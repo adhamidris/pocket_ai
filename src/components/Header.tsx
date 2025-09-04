@@ -1,0 +1,131 @@
+import { useEffect, useState } from "react";
+import { Button } from "@/components/ui/button";
+import { Menu, Moon, Sun, X } from "lucide-react";
+import LanguageToggle from "./LanguageToggle";
+import { useI18n } from "@/i18n/I18nProvider";
+
+const Header = () => {
+  const [isMenuOpen, setIsMenuOpen] = useState(false);
+  const [isLight, setIsLight] = useState(false);
+  const { t } = useI18n();
+
+  useEffect(() => {
+    const saved = localStorage.getItem("theme");
+    if (saved === "light") {
+      document.documentElement.classList.add("light");
+      setIsLight(true);
+    }
+  }, []);
+
+  const toggleTheme = () => {
+    const next = !isLight;
+    setIsLight(next);
+    if (next) {
+      document.documentElement.classList.add("light");
+      localStorage.setItem("theme", "light");
+    } else {
+      document.documentElement.classList.remove("light");
+      localStorage.setItem("theme", "dark");
+    }
+  };
+
+  return (
+    <header className="sticky top-0 z-50 bg-background/80 backdrop-blur-xl border-b border-neutral-100">
+      <div className="container mx-auto px-6 py-4">
+        <div className="flex items-center justify-between">
+          {/* Logo */}
+          <div className="flex items-center gap-2">
+            <div className="w-8 h-8 bg-gradient-primary rounded-lg flex items-center justify-center">
+              <span className="text-white font-bold text-lg">A</span>
+            </div>
+            <span className="text-xl font-semibold text-foreground">
+              {t("nav.brand")}
+            </span>
+          </div>
+
+          {/* Desktop Navigation */}
+          <nav className="hidden md:flex items-center gap-8">
+            <a href="#features" className="text-neutral-600 hover:text-primary transition-colors">
+              {t("nav.features")}
+            </a>
+            <a href="#pricing" className="text-neutral-600 hover:text-primary transition-colors">
+              {t("nav.pricing")}
+            </a>
+            <a href="#about" className="text-neutral-600 hover:text-primary transition-colors">
+              {t("nav.about")}
+            </a>
+            <a href="#contact" className="text-neutral-600 hover:text-primary transition-colors">
+              {t("nav.contact")}
+            </a>
+          </nav>
+
+          {/* Theme toggle + Desktop CTA */}
+          <div className="hidden md:flex items-center gap-4">
+            <LanguageToggle />
+            <button
+              onClick={toggleTheme}
+              className="p-2 rounded-lg border border-border hover:bg-accent/40 transition-colors"
+              aria-label={t("nav.toggleLightMode")}
+              title={t("nav.toggleLightMode")}
+            >
+              {isLight ? <Moon className="w-5 h-5" /> : <Sun className="w-5 h-5" />}
+            </button>
+            <Button variant="ghost" className="text-neutral-600 hover:text-primary">
+              {t("nav.signIn")}
+            </Button>
+            <Button className="bg-gradient-primary text-white hover:opacity-90 transition-opacity">
+              {t("nav.getStarted")}
+            </Button>
+          </div>
+
+          {/* Mobile Menu Button */}
+          <button
+            onClick={() => setIsMenuOpen(!isMenuOpen)}
+            className="md:hidden p-2 rounded-lg hover:bg-neutral-100 transition-colors"
+          >
+            {isMenuOpen ? <X size={24} /> : <Menu size={24} />}
+          </button>
+        </div>
+
+        {/* Mobile Menu */}
+        {isMenuOpen && (
+          <div className="md:hidden mt-4 py-4 border-t border-neutral-100 animate-fade-in">
+            <nav className="flex flex-col space-y-4">
+              <a href="#features" className="text-neutral-600 hover:text-primary transition-colors py-2">
+                {t("nav.features")}
+              </a>
+              <a href="#pricing" className="text-neutral-600 hover:text-primary transition-colors py-2">
+                {t("nav.pricing")}
+              </a>
+              <a href="#about" className="text-neutral-600 hover:text-primary transition-colors py-2">
+                {t("nav.about")}
+              </a>
+              <a href="#contact" className="text-neutral-600 hover:text-primary transition-colors py-2">
+                {t("nav.contact")}
+              </a>
+              <div className="flex flex-col space-y-2 pt-4">
+                <LanguageToggle />
+                <button
+                  onClick={toggleTheme}
+                  className="justify-start p-2 rounded-lg border border-border hover:bg-accent/40 transition-colors inline-flex items-center gap-2"
+                  aria-label={t("nav.toggleLightMode")}
+                >
+                  {isLight ? <Moon className="w-5 h-5" /> : <Sun className="w-5 h-5" />}
+                  <span>{t("nav.lightMode")}</span>
+                </button>
+                <Button variant="ghost" className="justify-start text-neutral-600">
+                  {t("nav.signIn")}
+                </Button>
+                <Button className="bg-gradient-primary text-white justify-start">
+                  {t("nav.getStarted")}
+                </Button>
+              </div>
+            </nav>
+          </div>
+        )}
+      </div>
+    </header>
+  );
+};
+
+export default Header;
