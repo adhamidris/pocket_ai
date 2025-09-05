@@ -1,0 +1,46 @@
+{
+  "expo": {
+    "name": "AI Support",
+    "slug": "ai-support-mobile",
+    "version": "1.0.0",
+    "sdkVersion": "53.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/icons/icon.png",
+    "scheme": "aisupport",
+    "userInterfaceStyle": "automatic",
+    "splash": {
+      "image": "./assets/splash/logo.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#0e131a",
+      "dark": {
+        "image": "./assets/splash/logo-dark.png",
+        "backgroundColor": "#0e131a"
+      }
+    },
+    "updates": {
+      "fallbackToCacheTimeout": 0
+    },
+    "assetBundlePatterns": [
+      "**/*"
+    ],
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.example.aisupport"
+    },
+    "android": {
+      "package": "com.example.aisupport",
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/icons/adaptive-foreground.png",
+        "backgroundColor": "#644EF9"
+      }
+    },
+    "notification": {
+      "icon": "./assets/icons/notification-icon.png",
+      "color": "#644EF9"
+    },
+    "plugins": [
+      "expo-font",
+      "expo-localization"
+    ]
+  }
+}
