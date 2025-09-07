@@ -83,4 +83,3 @@ export const lightTheme: Theme = {
     primary: 'hsl(240,75%,48%)',
   },
 }
-

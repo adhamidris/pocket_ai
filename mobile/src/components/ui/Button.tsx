@@ -1,7 +1,9 @@
-import React from 'react'
-import { TouchableOpacity, Text, ViewStyle, TextStyle, View } from 'react-native'
+import React, { useRef } from 'react'
+import { TouchableOpacity, Text, ViewStyle, TextStyle, Animated } from 'react-native'
 import { LinearGradient } from 'expo-linear-gradient'
-import { useTheme } from '@/providers/ThemeProvider'
+import * as Haptics from 'expo-haptics'
+import { useTheme } from '../../providers/ThemeProvider'
+import { LoadingSpinner } from './LoadingSpinner'
 
 type Variant = 'default' | 'secondary' | 'outline' | 'ghost' | 'link' | 'premium' | 'hero' | 'glass'
 type Size = 'sm' | 'md' | 'lg' | 'xl'
@@ -15,34 +17,99 @@ export const Button: React.FC<{
   variant?: Variant
   size?: Size
   disabled?: boolean
-}> = ({ title, onPress, variant = 'default', size = 'md', disabled }) => {
+  loading?: boolean
+}> = ({ title, onPress, variant = 'default', size = 'md', disabled, loading }) => {
   const { theme } = useTheme()
+  const scaleValue = useRef(new Animated.Value(1)).current
+
+  const handlePressIn = () => {
+    if (!disabled && !loading) {
+      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light)
+      Animated.spring(scaleValue, {
+        toValue: 0.95,
+        useNativeDriver: true,
+      }).start()
+    }
+  }
+
+  const handlePressOut = () => {
+    if (!disabled && !loading) {
+      Animated.spring(scaleValue, {
+        toValue: 1,
+        useNativeDriver: true,
+      }).start()
+    }
+  }
+
+  const handlePress = () => {
+    if (!disabled && !loading && onPress) {
+      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium)
+      onPress()
+    }
+  }
+
   const base: ViewStyle = {
     height: HEIGHT[size],
     borderRadius: RADIUS[size],
     paddingHorizontal: size === 'xl' ? 20 : size === 'lg' ? 16 : 12,
-    alignItems: 'center', justifyContent: 'center'
+    alignItems: 'center', 
+    justifyContent: 'center',
+    flexDirection: 'row',
+    gap: 8,
   }
-  const text: TextStyle = { color: theme.color.foreground, fontSize: 16, fontWeight: '600' }
+  
+  const text: TextStyle = { 
+    color: theme.color.foreground, 
+    fontSize: 16, 
+    fontWeight: '600' 
+  }
 
   if (variant === 'premium' || variant === 'hero') {
     return (
-      <TouchableOpacity onPress={onPress} disabled={disabled} activeOpacity={0.8} style={[base, { overflow: 'hidden' }]}> 
-        <LinearGradient
-          pointerEvents="none"
-          colors={[theme.color.primary, theme.color.primaryLight, 'hsl(260,100%,80%)']}
-          start={{ x: 0, y: 0 }}
-          end={{ x: 1, y: 1 }}
-          style={{ ...base, position: 'absolute', left: 0, right: 0, top: 0, bottom: 0 }}
-        />
-        <Text style={{ ...text, color: '#fff' }}>{title}</Text>
+      <TouchableOpacity 
+        onPressIn={handlePressIn}
+        onPressOut={handlePressOut}
+        onPress={handlePress}
+        disabled={disabled || loading} 
+        activeOpacity={1} 
+        style={[{ height: HEIGHT[size], borderRadius: RADIUS[size], overflow: 'hidden', alignSelf: 'stretch' }]}
+      > 
+        <Animated.View style={{ 
+          width: '100%', 
+          height: '100%', 
+          transform: [{ scale: scaleValue }],
+          alignItems: 'center',
+          justifyContent: 'center',
+          flexDirection: 'row',
+          paddingHorizontal: size === 'xl' ? 20 : size === 'lg' ? 16 : 12
+        }}>
+          <LinearGradient
+            pointerEvents="none"
+            colors={[theme.color.primary, theme.color.primaryLight, 'hsl(260,100%,80%)']}
+            start={{ x: 0, y: 0 }}
+            end={{ x: 1, y: 1 }}
+            style={{ 
+              position: 'absolute', 
+              left: 0, 
+              right: 0, 
+              top: 0, 
+              bottom: 0,
+              borderRadius: RADIUS[size],
+              ...(theme.shadow.premium as any)
+            }}
+          />
+          {loading && (
+            <LoadingSpinner size={20} color="#fff" style={{ marginRight: 8 }} />
+          )}
+          <Text style={{ ...text, color: '#fff' }}>{title}</Text>
+        </Animated.View>
       </TouchableOpacity>
     )
   }
 
   const bg: ViewStyle = (() => {
     switch (variant) {
-      case 'default': return { backgroundColor: theme.color.primary }
+      case 'default': return { backgroundColor: theme.color.primary, ...(theme.shadow.md as any) }
       case 'secondary': return { backgroundColor: theme.color.secondary }
       case 'outline': return { backgroundColor: theme.color.background, borderWidth: 1, borderColor: theme.color.border }
       case 'ghost': return { backgroundColor: 'transparent' }
@@ -55,8 +122,20 @@ export const Button: React.FC<{
   const color = variant === 'default' || variant === 'secondary' ? '#fff' : theme.color.foreground
 
   return (
-    <TouchableOpacity onPress={onPress} disabled={disabled} activeOpacity={0.8} style={[base, bg, disabled && { opacity: 0.5 }]}> 
-      <Text style={{ ...text, color }}>{title}</Text>
+    <TouchableOpacity 
+      onPressIn={handlePressIn}
+      onPressOut={handlePressOut}
+      onPress={handlePress}
+      disabled={disabled || loading} 
+      activeOpacity={1} 
+      style={[disabled && { opacity: 0.5 }]}
+    > 
+      <Animated.View style={[base, bg, { transform: [{ scale: scaleValue }] }]}>
+        {loading && (
+          <LoadingSpinner size={16} color={color} style={{ marginRight: 4 }} />
+        )}
+        <Text style={{ ...text, color }}>{title}</Text>
+      </Animated.View>
     </TouchableOpacity>
   )
 }

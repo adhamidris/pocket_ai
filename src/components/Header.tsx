@@ -3,11 +3,14 @@ import { Button } from "@/components/ui/button";
 import { Menu, Moon, Sun, X } from "lucide-react";
 import LanguageToggle from "./LanguageToggle";
 import { useI18n } from "@/i18n/I18nProvider";
+import LoginModal from "./LoginModal";
+import { Link } from "react-router-dom";
 
 const Header = () => {
   const [isMenuOpen, setIsMenuOpen] = useState(false);
   const [isLight, setIsLight] = useState(false);
   const { t } = useI18n();
+  const [loginOpen, setLoginOpen] = useState(false);
 
   useEffect(() => {
     const saved = localStorage.getItem("theme");
@@ -70,8 +73,11 @@ const Header = () => {
             >
               {isLight ? <Moon className="w-5 h-5" /> : <Sun className="w-5 h-5" />}
             </button>
-            <Button variant="ghost" className="text-neutral-600 hover:text-primary">
+            <Button variant="ghost" className="text-neutral-600 hover:text-primary" onClick={() => setLoginOpen(true)}>
               {t("nav.signIn")}
+            </Button>
+            <Button asChild variant="ghost" className="text-neutral-600 hover:text-primary">
+              <Link to="/register">{t("nav.register")}</Link>
             </Button>
             <Button className="bg-gradient-primary text-white hover:opacity-90 transition-opacity">
               {t("nav.getStarted")}
@@ -113,8 +119,11 @@ const Header = () => {
                   {isLight ? <Moon className="w-5 h-5" /> : <Sun className="w-5 h-5" />}
                   <span>{t("nav.lightMode")}</span>
                 </button>
-                <Button variant="ghost" className="justify-start text-neutral-600">
+                <Button variant="ghost" className="justify-start text-neutral-600" onClick={() => setLoginOpen(true)}>
                   {t("nav.signIn")}
+                </Button>
+                <Button asChild variant="ghost" className="justify-start text-neutral-600">
+                  <Link to="/register">{t("nav.register")}</Link>
                 </Button>
                 <Button className="bg-gradient-primary text-white justify-start">
                   {t("nav.getStarted")}
@@ -124,6 +133,7 @@ const Header = () => {
           </div>
         )}
       </div>
+      <LoginModal open={loginOpen} onOpenChange={setLoginOpen} />
     </header>
   );
 };

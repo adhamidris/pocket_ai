@@ -1,59 +1,237 @@
-export default {
-  home: {
-    ctaStart: 'ابدأ الآن',
-    ctaSignIn: 'تسجيل الدخول'
+const ar = {
+  // Navigation
+  nav: {
+    dashboard: "لوحة التحكم",
+    conversations: "المحادثات",
+    crm: "إدارة العملاء", 
+    agents: "الوكلاء",
+    settings: "الإعدادات"
   },
-  hero: {
-    title: 'الأمر بسيط!',
-    subtitle: 'قدّم دعماً فورياً وذكياً على مدار الساعة بمنصتنا المدعومة بالذكاء الاصطناعي.'
+
+  // Common
+  common: {
+    continue: "متابعة",
+    skip: "تخطي",
+    getStarted: "ابدأ الآن", 
+    back: "رجوع",
+    next: "التالي",
+    done: "تم",
+    cancel: "إلغاء",
+    save: "حفظ",
+    edit: "تعديل",
+    delete: "حذف",
+    loading: "جاري التحميل...",
+    error: "خطأ",
+    retry: "إعادة المحاولة",
+    refresh: "تحديث"
   },
-  howItWorks: {
-    steps: [
-      { title: 'سجّل', bullets: ['أكمل ملف العمل', 'ارفع SOP/قاعدة المعرفة', 'أو دَع الذكاء يولّدها لك'] },
-      { title: 'أنشئ وكيلك الذكي', bullets: ['اضبط الشخصية والأدوات', 'احصل على رابط البوابة'] },
-      { title: 'الصق! الصق! الصق!', bullets: ['انشر الرابط على قنواتك', 'واسترخِ وتابع'] },
-    ]
+
+  // Onboarding
+  onboarding: {
+    welcome: {
+      title: "خدمة عملاء مدعومة بالذكاء الاصطناعي",
+      subtitle: "قدّم دعماً فورياً وذكياً على مدار الساعة مع منصتنا المدعومة بالذكاء الاصطناعي",
+      ctaStart: "ابدأ الإعداد",
+      ctaSkipLogin: "تخطي إلى تسجيل الدخول"
+    },
+    howItWorks: {
+      title: "الأمر بسيط!",
+      steps: [
+        {
+          title: "سجّل",
+          bullets: [
+            "أكمل ملف العمل",
+            "ارفع SOP/قاعدة المعرفة", 
+            "أو دَع الذكاء يولّدها لك"
+          ]
+        },
+        {
+          title: "أنشئ وكيلك الذكي",
+          bullets: [
+            "اضبط الشخصية والأدوات",
+            "احصل على رابط البوابة"
+          ]
+        },
+        {
+          title: "الصق! الصق! الصق!",
+          bullets: [
+            "الصق الرابط على الموقع والشبكات وواتساب",
+            "واسترخِ وتابع"
+          ]
+        }
+      ]
+    },
+    chatPreview: {
+      title: "شاهده يعمل",
+      subtitle: "اختبر محادثة مباشرة"
+    },
+    skipLogin: {
+      tagline: "عملاؤك، بخدمةٍ أفضل."
+    },
+    shareAnywhere: {
+      message: "مرحباً! أنا مساعدك المدعوم بالذكاء الاصطناعي. شكراً لإنشائي. أنا جاهز لخدمة عملائك أينما وضعتني.\nفقط ثبّت رابط الدردشة في أي مكان!",
+      cta: "شاهدني أعمل"
+    },
+    
   },
-  featuresSnap: {
-    title: 'أهم الميزات',
-    items: [
-      'مساعد ذكي',
-      'استجابات سريعة جدًا',
-      'أمان على مستوى المؤسسات',
-      'تحليلات متقدمة'
-    ]
+
+  auth: {
+    email: "البريد الإلكتروني",
+    password: "كلمة المرور",
+    confirm: "تأكيد",
+    login: "تسجيل الدخول",
+    continueApple: "المتابعة باستخدام Apple",
+    continueGoogle: "المتابعة باستخدام Google",
+    fullName: "الاسم الكامل"
   },
-  testimonials: {
-    title: 'ماذا يقول العملاء',
-    items: [
-      { quote: 'انخفضت أوقات الاستجابة من دقائق إلى ثوانٍ. ارتفع الرضا 25%.', author: 'Maya Patel', role: 'مديرة الدعم، Flowify' },
-      { quote: 'أتممنا التحديثات والاسترجاعات خلال أيام. التذاكر أقل والإيرادات أعلى.', author: 'Alex Romero', role: 'المدير التنفيذي للعمليات، CloudCart' },
-      { quote: 'الإعداد كان سريعًا جدًا. الدردشة تبدو أصلية لعلامتنا.', author: 'Sofia Nguyen', role: 'نائب رئيس التسويق، BrightClinic' },
-      { quote: 'حللت التحليلات أنماطًا لم نرها من قبل.', author: 'Daniel Kim', role: 'قائد العمليات، Loop' }
-    ]
+  profile: {
+    companyName: "اسم الشركة",
+    industry: "الصناعة",
+    employees: "عدد الموظفين",
+    address: "العنوان"
   },
-  pricing: {
-    title: 'أسعار بسيطة',
-    perMonth: '/شهر',
-    getStarted: 'ابدأ الآن',
-    seeFull: 'عرض الأسعار الكاملة',
-    billing: { monthly: 'شهري', yearly: 'سنوي', yearlyNote: 'تُحسب سنوياً' },
-    packages: [
-      { tier: 'Plus', monthly: 29, yearly: 24, features: ['وكيل واحد', 'بوابة دردشة بعلامتك', 'قاعدة معرفة أساسية'] },
-      { tier: 'Pro', monthly: 89, yearly: 69, features: ['حتى 3 وكلاء', 'قاعدة معرفة متقدمة + استشهادات', 'سير عمل وأدوات'] },
-      { tier: 'Enterprise', monthly: 249, yearly: 199, features: ['وكلاء بلا حد', 'SSO وسجلات تدقيق', 'توجيه مخصص'] }
-    ]
+  languages: {
+    english: "الإنجليزية",
+    arabic: "العربية",
+    spanish: "الإسبانية",
+    french: "الفرنسية"
   },
+  // extra onboarding strings
+  onboardingExtra: {
+    skipLogin: {
+      tagline: "عملاؤك، بخدمةٍ أفضل."
+    },
+    howItWorksDemo: {
+      createAccount: "أنشئ حسابك",
+      businessProfile: "ملف العمل",
+      kbFile1: "knowledgebase.pdf",
+      kbFile2: "sop.docx",
+      kbFile3: "faq.csv"
+    },
+    shareAnywhere: {
+      message: "مرحباً! أنا مساعدك المدعوم بالذكاء الاصطناعي. شكراً لإنشائي. أنا جاهز لخدمة عملائك أينما وضعتني.\nفقط ثبّت رابط الدردشة في أي مكان!",
+      cta: "شاهدني أعمل"
+    }
+  },
+
+  common: {
+    continue: "متابعة",
+    skip: "تخطي",
+    getStarted: "ابدأ الآن",
+    back: "رجوع",
+    next: "التالي",
+    done: "تم",
+    cancel: "إلغاء",
+    save: "حفظ",
+    edit: "تعديل",
+    delete: "حذف",
+    loading: "جاري التحميل...",
+    error: "خطأ",
+    retry: "إعادة المحاولة",
+    refresh: "تحديث",
+    or: "أو",
+    upload: "رفع"
+  },
+
+  // Dashboard
+  dashboard: {
+    title: "لوحة التحكم",
+    welcome: "مرحباً بك",
+    stats: {
+      activeConversations: "المحادثات النشطة",
+      todayMessages: "رسائل اليوم",
+      responseTime: "متوسط وقت الاستجابة", 
+      satisfaction: "معدل الرضا"
+    },
+    recentActivity: "النشاط الأخير",
+    quickActions: "إجراءات سريعة",
+    noActivity: "لا يوجد نشاط حديث"
+  },
+
+  // Conversations
+  conversations: {
+    title: "المحادثات",
+    active: "نشطة",
+    archived: "مؤرشفة", 
+    all: "الكل",
+    noConversations: "لا توجد محادثات بعد",
+    startConversation: "ابدأ محادثة",
+    searchPlaceholder: "البحث في المحادثات...",
+    filters: {
+      agent: "الوكيل",
+      status: "الحالة",
+      date: "التاريخ"
+    }
+  },
+
+  // CRM
+  crm: {
+    title: "إدارة العملاء",
+    customers: "العملاء",
+    segments: "القطاعات",
+    insights: "الإحصائيات",
+    noCustomers: "لا يوجد عملاء بعد",
+    searchPlaceholder: "البحث عن العملاء...",
+    addCustomer: "إضافة عميل",
+    customerProfile: "ملف العميل",
+    activity: "النشاط",
+    notes: "الملاحظات",
+    tags: "العلامات"
+  },
+
+  // Agents
+  agents: {
+    title: "الوكلاء",
+    active: "نشط",
+    inactive: "غير نشط",
+    createAgent: "إنشاء وكيل",
+    editAgent: "تعديل الوكيل",
+    deleteAgent: "حذف الوكيل",
+    noAgents: "لم يتم إنشاء وكلاء بعد",
+    configuration: "التكوين",
+    persona: "الشخصية",
+    tools: "الأدوات",
+    knowledgeBase: "قاعدة المعرفة"
+  },
+
+  // Settings
+  settings: {
+    title: "الإعدادات",
+    sections: {
+      account: "الحساب",
+      subscription: "الاشتراك",
+      integrations: "التكاملات",
+      notifications: "الإشعارات", 
+      support: "الدعم"
+    },
+    account: {
+      profile: "الملف الشخصي",
+      security: "الأمان",
+      preferences: "التفضيلات"
+    },
+    subscription: {
+      currentPlan: "الخطة الحالية",
+      usage: "الاستخدام",
+      billing: "الفوترة",
+      upgrade: "ترقية الخطة"
+    }
+  },
+
+  // Demo conversation scenarios
   demo: {
     scenarios: [
       {
-        agentName: 'نانسي', jobTitle: 'وكيل دعم التجارة الإلكترونية',
+        agentName: "نانسي",
+        jobTitle: "وكيل دعم التجارة الإلكترونية",
         conversation: [
-          { id: 1, text: 'مرحباً! أحتاج مساعدة بخصوص طلبي 12345', isBot: false, delay: 1000 },
-          { id: 2, text: 'مرحباً، أنا نانسي. يسعدني مساعدتك. سأتحقق من الطلب الآن.', isBot: true, delay: 1400 },
-          { id: 3, text: 'شكراً لانتظارك. تم شحن طلبك أمس وسيصل غداً بحلول الثالثة مساءً.', isBot: true, delay: 1600 }
+          { text: "مرحباً! أحتاج مساعدة مع طلبي #12345", isBot: false },
+          { text: "مرحباً، أنا نانسي. سأكون سعيدة لمساعدتك. سأتحقق من الطلب الآن.", isBot: true },
+          { text: "شكراً للانتظار. تم شحن طلبك أمس وسيصل غداً بحلول الساعة 3 مساءً.", isBot: true },
+          { text: "رائع! شكراً نانسي.", isBot: false }
         ]
       }
     ]
   }
 }
+
+export default ar

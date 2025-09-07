@@ -1,21 +1,27 @@
 import React from 'react'
 import { GestureHandlerRootView } from 'react-native-gesture-handler'
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
+import { ThemeProvider } from './providers/ThemeProvider'
+import { RootNavigator } from './navigation/RootNavigator'
 import './i18n'
-import { ThemeProvider } from '@/providers/ThemeProvider'
-import { ReactQueryProvider } from '@/providers/QueryProvider'
-import { ToastProvider } from '@/providers/ToastProvider'
-import { RootNav } from '@/navigation'
+
+const queryClient = new QueryClient({
+  defaultOptions: {
+    queries: {
+      retry: 1,
+      staleTime: 30_000,
+    },
+  },
+})
 
 export default function App() {
   return (
     <GestureHandlerRootView style={{ flex: 1 }}>
-      <ThemeProvider>
-        <ReactQueryProvider>
-          <ToastProvider>
-            <RootNav />
-          </ToastProvider>
-        </ReactQueryProvider>
-      </ThemeProvider>
+      <QueryClientProvider client={queryClient}>
+        <ThemeProvider>
+          <RootNavigator />
+        </ThemeProvider>
+      </QueryClientProvider>
     </GestureHandlerRootView>
   )
 }

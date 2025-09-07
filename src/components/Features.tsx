@@ -161,21 +161,37 @@ function FeatureTabs() {
 
   const [active, setActive] = useState('setup');
   const [isHovered, setIsHovered] = useState(false);
+  const containerRef = useRef<HTMLDivElement | null>(null);
+  const [inView, setInView] = useState(false);
+
+  // Track if the features block is in viewport
+  useEffect(() => {
+    const el = containerRef.current;
+    if (!el) return;
+    const observer = new IntersectionObserver(
+      (entries) => {
+        entries.forEach((entry) => setInView(entry.isIntersecting));
+      },
+      { threshold: 0.25 }
+    );
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, []);
 
   useEffect(() => {
-    if (isHovered) return;
+    if (isHovered || !inView) return;
     const idx = tabs.findIndex((t) => t.key === active);
     const id = setInterval(() => {
       const next = tabs[(idx + 1) % tabs.length].key;
       setActive(next);
-    }, 7000);
+    }, 12000);
     return () => clearInterval(id);
-  }, [active, isHovered]);
+  }, [active, isHovered, inView]);
 
   const current = tabs.find((t) => t.key === active)!;
 
   return (
-    <div className="mt-8" onMouseEnter={() => setIsHovered(true)} onMouseLeave={() => setIsHovered(false)}>
+    <div ref={containerRef} className="mt-8" onMouseEnter={() => setIsHovered(true)} onMouseLeave={() => setIsHovered(false)}>
       <div className="grid lg:grid-cols-12 gap-8 items-start">
         <div className="lg:col-span-4">
           <div className="flex lg:flex-col flex-wrap gap-4">

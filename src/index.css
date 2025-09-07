@@ -12,6 +12,31 @@
 }
 
 @layer utilities {
+  /* Light-mode only: make login modal inputs stand out against white */
+  .light .login-modal .login-input { background-color: hsl(var(--secondary)); border-color: hsl(var(--border)); }
+  .dark .login-modal .login-input { background-color: hsl(var(--input)); border-color: hsl(var(--border)); }
+  /* Hide Register page orbs in light mode only */
+  .light .register-orbs { display: none !important; }
+
+  /* Streaming/shimmer text effect for subdued tagline */
+  @keyframes streaming {
+    0% { background-position: 200% 0; }
+    100% { background-position: -200% 0; }
+  }
+  .streaming-text {
+    color: hsl(var(--muted-foreground));
+    background: linear-gradient(90deg,
+      hsl(var(--muted-foreground)) 0%,
+      hsl(var(--muted-foreground)) 40%,
+      hsla(0,0%,100%,0.85) 50%,
+      hsl(var(--muted-foreground)) 60%,
+      hsl(var(--muted-foreground)) 100%);
+    -webkit-background-clip: text;
+            background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-size: 200% 100%;
+    animation: streaming 12s linear infinite;
+  }
   /* Light-mode only flashing glow behind Features panel */
   .panel-animated-border .panel-glow { display: none; }
   .light .panel-animated-border .panel-glow { display: block; }
@@ -228,6 +253,37 @@
 }
 
 @layer components {
+  /* Registration header theme override: purple gradient only in light mode */
+  .light .register-header { background: var(--gradient-primary); }
+  .light .register-header .register-header-title { color: white; }
+  .light .register-header .register-header-subtitle { color: hsla(0,0%,100%,0.80); }
+  /* In light mode, force gradient word to white for readability */
+  .light .register-header .text-gradient-hero {
+    background: none !important;
+    -webkit-background-clip: initial;
+            background-clip: initial;
+    -webkit-text-fill-color: #fff;
+    color: #fff;
+  }
+  /* Adjust welcome prefix color for readability on light background */
+  .register-welcome .welcome-prefix { color: hsl(var(--foreground)); }
+  .dark .register-welcome .welcome-prefix { color: white; }
+  .light .register-welcome .allow-gradient.text-gradient-hero {
+    background: var(--gradient-hero) !important;
+    -webkit-background-clip: text !important;
+            background-clip: text !important;
+    -webkit-text-fill-color: transparent !important;
+    color: transparent !important;
+  }
+  /* Allow specific gradient text inside register header even in light mode */
+  .light .register-header .allow-gradient.text-gradient-hero {
+    background: var(--gradient-hero) !important;
+    -webkit-background-clip: text !important;
+            background-clip: text !important;
+    -webkit-text-fill-color: transparent !important;
+    color: transparent !important;
+  }
+  /* (removed) snake-border animation */
   /* Premium glass effect */
   .glass {
     background: var(--gradient-glass);

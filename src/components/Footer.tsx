@@ -1,9 +1,11 @@
 import { Button } from "@/components/ui/button";
 import { ArrowRight, Twitter, Linkedin, Github, Mail } from "lucide-react";
 import { useI18n } from "@/i18n/I18nProvider";
+import { Link, useLocation } from "react-router-dom";
 
 const Footer = () => {
   const { t } = useI18n();
+  const { pathname } = useLocation();
   const footerLinks = t<Record<string, string[]>>("footer.categories");
   const socialLinks = [
     { icon: Twitter, href: "#", label: t("footer.social.twitter") },
@@ -49,16 +51,29 @@ const Footer = () => {
             <div key={category} className="md:text-left text-center">
               <h4 className="font-semibold text-foreground mb-4">{category}</h4>
               <ul className="space-y-3">
-                {links.map((link) => (
-                  <li key={link}>
-                    <a
-                      href="#"
-                      className="text-muted-foreground hover:text-foreground transition-colors"
-                    >
-                      {link}
-                    </a>
-                  </li>
-                ))}
+                {links.map((link) => {
+                  const features = t("nav.features");
+                  const pricing = t("nav.pricing");
+                  const isHome = pathname === "/";
+                  const isSpecial = link === features || link === pricing;
+                  const hash = link === features ? "#features" : link === pricing ? "#pricing" : "";
+                  return (
+                    <li key={link}>
+                      {isSpecial ? (
+                        <Link
+                          to={isHome ? { hash } : { pathname: "/", hash }}
+                          className="text-muted-foreground hover:text-foreground transition-colors"
+                        >
+                          {link}
+                        </Link>
+                      ) : (
+                        <a href="#" className="text-muted-foreground hover:text-foreground transition-colors">
+                          {link}
+                        </a>
+                      )}
+                    </li>
+                  );
+                })}
               </ul>
             </div>
           ))}
