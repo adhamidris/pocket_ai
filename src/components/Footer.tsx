@@ -54,9 +54,16 @@ const Footer = () => {
                 {links.map((link) => {
                   const features = t("nav.features");
                   const pricing = t("nav.pricing");
+                  const privacy = t("footer.bottom.privacy");
+                  const terms = t("footer.bottom.terms");
                   const isHome = pathname === "/";
                   const isSpecial = link === features || link === pricing;
-                  const hash = link === features ? "#features" : link === pricing ? "#pricing" : "";
+                  const hash = link === features ? "#features-box" : link === pricing ? "#pricing" : "";
+                  const isGdpr = (link || "").toLowerCase().includes("gdpr") || (link || "").includes("اللائحة");
+                  const isCompliance = (link || "").toLowerCase().includes("compliance") || (link || "").includes("الامتثال");
+                  const isCookies = (link || "").toLowerCase().includes("cookie") || (link || "").includes("الكوكيز");
+                  const isIntegrations = (link || "").toLowerCase() === "integrations" || (link || "").includes("التكاملات");
+                  const isSecurity = (link || "").toLowerCase() === "security" || (link || "").includes("الأمان");
                   return (
                     <li key={link}>
                       {isSpecial ? (
@@ -64,6 +71,34 @@ const Footer = () => {
                           to={isHome ? { hash } : { pathname: "/", hash }}
                           className="text-muted-foreground hover:text-foreground transition-colors"
                         >
+                          {link}
+                        </Link>
+                      ) : link === privacy ? (
+                        <Link to="/privacy" className="text-muted-foreground hover:text-foreground transition-colors">
+                          {link}
+                        </Link>
+                      ) : link === terms ? (
+                        <Link to="/terms" className="text-muted-foreground hover:text-foreground transition-colors">
+                          {link}
+                        </Link>
+                      ) : isGdpr ? (
+                        <Link to="/gdpr" className="text-muted-foreground hover:text-foreground transition-colors">
+                          {link}
+                        </Link>
+                      ) : isCookies ? (
+                        <Link to="/cookies" className="text-muted-foreground hover:text-foreground transition-colors">
+                          {link}
+                        </Link>
+                      ) : isIntegrations ? (
+                        <Link to="/integrations" className="text-muted-foreground hover:text-foreground transition-colors">
+                          {link}
+                        </Link>
+                      ) : isCompliance ? (
+                        <Link to="/compliance" className="text-muted-foreground hover:text-foreground transition-colors">
+                          {link}
+                        </Link>
+                      ) : isSecurity ? (
+                        <Link to="/security" className="text-muted-foreground hover:text-foreground transition-colors">
                           {link}
                         </Link>
                       ) : (
@@ -81,8 +116,29 @@ const Footer = () => {
 
         {/* Bottom Bar */}
         <div className="mt-16 pt-8 border-t border-border flex justify-center items-center">
-          <div className="text-muted-foreground text-sm text-center">
-            {t("footer.bottom.copyright")}
+          <div className="text-muted-foreground text-sm text-center flex flex-col items-center gap-2">
+            <div>{t("footer.bottom.copyright")}</div>
+            <div className="flex items-center gap-3">
+              <Link to="/privacy" className="text-muted-foreground hover:text-foreground transition-colors">
+                {t("footer.bottom.privacy")}
+              </Link>
+              <span className="opacity-40">•</span>
+              <Link to="/terms" className="text-muted-foreground hover:text-foreground transition-colors">
+                {t("footer.bottom.terms")}
+              </Link>
+              <span className="opacity-40">•</span>
+              <Link to="/gdpr" className="text-muted-foreground hover:text-foreground transition-colors">
+                {t("footer.bottom.cookie")}
+              </Link>
+              <span className="opacity-40">•</span>
+              <Link to="/cookies" className="text-muted-foreground hover:text-foreground transition-colors">
+                Cookie Policy
+              </Link>
+              <span className="opacity-40">•</span>
+              <Link to="/compliance" className="text-muted-foreground hover:text-foreground transition-colors">
+                Compliance
+              </Link>
+            </div>
           </div>
         </div>
       </div>

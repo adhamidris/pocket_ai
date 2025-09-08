@@ -12,6 +12,23 @@
 }
 
 @layer utilities {
+  /* Policy section target highlight */
+  @keyframes sectionHighlight {
+    0% { box-shadow: 0 0 0 0 hsla(240,100%,70%,0.0); }
+    20% { box-shadow: 0 0 0 6px hsla(240,100%,70%,0.15); }
+    100% { box-shadow: 0 0 0 0 hsla(240,100%,70%,0.0); }
+  }
+  .policy-section:target {
+    animation: sectionHighlight 1.6s ease-out;
+  }
+  .policy-section:target h2 {
+    background: var(--gradient-hero);
+    -webkit-background-clip: text;
+            background-clip: text;
+    -webkit-text-fill-color: transparent;
+    color: transparent;
+    transition: color var(--transition-normal);
+  }
   /* Light-mode only: make login modal inputs stand out against white */
   .light .login-modal .login-input { background-color: hsl(var(--secondary)); border-color: hsl(var(--border)); }
   .dark .login-modal .login-input { background-color: hsl(var(--input)); border-color: hsl(var(--border)); }
