@@ -8,9 +8,11 @@ import { Input } from "@/components/ui/input";
 import Header from "@/components/Header";
 import MobileAppPromo from "@/components/MobileAppPromo";
 import Footer from "@/components/Footer";
+import { useIsMobile } from "@/hooks/use-mobile";
+import { Badge } from "@/components/ui/badge";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
-import { HelpCircle } from "lucide-react";
+import { HelpCircle, ChevronDown } from "lucide-react";
 import {
   Select,
   SelectContent,
@@ -18,6 +20,8 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem } from "@/components/ui/command";
 import {
   Form,
   FormControl,
@@ -28,9 +32,19 @@ import {
 } from "@/components/ui/form";
 import { Link } from "react-router-dom";
 import { toast } from "@/components/ui/sonner";
+import {
+  DropdownMenu,
+  DropdownMenuCheckboxItem,
+  DropdownMenuContent,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 
 const Register = () => {
   const { t, dir, lang } = useI18n();
+  const isMobile = useIsMobile();
+  const [step, setStep] = useState<'form' | 'role' | 'business'>("form");
+  const [pickedRole, setPickedRole] = useState<'business' | 'entrepreneur' | 'employee' | null>(null);
 
   /* Phone field temporarily disabled
   const countries = [
@@ -86,7 +100,6 @@ const Register = () => {
   );
 
   const form = useForm<z.infer<typeof schema>>({
-    resolver: zodResolver(schema),
     defaultValues: {
       firstName: "",
       email: "",
@@ -95,6 +108,14 @@ const Register = () => {
       password: "",
       confirmPassword: "",
       role: "business",
+      // Business step defaults
+      industry: "",
+      specifyIndustry: "",
+      lineOfBusiness: [],
+      lineOfBusinessCustom: [],
+      companySize: "",
+      country: "",
+      website: "",
     },
     mode: "onTouched",
   });
@@ -145,14 +166,225 @@ const Register = () => {
     };
   }, [fullSub]);
 
+  // Role-step typing effect
+  const roleSub = t("auth.register.roleSub") as string;
+  const [typedRole, setTypedRole] = useState("");
+  const roleIntervalRef = useRef<number | null>(null);
+  const roleTimeoutRef = useRef<number | null>(null);
+
+  useEffect(() => {
+    if (step !== 'role') return () => {};
+    const start = () => {
+      let i = 0;
+      if (roleIntervalRef.current) window.clearInterval(roleIntervalRef.current);
+      if (roleTimeoutRef.current) window.clearTimeout(roleTimeoutRef.current);
+      roleIntervalRef.current = window.setInterval(() => {
+        i += 1;
+        setTypedRole(roleSub.slice(0, i));
+        if (i >= roleSub.length) {
+          if (roleIntervalRef.current) window.clearInterval(roleIntervalRef.current);
+          roleTimeoutRef.current = window.setTimeout(start, 1400);
+        }
+      }, 80);
+    };
+    start();
+    return () => {
+      if (roleIntervalRef.current) window.clearInterval(roleIntervalRef.current);
+      if (roleTimeoutRef.current) window.clearTimeout(roleTimeoutRef.current);
+    };
+  }, [step, roleSub]);
+
+  // Business-step typing effect
+  const businessSub = t("auth.register.businessSub") as string;
+  const [typedBusiness, setTypedBusiness] = useState("");
+  const bizIntervalRef = useRef<number | null>(null);
+  const bizTimeoutRef = useRef<number | null>(null);
+  const [lobOpen, setLobOpen] = useState(false);
+  const [industryOpen, setIndustryOpen] = useState(false);
+  const [showIndustryCustom, setShowIndustryCustom] = useState(false);
+  const [lobCustomInput, setLobCustomInput] = useState("");
+  const [lobQuery, setLobQuery] = useState("");
+
+  useEffect(() => {
+    if (step !== 'business') return () => {};
+    const start = () => {
+      let i = 0;
+      if (bizIntervalRef.current) window.clearInterval(bizIntervalRef.current);
+      if (bizTimeoutRef.current) window.clearTimeout(bizTimeoutRef.current);
+      bizIntervalRef.current = window.setInterval(() => {
+        i += 1;
+        setTypedBusiness(businessSub.slice(0, i));
+        if (i >= businessSub.length) {
+          if (bizIntervalRef.current) window.clearInterval(bizIntervalRef.current);
+          bizTimeoutRef.current = window.setTimeout(start, 1400);
+        }
+      }, 80);
+    };
+    start();
+    return () => {
+      if (bizIntervalRef.current) window.clearInterval(bizIntervalRef.current);
+      if (bizTimeoutRef.current) window.clearTimeout(bizTimeoutRef.current);
+    };
+  }, [step, businessSub]);
+
+  // Helper to map broader industry buckets to LoB presets
+  const mapIndustryToLoBKey = (v?: string) => {
+    if (!v) return 'Other';
+    const s = v.toLowerCase();
+    if (s.includes('e‑commerce') || s.includes('retail')) return 'E‑commerce';
+    if (s.includes('saas') || s.includes('software')) return 'SaaS';
+    if (s.includes('financial')) return 'Finance';
+    if (s.includes('health')) return 'Healthcare';
+    if (s.includes('education')) return 'Education';
+    if (s.includes('hospitality') || s.includes('travel')) return 'Hospitality';
+    return 'Other';
+  };
+  const isOther = false;
+
+  // Countries for business profile (with flags)
+  const bizCountries = [
+    { value: 'United States', flag: '🇺🇸' },
+    { value: 'United Kingdom', flag: '🇬🇧' },
+    { value: 'United Arab Emirates', flag: '🇦🇪' },
+    { value: 'Saudi Arabia', flag: '🇸🇦' },
+    { value: 'Egypt', flag: '🇪🇬' },
+    { value: 'France', flag: '🇫🇷' },
+    { value: 'Germany', flag: '🇩🇪' },
+    { value: 'Spain', flag: '🇪🇸' },
+    { value: 'Italy', flag: '🇮🇹' },
+    { value: 'Other', flag: '🌐' },
+  ] as const;
+
+  // Auto-detect country for Business step (timezone first, then locale)
+  useEffect(() => {
+    if (step !== 'business') return;
+    try {
+      const current = (form.getValues as any)("country");
+      if (current) return;
+
+      const regionToCountry: Record<string, string> = {
+        US: 'United States',
+        GB: 'United Kingdom',
+        AE: 'United Arab Emirates',
+        SA: 'Saudi Arabia',
+        EG: 'Egypt',
+        FR: 'France',
+        DE: 'Germany',
+        ES: 'Spain',
+        IT: 'Italy',
+      };
+
+      let region: string | undefined;
+      const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
+      const tzToRegion: Record<string, string> = {
+        'Europe/London': 'GB',
+        'Europe/Paris': 'FR',
+        'Europe/Berlin': 'DE',
+        'Europe/Madrid': 'ES',
+        'Europe/Rome': 'IT',
+        'America/New_York': 'US',
+        'America/Chicago': 'US',
+        'America/Denver': 'US',
+        'America/Los_Angeles': 'US',
+        'Asia/Riyadh': 'SA',
+        'Asia/Dubai': 'AE',
+        'Africa/Cairo': 'EG',
+      };
+      if (tz && tzToRegion[tz]) region = tzToRegion[tz];
+
+      if (!region) {
+        const langs = (navigator.languages && navigator.languages.length ? navigator.languages : [navigator.language]).filter(Boolean) as string[];
+        for (const l of langs) {
+          try {
+            // @ts-ignore Intl.Locale may be missing in some environments
+            const loc = new (Intl as any).Locale(l);
+            if (loc && loc.region) { region = String(loc.region).toUpperCase(); break; }
+          } catch {
+            const m = l && l.match(/[-_](\w{2})/);
+            if (m && m[1]) { region = m[1].toUpperCase(); break; }
+          }
+        }
+        if (!region && langs[0] && /^ar/i.test(langs[0])) region = 'EG';
+      }
+
+      const country = region ? regionToCountry[region] : undefined;
+      if (country) (form.setValue as any)("country", country, { shouldDirty: false, shouldTouch: false });
+    } catch {
+      // ignore
+    }
+  }, [step, form]);
+
+  // Options for Line of Products/Services per industry
+  const lobOptionsByIndustry: Record<string, string[]> = {
+    'E‑commerce': [
+      'Apparel',
+      'Electronics',
+      'Beauty & Personal Care',
+      'Home & Kitchen',
+      'Sports & Outdoors',
+      'Groceries',
+      'Digital Goods',
+      'Handmade & Crafts',
+      'Automotive Accessories',
+    ],
+    'SaaS': [
+      'CRM',
+      'Marketing Automation',
+      'Analytics',
+      'Project Management',
+      'Customer Support',
+      'Developer Tools',
+      'Productivity',
+      'Security',
+      // Horizontal SaaS categories (replace Fintech)
+      'Billing/Subscriptions',
+      'Auth/Identity',
+      'Observability',
+      'Data Platform',
+    ],
+    'Finance': [
+      'Banking',
+      'Lending',
+      'Payments',
+      'Wealth Management',
+      'Insurance',
+      'Accounting',
+      'Crypto/Blockchain',
+      'Fintech',
+    ],
+    'Healthcare': [
+      'Clinics',
+      'Telemedicine',
+      'Pharmacy',
+      'Diagnostics',
+      'Medical Devices',
+      'Wellness',
+    ],
+    'Education': [
+      'K‑12',
+      'Higher Education',
+      'EdTech Platform',
+      'Corporate Training',
+      'Test Prep',
+      'Language Learning',
+    ],
+    'Hospitality': [
+      'Hotels',
+      'Restaurants',
+      'Catering',
+      'Travel & Tours',
+      'Venues & Events',
+    ],
+    'Other': [
+      'Consulting',
+      'Manufacturing',
+      'Nonprofit',
+    ],
+  };
+
   const onSubmit = (values: z.infer<typeof schema>) => {
-    // Simulated submit; integrate API here later.
-    toast.success(t("auth.register.success.title"), {
-      description: t("auth.register.success.description", {
-        name: values.firstName,
-      }) as unknown as string,
-    });
-    form.reset();
+    // Move to next step (role selection)
+    setStep('role');
   };
 
   // Ensure entering Register lands at the top (avoid showing lower sections first)
@@ -180,21 +412,46 @@ const Register = () => {
             />
           </div>
           <div className="relative z-10 w-full max-w-lg md:max-w-xl">
-            {/* Welcome block above the form header */}
-            <div className="mb-2 text-center register-welcome">
-              <p className="mt-1 text-base md:text-lg text-muted-foreground/70 font-medium tracking-wide">{typed}</p>
-            </div>
             <div className="rounded-xl border border-border bg-card shadow-premium overflow-hidden">
           {/* Header */}
           <div className="bg-secondary p-3 md:p-4 rounded-t-xl register-header">
-            <h1 className="text-2xl md:text-3xl font-bold text-secondary-foreground text-center register-header-title">
-              {t("auth.register.titlePrefix")} {" "}
-              <span className="text-gradient-hero">{t("auth.register.titleHighlight")}</span>
-            </h1>
+            {step === 'form' ? (
+              <>
+                <h1 className="text-2xl md:text-3xl font-bold text-secondary-foreground text-center register-header-title">
+                  {t("auth.register.titlePrefix")} {" "}
+                  <span className="text-gradient-hero">{t("auth.register.titleHighlight")}</span>
+                </h1>
+                <p className="mt-1 text-center text-sm md:text-base streaming-text opacity-80 font-medium tracking-wide">
+                  {typed}
+                </p>
+              </>
+            ) : step === 'role' ? (
+              <>
+                <h1 className="text-2xl md:text-3xl font-bold text-secondary-foreground text-center register-header-title">
+                  {t("auth.register.tellUsMorePrefix")} {" "}
+                  <span className="text-gradient-hero">{t("auth.register.tellUsMoreHighlight")}</span>
+                </h1>
+                <p className="mt-1 text-center text-sm md:text-base streaming-text opacity-80 font-medium tracking-wide">
+                  {typedRole}
+                </p>
+              </>
+            ) : (
+              <>
+                <h1 className="text-2xl md:text-3xl font-bold text-secondary-foreground text-center register-header-title">
+                  {t("auth.register.businessTitlePrefix")} {" "}
+                  <span className="text-gradient-hero">{t("auth.register.businessTitleHighlight")}</span>
+                </h1>
+                <p className="mt-1 text-center text-sm md:text-base streaming-text opacity-80 font-medium tracking-wide">
+                  {typedBusiness}
+                </p>
+              </>
+            )}
           </div>
 
-          {/* Form */}
+          {/* Body */}
           <div className="p-3 md:p-4">
+            <div className="relative min-h-[20rem]">
+            <div className={`${step === 'form' ? 'animate-panel-in' : 'hidden'}`}>
             <Form {...form}>
               <form
                 onSubmit={form.handleSubmit(onSubmit)}
@@ -406,7 +663,7 @@ const Register = () => {
 
                 {/* Continue with Google */}
                 <div className="mt-3">
-                  <Button type="button" variant="secondary" className="w-full">
+                  <Button type="button" variant="secondary" className="w-full" onClick={() => setStep('role')}>
                     <span className="inline-flex items-center gap-2">
                       <span className="w-6 h-6 rounded-full inline-flex items-center justify-center">
                         <svg width="16" height="16" viewBox="0 0 48 48" aria-hidden>
@@ -422,12 +679,394 @@ const Register = () => {
                 </div>
               </form>
             </Form>
+            </div>
 
-            <div className="mt-6 text-center text-sm text-foreground/80">
-              {t("auth.register.haveAccount")} {" "}
-              <Link to="/" className="text-primary hover:underline">
-                {t("auth.register.login")}
-              </Link>
+            {/* Step 2: Role selection (outside the form container) */}
+            <div className={`${step === 'role' ? 'animate-panel-in' : 'hidden'}`}>
+              <div className="text-center mb-3 md:mb-4">
+                <h2 className="text-base md:text-lg font-semibold text-foreground">
+                  {t("auth.register.registeringAsIm")}
+                </h2>
+              </div>
+              <div className="flex flex-col gap-3">
+                <button
+                  type="button"
+                  onClick={() => { setPickedRole('business'); setStep('business'); }}
+                  className={`group w-full rounded-xl px-5 py-5 bg-gradient-primary text-white shadow-md transition-all flex flex-col items-center text-center hover-scale`}
+                >
+                  <div className="font-semibold text-lg no-blur">{t("auth.register.roles.business.title")}</div>
+                  <div className="text-white/85 text-sm mt-1 no-blur">{t("auth.register.roles.business.desc")}</div>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => setPickedRole('entrepreneur')}
+                  className={`group w-full rounded-xl px-5 py-5 bg-gradient-primary text-white shadow-md transition-all flex flex-col items-center text-center hover-scale`}
+                >
+                  <div className="font-semibold text-lg no-blur">{t("auth.register.roles.entrepreneur.title")}</div>
+                  <div className="text-white/85 text-sm mt-1 no-blur">{t("auth.register.roles.entrepreneur.desc")}</div>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => setPickedRole('employee')}
+                  className={`group w-full rounded-xl px-5 py-5 bg-gradient-primary text-white shadow-md transition-all flex flex-col items-center text-center hover-scale`}
+                >
+                  <div className="font-semibold text-lg no-blur">{t("auth.register.roles.employee.title")}</div>
+                  <div className="text-white/85 text-sm mt-1 no-blur">{t("auth.register.roles.employee.desc")}</div>
+                </button>
+              </div>
+            </div>
+
+            {/* Step 3 (Business): Business profile setup */}
+            <div className={`${step === 'business' ? 'animate-panel-in' : 'hidden'}`}>
+              <Form {...form}>
+                <form className="space-y-4" noValidate dir={dir}>
+                  <FormField
+                    control={form.control}
+                    name={"businessName" as any}
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>Business name</FormLabel>
+                        <FormControl>
+                          <Input className="bg-input border-0" placeholder="Acme Inc." {...field} />
+                        </FormControl>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <FormField
+                      control={form.control}
+                      name={"industry" as any}
+                      render={({ field }) => (
+                        <FormItem>
+                          <FormLabel>Industry</FormLabel>
+                          <Popover open={industryOpen} onOpenChange={setIndustryOpen}>
+                            <PopoverTrigger asChild>
+                              <button type="button" className="w-full h-10 px-3 rounded-md bg-input border-0 text-left text-sm text-foreground/90 flex items-center justify-between">
+                                <span className={field.value ? '' : 'text-muted-foreground'}>
+                                  {field.value || 'Search industry'}
+                                </span>
+                                <ChevronDown className="w-4 h-4 text-muted-foreground" />
+                              </button>
+                            </PopoverTrigger>
+                            <PopoverContent className="p-0 w-[var(--radix-popover-trigger-width)]">
+                              <Command>
+                                <CommandInput placeholder="Search industry..." />
+                                <CommandEmpty>No industry found.</CommandEmpty>
+                                <CommandGroup>
+                                  {[
+                                    'E‑commerce & Retail',
+                                    'SaaS & Software',
+                                    'Financial Services',
+                                    'Healthcare & Life Sciences',
+                                    'Education',
+                                    'Hospitality & Travel',
+                                    'Manufacturing',
+                                    'Logistics & Transportation',
+                                    'Real Estate',
+                                    'Media & Entertainment',
+                                    'Telecommunications',
+                                    'Energy & Utilities',
+                                    'Nonprofit & NGOs',
+                                    'Public Sector & Government',
+                                    'Professional Services',
+                                    'Consumer Services',
+                                  ].map(opt => (
+                                    <CommandItem key={opt} value={opt} onSelect={(val)=>{
+                                      (form.setValue as any)('industry', val, { shouldDirty: true, shouldTouch: true });
+                                      (form.setValue as any)('lineOfBusiness', [], { shouldDirty: false, shouldTouch: false });
+                                      setIndustryOpen(false);
+                                    }}>
+                                      {opt}
+                                    </CommandItem>
+                                  ))}
+                                </CommandGroup>
+                              </Command>
+                            </PopoverContent>
+                          </Popover>
+                          <FormMessage />
+                        </FormItem>
+                      )}
+                    />
+
+                    {isOther ? (
+                      <FormField key="right-specifyIndustry"
+                        control={form.control}
+                        name={"specifyIndustry" as any}
+                        render={({ field }) => (
+                          <FormItem className="fade-in">
+                            <FormLabel>Specify Industry</FormLabel>
+                            <FormControl>
+                              <Input className="bg-input border-0" placeholder="Describe your industry" {...field} />
+                            </FormControl>
+                            <FormMessage />
+                          </FormItem>
+                        )}
+                      />
+                    ) : (
+                      <FormField key="right-lineOfBusiness"
+                        control={form.control}
+                        name={"lineOfBusiness" as any}
+                        render={({ field }) => {
+                          const selected: string[] = Array.isArray(field.value) ? field.value : [];
+                          const custom: string[] = Array.isArray((form.watch as any)("lineOfBusinessCustom")) ? (form.watch as any)("lineOfBusinessCustom") : [];
+                          const allSel = Array.from(new Set([...(selected||[]), ...(custom||[])]));
+                          const industry = (form.watch as any)("industry") as string | undefined;
+                          const key = mapIndustryToLoBKey(industry);
+                          const baseOptions = lobOptionsByIndustry[key] || lobOptionsByIndustry['Other'];
+                          const options = baseOptions.filter(o => !o.toLowerCase().includes('services'));
+                          const maxVisible = 2; // reserve space for +N reliably
+                          const visible = allSel.slice(0, maxVisible);
+                          const remaining = Math.max(0, allSel.length - visible.length);
+                          return (
+                              <FormItem className="fade-in">
+                                <FormLabel>Products/Services</FormLabel>
+                                <DropdownMenu open={lobOpen} onOpenChange={setLobOpen}>
+                                  <DropdownMenuTrigger asChild>
+                                    <button type="button" className="w-full min-h-10 px-2 py-1.5 rounded-md bg-input border-0 text-left text-sm text-foreground/90 flex items-center justify-between">
+                                      {allSel.length === 0 ? (
+                                        <>
+                                          <span className="text-muted-foreground flex-1 overflow-hidden text-ellipsis whitespace-nowrap">Select Products/Services</span>
+                                          <ChevronDown className="w-4 h-4 text-muted-foreground shrink-0 ms-1" />
+                                        </>
+                                      ) : (
+                                        <>
+                                          <span className="flex items-center gap-1.5 overflow-hidden flex-1">
+                                            {visible.map((opt) => (
+                                              <Badge key={opt} variant="secondary" className="shrink-0">
+                                                {opt}
+                                              </Badge>
+                                            ))}
+                                          </span>
+                                          <span className="shrink-0 inline-flex items-center gap-1.5">
+                                            {remaining > 0 && (
+                                              <Badge variant="outline" className="shrink-0">+{remaining}</Badge>
+                                            )}
+                                            <ChevronDown className="w-4 h-4 text-muted-foreground" />
+                                          </span>
+                                        </>
+                                      )}
+                                    </button>
+                                  </DropdownMenuTrigger>
+                                  <DropdownMenuContent align="start" className="min-w-[18rem]">
+                                    <div className="px-2 py-1.5">
+                                      <Input value={lobQuery} onChange={(e)=>setLobQuery(e.target.value)} placeholder="Search products/services" className="h-8 bg-input" />
+                                    </div>
+                                    {options.filter(o=> !lobQuery.trim() || o.toLowerCase().includes(lobQuery.toLowerCase())).map((opt) => {
+                                      const checked = selected.includes(opt);
+                                      return (
+                                        <DropdownMenuCheckboxItem
+                                          key={opt}
+                                          checked={checked}
+                                          onSelect={(e) => e.preventDefault()}
+                                          onCheckedChange={(ck) => {
+                                            const curr = new Set(selected);
+                                            if (ck) curr.add(opt); else curr.delete(opt);
+                                            (form.setValue as any)("lineOfBusiness", Array.from(curr), { shouldDirty: true, shouldTouch: true });
+                                          }}
+                                        >
+                                          {opt}
+                                        </DropdownMenuCheckboxItem>
+                                      );
+                                    })}
+                                    <DropdownMenuSeparator />
+                                    <div className="px-2 py-1.5">
+                                      <div className="flex items-center gap-2">
+                                        <Input value={lobCustomInput} onChange={(e)=>setLobCustomInput(e.target.value)} placeholder="Add custom" className="h-8 bg-input" />
+                                        <Button type="button" size="sm" onClick={()=>{
+                                          const v = lobCustomInput.trim();
+                                          if(!v) return;
+                                          const prev = Array.isArray((form.getValues as any)("lineOfBusinessCustom")) ? (form.getValues as any)("lineOfBusinessCustom") : [];
+                                          if (!prev.includes(v) && !selected.includes(v)) {
+                                            (form.setValue as any)("lineOfBusinessCustom", [...prev, v], { shouldDirty: true, shouldTouch: true });
+                                          }
+                                          setLobCustomInput("");
+                                        }}>Add</Button>
+                                      </div>
+                                    </div>
+                                    <div className="px-2 py-1.5">
+                                      <Button type="button" size="sm" className="w-full" onClick={() => setLobOpen(false)}>Done</Button>
+                                    </div>
+                                  </DropdownMenuContent>
+                                </DropdownMenu>
+                                <FormMessage />
+                              </FormItem>
+                            );
+                          }}
+                        />
+                    )}
+                  </div>
+
+                  {isOther ? (
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4 fade-in">
+                      <FormField
+                        control={form.control}
+                        name={"lineOfBusiness" as any}
+                        render={({ field }) => {
+                          const selected: string[] = Array.isArray(field.value) ? field.value : [];
+                          const industry = (form.watch as any)("industry") as string | undefined;
+                          const options = industry && lobOptionsByIndustry[industry] ? lobOptionsByIndustry[industry] : lobOptionsByIndustry['Other'];
+                          const maxVisible = 2;
+                          const visible = selected.slice(0, maxVisible);
+                          const remaining = Math.max(0, selected.length - visible.length);
+                          return (
+                              <FormItem className="fade-in">
+                                <FormLabel>Line of Products/Services</FormLabel>
+                                <DropdownMenu open={lobOpen} onOpenChange={setLobOpen}>
+                                  <DropdownMenuTrigger asChild>
+                                    <button type="button" className="w-full min-h-10 px-2 py-1.5 rounded-md bg-input border-0 text-left text-sm text-foreground/90 flex items-center justify-between">
+                                      {selected.length === 0 ? (
+                                        <>
+                                          <span className="text-muted-foreground flex-1 overflow-hidden text-ellipsis whitespace-nowrap">Select Products/Services</span>
+                                          <ChevronDown className="w-4 h-4 text-muted-foreground shrink-0 ms-1" />
+                                        </>
+                                      ) : (
+                                        <>
+                                          <span className="flex items-center gap-1.5 overflow-hidden flex-1">
+                                            {visible.map((opt) => (
+                                              <Badge key={opt} variant="secondary" className="shrink-0">
+                                                {opt}
+                                              </Badge>
+                                            ))}
+                                          </span>
+                                          <span className="shrink-0 inline-flex items-center gap-1.5">
+                                            {remaining > 0 && (
+                                              <Badge variant="outline" className="shrink-0">+{remaining}</Badge>
+                                            )}
+                                            <ChevronDown className="w-4 h-4 text-muted-foreground" />
+                                          </span>
+                                        </>
+                                      )}
+                                    </button>
+                                  </DropdownMenuTrigger>
+                                  <DropdownMenuContent align="start" className="min-w-[18rem]">
+                                    {options.map((opt) => {
+                                      const checked = selected.includes(opt);
+                                      return (
+                                        <DropdownMenuCheckboxItem
+                                          key={opt}
+                                          checked={checked}
+                                          onSelect={(e) => e.preventDefault()}
+                                          onCheckedChange={(ck) => {
+                                            const curr = new Set(selected);
+                                            if (ck) curr.add(opt); else curr.delete(opt);
+                                            (form.setValue as any)("lineOfBusiness", Array.from(curr), { shouldDirty: true, shouldTouch: true });
+                                          }}
+                                        >
+                                          {opt}
+                                        </DropdownMenuCheckboxItem>
+                                      );
+                                    })}
+                                    <DropdownMenuSeparator />
+                                    <div className="px-2 py-1.5">
+                                      <Button type="button" size="sm" className="w-full" onClick={() => setLobOpen(false)}>Done</Button>
+                                    </div>
+                                  </DropdownMenuContent>
+                                </DropdownMenu>
+                                <FormMessage />
+                              </FormItem>
+                            );
+                          }}
+                        />
+                        
+                      </div>
+                    ) : (
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4 fade-in">
+                      <FormField key={`cs-field-${(form.watch as any)("industry") || 'none'}`}
+                        control={form.control}
+                        name={"companySize" as any}
+                        render={({ field }) => (
+                      <FormItem>
+                            <FormLabel>Company size</FormLabel>
+                            <Select key={`cs-${(form.watch as any)("industry") || 'none'}`} onValueChange={field.onChange} value={field.value || undefined}>
+                              <FormControl>
+                                <SelectTrigger className="bg-input border-0">
+                                  <SelectValue placeholder="Select Size" />
+                                </SelectTrigger>
+                              </FormControl>
+                              <SelectContent>
+                                {['1-10','11-50','51-200','201-1000','1000+'].map(opt => (
+                                  <SelectItem key={opt} value={opt}>{opt}</SelectItem>
+                                ))}
+                              </SelectContent>
+                            </Select>
+                            <FormMessage />
+                          </FormItem>
+                        )}
+                      />
+                      <FormField
+                        control={form.control}
+                        name={"country" as any}
+                        render={({ field }) => (
+                          <FormItem>
+                            <FormLabel>Country</FormLabel>
+                            <Select onValueChange={field.onChange} value={field.value}>
+                              <FormControl>
+                                <SelectTrigger className="bg-input border-0">
+                                  <SelectValue placeholder="Select country" />
+                                </SelectTrigger>
+                              </FormControl>
+                              <SelectContent>
+                                {bizCountries.map((c) => (
+                                  <SelectItem key={c.value} value={c.value}>
+                                    <span className="inline-flex items-center gap-2">
+                                      <span className="text-base leading-none">{c.flag}</span>
+                                      <span>{c.value}</span>
+                                    </span>
+                                  </SelectItem>
+                                ))}
+                              </SelectContent>
+                            </Select>
+                            <FormMessage />
+                          </FormItem>
+                        )}
+                      />
+                    </div>
+                    )}
+
+                  
+
+                  {/* Website moved to end (optional) */}
+                  <FormField
+                    control={form.control}
+                    name={"website" as any}
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>Website <span className="text-muted-foreground">(optional)</span></FormLabel>
+                        <FormControl>
+                          <Input className="bg-input border-0" type="url" placeholder="https://example.com" {...field} />
+                        </FormControl>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+
+                  <div className="flex items-center justify-between gap-3 pt-2">
+                    <Button type="button" variant="ghost" onClick={() => setStep('role')}>Back</Button>
+                    <Button type="button" className="bg-gradient-primary text-white hover:opacity-90">Next</Button>
+                  </div>
+                </form>
+              </Form>
+            </div>
+            </div>
+            
+            <div className="mt-6 text-center text-sm">
+              {step === 'form' && (
+                <div className="text-foreground/80">
+                  {t("auth.register.haveAccount")} {" "}
+                  <Link to="/" className="text-primary hover:underline">
+                    {t("auth.register.login")}
+                  </Link>
+                </div>
+              )}
+              {step === 'role' && (
+                <div className="streaming-text">
+                  To help us tailor your setup, please choose what best fits your intended use.
+                </div>
+              )}
             </div>
           </div>
             </div>
