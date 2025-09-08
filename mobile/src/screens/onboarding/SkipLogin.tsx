@@ -149,7 +149,7 @@ export const SkipLoginScreen: React.FC<Props> = ({ onBack, onLogin, onRegister }
                   <Text style={{ opacity: 0, fontSize: 38, fontWeight: '700', textAlign: 'center', lineHeight: 42 }}>Pocket</Text>
                 </LinearGradient>
               </MaskedView>
-              <Text style={{ color: '#fff', fontSize: 24, fontWeight: '700', textAlign: 'center', lineHeight: 30, marginTop: 2 }}>AI Assistants</Text>
+              <Text style={{ color: theme.color.foreground, fontSize: 24, fontWeight: '700', textAlign: 'center', lineHeight: 30, marginTop: 2 }}>AI Assistants</Text>
             </View>
             <Text style={{ color: theme.color.mutedForeground, fontSize: 16, textAlign: 'center', marginTop: 8 }}>
               {typed}
@@ -212,7 +212,7 @@ export const SkipLoginScreen: React.FC<Props> = ({ onBack, onLogin, onRegister }
                   <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
                     <View style={{ width: 24, height: 24, borderRadius: 12, backgroundColor: 'transparent', alignItems: 'center', justifyContent: 'center', overflow: 'hidden' }}>
                       <Svg width={16} height={16} viewBox="0 0 24 24">
-                        <Path fill="#fff" d="M16.365 1.43c-.977.058-2.128.66-2.8 1.436-.607.703-1.14 1.859-.94 2.938 1.083.083 2.2-.552 2.888-1.337.605-.692 1.083-1.822.852-3.037zM19.5 12.64c-.053-3.086 2.52-4.559 2.631-4.623-1.429-2.084-3.649-2.37-4.429-2.4-1.889-.192-3.684 1.135-4.642 1.135-.976 0-2.436-1.11-4.001-1.08-2.058.03-3.973 1.196-5.032 3.04-2.148 3.723-.548 9.214 1.547 12.236 1.017 1.463 2.223 3.107 3.8 3.052 1.53-.06 2.107-.988 3.963-.988 1.841 0 2.383.988 3.999.958 1.653-.027 2.698-1.492 3.702-2.962 1.165-1.706 1.644-3.36 1.671-3.443-.037-.017-3.211-1.233-3.238-4.825z"/>
+                        <Path fill={theme.dark ? '#fff' : '#000'} d="M16.365 1.43c-.977.058-2.128.66-2.8 1.436-.607.703-1.14 1.859-.94 2.938 1.083.083 2.2-.552 2.888-1.337.605-.692 1.083-1.822.852-3.037zM19.5 12.64c-.053-3.086 2.52-4.559 2.631-4.623-1.429-2.084-3.649-2.37-4.429-2.4-1.889-.192-3.684 1.135-4.642 1.135-.976 0-2.436-1.11-4.001-1.08-2.058.03-3.973 1.196-5.032 3.04-2.148 3.723-.548 9.214 1.547 12.236 1.017 1.463 2.223 3.107 3.8 3.052 1.53-.06 2.107-.988 3.963-.988 1.841 0 2.383.988 3.999.958 1.653-.027 2.698-1.492 3.702-2.962 1.165-1.706 1.644-3.36 1.671-3.443-.037-.017-3.211-1.233-3.238-4.825z"/>
                       </Svg>
                     </View>
                     <Text style={{ color: theme.color.cardForeground, fontWeight: '600' }}>Continue with Apple</Text>

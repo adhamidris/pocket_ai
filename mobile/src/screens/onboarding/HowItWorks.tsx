@@ -338,6 +338,8 @@ export const HowItWorksScreen: React.FC<HowItWorksScreenProps> = ({ onNext, onBa
             width: 200,
             height: 200,
             borderRadius: 100,
+            borderWidth: 0,
+            borderColor: 'transparent',
             opacity: opacity1 as unknown as number,
             transform: [
               { translateX: translateX1 as unknown as number },
@@ -359,6 +361,8 @@ export const HowItWorksScreen: React.FC<HowItWorksScreenProps> = ({ onNext, onBa
             width: 150,
             height: 150,
             borderRadius: 75,
+            borderWidth: 0,
+            borderColor: 'transparent',
             opacity: opacity2 as unknown as number,
             transform: [
               { translateX: translateX2 as unknown as number },

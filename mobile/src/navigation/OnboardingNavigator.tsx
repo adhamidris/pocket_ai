@@ -1,5 +1,5 @@
 import React, { useRef, useState } from 'react'
-import { View, Animated, Easing, useWindowDimensions } from 'react-native'
+import { View, Animated, Easing, useWindowDimensions, TouchableOpacity } from 'react-native'
 import AsyncStorage from '@react-native-async-storage/async-storage'
 import { WelcomeScreen } from '../screens/onboarding/Welcome'
 import { HowItWorksScreen } from '../screens/onboarding/HowItWorks'
@@ -9,9 +9,12 @@ import { SkipLoginScreen } from '../screens/onboarding/SkipLogin'
 import { HowItWorksAgentScreen } from '../screens/onboarding/HowItWorksAgent'
 import { ShareAnywhereScreen } from '../screens/onboarding/ShareAnywhere'
 import { useTheme } from '../providers/ThemeProvider'
+import { Sun, Moon } from 'lucide-react-native'
+import { useSafeAreaInsets } from 'react-native-safe-area-context'
 
 export const OnboardingNavigator: React.FC<{ onComplete: () => void }> = ({ onComplete }) => {
-  const { theme } = useTheme()
+  const { theme, toggle } = useTheme()
+  const insets = useSafeAreaInsets()
   const { width } = useWindowDimensions()
   const [currentStep, setCurrentStep] = useState(0)
   const [showRegister, setShowRegister] = useState(false)
@@ -73,6 +76,27 @@ export const OnboardingNavigator: React.FC<{ onComplete: () => void }> = ({ onCo
 
   return (
     <View style={{ flex: 1, backgroundColor: theme.color.background, overflow: 'hidden' }}>
+      {/* Theme toggle */}
+      <View style={{ position: 'absolute', top: insets.top + 8, right: 12, zIndex: 20 }}>
+        <TouchableOpacity
+          onPress={toggle}
+          activeOpacity={0.85}
+          style={{
+            padding: 8,
+            borderRadius: 16,
+            backgroundColor: 'transparent',
+            borderWidth: 0,
+            borderColor: 'transparent',
+            shadowColor: 'transparent',
+            shadowOpacity: 0,
+            shadowRadius: 0,
+            elevation: 0,
+          }}
+          hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+        >
+          {theme.dark ? <Sun size={18} color={theme.color.cardForeground as any} /> : <Moon size={18} color={theme.color.cardForeground as any} />}
+        </TouchableOpacity>
+      </View>
       {/* Base: current screen */}
       <View style={{ flex: 1 }}>
         {showSkipLogin ? (

@@ -1,19 +1,21 @@
 import { useI18n } from "@/i18n/I18nProvider";
+import { Smartphone } from "lucide-react";
 
-const MobileAppPromo = () => {
+const MobileAppPromo: React.FC<{ compact?: boolean }> = ({ compact = false }) => {
   const { t } = useI18n();
 
   return (
-    <section className="bg-background pt-10 md:pt-12 pb-14 md:pb-16">
+    <section className={`bg-background ${compact ? "pt-6 md:pt-8 pb-8 md:pb-10" : "pt-10 md:pt-12 pb-14 md:pb-16"}`}>
       <div className="container mx-auto px-6">
-        <div className="relative overflow-hidden rounded-2xl p-6 md:p-8 shadow-premium bg-gradient-hero text-white">
+        <div className={`relative overflow-hidden rounded-2xl ${compact ? "p-4 md:p-5" : "p-6 md:p-8"} shadow-premium bg-gradient-hero text-white`}>
           {/* subtle animated glow accents */}
-          <div className="pointer-events-none absolute -top-10 -left-10 w-64 h-64 rounded-full bg-white/10 blur-3xl animate-pulse" aria-hidden />
-          <div className="pointer-events-none absolute -bottom-12 -right-12 w-72 h-72 rounded-full bg-white/10 blur-3xl animate-pulse" style={{ animationDelay: '1.2s' }} aria-hidden />
+          <div className={`pointer-events-none absolute -top-10 -left-10 ${compact ? "w-48 h-48" : "w-64 h-64"} rounded-full bg-white/10 blur-3xl animate-pulse`} aria-hidden />
+          <div className={`pointer-events-none absolute -bottom-12 -right-12 ${compact ? "w-56 h-56" : "w-72 h-72"} rounded-full bg-white/10 blur-3xl animate-pulse`} style={{ animationDelay: '1.2s' }} aria-hidden />
 
           <div className="relative flex flex-col md:flex-row items-center justify-between gap-6">
-            <h3 className="text-2xl md:text-3xl font-semibold text-center md:text-start">
-              {t("mobileApp.title")}
+            <h3 className={`${compact ? "text-xl md:text-2xl" : "text-2xl md:text-3xl"} font-semibold text-center md:text-start inline-flex items-center gap-2`}>
+              <Smartphone className="w-6 h-6 text-white" aria-hidden />
+              <span>{t("mobileApp.title")}</span>
             </h3>
             <div className="flex gap-4 justify-center md:justify-end">
               <a href="#" className="group inline-flex items-center gap-3.5 rounded-xl border border-white/20 bg-white/10 px-6 py-3.5 shadow-sm hover:bg-white/15 transition-all duration-200 hover:translate-y-[-1px]" aria-label={t("hero.stats.googlePlay")}>

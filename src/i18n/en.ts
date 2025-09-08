@@ -66,7 +66,7 @@ const en = {
       createAccount: "Create Account",
       haveAccount: "Already have an account?",
       login: "Log in",
-      registeringAs: "Registering as",
+      registeringAs: "Registering as a",
       roles: {
         business: {
           title: "Business",

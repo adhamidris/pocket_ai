@@ -3,7 +3,7 @@ import { NavigationContainer } from '@react-navigation/native'
 import { createStackNavigator } from '@react-navigation/stack'
 import AsyncStorage from '@react-native-async-storage/async-storage'
 import { StatusBar } from 'expo-status-bar'
-import { ThemeProvider, useTheme } from '../providers/ThemeProvider'
+import { useTheme } from '../providers/ThemeProvider'
 
 // Screens
 import { OnboardingNavigator } from './OnboardingNavigator'
@@ -41,9 +41,7 @@ export const RootNavigator: React.FC = () => {
         {showOnboarding ? (
           <Stack.Screen name="Onboarding">
             {() => (
-              <ThemeProvider mode="dark">
-                <OnboardingNavigator onComplete={() => setShowOnboarding(false)} />
-              </ThemeProvider>
+              <OnboardingNavigator onComplete={() => setShowOnboarding(false)} />
             )}
           </Stack.Screen>
         ) : (

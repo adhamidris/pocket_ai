@@ -224,7 +224,7 @@ export const HowItWorksAgentScreen: React.FC<HowItWorksAgentProps> = ({ onNext, 
             <Switch
               value={a.value}
               onValueChange={() => {}}
-              trackColor={{ false: theme.color.muted as any, true: (theme.color.primary + '99') as any }}
+              trackColor={{ false: theme.color.muted as any, true: 'hsla(240,75%,48%,0.6)' as any }}
               thumbColor={a.value ? '#ffffff' : (theme.color.border as any)}
               ios_backgroundColor={theme.color.muted as any}
             />
@@ -289,6 +289,8 @@ export const HowItWorksAgentScreen: React.FC<HowItWorksAgentProps> = ({ onNext, 
             width: 200,
             height: 200,
             borderRadius: 100,
+            borderWidth: 0,
+            borderColor: 'transparent',
             opacity: opacity1 as unknown as number,
             transform: [
               { translateX: translateX1 as unknown as number },
@@ -310,6 +312,8 @@ export const HowItWorksAgentScreen: React.FC<HowItWorksAgentProps> = ({ onNext, 
             width: 150,
             height: 150,
             borderRadius: 75,
+            borderWidth: 0,
+            borderColor: 'transparent',
             opacity: opacity2 as unknown as number,
             transform: [
               { translateX: translateX2 as unknown as number },

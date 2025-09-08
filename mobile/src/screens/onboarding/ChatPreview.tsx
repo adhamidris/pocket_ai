@@ -247,6 +247,8 @@ export const ChatPreviewScreen: React.FC<ChatPreviewScreenProps> = ({ onComplete
             width: 200,
             height: 200,
             borderRadius: 100,
+            borderWidth: 0,
+            borderColor: 'transparent',
             opacity: opacity1 as unknown as number,
             transform: [
               { translateX: translateX1 as unknown as number },
@@ -268,6 +270,8 @@ export const ChatPreviewScreen: React.FC<ChatPreviewScreenProps> = ({ onComplete
             width: 150,
             height: 150,
             borderRadius: 75,
+            borderWidth: 0,
+            borderColor: 'transparent',
             opacity: opacity2 as unknown as number,
             transform: [
               { translateX: translateX2 as unknown as number },
@@ -473,7 +477,7 @@ export const ChatPreviewScreen: React.FC<ChatPreviewScreenProps> = ({ onComplete
                     style={{ color: theme.color.cardForeground, paddingVertical: 8, fontSize: 14 }}
                   />
                 </View>
-                <TouchableOpacity activeOpacity={0.7} style={{ width: 34, height: 32, borderRadius: 8, alignItems: 'center', justifyContent: 'center', backgroundColor: theme.color.primary + '20', borderWidth: 0 }}>
+                <TouchableOpacity activeOpacity={0.7} style={{ width: 34, height: 32, borderRadius: 8, alignItems: 'center', justifyContent: 'center', backgroundColor: 'hsla(240,75%,48%,0.12)', borderWidth: 0 }}>
                   <Send size={16} color={'#ffffff' as any} />
                 </TouchableOpacity>
               </View>

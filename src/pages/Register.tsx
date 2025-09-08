@@ -9,7 +9,6 @@ import Header from "@/components/Header";
 import MobileAppPromo from "@/components/MobileAppPromo";
 import Footer from "@/components/Footer";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
-import { Checkbox } from "@/components/ui/checkbox";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { HelpCircle } from "lucide-react";
 import {
@@ -33,6 +32,7 @@ import { toast } from "@/components/ui/sonner";
 const Register = () => {
   const { t, dir, lang } = useI18n();
 
+  /* Phone field temporarily disabled
   const countries = [
     { id: "eg", dial: "+20", abbr: "EG", flag: "🇪🇬", example: "0100 000 0000" },
     { id: "ae", dial: "+971", abbr: "UAE", flag: "🇦🇪", example: "050 000 0000" },
@@ -44,9 +44,12 @@ const Register = () => {
     { id: "es", dial: "+34", abbr: "ES", flag: "🇪🇸", example: "612 34 56 78" },
     { id: "it", dial: "+39", abbr: "IT", flag: "🇮🇹", example: "345 678 9012" },
   ] as const;
+  */
 
   // Local part only (no leading +; country code selected separately)
+  /* Phone field temporarily disabled
   const phoneRegex = useMemo(() => /^[0-9\s\-()]{7,20}$/, []);
+  */
 
   const schema = useMemo(
     () =>
@@ -58,28 +61,28 @@ const Register = () => {
           email: z
             .string()
             .email(t("auth.register.errors.emailInvalid")),
-          phoneCountry: z.string(),
-          phone: z
-            .string()
-            .optional()
-            .refine((v) => !v || phoneRegex.test(v), {
-              message: t("auth.register.errors.phoneInvalid"),
-            }),
+          // phoneCountry: z.string(),
+          // phone: z
+          //   .string()
+          //   .optional()
+          //   .refine((v) => !v || phoneRegex.test(v), {
+          //     message: t("auth.register.errors.phoneInvalid"),
+          //   }),
           password: z
             .string()
             .min(8, t("auth.register.errors.passwordMin")),
           confirmPassword: z
             .string()
             .min(8, t("auth.register.errors.passwordMin")),
-          roles: z
-            .array(z.enum(["business", "entrepreneur", "employee"]))
-            .min(1, t("auth.register.errors.roleRequired")),
+          role: z.enum(["business", "entrepreneur", "employee"], {
+            required_error: t("auth.register.errors.roleRequired"),
+          }),
         })
         .refine((vals) => vals.password === vals.confirmPassword, {
           path: ["confirmPassword"],
           message: t("auth.register.errors.passwordsMismatch"),
         }),
-    [t, phoneRegex]
+    [t /*, phoneRegex*/]
   );
 
   const form = useForm<z.infer<typeof schema>>({
@@ -87,20 +90,33 @@ const Register = () => {
     defaultValues: {
       firstName: "",
       email: "",
-      phoneCountry: "+1",
-      phone: "",
+      // phoneCountry: "+1",
+      // phone: "",
       password: "",
       confirmPassword: "",
-      roles: ["business"],
+      role: "business",
     },
     mode: "onTouched",
   });
 
+  /* Phone field temporarily disabled
+  // Auto-detect visitor region and preselect country code (timezone-first, then language)
+  useEffect(() => {
+    try {
+      const current = form.getValues("phoneCountry");
+      if (current && current !== "+1") return;
+      // detection logic...
+    } catch {}
+  }, []);
+  */
+
+  /* Phone field temporarily disabled
   const selectedDial = form.watch("phoneCountry");
   const selectedCountry = useMemo(
     () => countries.find((c) => c.dial === selectedDial) ?? countries.find(c => c.dial === "+1")!,
     [countries, selectedDial]
   );
+  */
 
   // Mobile-like typing effect for subheader (looping)
   const fullSub = t("auth.register.welcomeSub") as string;
@@ -225,6 +241,7 @@ const Register = () => {
                   )}
                 />
 
+                {/* Phone (optional) — temporarily disabled
                 <div>
                   <div className="text-sm font-medium text-foreground">
                     {t("auth.register.phone")} {" "}
@@ -237,7 +254,7 @@ const Register = () => {
                         name="phoneCountry"
                         render={({ field }) => (
                           <FormItem>
-                            <Select onValueChange={field.onChange} defaultValue={field.value}>
+                            <Select onValueChange={field.onChange} value={field.value}>
                               <FormControl>
                                 <SelectTrigger className="w-auto bg-input border-0">
                                   <SelectValue placeholder="+1" />
@@ -281,6 +298,7 @@ const Register = () => {
                     </div>
                   </div>
                 </div>
+                */}
 
                 <FormField
                   control={form.control}
@@ -322,92 +340,56 @@ const Register = () => {
                   )}
                 />
 
-                {/* Registering as (multi-select checkboxes inline) */}
-                <FormField
-                  control={form.control}
-                  name="roles"
-                  render={({ field }) => (
-                    <FormItem>
-                      <div className="flex items-center gap-4 w-full">
-                          <FormLabel className="whitespace-nowrap shrink-0">
-                            {t("auth.register.registeringAs")}
-                          </FormLabel>
-                          <div className="flex-1 flex items-center justify-center gap-4">
-                            {/* Business */}
-                            <label className="inline-flex items-center gap-2 cursor-pointer select-none">
-                              <Checkbox
-                                checked={field.value?.includes("business")}
-                                onCheckedChange={(checked) => {
-                                  const curr: string[] = field.value || [];
-                                  field.onChange(
-                                    checked
-                                      ? Array.from(new Set([...curr, "business"]))
-                                      : curr.filter((r) => r !== "business")
-                                  );
-                                }}
-                              />
-                              <span className="text-sm">{t("auth.register.rolesShort.business")}</span>
-                            </label>
-                            {/* Entrepreneur */}
-                            <label className="inline-flex items-center gap-2 cursor-pointer select-none">
-                              <Checkbox
-                                checked={field.value?.includes("entrepreneur")}
-                                onCheckedChange={(checked) => {
-                                  const curr: string[] = field.value || [];
-                                  field.onChange(
-                                    checked
-                                      ? Array.from(new Set([...curr, "entrepreneur"]))
-                                      : curr.filter((r) => r !== "entrepreneur")
-                                  );
-                                }}
-                              />
-                              <span className="text-sm">{t("auth.register.rolesShort.entrepreneur")}</span>
-                            </label>
-                            {/* Employee */}
-                            <label className="inline-flex items-center gap-2 cursor-pointer select-none">
-                              <Checkbox
-                                checked={field.value?.includes("employee")}
-                                onCheckedChange={(checked) => {
-                                  const curr: string[] = field.value || [];
-                                  field.onChange(
-                                    checked
-                                      ? Array.from(new Set([...curr, "employee"]))
-                                      : curr.filter((r) => r !== "employee")
-                                  );
-                                }}
-                              />
-                              <span className="text-sm">{t("auth.register.rolesShort.employee")}</span>
-                            </label>
-                          </div>
-                        {/* Hints tooltip (stays on same line at far right) */}
-                        <Tooltip>
-                          <TooltipTrigger asChild>
-                            <button type="button" aria-label="Role help" className="shrink-0 p-1.5 rounded-full border border-border bg-secondary/60 text-foreground hover:bg-secondary">
-                              <HelpCircle className="w-4 h-4" />
-                            </button>
-                          </TooltipTrigger>
-                          <TooltipContent side="right" align="end" sideOffset={8} avoidCollisions={false} className="max-w-sm bg-black text-white border-border/50">
-                            <div className="text-xs space-y-2">
-                              <div>
-                                <div className="font-semibold">{t("auth.register.roles.business.title")}</div>
-                                <div className="text-white/80">{t("auth.register.roles.business.desc")}</div>
-                              </div>
-                              <div>
-                                <div className="font-semibold">{t("auth.register.roles.entrepreneur.title")}</div>
-                                <div className="text-white/80">{t("auth.register.roles.entrepreneur.desc")}</div>
-                              </div>
-                              <div>
-                                <div className="font-semibold">{t("auth.register.roles.employee.title")}</div>
-                                <div className="text-white/80">{t("auth.register.roles.employee.desc")}</div>
-                              </div>
-                            </div>
-                          </TooltipContent>
-                        </Tooltip>
+                {/* Registering as a — temporarily disabled */}
+                {/*
+                <FormField control={form.control} name="role" render={({ field }) => (
+                  <FormItem>
+                    <div className="flex items-center gap-4 w-full">
+                      <FormLabel className="whitespace-nowrap shrink-0">{t("auth.register.registeringAs")}</FormLabel>
+                      <div className="flex-1 flex justify-center">
+                        <RadioGroup className="grid grid-cols-3 gap-4 place-items-center w-full max-w-md" value={field.value} onValueChange={field.onChange}>
+                          <label className="inline-flex items-center gap-2 cursor-pointer select-none">
+                            <RadioGroupItem value="business" />
+                            <span className="text-sm">{t("auth.register.rolesShort.business")}</span>
+                          </label>
+                          <label className="inline-flex items-center gap-2 cursor-pointer select-none">
+                            <RadioGroupItem value="entrepreneur" />
+                            <span className="text-sm">{t("auth.register.rolesShort.entrepreneur")}</span>
+                          </label>
+                          <label className="inline-flex items-center gap-2 cursor-pointer select-none">
+                            <RadioGroupItem value="employee" />
+                            <span className="text-sm">{t("auth.register.rolesShort.employee")}</span>
+                          </label>
+                        </RadioGroup>
                       </div>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <button type="button" aria-label="Role help" className="shrink-0 p-1.5 rounded-full border border-border bg-secondary/60 text-foreground hover:bg-secondary">
+                            <HelpCircle className="w-4 h-4" />
+                          </button>
+                        </TooltipTrigger>
+                        <TooltipContent side={dir === 'rtl' ? 'left' : 'right'} align="end" sideOffset={8} avoidCollisions={false} className="max-w-sm bg-black text-white border-border/50">
+                          <div className="text-xs space-y-2">
+                            <div>
+                              <div className="font-semibold">{t("auth.register.roles.business.title")}</div>
+                              <div className="text-white/80">{t("auth.register.roles.business.desc")}</div>
+                            </div>
+                            <div>
+                              <div className="font-semibold">{t("auth.register.roles.entrepreneur.title")}</div>
+                              <div className="text-white/80">{t("auth.register.roles.entrepreneur.desc")}</div>
+                            </div>
+                            <div>
+                              <div className="font-semibold">{t("auth.register.roles.employee.title")}</div>
+                              <div className="text-white/80">{t("auth.register.roles.employee.desc")}</div>
+                            </div>
+                          </div>
+                        </TooltipContent>
+                      </Tooltip>
+                    </div>
+                    <FormMessage />
+                  </FormItem>
+                )} />
+                */}
 
                 <Button type="submit" className="w-full bg-gradient-primary text-white hover:opacity-90">
                   {t("auth.register.createAccount")}
@@ -451,7 +433,7 @@ const Register = () => {
             </div>
           </div>
         </section>
-        <MobileAppPromo />
+        <MobileAppPromo compact />
       </main>
       <Footer />
     </div>

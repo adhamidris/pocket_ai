@@ -1,12 +1,9 @@
 import React, { useEffect, useRef } from 'react'
-import { View, Text, SafeAreaView, Animated, Easing, TouchableOpacity } from 'react-native'
-import { Sun } from 'lucide-react-native'
+import { View, Text, SafeAreaView, Animated, Easing } from 'react-native'
 import { LinearGradient } from 'expo-linear-gradient'
-import { StatusBar } from 'expo-status-bar'
 import MaskedView from '@react-native-masked-view/masked-view'
 import { useTranslation } from 'react-i18next'
 import { useTheme } from '../../providers/ThemeProvider'
-import { darkTheme } from '../../theme'
 import { Button } from '../../components/ui/Button'
 
 interface WelcomeScreenProps {
@@ -75,31 +72,13 @@ export const WelcomeScreen: React.FC<WelcomeScreenProps> = ({ onNext, onSkip }) 
   const translateY2 = drift2.interpolate({ inputRange: [0, 0.25, 0.5, 0.75, 1], outputRange: [0, 8, -6, 4, 0] })
 
   return (
-    <SafeAreaView style={{ flex: 1, backgroundColor: darkTheme.color.background }}>
+    <SafeAreaView style={{ flex: 1, backgroundColor: theme.color.background }}>
       <LinearGradient
-        colors={[darkTheme.color.background, darkTheme.color.background, darkTheme.color.background]}
+        colors={[theme.color.background, theme.color.background, theme.color.background]}
         start={{ x: 0, y: 0 }}
         end={{ x: 1, y: 1 }}
         style={{ flex: 1 }}
       >
-        <StatusBar style="light" />
-        {/* Light mode toggle icon (no functionality yet) */}
-        <TouchableOpacity
-          activeOpacity={0.8}
-          style={{
-            position: 'absolute',
-            top: 12,
-            right: 16,
-            padding: 8,
-            borderRadius: 16,
-            backgroundColor: 'rgba(255,255,255,0.06)',
-            borderWidth: 1,
-            borderColor: 'rgba(255,255,255,0.18)'
-          }}
-          hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-        >
-          <Sun color="#fff" size={20} />
-        </TouchableOpacity>
         {/* Background decorative elements with gradient heartbeat */}
         <View style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0 }}>
           <Animated.View
@@ -110,6 +89,8 @@ export const WelcomeScreen: React.FC<WelcomeScreenProps> = ({ onNext, onSkip }) 
               width: 200,
               height: 200,
               borderRadius: 100,
+              borderWidth: 0,
+              borderColor: 'transparent',
               opacity: opacity1 as unknown as number,
               transform: [
                 { translateX: translateX1 as unknown as number },
@@ -134,6 +115,8 @@ export const WelcomeScreen: React.FC<WelcomeScreenProps> = ({ onNext, onSkip }) 
               width: 150,
               height: 150,
               borderRadius: 75,
+              borderWidth: 0,
+              borderColor: 'transparent',
               opacity: opacity2 as unknown as number,
               transform: [
                 { translateX: translateX2 as unknown as number },
@@ -178,7 +161,7 @@ export const WelcomeScreen: React.FC<WelcomeScreenProps> = ({ onNext, onSkip }) 
           <View style={{ marginBottom: 16, alignItems: 'center' }}>
             {titlePrefix ? (
               <Text style={{
-                color: '#fff',
+                color: theme.color.foreground,
                 fontSize: 32,
                 fontWeight: '700',
                 textAlign: 'center',
@@ -222,7 +205,7 @@ export const WelcomeScreen: React.FC<WelcomeScreenProps> = ({ onNext, onSkip }) 
 
           {/* Subtitle */}
           <Text style={{
-            color: 'rgba(255,255,255,0.9)',
+            color: theme.color.mutedForeground,
             fontSize: 18,
             textAlign: 'center',
             marginBottom: 48,
@@ -235,9 +218,9 @@ export const WelcomeScreen: React.FC<WelcomeScreenProps> = ({ onNext, onSkip }) 
           {/* Action Buttons */}
           <View style={{ width: '100%', gap: 16 }}>
             <Button title="Start onboarding" variant="hero" size="lg" onPress={onNext} />
-            <TouchableOpacity onPress={onSkip} activeOpacity={0.7} style={{ alignSelf: 'center', paddingVertical: 6 }}>
-              <Text style={{ color: 'rgba(255,255,255,0.88)', fontSize: 16, fontWeight: '600' }}>Skip to login</Text>
-            </TouchableOpacity>
+            <View style={{ alignSelf: 'center', paddingVertical: 6 }}>
+              <Text onPress={onSkip} style={{ color: theme.color.mutedForeground, fontSize: 16, fontWeight: '600' }}>Skip to login</Text>
+            </View>
           </View>
         </View>
       </LinearGradient>
