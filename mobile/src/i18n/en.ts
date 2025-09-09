@@ -116,7 +116,6 @@ const en = {
   profile: {
     companyName: "Company name",
     industry: "Industry",
-    employees: "Employees",
     address: "Address"
   },
   languages: {

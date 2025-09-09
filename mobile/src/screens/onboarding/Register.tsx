@@ -26,23 +26,84 @@ export const RegisterScreen: React.FC<{ onBack: () => void, onLogin?: () => void
   // const roleAnchorRef = useRef<any>(null) // commented out: registering-as anchor ref
   // const roleTipTimeoutRef = useRef<any>(null) // commented out: registering-as tip timer
 
-  // Flow step: 'form' | 'role' | 'business'
-  const [step, setStep] = useState<'form' | 'role' | 'business'>('form')
+  // Flow step: 'form' | 'role' | 'business' | 'agent' | 'uploads'
+  const [step, setStep] = useState<'form' | 'role' | 'business' | 'agent' | 'uploads'>('form')
 
   // Business form state
   const [company, setCompany] = useState('')
   const [industry, setIndustry] = useState('')
   const [industryQuery, setIndustryQuery] = useState('')
   const [industryCustomInput, setIndustryCustomInput] = useState('')
-  const [employees, setEmployees] = useState('')
   const [website, setWebsite] = useState('')
   const [focusCompany, setFocusCompany] = useState(false)
   const [focusIndustry, setFocusIndustry] = useState(false)
-  const [focusEmployees, setFocusEmployees] = useState(false)
+  
   const [focusWebsite, setFocusWebsite] = useState(false)
   const [showIndustryModal, setShowIndustryModal] = useState(false)
-  const [showSizeModal, setShowSizeModal] = useState(false)
-  const sizeOptions = ['1-10','11-50','51-200','201-1000','1000+']
+  // Business type (toggle chips)
+  const businessTypeOptions = ['Physical Products', 'Digital Products', 'Services']
+  const [selectedBusinessTypes, setSelectedBusinessTypes] = useState<string[]>([])
+  const [businessTypeCustomsByLob, setBusinessTypeCustomsByLob] = useState<Record<string, string[]>>({})
+  const [businessTypeCustomInput, setBusinessTypeCustomInput] = useState('')
+  const [showBusinessTypeAdd, setShowBusinessTypeAdd] = useState(false)
+  const [lastLobSelected, setLastLobSelected] = useState<string | null>(null)
+  
+  // Agent setup state
+  const [agentName, setAgentName] = useState('')
+  const [desiredTitle, setDesiredTitle] = useState('')
+  const [titleCustomInput, setTitleCustomInput] = useState('')
+  const [agentTone, setAgentTone] = useState('')
+  const [selectedTraits, setSelectedTraits] = useState<string[]>([])
+  const [escalationRule, setEscalationRule] = useState('')
+  const [focusAgentName, setFocusAgentName] = useState(false)
+  const [focusTitle, setFocusTitle] = useState(false)
+  const [focusTone, setFocusTone] = useState(false)
+  const [focusTraits, setFocusTraits] = useState(false)
+  const [focusEscalation, setFocusEscalation] = useState(false)
+  const [showTitleModal, setShowTitleModal] = useState(false)
+  const [showToneModal, setShowToneModal] = useState(false)
+  const [showTraitsModal, setShowTraitsModal] = useState(false)
+  const [showEscalationModal, setShowEscalationModal] = useState(false)
+
+  // Tooltip state (shared)
+  const [showTooltip, setShowTooltip] = useState(false)
+  const [tooltipText, setTooltipText] = useState('')
+  const [tooltipMenuPos, setTooltipMenuPos] = useState<{ x: number, y: number, width: number, height: number } | null>(null)
+  
+  // Uploads step state
+  const [visionFiles, setVisionFiles] = useState<string[]>([])
+  const [missionFiles, setMissionFiles] = useState<string[]>([])
+  const [catalogFiles, setCatalogFiles] = useState<string[]>([])
+  const [faqsFiles, setFaqsFiles] = useState<string[]>([])
+  const [kbFiles, setKbFiles] = useState<string[]>([])
+  const [sopsFiles, setSopsFiles] = useState<string[]>([])
+  const [tcFiles, setTcFiles] = useState<string[]>([])
+  
+  // URL inputs for each upload type
+  const [visionUrl, setVisionUrl] = useState('')
+  const [missionUrl, setMissionUrl] = useState('')
+  const [catalogUrl, setCatalogUrl] = useState('')
+  const [faqsUrl, setFaqsUrl] = useState('')
+  const [kbUrl, setKbUrl] = useState('')
+  const [sopsUrl, setSopsUrl] = useState('')
+  const [tcUrl, setTcUrl] = useState('')
+  const hasProducts = selectedBusinessTypes.some(t => {
+    const s = t.toLowerCase()
+    return s.includes('product') || s.includes('goods')
+  })
+  const hasServices = selectedBusinessTypes.some(t => t.toLowerCase().includes('service'))
+  const catalogEntity = hasProducts && hasServices ? 'Products & Services' : hasProducts ? 'Products' : hasServices ? 'Services' : 'Products/Services'
+  const uploadOptions = [
+    { key: 'vision', label: 'Vision' },
+    { key: 'mission', label: 'Mission' },
+    { key: 'catalog', label: `${catalogEntity} Catalog` },
+    { key: 'faqs', label: 'FAQs' },
+    { key: 'kb', label: 'Knowledge Base' },
+    { key: 'sops', label: 'SOPs' },
+    { key: 'tc', label: 'T&C' },
+  ]
+  const [selectedUploadTypes, setSelectedUploadTypes] = useState<string[]>([])
+  
   // Updated to mirror web Register industry categories
   const industryOptions = [
     'E‑commerce & Retail',
@@ -278,11 +339,45 @@ export const RegisterScreen: React.FC<{ onBack: () => void, onLogin?: () => void
   const [lobContainerH, setLobContainerH] = useState(0)
   const [lobScrollY, setLobScrollY] = useState(0)
 
+  // Track previous niches and industry to reset Business Type only on removal/change (not on addition)
+  const prevSelectedLobsRef = useRef<string[]>([])
+  const prevIndustryRef = useRef<string>('')
+
   useEffect(() => {
     // Filter out selected LoBs not in the new industry's options
     const options = getLobOptions(industry)
     setSelectedLobs((prev) => prev.filter((x) => options.includes(x)))
+    // If industry changed and all previously selected niches become invalid (none left), reset business type selections
+    const prevIndustry = prevIndustryRef.current
+    if (prevIndustry && prevIndustry !== industry) {
+      const prev = prevSelectedLobsRef.current
+      const next = prev.filter(x => options.includes(x))
+      if (prev.length > 0 && next.length === 0) setSelectedBusinessTypes([])
+    }
+    prevIndustryRef.current = industry
   }, [industry])
+
+  // Reset custom business types and re-sync when nichees/industry change
+  useEffect(() => {
+    // Hide new-entry UI
+    setShowBusinessTypeAdd(false)
+    setBusinessTypeCustomInput('')
+    // Remove customs that belong to nichees no longer selected
+    setBusinessTypeCustomsByLob((prev) => {
+      const next: Record<string, string[]> = {}
+      for (const lob of selectedLobs) {
+        if (prev[lob] && prev[lob].length) next[lob] = prev[lob]
+      }
+      return next
+    })
+    // Determine if niches were removed (not added)
+    const prev = prevSelectedLobsRef.current
+    const current = selectedLobs
+    // Only reset if all niches were cleared (no selections remain)
+    if (prev.length > 0 && current.length === 0) setSelectedBusinessTypes([])
+    // Update prev ref after handling
+    prevSelectedLobsRef.current = current
+  }, [industry, selectedLobs, customLobs])
 
   // Country state (dropdown)
   const [country, setCountry] = useState('')
@@ -301,13 +396,57 @@ export const RegisterScreen: React.FC<{ onBack: () => void, onLogin?: () => void
     { value: 'Other', flag: '🌐' },
   ]
 
+  // Agent options
+  const titleOptions = [
+    'Customer Support Agent',
+    'Support Specialist',
+    'Customer Success Representative',
+    'Sales Support Agent',
+    'Front Desk Representative',
+    'Account Manager',
+    'Helpdesk Agent',
+  ]
+  const toneOptions = [
+    'Friendly',
+    'Professional',
+    'Empathetic',
+    'Casual',
+    'Formal',
+    'Concise',
+  ]
+  const traitOptions = [
+    'Detail-oriented',
+    'Talkative',
+    'Proactive',
+    'Patient',
+    'Analytical',
+    'Persuasive',
+  ]
+  const escalationOptions = [
+    'If customer asks for a human',
+    'If sentiment is negative',
+    'If more than 2 failed attempts',
+    'If order/account is high-value',
+    'If compliance/security issue detected',
+  ]
+
   // Anchors for dropdown positioning
   const industryAnchorRef = useRef<any>(null)
   const [industryMenuPos, setIndustryMenuPos] = useState<{ x: number, y: number, width: number, height: number } | null>(null)
   const countryAnchorRef = useRef<any>(null)
   const [countryMenuPos, setCountryMenuPos] = useState<{ x: number, y: number, width: number, height: number } | null>(null)
-  const sizeAnchorRef = useRef<any>(null)
-  const [sizeMenuPos, setSizeMenuPos] = useState<{ x: number, y: number, width: number, height: number } | null>(null)
+  // Agent anchors
+  const titleAnchorRef = useRef<any>(null)
+  const [titleMenuPos, setTitleMenuPos] = useState<{ x: number, y: number, width: number, height: number } | null>(null)
+  const toneAnchorRef = useRef<any>(null)
+  const [toneMenuPos, setToneMenuPos] = useState<{ x: number, y: number, width: number, height: number } | null>(null)
+  const traitsAnchorRef = useRef<any>(null)
+  const [traitsMenuPos, setTraitsMenuPos] = useState<{ x: number, y: number, width: number, height: number } | null>(null)
+  const escalationAnchorRef = useRef<any>(null)
+  const [escalationMenuPos, setEscalationMenuPos] = useState<{ x: number, y: number, width: number, height: number } | null>(null)
+  const tooltipAnchorRef = useRef<any>(null)
+  const escalationTipRef = useRef<any>(null)
+  
 
   // Scrollbar metrics for dropdowns
   const [industryContentH, setIndustryContentH] = useState(0)
@@ -319,6 +458,19 @@ export const RegisterScreen: React.FC<{ onBack: () => void, onLogin?: () => void
   const [sizeContentH, setSizeContentH] = useState(0)
   const [sizeContainerH, setSizeContainerH] = useState(0)
   const [sizeScrollY, setSizeScrollY] = useState(0)
+  // Agent dropdown metrics
+  const [titleContentH, setTitleContentH] = useState(0)
+  const [titleContainerH, setTitleContainerH] = useState(0)
+  const [titleScrollY, setTitleScrollY] = useState(0)
+  const [toneContentH, setToneContentH] = useState(0)
+  const [toneContainerH, setToneContainerH] = useState(0)
+  const [toneScrollY, setToneScrollY] = useState(0)
+  const [traitsContentH, setTraitsContentH] = useState(0)
+  const [traitsContainerH, setTraitsContainerH] = useState(0)
+  const [traitsScrollY, setTraitsScrollY] = useState(0)
+  const [escalationContentH, setEscalationContentH] = useState(0)
+  const [escalationContainerH, setEscalationContainerH] = useState(0)
+  const [escalationScrollY, setEscalationScrollY] = useState(0)
 
   // Enable LayoutAnimation on Android
   useEffect(() => {
@@ -400,7 +552,9 @@ export const RegisterScreen: React.FC<{ onBack: () => void, onLogin?: () => void
   const FORM_SUB = 'Join and get started in minutes'
   const ROLE_SUB = "Just few more steps and you're ready.."
   const BUSINESS_SUB = 'Help us understand your business'
-  const targetSub = step === 'form' ? FORM_SUB : step === 'role' ? ROLE_SUB : BUSINESS_SUB
+  const AGENT_SUB = 'Configure your AI agent'
+  const UPLOADS_SUB = 'Upload your materials'
+  const targetSub = step === 'form' ? FORM_SUB : step === 'role' ? ROLE_SUB : step === 'business' ? BUSINESS_SUB : step === 'agent' ? AGENT_SUB : UPLOADS_SUB
   const [typed, setTyped] = useState('')
   const subIntervalRef = useRef<any>(null)
   const subTimeoutRef = useRef<any>(null)
@@ -489,6 +643,16 @@ export const RegisterScreen: React.FC<{ onBack: () => void, onLogin?: () => void
   }
 
   const handleBack = () => {
+    if (step === 'uploads') {
+      LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut)
+      setStep('agent')
+      return
+    }
+    if (step === 'agent') {
+      LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut)
+      setStep('business')
+      return
+    }
     if (step === 'business') {
       LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut)
       setStep('role')
@@ -502,7 +666,7 @@ export const RegisterScreen: React.FC<{ onBack: () => void, onLogin?: () => void
     onBack()
   }
 
-  const headerTitle = step === 'form' ? 'Create your account' : step === 'role' ? 'Tell us more about you' : 'Business profile setup'
+  const headerTitle = step === 'form' ? 'Create your account' : step === 'role' ? 'Tell us more about you' : step === 'business' ? 'Business profile setup' : step === 'agent' ? 'Agent setup' : 'Uploads'
 
   const openIndustryMenu = () => {
     setFocusIndustry(true)
@@ -530,20 +694,62 @@ export const RegisterScreen: React.FC<{ onBack: () => void, onLogin?: () => void
       }
     })
   }
-  const openSizeMenu = () => {
-    setFocusEmployees(true)
+  const openTitleMenu = () => {
+    setFocusTitle(true)
     requestAnimationFrame(() => {
       try {
-        sizeAnchorRef.current?.measureInWindow?.((x: number, y: number, width: number, height: number) => {
-          setSizeMenuPos({ x, y, width, height })
-          setShowSizeModal(true)
+        titleAnchorRef.current?.measureInWindow?.((x: number, y: number, width: number, height: number) => {
+          setTitleMenuPos({ x, y, width, height })
+          setShowTitleModal(true)
         })
       } catch {
-        setShowSizeModal(true)
+        setShowTitleModal(true)
       }
     })
   }
+  const openToneMenu = () => {
+    setFocusTone(true)
+    requestAnimationFrame(() => {
+      try {
+        toneAnchorRef.current?.measureInWindow?.((x: number, y: number, width: number, height: number) => {
+          setToneMenuPos({ x, y, width, height })
+          setShowToneModal(true)
+        })
+      } catch {
+        setShowToneModal(true)
+      }
+    })
+  }
+  const openTraitsMenu = () => {
+    setFocusTraits(true)
+    requestAnimationFrame(() => {
+      try {
+        traitsAnchorRef.current?.measureInWindow?.((x: number, y: number, width: number, height: number) => {
+          setTraitsMenuPos({ x, y, width, height })
+          setShowTraitsModal(true)
+        })
+      } catch {
+        setShowTraitsModal(true)
+      }
+    })
+  }
+  const openEscalationMenu = () => {
+    setFocusEscalation(true)
+    requestAnimationFrame(() => {
+      try {
+        escalationAnchorRef.current?.measureInWindow?.((x: number, y: number, width: number, height: number) => {
+          setEscalationMenuPos({ x, y, width, height })
+          setShowEscalationModal(true)
+        })
+      } catch {
+        setShowEscalationModal(true)
+      }
+    })
+  }
+  
+  const ignoreNextLobOpenRef = useRef(false)
   const openLobMenu = () => {
+    if (ignoreNextLobOpenRef.current) { ignoreNextLobOpenRef.current = false; return }
     setFocusLob(true)
     requestAnimationFrame(() => {
       try {
@@ -553,6 +759,19 @@ export const RegisterScreen: React.FC<{ onBack: () => void, onLogin?: () => void
         })
       } catch {
         setShowLobModal(true)
+      }
+    })
+  }
+  const openTooltip = (targetRef: any, text: string) => {
+    setTooltipText(text)
+    requestAnimationFrame(() => {
+      try {
+        targetRef?.current?.measureInWindow?.((x: number, y: number, width: number, height: number) => {
+          setTooltipMenuPos({ x, y, width, height })
+          setShowTooltip(true)
+        })
+      } catch {
+        setShowTooltip(true)
       }
     })
   }
@@ -568,6 +787,92 @@ export const RegisterScreen: React.FC<{ onBack: () => void, onLogin?: () => void
     const top = openBelow ? (pos.y + pos.height + gap) : Math.max(margin, pos.y - maxHeight - gap)
     return { top, maxHeight }
   }
+
+  const getAllowedBusinessTypes = (industryLabel: string, lobs: string[], custom: string[]) => {
+    const key = mapIndustryToLobKey(industryLabel)
+    const selections = Array.from(new Set([...(lobs || []), ...(custom || [])]))
+    const allowed = new Set<string>()
+
+    const add = (t: string) => allowed.add(t)
+    const includesAny = (text: string, kws: string[]) => kws.some(k => text.includes(k))
+
+    const productKeywords = ['apparel','electronics','device','hardware','goods','product','home','kitchen','sports','groceries','automotive','printing','assembly','packaging']
+    const digitalKeywords = ['digital','software','saas','platform','tool','analytics','crm','security','billing','auth','identity','observability','data']
+    const serviceKeywords = ['consult','support','service','training','enablement','management','fulfillment','brokerage','leasing','delivery','co‑working','coworking']
+
+    // Industry-level defaults
+    if (key === 'E‑commerce' || key === 'Manufacturing') add('Physical Products')
+    if (key === 'SaaS') add('Digital Products')
+    if (['Finance','Healthcare','Education','Hospitality','Logistics','Real Estate','Telecommunications','Energy & Utilities','Nonprofit & NGOs','Professional Services','Consumer Services'].includes(key)) add('Services')
+
+    for (const raw of selections) {
+      const l = String(raw || '').toLowerCase()
+      if (includesAny(l, productKeywords)) add('Physical Products')
+      if (includesAny(l, digitalKeywords)) add('Digital Products')
+      if (includesAny(l, serviceKeywords)) add('Services')
+      if (l.includes('digital goods')) { add('Digital Products') }
+    }
+
+    // Fallbacks if nothing matched but selections exist
+    if (selections.length > 0 && allowed.size === 0) {
+      if (key === 'SaaS') add('Digital Products')
+      else if (key === 'E‑commerce' || key === 'Manufacturing') add('Physical Products')
+      else add('Services')
+    }
+
+    // Order consistently
+    const order = ['Physical Products','Digital Products','Services']
+    return order.filter(o => allowed.has(o))
+  }
+
+  const UploadInputRow: React.FC<{ 
+    url: string; 
+    onUrlChange: (url: string) => void; 
+    onAttach: () => void; 
+    files: string[]; 
+    theme: any 
+  }> = ({ url, onUrlChange, onAttach, files, theme }) => (
+    <View style={{ gap: 8 }}>
+      <View style={{ flexDirection: 'row', gap: 8, alignItems: 'center' }}>
+        <View style={{ flex: 1, backgroundColor: theme.color.accent, borderRadius: 10, paddingHorizontal: 12, paddingVertical: 8, borderWidth: 0, borderColor: 'transparent' }}>
+          <TextInput
+            value={url}
+            onChangeText={onUrlChange}
+            placeholder="Insert URL here..."
+            placeholderTextColor={theme.color.mutedForeground}
+            style={{ color: theme.color.cardForeground, fontSize: 14, paddingVertical: 2 }}
+            autoCapitalize="none"
+            keyboardType="url"
+            underlineColorAndroid="transparent"
+          />
+        </View>
+        <TouchableOpacity
+          activeOpacity={0.85}
+          onPress={onAttach}
+          style={{ 
+            height: 44, 
+            borderRadius: 10, 
+            backgroundColor: theme.color.primary, 
+            alignItems: 'center', 
+            justifyContent: 'center',
+            paddingHorizontal: 16,
+            minWidth: 80
+          }}
+        >
+          <Text style={{ color: '#fff', fontWeight: '600', fontSize: 14 }}>Attach</Text>
+        </TouchableOpacity>
+      </View>
+      {files && files.length > 0 ? (
+        <View style={{ gap: 4 }}>
+          {files.map((f, i) => (
+            <View key={i} style={{ backgroundColor: theme.color.secondary, borderRadius: 8, paddingHorizontal: 10, paddingVertical: 8 }}>
+              <Text numberOfLines={1} ellipsizeMode="tail" style={{ color: theme.color.mutedForeground, fontSize: 12 }}>{f}</Text>
+            </View>
+          ))}
+        </View>
+      ) : null}
+    </View>
+  )
 
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: theme.color.background }}>
@@ -641,19 +946,19 @@ export const RegisterScreen: React.FC<{ onBack: () => void, onLogin?: () => void
           <>
             <View style={{ gap: 8 }}>
               <View style={{ backgroundColor: theme.color.accent, borderRadius: 12, paddingHorizontal: 10, paddingVertical: 6, borderWidth: 0, borderColor: 'transparent', shadowColor: theme.color.primary, shadowOpacity: focusFirst ? 0.12 : 0, shadowRadius: 10, shadowOffset: { width: 0, height: 6 }, elevation: 0 }}>
-                <Text style={{ color: theme.color.cardForeground, fontSize: 12, fontWeight: '600', marginBottom: 4 }}>First name</Text>
+                <Text style={{ color: theme.color.cardForeground, fontSize: 14, marginBottom: 4 }}>First name</Text>
                 <TextInput value={firstName} onChangeText={setFirstName} placeholder="John" placeholderTextColor={theme.color.mutedForeground} underlineColorAndroid="transparent" onFocus={() => setFocusFirst(true)} onBlur={() => setFocusFirst(false)} style={{ color: theme.color.cardForeground, paddingVertical: 2, fontSize: 14, borderWidth: 0, borderColor: 'transparent' }} />
               </View>
               <View style={{ backgroundColor: theme.color.accent, borderRadius: 12, paddingHorizontal: 10, paddingVertical: 6, borderWidth: 0, borderColor: 'transparent', shadowColor: theme.color.primary, shadowOpacity: focusEmail ? 0.12 : 0, shadowRadius: 10, shadowOffset: { width: 0, height: 6 }, elevation: 0 }}>
-                <Text style={{ color: theme.color.cardForeground, fontSize: 12, fontWeight: '600', marginBottom: 4 }}>Email</Text>
+                <Text style={{ color: theme.color.cardForeground, fontSize: 14, marginBottom: 4 }}>Email</Text>
                 <TextInput value={email} onChangeText={setEmail} placeholder="you@company.com" keyboardType="email-address" placeholderTextColor={theme.color.mutedForeground} underlineColorAndroid="transparent" onFocus={() => setFocusEmail(true)} onBlur={() => setFocusEmail(false)} style={{ color: theme.color.cardForeground, paddingVertical: 2, fontSize: 14, borderWidth: 0, borderColor: 'transparent' }} />
               </View>
               <View style={{ backgroundColor: theme.color.accent, borderRadius: 12, paddingHorizontal: 10, paddingVertical: 6, borderWidth: 0, borderColor: 'transparent', shadowColor: theme.color.primary, shadowOpacity: focusPass ? 0.12 : 0, shadowRadius: 10, shadowOffset: { width: 0, height: 6 }, elevation: 0 }}>
-                <Text style={{ color: theme.color.cardForeground, fontSize: 12, fontWeight: '600', marginBottom: 4 }}>Password</Text>
+                <Text style={{ color: theme.color.cardForeground, fontSize: 14, marginBottom: 4 }}>Password</Text>
                 <TextInput value={password} onChangeText={setPassword} placeholder="••••••••" secureTextEntry autoComplete="off" textContentType="none" importantForAutofill="no" placeholderTextColor={theme.color.mutedForeground} underlineColorAndroid="transparent" onFocus={() => setFocusPass(true)} onBlur={() => setFocusPass(false)} style={{ color: theme.color.cardForeground, paddingVertical: 2, fontSize: 14, borderWidth: 0, borderColor: 'transparent' }} />
               </View>
               <View style={{ backgroundColor: theme.color.accent, borderRadius: 12, paddingHorizontal: 10, paddingVertical: 6, borderWidth: 0, borderColor: 'transparent', shadowColor: theme.color.primary, shadowOpacity: focusConfirm ? 0.12 : 0, shadowRadius: 10, shadowOffset: { width: 0, height: 6 }, elevation: 0 }}>
-                <Text style={{ color: theme.color.cardForeground, fontSize: 12, fontWeight: '600', marginBottom: 4 }}>Confirm password</Text>
+                <Text style={{ color: theme.color.cardForeground, fontSize: 14, marginBottom: 4 }}>Confirm password</Text>
                 <TextInput value={confirm} onChangeText={setConfirm} placeholder="••••••••" secureTextEntry autoComplete="off" textContentType="none" importantForAutofill="no" placeholderTextColor={theme.color.mutedForeground} underlineColorAndroid="transparent" onFocus={() => setFocusConfirm(true)} onBlur={() => setFocusConfirm(false)} style={{ color: theme.color.cardForeground, paddingVertical: 2, fontSize: 14, borderWidth: 0, borderColor: 'transparent' }} />
               </View>
             </View>
@@ -772,16 +1077,16 @@ export const RegisterScreen: React.FC<{ onBack: () => void, onLogin?: () => void
               <Text style={{ color: theme.color.mutedForeground, fontWeight: '600' }}>Back</Text>
             </TouchableOpacity>
           </View>
-        ) : (
+        ) : step === 'business' ? (
           // Step: business form
           <View style={{ marginTop: 4 }}>
             <View style={{ gap: 8 }}>
-              <View style={{ backgroundColor: theme.color.accent, borderRadius: 12, paddingHorizontal: 10, paddingVertical: 6, borderWidth: 0, borderColor: 'transparent', shadowColor: theme.color.primary, shadowOpacity: focusCompany ? 0.12 : 0, shadowRadius: 10, shadowOffset: { width: 0, height: 6 }, elevation: 0 }}>
-                <Text style={{ color: theme.color.cardForeground, fontSize: 12, fontWeight: '600', marginBottom: 4 }}>Business name</Text>
+              <View style={{ backgroundColor: theme.color.accent, borderRadius: 12, paddingHorizontal: 12, paddingVertical: 8, borderWidth: 0, borderColor: 'transparent', shadowColor: theme.color.primary, shadowOpacity: focusCompany ? 0.12 : 0, shadowRadius: 10, shadowOffset: { width: 0, height: 6 }, elevation: 0 }}>
+                <Text style={{ color: theme.color.mutedForeground, fontSize: 13, marginBottom: 4 }}>Business name</Text>
                 <TextInput value={company} onChangeText={setCompany} placeholder="Acme Inc" placeholderTextColor={theme.color.mutedForeground} underlineColorAndroid="transparent" onFocus={() => setFocusCompany(true)} onBlur={() => setFocusCompany(false)} style={{ color: theme.color.cardForeground, paddingVertical: 2, fontSize: 14, borderWidth: 0, borderColor: 'transparent' }} />
               </View>
-              <View style={{ backgroundColor: theme.color.accent, borderRadius: 12, paddingHorizontal: 10, paddingVertical: 6, borderWidth: 0, borderColor: 'transparent', shadowColor: theme.color.primary, shadowOpacity: focusIndustry ? 0.12 : 0, shadowRadius: 10, shadowOffset: { width: 0, height: 6 }, elevation: 0 }}>
-                <Text style={{ color: theme.color.cardForeground, fontSize: 12, fontWeight: '600', marginBottom: 4 }}>Industry</Text>
+              <View style={{ backgroundColor: theme.color.accent, borderRadius: 12, paddingHorizontal: 12, paddingVertical: 8, borderWidth: 0, borderColor: 'transparent', shadowColor: theme.color.primary, shadowOpacity: focusIndustry ? 0.12 : 0, shadowRadius: 10, shadowOffset: { width: 0, height: 6 }, elevation: 0 }}>
+                <Text style={{ color: theme.color.mutedForeground, fontSize: 13, marginBottom: 4 }}>Industry</Text>
                 <Pressable
                   ref={industryAnchorRef}
                   collapsable={false}
@@ -799,8 +1104,8 @@ export const RegisterScreen: React.FC<{ onBack: () => void, onLogin?: () => void
               {/* 'Other' free-text branch removed to mirror web flow */}
 
               {/* Products/Services */}
-              <View style={{ backgroundColor: theme.color.accent, borderRadius: 12, paddingHorizontal: 10, paddingVertical: 6, borderWidth: 0, borderColor: 'transparent', shadowColor: theme.color.primary, shadowOpacity: focusLob ? 0.12 : 0, shadowRadius: 10, shadowOffset: { width: 0, height: 6 }, elevation: 0 }}>
-                <Text style={{ color: theme.color.cardForeground, fontSize: 12, fontWeight: '600', marginBottom: 4 }}>Products/Services</Text>
+              <View style={{ backgroundColor: theme.color.accent, borderRadius: 12, paddingHorizontal: 10, paddingVertical: 8, borderWidth: 0, borderColor: 'transparent', shadowColor: theme.color.primary, shadowOpacity: focusLob ? 0.12 : 0, shadowRadius: 10, shadowOffset: { width: 0, height: 6 }, elevation: 0 }}>
+                <Text style={{ color: theme.color.mutedForeground, fontSize: 13, marginBottom: 6 }}>Industry nichees</Text>
                 <Pressable
                   ref={lobAnchorRef}
                   collapsable={false}
@@ -816,20 +1121,25 @@ export const RegisterScreen: React.FC<{ onBack: () => void, onLogin?: () => void
                         if (merged.length === 0) {
                           return (
                             <Text style={{ color: theme.color.mutedForeground, paddingVertical: 2, fontSize: 14, flexShrink: 1 }} numberOfLines={1}>
-                              Select Products/Services
+                              {industry ? 'Select nichees' : 'Select industry first'}
                     </Text>
                           )
                         }
                         return (
                           <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, flexShrink: 1 }}>
                             {visible.map((opt) => (
-                              <View key={opt} style={{ backgroundColor: theme.color.secondary, borderWidth: 1, borderColor: theme.color.border, borderRadius: theme.radius.sm, paddingHorizontal: 8, paddingVertical: 2 }}>
-                                <Text style={{ color: theme.color.mutedForeground, fontSize: 12, fontWeight: '600' }}>{opt}</Text>
-                  </View>
+                              <TouchableOpacity
+                                key={opt}
+                                onPress={(e) => { e.stopPropagation?.(); setSelectedLobs(prev => prev.filter(x => x !== opt)) }}
+                                activeOpacity={0.85}
+                                style={{ backgroundColor: theme.color.primary, borderRadius: 999, paddingLeft: 10, paddingRight: 10, paddingVertical: 6, position: 'relative' }}
+                              >
+                                <Text style={{ color: '#fff', fontSize: 12, fontWeight: '600' }}>{opt}</Text>
+                              </TouchableOpacity>
                             ))}
                             {remaining > 0 && (
-                              <View style={{ backgroundColor: 'transparent', borderWidth: 1, borderColor: theme.color.border, borderRadius: theme.radius.sm, paddingHorizontal: 8, paddingVertical: 2 }}>
-                                <Text style={{ color: theme.color.mutedForeground, fontSize: 12, fontWeight: '600' }}>+{remaining}</Text>
+                              <View style={{ backgroundColor: theme.color.primary, borderRadius: 999, paddingHorizontal: 10, paddingVertical: 6, shadowColor: 'transparent', shadowOpacity: 0, shadowRadius: 0, shadowOffset: { width: 0, height: 0 }, elevation: 0, borderWidth: 0, borderColor: 'transparent' }}>
+                                <Text style={{ color: '#fff', fontSize: 12, fontWeight: '600' }}>+{remaining}</Text>
                 </View>
               )}
                           </View>
@@ -842,23 +1152,44 @@ export const RegisterScreen: React.FC<{ onBack: () => void, onLogin?: () => void
               </View>
               {/* Replaced free-text Other with custom LoB chips in modal */}
 
-              {/* Company size */}
-              <View style={{ backgroundColor: theme.color.accent, borderRadius: 12, paddingHorizontal: 10, paddingVertical: 6, borderWidth: 0, borderColor: 'transparent', shadowColor: theme.color.primary, shadowOpacity: focusEmployees ? 0.12 : 0, shadowRadius: 10, shadowOffset: { width: 0, height: 6 }, elevation: 0 }}>
-                <Text style={{ color: theme.color.cardForeground, fontSize: 12, fontWeight: '600', marginBottom: 4 }}>Company size</Text>
-                <Pressable
-                  ref={sizeAnchorRef}
-                  collapsable={false}
-                  onPress={openSizeMenu}
-                  hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-                >
-                  <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
-                    <Text style={{ color: employees ? theme.color.cardForeground : theme.color.mutedForeground, paddingVertical: 2, fontSize: 14 }}>
-                      {employees || 'Select size'}
-                    </Text>
-                    <Text style={{ color: theme.color.mutedForeground, fontSize: 16 }}>▾</Text>
+              {/* Business Type (toggle chips) */}
+              {(() => {
+                const merged = Array.from(new Set([...(selectedLobs||[]), ...(customLobs||[])]))
+                if (merged.length === 0) return null
+                const baseOptions = businessTypeOptions
+                const allowedAll = baseOptions
+                return (
+                  <View style={{ backgroundColor: theme.color.accent, borderRadius: 12, paddingHorizontal: 10, paddingVertical: 8, borderWidth: 0, borderColor: 'transparent', shadowColor: theme.color.primary, shadowOpacity: 0, shadowRadius: 10, shadowOffset: { width: 0, height: 6 }, elevation: 0 }}>
+                    <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 6 }}>
+                      <Text style={{ color: theme.color.mutedForeground, fontSize: 13, marginRight: 6 }}>Business type</Text>
+                    </View>
+                    <View style={{ flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center' }}>
+                      {Array.from(new Set(allowedAll)).map((opt) => {
+                        const selected = selectedBusinessTypes.includes(opt)
+                        return (
+                          <TouchableOpacity
+                            key={opt}
+                            onPress={() => setSelectedBusinessTypes(prev => selected ? prev.filter(x => x !== opt) : [...prev, opt])}
+                            activeOpacity={0.85}
+                            style={{
+                              paddingHorizontal: 10,
+                              paddingVertical: 6,
+                              borderRadius: 999,
+                              marginRight: 6,
+                              marginBottom: 6,
+                              backgroundColor: selected ? theme.color.primary : (theme.dark ? theme.color.secondary : theme.color.card),
+                            }}
+                          >
+                            <Text style={{ color: selected ? '#fff' : theme.color.mutedForeground, fontSize: 12, fontWeight: '600' }}>{opt}</Text>
+                          </TouchableOpacity>
+                        )
+                      })}
                   </View>
-                </Pressable>
-              </View>
+                  </View>
+                )
+              })()}
+
+              
 
               {/* Country */}
               <Pressable
@@ -866,9 +1197,9 @@ export const RegisterScreen: React.FC<{ onBack: () => void, onLogin?: () => void
                 collapsable={false}
                 onPress={openCountryMenu}
                 hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-                style={{ backgroundColor: theme.color.accent, borderRadius: 12, paddingHorizontal: 10, paddingVertical: 6, borderWidth: 0, borderColor: 'transparent', shadowColor: theme.color.primary, shadowOpacity: focusCountry ? 0.12 : 0, shadowRadius: 10, shadowOffset: { width: 0, height: 6 }, elevation: 0 }}
+                style={{ backgroundColor: theme.color.accent, borderRadius: 12, paddingHorizontal: 12, paddingVertical: 8, borderWidth: 0, borderColor: 'transparent', shadowColor: theme.color.primary, shadowOpacity: focusCountry ? 0.12 : 0, shadowRadius: 10, shadowOffset: { width: 0, height: 6 }, elevation: 0 }}
               >
-                <Text style={{ color: theme.color.cardForeground, fontSize: 12, fontWeight: '600', marginBottom: 4 }}>Country</Text>
+                <Text style={{ color: theme.color.mutedForeground, fontSize: 13, marginBottom: 4 }}>Country</Text>
                 <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
                   <View style={{ flexDirection: 'row', alignItems: 'center' }}>
                     {country ? (
@@ -886,13 +1217,13 @@ export const RegisterScreen: React.FC<{ onBack: () => void, onLogin?: () => void
 
               {/* Website */}
               <View style={{ backgroundColor: theme.color.accent, borderRadius: 12, paddingHorizontal: 10, paddingVertical: 6, borderWidth: 0, borderColor: 'transparent', shadowColor: theme.color.primary, shadowOpacity: focusWebsite ? 0.12 : 0, shadowRadius: 10, shadowOffset: { width: 0, height: 6 }, elevation: 0 }}>
-                <Text style={{ color: theme.color.cardForeground, fontSize: 12, fontWeight: '600', marginBottom: 4 }}>Website <Text style={{ color: theme.color.mutedForeground }}>(optional)</Text></Text>
+                <Text style={{ color: theme.color.mutedForeground, fontSize: 13, marginBottom: 4 }}>Website <Text style={{ color: theme.color.mutedForeground }}>(optional)</Text></Text>
                 <TextInput value={website} onChangeText={setWebsite} placeholder="https://example.com" autoCapitalize="none" keyboardType="url" placeholderTextColor={theme.color.mutedForeground} underlineColorAndroid="transparent" onFocus={() => setFocusWebsite(true)} onBlur={() => setFocusWebsite(false)} style={{ color: theme.color.cardForeground, paddingVertical: 2, fontSize: 14, borderWidth: 0, borderColor: 'transparent' }} />
               </View>
             </View>
 
             <View style={{ marginTop: 12 }}>
-              <Button title="Next" size="lg" variant="hero" onPress={() => {}} />
+              <Button title="Next" size="lg" variant="hero" onPress={() => { LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut); setStep('agent') }} />
             </View>
 
             <TouchableOpacity onPress={handleBack} style={{ alignSelf: 'center', marginTop: 20 }}>
@@ -1002,27 +1333,24 @@ export const RegisterScreen: React.FC<{ onBack: () => void, onLogin?: () => void
                         <Text style={{ color: theme.color.cardForeground, fontSize: 14, fontWeight: '700', marginBottom: 6 }}>Select country</Text>
                         <View style={{ position: 'relative', paddingBottom: 8 }}>
                           <ScrollView
-                            showsVerticalScrollIndicator={false}
-                            contentContainerStyle={{ paddingBottom: 20 }}
-                            contentInset={{ bottom: Platform.OS === 'ios' ? 10 : 0 }}
-                            scrollIndicatorInsets={{ bottom: 8 }}
+                            showsVerticalScrollIndicator={true}
+                            contentContainerStyle={{ paddingBottom: 0 }}
                             keyboardShouldPersistTaps="handled"
-                            onContentSizeChange={(w, h) => setCountryContentH(h)}
-                            onScroll={(e) => setCountryScrollY(e.nativeEvent.contentOffset.y)}
                             scrollEventThrottle={16}
+                            style={{ maxHeight: Math.max(140, plc.maxHeight - 160) }}
                           >
                             {countryOptions.map((opt) => (
-                  <TouchableOpacity
+                              <TouchableOpacity
                                 key={opt.value}
                                 onPress={() => { setCountry(opt.value); setShowCountryModal(false); setFocusCountry(false) }}
                                 style={{ paddingVertical: 8, paddingHorizontal: 8, borderRadius: 8, backgroundColor: opt.value === country ? theme.color.accent : 'transparent', marginBottom: 3, flexDirection: 'row', alignItems: 'center', gap: 8 }}
-                    activeOpacity={0.8}
-                  >
+                                activeOpacity={0.8}
+                              >
                                 <Text style={{ fontSize: 16 }}>{opt.flag}</Text>
                                 <Text numberOfLines={1} ellipsizeMode="tail" style={{ color: theme.color.cardForeground, fontSize: 14, flexShrink: 1 }}>{opt.value}</Text>
-                  </TouchableOpacity>
-                ))}
-              </ScrollView>
+                              </TouchableOpacity>
+                            ))}
+                          </ScrollView>
                           {/* scrollbar removed intentionally */}
                         </View>
                       </View>
@@ -1033,50 +1361,7 @@ export const RegisterScreen: React.FC<{ onBack: () => void, onLogin?: () => void
               </Pressable>
         </Modal>
 
-            {/* Size Modal */}
-            <Modal
-              visible={showSizeModal}
-              transparent
-              animationType="fade"
-              onRequestClose={() => { setShowSizeModal(false); setFocusEmployees(false) }}
-            >
-              <Pressable
-                style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.25)' }}
-                onPress={() => { setShowSizeModal(false); setFocusEmployees(false) }}
-              >
-                {sizeMenuPos ? (
-                  (() => { const plc = getMenuPlacement(sizeMenuPos); return (
-                  <View style={{ position: 'absolute', left: sizeMenuPos.x, top: plc.top, width: sizeMenuPos.width }}>
-                    <View onLayout={(e) => setSizeContainerH(e.nativeEvent.layout.height)} style={{ backgroundColor: theme.color.card, borderRadius: 12, borderWidth: 0, borderColor: 'transparent', maxHeight: plc.maxHeight, shadowColor: '#000', shadowOpacity: 0.2, shadowRadius: 16, shadowOffset: { width: 0, height: 10 }, elevation: 10, overflow: 'hidden' }}>
-                      <View style={{ paddingVertical: 8, paddingHorizontal: 12 }}>
-                        <Text style={{ color: theme.color.cardForeground, fontSize: 14, fontWeight: '700', marginBottom: 6 }}>Select company size</Text>
-                        <View style={{ position: 'relative' }}>
-                          <ScrollView
-                            showsVerticalScrollIndicator={false}
-                            onContentSizeChange={(w, h) => setSizeContentH(h)}
-                            onScroll={(e) => setSizeScrollY(e.nativeEvent.contentOffset.y)}
-                            scrollEventThrottle={16}
-                          >
-                            {sizeOptions.map((opt) => (
-                    <TouchableOpacity
-                                key={opt}
-                                onPress={() => { setEmployees(opt); setShowSizeModal(false); setFocusEmployees(false) }}
-                                style={{ paddingVertical: 8, paddingHorizontal: 8, borderRadius: 8, backgroundColor: opt === employees ? theme.color.accent : 'transparent', marginBottom: 3 }}
-                      activeOpacity={0.8}
-                    >
-                                <Text numberOfLines={1} ellipsizeMode="tail" style={{ color: theme.color.cardForeground, fontSize: 14 }}>{opt}</Text>
-                    </TouchableOpacity>
-                  ))}
-                </ScrollView>
-                          {/* scrollbar removed intentionally */}
-                        </View>
-                      </View>
-                    </View>
-                  </View>
-                  ) })()
-                ) : null}
-              </Pressable>
-            </Modal>
+            
 
             {/* LOB Modal (match industry/country modal styling) */}
             <Modal
@@ -1094,14 +1379,20 @@ export const RegisterScreen: React.FC<{ onBack: () => void, onLogin?: () => void
                   <View style={{ position: 'absolute', left: lobMenuPos.x, top: plc.top, width: lobMenuPos.width }}>
                     <View onLayout={(e) => setLobContainerH(e.nativeEvent.layout.height)} style={{ backgroundColor: theme.color.card, borderRadius: 12, borderWidth: 0, borderColor: 'transparent', maxHeight: plc.maxHeight, shadowColor: '#000', shadowOpacity: 0.2, shadowRadius: 16, shadowOffset: { width: 0, height: 10 }, elevation: 10, overflow: 'hidden' }}>
                       <View style={{ paddingVertical: 8, paddingHorizontal: 12 }}>
-                        <Text style={{ color: theme.color.cardForeground, fontSize: 14, fontWeight: '700', marginBottom: 6 }}>Products/Services</Text>
+                        <Text style={{ color: theme.color.cardForeground, fontSize: 14, fontWeight: '700', marginBottom: 6 }}>Select nichees</Text>
                         <View style={{ position: 'relative', paddingBottom: 8 }}>
+                          {!industry ? (
+                            <View style={{ paddingVertical: 8 }}>
+                              <Text style={{ color: theme.color.mutedForeground, fontSize: 13 }}>Select industry first</Text>
+                            </View>
+                          ) : (
+                            <>
                           <View style={{ marginBottom: 8 }}>
                             <View style={{ backgroundColor: theme.color.accent, borderRadius: 8, paddingHorizontal: 10, paddingVertical: 6, borderWidth: 0, borderColor: 'transparent' }}>
                               <TextInput
                                 value={lobQuery}
                                 onChangeText={setLobQuery}
-                                placeholder="Search products/services"
+                                    placeholder="Search nichees"
                                 placeholderTextColor={theme.color.mutedForeground}
                                 style={{ color: theme.color.cardForeground, fontSize: 14, paddingVertical: 2 }}
                               />
@@ -1164,6 +1455,8 @@ export const RegisterScreen: React.FC<{ onBack: () => void, onLogin?: () => void
                             })}
                             {/* End of list */}
                           </ScrollView>
+                            </>
+                          )}
                         </View>
                       </View>
                     </View>
@@ -1173,10 +1466,449 @@ export const RegisterScreen: React.FC<{ onBack: () => void, onLogin?: () => void
               </Pressable>
             </Modal>
           </View>
+        ) : step === 'agent' ? (
+          // Step: agent setup
+          <View style={{ marginTop: 4 }}>
+            <View style={{ gap: 8 }}>
+              {/* Agent name */}
+              <View style={{ backgroundColor: theme.color.accent, borderRadius: 12, paddingHorizontal: 10, paddingVertical: 6, borderWidth: 0, borderColor: 'transparent', shadowColor: theme.color.primary, shadowOpacity: focusCompany ? 0.12 : 0, shadowRadius: 10, shadowOffset: { width: 0, height: 6 }, elevation: 0 }}>
+                <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 4 }}>
+                  <Text style={{ color: theme.color.cardForeground, fontSize: 14, marginRight: 6 }}>Agent name</Text>
+                </View>
+                <TextInput value={agentName} onChangeText={setAgentName} placeholder="e.g., Nancy" placeholderTextColor={theme.color.mutedForeground} underlineColorAndroid="transparent" onFocus={() => setFocusAgentName(true)} onBlur={() => setFocusAgentName(false)} style={{ color: theme.color.cardForeground, paddingVertical: 2, fontSize: 14, borderWidth: 0, borderColor: 'transparent' }} />
+              </View>
+
+              {/* Desired Title */}
+              <View style={{ backgroundColor: theme.color.accent, borderRadius: 12, paddingHorizontal: 10, paddingVertical: 6, borderWidth: 0, borderColor: 'transparent', shadowColor: theme.color.primary, shadowOpacity: focusIndustry ? 0.12 : 0, shadowRadius: 10, shadowOffset: { width: 0, height: 6 }, elevation: 0 }}>
+                <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 4 }}>
+                  <Text style={{ color: theme.color.cardForeground, fontSize: 14, marginRight: 6 }}>Role</Text>
+                </View>
+                <Pressable
+                  ref={titleAnchorRef}
+                  collapsable={false}
+                  onPress={openTitleMenu}
+                >
+                  <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+                    <Text style={{ color: desiredTitle ? theme.color.cardForeground : theme.color.mutedForeground, paddingVertical: 2, fontSize: 14 }}>
+                      {desiredTitle || 'Select title'}
+                    </Text>
+                    <Text style={{ color: theme.color.mutedForeground, fontSize: 16 }}>▾</Text>
+                  </View>
+                </Pressable>
+              </View>
+
+              {/* Agent tone */}
+              <View style={{ backgroundColor: theme.color.accent, borderRadius: 12, paddingHorizontal: 10, paddingVertical: 6, borderWidth: 0, borderColor: 'transparent', shadowColor: theme.color.primary, shadowOpacity: 0, shadowRadius: 10, shadowOffset: { width: 0, height: 6 }, elevation: 0 }}>
+                <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 4 }}>
+                  <Text style={{ color: theme.color.cardForeground, fontSize: 14, marginRight: 6 }}>Tone</Text>
+                </View>
+                <Pressable ref={toneAnchorRef} collapsable={false} onPress={openToneMenu}>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+                    <Text style={{ color: agentTone ? theme.color.cardForeground : theme.color.mutedForeground, paddingVertical: 2, fontSize: 14 }}>
+                      {agentTone || 'Select tone'}
+                    </Text>
+                    <Text style={{ color: theme.color.mutedForeground, fontSize: 16 }}>▾</Text>
+                  </View>
+                </Pressable>
+              </View>
+
+              {/* Agent traits (inline toggle chips) */}
+              <View style={{ backgroundColor: theme.color.accent, borderRadius: 12, paddingHorizontal: 10, paddingVertical: 8, borderWidth: 0, borderColor: 'transparent', shadowColor: theme.color.primary, shadowOpacity: 0, shadowRadius: 10, shadowOffset: { width: 0, height: 6 }, elevation: 0 }}>
+                <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 6 }}>
+                  <Text style={{ color: theme.color.cardForeground, fontSize: 14, marginRight: 6 }}>Traits</Text>
+                </View>
+                <View style={{ flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center' }}>
+                  {traitOptions.map((opt) => {
+                    const selected = selectedTraits.includes(opt)
+                    return (
+                      <TouchableOpacity
+                        key={opt}
+                        onPress={() => setSelectedTraits(prev => selected ? prev.filter(x => x !== opt) : [...prev, opt])}
+                        activeOpacity={0.85}
+                        style={{
+                          paddingHorizontal: 10,
+                          paddingVertical: 6,
+                          borderRadius: 999,
+                          marginRight: 6,
+                          marginBottom: 6,
+                          backgroundColor: selected ? theme.color.primary : theme.color.secondary,
+                        }}
+                      >
+                        <Text style={{ color: selected ? '#fff' : theme.color.mutedForeground, fontSize: 12, fontWeight: '600' }}>{opt}</Text>
+                      </TouchableOpacity>
+                    )
+                  })}
+                </View>
+              </View>
+
+              {/* Escalation rules */}
+              <View style={{ backgroundColor: theme.color.accent, borderRadius: 12, paddingHorizontal: 10, paddingVertical: 6, borderWidth: 0, borderColor: 'transparent', shadowColor: theme.color.primary, shadowOpacity: 0, shadowRadius: 10, shadowOffset: { width: 0, height: 6 }, elevation: 0 }}>
+                <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 4 }}>
+                  <Text style={{ color: theme.color.cardForeground, fontSize: 14, marginRight: 6 }}>Escalation rules</Text>
+                  <Pressable ref={escalationTipRef} hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }} onPress={() => openTooltip(escalationTipRef, 'Tell the agent when to hand off to a human to protect CX and SLAs.') }>
+                    <View style={{ width: 16, height: 16, borderRadius: 8, borderWidth: 0, borderColor: 'transparent', alignItems: 'center', justifyContent: 'center', backgroundColor: theme.dark ? '#000' : '#fff' }}>
+                      <Text style={{ color: theme.color.primary, fontSize: 11, fontWeight: '500' }}>i</Text>
+                    </View>
+                  </Pressable>
+                </View>
+                <Pressable ref={escalationAnchorRef} collapsable={false} onPress={openEscalationMenu}>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+                    <Text style={{ color: escalationRule ? theme.color.cardForeground : theme.color.mutedForeground, paddingVertical: 2, fontSize: 14 }}>
+                      {escalationRule || 'Select rules'}
+                    </Text>
+                    <Text style={{ color: theme.color.mutedForeground, fontSize: 16 }}>▾</Text>
+                  </View>
+                </Pressable>
+              </View>
+            </View>
+
+            <View style={{ marginTop: 12 }}>
+              <Button title="Next" size="lg" variant="hero" onPress={() => { LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut); setStep('uploads') }} />
+            </View>
+
+            <TouchableOpacity onPress={handleBack} style={{ alignSelf: 'center', marginTop: 20 }}>
+              <Text style={{ color: theme.color.mutedForeground, fontWeight: '600' }}>Back</Text>
+            </TouchableOpacity>
+          </View>
+        ) : step === 'uploads' ? (
+          // Step: uploads
+          <View style={{ marginTop: 4 }}>
+            <View style={{ gap: 12 }}>
+              {/* Choose applicable materials */}
+              <View style={{ backgroundColor: theme.color.accent, borderRadius: 12, paddingHorizontal: 12, paddingVertical: 10 }}>
+                <Text style={{ color: theme.color.cardForeground, fontSize: 14, fontWeight: '700', marginBottom: 6 }}>Which materials do you want to upload?</Text>
+                <View style={{ flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center' }}>
+                  {uploadOptions.map((opt) => {
+                    const selected = selectedUploadTypes.includes(opt.key)
+                    return (
+                      <TouchableOpacity
+                        key={opt.key}
+                        onPress={() => setSelectedUploadTypes(prev => selected ? prev.filter(x => x !== opt.key) : [...prev, opt.key])}
+                        activeOpacity={0.85}
+                        style={{
+                          paddingHorizontal: 10,
+                          paddingVertical: 6,
+                          borderRadius: 999,
+                          marginRight: 6,
+                          marginBottom: 6,
+                          backgroundColor: selected ? theme.color.primary : theme.color.secondary,
+                        }}
+                      >
+                        <Text style={{ color: selected ? '#fff' : theme.color.mutedForeground, fontSize: 12, fontWeight: '600' }}>{opt.label}</Text>
+                      </TouchableOpacity>
+                    )
+                  })}
+                </View>
+              </View>
+ 
+               {/* Vision */}
+               {selectedUploadTypes.includes('vision') && (
+               <View style={{ backgroundColor: theme.color.accent, borderRadius: 12, paddingHorizontal: 12, paddingVertical: 10 }}>
+                 <Text style={{ color: theme.color.cardForeground, fontSize: 14, fontWeight: '700', marginBottom: 6 }}>Vision</Text>
+                 <UploadInputRow 
+                   url={visionUrl} 
+                   onUrlChange={setVisionUrl} 
+                   onAttach={() => {}} 
+                   files={visionFiles} 
+                   theme={theme} 
+                 />
+          </View>
         )}
+ 
+               {/* Mission */}
+               {selectedUploadTypes.includes('mission') && (
+               <View style={{ backgroundColor: theme.color.accent, borderRadius: 12, paddingHorizontal: 12, paddingVertical: 10 }}>
+                 <Text style={{ color: theme.color.cardForeground, fontSize: 14, fontWeight: '700', marginBottom: 6 }}>Mission</Text>
+                 <UploadInputRow 
+                   url={missionUrl} 
+                   onUrlChange={setMissionUrl} 
+                   onAttach={() => {}} 
+                   files={missionFiles} 
+                   theme={theme} 
+                 />
+               </View>
+               )}
+ 
+               {/* Products/Services Catalog */}
+               {selectedUploadTypes.includes('catalog') && (
+               <View style={{ backgroundColor: theme.color.accent, borderRadius: 12, paddingHorizontal: 12, paddingVertical: 10 }}>
+                 <Text style={{ color: theme.color.cardForeground, fontSize: 14, fontWeight: '700', marginBottom: 6 }}>{catalogEntity} Catalog</Text>
+                 <UploadInputRow 
+                   url={catalogUrl} 
+                   onUrlChange={setCatalogUrl} 
+                   onAttach={() => {}} 
+                   files={catalogFiles} 
+                   theme={theme} 
+                 />
+               </View>
+               )}
+ 
+               {/* FAQs */}
+               {selectedUploadTypes.includes('faqs') && (
+               <View style={{ backgroundColor: theme.color.accent, borderRadius: 12, paddingHorizontal: 12, paddingVertical: 10 }}>
+                 <Text style={{ color: theme.color.cardForeground, fontSize: 14, fontWeight: '700', marginBottom: 6 }}>FAQs</Text>
+                 <UploadInputRow 
+                   url={faqsUrl} 
+                   onUrlChange={setFaqsUrl} 
+                   onAttach={() => {}} 
+                   files={faqsFiles} 
+                   theme={theme} 
+                 />
+               </View>
+               )}
+ 
+               {/* Knowledge Base */}
+               {selectedUploadTypes.includes('kb') && (
+               <View style={{ backgroundColor: theme.color.accent, borderRadius: 12, paddingHorizontal: 12, paddingVertical: 10 }}>
+                 <Text style={{ color: theme.color.cardForeground, fontSize: 14, fontWeight: '700', marginBottom: 6 }}>Knowledge Base</Text>
+                 <UploadInputRow 
+                   url={kbUrl} 
+                   onUrlChange={setKbUrl} 
+                   onAttach={() => {}} 
+                   files={kbFiles} 
+                   theme={theme} 
+                 />
+               </View>
+               )}
+ 
+               {/* SOPs */}
+               {selectedUploadTypes.includes('sops') && (
+               <View style={{ backgroundColor: theme.color.accent, borderRadius: 12, paddingHorizontal: 12, paddingVertical: 10 }}>
+                 <Text style={{ color: theme.color.cardForeground, fontSize: 14, fontWeight: '700', marginBottom: 6 }}>SOPs</Text>
+                 <UploadInputRow 
+                   url={sopsUrl} 
+                   onUrlChange={setSopsUrl} 
+                   onAttach={() => {}} 
+                   files={sopsFiles} 
+                   theme={theme} 
+                 />
+               </View>
+               )}
+ 
+               {/* Terms & Conditions */}
+               {selectedUploadTypes.includes('tc') && (
+               <View style={{ backgroundColor: theme.color.accent, borderRadius: 12, paddingHorizontal: 12, paddingVertical: 10 }}>
+                 <Text style={{ color: theme.color.cardForeground, fontSize: 14, fontWeight: '700', marginBottom: 6 }}>T&C</Text>
+                 <UploadInputRow 
+                   url={tcUrl} 
+                   onUrlChange={setTcUrl} 
+                   onAttach={() => {}} 
+                   files={tcFiles} 
+                   theme={theme} 
+                 />
+               </View>
+               )}
+             </View>
+ 
+             <View style={{ marginTop: 12 }}>
+               <Button title="Finish" size="lg" variant="hero" onPress={() => {}} />
+             </View>
+ 
+             <TouchableOpacity onPress={handleBack} style={{ alignSelf: 'center', marginTop: 20 }}>
+               <Text style={{ color: theme.color.mutedForeground, fontWeight: '600' }}>Back</Text>
+             </TouchableOpacity>
+          </View>
+        ) : null}
         </ScrollView>
       </View>
       </KeyboardAvoidingView>
+      {/* Agent: Title Modal */}
+      <Modal
+        visible={showTitleModal}
+        transparent
+        animationType="fade"
+        onRequestClose={() => { setShowTitleModal(false); setFocusTitle(false) }}
+      >
+        <Pressable style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.25)' }} onPress={() => { setShowTitleModal(false); setFocusTitle(false) }}>
+          {titleMenuPos ? (() => { const plc = getMenuPlacement(titleMenuPos); return (
+            <View style={{ position: 'absolute', left: titleMenuPos.x, top: plc.top, width: titleMenuPos.width }}>
+              <View onLayout={(e) => setTitleContainerH(e.nativeEvent.layout.height)} style={{ backgroundColor: theme.color.card, borderRadius: 12, borderWidth: 0, borderColor: 'transparent', maxHeight: plc.maxHeight, shadowColor: '#000', shadowOpacity: 0.2, shadowRadius: 16, shadowOffset: { width: 0, height: 10 }, elevation: 10, overflow: 'hidden' }}>
+                <View style={{ paddingVertical: 8, paddingHorizontal: 12 }}>
+                  <Text style={{ color: theme.color.cardForeground, fontSize: 14, fontWeight: '700', marginBottom: 6 }}>Select title</Text>
+                  {/* Add custom */}
+                  <View style={{ marginBottom: 8 }}>
+                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                      <View style={{ flex: 1, backgroundColor: theme.color.accent, borderRadius: 8, paddingHorizontal: 10, paddingVertical: 6 }}>
+                        <TextInput
+                          value={titleCustomInput}
+                          onChangeText={setTitleCustomInput}
+                          placeholder="Add custom"
+                          placeholderTextColor={theme.color.mutedForeground}
+                          style={{ color: theme.color.cardForeground, fontSize: 14, paddingVertical: 2 }}
+                        />
+                      </View>
+                      <TouchableOpacity
+                        activeOpacity={0.85}
+                        onPress={() => {
+                          const v = titleCustomInput.trim(); if (!v) return;
+                          setDesiredTitle(v);
+                          setTitleCustomInput('');
+                          setShowTitleModal(false); setFocusTitle(false);
+                        }}
+                        style={{ backgroundColor: theme.color.primary, borderRadius: 8, paddingHorizontal: 12, paddingVertical: 8 }}
+                      >
+                        <Text style={{ color: '#fff', fontWeight: '600' }}>Add</Text>
+                      </TouchableOpacity>
+                    </View>
+                  </View>
+                  <ScrollView
+                    showsVerticalScrollIndicator={true}
+                    contentContainerStyle={{ paddingTop: 6, paddingBottom: 12 }}
+                    keyboardShouldPersistTaps="handled"
+                    onContentSizeChange={(w,h)=>setTitleContentH(h)}
+                    onScroll={(e)=>setTitleScrollY(e.nativeEvent.contentOffset.y)}
+                    scrollEventThrottle={16}
+                    style={{ maxHeight: Math.max(140, plc.maxHeight - 160) }}
+                  >
+                    {titleOptions.map((opt) => (
+                      <TouchableOpacity key={opt} onPress={() => { setDesiredTitle(opt); setShowTitleModal(false); setFocusTitle(false) }} hitSlop={{ top: 8, bottom: 8, left: 0, right: 0 }} style={{ paddingVertical: 8, paddingHorizontal: 8, borderRadius: 8, backgroundColor: opt === desiredTitle ? theme.color.accent : 'transparent', marginBottom: 3 }} activeOpacity={0.8}>
+                        <Text numberOfLines={1} ellipsizeMode="tail" style={{ color: theme.color.cardForeground, fontSize: 14 }}>{opt}</Text>
+                      </TouchableOpacity>
+                    ))}
+                  </ScrollView>
+                </View>
+              </View>
+            </View>
+          )})() : null}
+        </Pressable>
+      </Modal>
+
+      {/* Agent: Tone Modal */}
+      <Modal
+        visible={showToneModal}
+        transparent
+        animationType="fade"
+        onRequestClose={() => { setShowToneModal(false); setFocusTone(false) }}
+      >
+        <Pressable style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.25)' }} onPress={() => { setShowToneModal(false); setFocusTone(false) }}>
+          {toneMenuPos ? (() => { const plc = getMenuPlacement(toneMenuPos); return (
+            <View style={{ position: 'absolute', left: toneMenuPos.x, top: plc.top, width: toneMenuPos.width }}>
+              <View onLayout={(e) => setToneContainerH(e.nativeEvent.layout.height)} style={{ backgroundColor: theme.color.card, borderRadius: 12, borderWidth: 0, borderColor: 'transparent', maxHeight: plc.maxHeight, shadowColor: '#000', shadowOpacity: 0.2, shadowRadius: 16, shadowOffset: { width: 0, height: 10 }, elevation: 10, overflow: 'hidden' }}>
+                <View style={{ paddingVertical: 8, paddingHorizontal: 12 }}>
+                  <Text style={{ color: theme.color.cardForeground, fontSize: 14, fontWeight: '700', marginBottom: 6 }}>Select tone</Text>
+                  <ScrollView
+                    showsVerticalScrollIndicator={true}
+                    contentContainerStyle={{ paddingTop: 6, paddingBottom: 12 }}
+                    keyboardShouldPersistTaps="handled"
+                    onContentSizeChange={(w,h)=>setToneContentH(h)}
+                    onScroll={(e)=>setToneScrollY(e.nativeEvent.contentOffset.y)}
+                    scrollEventThrottle={16}
+                    style={{ maxHeight: Math.max(140, plc.maxHeight - 160) }}
+                  >
+                    {toneOptions.map((opt) => (
+                      <TouchableOpacity key={opt} onPress={() => { setAgentTone(opt); setShowToneModal(false); setFocusTone(false) }} hitSlop={{ top: 8, bottom: 8, left: 0, right: 0 }} style={{ paddingVertical: 8, paddingHorizontal: 8, borderRadius: 8, backgroundColor: opt === agentTone ? theme.color.accent : 'transparent', marginBottom: 3 }} activeOpacity={0.8}>
+                        <Text numberOfLines={1} ellipsizeMode="tail" style={{ color: theme.color.cardForeground, fontSize: 14 }}>{opt}</Text>
+                      </TouchableOpacity>
+                    ))}
+                  </ScrollView>
+                </View>
+              </View>
+            </View>
+          )})() : null}
+        </Pressable>
+      </Modal>
+
+      {/* Agent: Traits Modal removed - using inline toggle chips */}
+
+      {/* Agent: Escalation Modal */}
+      <Modal
+        visible={showEscalationModal}
+        transparent
+        animationType="fade"
+        onRequestClose={() => { setShowEscalationModal(false); setFocusEscalation(false) }}
+      >
+        <Pressable style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.25)' }} onPress={() => { setShowEscalationModal(false); setFocusEscalation(false) }}>
+          {escalationMenuPos ? (() => { const plc = getMenuPlacement(escalationMenuPos); return (
+            <View style={{ position: 'absolute', left: escalationMenuPos.x, top: plc.top, width: escalationMenuPos.width }}>
+              <View onLayout={(e) => setEscalationContainerH(e.nativeEvent.layout.height)} style={{ backgroundColor: theme.color.card, borderRadius: 12, borderWidth: 0, borderColor: 'transparent', maxHeight: plc.maxHeight, shadowColor: '#000', shadowOpacity: 0.2, shadowRadius: 16, shadowOffset: { width: 0, height: 10 }, elevation: 10, overflow: 'hidden' }}>
+                <View style={{ paddingVertical: 8, paddingHorizontal: 12 }}>
+                  <Text style={{ color: theme.color.cardForeground, fontSize: 14, fontWeight: '700', marginBottom: 6 }}>Escalation rules</Text>
+                  <ScrollView
+                    showsVerticalScrollIndicator={true}
+                    contentContainerStyle={{ paddingTop: 6, paddingBottom: 12 }}
+                    keyboardShouldPersistTaps="handled"
+                    onContentSizeChange={(w,h)=>setEscalationContentH(h)}
+                    onScroll={(e)=>setEscalationScrollY(e.nativeEvent.contentOffset.y)}
+                    scrollEventThrottle={16}
+                    style={{ maxHeight: Math.max(140, plc.maxHeight - 160) }}
+                  >
+                    {escalationOptions.map((opt) => (
+                      <TouchableOpacity key={opt} onPress={() => { setEscalationRule(opt); setShowEscalationModal(false); setFocusEscalation(false) }} hitSlop={{ top: 8, bottom: 8, left: 0, right: 0 }} style={{ paddingVertical: 8, paddingHorizontal: 8, borderRadius: 8, backgroundColor: opt === escalationRule ? theme.color.accent : 'transparent', marginBottom: 3 }} activeOpacity={0.8}>
+                        <Text numberOfLines={1} ellipsizeMode="tail" style={{ color: theme.color.cardForeground, fontSize: 14 }}>{opt}</Text>
+                      </TouchableOpacity>
+                    ))}
+                  </ScrollView>
+                </View>
+              </View>
+            </View>
+          )})() : null}
+        </Pressable>
+      </Modal>
+      
+      {/* Shared Tooltip */}
+      <Modal
+        visible={showTooltip}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setShowTooltip(false)}
+      >
+        <Pressable style={{ flex: 1, backgroundColor: 'transparent' }} onPress={() => setShowTooltip(false)}>
+          {tooltipMenuPos ? (() => {
+            const screen = Dimensions.get('window')
+            const gap = 8
+            const width = Math.max(220, Math.min(320, tooltipMenuPos.width))
+            let left = tooltipMenuPos.x + tooltipMenuPos.width + gap
+            if (left + width + 8 > screen.width) {
+              left = Math.max(8, tooltipMenuPos.x - width - gap)
+            }
+            const top = Math.max(8, Math.min(tooltipMenuPos.y, screen.height - 200))
+            return (
+              <View style={{ position: 'absolute', left, top, width, backgroundColor: theme.color.card, borderRadius: 10, padding: 10, shadowColor: '#000', shadowOpacity: 0.2, shadowRadius: 12, shadowOffset: { width: 0, height: 8 }, elevation: 8 }}>
+                <Text style={{ color: theme.color.cardForeground, fontSize: 12, lineHeight: 16 }}>{tooltipText}</Text>
+              </View>
+            )
+          })() : null}
+        </Pressable>
+      </Modal>
     </SafeAreaView>
+  )
+}
+
+// Mount shared tooltip overlay
+export const RegisterScreenWithTooltips = (props: any) => {
+  const { theme } = useTheme()
+  // We can't access inner state from here, so this is a placeholder export in case of reuse.
+  return null
+}
+
+// Tooltip Modal (shared)
+// Rendered as a sibling overlay in the same file scope for simplicity
+export const RegisterTooltipsOverlay: React.FC<{
+  visible: boolean,
+  text: string,
+  pos: { x: number, y: number, width: number, height: number } | null,
+  theme: any,
+  onClose: () => void
+}> = ({ visible, text, pos, theme, onClose }) => {
+  if (!visible || !pos) return null as any
+  const plc = ((p: { x: number, y: number, width: number, height: number }) => {
+    const screenH = Dimensions.get('window').height
+    const margin = 24
+    const gap = 6
+    const below = Math.max(0, screenH - (p.y + p.height + gap) - margin)
+    const above = Math.max(0, p.y - margin)
+    const openBelow = below >= Math.max(100, above)
+    const maxHeight = Math.min(200, openBelow ? below : above)
+    const top = openBelow ? (p.y + p.height + gap) : Math.max(margin, p.y - maxHeight - gap)
+    return { top, maxHeight }
+  })(pos)
+  return (
+    <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
+      <Pressable style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.15)' }} onPress={onClose}>
+        <View style={{ position: 'absolute', left: pos.x, top: plc.top, width: Math.max(220, pos.width), backgroundColor: theme.color.card, borderRadius: 10, padding: 10, shadowColor: '#000', shadowOpacity: 0.2, shadowRadius: 12, shadowOffset: { width: 0, height: 8 }, elevation: 8 }}>
+          <Text style={{ color: theme.color.cardForeground, fontSize: 12, lineHeight: 16 }}>{text}</Text>
+        </View>
+      </Pressable>
+    </Modal>
   )
 }

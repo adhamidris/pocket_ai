@@ -87,7 +87,6 @@ const ar = {
   profile: {
     companyName: "اسم الشركة",
     industry: "الصناعة",
-    employees: "عدد الموظفين",
     address: "العنوان"
   },
   languages: {

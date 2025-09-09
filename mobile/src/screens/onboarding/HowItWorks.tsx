@@ -221,9 +221,7 @@ export const HowItWorksScreen: React.FC<HowItWorksScreenProps> = ({ onNext, onBa
           <View style={{ flex: 1 }}>
             <Input label={'Industry'} value={industry} editable={false} />
           </View>
-          <View style={{ flex: 1 }}>
-            <Input label={'Employees'} value={'11-50'} editable={false} />
-          </View>
+          
         </View>
         <Input label={'Address'} value={address} editable={false} />
         <View style={{ marginTop: 8 }}>
