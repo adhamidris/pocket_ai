@@ -11,13 +11,14 @@ import Svg, { Circle, Rect, G, Path, Defs, RadialGradient, Stop, Ellipse } from 
 interface Props {
   onNext: () => void
   onBack: () => void
+  onSkipToRegister?: () => void
 }
 
 const AnimatedCircle: any = Animated.createAnimatedComponent(Circle)
 const AnimatedRect: any = Animated.createAnimatedComponent(Rect)
 const AnimatedPath: any = Animated.createAnimatedComponent(Path)
 
-export const ShareAnywhereScreen: React.FC<Props> = ({ onNext, onBack }) => {
+export const ShareAnywhereScreen: React.FC<Props> = ({ onNext, onBack, onSkipToRegister }) => {
   const { theme } = useTheme()
   const fullMessage = "Hello there! I'm your AI-Powered assistant, thank you for creating me. I'm ready to serve your clients anywhere you'll place me.\nJust pin my link anywhere!"
   const [typedMsg, setTypedMsg] = useState('')
@@ -367,7 +368,7 @@ export const ShareAnywhereScreen: React.FC<Props> = ({ onNext, onBack }) => {
         <View style={{ gap: 16, marginTop: 24 }}>
           <Button title={'See me in action'} size="lg" variant="hero" onPress={onNext} />
           <View style={{ alignItems: 'center' }}>
-            <Text onPress={onBack} style={{ color: theme.color.mutedForeground, fontSize: 16, fontWeight: '600', paddingVertical: 6 }}>Skip to register</Text>
+            <Text onPress={onSkipToRegister || onBack} style={{ color: theme.color.mutedForeground, fontSize: 16, fontWeight: '600', paddingVertical: 6 }}>Skip to register</Text>
           </View>
         </View>
       </View>

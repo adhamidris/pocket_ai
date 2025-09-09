@@ -12,6 +12,7 @@ import { LinearGradient } from 'expo-linear-gradient'
 interface HowItWorksAgentProps {
   onNext: () => void
   onBack: () => void
+  onSkipToRegister?: () => void
 }
 
 const Chip: React.FC<{ label: string; selected?: boolean }> = ({ label, selected }) => {
@@ -32,7 +33,7 @@ const Chip: React.FC<{ label: string; selected?: boolean }> = ({ label, selected
   )
 }
 
-export const HowItWorksAgentScreen: React.FC<HowItWorksAgentProps> = ({ onNext, onBack }) => {
+export const HowItWorksAgentScreen: React.FC<HowItWorksAgentProps> = ({ onNext, onBack, onSkipToRegister }) => {
   const { t } = useTranslation()
   const { theme } = useTheme()
 
@@ -365,7 +366,7 @@ export const HowItWorksAgentScreen: React.FC<HowItWorksAgentProps> = ({ onNext, 
               setTimeout(() => { setPageNextLoading(false); onNext() }, 550)
             }}
           />
-          <TouchableOpacity onPress={onBack} activeOpacity={0.7} style={{ alignSelf: 'center', paddingVertical: 6 }}>
+          <TouchableOpacity onPress={onSkipToRegister || onBack} activeOpacity={0.7} style={{ alignSelf: 'center', paddingVertical: 6 }}>
             <Text style={{ color: theme.color.mutedForeground, fontSize: 16, fontWeight: '600' }}>Skip to register</Text>
           </TouchableOpacity>
         </View>

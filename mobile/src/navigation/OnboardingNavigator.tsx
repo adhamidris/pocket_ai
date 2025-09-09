@@ -104,9 +104,9 @@ export const OnboardingNavigator: React.FC<{ onComplete: () => void }> = ({ onCo
         ) : (
         <>
         {currentStep === 0 && <WelcomeScreen onNext={handleNext} onSkip={handleSkip} />}
-        {currentStep === 1 && <HowItWorksScreen onNext={handleNext} onBack={handleBack} />}
-        {currentStep === 2 && <HowItWorksAgentScreen onNext={handleNext} onBack={handleBack} />}
-        {currentStep === 3 && <ShareAnywhereScreen onNext={handleNext} onBack={handleBack} />}
+        {currentStep === 1 && <HowItWorksScreen onNext={handleNext} onBack={handleBack} onSkipToRegister={skipToRegister} />}
+        {currentStep === 2 && <HowItWorksAgentScreen onNext={handleNext} onBack={handleBack} onSkipToRegister={skipToRegister} />}
+        {currentStep === 3 && <ShareAnywhereScreen onNext={handleNext} onBack={handleBack} onSkipToRegister={skipToRegister} />}
         {currentStep === 4 && !showRegister && (
           <ChatPreviewScreen onComplete={handleSkip} onBack={handleBack} onRegister={() => setShowRegister(true)} />
         )}
@@ -120,9 +120,9 @@ export const OnboardingNavigator: React.FC<{ onComplete: () => void }> = ({ onCo
       {transitioningStep !== null && (
         <Animated.View style={{ position: 'absolute', inset: 0, transform: [{ translateX: incomingX }] }}>
           {transitioningStep === 0 && <WelcomeScreen onNext={handleNext} onSkip={handleSkip} />}
-          {transitioningStep === 1 && <HowItWorksScreen onNext={handleNext} onBack={handleBack} />}
-          {transitioningStep === 2 && <HowItWorksAgentScreen onNext={handleNext} onBack={handleBack} />}
-          {transitioningStep === 3 && <ShareAnywhereScreen onNext={handleNext} onBack={handleBack} />}
+          {transitioningStep === 1 && <HowItWorksScreen onNext={handleNext} onBack={handleBack} onSkipToRegister={skipToRegister} />}
+          {transitioningStep === 2 && <HowItWorksAgentScreen onNext={handleNext} onBack={handleBack} onSkipToRegister={skipToRegister} />}
+          {transitioningStep === 3 && <ShareAnywhereScreen onNext={handleNext} onBack={handleBack} onSkipToRegister={skipToRegister} />}
           {transitioningStep === 4 && !showRegister && (
             <ChatPreviewScreen onComplete={handleSkip} onBack={handleBack} onRegister={() => setShowRegister(true)} />
           )}
@@ -135,9 +135,9 @@ export const OnboardingNavigator: React.FC<{ onComplete: () => void }> = ({ onCo
       {isTransitioning && (
         <Animated.View pointerEvents="none" style={{ position: 'absolute', inset: 0, transform: [{ translateX: currentX }], opacity: 0.96 }}>
           {currentStep === 0 && <WelcomeScreen onNext={handleNext} onSkip={handleSkip} />}
-          {currentStep === 1 && <HowItWorksScreen onNext={handleNext} onBack={handleBack} />}
-          {currentStep === 2 && <HowItWorksAgentScreen onNext={handleNext} onBack={handleBack} />}
-          {currentStep === 3 && <ShareAnywhereScreen onNext={handleNext} onBack={handleBack} />}
+          {currentStep === 1 && <HowItWorksScreen onNext={handleNext} onBack={handleBack} onSkipToRegister={skipToRegister} />}
+          {currentStep === 2 && <HowItWorksAgentScreen onNext={handleNext} onBack={handleBack} onSkipToRegister={skipToRegister} />}
+          {currentStep === 3 && <ShareAnywhereScreen onNext={handleNext} onBack={handleBack} onSkipToRegister={skipToRegister} />}
           {currentStep === 4 && !showRegister && (
             <ChatPreviewScreen onComplete={handleSkip} onBack={handleBack} onRegister={() => setShowRegister(true)} />
           )}

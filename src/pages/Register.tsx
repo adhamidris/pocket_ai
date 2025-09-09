@@ -231,12 +231,23 @@ const Register = () => {
   const mapIndustryToLoBKey = (v?: string) => {
     if (!v) return 'Other';
     const s = v.toLowerCase();
-    if (s.includes('e‑commerce') || s.includes('retail')) return 'E‑commerce';
+    // Keep existing categories
+    if (s.includes('e‑commerce') || s.includes('e-commerce') || s.includes('retail')) return 'E‑commerce';
     if (s.includes('saas') || s.includes('software')) return 'SaaS';
     if (s.includes('financial')) return 'Finance';
     if (s.includes('health')) return 'Healthcare';
     if (s.includes('education')) return 'Education';
     if (s.includes('hospitality') || s.includes('travel')) return 'Hospitality';
+    // New detailed categories
+    if (s.includes('manufactur')) return 'Manufacturing';
+    if (s.includes('logistics') || s.includes('transport')) return 'Logistics';
+    if (s.includes('real estate')) return 'Real Estate';
+    if (s.includes('media') || s.includes('entertainment')) return 'Media & Entertainment';
+    if (s.includes('telecom')) return 'Telecommunications';
+    if (s.includes('energy') || s.includes('utilit')) return 'Energy & Utilities';
+    if (s.includes('nonprofit') || s.includes('ngo')) return 'Nonprofit & NGOs';
+    if (s.includes('professional')) return 'Professional Services';
+    if (s.includes('consumer')) return 'Consumer Services';
     return 'Other';
   };
   const isOther = false;
@@ -336,7 +347,6 @@ const Register = () => {
       'Developer Tools',
       'Productivity',
       'Security',
-      // Horizontal SaaS categories (replace Fintech)
       'Billing/Subscriptions',
       'Auth/Identity',
       'Observability',
@@ -350,7 +360,7 @@ const Register = () => {
       'Insurance',
       'Accounting',
       'Crypto/Blockchain',
-      'Fintech',
+      'Trading Platforms',
     ],
     'Healthcare': [
       'Clinics',
@@ -359,6 +369,7 @@ const Register = () => {
       'Diagnostics',
       'Medical Devices',
       'Wellness',
+      'Electronic Health Records',
     ],
     'Education': [
       'K‑12',
@@ -367,6 +378,7 @@ const Register = () => {
       'Corporate Training',
       'Test Prep',
       'Language Learning',
+      'Tutoring & Coaching',
     ],
     'Hospitality': [
       'Hotels',
@@ -374,11 +386,121 @@ const Register = () => {
       'Catering',
       'Travel & Tours',
       'Venues & Events',
+      'Short‑Term Rentals',
+    ],
+    'Manufacturing': [
+      'OEM Production',
+      'Contract Manufacturing',
+      'CNC Machining',
+      'Injection Molding',
+      '3D Printing',
+      'PCB Assembly',
+      'Quality Assurance',
+      'Procurement & Supply',
+      'Packaging',
+      'Maintenance (MRO)',
+    ],
+    'Logistics': [
+      'Freight Forwarding',
+      'Last‑Mile Delivery',
+      'Warehousing & Fulfillment',
+      'Cold Chain',
+      'Customs Brokerage',
+      'Fleet Management',
+      'Courier',
+      'LTL/FTL Trucking',
+      'Air Cargo',
+      'Ocean Freight',
+    ],
+    'Real Estate': [
+      'Residential Sales',
+      'Commercial Leasing',
+      'Property Management',
+      'Valuation & Appraisal',
+      'Real Estate Development',
+      'Facility Management',
+      'Co‑working',
+      'Mortgage Brokerage',
+      'Title & Escrow',
+      'Short‑Term Rentals',
+    ],
+    'Media & Entertainment': [
+      'Streaming Subscriptions',
+      'OTT Platform',
+      'Content Production',
+      'Post‑Production',
+      'Music Publishing',
+      'Game Development',
+      'Live Events',
+      'Digital Advertising',
+      'Influencer Campaigns',
+      'Licensing & Syndication',
+    ],
+    'Telecommunications': [
+      'Mobile Voice',
+      'Fixed Broadband',
+      'VoIP',
+      'IoT Connectivity',
+      'Cloud PBX',
+      'SIP Trunking',
+      'Managed Networks',
+      '5G Solutions',
+      'Fiber to the Home',
+      'Data Center Colocation',
+    ],
+    'Energy & Utilities': [
+      'Electricity Supply',
+      'Natural Gas Supply',
+      'Renewable Generation',
+      'Solar Installation',
+      'Energy Storage',
+      'Smart Metering',
+      'Demand Response',
+      'Energy Trading',
+      'EV Charging',
+      'Utility Billing',
+    ],
+    'Nonprofit & NGOs': [
+      'Fundraising',
+      'Grant Management',
+      'Program Delivery',
+      'Volunteer Management',
+      'Advocacy & Outreach',
+      'Education Programs',
+      'Healthcare Missions',
+      'Disaster Relief',
+      'Community Development',
+      'Monitoring & Evaluation',
+    ],
+    'Professional Services': [
+      'Consulting',
+      'Legal Advisory',
+      'Tax & Audit',
+      'Accounting',
+      'Architecture',
+      'Engineering',
+      'Design & Creative',
+      'Recruitment',
+      'IT Consulting',
+      'Managed IT',
+    ],
+    'Consumer Services': [
+      'Home Cleaning',
+      'Appliance Repair',
+      'Beauty & Wellness',
+      'Fitness & Training',
+      'Tutoring',
+      'Pet Care',
+      'Event Planning',
+      'Photography',
+      'Home Renovation',
+      'Moving & Storage',
     ],
     'Other': [
       'Consulting',
-      'Manufacturing',
-      'Nonprofit',
+      'Custom Development',
+      'Training & Enablement',
+      'Support & Success',
     ],
   };
 
@@ -771,7 +893,6 @@ const Register = () => {
                                     'Telecommunications',
                                     'Energy & Utilities',
                                     'Nonprofit & NGOs',
-                                    'Public Sector & Government',
                                     'Professional Services',
                                     'Consumer Services',
                                   ].map(opt => (

@@ -32,6 +32,8 @@ export const RegisterScreen: React.FC<{ onBack: () => void, onLogin?: () => void
   // Business form state
   const [company, setCompany] = useState('')
   const [industry, setIndustry] = useState('')
+  const [industryQuery, setIndustryQuery] = useState('')
+  const [industryCustomInput, setIndustryCustomInput] = useState('')
   const [employees, setEmployees] = useState('')
   const [website, setWebsite] = useState('')
   const [focusCompany, setFocusCompany] = useState(false)
@@ -41,45 +43,233 @@ export const RegisterScreen: React.FC<{ onBack: () => void, onLogin?: () => void
   const [showIndustryModal, setShowIndustryModal] = useState(false)
   const [showSizeModal, setShowSizeModal] = useState(false)
   const sizeOptions = ['1-10','11-50','51-200','201-1000','1000+']
+  // Updated to mirror web Register industry categories
   const industryOptions = [
-    'E-Commerce',
-    'Retail',
-    'SaaS',
-    'Healthcare',
-    'Finance',
+    'E‑commerce & Retail',
+    'SaaS & Software',
+    'Financial Services',
+    'Healthcare & Life Sciences',
     'Education',
-    'Hospitality',
-    'Real Estate',
-    'Marketing / Advertising',
+    'Hospitality & Travel',
     'Manufacturing',
-    'Logistics / Transportation',
-    'Media / Entertainment',
-    'Non-Profit',
-    'Other',
+    'Logistics & Transportation',
+    'Real Estate',
+    'Media & Entertainment',
+    'Telecommunications',
+    'Energy & Utilities',
+    'Nonprofit & NGOs',
+    'Professional Services',
+    'Consumer Services',
   ]
-  const [otherIndustry, setOtherIndustry] = useState('')
-  const [focusOtherIndustry, setFocusOtherIndustry] = useState(false)
 
-  // LOB options per industry (mirrors web, with sensible fallbacks)
-  const lobOptionsByIndustry: Record<string, string[]> = {
-    'E-Commerce': ['Apparel','Electronics','Beauty & Personal Care','Home & Kitchen','Sports & Outdoors','Groceries','Digital Goods','Handmade & Crafts','Automotive Accessories'],
-    'SaaS': ['CRM','Marketing Automation','Analytics','Project Management','Customer Support','Developer Tools','Fintech','Productivity','Security'],
-    'Finance': ['Banking','Lending','Payments','Wealth Management','Insurance','Accounting','Crypto / Blockchain'],
-    'Healthcare': ['Clinics','Telemedicine','Pharmacy','Diagnostics','Medical Devices','Wellness'],
-    'Education': ['K-12','Higher Education','EdTech Platform','Corporate Training','Test Prep','Language Learning'],
-    'Hospitality': ['Hotels','Restaurants','Catering','Travel & Tours','Venues & Events'],
-    'Retail': ['Apparel','Electronics','Home & Kitchen','Beauty & Personal Care','Groceries','Sports & Outdoors'],
-    'Real Estate': ['Residential','Commercial','Property Management','Brokerage','Vacation Rentals'],
-    'Marketing / Advertising': ['Agency Services','Performance Marketing','Branding','SEO/SEM','Content Marketing','Social Media'],
-    'Manufacturing': ['Automotive','Consumer Goods','Industrial Equipment','Electronics','Food & Beverage'],
-    'Logistics / Transportation': ['Freight','Last-mile Delivery','Warehousing','Fleet Management','Courier Services'],
-    'Media / Entertainment': ['Streaming','Gaming','Publishing','Music','Film/TV','Events'],
-    'Non-Profit': ['Education','Healthcare','Community Services','Environmental','Religious','Arts & Culture'],
-    'Other': ['Consulting','Retail','Manufacturing','Services','Non-profit']
+  // Map industry label to LoB key (mirror web)
+  const mapIndustryToLobKey = (label?: string) => {
+    if (!label) return 'Other'
+    const s = label.toLowerCase()
+    if (s.includes('e‑commerce') || s.includes('e-commerce') || s.includes('retail')) return 'E‑commerce'
+    if (s.includes('saas') || s.includes('software')) return 'SaaS'
+    if (s.includes('financial')) return 'Finance'
+    if (s.includes('health')) return 'Healthcare'
+    if (s.includes('education')) return 'Education'
+    if (s.includes('hospitality') || s.includes('travel')) return 'Hospitality'
+    if (s.includes('manufactur')) return 'Manufacturing'
+    if (s.includes('logistics') || s.includes('transport')) return 'Logistics'
+    if (s.includes('real estate')) return 'Real Estate'
+    if (s.includes('media') || s.includes('entertainment')) return 'Media & Entertainment'
+    if (s.includes('telecom')) return 'Telecommunications'
+    if (s.includes('energy') || s.includes('utilit')) return 'Energy & Utilities'
+    if (s.includes('nonprofit') || s.includes('ngo')) return 'Nonprofit & NGOs'
+    if (s.includes('professional')) return 'Professional Services'
+    if (s.includes('consumer')) return 'Consumer Services'
+    return 'Other'
   }
-  const getLobOptions = (ind: string) => lobOptionsByIndustry[ind] || lobOptionsByIndustry['Other']
+  const lobOptionsByKey: Record<string, string[]> = {
+    'E‑commerce': [
+      'Apparel',
+      'Electronics',
+      'Beauty & Personal Care',
+      'Home & Kitchen',
+      'Sports & Outdoors',
+      'Groceries',
+      'Digital Goods',
+      'Handmade & Crafts',
+      'Automotive Accessories',
+    ],
+    'SaaS': [
+      'CRM',
+      'Marketing Automation',
+      'Analytics',
+      'Project Management',
+      'Customer Support',
+      'Developer Tools',
+      'Productivity',
+      'Security',
+      'Billing/Subscriptions',
+      'Auth/Identity',
+      'Observability',
+      'Data Platform',
+    ],
+    'Finance': [
+      'Banking',
+      'Lending',
+      'Payments',
+      'Wealth Management',
+      'Insurance',
+      'Accounting',
+      'Crypto/Blockchain',
+      'Trading Platforms',
+    ],
+    'Healthcare': [
+      'Clinics',
+      'Telemedicine',
+      'Pharmacy',
+      'Diagnostics',
+      'Medical Devices',
+      'Wellness',
+      'Electronic Health Records',
+    ],
+    'Education': [
+      'K‑12',
+      'Higher Education',
+      'EdTech Platform',
+      'Corporate Training',
+      'Test Prep',
+      'Language Learning',
+      'Tutoring & Coaching',
+    ],
+    'Hospitality': [
+      'Hotels',
+      'Restaurants',
+      'Catering',
+      'Travel & Tours',
+      'Venues & Events',
+      'Short‑Term Rentals',
+    ],
+    'Manufacturing': [
+      'OEM Production',
+      'Contract Manufacturing',
+      'CNC Machining',
+      'Injection Molding',
+      '3D Printing',
+      'PCB Assembly',
+      'Quality Assurance',
+      'Procurement & Supply',
+      'Packaging',
+      'Maintenance (MRO)',
+    ],
+    'Logistics': [
+      'Freight Forwarding',
+      'Last‑Mile Delivery',
+      'Warehousing & Fulfillment',
+      'Cold Chain',
+      'Customs Brokerage',
+      'Fleet Management',
+      'Courier',
+      'LTL/FTL Trucking',
+      'Air Cargo',
+      'Ocean Freight',
+    ],
+    'Real Estate': [
+      'Residential Sales',
+      'Commercial Leasing',
+      'Property Management',
+      'Valuation & Appraisal',
+      'Real Estate Development',
+      'Facility Management',
+      'Co‑working',
+      'Mortgage Brokerage',
+      'Title & Escrow',
+      'Short‑Term Rentals',
+    ],
+    'Media & Entertainment': [
+      'Streaming Subscriptions',
+      'OTT Platform',
+      'Content Production',
+      'Post‑Production',
+      'Music Publishing',
+      'Game Development',
+      'Live Events',
+      'Digital Advertising',
+      'Influencer Campaigns',
+      'Licensing & Syndication',
+    ],
+    'Telecommunications': [
+      'Mobile Voice',
+      'Fixed Broadband',
+      'VoIP',
+      'IoT Connectivity',
+      'Cloud PBX',
+      'SIP Trunking',
+      'Managed Networks',
+      '5G Solutions',
+      'Fiber to the Home',
+      'Data Center Colocation',
+    ],
+    'Energy & Utilities': [
+      'Electricity Supply',
+      'Natural Gas Supply',
+      'Renewable Generation',
+      'Solar Installation',
+      'Energy Storage',
+      'Smart Metering',
+      'Demand Response',
+      'Energy Trading',
+      'EV Charging',
+      'Utility Billing',
+    ],
+    'Nonprofit & NGOs': [
+      'Fundraising',
+      'Grant Management',
+      'Program Delivery',
+      'Volunteer Management',
+      'Advocacy & Outreach',
+      'Education Programs',
+      'Healthcare Missions',
+      'Disaster Relief',
+      'Community Development',
+      'Monitoring & Evaluation',
+    ],
+    'Professional Services': [
+      'Consulting',
+      'Legal Advisory',
+      'Tax & Audit',
+      'Accounting',
+      'Architecture',
+      'Engineering',
+      'Design & Creative',
+      'Recruitment',
+      'IT Consulting',
+      'Managed IT',
+    ],
+    'Consumer Services': [
+      'Home Cleaning',
+      'Appliance Repair',
+      'Beauty & Wellness',
+      'Fitness & Training',
+      'Tutoring',
+      'Pet Care',
+      'Event Planning',
+      'Photography',
+      'Home Renovation',
+      'Moving & Storage',
+    ],
+    'Other': [
+      'Consulting',
+      'Custom Development',
+      'Training & Enablement',
+      'Support & Success',
+    ],
+  }
+  const getLobOptions = (label: string) => {
+    const key = mapIndustryToLobKey(label)
+    const base = lobOptionsByKey[key] || lobOptionsByKey['Other']
+    return base.filter(o => !o.toLowerCase().includes('services'))
+  }
 
   const [selectedLobs, setSelectedLobs] = useState<string[]>([])
+  const [customLobs, setCustomLobs] = useState<string[]>([])
+  const [lobQuery, setLobQuery] = useState('')
+  const [lobCustomInput, setLobCustomInput] = useState('')
   const [showLobModal, setShowLobModal] = useState(false)
   const [focusLob, setFocusLob] = useState(false)
   const lobAnchorRef = useRef<any>(null)
@@ -87,11 +277,9 @@ export const RegisterScreen: React.FC<{ onBack: () => void, onLogin?: () => void
   const [lobContentH, setLobContentH] = useState(0)
   const [lobContainerH, setLobContainerH] = useState(0)
   const [lobScrollY, setLobScrollY] = useState(0)
-  const [specifyProducts, setSpecifyProducts] = useState('')
-  const [focusSpecifyProducts, setFocusSpecifyProducts] = useState(false)
 
   useEffect(() => {
-    // Filter out LOBs not valid for the new industry
+    // Filter out selected LoBs not in the new industry's options
     const options = getLobOptions(industry)
     setSelectedLobs((prev) => prev.filter((x) => options.includes(x)))
   }, [industry])
@@ -139,12 +327,7 @@ export const RegisterScreen: React.FC<{ onBack: () => void, onLogin?: () => void
     }
   }, [])
 
-  useEffect(() => {
-    if (industry !== 'Other') {
-      setOtherIndustry('')
-      setFocusOtherIndustry(false)
-    }
-  }, [industry])
+  // (Removed Other industry branch to mirror web UX)
 
   // Auto-detect country on business step (timezone first, then region/locale)
   useEffect(() => {
@@ -559,20 +742,22 @@ export const RegisterScreen: React.FC<{ onBack: () => void, onLogin?: () => void
             <View style={{ gap: 16, alignItems: 'center', marginTop: 8 }}>
               <TouchableOpacity activeOpacity={0.9} onPress={goToBusinessStep} style={{ overflow: 'hidden', borderRadius: 12, alignSelf: 'center', width: '96%' }}>
                 <LinearGradient colors={[theme.color.primary, theme.color.primaryLight]} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={{ paddingVertical: 20, paddingHorizontal: 16, borderRadius: 12, alignItems: 'center', justifyContent: 'center' }}>
-                  <Text style={{ color: '#fff', fontSize: 16, fontWeight: '700', marginBottom: 4, textAlign: 'center', lineHeight: 22 }}>Business</Text>
-                  <Text style={{ color: '#fff', opacity: 0.9, textAlign: 'center', fontSize: 13, lineHeight: 18 }}>to handle basic customer service tasks</Text>
+                  <Text style={{ color: '#fff', fontSize: 18, fontWeight: '700', marginBottom: 4, textAlign: 'center', lineHeight: 24 }}>B2C</Text>
+                  <Text style={{ color: '#fff', opacity: 0.95, textAlign: 'center', fontSize: 14, lineHeight: 18 }}>Customer Support</Text>
+                  <Text style={{ color: '#fff', opacity: 0.9, textAlign: 'center', fontSize: 12, lineHeight: 16, marginTop: 2 }}>handling inquiries, orders, and complaints</Text>
                 </LinearGradient>
               </TouchableOpacity>
               <TouchableOpacity activeOpacity={0.9} style={{ overflow: 'hidden', borderRadius: 12, alignSelf: 'center', width: '96%' }}>
                 <LinearGradient colors={[theme.color.primary, theme.color.primaryLight]} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={{ paddingVertical: 20, paddingHorizontal: 16, borderRadius: 12, alignItems: 'center', justifyContent: 'center' }}>
-                  <Text style={{ color: '#fff', fontSize: 16, fontWeight: '700', marginBottom: 4, textAlign: 'center', lineHeight: 22 }}>Entrepreneur</Text>
-                  <Text style={{ color: '#fff', opacity: 0.9, textAlign: 'center', fontSize: 13, lineHeight: 18 }}>to handle my clients' communications</Text>
+                  <Text style={{ color: '#fff', fontSize: 18, fontWeight: '700', marginBottom: 4, textAlign: 'center', lineHeight: 24 }}>B2B</Text>
+                  <Text style={{ color: '#fff', opacity: 0.95, textAlign: 'center', fontSize: 14, lineHeight: 18 }}>Business Development</Text>
+                  <Text style={{ color: '#fff', opacity: 0.9, textAlign: 'center', fontSize: 12, lineHeight: 16, marginTop: 2 }}>managing suppliers, clients, and partners</Text>
                 </LinearGradient>
               </TouchableOpacity>
               <TouchableOpacity activeOpacity={0.9} style={{ overflow: 'hidden', borderRadius: 12, alignSelf: 'center', width: '96%' }}>
                 <LinearGradient colors={[theme.color.primary, theme.color.primaryLight]} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={{ paddingVertical: 20, paddingHorizontal: 16, borderRadius: 12, alignItems: 'center', justifyContent: 'center' }}>
-                  <Text style={{ color: '#fff', fontSize: 16, fontWeight: '700', marginBottom: 4, textAlign: 'center', lineHeight: 22 }}>Employee</Text>
-                  <Text style={{ color: '#fff', opacity: 0.9, textAlign: 'center', fontSize: 13, lineHeight: 18 }}>to handle my frontlining daily tasks</Text>
+                  <Text style={{ color: '#fff', fontSize: 18, fontWeight: '700', marginBottom: 4, textAlign: 'center', lineHeight: 24 }}>Employee</Text>
+                  <Text style={{ color: '#fff', opacity: 0.9, textAlign: 'center', fontSize: 12, lineHeight: 16 }}>for day‑to‑day frontline communication, internal requests, and task handoffs</Text>
                 </LinearGradient>
               </TouchableOpacity>
             </View>
@@ -592,7 +777,7 @@ export const RegisterScreen: React.FC<{ onBack: () => void, onLogin?: () => void
           <View style={{ marginTop: 4 }}>
             <View style={{ gap: 8 }}>
               <View style={{ backgroundColor: theme.color.accent, borderRadius: 12, paddingHorizontal: 10, paddingVertical: 6, borderWidth: 0, borderColor: 'transparent', shadowColor: theme.color.primary, shadowOpacity: focusCompany ? 0.12 : 0, shadowRadius: 10, shadowOffset: { width: 0, height: 6 }, elevation: 0 }}>
-                <Text style={{ color: theme.color.cardForeground, fontSize: 12, fontWeight: '600', marginBottom: 4 }}>Company name</Text>
+                <Text style={{ color: theme.color.cardForeground, fontSize: 12, fontWeight: '600', marginBottom: 4 }}>Business name</Text>
                 <TextInput value={company} onChangeText={setCompany} placeholder="Acme Inc" placeholderTextColor={theme.color.mutedForeground} underlineColorAndroid="transparent" onFocus={() => setFocusCompany(true)} onBlur={() => setFocusCompany(false)} style={{ color: theme.color.cardForeground, paddingVertical: 2, fontSize: 14, borderWidth: 0, borderColor: 'transparent' }} />
               </View>
               <View style={{ backgroundColor: theme.color.accent, borderRadius: 12, paddingHorizontal: 10, paddingVertical: 6, borderWidth: 0, borderColor: 'transparent', shadowColor: theme.color.primary, shadowOpacity: focusIndustry ? 0.12 : 0, shadowRadius: 10, shadowOffset: { width: 0, height: 6 }, elevation: 0 }}>
@@ -611,16 +796,11 @@ export const RegisterScreen: React.FC<{ onBack: () => void, onLogin?: () => void
                   </View>
                 </Pressable>
               </View>
-              {industry === 'Other' && (
-                <View style={{ backgroundColor: theme.color.accent, borderRadius: 12, paddingHorizontal: 10, paddingVertical: 6, borderWidth: 0, borderColor: 'transparent', shadowColor: theme.color.primary, shadowOpacity: focusOtherIndustry ? 0.12 : 0, shadowRadius: 10, shadowOffset: { width: 0, height: 6 }, elevation: 0 }}>
-                  <Text style={{ color: theme.color.cardForeground, fontSize: 12, fontWeight: '600', marginBottom: 4 }}>Industry (please specify)</Text>
-                  <TextInput value={otherIndustry} onChangeText={setOtherIndustry} placeholder="Type your industry" placeholderTextColor={theme.color.mutedForeground} underlineColorAndroid="transparent" onFocus={() => setFocusOtherIndustry(true)} onBlur={() => setFocusOtherIndustry(false)} style={{ color: theme.color.cardForeground, paddingVertical: 2, fontSize: 14, borderWidth: 0, borderColor: 'transparent' }} />
-                </View>
-              )}
+              {/* 'Other' free-text branch removed to mirror web flow */}
 
-              {/* Line of Products/Services */}
+              {/* Products/Services */}
               <View style={{ backgroundColor: theme.color.accent, borderRadius: 12, paddingHorizontal: 10, paddingVertical: 6, borderWidth: 0, borderColor: 'transparent', shadowColor: theme.color.primary, shadowOpacity: focusLob ? 0.12 : 0, shadowRadius: 10, shadowOffset: { width: 0, height: 6 }, elevation: 0 }}>
-                <Text style={{ color: theme.color.cardForeground, fontSize: 12, fontWeight: '600', marginBottom: 4 }}>Line of Products/Services</Text>
+                <Text style={{ color: theme.color.cardForeground, fontSize: 12, fontWeight: '600', marginBottom: 4 }}>Products/Services</Text>
                 <Pressable
                   ref={lobAnchorRef}
                   collapsable={false}
@@ -628,19 +808,39 @@ export const RegisterScreen: React.FC<{ onBack: () => void, onLogin?: () => void
                   hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
                 >
                   <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
-                    <Text style={{ color: selectedLobs.length ? theme.color.cardForeground : theme.color.mutedForeground, paddingVertical: 2, fontSize: 14 }}>
-                      {selectedLobs.length ? (selectedLobs.length <= 2 ? selectedLobs.join(', ') : `${selectedLobs.slice(0,2).join(', ')} +${selectedLobs.length - 2}`) : 'Select Products/Services'}
+                    <View style={{ flexDirection: 'row', alignItems: 'center', flex: 1, overflow: 'hidden' }}>
+                      {(() => {
+                        const merged = Array.from(new Set([...(selectedLobs||[]), ...(customLobs||[])]))
+                        const visible = merged.slice(0, 2)
+                        const remaining = Math.max(0, merged.length - visible.length)
+                        if (merged.length === 0) {
+                          return (
+                            <Text style={{ color: theme.color.mutedForeground, paddingVertical: 2, fontSize: 14, flexShrink: 1 }} numberOfLines={1}>
+                              Select Products/Services
                     </Text>
-                    <Text style={{ color: theme.color.mutedForeground, fontSize: 16 }}>▾</Text>
+                          )
+                        }
+                        return (
+                          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, flexShrink: 1 }}>
+                            {visible.map((opt) => (
+                              <View key={opt} style={{ backgroundColor: theme.color.secondary, borderWidth: 1, borderColor: theme.color.border, borderRadius: theme.radius.sm, paddingHorizontal: 8, paddingVertical: 2 }}>
+                                <Text style={{ color: theme.color.mutedForeground, fontSize: 12, fontWeight: '600' }}>{opt}</Text>
+                  </View>
+                            ))}
+                            {remaining > 0 && (
+                              <View style={{ backgroundColor: 'transparent', borderWidth: 1, borderColor: theme.color.border, borderRadius: theme.radius.sm, paddingHorizontal: 8, paddingVertical: 2 }}>
+                                <Text style={{ color: theme.color.mutedForeground, fontSize: 12, fontWeight: '600' }}>+{remaining}</Text>
+                </View>
+              )}
+                          </View>
+                        )
+                      })()}
+                    </View>
+                    <Text style={{ color: theme.color.mutedForeground, fontSize: 16, marginLeft: 8 }}>▾</Text>
                   </View>
                 </Pressable>
               </View>
-              {selectedLobs.includes('Other') && (
-                <View style={{ backgroundColor: theme.color.accent, borderRadius: 12, paddingHorizontal: 10, paddingVertical: 6, borderWidth: 0, borderColor: 'transparent', shadowColor: theme.color.primary, shadowOpacity: focusSpecifyProducts ? 0.12 : 0, shadowRadius: 10, shadowOffset: { width: 0, height: 6 }, elevation: 0 }}>
-                  <Text style={{ color: theme.color.cardForeground, fontSize: 12, fontWeight: '600', marginBottom: 4 }}>Specify your Services/Products</Text>
-                  <TextInput value={specifyProducts} onChangeText={setSpecifyProducts} placeholder="Type your services/products" placeholderTextColor={theme.color.mutedForeground} underlineColorAndroid="transparent" onFocus={() => setFocusSpecifyProducts(true)} onBlur={() => setFocusSpecifyProducts(false)} style={{ color: theme.color.cardForeground, paddingVertical: 2, fontSize: 14, borderWidth: 0, borderColor: 'transparent' }} />
-                </View>
-              )}
+              {/* Replaced free-text Other with custom LoB chips in modal */}
 
               {/* Company size */}
               <View style={{ backgroundColor: theme.color.accent, borderRadius: 12, paddingHorizontal: 10, paddingVertical: 6, borderWidth: 0, borderColor: 'transparent', shadowColor: theme.color.primary, shadowOpacity: focusEmployees ? 0.12 : 0, shadowRadius: 10, shadowOffset: { width: 0, height: 6 }, elevation: 0 }}>
@@ -714,20 +914,56 @@ export const RegisterScreen: React.FC<{ onBack: () => void, onLogin?: () => void
                   (() => { const plc = getMenuPlacement(industryMenuPos); return (
                   <View style={{ position: 'absolute', left: industryMenuPos.x, top: plc.top, width: industryMenuPos.width }}>
                     <View onLayout={(e) => setIndustryContainerH(e.nativeEvent.layout.height)} style={{ backgroundColor: theme.color.card, borderRadius: 12, borderWidth: 0, borderColor: 'transparent', maxHeight: plc.maxHeight, shadowColor: '#000', shadowOpacity: 0.2, shadowRadius: 16, shadowOffset: { width: 0, height: 10 }, elevation: 10, overflow: 'hidden' }}>
-                      <View style={{ paddingVertical: 8, paddingHorizontal: 12 }}>
+                      <View style={{ paddingTop: 8, paddingBottom: 0, paddingHorizontal: 12 }}>
                         <Text style={{ color: theme.color.cardForeground, fontSize: 14, fontWeight: '700', marginBottom: 6 }}>Select industry</Text>
-                        <View style={{ position: 'relative', paddingBottom: 8 }}>
+                        <View style={{ position: 'relative' }}>
+                          {/* Search */}
+                          <View style={{ marginBottom: 8 }}>
+                            <View style={{ backgroundColor: theme.color.accent, borderRadius: 8, paddingHorizontal: 10, paddingVertical: 6 }}>
+                              <TextInput
+                                value={industryQuery}
+                                onChangeText={setIndustryQuery}
+                                placeholder="Search industry"
+                                placeholderTextColor={theme.color.mutedForeground}
+                                style={{ color: theme.color.cardForeground, fontSize: 14, paddingVertical: 2 }}
+                              />
+                            </View>
+                          </View>
+                          {/* Add custom */}
+                          <View style={{ marginBottom: 8 }}>
+                            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                              <View style={{ flex: 1, backgroundColor: theme.color.accent, borderRadius: 8, paddingHorizontal: 10, paddingVertical: 6 }}>
+                                <TextInput
+                                  value={industryCustomInput}
+                                  onChangeText={setIndustryCustomInput}
+                                  placeholder="Add custom"
+                                  placeholderTextColor={theme.color.mutedForeground}
+                                  style={{ color: theme.color.cardForeground, fontSize: 14, paddingVertical: 2 }}
+                                />
+                              </View>
+                              <TouchableOpacity
+                                activeOpacity={0.85}
+                                onPress={() => {
+                                  const v = industryCustomInput.trim(); if (!v) return;
+                                  setIndustry(v);
+                                  setIndustryCustomInput('');
+                                  setShowIndustryModal(false); setFocusIndustry(false);
+                                }}
+                                style={{ backgroundColor: theme.color.primary, borderRadius: 8, paddingHorizontal: 12, paddingVertical: 8 }}
+                              >
+                                <Text style={{ color: '#fff', fontWeight: '600' }}>Add</Text>
+                              </TouchableOpacity>
+                            </View>
+                          </View>
+                          {/* List */}
                           <ScrollView
-                            showsVerticalScrollIndicator={false}
-                            contentContainerStyle={{ paddingBottom: 20 }}
-                            contentInset={{ bottom: Platform.OS === 'ios' ? 10 : 0 }}
-                            scrollIndicatorInsets={{ bottom: 8 }}
+                            showsVerticalScrollIndicator={true}
+                            contentContainerStyle={{ paddingBottom: 0 }}
                             keyboardShouldPersistTaps="handled"
-                            onContentSizeChange={(w, h) => setIndustryContentH(h)}
-                            onScroll={(e) => setIndustryScrollY(e.nativeEvent.contentOffset.y)}
                             scrollEventThrottle={16}
+                            style={{ maxHeight: Math.max(140, plc.maxHeight - 160) }}
                           >
-                            {industryOptions.map((opt) => (
+                            {(industryOptions.filter(opt => !industryQuery.trim() || opt.toLowerCase().includes(industryQuery.toLowerCase()))).map((opt) => (
                               <TouchableOpacity
                                 key={opt}
                                 onPress={() => { setIndustry(opt); setShowIndustryModal(false); setFocusIndustry(false) }}
@@ -738,7 +974,6 @@ export const RegisterScreen: React.FC<{ onBack: () => void, onLogin?: () => void
                               </TouchableOpacity>
                             ))}
                           </ScrollView>
-                          {/* scrollbar removed intentionally */}
                         </View>
                       </View>
                     </View>
@@ -859,19 +1094,55 @@ export const RegisterScreen: React.FC<{ onBack: () => void, onLogin?: () => void
                   <View style={{ position: 'absolute', left: lobMenuPos.x, top: plc.top, width: lobMenuPos.width }}>
                     <View onLayout={(e) => setLobContainerH(e.nativeEvent.layout.height)} style={{ backgroundColor: theme.color.card, borderRadius: 12, borderWidth: 0, borderColor: 'transparent', maxHeight: plc.maxHeight, shadowColor: '#000', shadowOpacity: 0.2, shadowRadius: 16, shadowOffset: { width: 0, height: 10 }, elevation: 10, overflow: 'hidden' }}>
                       <View style={{ paddingVertical: 8, paddingHorizontal: 12 }}>
-                        <Text style={{ color: theme.color.cardForeground, fontSize: 14, fontWeight: '700', marginBottom: 6 }}>Line of Products/Services</Text>
+                        <Text style={{ color: theme.color.cardForeground, fontSize: 14, fontWeight: '700', marginBottom: 6 }}>Products/Services</Text>
                         <View style={{ position: 'relative', paddingBottom: 8 }}>
+                          <View style={{ marginBottom: 8 }}>
+                            <View style={{ backgroundColor: theme.color.accent, borderRadius: 8, paddingHorizontal: 10, paddingVertical: 6, borderWidth: 0, borderColor: 'transparent' }}>
+                              <TextInput
+                                value={lobQuery}
+                                onChangeText={setLobQuery}
+                                placeholder="Search products/services"
+                                placeholderTextColor={theme.color.mutedForeground}
+                                style={{ color: theme.color.cardForeground, fontSize: 14, paddingVertical: 2 }}
+                              />
+                            </View>
+                          </View>
+                          {/* Add custom moved above the list to avoid clipping */}
+                          <View style={{ marginBottom: 8 }}>
+                            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                              <View style={{ flex: 1, backgroundColor: theme.color.accent, borderRadius: 8, paddingHorizontal: 10, paddingVertical: 6 }}>
+                                <TextInput
+                                  value={lobCustomInput}
+                                  onChangeText={setLobCustomInput}
+                                  placeholder="Add custom"
+                                  placeholderTextColor={theme.color.mutedForeground}
+                                  style={{ color: theme.color.cardForeground, fontSize: 14, paddingVertical: 2 }}
+                                />
+                              </View>
+                              <TouchableOpacity
+                                activeOpacity={0.85}
+                                onPress={() => {
+                                  const v = lobCustomInput.trim()
+                                  if (!v) return
+                                  setCustomLobs(prev => prev.includes(v) ? prev : [...prev, v])
+                                  setLobCustomInput('')
+                                }}
+                                style={{ backgroundColor: theme.color.primary, borderRadius: 8, paddingHorizontal: 12, paddingVertical: 8 }}
+                              >
+                                <Text style={{ color: '#fff', fontWeight: '600' }}>Add</Text>
+                              </TouchableOpacity>
+                            </View>
+                          </View>
                           <ScrollView
-                            showsVerticalScrollIndicator={false}
-                            contentContainerStyle={{ paddingBottom: 20 }}
-                            contentInset={{ bottom: Platform.OS === 'ios' ? 10 : 0 }}
-                            scrollIndicatorInsets={{ bottom: 8 }}
+                            showsVerticalScrollIndicator={true}
+                            contentContainerStyle={{ paddingBottom: 0 }}
                             keyboardShouldPersistTaps="handled"
                             onContentSizeChange={(w, h) => setLobContentH(h)}
                             onScroll={(e) => setLobScrollY(e.nativeEvent.contentOffset.y)}
                             scrollEventThrottle={16}
+                            style={{ maxHeight: Math.max(140, plc.maxHeight - 160) }}
                           >
-                            {options.map((opt) => {
+                            {options.filter(o => !lobQuery.trim() || o.toLowerCase().includes(lobQuery.toLowerCase())).map((opt) => {
                               const selected = selectedLobs.includes(opt)
                               return (
                                 <TouchableOpacity
@@ -891,8 +1162,8 @@ export const RegisterScreen: React.FC<{ onBack: () => void, onLogin?: () => void
                                 </TouchableOpacity>
                               )
                             })}
+                            {/* End of list */}
                           </ScrollView>
-                          {/* scrollbar removed intentionally */}
                         </View>
                       </View>
                     </View>

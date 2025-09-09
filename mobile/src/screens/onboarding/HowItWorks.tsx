@@ -13,6 +13,7 @@ import { Check } from 'lucide-react-native'
 interface HowItWorksScreenProps {
   onNext: () => void
   onBack: () => void
+  onSkipToRegister?: () => void
 }
 
 const StepCard: React.FC<{ title: string; bullets: string[] }> = ({ title, bullets }) => {
@@ -71,7 +72,7 @@ const AnimatedConnector: React.FC<{ progress: Animated.Value }> = ({ progress })
   )
 }
 
-export const HowItWorksScreen: React.FC<HowItWorksScreenProps> = ({ onNext, onBack }) => {
+export const HowItWorksScreen: React.FC<HowItWorksScreenProps> = ({ onNext, onBack, onSkipToRegister }) => {
   const { t } = useTranslation()
   const { theme } = useTheme()
 
@@ -410,7 +411,7 @@ export const HowItWorksScreen: React.FC<HowItWorksScreenProps> = ({ onNext, onBa
             size="lg"
             variant="hero"
           />
-          <TouchableOpacity onPress={onBack} activeOpacity={0.7} style={{ alignSelf: 'center', paddingVertical: 6 }}>
+          <TouchableOpacity onPress={onSkipToRegister || onBack} activeOpacity={0.7} style={{ alignSelf: 'center', paddingVertical: 6 }}>
             <Text style={{ color: theme.color.mutedForeground, fontSize: 16, fontWeight: '600' }}>Skip to register</Text>
           </TouchableOpacity>
         </View>
