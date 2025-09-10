@@ -167,7 +167,7 @@ export const SkipLoginScreen: React.FC<Props> = ({ onBack, onLogin, onRegister }
                 <TextInput
                   placeholder="you@company.com"
                   keyboardType="email-address"
-                  placeholderTextColor={theme.color.mutedForeground}
+                  placeholderTextColor={theme.color.placeholder}
                   underlineColorAndroid="transparent"
                   style={{ color: theme.color.cardForeground, paddingVertical: 3, fontSize: 14 }}
                 />
@@ -180,7 +180,7 @@ export const SkipLoginScreen: React.FC<Props> = ({ onBack, onLogin, onRegister }
                   autoComplete="off"
                   textContentType="none"
                   importantForAutofill="no"
-                  placeholderTextColor={theme.color.mutedForeground}
+                  placeholderTextColor={theme.color.placeholder}
                   underlineColorAndroid="transparent"
                   style={{ color: theme.color.cardForeground, paddingVertical: 3, fontSize: 14 }}
                 />

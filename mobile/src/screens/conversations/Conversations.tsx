@@ -1,5 +1,6 @@
 import React, { useState } from 'react'
 import { View, Text, SafeAreaView, ScrollView, TouchableOpacity, Alert } from 'react-native'
+import { useSafeAreaInsets } from 'react-native-safe-area-context'
 import { useTranslation } from 'react-i18next'
 import { useTheme } from '../../providers/ThemeProvider'
 import { Card } from '../../components/ui/Card'
@@ -33,6 +34,7 @@ interface Conversation {
 export const ConversationsScreen: React.FC = () => {
   const { t } = useTranslation()
   const { theme } = useTheme()
+  const insets = useSafeAreaInsets()
   const [activeTab, setActiveTab] = useState<'active' | 'archived' | 'all'>('active')
   const [selectedConversation, setSelectedConversation] = useState<Conversation | null>(null)
   const [showChat, setShowChat] = useState(false)
@@ -276,7 +278,7 @@ export const ConversationsScreen: React.FC = () => {
     <SafeAreaView style={{ flex: 1, backgroundColor: theme.color.background }}>
       <View style={{ flex: 1 }}>
         {/* Header */}
-        <View style={{ padding: 24, paddingBottom: 16 }}>
+        <View style={{ paddingHorizontal: 24, paddingTop: insets.top + 12, paddingBottom: 16 }}>
           <Text style={{
             color: theme.color.foreground,
             fontSize: 32,
@@ -288,105 +290,35 @@ export const ConversationsScreen: React.FC = () => {
 
           {/* Stats Row */}
           <View style={{ flexDirection: 'row', gap: 12, marginBottom: 16 }}>
-            <View style={{
-              backgroundColor: theme.color.primary + '20',
-              borderRadius: theme.radius.md,
-              paddingHorizontal: 12,
-              paddingVertical: 8,
-              flex: 1,
-              alignItems: 'center'
-            }}>
-              <MessageCircle size={16} color={theme.color.primary} />
-              <Text style={{
-                color: theme.color.primary,
-                fontSize: 16,
-                fontWeight: '700',
-                marginTop: 4
+            {[{icon: MessageCircle, color: theme.color.primary, value: stats.total, label: 'Total'},
+              {icon: Users, color: theme.color.success, value: stats.active, label: 'Active'},
+              {icon: Clock, color: theme.color.warning, value: stats.waiting, label: 'Waiting'},
+              {icon: AlertTriangle, color: theme.color.error, value: stats.urgent, label: 'Urgent'}].map((s, idx) => (
+              <View key={idx} style={{
+                backgroundColor: theme.color.card,
+                borderRadius: theme.radius.md,
+                paddingHorizontal: 12,
+                paddingVertical: 8,
+                flex: 1,
+                alignItems: 'center'
               }}>
-                {stats.total}
-              </Text>
-              <Text style={{
-                color: theme.color.primary,
-                fontSize: 10
-              }}>
-                Total
-              </Text>
-            </View>
-            
-            <View style={{
-              backgroundColor: theme.color.success + '20',
-              borderRadius: theme.radius.md,
-              paddingHorizontal: 12,
-              paddingVertical: 8,
-              flex: 1,
-              alignItems: 'center'
-            }}>
-              <Users size={16} color={theme.color.success} />
-              <Text style={{
-                color: theme.color.success,
-                fontSize: 16,
-                fontWeight: '700',
-                marginTop: 4
-              }}>
-                {stats.active}
-              </Text>
-              <Text style={{
-                color: theme.color.success,
-                fontSize: 10
-              }}>
-                Active
-              </Text>
-            </View>
-            
-            <View style={{
-              backgroundColor: theme.color.warning + '20',
-              borderRadius: theme.radius.md,
-              paddingHorizontal: 12,
-              paddingVertical: 8,
-              flex: 1,
-              alignItems: 'center'
-            }}>
-              <Clock size={16} color={theme.color.warning} />
-              <Text style={{
-                color: theme.color.warning,
-                fontSize: 16,
-                fontWeight: '700',
-                marginTop: 4
-              }}>
-                {stats.waiting}
-              </Text>
-              <Text style={{
-                color: theme.color.warning,
-                fontSize: 10
-              }}>
-                Waiting
-              </Text>
-            </View>
-            
-            <View style={{
-              backgroundColor: theme.color.error + '20',
-              borderRadius: theme.radius.md,
-              paddingHorizontal: 12,
-              paddingVertical: 8,
-              flex: 1,
-              alignItems: 'center'
-            }}>
-              <AlertTriangle size={16} color={theme.color.error} />
-              <Text style={{
-                color: theme.color.error,
-                fontSize: 16,
-                fontWeight: '700',
-                marginTop: 4
-              }}>
-                {stats.urgent}
-              </Text>
-              <Text style={{
-                color: theme.color.error,
-                fontSize: 10
-              }}>
-                Urgent
-              </Text>
-            </View>
+                <s.icon size={16} color={s.color as any} />
+                <Text style={{
+                  color: theme.color.cardForeground,
+                  fontSize: 16,
+                  fontWeight: '700',
+                  marginTop: 4
+                }}>
+                  {s.value}
+                </Text>
+                <Text style={{
+                  color: theme.color.mutedForeground,
+                  fontSize: 10
+                }}>
+                  {s.label}
+                </Text>
+              </View>
+            ))}
           </View>
 
           {/* Search Bar */}
@@ -426,22 +358,20 @@ export const ConversationsScreen: React.FC = () => {
               onPress={() => setActiveTab(tab.key)}
               style={{
                 flex: 1,
-                paddingVertical: 12,
-                paddingHorizontal: 16,
+                paddingVertical: 10,
+                paddingHorizontal: 14,
                 borderRadius: theme.radius.md,
                 backgroundColor: activeTab === tab.key 
-                  ? theme.color.primary + '20' 
+                  ? (theme.dark ? theme.color.secondary : theme.color.card) 
                   : 'transparent',
-                borderWidth: 1,
-                borderColor: activeTab === tab.key 
-                  ? theme.color.primary 
-                  : 'transparent',
+                borderWidth: 0,
+                borderColor: 'transparent',
                 marginRight: tab.key !== 'all' ? 8 : 0
               }}
             >
               <Text style={{
                 color: activeTab === tab.key 
-                  ? theme.color.primary 
+                  ? theme.color.cardForeground 
                   : theme.color.mutedForeground,
                 textAlign: 'center',
                 fontWeight: '600'

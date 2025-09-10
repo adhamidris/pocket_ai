@@ -1,5 +1,6 @@
 import React, { useState } from 'react'
 import { View, Text, SafeAreaView, ScrollView, TouchableOpacity, Alert } from 'react-native'
+import { useSafeAreaInsets } from 'react-native-safe-area-context'
 import { useTranslation } from 'react-i18next'
 import { useTheme } from '../../providers/ThemeProvider'
 import { Card } from '../../components/ui/Card'
@@ -27,6 +28,7 @@ interface Customer {
 export const CRMScreen: React.FC = () => {
   const { t } = useTranslation()
   const { theme } = useTheme()
+  const insets = useSafeAreaInsets()
   const [activeTab, setActiveTab] = useState<'customers' | 'segments' | 'insights'>('customers')
   const [selectedCustomer, setSelectedCustomer] = useState<Customer | null>(null)
   const [showCustomerDetail, setShowCustomerDetail] = useState(false)
@@ -126,7 +128,7 @@ export const CRMScreen: React.FC = () => {
     <SafeAreaView style={{ flex: 1, backgroundColor: theme.color.background }}>
       <View style={{ flex: 1 }}>
         {/* Header */}
-        <View style={{ padding: 24, paddingBottom: 16 }}>
+        <View style={{ paddingHorizontal: 24, paddingTop: insets.top + 12, paddingBottom: 16 }}>
           <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
             <Text style={{
               color: theme.color.foreground,
@@ -138,26 +140,26 @@ export const CRMScreen: React.FC = () => {
             <TouchableOpacity style={{
               width: 44,
               height: 44,
-              backgroundColor: theme.color.primary,
+              backgroundColor: theme.color.card,
               borderRadius: 22,
               alignItems: 'center',
               justifyContent: 'center'
             }}>
-              <Plus color="#fff" size={20} />
+              <Plus color={theme.color.cardForeground as any} size={20} />
             </TouchableOpacity>
           </View>
 
           {/* Stats Row */}
           <View style={{ flexDirection: 'row', gap: 12, marginBottom: 16 }}>
             <View style={{
-              backgroundColor: theme.color.primary + '20',
+              backgroundColor: theme.color.card,
               borderRadius: theme.radius.md,
               paddingHorizontal: 12,
               paddingVertical: 8,
               flex: 1
             }}>
               <Text style={{
-                color: theme.color.primary,
+                color: theme.color.cardForeground,
                 fontSize: 18,
                 fontWeight: '700',
                 textAlign: 'center'
@@ -165,7 +167,7 @@ export const CRMScreen: React.FC = () => {
                 {stats.total}
               </Text>
               <Text style={{
-                color: theme.color.primary,
+                color: theme.color.mutedForeground,
                 fontSize: 11,
                 textAlign: 'center'
               }}>
@@ -174,14 +176,14 @@ export const CRMScreen: React.FC = () => {
             </View>
             
             <View style={{
-              backgroundColor: theme.color.success + '20',
+              backgroundColor: theme.color.card,
               borderRadius: theme.radius.md,
               paddingHorizontal: 12,
               paddingVertical: 8,
               flex: 1
             }}>
               <Text style={{
-                color: theme.color.success,
+                color: theme.color.cardForeground,
                 fontSize: 18,
                 fontWeight: '700',
                 textAlign: 'center'
@@ -189,7 +191,7 @@ export const CRMScreen: React.FC = () => {
                 {stats.active}
               </Text>
               <Text style={{
-                color: theme.color.success,
+                color: theme.color.mutedForeground,
                 fontSize: 11,
                 textAlign: 'center'
               }}>
@@ -198,14 +200,14 @@ export const CRMScreen: React.FC = () => {
             </View>
             
             <View style={{
-              backgroundColor: theme.color.warning + '20',
+              backgroundColor: theme.color.card,
               borderRadius: theme.radius.md,
               paddingHorizontal: 12,
               paddingVertical: 8,
               flex: 1
             }}>
               <Text style={{
-                color: theme.color.warning,
+                color: theme.color.cardForeground,
                 fontSize: 18,
                 fontWeight: '700',
                 textAlign: 'center'
@@ -213,7 +215,7 @@ export const CRMScreen: React.FC = () => {
                 {stats.vip}
               </Text>
               <Text style={{
-                color: theme.color.warning,
+                color: theme.color.mutedForeground,
                 fontSize: 11,
                 textAlign: 'center'
               }}>
@@ -222,14 +224,14 @@ export const CRMScreen: React.FC = () => {
             </View>
             
             <View style={{
-              backgroundColor: theme.color.mutedForeground + '20',
+              backgroundColor: theme.color.card,
               borderRadius: theme.radius.md,
               paddingHorizontal: 12,
               paddingVertical: 8,
               flex: 1
             }}>
               <Text style={{
-                color: theme.color.mutedForeground,
+                color: theme.color.cardForeground,
                 fontSize: 14,
                 fontWeight: '700',
                 textAlign: 'center'
@@ -283,16 +285,14 @@ export const CRMScreen: React.FC = () => {
               onPress={() => setActiveTab(tab.key)}
               style={{
                 flex: 1,
-                paddingVertical: 12,
-                paddingHorizontal: 16,
+                paddingVertical: 10,
+                paddingHorizontal: 14,
                 borderRadius: theme.radius.md,
                 backgroundColor: activeTab === tab.key 
-                  ? theme.color.primary + '20' 
+                  ? (theme.dark ? theme.color.secondary : theme.color.card) 
                   : 'transparent',
-                borderWidth: 1,
-                borderColor: activeTab === tab.key 
-                  ? theme.color.primary 
-                  : 'transparent',
+                borderWidth: 0,
+                borderColor: 'transparent',
                 marginRight: tab.key !== 'insights' ? 8 : 0,
                 flexDirection: 'row',
                 alignItems: 'center',
@@ -302,13 +302,13 @@ export const CRMScreen: React.FC = () => {
             >
               <tab.icon
                 color={activeTab === tab.key 
-                  ? theme.color.primary 
+                  ? theme.color.cardForeground 
                   : theme.color.mutedForeground}
                 size={16}
               />
               <Text style={{
                 color: activeTab === tab.key 
-                  ? theme.color.primary 
+                  ? theme.color.cardForeground 
                   : theme.color.mutedForeground,
                 fontWeight: '600',
                 fontSize: 14

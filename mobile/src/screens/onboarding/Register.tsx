@@ -2,11 +2,12 @@ import React, { useRef, useState, useEffect } from 'react'
 import { SafeAreaView, View, Text, TextInput, TouchableOpacity, Modal, ScrollView, Pressable, KeyboardAvoidingView, Platform, Dimensions, Animated, Easing, LayoutAnimation, UIManager } from 'react-native'
 import Svg, { Path } from 'react-native-svg'
 import { LinearGradient } from 'expo-linear-gradient'
+import { Paperclip } from 'lucide-react-native'
 import { useTheme } from '../../providers/ThemeProvider'
 import { Button } from '../../components/ui/Button'
 import * as Localization from 'expo-localization'
 
-export const RegisterScreen: React.FC<{ onBack: () => void, onLogin?: () => void }> = ({ onBack, onLogin }) => {
+export const RegisterScreen: React.FC<{ onBack: () => void, onLogin?: () => void, onComplete?: () => void }> = ({ onBack, onLogin, onComplete }) => {
   const { theme } = useTheme()
   const [firstName, setFirstName] = useState('')
   const [email, setEmail] = useState('')
@@ -103,6 +104,15 @@ export const RegisterScreen: React.FC<{ onBack: () => void, onLogin?: () => void
     { key: 'tc', label: 'T&C' },
   ]
   const [selectedUploadTypes, setSelectedUploadTypes] = useState<string[]>([])
+  
+  const attachUrl = (value: string, setList: React.Dispatch<React.SetStateAction<string[]>>, clear: () => void) => {
+    const v = (value || '').trim()
+    if (!v) return
+    // naive URL validation
+    const looksUrl = /^(https?:\/\/|www\.)/i.test(v)
+    setList(prev => prev.includes(v) ? prev : [...prev, v])
+    if (looksUrl) clear()
+  }
   
   // Updated to mirror web Register industry categories
   const industryOptions = [
@@ -834,12 +844,20 @@ export const RegisterScreen: React.FC<{ onBack: () => void, onLogin?: () => void
   }> = ({ url, onUrlChange, onAttach, files, theme }) => (
     <View style={{ gap: 8 }}>
       <View style={{ flexDirection: 'row', gap: 8, alignItems: 'center' }}>
-        <View style={{ flex: 1, backgroundColor: theme.color.accent, borderRadius: 10, paddingHorizontal: 12, paddingVertical: 8, borderWidth: 0, borderColor: 'transparent' }}>
+        <View style={{
+          flex: 1,
+          backgroundColor: theme.dark ? theme.color.accent : theme.color.card,
+          borderRadius: 10,
+          paddingHorizontal: 12,
+          paddingVertical: 8,
+          borderWidth: 1,
+          borderColor: theme.color.border
+        }}>
           <TextInput
             value={url}
             onChangeText={onUrlChange}
             placeholder="Insert URL here..."
-            placeholderTextColor={theme.color.mutedForeground}
+            placeholderTextColor={theme.color.placeholder}
             style={{ color: theme.color.cardForeground, fontSize: 14, paddingVertical: 2 }}
             autoCapitalize="none"
             keyboardType="url"
@@ -849,17 +867,20 @@ export const RegisterScreen: React.FC<{ onBack: () => void, onLogin?: () => void
         <TouchableOpacity
           activeOpacity={0.85}
           onPress={onAttach}
+          accessibilityRole="button"
+          accessibilityLabel="Attach URL"
           style={{ 
-            height: 44, 
-            borderRadius: 10, 
-            backgroundColor: theme.color.primary, 
-            alignItems: 'center', 
-            justifyContent: 'center',
-            paddingHorizontal: 16,
-            minWidth: 80
+            width: 44,
+            height: 44,
+            borderRadius: 10,
+            borderWidth: 1,
+            borderColor: theme.color.border,
+            backgroundColor: 'transparent',
+            alignItems: 'center',
+            justifyContent: 'center'
           }}
         >
-          <Text style={{ color: '#fff', fontWeight: '600', fontSize: 14 }}>Attach</Text>
+          <Paperclip size={18} color={theme.color.cardForeground as any} />
         </TouchableOpacity>
       </View>
       {files && files.length > 0 ? (
@@ -1608,7 +1629,7 @@ export const RegisterScreen: React.FC<{ onBack: () => void, onLogin?: () => void
                  <UploadInputRow 
                    url={visionUrl} 
                    onUrlChange={setVisionUrl} 
-                   onAttach={() => {}} 
+                   onAttach={() => attachUrl(visionUrl, setVisionFiles, () => setVisionUrl(''))} 
                    files={visionFiles} 
                    theme={theme} 
                  />
@@ -1622,7 +1643,7 @@ export const RegisterScreen: React.FC<{ onBack: () => void, onLogin?: () => void
                  <UploadInputRow 
                    url={missionUrl} 
                    onUrlChange={setMissionUrl} 
-                   onAttach={() => {}} 
+                   onAttach={() => attachUrl(missionUrl, setMissionFiles, () => setMissionUrl(''))} 
                    files={missionFiles} 
                    theme={theme} 
                  />
@@ -1636,7 +1657,7 @@ export const RegisterScreen: React.FC<{ onBack: () => void, onLogin?: () => void
                  <UploadInputRow 
                    url={catalogUrl} 
                    onUrlChange={setCatalogUrl} 
-                   onAttach={() => {}} 
+                   onAttach={() => attachUrl(catalogUrl, setCatalogFiles, () => setCatalogUrl(''))} 
                    files={catalogFiles} 
                    theme={theme} 
                  />
@@ -1650,7 +1671,7 @@ export const RegisterScreen: React.FC<{ onBack: () => void, onLogin?: () => void
                  <UploadInputRow 
                    url={faqsUrl} 
                    onUrlChange={setFaqsUrl} 
-                   onAttach={() => {}} 
+                   onAttach={() => attachUrl(faqsUrl, setFaqsFiles, () => setFaqsUrl(''))} 
                    files={faqsFiles} 
                    theme={theme} 
                  />
@@ -1664,7 +1685,7 @@ export const RegisterScreen: React.FC<{ onBack: () => void, onLogin?: () => void
                  <UploadInputRow 
                    url={kbUrl} 
                    onUrlChange={setKbUrl} 
-                   onAttach={() => {}} 
+                   onAttach={() => attachUrl(kbUrl, setKbFiles, () => setKbUrl(''))} 
                    files={kbFiles} 
                    theme={theme} 
                  />
@@ -1678,7 +1699,7 @@ export const RegisterScreen: React.FC<{ onBack: () => void, onLogin?: () => void
                  <UploadInputRow 
                    url={sopsUrl} 
                    onUrlChange={setSopsUrl} 
-                   onAttach={() => {}} 
+                   onAttach={() => attachUrl(sopsUrl, setSopsFiles, () => setSopsUrl(''))} 
                    files={sopsFiles} 
                    theme={theme} 
                  />
@@ -1692,7 +1713,7 @@ export const RegisterScreen: React.FC<{ onBack: () => void, onLogin?: () => void
                  <UploadInputRow 
                    url={tcUrl} 
                    onUrlChange={setTcUrl} 
-                   onAttach={() => {}} 
+                   onAttach={() => attachUrl(tcUrl, setTcFiles, () => setTcUrl(''))} 
                    files={tcFiles} 
                    theme={theme} 
                  />
@@ -1701,7 +1722,7 @@ export const RegisterScreen: React.FC<{ onBack: () => void, onLogin?: () => void
              </View>
  
              <View style={{ marginTop: 12 }}>
-               <Button title="Finish" size="lg" variant="hero" onPress={() => {}} />
+               <Button title="Finish" size="lg" variant="hero" onPress={onComplete} />
              </View>
  
              <TouchableOpacity onPress={handleBack} style={{ alignSelf: 'center', marginTop: 20 }}>

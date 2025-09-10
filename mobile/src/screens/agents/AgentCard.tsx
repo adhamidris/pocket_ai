@@ -74,9 +74,7 @@ export const AgentCard: React.FC<AgentCardProps> = ({
             <View style={{
               width: 32,
               height: 32,
-              backgroundColor: agent.status === 'active' 
-                ? theme.color.primary + '20' 
-                : theme.color.muted,
+              backgroundColor: theme.dark ? theme.color.secondary : theme.color.card,
               borderRadius: 16,
               alignItems: 'center',
               justifyContent: 'center'
@@ -93,12 +91,25 @@ export const AgentCard: React.FC<AgentCardProps> = ({
             }}>
               {agent.name}
             </Text>
-            <Badge 
-              variant={agent.status === 'active' ? 'success' : 'secondary'} 
-              size="sm"
-            >
-              {agent.status}
-            </Badge>
+            <View style={{
+              flexDirection: 'row',
+              alignItems: 'center',
+              gap: 6,
+              backgroundColor: theme.dark ? theme.color.secondary : theme.color.card,
+              borderRadius: theme.radius.sm,
+              paddingHorizontal: 8,
+              paddingVertical: 4
+            }}>
+              <View style={{
+                width: 6,
+                height: 6,
+                borderRadius: 3,
+                backgroundColor: agent.status === 'active' ? theme.color.success : theme.color.mutedForeground
+              }} />
+              <Text style={{ color: theme.color.mutedForeground, fontSize: 12, fontWeight: '600' }}>
+                {agent.status}
+              </Text>
+            </View>
           </View>
           
           <Text style={{
@@ -132,7 +143,7 @@ export const AgentCard: React.FC<AgentCardProps> = ({
             width: 32,
             height: 32,
             borderRadius: 16,
-            backgroundColor: theme.color.muted,
+            backgroundColor: theme.dark ? theme.color.secondary : theme.color.card,
             alignItems: 'center',
             justifyContent: 'center'
           }}

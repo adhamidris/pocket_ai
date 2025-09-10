@@ -111,7 +111,7 @@ export const OnboardingNavigator: React.FC<{ onComplete: () => void }> = ({ onCo
           <ChatPreviewScreen onComplete={handleSkip} onBack={handleBack} onRegister={() => setShowRegister(true)} />
         )}
         {currentStep === 4 && showRegister && (
-          <RegisterScreen onBack={() => setShowRegister(false)} onLogin={() => { setShowRegister(false); setShowSkipLogin(true) }} />
+          <RegisterScreen onBack={() => setShowRegister(false)} onLogin={() => { setShowRegister(false); setShowSkipLogin(true) }} onComplete={onComplete} />
         )}
         </>
         )}
@@ -127,7 +127,7 @@ export const OnboardingNavigator: React.FC<{ onComplete: () => void }> = ({ onCo
             <ChatPreviewScreen onComplete={handleSkip} onBack={handleBack} onRegister={() => setShowRegister(true)} />
           )}
           {transitioningStep === 4 && showRegister && (
-            <RegisterScreen onBack={() => setShowRegister(false)} onLogin={() => { setShowRegister(false); setShowSkipLogin(true) }} />
+            <RegisterScreen onBack={() => setShowRegister(false)} onLogin={() => { setShowRegister(false); setShowSkipLogin(true) }} onComplete={onComplete} />
           )}
         </Animated.View>
       )}
@@ -142,7 +142,7 @@ export const OnboardingNavigator: React.FC<{ onComplete: () => void }> = ({ onCo
             <ChatPreviewScreen onComplete={handleSkip} onBack={handleBack} onRegister={() => setShowRegister(true)} />
           )}
           {currentStep === 4 && showRegister && (
-            <RegisterScreen onBack={() => setShowRegister(false)} />
+            <RegisterScreen onBack={() => setShowRegister(false)} onComplete={onComplete} />
           )}
         </Animated.View>
       )}

@@ -23,8 +23,8 @@ export const TabNavigator: React.FC = () => {
         headerShown: false,
         tabBarStyle: {
           backgroundColor: theme.color.card,
-          borderTopColor: theme.color.border,
-          borderTopWidth: 1,
+          borderTopColor: 'transparent',
+          borderTopWidth: 0,
           height: 85,
           paddingBottom: 10,
           paddingTop: 10,

@@ -12,6 +12,7 @@ export type Theme = {
     secondary: Color
     muted: Color
     mutedForeground: Color
+    placeholder: Color
     accent: Color
     border: Color
     ring: Color
@@ -45,6 +46,7 @@ export const darkTheme: Theme = {
     secondary: 'hsl(215,20%,15%)',
     muted: 'hsl(215,20%,15%)',
     mutedForeground: 'hsl(215,8%,65%)',
+    placeholder: 'hsl(214, 9%, 72%)',
     accent: 'hsl(215,15%,18%)',
     border: 'hsl(215,15%,20%)',
     ring: 'hsl(240,100%,70%)',
@@ -78,6 +80,7 @@ export const lightTheme: Theme = {
     secondary: 'hsl(240,5%,96%)',
     muted: 'hsl(240,5%,97%)',
     mutedForeground: 'hsl(224,6%,40%)',
+    placeholder: 'hsl(224, 5%, 46%)',
     accent: 'hsl(240,5%,96%)',
     border: 'hsl(240,6%,90%)',
     primary: 'hsl(240,75%,48%)',

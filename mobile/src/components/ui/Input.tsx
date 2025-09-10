@@ -52,7 +52,7 @@ export const Input: React.FC<InputProps> = ({
             color: theme.color.foreground,
             fontSize: 16
           }, style]}
-          placeholderTextColor={theme.color.mutedForeground}
+          placeholderTextColor={theme.color.placeholder}
           {...props}
         />
       </View>

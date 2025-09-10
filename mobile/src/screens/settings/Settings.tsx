@@ -1,5 +1,6 @@
 import React, { useState } from 'react'
 import { View, Text, SafeAreaView, ScrollView, TouchableOpacity, Alert } from 'react-native'
+import { useSafeAreaInsets } from 'react-native-safe-area-context'
 import { useTranslation } from 'react-i18next'
 import { useTheme } from '../../providers/ThemeProvider'
 import { Card } from '../../components/ui/Card'
@@ -24,6 +25,7 @@ import {
 export const SettingsScreen: React.FC = () => {
   const { t } = useTranslation()
   const { theme, isDark, toggle } = useTheme()
+  const insets = useSafeAreaInsets()
   const [activeSection, setActiveSection] = useState<'profile' | 'subscription' | 'main'>('main')
 
   const handleSignOut = () => {
@@ -131,7 +133,7 @@ export const SettingsScreen: React.FC = () => {
       <SafeAreaView style={{ flex: 1, backgroundColor: theme.color.background }}>
         <ScrollView style={{ flex: 1 }}>
           {/* Header */}
-          <View style={{ padding: 24, paddingBottom: 16 }}>
+          <View style={{ paddingHorizontal: 24, paddingTop: insets.top + 12, paddingBottom: 16 }}>
             <TouchableOpacity 
               onPress={() => setActiveSection('main')}
               style={{
@@ -178,7 +180,7 @@ export const SettingsScreen: React.FC = () => {
       <SafeAreaView style={{ flex: 1, backgroundColor: theme.color.background }}>
         <ScrollView style={{ flex: 1 }}>
           {/* Header */}
-          <View style={{ padding: 24, paddingBottom: 16 }}>
+          <View style={{ paddingHorizontal: 24, paddingTop: insets.top + 12, paddingBottom: 16 }}>
             <TouchableOpacity 
               onPress={() => setActiveSection('main')}
               style={{
@@ -225,7 +227,7 @@ export const SettingsScreen: React.FC = () => {
     <SafeAreaView style={{ flex: 1, backgroundColor: theme.color.background }}>
       <ScrollView style={{ flex: 1 }}>
         {/* Header */}
-        <View style={{ padding: 24, paddingBottom: 16 }}>
+        <View style={{ paddingHorizontal: 24, paddingTop: insets.top + 12, paddingBottom: 16 }}>
           <Text style={{
             color: theme.color.foreground,
             fontSize: 32,
@@ -271,7 +273,7 @@ export const SettingsScreen: React.FC = () => {
                     <View style={{
                       width: 40,
                       height: 40,
-                      backgroundColor: theme.color.muted,
+                      backgroundColor: theme.dark ? theme.color.secondary : theme.color.card,
                       borderRadius: 20,
                       alignItems: 'center',
                       justifyContent: 'center',
@@ -291,13 +293,13 @@ export const SettingsScreen: React.FC = () => {
                         </Text>
                         {item.badge && (
                           <View style={{
-                            backgroundColor: theme.color.primary + '20',
+                            backgroundColor: theme.dark ? theme.color.secondary : theme.color.card,
                             paddingHorizontal: 6,
                             paddingVertical: 2,
                             borderRadius: 4
                           }}>
                             <Text style={{
-                              color: theme.color.primary,
+                              color: theme.color.mutedForeground,
                               fontSize: 10,
                               fontWeight: '600'
                             }}>
@@ -333,17 +335,17 @@ export const SettingsScreen: React.FC = () => {
               alignItems: 'center',
               justifyContent: 'center',
               gap: 12,
-              backgroundColor: theme.color.error + '10',
-              borderWidth: 1,
-              borderColor: theme.color.error + '30',
+              backgroundColor: theme.color.card,
+              borderWidth: 0,
+              borderColor: 'transparent',
               borderRadius: theme.radius.lg,
               paddingVertical: 16,
               paddingHorizontal: 24
             }}
           >
-            <LogOut size={20} color={theme.color.error} />
+            <LogOut size={20} color={theme.color.mutedForeground} />
             <Text style={{
-              color: theme.color.error,
+              color: theme.color.mutedForeground,
               fontSize: 16,
               fontWeight: '600'
             }}>

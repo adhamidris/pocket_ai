@@ -113,7 +113,7 @@ export const CustomerDetail: React.FC<CustomerDetailProps> = ({
 
   return (
     <Modal visible={visible} onClose={onClose} size="lg">
-      <ScrollView showsVerticalScrollIndicator={false}>
+      <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingBottom: 20 }}>
         {/* Customer Header */}
         <View style={{
           flexDirection: 'row',
@@ -127,16 +127,14 @@ export const CustomerDetail: React.FC<CustomerDetailProps> = ({
           <View style={{
             width: 64,
             height: 64,
-            backgroundColor: customer.status === 'vip' 
-              ? theme.color.warning + '20'
-              : theme.color.primary + '20',
+            backgroundColor: theme.dark ? theme.color.secondary : theme.color.card,
             borderRadius: 32,
             alignItems: 'center',
             justifyContent: 'center',
             marginRight: 16
           }}>
             <Text style={{
-              color: customer.status === 'vip' ? theme.color.warning : theme.color.primary,
+              color: theme.color.cardForeground,
               fontSize: 24,
               fontWeight: '700'
             }}>
@@ -160,9 +158,31 @@ export const CustomerDetail: React.FC<CustomerDetailProps> = ({
               )}
             </View>
             
-            <Badge variant={getStatusVariant(customer.status)} size="sm" style={{ marginBottom: 8 }}>
-              {customer.status.toUpperCase()}
-            </Badge>
+            <View style={{
+              flexDirection: 'row',
+              alignItems: 'center',
+              gap: 6,
+              backgroundColor: theme.dark ? theme.color.secondary : theme.color.card,
+              borderRadius: theme.radius.sm,
+              paddingHorizontal: 8,
+              paddingVertical: 4,
+              marginBottom: 8,
+              alignSelf: 'flex-start'
+            }}>
+              <View style={{
+                width: 6,
+                height: 6,
+                borderRadius: 3,
+                backgroundColor: (
+                  customer.status === 'vip' ? theme.color.warning :
+                  customer.status === 'active' ? theme.color.success :
+                  theme.color.mutedForeground
+                )
+              }} />
+              <Text style={{ color: theme.color.mutedForeground, fontSize: 12, fontWeight: '600' }}>
+                {customer.status.toUpperCase()}
+              </Text>
+            </View>
             
             <Text style={{
               color: theme.color.mutedForeground,
@@ -176,12 +196,12 @@ export const CustomerDetail: React.FC<CustomerDetailProps> = ({
           <TouchableOpacity style={{
             width: 40,
             height: 40,
-            backgroundColor: theme.color.primary,
+            backgroundColor: theme.dark ? theme.color.secondary : theme.color.card,
             borderRadius: 20,
             alignItems: 'center',
             justifyContent: 'center'
           }}>
-            <Edit size={18} color="#fff" />
+            <Edit size={18} color={theme.color.mutedForeground as any} />
           </TouchableOpacity>
         </View>
 
@@ -325,12 +345,12 @@ export const CustomerDetail: React.FC<CustomerDetailProps> = ({
             <TouchableOpacity style={{
               width: 32,
               height: 32,
-              backgroundColor: theme.color.primary + '20',
+              backgroundColor: theme.dark ? theme.color.secondary : theme.color.card,
               borderRadius: 16,
               alignItems: 'center',
               justifyContent: 'center'
             }}>
-              <Plus size={16} color={theme.color.primary} />
+              <Plus size={16} color={theme.color.mutedForeground as any} />
             </TouchableOpacity>
           </View>
           
@@ -428,7 +448,7 @@ export const CustomerDetail: React.FC<CustomerDetailProps> = ({
                   <View style={{
                     width: 8,
                     height: 8,
-                    backgroundColor: theme.color.primary,
+                    backgroundColor: theme.color.mutedForeground,
                     borderRadius: 4,
                     marginTop: 6
                   }} />
@@ -495,7 +515,7 @@ export const CustomerDetail: React.FC<CustomerDetailProps> = ({
         )}
 
         {/* Action Buttons */}
-        <View style={{ gap: 12, marginTop: 20 }}>
+        <View style={{ gap: 12, marginTop: 20, paddingBottom: 8 }}>
           <Button
             title="Start Conversation"
             variant="premium"

@@ -1,5 +1,5 @@
 import React from 'react'
-import { View, Text, SafeAreaView, ScrollView, TouchableOpacity } from 'react-native'
+import { View, Text, SafeAreaView, ScrollView, TouchableOpacity, Animated } from 'react-native'
 import { useTranslation } from 'react-i18next'
 import { useNavigation } from '@react-navigation/native'
 import { useTheme } from '../../providers/ThemeProvider'
@@ -7,7 +7,7 @@ import { Card } from '../../components/ui/Card'
 import { AnimatedCard } from '../../components/ui/AnimatedCard'
 import { Button } from '../../components/ui/Button'
 import { Badge } from '../../components/ui/Badge'
-import { PulseAnimation } from '../../components/ui/PulseAnimation'
+import { useSafeAreaInsets } from 'react-native-safe-area-context'
 import { 
   MessageCircle, 
   TrendingUp, 
@@ -17,17 +17,32 @@ import {
   Users,
   AlertTriangle,
   ArrowRight,
-  ChevronRight
+  ChevronRight,
+  Sun,
+  Moon
 } from 'lucide-react-native'
 
 export const DashboardScreen: React.FC = () => {
   const { t } = useTranslation()
-  const { theme } = useTheme()
+  const { theme, toggle } = useTheme()
   const navigation = useNavigation<any>()
+  const insets = useSafeAreaInsets()
+  const pulse = React.useRef(new Animated.Value(0)).current
+
+  React.useEffect(() => {
+    const loop = Animated.loop(
+      Animated.sequence([
+        Animated.timing(pulse, { toValue: 1, duration: 800, useNativeDriver: true }),
+        Animated.timing(pulse, { toValue: 0, duration: 800, useNativeDriver: true })
+      ])
+    )
+    loop.start()
+    return () => loop.stop()
+  }, [pulse])
 
   const stats = [
     { 
-      label: t('dashboard.stats.activeConversations'), 
+      label: 'Live conversations', 
       value: '2', 
       icon: MessageCircle, 
       color: theme.color.primary,
@@ -91,6 +106,8 @@ export const DashboardScreen: React.FC = () => {
     }
   ]
 
+  const urgentCount = recentActivity.filter(a => a.status === 'urgent').length
+
   const getActivityIcon = (type: string) => {
     switch (type) {
       case 'conversation': return MessageCircle
@@ -138,15 +155,25 @@ export const DashboardScreen: React.FC = () => {
     <SafeAreaView style={{ flex: 1, backgroundColor: theme.color.background }}>
       <ScrollView style={{ flex: 1 }}>
         {/* Header */}
-        <View style={{ padding: 24, paddingBottom: 16 }}>
-          <Text style={{
-            color: theme.color.foreground,
-            fontSize: 32,
-            fontWeight: '700',
-            marginBottom: 8
-          }}>
-            {t('dashboard.title')}
-          </Text>
+        <View style={{ paddingHorizontal: 24, paddingTop: insets.top + 12, paddingBottom: 16 }}>
+          <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+            <Text style={{
+              color: theme.color.foreground,
+              fontSize: 32,
+              fontWeight: '700',
+              marginBottom: 8
+            }}>
+              {t('dashboard.title')}
+            </Text>
+            <TouchableOpacity
+              onPress={toggle}
+              activeOpacity={0.85}
+              style={{ padding: 8, borderRadius: 16 }}
+              hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+            >
+              {theme.dark ? <Sun size={18} color={theme.color.cardForeground as any} /> : <Moon size={18} color={theme.color.cardForeground as any} />}
+            </TouchableOpacity>
+          </View>
           <Text style={{
             color: theme.color.mutedForeground,
             fontSize: 16
@@ -156,51 +183,63 @@ export const DashboardScreen: React.FC = () => {
         </View>
 
         {/* Alert Banner */}
-        <View style={{ paddingHorizontal: 24, marginBottom: 24 }}>
-          <PulseAnimation duration={2000} minOpacity={0.8} maxOpacity={1}>
-            <AnimatedCard 
+        <View style={{ paddingHorizontal: 24, marginBottom: 16 }}>
+          <AnimatedCard 
               animationType="slideUp"
               delay={100}
               style={{ 
-                backgroundColor: theme.color.error + '10',
-                borderColor: theme.color.error + '30'
+                backgroundColor: theme.color.card,
+                borderColor: 'transparent',
+                borderWidth: 0,
+                padding: 16
               }}
               onPress={() => navigation.navigate('Conversations')}
             >
               <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
-                <AlertTriangle size={20} color={theme.color.error} />
+                <AlertTriangle size={24} color={theme.color.warning} />
                 <View style={{ flex: 1 }}>
                   <Text style={{
-                    color: theme.color.error,
-                    fontSize: 14,
-                    fontWeight: '600',
-                    marginBottom: 2
+                    color: theme.color.cardForeground,
+                    fontSize: 16,
+                    fontWeight: '700',
+                    marginBottom: 4
                   }}>
-                    Urgent Conversation
+                    Urgent Conversations
                   </Text>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 0, marginBottom: 6 }}>
+                    <Animated.View
+                      style={{
+                        width: 8,
+                        height: 8,
+                        borderRadius: 4,
+                        backgroundColor: theme.color.error,
+                        transform: [
+                          {
+                            scale: pulse.interpolate({ inputRange: [0, 1], outputRange: [1, 1.35] }) as any
+                          }
+                        ],
+                        opacity: pulse.interpolate({ inputRange: [0, 1], outputRange: [0.6, 1] }) as any
+                      }}
+                    />
+                    <Text style={{ color: theme.color.mutedForeground, fontSize: 12, fontWeight: '600' }}>{urgentCount} urgent</Text>
+                  </View>
                   <Text style={{
-                    color: theme.color.error,
-                    fontSize: 12
+                    color: theme.color.mutedForeground,
+                    fontSize: 12,
+                    lineHeight: 16,
+                    marginTop: 0
                   }}>
-                    Sarah Johnson needs immediate billing assistance
+                    {urgentCount > 0 ? `${urgentCount} unresolved conversations flagged urgent` : 'No urgent conversations right now'}
                   </Text>
                 </View>
-                <TouchableOpacity 
-                  onPress={() => navigation.navigate('Conversations')}
-                  style={{
-                    backgroundColor: theme.color.error,
-                    paddingHorizontal: 12,
-                    paddingVertical: 6,
-                    borderRadius: theme.radius.sm
-                  }}
-                >
-                  <Text style={{ color: '#fff', fontSize: 12, fontWeight: '600' }}>
-                    View
-                  </Text>
+                <TouchableOpacity onPress={() => navigation.navigate('Conversations')} style={{ paddingHorizontal: 6, paddingVertical: 4 }}>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+                    <Text style={{ color: theme.color.primary, fontSize: 12, fontWeight: '700' }}>Review</Text>
+                    <ChevronRight size={12} color={theme.color.primary} />
+                  </View>
                 </TouchableOpacity>
               </View>
-            </AnimatedCard>
-          </PulseAnimation>
+          </AnimatedCard>
         </View>
 
         {/* Stats Grid */}
@@ -219,19 +258,24 @@ export const DashboardScreen: React.FC = () => {
               style={{ 
                 flex: 1, 
                 minWidth: '47%',
-                padding: 16
+                padding: 16,
+                backgroundColor: theme.color.card,
+                borderColor: 'transparent',
+                borderWidth: 0
               }}
             >
               <View style={{ flexDirection: 'row', alignItems: 'flex-start', gap: 12 }}>
                 <View style={{
                   width: 40,
                   height: 40,
-                  backgroundColor: stat.color + '20',
+                  backgroundColor: theme.color.primary,
                   borderRadius: 20,
                   alignItems: 'center',
-                  justifyContent: 'center'
+                  justifyContent: 'center',
+                  borderWidth: 0,
+                  borderColor: 'transparent'
                 }}>
-                  <stat.icon color={stat.color} size={20} />
+                  <stat.icon color={'#ffffff' as any} size={20} />
                 </View>
                 <View style={{ flex: 1 }}>
                   <Text style={{
@@ -280,16 +324,18 @@ export const DashboardScreen: React.FC = () => {
                 animationType="slideUp"
                 delay={600 + (index * 100)}
                 onPress={action.onPress}
-                style={{ padding: 16 }}
+                style={{ padding: 16, borderWidth: 0, borderColor: 'transparent' }}
               >
                 <View style={{ flexDirection: 'row', alignItems: 'center', gap: 16 }}>
                   <View style={{
                     width: 44,
                     height: 44,
-                    backgroundColor: action.color + '20',
+                    backgroundColor: theme.dark ? theme.color.secondary : theme.color.card,
                     borderRadius: 22,
                     alignItems: 'center',
-                    justifyContent: 'center'
+                    justifyContent: 'center',
+                    borderWidth: 1,
+                    borderColor: theme.color.border
                   }}>
                     <action.icon color={action.color} size={22} />
                   </View>
@@ -362,10 +408,12 @@ export const DashboardScreen: React.FC = () => {
                     <View style={{
                       width: 32,
                       height: 32,
-                      backgroundColor: color + '20',
+                      backgroundColor: theme.dark ? theme.color.secondary : theme.color.card,
                       borderRadius: 16,
                       alignItems: 'center',
-                      justifyContent: 'center'
+                      justifyContent: 'center',
+                      borderWidth: 1,
+                      borderColor: theme.color.border
                     }}>
                       <ActivityIcon size={16} color={color} />
                     </View>

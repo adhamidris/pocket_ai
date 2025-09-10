@@ -108,9 +108,7 @@ export const ConversationCard: React.FC<ConversationCardProps> = ({
     <TouchableOpacity onPress={() => onPress(conversation)}>
       <Card style={{ 
         marginBottom: 12,
-        backgroundColor: conversation.unreadCount > 0 
-          ? theme.color.primary + '05' 
-          : theme.color.card
+        backgroundColor: theme.color.card
       }}>
         {/* Header */}
         <View style={{
@@ -124,16 +122,16 @@ export const ConversationCard: React.FC<ConversationCardProps> = ({
             <View style={{
               width: 44,
               height: 44,
-              backgroundColor: conversation.priority === 'urgent' 
-                ? theme.color.error + '20'
-                : theme.color.primary + '20',
+              backgroundColor: theme.dark ? theme.color.secondary : theme.color.card,
               borderRadius: 22,
               alignItems: 'center',
               justifyContent: 'center',
-              marginRight: 12
+              marginRight: 12,
+              borderWidth: 0,
+              borderColor: 'transparent'
             }}>
               <Text style={{
-                color: conversation.priority === 'urgent' ? theme.color.error : theme.color.primary,
+                color: theme.color.cardForeground,
                 fontSize: 14,
                 fontWeight: '600'
               }}>
@@ -189,9 +187,31 @@ export const ConversationCard: React.FC<ConversationCardProps> = ({
             </Text>
             
             <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-              <Badge variant={getStatusVariant(conversation.status)} size="sm">
-                {conversation.status.toUpperCase()}
-              </Badge>
+              <View style={{
+                flexDirection: 'row',
+                alignItems: 'center',
+                gap: 6,
+                backgroundColor: theme.dark ? theme.color.secondary : theme.color.card,
+                borderWidth: 0,
+                borderColor: 'transparent',
+                borderRadius: theme.radius.sm,
+                paddingHorizontal: 8,
+                paddingVertical: 4
+              }}>
+                <View style={{
+                  width: 6,
+                  height: 6,
+                  borderRadius: 3,
+                  backgroundColor: (
+                    conversation.status === 'active' ? theme.color.success :
+                    conversation.status === 'waiting' ? theme.color.warning :
+                    theme.color.mutedForeground
+                  )
+                }} />
+                <Text style={{ color: theme.color.mutedForeground, fontSize: 12, fontWeight: '600' }}>
+                  {conversation.status.toUpperCase()}
+                </Text>
+              </View>
               
               <TouchableOpacity
                 onPress={() => onMore(conversation)}
@@ -199,9 +219,11 @@ export const ConversationCard: React.FC<ConversationCardProps> = ({
                   width: 24,
                   height: 24,
                   borderRadius: 12,
-                  backgroundColor: theme.color.muted,
+                  backgroundColor: theme.dark ? theme.color.secondary : theme.color.card,
                   alignItems: 'center',
-                  justifyContent: 'center'
+                  justifyContent: 'center',
+                  borderWidth: 0,
+                  borderColor: 'transparent'
                 }}
               >
                 <MoreHorizontal size={12} color={theme.color.mutedForeground} />

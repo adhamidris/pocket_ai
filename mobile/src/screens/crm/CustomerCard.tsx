@@ -87,16 +87,14 @@ export const CustomerCard: React.FC<CustomerCardProps> = ({
             <View style={{
               width: 48,
               height: 48,
-              backgroundColor: customer.status === 'vip' 
-                ? theme.color.warning + '20'
-                : theme.color.primary + '20',
+              backgroundColor: theme.dark ? theme.color.secondary : theme.color.card,
               borderRadius: 24,
               alignItems: 'center',
               justifyContent: 'center',
               marginRight: 12
             }}>
               <Text style={{
-                color: customer.status === 'vip' ? theme.color.warning : theme.color.primary,
+                color: theme.color.cardForeground,
                 fontSize: 16,
                 fontWeight: '600'
               }}>
@@ -147,16 +145,36 @@ export const CustomerCard: React.FC<CustomerCardProps> = ({
 
           {/* Status & Actions */}
           <View style={{ alignItems: 'flex-end', gap: 8 }}>
-            <Badge variant={getStatusVariant(customer.status)} size="sm">
-              {customer.status.toUpperCase()}
-            </Badge>
+            <View style={{
+              flexDirection: 'row',
+              alignItems: 'center',
+              gap: 6,
+              backgroundColor: theme.dark ? theme.color.secondary : theme.color.card,
+              borderRadius: theme.radius.sm,
+              paddingHorizontal: 8,
+              paddingVertical: 4
+            }}>
+              <View style={{
+                width: 6,
+                height: 6,
+                borderRadius: 3,
+                backgroundColor: (
+                  customer.status === 'vip' ? theme.color.warning :
+                  customer.status === 'active' ? theme.color.success :
+                  theme.color.mutedForeground
+                )
+              }} />
+              <Text style={{ color: theme.color.mutedForeground, fontSize: 12, fontWeight: '600' }}>
+                {customer.status.toUpperCase()}
+              </Text>
+            </View>
             <TouchableOpacity
               onPress={() => onMore(customer)}
               style={{
                 width: 28,
                 height: 28,
                 borderRadius: 14,
-                backgroundColor: theme.color.muted,
+                backgroundColor: theme.dark ? theme.color.secondary : theme.color.card,
                 alignItems: 'center',
                 justifyContent: 'center'
               }}

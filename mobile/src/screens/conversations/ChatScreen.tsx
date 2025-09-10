@@ -192,16 +192,14 @@ export const ChatScreen: React.FC<ChatScreenProps> = ({
           <View style={{
             width: 40,
             height: 40,
-            backgroundColor: conversation.priority === 'urgent' 
-              ? theme.color.error + '20'
-              : theme.color.primary + '20',
+            backgroundColor: theme.dark ? theme.color.secondary : theme.color.card,
             borderRadius: 20,
             alignItems: 'center',
             justifyContent: 'center',
             marginRight: 12
           }}>
             <Text style={{
-              color: conversation.priority === 'urgent' ? theme.color.error : theme.color.primary,
+              color: theme.color.cardForeground,
               fontSize: 14,
               fontWeight: '600'
             }}>
@@ -246,7 +244,7 @@ export const ChatScreen: React.FC<ChatScreenProps> = ({
               width: 36,
               height: 36,
               borderRadius: 18,
-              backgroundColor: theme.color.success + '20',
+              backgroundColor: theme.dark ? theme.color.secondary : theme.color.card,
               alignItems: 'center',
               justifyContent: 'center'
             }}>
@@ -257,7 +255,7 @@ export const ChatScreen: React.FC<ChatScreenProps> = ({
               width: 36,
               height: 36,
               borderRadius: 18,
-              backgroundColor: theme.color.primary + '20',
+              backgroundColor: theme.dark ? theme.color.secondary : theme.color.card,
               alignItems: 'center',
               justifyContent: 'center'
             }}>
@@ -268,7 +266,7 @@ export const ChatScreen: React.FC<ChatScreenProps> = ({
               width: 36,
               height: 36,
               borderRadius: 18,
-              backgroundColor: theme.color.muted,
+              backgroundColor: theme.dark ? theme.color.secondary : theme.color.card,
               alignItems: 'center',
               justifyContent: 'center'
             }}>
@@ -379,7 +377,7 @@ export const ChatScreen: React.FC<ChatScreenProps> = ({
               value={newMessage}
               onChangeText={setNewMessage}
               placeholder="Type your message..."
-              placeholderTextColor={theme.color.mutedForeground}
+              placeholderTextColor={theme.color.placeholder}
               multiline
               maxLength={1000}
               style={{

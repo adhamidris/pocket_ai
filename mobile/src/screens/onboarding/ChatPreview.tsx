@@ -473,7 +473,7 @@ export const ChatPreviewScreen: React.FC<ChatPreviewScreenProps> = ({ onComplete
                     onChangeText={setInputValue}
                     editable={false}
                     placeholder={'Type your message…'}
-                    placeholderTextColor={theme.color.mutedForeground}
+                    placeholderTextColor={theme.color.placeholder}
                     style={{ color: theme.color.cardForeground, paddingVertical: 8, fontSize: 14 }}
                   />
                 </View>

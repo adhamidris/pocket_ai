@@ -59,13 +59,14 @@ export const Modal: React.FC<ModalProps> = ({
             borderRadius: theme.radius.xl,
             width: getModalWidth(),
             maxHeight: height * 0.8,
-            borderWidth: 1,
-            borderColor: theme.color.border,
+            borderWidth: 0,
+            borderColor: 'transparent',
             shadowColor: '#000',
             shadowOpacity: 0.25,
             shadowRadius: 20,
             shadowOffset: { width: 0, height: 10 },
-            elevation: 10
+            elevation: 10,
+            overflow: 'hidden'
           }}
           onPress={(e) => e.stopPropagation()}
         >
