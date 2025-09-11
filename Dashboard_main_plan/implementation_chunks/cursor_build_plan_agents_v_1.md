@@ -63,7 +63,7 @@ export interface EscalationPolicy { id: string; name: string; rules: { afterMinu
 
 ### Acceptance Checks
 - Types compile and export correctly; no circular import issues.
-
+ok
 ---
 
 ## STEP 2 — Primitive Components
@@ -83,7 +83,7 @@ In `mobile/src/components/agents/`, create:
 
 ### Acceptance Checks
 - Can render primitives in isolation with tokens; touch targets ≥44dp where tappable.
-
+ok
 ---
 
 ## STEP 3 — Agent Row & Cards
@@ -99,7 +99,7 @@ Create:
 
 ### Acceptance Checks
 - Rows render with both AI and Human variants without layout breaks.
-
+ok
 ---
 
 ## STEP 4 — Agents List Screen
@@ -122,7 +122,7 @@ Register in navigator as `Agents`.
 
 ### Acceptance Checks
 - Filters/sort/search apply quickly; list virtualization is smooth.
-
+ok
 ---
 
 ## STEP 5 — Agent Detail (Shared Shell)
@@ -140,7 +140,7 @@ Create `mobile/src/screens/Agents/AgentDetail.tsx`:
 
 ### Acceptance Checks
 - Navigating from list opens correct variant; tabs switch; top actions show stubs.
-
+ok
 ---
 
 ## STEP 6 — Human Agent: Schedule & Capacity
@@ -157,7 +157,7 @@ Wire into `AgentDetail` when `kind==='human'` under **Schedule/Behavior** tab.
 
 ### Acceptance Checks
 - Adding/removing slots updates local state; basic overlap warnings appear.
-
+ok
 ---
 
 ## STEP 7 — AI Agent: Behavior & Allowlist (MCP)
@@ -175,7 +175,7 @@ Wire these under **Schedule/Behavior** tab when `kind==='ai'`.
 
 ### Acceptance Checks
 - Toggling allowlist items flips enabled state; behavior fields update local state.
-
+ok
 ---
 
 ## STEP 8 — Routing Rules (UI‑Only)
@@ -193,7 +193,7 @@ Add entry from Agents header overflow and also from AgentDetail ("See routing").
 
 ### Acceptance Checks
 - Creating/enabling/disabling/reordering rules updates local list; no crashes.
-
+ok
 ---
 
 ## STEP 9 — Overflow & Escalation Policies
@@ -210,7 +210,7 @@ Link from Agents header overflow and from Routing builder.
 
 ### Acceptance Checks
 - Editing a policy updates local state; UI reflects requiresApproval flag.
-
+ok
 ---
 
 ## STEP 10 — Performance View (Per‑Agent)
@@ -226,7 +226,7 @@ Under **Performance** tab in `AgentDetail` show:
 
 ### Acceptance Checks
 - Stats render based on kind; no UI jumps.
-
+ok
 ---
 
 ## STEP 11 — Row Interactions (Quick Actions)
@@ -241,7 +241,7 @@ Wire to long‑press on `AgentRow`.
 
 ### Acceptance Checks
 - Sheet opens; toggles mutate local demo state; visual badges update.
-
+ok
 ---
 
 ## STEP 12 — Cross‑App Hooks
@@ -256,7 +256,7 @@ Wire to long‑press on `AgentRow`.
 
 ### Acceptance Checks
 - Both navigations work and update local UI without crashes.
-
+ok
 ---
 
 ## STEP 13 — Offline & Sync Stubs
@@ -272,7 +272,7 @@ Wire to long‑press on `AgentRow`.
 
 ### Acceptance Checks
 - Offline toggle shows banner; queued icons appear then clear.
-
+ok
 ---
 
 ## STEP 14 — Accessibility & Performance
@@ -288,7 +288,7 @@ Wire to long‑press on `AgentRow`.
 
 ### Acceptance Checks
 - Screen readers can navigate controls; lists scroll 60fps.
-
+ok
 ---
 
 ## STEP 15 — Analytics Stubs
@@ -308,7 +308,7 @@ Using `lib/analytics.ts`:
 
 ### Acceptance Checks
 - Console shows events in dev when interacting with Agents.
-
+ok
 ---
 
 ## STEP 16 — Final Review & Gaps
@@ -323,7 +323,7 @@ Using `lib/analytics.ts`:
 
 ### Acceptance Checks
 - All checks pass; doc created.
-
+ok
 ---
 
 ## Paste‑Ready Micro Prompts

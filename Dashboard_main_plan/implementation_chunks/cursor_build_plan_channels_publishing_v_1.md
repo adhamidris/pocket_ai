@@ -56,7 +56,7 @@ export interface WidgetSnippet { framework: 'html'|'react'|'next'|'shopify'; cod
 
 ### Acceptance Checks
 - Types compile and export; no circular imports.
-
+ok
 ---
 
 ## STEP 2 — Primitive Components
@@ -78,7 +78,7 @@ Provide `testID`s and use tokens.
 
 ### Acceptance Checks
 - Each renders with demo props; copy/rotate/save handlers `console.log` without crashing.
-
+ok
 ---
 
 ## STEP 3 — Channels Home Screen
@@ -100,7 +100,7 @@ Register as `Channels` in navigator.
 
 ### Acceptance Checks
 - Home renders; copy/open/rotate/QR save stubs work; channel cards navigate to recipes.
-
+ok
 ---
 
 ## STEP 4 — Recipe Center (Per Channel)
@@ -121,7 +121,7 @@ Create `mobile/src/screens/Channels/RecipeCenter.tsx`:
 
 ### Acceptance Checks
 - Changing channel param switches templates; copy buttons log; connected toggle updates parent state when returning.
-
+ok
 ---
 
 ## STEP 5 — Widget Snippet Screen
@@ -140,7 +140,7 @@ Link from Channels overflow menu.
 
 ### Acceptance Checks
 - Tabs switch; copy works; link URL appears inside code blocks.
-
+ok
 ---
 
 ## STEP 6 — UTM Builder (Optional but Useful)
@@ -159,7 +159,7 @@ Link from overflow menu.
 
 ### Acceptance Checks
 - Editing fields updates preview; Copy logs and shows toast; QR preview uses new URL.
-
+ok
 ---
 
 ## STEP 7 — Verification & Logs (UI‑Only)
@@ -177,7 +177,7 @@ Link from overflow menu.
 
 ### Acceptance Checks
 - Running a verification updates state and the log list; ChannelsHome badge updates.
-
+ok
 ---
 
 ## STEP 8 — Theming Deep Link
@@ -192,7 +192,7 @@ Link from overflow menu.
 
 ### Acceptance Checks
 - Tapping Theming opens the preview; returning updates chips.
-
+ok
 ---
 
 ## STEP 9 — Short Link & Rotation UX
@@ -208,7 +208,7 @@ Link from overflow menu.
 
 ### Acceptance Checks
 - Toggle shows short link; rotation updates fields and shows reminder.
-
+ok
 ---
 
 ## STEP 10 — Cross‑App Hooks
@@ -224,7 +224,7 @@ Link from overflow menu.
 
 ### Acceptance Checks
 - Navigation works both ways; WebView opens without crash.
-
+ok
 ---
 
 ## STEP 11 — Offline & Sync Stubs
@@ -240,7 +240,7 @@ Link from overflow menu.
 
 ### Acceptance Checks
 - Offline toggle shows banner; edits show queued state then clear.
-
+ok
 ---
 
 ## STEP 12 — Performance & Accessibility
@@ -256,7 +256,7 @@ Link from overflow menu.
 
 ### Acceptance Checks
 - Scrolling stays smooth; screen readers can activate core controls.
-
+ok
 ---
 
 ## STEP 13 — Analytics Stubs
@@ -276,7 +276,7 @@ Using `lib/analytics.ts` instrument:
 
 ### Acceptance Checks
 - Console logs events during interactions in dev.
-
+ok
 ---
 
 ## STEP 14 — Final Review & Gaps
@@ -291,7 +291,7 @@ Using `lib/analytics.ts` instrument:
 
 ### Acceptance Checks
 - All checks pass; doc created.
-
+ok
 ---
 
 ## Paste‑Ready Micro Prompts

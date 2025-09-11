@@ -1,155 +1,101 @@
 import React from 'react'
-import { View, Text, SafeAreaView, ScrollView, TouchableOpacity, Animated } from 'react-native'
+import { View, Text, SafeAreaView, ScrollView, TouchableOpacity } from 'react-native'
 import { useTranslation } from 'react-i18next'
 import { useNavigation } from '@react-navigation/native'
 import { useTheme } from '../../providers/ThemeProvider'
-import { Card } from '../../components/ui/Card'
-import { AnimatedCard } from '../../components/ui/AnimatedCard'
-import { Button } from '../../components/ui/Button'
-import { Badge } from '../../components/ui/Badge'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
-import { 
-  MessageCircle, 
-  TrendingUp, 
-  Clock, 
-  Star,
-  Bot,
-  Users,
-  AlertTriangle,
-  ArrowRight,
-  ChevronRight,
-  Sun,
-  Moon
-} from 'lucide-react-native'
+import { Sun, Moon, MoreHorizontal } from 'lucide-react-native'
+import KpiTile from '../../components/dashboard/KpiTile'
+import AlertCard from '../../components/dashboard/AlertCard'
+import QuickActions from '../../components/dashboard/QuickActions'
+import SetupProgressCard from '../../components/dashboard/SetupProgressCard'
+import InsightsTopIntents from '../../components/dashboard/InsightsTopIntents'
+import InsightsPeakTimes from '../../components/dashboard/InsightsPeakTimes'
+import VolumeByChannelMini from '../../components/dashboard/VolumeByChannelMini'
+import IndustryTiles from '../../components/dashboard/IndustryTiles'
+import { DashboardKpi, AlertItem, SetupStep, IntentItem, PeakHour, IndustryPackId } from '../../types/dashboard'
+import { getFlags, selectKpis, selectAlerts, selectQuickActions, selectIndustryPack } from './personalizer'
+import ErrorBanner from '../../components/dashboard/ErrorBanner'
+import EmptyState from '../../components/dashboard/EmptyState'
+import OfflineBanner from '../../components/dashboard/OfflineBanner'
+import SyncCenterSheet from '../../components/dashboard/SyncCenterSheet'
+import { track } from '../../lib/analytics'
+import AskDashboard from '../../components/dashboard/AskDashboard'
 
 export const DashboardScreen: React.FC = () => {
   const { t } = useTranslation()
   const { theme, toggle } = useTheme()
   const navigation = useNavigation<any>()
   const insets = useSafeAreaInsets()
-  const pulse = React.useRef(new Animated.Value(0)).current
+  // Demo data for scaffolding
+  const [kpis, setKpis] = React.useState<DashboardKpi[]>([])
+  const [alerts, setAlerts] = React.useState<AlertItem[]>([])
+  const [actions, setActions] = React.useState<{ label: string; deeplink: string; testID: string }[]>([])
+
+  const steps: SetupStep[] = [
+    { id: 's1', title: 'Connect Channels', status: 'todo', deeplink: 'app://channels' },
+    { id: 's2', title: 'Publish Widget/Link', status: 'todo', deeplink: 'app://channels/publish' },
+    { id: 's3', title: 'Train from Uploads', status: 'done', deeplink: 'app://knowledge' },
+  ]
+
+  const intents: IntentItem[] = [
+    { name: 'Order status', sharePct: 34, deflectionPct: 68, trendDelta: 5 },
+    { name: 'Billing', sharePct: 22, deflectionPct: 40, trendDelta: -2 },
+    { name: 'Product availability', sharePct: 12, trendDelta: 1 },
+  ]
+
+  const peakHours: PeakHour[] = Array.from({ length: 24 }, (_, hour) => ({ hour, value: Math.round(Math.abs(Math.sin(hour / 3)) * 10) + (hour % 6 === 0 ? 8 : 0) }))
+
+  const byChannel = [
+    { channel: 'WhatsApp', value: 42 },
+    { channel: 'Instagram', value: 28 },
+    { channel: 'Facebook', value: 16 },
+    { channel: 'Web', value: 35 },
+  ]
+
+  const [pack, setPack] = React.useState<IndustryPackId>('neutral')
+  const loadingKpis = false
+  const loadingIntents = false
+  const [loadingPeak, setLoadingPeak] = React.useState(false)
+  const [showError, setShowError] = React.useState(false)
+  const [offline, setOffline] = React.useState(false)
+  const [syncOpen, setSyncOpen] = React.useState(false)
+
+  const handleActionPress = (deeplink: string) => {
+    // Very light deeplink parser for demo → navigate with params
+    if (deeplink.startsWith('app://conversations')) {
+      const filter = deeplink.split('filter=')[1] || 'all'
+      navigation.navigate('Conversations', { filter })
+    }
+    if (deeplink.startsWith('app://channels')) {
+      navigation.navigate('Channels')
+    }
+    // infer kind from deeplink for analytics
+    if (deeplink.includes('urgent')) track('quick_action.used', { kind: 'urgent' })
+    else if (deeplink.includes('waiting30')) track('quick_action.used', { kind: 'waiting30' })
+    else if (deeplink.includes('unassigned')) track('quick_action.used', { kind: 'unassigned' })
+    else if (deeplink.includes('slaRisk')) track('quick_action.used', { kind: 'slaRisk' })
+  }
 
   React.useEffect(() => {
-    const loop = Animated.loop(
-      Animated.sequence([
-        Animated.timing(pulse, { toValue: 1, duration: 800, useNativeDriver: true }),
-        Animated.timing(pulse, { toValue: 0, duration: 800, useNativeDriver: true })
-      ])
-    )
-    loop.start()
-    return () => loop.stop()
-  }, [pulse])
+    (async () => {
+      const flags = await getFlags()
+      setKpis(selectKpis(flags))
+      setAlerts(selectAlerts(flags))
+      setActions(selectQuickActions(flags))
+      setPack(selectIndustryPack(flags))
+    })()
+  }, [])
 
-  const stats = [
-    { 
-      label: 'Live conversations', 
-      value: '2', 
-      icon: MessageCircle, 
-      color: theme.color.primary,
-      trend: '+5 from yesterday'
-    },
-    { 
-      label: t('dashboard.stats.todayMessages'), 
-      value: '43', 
-      icon: TrendingUp, 
-      color: theme.color.success,
-      trend: '+12% vs last week'
-    },
-    { 
-      label: t('dashboard.stats.responseTime'), 
-      value: '1.2s', 
-      icon: Clock, 
-      color: theme.color.warning,
-      trend: '45% faster'
-    },
-    { 
-      label: t('dashboard.stats.satisfaction'), 
-      value: '92%', 
-      icon: Star, 
-      color: theme.color.warning,
-      trend: '+3% this month'
-    },
-  ]
+  React.useEffect(() => {
+    track('dashboard.view')
+  }, [])
 
-  const recentActivity = [
-    {
-      id: '1',
-      type: 'conversation',
-      title: 'Sarah Johnson started a conversation',
-      description: 'Billing inquiry - Urgent priority',
-      timestamp: '5 minutes ago',
-      status: 'urgent'
-    },
-    {
-      id: '2',
-      type: 'agent',
-      title: 'Nancy AI resolved 3 conversations',
-      description: 'Average response time: 1.1s',
-      timestamp: '1 hour ago',
-      status: 'success'
-    },
-    {
-      id: '3',
-      type: 'customer',
-      title: 'New customer: Michael Chen',
-      description: 'Technical integration support',
-      timestamp: '2 hours ago',
-      status: 'info'
-    },
-    {
-      id: '4',
-      type: 'satisfaction',
-      title: 'Emma Rodriguez rated 5 stars',
-      description: 'Resolution: Dashboard access issue',
-      timestamp: '3 hours ago',
-      status: 'success'
+  React.useEffect(() => {
+    if (kpis.length > 0) {
+      track('dashboard.kpi_viewed', { kpis: kpis.map(k => k.kind) })
     }
-  ]
-
-  const urgentCount = recentActivity.filter(a => a.status === 'urgent').length
-
-  const getActivityIcon = (type: string) => {
-    switch (type) {
-      case 'conversation': return MessageCircle
-      case 'agent': return Bot
-      case 'customer': return Users
-      case 'satisfaction': return Star
-      default: return MessageCircle
-    }
-  }
-
-  const getActivityColor = (status: string) => {
-    switch (status) {
-      case 'urgent': return theme.color.error
-      case 'success': return theme.color.success
-      case 'info': return theme.color.primary
-      default: return theme.color.mutedForeground
-    }
-  }
-
-  const quickActions = [
-    {
-      title: 'View All Conversations',
-      description: '2 active, 1 waiting',
-      icon: MessageCircle,
-      color: theme.color.primary,
-      onPress: () => navigation.navigate('Conversations')
-    },
-    {
-      title: 'Manage Agents',
-      description: 'Configure AI assistants',
-      icon: Bot,
-      color: theme.color.success,
-      onPress: () => navigation.navigate('Agents')
-    },
-    {
-      title: 'Customer Profiles',
-      description: '4 customers, 1 VIP',
-      icon: Users,
-      color: theme.color.warning,
-      onPress: () => navigation.navigate('CRM')
-    }
-  ]
+  }, [kpis])
 
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: theme.color.background }}>
@@ -168,11 +114,25 @@ export const DashboardScreen: React.FC = () => {
             <TouchableOpacity
               onPress={toggle}
               activeOpacity={0.85}
-              style={{ padding: 8, borderRadius: 16 }}
+              style={{ padding: 8, borderRadius: 16, minHeight: 44, minWidth: 44, alignItems: 'center', justifyContent: 'center' }}
               hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+              accessibilityLabel="Toggle theme"
+              accessibilityRole="button"
             >
               {theme.dark ? <Sun size={18} color={theme.color.cardForeground as any} /> : <Moon size={18} color={theme.color.cardForeground as any} />}
             </TouchableOpacity>
+            {__DEV__ ? (
+              <TouchableOpacity
+                onPress={() => setSyncOpen(true)}
+                activeOpacity={0.85}
+                style={{ padding: 8, borderRadius: 16, minHeight: 44, minWidth: 44, alignItems: 'center', justifyContent: 'center' }}
+                hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                accessibilityLabel="Open Sync Center"
+                accessibilityRole="button"
+              >
+                <MoreHorizontal size={18} color={theme.color.cardForeground as any} />
+              </TouchableOpacity>
+            ) : null}
           </View>
           <Text style={{
             color: theme.color.mutedForeground,
@@ -181,272 +141,117 @@ export const DashboardScreen: React.FC = () => {
             {t('dashboard.welcome')} 👋
           </Text>
         </View>
+        {/* Dev toggles (only in dev) */}
+        {__DEV__ && (
+          <View style={{ paddingHorizontal: 24, marginBottom: 8, flexDirection: 'row', gap: 12 }}>
+            <TouchableOpacity onPress={() => setShowError((v) => !v)} accessibilityLabel="Toggle error banner" accessibilityRole="button" style={{ paddingHorizontal: 12, paddingVertical: 8, borderRadius: 8, backgroundColor: theme.color.card, borderWidth: 1, borderColor: theme.color.border, minHeight: 44, justifyContent: 'center' }}>
+              <Text style={{ color: theme.color.cardForeground, fontWeight: '600' }}>{showError ? 'Hide Error' : 'Show Error'}</Text>
+            </TouchableOpacity>
+            <TouchableOpacity onPress={() => setLoadingPeak((v) => !v)} accessibilityLabel="Toggle loading for Peak Times" accessibilityRole="button" style={{ paddingHorizontal: 12, paddingVertical: 8, borderRadius: 8, backgroundColor: theme.color.card, borderWidth: 1, borderColor: theme.color.border, minHeight: 44, justifyContent: 'center' }}>
+              <Text style={{ color: theme.color.cardForeground, fontWeight: '600' }}>{loadingPeak ? 'Stop Loading' : 'Load PeakTimes'}</Text>
+            </TouchableOpacity>
+            <TouchableOpacity onPress={() => setOffline((v) => !v)} accessibilityLabel="Toggle offline" accessibilityRole="button" style={{ paddingHorizontal: 12, paddingVertical: 8, borderRadius: 8, backgroundColor: theme.color.card, borderWidth: 1, borderColor: theme.color.border, minHeight: 44, justifyContent: 'center' }}>
+              <Text style={{ color: theme.color.cardForeground, fontWeight: '600' }}>{offline ? 'Go Online' : 'Go Offline'}</Text>
+            </TouchableOpacity>
+          </View>
+        )}
 
-        {/* Alert Banner */}
-        <View style={{ paddingHorizontal: 24, marginBottom: 16 }}>
-          <AnimatedCard 
-              animationType="slideUp"
-              delay={100}
-              style={{ 
-                backgroundColor: theme.color.card,
-                borderColor: 'transparent',
-                borderWidth: 0,
-                padding: 16
-              }}
-              onPress={() => navigation.navigate('Conversations')}
-            >
-              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
-                <AlertTriangle size={24} color={theme.color.warning} />
-                <View style={{ flex: 1 }}>
-                  <Text style={{
-                    color: theme.color.cardForeground,
-                    fontSize: 16,
-                    fontWeight: '700',
-                    marginBottom: 4
-                  }}>
-                    Urgent Conversations
-                  </Text>
-                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 0, marginBottom: 6 }}>
-                    <Animated.View
-                      style={{
-                        width: 8,
-                        height: 8,
-                        borderRadius: 4,
-                        backgroundColor: theme.color.error,
-                        transform: [
-                          {
-                            scale: pulse.interpolate({ inputRange: [0, 1], outputRange: [1, 1.35] }) as any
-                          }
-                        ],
-                        opacity: pulse.interpolate({ inputRange: [0, 1], outputRange: [0.6, 1] }) as any
-                      }}
-                    />
-                    <Text style={{ color: theme.color.mutedForeground, fontSize: 12, fontWeight: '600' }}>{urgentCount} urgent</Text>
-                  </View>
-                  <Text style={{
-                    color: theme.color.mutedForeground,
-                    fontSize: 12,
-                    lineHeight: 16,
-                    marginTop: 0
-                  }}>
-                    {urgentCount > 0 ? `${urgentCount} unresolved conversations flagged urgent` : 'No urgent conversations right now'}
-                  </Text>
-                </View>
-                <TouchableOpacity onPress={() => navigation.navigate('Conversations')} style={{ paddingHorizontal: 6, paddingVertical: 4 }}>
-                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
-                    <Text style={{ color: theme.color.primary, fontSize: 12, fontWeight: '700' }}>Review</Text>
-                    <ChevronRight size={12} color={theme.color.primary} />
-                  </View>
-                </TouchableOpacity>
-              </View>
-          </AnimatedCard>
-        </View>
+        {/* Error banner */}
+        {showError && (
+          <View style={{ paddingHorizontal: 24, marginBottom: 12 }}>
+            <ErrorBanner message="Simulated error — demo only" testID="err-banner" />
+          </View>
+        )}
 
-        {/* Stats Grid */}
-        <View style={{
-          paddingHorizontal: 24,
-          flexDirection: 'row',
-          flexWrap: 'wrap',
-          gap: 12,
-          marginBottom: 32
-        }}>
-          {stats.map((stat, index) => (
-            <AnimatedCard 
-              key={index} 
-              animationType="fadeIn"
-              delay={200 + (index * 100)}
-              style={{ 
-                flex: 1, 
-                minWidth: '47%',
-                padding: 16,
-                backgroundColor: theme.color.card,
-                borderColor: 'transparent',
-                borderWidth: 0
-              }}
-            >
-              <View style={{ flexDirection: 'row', alignItems: 'flex-start', gap: 12 }}>
-                <View style={{
-                  width: 40,
-                  height: 40,
-                  backgroundColor: theme.color.primary,
-                  borderRadius: 20,
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  borderWidth: 0,
-                  borderColor: 'transparent'
-                }}>
-                  <stat.icon color={'#ffffff' as any} size={20} />
-                </View>
-                <View style={{ flex: 1 }}>
-                  <Text style={{
-                    color: theme.color.cardForeground,
-                    fontSize: 24,
-                    fontWeight: '700',
-                    marginBottom: 2
-                  }}>
-                    {stat.value}
-                  </Text>
-                  <Text style={{
-                    color: theme.color.mutedForeground,
-                    fontSize: 11,
-                    marginBottom: 4
-                  }}>
-                    {stat.label}
-                  </Text>
-                  <Text style={{
-                    color: theme.color.success,
-                    fontSize: 10,
-                    fontWeight: '500'
-                  }}>
-                    {stat.trend}
-                  </Text>
-                </View>
-              </View>
-            </AnimatedCard>
+        {/* Offline banner */}
+        {offline && (
+          <View style={{ paddingHorizontal: 24, marginBottom: 12 }}>
+            <OfflineBanner visible={offline} testID="offline-banner" />
+          </View>
+        )}
+
+        {/* KPIs */}
+        <View style={{ paddingHorizontal: 24, marginBottom: 20, flexDirection: 'row', flexWrap: 'wrap', gap: 12 }}>
+          {kpis.map((kpi) => (
+            <View key={kpi.kind} style={{ flexBasis: '47%', flexGrow: 1 }}>
+              <KpiTile item={kpi} loading={loadingKpis} testID={`kpi-${kpi.kind}`} />
+            </View>
           ))}
         </View>
 
-        {/* Quick Actions */}
-        <View style={{ paddingHorizontal: 24, marginBottom: 32 }}>
-          <Text style={{
-            color: theme.color.foreground,
-            fontSize: 20,
-            fontWeight: '600',
-            marginBottom: 16
-          }}>
-            {t('dashboard.quickActions')}
-          </Text>
-          
-          <View style={{ gap: 12 }}>
-            {quickActions.map((action, index) => (
-              <AnimatedCard 
-                key={index} 
-                animationType="slideUp"
-                delay={600 + (index * 100)}
-                onPress={action.onPress}
-                style={{ padding: 16, borderWidth: 0, borderColor: 'transparent' }}
-              >
-                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 16 }}>
-                  <View style={{
-                    width: 44,
-                    height: 44,
-                    backgroundColor: theme.dark ? theme.color.secondary : theme.color.card,
-                    borderRadius: 22,
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    borderWidth: 1,
-                    borderColor: theme.color.border
-                  }}>
-                    <action.icon color={action.color} size={22} />
-                  </View>
-                  
-                  <View style={{ flex: 1 }}>
-                    <Text style={{
-                      color: theme.color.cardForeground,
-                      fontSize: 16,
-                      fontWeight: '600',
-                      marginBottom: 2
-                    }}>
-                      {action.title}
-                    </Text>
-                    <Text style={{
-                      color: theme.color.mutedForeground,
-                      fontSize: 14
-                    }}>
-                      {action.description}
-                    </Text>
-                  </View>
-                  
-                  <ChevronRight size={20} color={theme.color.mutedForeground} />
-                </View>
-              </AnimatedCard>
-            ))}
-          </View>
+        {/* Alerts */}
+        <View style={{ paddingHorizontal: 24, marginBottom: 24 }}>
+          <ScrollView horizontal showsHorizontalScrollIndicator={false}>
+            <View style={{ flexDirection: 'row' }}>
+              {alerts.map((a) => (
+                <AlertCard key={a.id} alert={a} testID={`alert-${a.kind}`} onPress={(deeplink) => {
+                  if (a.kind === 'slaRisk') {
+                    // Open Automations -> SlaEditor
+                    // @ts-ignore
+                    navigation.navigate('Automations', { screen: 'SlaEditor', params: { policy: { id: 'sla-1', name: 'Default SLA', pauseOutsideHours: true, targets: [ { priority: 'vip', frtP50Sec: 60, frtP90Sec: 180 }, { priority: 'high', frtP50Sec: 120, frtP90Sec: 300 }, { priority: 'normal', frtP50Sec: 300, frtP90Sec: 1200 } ] }, onApply: () => {} } })
+                  } else {
+                    handleActionPress(deeplink)
+                  }
+                }} />
+              ))}
+            </View>
+          </ScrollView>
         </View>
 
-        {/* Recent Activity */}
-        <View style={{ paddingHorizontal: 24, marginBottom: 32 }}>
-          <View style={{
-            flexDirection: 'row',
-            justifyContent: 'space-between',
-            alignItems: 'center',
-            marginBottom: 16
-          }}>
-            <Text style={{
-              color: theme.color.foreground,
-              fontSize: 20,
-              fontWeight: '600'
-            }}>
-              {t('dashboard.recentActivity')}
-            </Text>
-            <TouchableOpacity>
-              <Text style={{
-                color: theme.color.primary,
-                fontSize: 14,
-                fontWeight: '500'
-              }}>
-                View All
-              </Text>
-            </TouchableOpacity>
-          </View>
-          
-          <Card>
-            <View style={{ gap: 16 }}>
-              {recentActivity.map((activity, index) => {
-                const ActivityIcon = getActivityIcon(activity.type)
-                const color = getActivityColor(activity.status)
-                
-                return (
-                  <View key={activity.id} style={{
-                    flexDirection: 'row',
-                    alignItems: 'flex-start',
-                    gap: 12,
-                    paddingBottom: index < recentActivity.length - 1 ? 16 : 0,
-                    borderBottomWidth: index < recentActivity.length - 1 ? 1 : 0,
-                    borderBottomColor: theme.color.border
-                  }}>
-                    <View style={{
-                      width: 32,
-                      height: 32,
-                      backgroundColor: theme.dark ? theme.color.secondary : theme.color.card,
-                      borderRadius: 16,
-                      alignItems: 'center',
-                      justifyContent: 'center',
-                      borderWidth: 1,
-                      borderColor: theme.color.border
-                    }}>
-                      <ActivityIcon size={16} color={color} />
-                    </View>
-                    
-                    <View style={{ flex: 1 }}>
-                      <Text style={{
-                        color: theme.color.cardForeground,
-                        fontSize: 14,
-                        fontWeight: '600',
-                        marginBottom: 2
-                      }}>
-                        {activity.title}
-                      </Text>
-                      <Text style={{
-                        color: theme.color.mutedForeground,
-                        fontSize: 13,
-                        marginBottom: 4
-                      }}>
-                        {activity.description}
-                      </Text>
-                      <Text style={{
-                        color: theme.color.mutedForeground,
-                        fontSize: 11
-                      }}>
-                        {activity.timestamp}
-                      </Text>
-                    </View>
-                  </View>
-                )
-              })}
-            </View>
-          </Card>
+        {/* Quick Actions */}
+        <View style={{ paddingHorizontal: 24, marginBottom: 24 }}>
+          <QuickActions actions={actions} onPress={handleActionPress} testID="quick-actions" />
         </View>
+
+        {/* Setup Progress (only if any todo) */}
+        {steps.some(s => s.status === 'todo') && (
+          <View style={{ paddingHorizontal: 24, marginBottom: 24 }}>
+            <SetupProgressCard steps={steps} testID="setup-progress" />
+          </View>
+        )}
+
+        {/* Insights */}
+        <View style={{ paddingHorizontal: 24, gap: 16, marginBottom: 24 }}>
+          <InsightsTopIntents items={intents} loading={loadingIntents} testID="insights-intents" />
+          <InsightsPeakTimes hours={peakHours} loading={loadingPeak} testID="insights-peak" />
+          <VolumeByChannelMini items={byChannel} testID="insights-volume" />
+        </View>
+
+        {/* Ask the Dashboard */}
+        <View style={{ paddingHorizontal: 24, marginBottom: 24 }}>
+          <AskDashboard testID="ask-dashboard" />
+        </View>
+
+        {/* Industry Tiles */}
+        <View style={{ paddingHorizontal: 24, marginBottom: 32 }}>
+          <IndustryTiles
+            pack={pack}
+            onTilePress={(title) => {
+              // Basic contextual routing stubs
+              if (title.includes('Orders') || title.includes('Pending') || title.includes('Returns')) {
+                navigation.navigate('Conversations', { filter: 'urgent' })
+              } else if (title.includes('Bookings') || title.includes('Callback')) {
+                navigation.navigate('Conversations', { filter: 'waiting30' })
+              } else if (title.includes('Trials') || title.includes('At‑Risk')) {
+                navigation.navigate('Conversations', { filter: 'vip' })
+              }
+            }}
+            testID="industry-tiles"
+          />
+        </View>
+
+        {/* Spacer bottom */}
+        <View style={{ height: 24 }} />
+
+        {/* Sync Center Sheet */}
+        <SyncCenterSheet
+          visible={syncOpen}
+          onClose={() => setSyncOpen(false)}
+          lastSyncAt={new Date().toLocaleString()}
+          queuedCount={offline ? 3 : 0}
+          onRetryAll={() => {}}
+          testID="sync-center"
+        />
       </ScrollView>
     </SafeAreaView>
   )

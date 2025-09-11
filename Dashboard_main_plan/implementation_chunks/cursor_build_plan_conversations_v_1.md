@@ -61,7 +61,7 @@ export interface ConversationDetail extends ConversationSummary {
 
 ### Acceptance Checks
 - Type exports compile; no circular deps.
-
+ok
 ---
 
 ## STEP 2 — Component Shells (List‑level)
@@ -86,7 +86,7 @@ Use `Box`/`Text` and tokens. Include `testID`s.
 
 ### Acceptance Checks
 - Import into a dummy screen; no runtime errors; visual shells render.
-
+ok
 ---
 
 ## STEP 3 — Conversations Screen (List)
@@ -112,7 +112,7 @@ Register screen in navigator as `Conversations`.
 ### Acceptance Checks
 - Navigating from Dashboard deep link lands with the right active filter.
 - Filters/sort/search update the list quickly; pull‑to‑refresh works.
-
+ok
 ---
 
 ## STEP 4 — Row Interactions (Quick Actions)
@@ -130,7 +130,7 @@ Create `RowActionsSheet.tsx` with props: `id`, callbacks for each action (no bac
 
 ### Acceptance Checks
 - Long‑press shows sheet; actions invoke callbacks; UI stays stable.
-
+ok
 ---
 
 ## STEP 5 — Navigation Contracts
@@ -151,7 +151,7 @@ Ensure `ConversationsList` and `ConversationThread` use these types. Fix imports
 
 ### Acceptance Checks
 - Type checking passes; navigation calls are typed.
-
+ok
 ---
 
 ## STEP 6 — Thread Components (Message UI)
@@ -169,7 +169,7 @@ In `mobile/src/components/conversations/`, add:
 
 ### Acceptance Checks
 - Render in a dummy screen without errors.
-
+ok
 ---
 
 ## STEP 7 — Conversation Thread Screen
@@ -190,7 +190,7 @@ Create `mobile/src/screens/Conversations/ConversationThread.tsx`:
 
 ### Acceptance Checks
 - Navigating from list opens the right thread; sending a message appends to end smoothly.
-
+ok
 ---
 
 ## STEP 8 — HITL & Risk Gates (UI‑only)
@@ -206,7 +206,7 @@ Create `mobile/src/screens/Conversations/ConversationThread.tsx`:
 
 ### Acceptance Checks
 - Gates appear based on flags; interactions remain non‑blocking.
-
+ok
 ---
 
 ## STEP 9 — Offline & Queue Stubs
@@ -222,7 +222,7 @@ Create `mobile/src/screens/Conversations/ConversationThread.tsx`:
 
 ### Acceptance Checks
 - Toggling local `offline` state shows banner; queued message shows a clock; then clears.
-
+ok
 ---
 
 ## STEP 10 — Performance & Virtualization
@@ -238,7 +238,7 @@ Create `mobile/src/screens/Conversations/ConversationThread.tsx`:
 
 ### Acceptance Checks
 - Scroll stays 60fps on test devices; search doesn’t stutter.
-
+ok
 ---
 
 ## STEP 11 — Accessibility & Ergonomics
@@ -255,7 +255,7 @@ Create `mobile/src/screens/Conversations/ConversationThread.tsx`:
 
 ### Acceptance Checks
 - VoiceOver/TalkBack reads sender and message correctly; chips are focusable.
-
+ok
 ---
 
 ## STEP 12 — Analytics Stubs
@@ -274,7 +274,7 @@ Using `lib/analytics.ts`:
 
 ### Acceptance Checks
 - Console shows events on interactions in dev.
-
+ok
 ---
 
 ## STEP 13 — Final Review & Gaps
@@ -292,7 +292,7 @@ Using `lib/analytics.ts`:
 
 ### Acceptance Checks
 - All checks pass; doc created.
-
+ok
 ---
 
 ## Paste‑Ready Micro Prompts

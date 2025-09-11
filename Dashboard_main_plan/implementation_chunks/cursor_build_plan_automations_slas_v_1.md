@@ -61,7 +61,7 @@ export interface SimulationResult { matchedRuleIds: string[]; actions: Action[];
 
 ### Acceptance Checks
 - Types compile; no circular dependencies.
-
+ok
 ---
 
 ## STEP 2 — Primitive Components
@@ -84,7 +84,7 @@ In `mobile/src/components/automations/`, create:
 
 ### Acceptance Checks
 - All components render with demo props; touch targets ≥44dp.
-
+ok
 ---
 
 ## STEP 3 — Automations Home
@@ -109,7 +109,7 @@ Register in navigator as `Automations`.
 
 ### Acceptance Checks
 - Home renders; rule toggles and reorders update local state; nav to editors works.
-
+ok
 ---
 
 ## STEP 4 — Rule Builder
@@ -128,7 +128,7 @@ Create `RuleBuilder.tsx`:
 
 ### Acceptance Checks
 - Creating/editing rules updates the list; preview text updates live.
-
+ok
 ---
 
 ## STEP 5 — Business Hours & Holidays
@@ -146,7 +146,7 @@ Create `BusinessHoursScreen.tsx`:
 
 ### Acceptance Checks
 - Saving updates summary on home; basic validation prevents overlaps.
-
+ok
 ---
 
 ## STEP 6 — SLA Targets Editor
@@ -164,7 +164,7 @@ Create `SlaEditor.tsx`:
 
 ### Acceptance Checks
 - Adding/removing targets works; policy summary on home updates.
-
+ok
 ---
 
 ## STEP 7 — Auto‑Responders
@@ -180,7 +180,7 @@ Create `AutoRespondersScreen.tsx`:
 
 ### Acceptance Checks
 - Creating/toggling responders reflects on home; validation for empty message.
-
+ok
 ---
 
 ## STEP 8 — Simulator
@@ -198,7 +198,7 @@ Create `SimulatorScreen.tsx`:
 
 ### Acceptance Checks
 - Running updates results; applying as new rule preloads builder.
-
+ok
 ---
 
 ## STEP 9 — Import/Export & Audit (UI‑Only)
@@ -216,7 +216,7 @@ Link from home overflow.
 
 ### Acceptance Checks
 - Export shows JSON; Import updates local state; audit entries append on key actions.
-
+ok
 ---
 
 ## STEP 10 — Cross‑App Hooks
@@ -233,7 +233,7 @@ Link from home overflow.
 
 ### Acceptance Checks
 - Each entry point preloads expected fields; back navigation returns to origin.
-
+ok
 ---
 
 ## STEP 11 — Offline & Queue Stubs
@@ -249,7 +249,7 @@ Link from home overflow.
 
 ### Acceptance Checks
 - Offline toggle shows banner; queued icons appear then clear.
-
+ok
 ---
 
 ## STEP 12 — Performance & Accessibility
@@ -265,7 +265,7 @@ Link from home overflow.
 
 ### Acceptance Checks
 - Editors feel responsive; screen readers can traverse.
-
+ok
 ---
 
 ## STEP 13 — Analytics Stubs
@@ -286,7 +286,7 @@ Using `lib/analytics.ts` instrument:
 
 ### Acceptance Checks
 - Console logs events during interactions in dev.
-
+ok
 ---
 
 ## STEP 14 — Final Review & Gaps
@@ -301,7 +301,7 @@ Using `lib/analytics.ts` instrument:
 
 ### Acceptance Checks
 - All checks pass; doc created.
-
+ok
 ---
 
 ## Paste‑Ready Micro Prompts

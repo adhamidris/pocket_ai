@@ -52,7 +52,7 @@ export interface DriftWarning { sourceId:string; kind:'stale_url'|'upload_change
 
 ### Acceptance Checks
 - Types compile; no circular dependencies.
-
+ok
 ---
 
 ## STEP 2 — Primitive Components
@@ -75,7 +75,7 @@ Ensure each uses `Box`/`Text` and tokens; include `testID`s.
 
 ### Acceptance Checks
 - All render in isolation with demo props; touch targets ≥44dp.
-
+ok
 ---
 
 ## STEP 3 — Knowledge Home Screen
@@ -97,7 +97,7 @@ Register in navigator as `Knowledge`.
 
 ### Acceptance Checks
 - Screen renders with demo sources; buttons visible; pull‑to‑refresh works.
-
+ok
 ---
 
 ## STEP 4 — Add URL Source Flow
@@ -115,7 +115,7 @@ Link from `KnowledgeHome` → `AddUrlSource`.
 
 ### Acceptance Checks
 - Invalid URLs show inline error; saving appends to sources list.
-
+ok
 ---
 
 ## STEP 5 — Add Upload Source Flow (UI‑only)
@@ -134,7 +134,7 @@ Wire from `KnowledgeHome`.
 
 ### Acceptance Checks
 - File metadata preview appears; saving creates a new upload source locally.
-
+ok
 ---
 
 ## STEP 6 — Note Source Editor
@@ -151,7 +151,7 @@ Link from `KnowledgeHome` as `New Note` and on `SourceCard` press for notes.
 
 ### Acceptance Checks
 - Creating and editing notes works; tags render as chips elsewhere.
-
+ok
 ---
 
 ## STEP 7 — Training Queue & Status
@@ -169,7 +169,7 @@ Hook `Train Now` from `KnowledgeHome` to open `TrainingCenter`.
 
 ### Acceptance Checks
 - Jobs progress visually; sources reflect updated status/last trained times.
-
+ok
 ---
 
 ## STEP 8 — Coverage & Health
@@ -186,7 +186,7 @@ Link from `KnowledgeHome` coverage row.
 
 ### Acceptance Checks
 - Coverage numbers render; tapping a warning opens the correct action sheet.
-
+ok
 ---
 
 ## STEP 9 — Failure Log & Fix Loop
@@ -203,7 +203,7 @@ Link from `KnowledgeHome` via button `Failures`.
 
 ### Acceptance Checks
 - Clicking a failure can jump to thread or create/edit a note; UI updates list.
-
+ok
 ---
 
 ## STEP 10 — Test Harness
@@ -221,7 +221,7 @@ Add entry from Knowledge header.
 
 ### Acceptance Checks
 - Creating/running tests works; pass/fail badges visible.
-
+ok
 ---
 
 ## STEP 11 — Source Priority & Scope
@@ -238,7 +238,7 @@ Link from Knowledge overflow menu.
 
 ### Acceptance Checks
 - Reordering changes local order; toggling enabled hides source from home list.
-
+ok
 ---
 
 ## STEP 12 — Redaction & Content Controls
@@ -256,7 +256,7 @@ Link from Knowledge header overflow.
 
 ### Acceptance Checks
 - Toggling rules flips UI state; link navigates correctly.
-
+ok
 ---
 
 ## STEP 13 — Versioning & Change Log (UI‑only)
@@ -273,7 +273,7 @@ Entry via Knowledge overflow.
 
 ### Acceptance Checks
 - Selecting versions updates the panel; restore shows a toast; no crashes.
-
+ok
 ---
 
 ## STEP 14 — Offline & Queue Stubs
@@ -289,7 +289,7 @@ Entry via Knowledge overflow.
 
 ### Acceptance Checks
 - Offline state shows banner; queued icons appear then clear.
-
+ok
 ---
 
 ## STEP 15 — Performance & Accessibility
@@ -306,7 +306,7 @@ Entry via Knowledge overflow.
 
 ### Acceptance Checks
 - 60fps on scroll; screen readers can operate controls; contrast ok.
-
+ok
 ---
 
 ## STEP 16 — Analytics Stubs
@@ -327,7 +327,7 @@ Using `lib/analytics.ts` instrument:
 
 ### Acceptance Checks
 - Console logs events in dev during interactions.
-
+ok
 ---
 
 ## STEP 17 — Cross‑App Hooks
@@ -343,7 +343,7 @@ Using `lib/analytics.ts` instrument:
 
 ### Acceptance Checks
 - Navigation works as expected without crashes.
-
+ok
 ---
 
 ## STEP 18 — Final Review & Gaps
@@ -358,7 +358,7 @@ Using `lib/analytics.ts` instrument:
 
 ### Acceptance Checks
 - All checks pass; doc created.
-
+ok
 ---
 
 ## Paste‑Ready Micro Prompts

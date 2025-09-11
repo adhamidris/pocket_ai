@@ -155,7 +155,7 @@ Add/extend navigation types: `Conversations` screen accepts params `{ filter?: '
 
 ### Acceptance Checks
 - You can simulate loading and error; UI remains stable and accessible.
-
+kkkkkkkk
 ---
 
 ## STEP 7 — Accessibility & Touch Ergonomics
@@ -172,7 +172,7 @@ Add/extend navigation types: `Conversations` screen accepts params `{ filter?: '
 
 ### Acceptance Checks
 - VoiceOver/TalkBack can read labels; manual contrast check passes.
-
+ok
 ---
 
 ## STEP 8 — Offline/Sync UI Stubs
@@ -188,7 +188,7 @@ Add/extend navigation types: `Conversations` screen accepts params `{ filter?: '
 
 ### Acceptance Checks
 - Toggling a local `offline` state shows the banner; sheet opens and is scrollable.
-
+ok
 ---
 
 ## STEP 9 — Day‑1 Analytics Stubs
@@ -212,7 +212,7 @@ Instrument in Dashboard:
 
 ### Acceptance Checks
 - Console shows events when interacting with dashboard.
-
+ok
 ---
 
 ## STEP 10 — Industry Tiles (Retail/Services/SaaS)
@@ -230,7 +230,7 @@ Expose a prop `onTilePress(title: string)` to navigate to contextual filtered vi
 
 ### Acceptance Checks
 - Changing `industryPack` flag swaps tiles immediately.
-
+ok
 ---
 
 ## STEP 11 — Dashboard Q&A (Ask the Dashboard)
@@ -244,7 +244,7 @@ Create `AskDashboard.tsx` with a text input + submit button; on submit, render a
 
 ### Acceptance Checks
 - Typing a question and submitting shows a summary card; no crashes.
-
+ok
 ---
 
 ## STEP 12 — Performance Pass
@@ -260,7 +260,7 @@ Create `AskDashboard.tsx` with a text input + submit button; on submit, render a
 
 ### Acceptance Checks
 - JS frame drops minimized; scroll smooth.
-
+ok
 ---
 
 ## STEP 13 — Final Review & Gaps Audit
@@ -278,7 +278,7 @@ Create `AskDashboard.tsx` with a text input + submit button; on submit, render a
 
 ### Acceptance Checks
 - All checks green; `KNOWN_GAPS.md` created.
-
+ok
 ---
 
 ## Optional Add‑Ons (after v0)

@@ -1,14 +1,18 @@
 import React from 'react'
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs'
-import { Home, MessageCircle, Users, Bot, Settings } from 'lucide-react-native'
+import { Home, MessageCircle, Users, Bot, Settings, Workflow, BarChart3 } from 'lucide-react-native'
 import { useTranslation } from 'react-i18next'
 import { useTheme } from '../providers/ThemeProvider'
 
 // Screen imports
 import { DashboardScreen } from '../screens/dashboard/Dashboard'
-import { ConversationsScreen } from '../screens/conversations/Conversations'
-import { CRMScreen } from '../screens/crm/CRM'
-import { AgentsScreen } from '../screens/agents/Agents'
+import ConversationsStack from './ConversationsStack'
+import CRMStack from './CRMStack'
+import AgentsStack from './AgentsStack'
+import ChannelsStack from './ChannelsStack'
+import KnowledgeStack from './KnowledgeStack'
+import AutomationsStack from './AutomationsStack'
+import AnalyticsStack from './AnalyticsStack'
 import { SettingsScreen } from '../screens/settings/Settings'
 
 const Tab = createBottomTabNavigator()
@@ -51,7 +55,7 @@ export const TabNavigator: React.FC = () => {
       />
       <Tab.Screen
         name="Conversations"
-        component={ConversationsScreen}
+        component={ConversationsStack}
         options={{
           title: t('nav.conversations'),
           tabBarIcon: ({ color, size }) => <MessageCircle color={color} size={size} />
@@ -59,7 +63,7 @@ export const TabNavigator: React.FC = () => {
       />
       <Tab.Screen
         name="CRM"
-        component={CRMScreen}
+        component={CRMStack}
         options={{
           title: t('nav.crm'),
           tabBarIcon: ({ color, size }) => <Users color={color} size={size} />
@@ -67,10 +71,42 @@ export const TabNavigator: React.FC = () => {
       />
       <Tab.Screen
         name="Agents"
-        component={AgentsScreen}
+        component={AgentsStack}
         options={{
           title: t('nav.agents'),
           tabBarIcon: ({ color, size }) => <Bot color={color} size={size} />
+        }}
+      />
+      <Tab.Screen
+        name="Channels"
+        component={ChannelsStack}
+        options={{
+          title: t('nav.channels', { defaultValue: 'Channels' }),
+          tabBarIcon: ({ color, size }) => <MessageCircle color={color} size={size} />
+        }}
+      />
+      <Tab.Screen
+        name="Knowledge"
+        component={KnowledgeStack}
+        options={{
+          title: t('nav.knowledge', { defaultValue: 'Knowledge' }),
+          tabBarIcon: ({ color, size }) => <MessageCircle color={color} size={size} />
+        }}
+      />
+      <Tab.Screen
+        name="Automations"
+        component={AutomationsStack}
+        options={{
+          title: 'Automations',
+          tabBarIcon: ({ color, size }) => <Workflow color={color} size={size} />
+        }}
+      />
+      <Tab.Screen
+        name="Analytics"
+        component={AnalyticsStack}
+        options={{
+          title: 'Analytics',
+          tabBarIcon: ({ color, size }) => <BarChart3 color={color} size={size} />
         }}
       />
       <Tab.Screen

@@ -57,7 +57,7 @@ export interface AttributionRow { source: string; medium?: string; campaign?: st
 
 ### Acceptance Checks
 - Types compile; no circular deps.
-
+ok
 ---
 
 ## STEP 2 — Chart & Tile Primitives (No external libs)
@@ -82,7 +82,7 @@ Provide `testID`s and a11y labels.
 
 ### Acceptance Checks
 - Each renders with demo props; touch targets ≥44dp; tables scroll.
-
+ok
 ---
 
 ## STEP 3 — Analytics Home (Overview)
@@ -104,7 +104,7 @@ Register as `Analytics` in navigator.
 
 ### Acceptance Checks
 - Presets switch range; compare shows deltas on tiles; filters change demo series.
-
+ok
 ---
 
 ## STEP 4 — Trends Screen
@@ -122,7 +122,7 @@ Create `TrendsScreen.tsx`:
 
 ### Acceptance Checks
 - Switching tabs/grain updates chart; tapping a bucket navigates to Conversations with `{ atTs: bucketTs }` (UI‑only).
-
+ok
 ---
 
 ## STEP 5 — Channel Breakdown
@@ -140,7 +140,7 @@ Create `ChannelBreakdown.tsx`:
 
 ### Acceptance Checks
 - Table updates when filters change; CTA navigates.
-
+WE STOPPED HERE THIS STEP PROMPT DID NOT GO WELL
 ---
 
 ## STEP 6 — Intent Analytics

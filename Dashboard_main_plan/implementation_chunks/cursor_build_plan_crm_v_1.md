@@ -87,7 +87,7 @@ Use `Box`/`Text` and tokens; provide `testID`s.
 
 ### Acceptance Checks
 - Can render each component standalone without runtime errors.
-
+ok
 ---
 
 ## STEP 3 — Row & Card Components
@@ -104,7 +104,7 @@ Create:
 
 ### Acceptance Checks
 - Render with mock data; long names and many tags wrap gracefully.
-
+ok
 ---
 
 ## STEP 4 — CRM List Screen
@@ -128,7 +128,7 @@ Register screen as `CRM`.
 
 ### Acceptance Checks
 - Filters/sort/search work smoothly; list virtualization ok; deep link focuses target row.
-
+ok
 ---
 
 ## STEP 5 — Row Interactions (Quick Actions)
@@ -144,7 +144,7 @@ Wire into `ContactRow` long‑press. For **Start Conversation**, navigate to `Co
 
 ### Acceptance Checks
 - Sheet opens; each action triggers a stub; navigation works.
-
+ok
 ---
 
 ## STEP 6 — Contact Detail Screen
@@ -163,7 +163,7 @@ Create `mobile/src/screens/CRM/ContactDetail.tsx`:
 
 ### Acceptance Checks
 - Navigating from list opens details; tabs switch; interactions open threads; redaction toggle changes UI text style (e.g., mask email/phone).
-
+ok
 ---
 
 ## STEP 7 — Import & Export (UI Stubs)
@@ -181,7 +181,7 @@ Add a button in `CRMList` header to open this sheet.
 
 ### Acceptance Checks
 - Opening sheet works; mapping UI renders; export shows a success toast.
-
+ok
 ---
 
 ## STEP 8 — Dedupe & Merge Flow (UI‑only)
@@ -198,7 +198,7 @@ Add `DedupeCenter` entry point from CRM header overflow menu.
 
 ### Acceptance Checks
 - Review flow selectable; merging updates local data; no crashes.
-
+ok
 ---
 
 ## STEP 9 — Segments Builder
@@ -217,7 +217,7 @@ Add `SegmentsScreen` entry in CRM header and a quick access button in `CRMList`.
 
 ### Acceptance Checks
 - Creating a segment updates preview count and can be applied to filter contacts.
-
+ok
 ---
 
 ## STEP 10 — Consent & Privacy Surfaces
@@ -234,7 +234,7 @@ Add `SegmentsScreen` entry in CRM header and a quick access button in `CRMList`.
 
 ### Acceptance Checks
 - Consent filter chips filter; deletion request shows a toast; link navigates to center shell.
-
+ok
 ---
 
 ## STEP 11 — Offline & Queue Stubs
@@ -250,7 +250,7 @@ Add `SegmentsScreen` entry in CRM header and a quick access button in `CRMList`.
 
 ### Acceptance Checks
 - Toggling offline shows banner; queued icons appear then clear after timeout.
-
+ok
 ---
 
 ## STEP 12 — Performance & Virtualization
@@ -267,7 +267,7 @@ Add `SegmentsScreen` entry in CRM header and a quick access button in `CRMList`.
 
 ### Acceptance Checks
 - 200+ contacts scroll at 60fps; A–Z jump works; search is responsive.
-
+ok
 ---
 
 ## STEP 13 — Accessibility & Ergonomics
@@ -284,7 +284,7 @@ Add `SegmentsScreen` entry in CRM header and a quick access button in `CRMList`.
 
 ### Acceptance Checks
 - Screen readers announce name + key attributes; chips focusable; contrast ok.
-
+ok
 ---
 
 ## STEP 14 — Analytics Stubs
@@ -305,7 +305,7 @@ Using `lib/analytics.ts`:
 
 ### Acceptance Checks
 - Console logs events on interactions in dev.
-
+ok
 ---
 
 ## STEP 15 — Cross‑App Hooks
@@ -320,7 +320,7 @@ Using `lib/analytics.ts`:
 
 ### Acceptance Checks
 - Hand‑off works both ways without crashes.
-
+ok
 ---
 
 ## STEP 16 — Final Review & Gaps
@@ -336,7 +336,7 @@ Using `lib/analytics.ts`:
 
 ### Acceptance Checks
 - All checks pass; doc created.
-
+ok
 ---
 
 ## Paste‑Ready Micro Prompts
