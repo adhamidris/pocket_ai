@@ -1,6 +1,6 @@
 import React from 'react'
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs'
-import { Home, MessageCircle, Users, Bot, Settings, Workflow, BarChart3 } from 'lucide-react-native'
+import { Home, MessageCircle, Users, Bot, Settings as SettingsIcon, Workflow, BarChart3, Shield, Globe, HelpCircle } from 'lucide-react-native'
 import { useTranslation } from 'react-i18next'
 import { useTheme } from '../providers/ThemeProvider'
 
@@ -13,15 +13,23 @@ import ChannelsStack from './ChannelsStack'
 import KnowledgeStack from './KnowledgeStack'
 import AutomationsStack from './AutomationsStack'
 import AnalyticsStack from './AnalyticsStack'
-import { SettingsScreen } from '../screens/settings/Settings'
+import SettingsStack from './SettingsStack'
+import PrivacyCenter from '../screens/security/PrivacyCenter'
+import SecurityHome from '../screens/Security/SecurityHome'
+import PortalPreview from '../screens/Portal/PortalPreview'
+import ActionsStack from './ActionsStack'
+import { HelpButton } from '../components/help'
+import { useNavigation } from '@react-navigation/native'
 
 const Tab = createBottomTabNavigator()
 
 export const TabNavigator: React.FC = () => {
   const { t } = useTranslation()
   const { theme } = useTheme()
+  const navigation = useNavigation<any>()
 
   return (
+    <>
     <Tab.Navigator
       screenOptions={{
         headerShown: false,
@@ -42,6 +50,12 @@ export const TabNavigator: React.FC = () => {
         },
         tabBarIconStyle: {
           marginTop: 4,
+        },
+        tabBarLongPress: () => {
+          // Open command palette on long-press anywhere on tab bar
+          // @ts-ignore
+          const { DeviceEventEmitter } = require('react-native')
+          DeviceEventEmitter.emit('palette.open')
         }
       }}
     >
@@ -110,13 +124,40 @@ export const TabNavigator: React.FC = () => {
         }}
       />
       <Tab.Screen
+        name="Actions"
+        component={ActionsStack}
+        options={{
+          title: 'Actions',
+          tabBarIcon: ({ color, size }) => <Workflow color={color} size={size} />
+        }}
+      />
+      <Tab.Screen
+        name="Security"
+        component={SecurityHome}
+        options={{
+          title: 'Security',
+          tabBarIcon: ({ color, size }) => <Shield color={color} size={size} />
+        }}
+      />
+      <Tab.Screen
+        name="Portal"
+        component={PortalPreview}
+        options={{
+          title: 'Portal',
+          tabBarIcon: ({ color, size }) => <Globe color={color} size={size} />
+        }}
+      />
+      <Tab.Screen
         name="Settings"
-        component={SettingsScreen}
+        component={SettingsStack}
         options={{
           title: t('nav.settings'),
-          tabBarIcon: ({ color, size }) => <Settings color={color} size={size} />
+          tabBarIcon: ({ color, size }) => <SettingsIcon color={color} size={size} />
         }}
       />
     </Tab.Navigator>
+    {/* Floating Help */}
+    <HelpButton onPress={() => navigation.navigate('HelpCenter')} />
+    </>
   )
 }

@@ -30,7 +30,7 @@ Add `FixtureSwitcher.tsx` (QA overlay) to swap between **Baseline**, **High Volu
 
 ### Acceptance Checks
 - Toggling profiles updates all modules’ demo state consistently.
-
+ok
 ---
 
 ## STEP 2 — Component Gallery
@@ -44,7 +44,7 @@ Create `mobile/src/screens/QA/ComponentGallery.tsx` that renders a grid of primi
 
 ### Acceptance Checks
 - No visual regressions; each primitive mounts without warnings.
-
+ok
 ---
 
 ## STEP 3 — Navigation & Deep‑Link Audit
@@ -68,7 +68,7 @@ Display a pass/fail table with last route & params.
 
 ### Acceptance Checks
 - All routes work; params visible; back stack sane (no duplicate screens).
-
+ok
 ---
 
 ## STEP 4 — Accessibility (WCAG‑ish) Pass
@@ -84,7 +84,7 @@ Create `AccessibilityAudit.tsx` that:
 
 ### Acceptance Checks
 - Zero missing labels on critical actions; contrast warnings resolved or waived with rationale.
-
+ok
 ---
 
 ## STEP 5 — i18n & RTL Sweep
@@ -100,7 +100,7 @@ Create `I18nAudit.tsx`:
 
 ### Acceptance Checks
 - No clipped text in pseudo‑locale; RTL mirrors correctly; dates/times render per locale prefs.
-
+ok
 ---
 
 ## STEP 6 — Theming & Brand Parity
@@ -116,7 +116,7 @@ Create `ThemeAudit.tsx` with preset apply buttons (Neutral/Bold/Soft + two custo
 
 ### Acceptance Checks
 - No illegible text; ContrastBadge passes where required; portal preview reflects tokens.
-
+ok
 ---
 
 ## STEP 7 — Offline & Queue Behaviors
@@ -131,7 +131,7 @@ Create `OfflineAudit.tsx`:
 
 ### Acceptance Checks
 - All screens show the correct offline badges and queue visuals; no dead‑end UI.
-
+ok
 ---
 
 ## STEP 8 — Performance Budgets
@@ -149,7 +149,7 @@ Define budgets in comments: initial nav < 300ms, scroll > 55fps on mid device, r
 
 ### Acceptance Checks
 - Lists remain smooth; any flagged screens have TODOs or simplified variants available.
-
+ok
 ---
 
 ## STEP 9 — Error & Empty‑State Coverage
@@ -163,7 +163,7 @@ Create `StateCoverageAudit.tsx` that fuzzes per‑screen data to: **loading**, *
 
 ### Acceptance Checks
 - No bare blanks or silent failures; CTAs navigate.
-
+ok
 ---
 
 ## STEP 10 — Analytics/Telemetry Validation
@@ -179,7 +179,7 @@ Create `TelemetryAudit.tsx`:
 
 ### Acceptance Checks
 - All key events appear exactly once; PII masking works; export produces JSON.
-
+ok
 ---
 
 ## STEP 11 — Entitlements & Upsell Gating
@@ -194,7 +194,7 @@ Create `EntitlementAudit.tsx`:
 
 ### Acceptance Checks
 - Gates appear correctly per plan; upgrade/downgrade transitions update UI everywhere.
-
+ok
 ---
 
 ## STEP 12 — Security & Privacy UX Checks
@@ -210,7 +210,7 @@ Create `SecPrivacyAudit.tsx`:
 
 ### Acceptance Checks
 - Masking consistent; warnings/badges show; audit entries appear from other modules.
-
+ok
 ---
 
 ## STEP 13 — E2E Paths (Scripted Walks)
@@ -228,7 +228,7 @@ Show a checklist UI with pass/fail ticks.
 
 ### Acceptance Checks
 - All steps complete without dead‑ends; failures show which screen/step.
-
+ok
 ---
 
 ## STEP 14 — Bug Bash Playbook
@@ -247,7 +247,7 @@ Create `BugBashPlaybook.md` (in `mobile/docs/`) with:
 
 ### Acceptance Checks
 - Playbook renders and covers all modules; rubric clear.
-
+ok
 ---
 
 ## STEP 15 — RC Preflight Checklist
@@ -265,7 +265,7 @@ Create `RC_Preflight.tsx` with checkboxes and links:
 
 ### Acceptance Checks
 - All boxes can be marked; unresolved items link to audit screens.
-
+ok
 ---
 
 ## STEP 16 — Launch & Rollout Plan (UI Stubs)
@@ -282,7 +282,7 @@ Create `LaunchRollout.tsx`:
 
 ### Acceptance Checks
 - State persists; links navigate to relevant audit screens.
-
+ok
 ---
 
 ## STEP 17 — Final Gaps & Debrief
@@ -298,7 +298,7 @@ Create `mobile/docs/KNOWN_GAPS_RC.md` summarizing:
 
 ### Acceptance Checks
 - Document covers all integration points; referenced by RC Preflight.
-
+ok
 ---
 
 ## Paste‑Ready Micro Prompts

@@ -10,6 +10,7 @@ import RuleCard from '../../components/automations/RuleCard'
 import ResponderCard from '../../components/automations/ResponderCard'
 import SimulatorPanel from '../../components/automations/SimulatorPanel'
 import { Action, AutoResponder, BusinessCalendar, BusinessHoursDay, Condition, Rule, SlaPolicy } from '../../types/automations'
+import { EmptyStateGuide } from '../../components/help/EmptyStateGuide'
 
 const genRules = (): Rule[] => Array.from({ length: 5 }, (_, i) => ({
   id: `r-${i+1}`,
@@ -118,17 +119,25 @@ const AutomationsHome: React.FC = () => {
                 <Text style={{ color: theme.color.primary, fontWeight: '700' }}>New Rule</Text>
               </TouchableOpacity>
             </View>
-            <View style={{ gap: 8 }}>
-              {rules.map((r) => (
-                <RuleCard key={r.id} rule={r} queued={!!queued.rules[r.id]} onToggle={() => {
-                  setRules((arr) => arr.map((x) => x.id === r.id ? { ...x, enabled: !x.enabled } : x))
-                  if (offline) {
-                    setQueued((q) => ({ ...q, rules: { ...q.rules, [r.id]: true } }))
-                    setTimeout(() => setQueued((q) => ({ ...q, rules: { ...q.rules, [r.id]: false } })), 1500)
-                  }
-                }} onEdit={() => navigation.navigate('Automations', { screen: 'RuleBuilder', params: { rule: r, onSave: (nr: Rule) => setRules((arr) => arr.map((x) => x.id === nr.id ? nr : x)) } })} onReorder={(dir) => reorder(r.id, dir)} testID={`auto-rule-row-${r.id}`} />
-              ))}
-            </View>
+            {rules.length === 0 ? (
+              <EmptyStateGuide
+                title="Create your first rule"
+                lines={["Automate routing, replies, and more."]}
+                cta={{ label: 'Open Rule Builder', onPress: () => navigation.navigate('Automations', { screen: 'RuleBuilder' }) }}
+              />
+            ) : (
+              <View style={{ gap: 8 }}>
+                {rules.map((r) => (
+                  <RuleCard key={r.id} rule={r} queued={!!queued.rules[r.id]} onToggle={() => {
+                    setRules((arr) => arr.map((x) => x.id === r.id ? { ...x, enabled: !x.enabled } : x))
+                    if (offline) {
+                      setQueued((q) => ({ ...q, rules: { ...q.rules, [r.id]: true } }))
+                      setTimeout(() => setQueued((q) => ({ ...q, rules: { ...q.rules, [r.id]: false } })), 1500)
+                    }
+                  }} onEdit={() => navigation.navigate('Automations', { screen: 'RuleBuilder', params: { rule: r, onSave: (nr: Rule) => setRules((arr) => arr.map((x) => x.id === nr.id ? nr : x)) } })} onReorder={(dir) => reorder(r.id, dir)} testID={`auto-rule-row-${r.id}`} />
+                ))}
+              </View>
+            )}
           </View>
 
           {/* Business Hours */}

@@ -8,6 +8,7 @@ import SlaTargetEditor from '../../components/automations/SlaTargetEditor'
 import BreachBadge from '../../components/automations/BreachBadge'
 import OfflineBanner from '../../components/dashboard/OfflineBanner'
 import { track } from '../../lib/analytics'
+import EntitlementsGate from '../../components/billing/EntitlementsGate'
 
 export interface SlaEditorParams {
   policy: SlaPolicy
@@ -58,6 +59,7 @@ const SlaEditor: React.FC = () => {
       </View>
 
       <ScrollView style={{ padding: 16 }} contentContainerStyle={{ paddingBottom: 24 }}>
+        <EntitlementsGate require="automations">
         {offline && <OfflineBanner visible />}
         {/* Name & pause */}
         <View style={{ marginBottom: 12 }}>
@@ -99,6 +101,7 @@ const SlaEditor: React.FC = () => {
           </TouchableOpacity>
         </View>
       </ScrollView>
+      </EntitlementsGate>
     </SafeAreaView>
   )
 }

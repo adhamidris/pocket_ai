@@ -1,5 +1,5 @@
 import React from 'react'
-import { SafeAreaView, View, TextInput, FlatList, RefreshControl, TouchableOpacity, Text } from 'react-native'
+import { SafeAreaView, View, TextInput, FlatList, RefreshControl, TouchableOpacity, Text, DeviceEventEmitter } from 'react-native'
 import { useTheme } from '../../providers/ThemeProvider'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
 import { useNavigation, useRoute } from '@react-navigation/native'
@@ -13,6 +13,8 @@ import ImportExportSheet from '../../components/crm/ImportExportSheet'
 import OfflineBanner from '../../components/dashboard/OfflineBanner'
 import SyncCenterSheet from '../../components/dashboard/SyncCenterSheet'
 import { track } from '../../lib/analytics'
+import { DeviceEventEmitter } from 'react-native'
+import { getFixtures } from '../../qa/fixtures'
 
 const rand = (min: number, max: number) => Math.floor(Math.random() * (max - min + 1)) + min
 const pick = <T,>(arr: T[]): T => arr[rand(0, arr.length - 1)]
@@ -52,7 +54,8 @@ export const CRMList: React.FC = () => {
   const [sort, setSort] = React.useState<SortKey>('recent')
   const [loading, setLoading] = React.useState(false)
   const [refreshing, setRefreshing] = React.useState(false)
-  const [data, setData] = React.useState<Contact[]>(() => genContacts())
+  const [data, setData] = React.useState<Contact[]>(() => getFixtures().contacts)
+  const [hidePII, setHidePII] = React.useState<boolean>(false)
   const [highlightId, setHighlightId] = React.useState<string | null>(null)
   const listRef = React.useRef<FlatList<Contact>>(null)
   const [sheetOpen, setSheetOpen] = React.useState(false)
@@ -92,7 +95,15 @@ export const CRMList: React.FC = () => {
     track('crm.view')
     setLoading(true)
     const t = setTimeout(() => setLoading(false), 400)
-    return () => clearTimeout(t)
+    const sub = DeviceEventEmitter.addListener('qa.fixtures.changed', () => {
+      try { setData(getFixtures().contacts) } catch {}
+    })
+    return () => { clearTimeout(t); sub.remove() }
+  }, [])
+
+  React.useEffect(() => {
+    const sub = DeviceEventEmitter.addListener('privacy.modes', (vals: any) => setHidePII(!!vals?.hideContactPII))
+    return () => sub.remove()
   }, [])
 
   const onRefresh = () => {
@@ -252,6 +263,7 @@ export const CRMList: React.FC = () => {
                   queuedVip={queued[item.id]?.vip}
                   queuedTag={queued[item.id]?.tag}
                   queuedConsent={queued[item.id]?.consent}
+                  hidePII={hidePII}
                 />
               </View>
             )}

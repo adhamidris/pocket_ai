@@ -55,7 +55,7 @@ export interface Shortcut { id:string; label:string; icon?:string; action:ToolSu
 
 ### Acceptance Checks
 - Types compile; no circular deps.
-
+ok
 ---
 
 ## STEP 2 — Primitive Components
@@ -80,7 +80,7 @@ In `mobile/src/components/assistant/`, create:
 
 ### Acceptance Checks
 - All render with demo props; ≥44dp; a11y labels on send/mic/tts.
-
+ok
 ---
 
 ## STEP 3 — Dashboard Ask Panel
@@ -97,7 +97,7 @@ Create `mobile/src/screens/Assistant/DashboardAskPanel.tsx`:
 
 ### Acceptance Checks
 - Sending a query renders an answer with tool suggestions; shortcuts prefill the input and send.
-
+ok
 ---
 
 ## STEP 4 — Global Assistant Overlay
@@ -116,7 +116,7 @@ Add a floating **Assistant FAB** component into the root navigator.
 
 ### Acceptance Checks
 - FAB opens overlay over any screen; recent answers persist; follow‑ups append new answers.
-
+ok
 ---
 
 ## STEP 5 — Tool Suggestions → Deep Links
@@ -140,7 +140,7 @@ Wire `ToolSuggestionRow` buttons to this helper.
 
 ### Acceptance Checks
 - Tapping a suggestion navigates to the expected screen with params visible.
-
+ok
 ---
 
 ## STEP 6 — Voice (Mic & TTS) UI
@@ -157,7 +157,7 @@ Wire `ToolSuggestionRow` buttons to this helper.
 
 ### Acceptance Checks
 - Holding mic simulates capture; TTS controls appear per answer and animate.
-
+ok
 ---
 
 ## STEP 7 — Prompt Templates & Pins
@@ -179,7 +179,7 @@ Integrate **Templates** and **Pins** tabs into `AssistantOverlay` header.
 
 ### Acceptance Checks
 - Using a template fills and sends; pins appear and open from overlay.
-
+ok
 ---
 
 ## STEP 8 — Persona & Tone Controls
@@ -195,7 +195,7 @@ Integrate **Templates** and **Pins** tabs into `AssistantOverlay` header.
 
 ### Acceptance Checks
 - Switching persona changes chunk order; tone affects copy length.
-
+ok
 ---
 
 ## STEP 9 — Safety & Privacy UX
@@ -210,7 +210,7 @@ Integrate **Templates** and **Pins** tabs into `AssistantOverlay` header.
 
 ### Acceptance Checks
 - Toggling Hide PII flips masking on citations within answers.
-
+ok
 ---
 
 ## STEP 10 — Daily Brief & Notifications (UI‑only)
@@ -229,7 +229,7 @@ Add a **“Daily Brief”** shortcut to DashboardAskPanel and AssistantOverlay s
 
 ### Acceptance Checks
 - Screen renders with canned content; Schedule stores local flag; Share shows toast.
-
+ok
 ---
 
 ## STEP 11 — Cross‑App Hooks
@@ -246,7 +246,7 @@ Add a **“Daily Brief”** shortcut to DashboardAskPanel and AssistantOverlay s
 
 ### Acceptance Checks
 - Each hook opens Assistant with prefilled text and persona.
-
+ok
 ---
 
 ## STEP 12 — Offline & Rate‑Limit
@@ -261,7 +261,7 @@ Add a **“Daily Brief”** shortcut to DashboardAskPanel and AssistantOverlay s
 
 ### Acceptance Checks
 - Cooldown triggers and resolves; queued chips clear after timeout.
-
+ok
 ---
 
 ## STEP 13 — Accessibility & Performance
@@ -277,7 +277,7 @@ Add a **“Daily Brief”** shortcut to DashboardAskPanel and AssistantOverlay s
 
 ### Acceptance Checks
 - Screen reader flow works; 60fps scroll with many answers.
-
+ok
 ---
 
 ## STEP 14 — Analytics (Meta‑events)
@@ -297,7 +297,7 @@ Using `lib/analytics.ts`:
 
 ### Acceptance Checks
 - Console logs events during interactions in dev.
-
+ok
 ---
 
 ## STEP 15 — Final Review & Gaps
@@ -312,7 +312,7 @@ Using `lib/analytics.ts`:
 
 ### Acceptance Checks
 - All checks pass; doc created.
-
+ok
 ---
 
 ## Paste‑Ready Micro Prompts

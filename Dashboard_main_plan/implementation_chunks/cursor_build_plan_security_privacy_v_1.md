@@ -78,7 +78,7 @@ export interface PrivacyMode { anonymizeAnalytics:boolean; hideContactPII:boolea
 
 ### Acceptance Checks
 - Types compile; no circular deps.
-
+ok
 ---
 
 ## STEP 2 — Primitive Components
@@ -104,7 +104,7 @@ In `mobile/src/components/security/`, create:
 
 ### Acceptance Checks
 - Primitives render with demo props; controls meet ≥44dp; labels have a11y text.
-
+ok
 ---
 
 ## STEP 3 — Security & Privacy Home
@@ -130,7 +130,7 @@ Register as `SecurityPrivacy` in navigator.
 
 ### Acceptance Checks
 - Home renders summaries; tapping rows navigates to editors.
-
+ok
 ---
 
 ## STEP 4 — Retention Policy Editor
@@ -148,7 +148,7 @@ Create `RetentionEditor.tsx`:
 
 ### Acceptance Checks
 - Saving updates summary on home; audit log shows new event.
-
+ok
 ---
 
 ## STEP 5 — Consent Center
@@ -164,7 +164,7 @@ Create `ConsentCenter.tsx`:
 
 ### Acceptance Checks
 - Creating/publishing templates updates list; records table filters; navigation to CRM works.
-
+ok
 ---
 
 ## STEP 6 — Audit Log (Filters & Export)
@@ -181,7 +181,7 @@ Create `AuditLogScreen.tsx`:
 
 ### Acceptance Checks
 - Filters change list; export shows toast and logs.
-
+ok
 ---
 
 ## STEP 7 — Access Controls
@@ -198,7 +198,7 @@ Create `AccessControlsScreen.tsx`:
 
 ### Acceptance Checks
 - CIDR validation errors display; saves update home summary; audit entries appear.
-
+ok
 ---
 
 ## STEP 8 — Data Residency
@@ -215,7 +215,7 @@ Create `DataResidencyScreen.tsx`:
 
 ### Acceptance Checks
 - Changing region updates home summary; audit record logged.
-
+ok
 ---
 
 ## STEP 9 — Exports (DSAR) Center
@@ -232,7 +232,7 @@ Create `ExportsCenter.tsx`:
 
 ### Acceptance Checks
 - Creating a job adds to list and progresses; audit shows entries.
-
+ok
 ---
 
 ## STEP 10 — Deletion Requests (DSR)
@@ -249,7 +249,7 @@ Create `DeletionRequestsScreen.tsx`:
 
 ### Acceptance Checks
 - State machine works visually; audit entries appear; navigation hooks work.
-
+ok
 ---
 
 ## STEP 11 — Legal Holds
@@ -266,7 +266,7 @@ Create `LegalHoldsScreen.tsx`:
 
 ### Acceptance Checks
 - Activating a hold surfaces a badge on linked screens; audit shows entries.
-
+ok
 ---
 
 ## STEP 12 — Privacy Modes
@@ -283,7 +283,7 @@ Create `PrivacyModesScreen.tsx`:
 
 ### Acceptance Checks
 - Toggling **Hide PII** masks CRM contact PII visually; Analytics shows "Anonymized" badge when on.
-
+ok
 ---
 
 ## STEP 13 — Cross‑App Hooks
@@ -300,7 +300,7 @@ Create `PrivacyModesScreen.tsx`:
 
 ### Acceptance Checks
 - Links navigate and return correctly; prefilled params apply.
-
+ok
 ---
 
 ## STEP 14 — Offline & Queue Stubs
@@ -316,7 +316,7 @@ Create `PrivacyModesScreen.tsx`:
 
 ### Acceptance Checks
 - Offline shows banner; queued icons appear then clear.
-
+ok
 ---
 
 ## STEP 15 — Performance & Accessibility
@@ -332,7 +332,7 @@ Create `PrivacyModesScreen.tsx`:
 
 ### Acceptance Checks
 - Scrolling remains smooth; screen readers can operate controls.
-
+ok
 ---
 
 ## STEP 16 — Analytics Stubs
@@ -356,7 +356,7 @@ Using `lib/analytics.ts` instrument:
 
 ### Acceptance Checks
 - Console logs events during interactions in dev.
-
+ok
 ---
 
 ## STEP 17 — Final Review & Gaps
@@ -371,7 +371,7 @@ Using `lib/analytics.ts` instrument:
 
 ### Acceptance Checks
 - All checks pass; document created.
-
+ok
 ---
 
 ## Paste‑Ready Micro Prompts

@@ -78,7 +78,7 @@ export const ContactDetail: React.FC = () => {
             <TouchableOpacity onPress={() => Alert.alert('Delete', 'Are you sure?', [{ text: 'Cancel' }, { text: 'Delete', style: 'destructive' }])} accessibilityLabel="Delete" accessibilityRole="button" style={{ padding: 8 }}>
               <Text style={{ color: theme.color.error, fontWeight: '600' }}>Delete</Text>
             </TouchableOpacity>
-            <TouchableOpacity onPress={() => { track('crm.delete_request', { id: contact.id }); Alert.alert('Request submitted', 'Deletion request submitted (UI-only).') }} accessibilityLabel="Request Deletion" accessibilityRole="button" style={{ padding: 8 }}>
+            <TouchableOpacity onPress={() => { track('crm.delete_request', { id: contact.id }); navigation.navigate('Security', { screen: 'DeletionRequests' , params: { prefill: { subject: 'contact', refId: contact.id } } }) }} accessibilityLabel="Request Deletion" accessibilityRole="button" style={{ padding: 8 }}>
               <Text style={{ color: theme.color.mutedForeground, fontWeight: '600' }}>Request Deletion</Text>
             </TouchableOpacity>
             <TouchableOpacity onPress={() => navigation.navigate('CRM', { screen: 'PrivacyCenter' })} accessibilityLabel="Privacy Center" accessibilityRole="button" style={{ padding: 8 }}>

@@ -61,7 +61,7 @@ export interface CsatForm { rating?:1|2|3|4|5; comment?:string; }
 
 ### Acceptance Checks
 - Types compile and export cleanly.
-
+ok
 ---
 
 ## STEP 2 — Primitive Components
@@ -89,7 +89,7 @@ In `mobile/src/components/portal/`, create:
 
 ### Acceptance Checks
 - Each primitive renders with demo props; minimum hit area 44dp; color tokens from theme.
-
+ok
 ---
 
 ## STEP 3 — Portal Preview Shell
@@ -108,7 +108,7 @@ Create `mobile/src/screens/Portal/PortalPreview.tsx`:
 
 ### Acceptance Checks
 - Preview responds to toggles; sending a message appends a customer bubble and then AI reply after a timeout.
-
+ok
 ---
 
 ## STEP 4 — Pre‑Chat Form & Consent
@@ -126,7 +126,7 @@ Create `PrechatScreen.tsx`:
 
 ### Acceptance Checks
 - Required fields validated; Accept enables Start; values appear in preview.
-
+ok
 ---
 
 ## STEP 5 — Quick Replies & Action Suggestions
@@ -142,7 +142,7 @@ Create `PrechatScreen.tsx`:
 
 ### Acceptance Checks
 - Tapping chips sends messages; actions add cards; composer stays focused.
-
+ok
 ---
 
 ## STEP 6 — Attachments (UI‑only)
@@ -160,7 +160,7 @@ Create `AttachmentFlow.tsx`:
 
 ### Acceptance Checks
 - Adding/removing attachments works; progress animates; validation errors display.
-
+ok
 ---
 
 ## STEP 7 — Voice Controls (Mocked)
@@ -178,7 +178,7 @@ Create `VoiceBar.tsx`:
 
 ### Acceptance Checks
 - Holding mic simulates recording; releasing sends text; TTS icons animate per bubble.
-
+ok
 ---
 
 ## STEP 8 — Queueing & Handoff (HITL)
@@ -195,7 +195,7 @@ Create `HandoffBar.tsx`:
 
 ### Acceptance Checks
 - Request/Cancel updates state and shows queue; End chat triggers CSAT.
-
+ok
 ---
 
 ## STEP 9 — CSAT & Transcript
@@ -211,7 +211,7 @@ Create `HandoffBar.tsx`:
 
 ### Acceptance Checks
 - Submitting CSAT stores rating locally; email validates before enabling Send.
-
+ok
 ---
 
 ## STEP 10 — Theming & Accessibility
@@ -228,7 +228,7 @@ Create `HandoffBar.tsx`:
 
 ### Acceptance Checks
 - Theme changes reflect instantly; screen reader announces roles; RTL flips layout.
-
+ok
 ---
 
 ## STEP 11 — Rate Limits & Abuse UX (UI‑only)
@@ -243,7 +243,7 @@ Create `HandoffBar.tsx`:
 
 ### Acceptance Checks
 - Rapid taps trigger cooldown; notices appear and disappear correctly.
-
+ok
 ---
 
 ## STEP 12 — Analytics Stubs (Portal)
@@ -263,7 +263,7 @@ Using `lib/analytics.ts` add:
 
 ### Acceptance Checks
 - Console logs expected events during interactions.
-
+ok
 ---
 
 ## STEP 13 — Cross‑App Hooks
@@ -280,7 +280,7 @@ Using `lib/analytics.ts` add:
 
 ### Acceptance Checks
 - Deep links carry context (themeId, link) and reflect immediately on preview.
-
+ok
 ---
 
 ## STEP 14 — Offline & Error States
@@ -295,7 +295,7 @@ Using `lib/analytics.ts` add:
 
 ### Acceptance Checks
 - Toggling offline shows badges and disables composer; returning online clears.
-
+ok
 ---
 
 ## STEP 15 — Performance & Virtualization
@@ -311,7 +311,7 @@ Using `lib/analytics.ts` add:
 
 ### Acceptance Checks
 - 60fps scroll with 200+ demo messages; no layout thrash.
-
+ok
 ---
 
 ## STEP 16 — Definitions & Copy Bank
@@ -325,7 +325,7 @@ Create `mobile/src/content/portalCopy.ts` with strings for system notices, conse
 
 ### Acceptance Checks
 - Changing locale in Settings swaps copy strings.
-
+ok
 ---
 
 ## STEP 17 — Final Review & Gaps

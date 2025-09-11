@@ -8,7 +8,17 @@ import AnalyticsFilterBar from '../../components/analytics/FilterBar'
 import NumberTile from '../../components/analytics/NumberTile'
 import LineChartMini from '../../components/analytics/LineChartMini'
 import ExportBar from '../../components/analytics/ExportBar'
+import ChannelBreakdown from '../../components/analytics/ChannelBreakdown'
+import IntentAnalytics from '../../components/analytics/IntentAnalytics'
+import AgentPerformance from '../../components/analytics/AgentPerformance'
+import CohortsRepeat from '../../components/analytics/CohortsRepeat'
+import PeakHours from '../../components/analytics/PeakHours'
+import Funnels from '../../components/analytics/Funnels'
+import Attribution from '../../components/analytics/Attribution'
 import { track } from '../../lib/analytics'
+import { DeviceEventEmitter } from 'react-native'
+import OfflineBanner from '../../components/dashboard/OfflineBanner'
+import { EmptyStateGuide } from '../../components/help/EmptyStateGuide'
 
 const now = () => new Date()
 const iso = (d: Date) => d.toISOString()
@@ -42,8 +52,18 @@ const AnalyticsHome: React.FC = () => {
     volume: genSeries(48, 120),
     breaches: genSeries(48, 4),
   }))
+  const [offline, setOffline] = React.useState<boolean>(false)
+  const [lastRefreshedAt, setLastRefreshedAt] = React.useState<number>(() => Date.now())
+  const [anonymized, setAnonymized] = React.useState<boolean>(false)
 
   React.useEffect(() => { track('analytics.view') }, [])
+
+  React.useEffect(() => {
+    const sub = DeviceEventEmitter.addListener('privacy.modes', (vals: any) => {
+      setAnonymized(!!vals?.anonymizeAnalytics)
+    })
+    return () => sub.remove()
+  }, [])
 
   // When range/filters change, regenerate demo series with slight shifts
   React.useEffect(() => {
@@ -88,18 +108,53 @@ const AnalyticsHome: React.FC = () => {
 
   const setFilter = (key: string, val: any) => setFilters((f) => ({ ...f, [key]: val }))
 
+  const notEnoughData = false // in demo, we usually have data; toggle for guide
+
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: theme.color.background }}>
       <ScrollView style={{ flex: 1 }}>
         {/* Header */}
         <View style={{ paddingHorizontal: 24, paddingTop: insets.top + 12, paddingBottom: 12 }}>
+          <View style={{ marginBottom: 8 }}>
+            <OfflineBanner visible={offline} testID="an-offline" />
+          </View>
           <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
-            <Text style={{ color: theme.color.foreground, fontSize: 28, fontWeight: '700' }}>Analytics</Text>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+              <Text style={{ color: theme.color.foreground, fontSize: 28, fontWeight: '700' }}>Analytics</Text>
+              {anonymized && (
+                <View style={{ paddingHorizontal: 8, paddingVertical: 4, borderRadius: 10, borderWidth: 1, borderColor: theme.color.border }}>
+                  <Text style={{ color: theme.color.mutedForeground, fontSize: 12 }}>Anonymized</Text>
+                </View>
+              )}
+            </View>
             <View style={{ flexDirection: 'row', gap: 8 }}>
-              <TouchableOpacity onPress={() => {}} accessibilityLabel="Definitions" accessibilityRole="button" style={{ paddingHorizontal: 12, paddingVertical: 8, borderRadius: 12, borderWidth: 1, borderColor: theme.color.border }}>
+              <TouchableOpacity onPress={() => setOffline((v) => !v)} accessibilityLabel="Toggle offline" accessibilityRole="button" style={{ paddingHorizontal: 12, paddingVertical: 8, borderRadius: 12, borderWidth: 1, borderColor: offline ? theme.color.primary : theme.color.border }}>
+                <Text style={{ color: offline ? theme.color.primary : theme.color.cardForeground, fontWeight: '600' }}>{offline ? 'Cached' : 'Online'}</Text>
+              </TouchableOpacity>
+              <TouchableOpacity onPress={() => DeviceEventEmitter.emit('assistant.open', { text: 'Why did FRT worsen today?', persona: 'analyst' })} accessibilityLabel="Ask why FRT" accessibilityRole="button" style={{ paddingHorizontal: 12, paddingVertical: 8, borderRadius: 12, borderWidth: 1, borderColor: theme.color.border }}>
+                <Text style={{ color: theme.color.cardForeground, fontWeight: '600' }}>Ask why (FRT)</Text>
+              </TouchableOpacity>
+              <TouchableOpacity onPress={() => { setLastRefreshedAt(Date.now()); setSeries({
+                frt: genSeries(48, 40),
+                resolution: genSeries(48, 85),
+                csat: genSeries(48, 92),
+                deflect: genSeries(48, 45),
+                volume: genSeries(48, 120),
+                breaches: genSeries(48, 4),
+              }) }} accessibilityLabel="Refresh" accessibilityRole="button" style={{ paddingHorizontal: 12, paddingVertical: 8, borderRadius: 12, borderWidth: 1, borderColor: theme.color.border }}>
+                <Text style={{ color: theme.color.cardForeground, fontWeight: '600' }}>Refresh</Text>
+              </TouchableOpacity>
+              <TouchableOpacity onPress={() => {
+                // @ts-ignore
+                (require('@react-navigation/native') as any).useNavigation().navigate('Analytics', { screen: 'Definitions' })
+              }} accessibilityLabel="Definitions" accessibilityRole="button" style={{ paddingHorizontal: 12, paddingVertical: 8, borderRadius: 12, borderWidth: 1, borderColor: theme.color.border }}>
                 <Text style={{ color: theme.color.cardForeground, fontWeight: '600' }}>Definitions</Text>
               </TouchableOpacity>
-              <TouchableOpacity onPress={() => {}} accessibilityLabel="Saved Reports" accessibilityRole="button" style={{ paddingHorizontal: 12, paddingVertical: 8, borderRadius: 12, borderWidth: 1, borderColor: theme.color.border }}>
+              <TouchableOpacity onPress={() => {
+                // pass current filters/range; stub metrics
+                // @ts-ignore navigation exists via parent
+                (require('@react-navigation/native') as any).useNavigation().navigate('Analytics', { screen: 'SavedReports', params: { metrics: ['volume','frtP50','resolutionRate'], dims: ['time'], filters, range } })
+              }} accessibilityLabel="Saved Reports" accessibilityRole="button" style={{ paddingHorizontal: 12, paddingVertical: 8, borderRadius: 12, borderWidth: 1, borderColor: theme.color.border }}>
                 <Text style={{ color: theme.color.cardForeground, fontWeight: '600' }}>Saved Reports</Text>
               </TouchableOpacity>
             </View>
@@ -107,25 +162,42 @@ const AnalyticsHome: React.FC = () => {
 
           {/* Controls */}
           <View style={{ marginTop: 8, gap: 12 }}>
-            <DateRangePicker range={range} onChange={setRange} testID="an-range" />
-            <AnalyticsFilterBar filters={filters} onChange={setFilter} testID="an-filters" />
+            <DateRangePicker range={range} onChange={(r) => { setRange(r); track('analytics.filter', { key: 'range', value: r }) }} testID="an-range" />
+            <AnalyticsFilterBar filters={filters} onChange={(k, v) => { setFilter(k, v); track('analytics.filter', { key: k, value: v }) }} testID="an-filters" />
           </View>
         </View>
 
         {/* KPI tiles */}
         <View style={{ paddingHorizontal: 24 }}>
+          {notEnoughData ? (
+            <EmptyStateGuide
+              title="Not enough data yet"
+              lines={["Increase your date range or wait for more volume."]}
+              cta={{ label: 'Set timeframe to 30 days', onPress: () => setRange(makeRange(30)) }}
+            />
+          ) : (
           <ScrollView horizontal showsHorizontalScrollIndicator={false}>
             <View style={{ flexDirection: 'row', gap: 12, paddingBottom: 8 }}>
               {([
-                { key: 'FRT P50', data: kpi.frt },
-                { key: 'Resolution %', data: kpi.res },
-                { key: 'CSAT', data: kpi.csat },
-                { key: 'Deflection', data: kpi.defl },
-                { key: 'Volume', data: kpi.vol },
-                { key: 'SLA Breaches', data: kpi.br },
+                { key: 'FRT P50', data: kpi.frt, def: '50th percentile of first response latency (agent or AI) within time bucket.' },
+                { key: 'Resolution %', data: kpi.res, def: 'Resolved conversations divided by total conversations in the period.' },
+                { key: 'CSAT', data: kpi.csat, def: 'Average customer satisfaction score for the period.' },
+                { key: 'Deflection', data: kpi.defl, def: 'Conversations resolved by AI with no agent divided by total.' },
+                { key: 'Volume', data: kpi.vol, def: 'Total conversations in the selected period.', cta: 'Open Conversations' },
+                { key: 'SLA Breaches', data: kpi.br, def: 'Total SLA breaches in the selected period.' },
               ] as const).map((tile, idx) => (
                 <View key={idx} style={{ width: 200 }}>
-                  <NumberTile label={tile.key} value={tile.data.value} delta={tile.data.delta} helpText="vs prev" testID={`an-kpi-${idx}`} />
+                  <NumberTile label={tile.key} value={tile.data.value} delta={tile.data.delta} helpText="vs prev" definition={tile.def} testID={`an-kpi-${idx}`} />
+                  {tile.cta && (
+                    <View style={{ marginTop: 6 }}>
+                      <TouchableOpacity onPress={() => {
+                        // @ts-ignore
+                        (require('@react-navigation/native') as any).useNavigation().navigate('Conversations', { screen: 'Conversations' })
+                      }} accessibilityLabel="Open Conversations" accessibilityRole="button" style={{ paddingHorizontal: 12, paddingVertical: 8, borderRadius: 10, borderWidth: 1, borderColor: theme.color.border }}>
+                        <Text style={{ color: theme.color.cardForeground, fontWeight: '600' }}>{tile.cta}</Text>
+                      </TouchableOpacity>
+                    </View>
+                  )}
                   <View style={{ marginTop: 8 }}>
                     <LineChartMini series={tile.data.series} />
                   </View>
@@ -133,6 +205,7 @@ const AnalyticsHome: React.FC = () => {
               ))}
             </View>
           </ScrollView>
+          )}
         </View>
 
         {/* Top Insights */}
@@ -147,7 +220,42 @@ const AnalyticsHome: React.FC = () => {
 
         {/* Export */}
         <View style={{ paddingHorizontal: 24, marginTop: 16, marginBottom: 24 }}>
-          <ExportBar testID="an-export" />
+          <ExportBar onExportCsv={() => { track('analytics.export', { type: 'csv' }) }} onExportPdf={() => { track('analytics.export', { type: 'pdf' }) }} testID="an-export" />
+        </View>
+
+        {/* Channel Breakdown */}
+        <View style={{ paddingHorizontal: 24, marginBottom: 24 }}>
+          <ChannelBreakdown testID="an-channel-breakdown" />
+        </View>
+
+        {/* Intent Analytics */}
+        <View style={{ paddingHorizontal: 24, marginBottom: 24 }}>
+          <IntentAnalytics testID="an-intent-analytics" />
+        </View>
+
+        {/* Agent Performance */}
+        <View style={{ paddingHorizontal: 24, marginBottom: 24 }}>
+          <AgentPerformance testID="an-agent-performance" />
+        </View>
+
+        {/* Cohorts & Repeat Contacts */}
+        <View style={{ paddingHorizontal: 24, marginBottom: 24 }}>
+          <CohortsRepeat testID="an-cohorts-repeat" />
+        </View>
+
+        {/* Peak Hours */}
+        <View style={{ paddingHorizontal: 24, marginBottom: 24 }}>
+          <PeakHours testID="an-peak-hours" />
+        </View>
+
+        {/* Funnels */}
+        <View style={{ paddingHorizontal: 24, marginBottom: 24 }}>
+          <Funnels testID="an-funnels" />
+        </View>
+
+        {/* Attribution */}
+        <View style={{ paddingHorizontal: 24, marginBottom: 24 }}>
+          <Attribution testID="an-attribution" />
         </View>
       </ScrollView>
     </SafeAreaView>

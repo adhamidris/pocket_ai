@@ -2,6 +2,7 @@ import React from 'react'
 import { View, Text, TouchableOpacity, Switch } from 'react-native'
 import { AllowedAction } from '../../types/agents'
 import { tokens } from '../../ui/tokens'
+import EntitlementsGate from '../billing/EntitlementsGate'
 
 export interface AllowlistEditorProps {
   items: AllowedAction[]
@@ -21,6 +22,7 @@ const RiskBadge: React.FC<{ level?: 'low'|'medium'|'high' }> = ({ level }) => {
 
 const AllowlistEditor: React.FC<AllowlistEditorProps> = ({ items, onToggle, testID }) => {
   return (
+    <EntitlementsGate require="agentsAllowlist">
     <View testID={testID}>
       {items.map((a) => (
         <View key={a.key} style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', borderWidth: 1, borderColor: tokens.colors.border, borderRadius: 12, padding: 12, marginBottom: 8 }}>
@@ -38,6 +40,7 @@ const AllowlistEditor: React.FC<AllowlistEditorProps> = ({ items, onToggle, test
         </View>
       ))}
     </View>
+    </EntitlementsGate>
   )
 }
 

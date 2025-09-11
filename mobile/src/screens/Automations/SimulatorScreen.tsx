@@ -6,6 +6,7 @@ import { useNavigation, useRoute } from '@react-navigation/native'
 import { Action, BusinessCalendar, Condition, Rule, SlaPolicy, SimulationInput, SimulationResult } from '../../types/automations'
 import TagChip from '../../components/crm/TagChip'
 import { track } from '../../lib/analytics'
+import EntitlementsGate from '../../components/billing/EntitlementsGate'
 
 export interface SimulatorParams {
   rules: Rule[]
@@ -162,6 +163,7 @@ const SimulatorScreen: React.FC = () => {
       </View>
 
       <ScrollView style={{ padding: 16 }} contentContainerStyle={{ paddingBottom: 24 }}>
+        <EntitlementsGate require="automations">
         {/* Inputs */}
         <View style={{ gap: 12 }}>
           <View>
@@ -236,6 +238,7 @@ const SimulatorScreen: React.FC = () => {
             )}
           </View>
         )}
+        </EntitlementsGate>
       </ScrollView>
     </SafeAreaView>
   )

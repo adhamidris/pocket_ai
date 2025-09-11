@@ -21,6 +21,7 @@ export interface ContactRowProps {
   queuedVip?: boolean
   queuedTag?: boolean
   queuedConsent?: boolean
+  hidePII?: boolean
   testID?: string
 }
 
@@ -38,7 +39,7 @@ const timeAgo = (ts?: number) => {
 
 import RowActionsSheet from './RowActionsSheet'
 
-const ContactRow: React.FC<ContactRowProps> = ({ item, interaction, onPress, onLongPress, onToggleVip, onAddRemoveTag, onSetConsent, queuedVip, queuedTag, queuedConsent, testID }) => {
+const ContactRow: React.FC<ContactRowProps> = ({ item, interaction, onPress, onLongPress, onToggleVip, onAddRemoveTag, onSetConsent, queuedVip, queuedTag, queuedConsent, hidePII, testID }) => {
   const extraTags = Math.max(0, item.tags.length - 3)
   const [open, setOpen] = React.useState(false)
 
@@ -86,6 +87,15 @@ const ContactRow: React.FC<ContactRowProps> = ({ item, interaction, onPress, onL
                 {interaction.lastMessageSnippet}
               </Text>
             )}
+          </Box>
+          {/* PII lines */}
+          <Box>
+            {item.email ? (
+              <Text size={11} color={tokens.colors.mutedForeground}>{hidePII ? '••••••••@••••' : item.email}</Text>
+            ) : null}
+            {item.phone ? (
+              <Text size={11} color={tokens.colors.mutedForeground}>{hidePII ? '+•••-•••-••••' : item.phone}</Text>
+            ) : null}
           </Box>
 
           {/* Tags */}

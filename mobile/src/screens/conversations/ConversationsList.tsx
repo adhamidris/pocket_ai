@@ -12,7 +12,11 @@ import AgentMiniCard from '../../components/agents/AgentMiniCard'
 import { AnyAgent, AgentKind, AgentStatus, SkillTag } from '../../types/agents'
 import ListSkeleton from '../../components/conversations/ListSkeleton'
 import EmptyState from '../../components/conversations/EmptyState'
+import { EmptyStateGuide } from '../../components/help/EmptyStateGuide'
+import { DeviceEventEmitter } from 'react-native'
 import { track } from '../../lib/analytics'
+import { DeviceEventEmitter } from 'react-native'
+import { getFixtures } from '../../qa/fixtures'
 
 const priorities: Priority[] = ['low', 'normal', 'high', 'vip']
 
@@ -59,7 +63,7 @@ export const ConversationsList: React.FC = () => {
   const [sort, setSort] = React.useState<'recent' | 'oldest' | 'priority'>('recent')
   const [loading, setLoading] = React.useState(false)
   const [refreshing, setRefreshing] = React.useState(false)
-  const [data, setData] = React.useState<ConversationSummary[]>(() => genDemo())
+  const [data, setData] = React.useState<ConversationSummary[]>(() => getFixtures().conversations)
   const [assignOpen, setAssignOpen] = React.useState<null | string>(null)
   const [agents] = React.useState<AnyAgent[]>(() => {
     const skills: Array<SkillTag> = [{ name: 'support', level: 3 }]
@@ -70,6 +74,10 @@ export const ConversationsList: React.FC = () => {
   // Analytics: view
   React.useEffect(() => {
     track('conversations.view')
+    const sub = DeviceEventEmitter.addListener('qa.fixtures.changed', () => {
+      try { setData(getFixtures().conversations) } catch {}
+    })
+    return () => sub.remove()
   }, [])
 
   // Debounce query to avoid stutter
@@ -82,6 +90,7 @@ export const ConversationsList: React.FC = () => {
   React.useEffect(() => {
     const f = route.params?.filter as string | undefined
     const prefill = route.params?.prefill as string | undefined
+    const channel = route.params?.channel as string | undefined
     if (!f) return
     switch (f) {
       case 'urgent':
@@ -102,6 +111,7 @@ export const ConversationsList: React.FC = () => {
       default:
         break
     }
+    if (channel) setActive((a) => ({ ...a, channel }))
   }, [route.params])
 
   // Prefill search from cross-app navigation
@@ -196,8 +206,21 @@ export const ConversationsList: React.FC = () => {
       <View style={{ flex: 1, paddingHorizontal: 24 }}>
         {loading ? (
           <ListSkeleton rows={8} testID="conv-skeleton" />
+        ) : data.length === 0 ? (
+          <EmptyStateGuide
+            title="Publish your link to start receiving messages"
+            lines={["No conversations yet.", "Share your widget link to collect messages."]}
+            cta={{ label: 'Open Channels', onPress: () => navigation.navigate('Channels', { screen: 'WidgetSnippet' }) }}
+          />
         ) : filtered.length === 0 ? (
-          <EmptyState message="No conversations match your filters." testID="conv-empty" />
+          <View>
+            <EmptyState message="No conversations match your filters." testID="conv-empty" />
+            <View style={{ marginTop: 12, alignItems: 'center' }}>
+              <TouchableOpacity onPress={() => DeviceEventEmitter.emit('assistant.open', { text: 'Find customers asking about billing in last 24h', persona: 'ops' })} accessibilityRole="button" accessibilityLabel="Ask Assistant" style={{ paddingHorizontal: 12, paddingVertical: 8, borderRadius: 10, borderWidth: 1, borderColor: theme.color.border }}>
+                <Text style={{ color: theme.color.cardForeground, fontWeight: '600' }}>Ask Assistant to search</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
         ) : (
           <FlatList
             testID="conv-list"

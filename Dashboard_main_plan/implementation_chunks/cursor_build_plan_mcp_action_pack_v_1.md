@@ -56,7 +56,7 @@ export interface SecretRef { key:string; note?:string; lastRotatedAt?:number } /
 
 ### Acceptance Checks
 - Types compile; no circular deps.
-
+ok
 ---
 
 ## STEP 2 — Primitive Components
@@ -81,7 +81,7 @@ In `mobile/src/components/actions/`, create:
 
 ### Acceptance Checks
 - All primitives render with demo props; ≥44dp hit targets; a11y labels present.
-
+ok
 ---
 
 ## STEP 3 — Actions Home (Catalog + Allowlist + Monitor)
@@ -102,7 +102,7 @@ Register as `Actions` in navigator.
 
 ### Acceptance Checks
 - Tabs switch; search filters catalog; monitor shows demo runs.
-
+ok
 ---
 
 ## STEP 4 — Action Details & Try It
@@ -119,7 +119,7 @@ Create `ActionDetail.tsx`:
 
 ### Acceptance Checks
 - Invalid params show errors; simulate renders preview; Run creates a `RunRow` entry.
-
+ok
 ---
 
 ## STEP 5 — Rule Builder (Allowlist Editor)
@@ -136,7 +136,7 @@ Create `AllowRuleBuilder.tsx`:
 
 ### Acceptance Checks
 - Save appends/updates rule; enable/disable flips state; validation works.
-
+ok
 ---
 
 ## STEP 6 — Capability Packs (Industry presets)
@@ -153,7 +153,7 @@ Create `CapabilityPacks.tsx`:
 
 ### Acceptance Checks
 - Applying shows new rules; reverting removes them; idempotent behavior.
-
+ok
 ---
 
 ## STEP 7 — Approvals & Inboxes (UI‑only)
@@ -170,7 +170,7 @@ Create `ApprovalsInbox.tsx`:
 
 ### Acceptance Checks
 - Approving/rejecting updates state; Monitor reflects changes.
-
+ok
 ---
 
 ## STEP 8 — Runtime Guardrails (Simulated)
@@ -188,7 +188,7 @@ Create `ApprovalsInbox.tsx`:
 
 ### Acceptance Checks
 - Triggering each guard shows the proper message/state.
-
+ok
 ---
 
 ## STEP 9 — Secrets Placeholder & Environment Notes
@@ -205,7 +205,7 @@ Link from ActionsHome overflow **Secrets**.
 
 ### Acceptance Checks
 - Rows render; rotate shows toast/log.
-
+ok
 ---
 
 ## STEP 10 — Import/Export & Versioning (UI-only)
@@ -222,7 +222,7 @@ Create `ImportExportScreen.tsx`:
 
 ### Acceptance Checks
 - Export emits JSON; import updates local lists; conflicts flagged.
-
+ok
 ---
 
 ## STEP 11 — Cross‑App Hooks
@@ -239,7 +239,7 @@ Create `ImportExportScreen.tsx`:
 
 ### Acceptance Checks
 - Each deep link carries context and prefills params.
-
+ok
 ---
 
 ## STEP 12 — Monitor & Incident View
@@ -255,7 +255,7 @@ Create `RunMonitorScreen.tsx`:
 
 ### Acceptance Checks
 - State transitions update visuals; rollback shows a placeholder dialog.
-
+ok
 ---
 
 ## STEP 13 — Performance, Accessibility, Offline
@@ -271,7 +271,7 @@ Create `RunMonitorScreen.tsx`:
 
 ### Acceptance Checks
 - 60fps scroll; a11y reads risk and approval states; queued icons appear then clear.
-
+ok
 ---
 
 ## STEP 14 — Analytics (Meta-events)
@@ -292,7 +292,7 @@ Using `lib/analytics.ts` add:
 
 ### Acceptance Checks
 - Console logs events in dev during interactions.
-
+ok
 ---
 
 ## STEP 15 — Final Review & Gaps
@@ -307,7 +307,7 @@ Using `lib/analytics.ts` add:
 
 ### Acceptance Checks
 - All checks pass; doc created.
-
+ok
 ---
 
 ## Paste‑Ready Micro Prompts

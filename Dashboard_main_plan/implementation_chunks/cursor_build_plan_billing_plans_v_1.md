@@ -75,7 +75,7 @@ export interface BillingPortalState {
 
 ### Acceptance Checks
 - Types compile; no circular deps.
-
+ok
 ---
 
 ## STEP 2 — Primitive Components
@@ -99,7 +99,7 @@ In `mobile/src/components/billing/`, create:
 
 ### Acceptance Checks
 - Render primitives with demo props; touch ≥44dp; a11y labels present.
-
+ok
 ---
 
 ## STEP 3 — Billing Home
@@ -123,7 +123,7 @@ Register as `Billing` in navigator and link from Settings home.
 
 ### Acceptance Checks
 - Home renders summaries; CTAs navigate to editors.
-
+ok
 ---
 
 ## STEP 4 — Plan Matrix & Upgrade Flow
@@ -145,7 +145,7 @@ Create `CheckoutScreen.tsx`:
 
 ### Acceptance Checks
 - Switching interval updates prices; selecting plan flows to checkout; subscribing updates BillingHome.
-
+ok
 ---
 
 ## STEP 5 — Manage Plan (Upgrade/Downgrade, Cancel, Proration)
@@ -162,7 +162,7 @@ Create `ManagePlanScreen.tsx`:
 
 ### Acceptance Checks
 - Toggling cancel/ pause updates local sub; opening matrix updates plan.
-
+ok
 ---
 
 ## STEP 6 — Payment Methods
@@ -179,7 +179,7 @@ Create `PaymentMethodsScreen.tsx`:
 
 ### Acceptance Checks
 - Adding/removing/default updates list; dunning banner clears when default added.
-
+ok
 ---
 
 ## STEP 7 — Invoices
@@ -196,7 +196,7 @@ Create `InvoicesScreen.tsx`:
 
 ### Acceptance Checks
 - Filters change list; detail opens; open PDF shows toast.
-
+ok
 ---
 
 ## STEP 8 — Taxes & Billing Profile
@@ -213,7 +213,7 @@ Create `TaxBillingProfile.tsx`:
 
 ### Acceptance Checks
 - Saving updates invoice preview fields; validation for basic formats.
-
+ok
 ---
 
 ## STEP 9 — Coupons & Promotions
@@ -230,7 +230,7 @@ Add a `CouponsScreen.tsx`:
 
 ### Acceptance Checks
 - Applying/removing updates totals in checkout and manage screens.
-
+ok
 ---
 
 ## STEP 10 — Usage & Limits
@@ -247,7 +247,7 @@ Create `UsageLimitsScreen.tsx`:
 
 ### Acceptance Checks
 - Bars reflect demo state; toggles persist locally.
-
+ok
 ---
 
 ## STEP 11 — Dunning & Grace
@@ -263,7 +263,7 @@ Create `DunningScreen.tsx`:
 
 ### Acceptance Checks
 - Retry toggles lastChargeFailed and clears on success; banners reflect state.
-
+ok
 ---
 
 ## STEP 12 — Entitlements & Gating (Global)
@@ -286,7 +286,7 @@ Sweep across modules and wrap premium surfaces:
 
 ### Acceptance Checks
 - When on Free/Starter, premium sections show UpsellInline; after upgrade, sections render.
-
+ok
 ---
 
 ## STEP 13 — Cross‑App Upsells
@@ -303,7 +303,7 @@ Create `UpsellInline.tsx` (reusable) and add CTAs:
 
 ### Acceptance Checks
 - CTAs navigate with the correct plan highlighted.
-
+ok
 ---
 
 ## STEP 14 — Price Localization & Currency
@@ -319,7 +319,7 @@ Create `CurrencySelector.tsx` (in Settings or Billing header):
 
 ### Acceptance Checks
 - Changing currency updates visible prices consistently.
-
+ok
 ---
 
 ## STEP 15 — Offline & Sync Stubs
@@ -335,7 +335,7 @@ Create `CurrencySelector.tsx` (in Settings or Billing header):
 
 ### Acceptance Checks
 - Offline shows banner; queued icons appear then clear.
-
+ok
 ---
 
 ## STEP 16 — Accessibility & Performance
@@ -350,7 +350,7 @@ Create `CurrencySelector.tsx` (in Settings or Billing header):
 
 ### Acceptance Checks
 - Lists scroll smoothly; screen readers announce plan/price, usage %, and invoice details.
-
+ok
 ---
 
 ## STEP 17 — Analytics Stubs
@@ -374,7 +374,7 @@ Using `lib/analytics.ts` instrument:
 
 ### Acceptance Checks
 - Console logs events during interactions in dev.
-
+ok
 ---
 
 ## STEP 18 — Final Review & Gaps
@@ -389,7 +389,7 @@ Using `lib/analytics.ts` instrument:
 
 ### Acceptance Checks
 - All checks pass; doc created.
-
+ok
 ---
 
 ## Paste‑Ready Micro Prompts

@@ -12,7 +12,7 @@ const HeatmapGrid: React.FC<HeatmapGridProps> = ({ points, xLabels, yLabels, tes
     return `${tokens.colors.primary}${Math.round(alpha * 255).toString(16).padStart(2, '0')}`
   }
   return (
-    <View testID={testID}>
+    <View testID={testID} accessibilityRole="image" accessibilityLabel="Heatmap grid" accessible>
       <View style={{ flexDirection: 'row', marginBottom: 6 }}>
         <View style={{ width: 48 }} />
         {xLabels.map((x, i) => (
@@ -33,6 +33,7 @@ const HeatmapGrid: React.FC<HeatmapGridProps> = ({ points, xLabels, yLabels, tes
           })}
         </View>
       ))}
+      <Text style={{ color: tokens.colors.mutedForeground, fontSize: 12, marginTop: 4 }}>Heatmap shows intensity across {yLabels.length} rows and {xLabels.length} columns.</Text>
     </View>
   )
 }

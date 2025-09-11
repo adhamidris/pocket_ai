@@ -69,7 +69,7 @@ const ChannelsHome: React.FC = () => {
         <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
           <Text style={{ color: theme.color.foreground, fontSize: 32, fontWeight: '700' }}>Channels & Publishing</Text>
           <View style={{ flexDirection: 'row', gap: 8 }}>
-            <TouchableOpacity onPress={() => navigation.navigate('Settings', { screen: 'ThemePreview', params: { themeId: link.themeId, onApply: (v: any) => setLink((l) => ({ ...l, themeId: l.themeId })) } })} accessibilityLabel="Theming" accessibilityRole="button" style={{ paddingHorizontal: 12, paddingVertical: 8, borderWidth: 1, borderColor: theme.color.border, borderRadius: 12 }}>
+            <TouchableOpacity onPress={() => navigation.navigate('Settings', { screen: 'Settings', params: { deeplink: 'branding' } })} accessibilityLabel="Theming" accessibilityRole="button" style={{ paddingHorizontal: 12, paddingVertical: 8, borderWidth: 1, borderColor: theme.color.border, borderRadius: 12 }}>
               <Text style={{ color: theme.color.cardForeground, fontWeight: '600' }}>Theming</Text>
             </TouchableOpacity>
             <TouchableOpacity onPress={() => navigation.navigate('Channels', { screen: 'WidgetSnippet', params: { linkUrl: link.url } })} accessibilityLabel="Widget Snippet" accessibilityRole="button" style={{ paddingHorizontal: 12, paddingVertical: 8, borderWidth: 1, borderColor: theme.color.border, borderRadius: 12 }}>
@@ -122,7 +122,7 @@ const ChannelsHome: React.FC = () => {
           <TouchableOpacity onPress={() => setOffline((v) => !v)} accessibilityLabel="Toggle offline" accessibilityRole="button" style={{ paddingHorizontal: 12, paddingVertical: 8, borderWidth: 1, borderColor: theme.color.border, borderRadius: 12 }}>
             <Text style={{ color: theme.color.cardForeground, fontWeight: '600' }}>{offline ? 'Go Online' : 'Go Offline'}</Text>
           </TouchableOpacity>
-          <TouchableOpacity onPress={() => setTestOpen(true)} accessibilityLabel="Test in Portal" accessibilityRole="button" style={{ paddingHorizontal: 12, paddingVertical: 8, borderWidth: 1, borderColor: theme.color.border, borderRadius: 12 }}>
+          <TouchableOpacity onPress={() => { setTestOpen(true); /* deep link to portal */ try { (require('../../lib/analytics') as any).track('portal.open') } catch {}; (navigation as any).navigate('Portal', { linkUrl: link.url }) }} accessibilityLabel="Test in Portal" accessibilityRole="button" style={{ paddingHorizontal: 12, paddingVertical: 8, borderWidth: 1, borderColor: theme.color.border, borderRadius: 12 }}>
             <Text style={{ color: theme.color.cardForeground, fontWeight: '600' }}>Test in Portal</Text>
           </TouchableOpacity>
           <TouchableOpacity onPress={() => setSyncOpen(true)} accessibilityLabel="Sync Center" accessibilityRole="button" style={{ paddingHorizontal: 12, paddingVertical: 8, borderWidth: 1, borderColor: theme.color.border, borderRadius: 12 }}>

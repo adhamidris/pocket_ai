@@ -11,35 +11,35 @@
 ---
 
 ## Recommended Build Order (Phased)
-1. **Dashboard** — overview, KPIs, quick actions  
+1. **Dashboard** — overview, KPIs, quick actions  done
    _Doc:_ **Cursor_BuildPlan_Dashboard_v1.md**
-2. **Conversations** — lists, filters, detail, actions  
+2. **Conversations** — lists, filters, detail, actions  done
    _Doc:_ **Cursor_BuildPlan_Conversations_v1.md**
-3. **CRM** — contacts, profiles, timelines  
+3. **CRM** — contacts, profiles, timelines  done
    _Doc:_ **Cursor_BuildPlan_CRM_v1.md**
-4. **Agents** — AI/Human agents, routing, presence  
+4. **Agents** — AI/Human agents, routing, presence  done
    _Doc:_ **Cursor_BuildPlan_Agents_v1.md**
-5. **Channels & Publishing** — unique link, widget snippet, recipes  
+5. **Channels & Publishing** — unique link, widget snippet, recipes  done
    _Doc:_ **Cursor_BuildPlan_Channels_Publishing_v1.md**
-6. **Knowledge** — sources, training, FailureLog, redaction  
+6. **Knowledge** — sources, training, FailureLog, redaction  done
    _Doc:_ **Cursor_BuildPlan_Knowledge_v1.md**
-7. **Automations & SLAs** — rules, hours/holidays, SLA editor, simulator  
+7. **Automations & SLAs** — rules, hours/holidays, SLA editor, simulator  done
    _Doc:_ **Cursor_BuildPlan_Automations_SLAs_v1.md**
-8. **Analytics** — KPIs, trends, cohorts, funnels, attribution  
+8. **Analytics** — KPIs, trends, cohorts, funnels, attribution  done
    _Doc:_ **Cursor_BuildPlan_Analytics_v1.md**
-9. **Settings & Theming** — branding, locale, notifications, publish theme  
+9. **Settings & Theming** — branding, locale, notifications, publish theme  done
    _Doc:_ **Cursor_BuildPlan_Settings_Theming_v1.md**
-10. **Security & Privacy Center** — retention, consent, audit, access  
+10. **Security & Privacy Center** — retention, consent, audit, access  done
     _Doc:_ **Cursor_BuildPlan_Security_Privacy_v1.md**
-11. **Billing & Plans** — plans, checkout, invoices, entitlements  
+11. **Billing & Plans** — plans, checkout, invoices, entitlements  done
     _Doc:_ **Cursor_BuildPlan_Billing_Plans_v1.md**
-12. **Hosted Chat Portal** — branded customer UI + preview  
+12. **Hosted Chat Portal** — branded customer UI + preview  done
     _Doc:_ **Cursor_BuildPlan_Hosted_Chat_Portal_v1.md**
-13. **Assistant & Voice** — dashboard Q&A, overlay, mic/TTS  
+13. **Assistant & Voice** — dashboard Q&A, overlay, mic/TTS  done
     _Doc:_ **Cursor_BuildPlan_Assistant_Voice_v1.md**
-14. **MCP / Action Pack** — agent actions, allowlists, approvals  
+14. **MCP / Action Pack** — agent actions, allowlists, approvals  done
     _Doc:_ **Cursor_BuildPlan_MCP_ActionPack_v1.md**
-15. **Help, Docs & Onboarding** — help center, tours, checklists  
+15. **Help, Docs & Onboarding** — help center, tours, checklists  done
     _Doc:_ **Cursor_BuildPlan_Help_Docs_Onboarding_v1.md**
 16. **Cross‑Module QA & Release Candidate** — fixtures, audits, RC  
     _Doc:_ **Cursor_BuildPlan_QA_ReleaseCandidate_v1.md**

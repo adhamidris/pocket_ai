@@ -48,7 +48,7 @@ export interface PublishState { themeId:string; lastPublishedAt?:number; linkedC
 
 ### Acceptance Checks
 - Types compile; no circular deps.
-
+ok
 ---
 
 ## STEP 2 — Primitive Components
@@ -72,7 +72,7 @@ In `mobile/src/components/settings/`, create:
 
 ### Acceptance Checks
 - All primitives render with demo props; touch ≥44dp; `ContrastBadge` shows pass/fail toggling colors.
-
+ok
 ---
 
 ## STEP 3 — Settings Home
@@ -92,7 +92,7 @@ Register as `Settings` in navigator.
 
 ### Acceptance Checks
 - Rows navigate; summaries update when returning from sub‑screens.
-
+ok
 ---
 
 ## STEP 4 — Business Profile Screen
@@ -110,7 +110,7 @@ Create `BusinessProfileScreen.tsx`:
 
 ### Acceptance Checks
 - Saving updates the SettingsHome summary; CTA navigates to Channels.
-
+ok
 ---
 
 ## STEP 5 — Branding & Theming
@@ -131,7 +131,7 @@ Create `BrandingThemeScreen.tsx`:
 
 ### Acceptance Checks
 - Presets apply; contrast badges respond; preview updates live; save draft updates local theme.
-
+ok
 ---
 
 ## STEP 6 — Theme Publish & Linkage
@@ -149,7 +149,7 @@ Create `PublishThemeScreen.tsx`:
 
 ### Acceptance Checks
 - Publishing updates state and SettingsHome summary; channel toggles persist locally.
-
+ok
 ---
 
 ## STEP 7 — Locale & Timezone
@@ -166,7 +166,7 @@ Create `LocaleTimezoneScreen.tsx`:
 
 ### Acceptance Checks
 - Preview reflects changes; SettingsHome summary updates; basic RTL mirror appears.
-
+ok
 ---
 
 ## STEP 8 — Notifications
@@ -183,7 +183,7 @@ Create `NotificationsScreen.tsx`:
 
 ### Acceptance Checks
 - Toggles persist; test buttons log/notify.
-
+ok
 ---
 
 ## STEP 9 — Developer Shell Links
@@ -198,7 +198,7 @@ Link from Settings overflow → Developer.
 
 ### Acceptance Checks
 - Navigation works; placeholder screens exist if shells not built yet.
-
+ok
 ---
 
 ## STEP 10 — About & Legal (UI‑only)
@@ -214,7 +214,7 @@ Create `AboutLegal.tsx`:
 
 ### Acceptance Checks
 - Links open; navigation to security center works.
-
+ok
 ---
 
 ## STEP 11 — Cross‑App Hooks
@@ -230,7 +230,7 @@ Create `AboutLegal.tsx`:
 
 ### Acceptance Checks
 - Links navigate and return correctly; state reflects changes.
-
+ok
 ---
 
 ## STEP 12 — Offline & Queue Stubs
@@ -246,7 +246,7 @@ Create `AboutLegal.tsx`:
 
 ### Acceptance Checks
 - Offline banner shows; queued icons appear then clear.
-
+ok
 ---
 
 ## STEP 13 — Performance & Accessibility
@@ -261,7 +261,7 @@ Create `AboutLegal.tsx`:
 
 ### Acceptance Checks
 - Editor feels snappy; screen readers can adjust controls; contrast passes via `ContrastBadge`.
-
+ok
 ---
 
 ## STEP 14 — Analytics Stubs
@@ -281,7 +281,7 @@ Using `lib/analytics.ts` add:
 
 ### Acceptance Checks
 - Console logs events during interactions in dev.
-
+ok
 ---
 
 ## STEP 15 — Final Review & Gaps
@@ -296,7 +296,7 @@ Using `lib/analytics.ts` add:
 
 ### Acceptance Checks
 - All checks pass; doc created.
-
+ok
 ---
 
 ## Paste‑Ready Micro Prompts

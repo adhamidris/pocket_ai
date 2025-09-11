@@ -140,7 +140,7 @@ Create `ChannelBreakdown.tsx`:
 
 ### Acceptance Checks
 - Table updates when filters change; CTA navigates.
-WE STOPPED HERE THIS STEP PROMPT DID NOT GO WELL
+ok
 ---
 
 ## STEP 6 — Intent Analytics
@@ -157,7 +157,7 @@ Create `IntentAnalytics.tsx`:
 
 ### Acceptance Checks
 - Tapping actions navigates properly; table scrolls smoothly.
-
+ok
 ---
 
 ## STEP 7 — Agent Performance
@@ -174,7 +174,7 @@ Create `AgentPerformance.tsx`:
 
 ### Acceptance Checks
 - Sorting/filtering work; CTAs navigate.
-
+ok
 ---
 
 ## STEP 8 — Cohorts & Repeat Contacts
@@ -191,7 +191,7 @@ Create `CohortsRepeat.tsx`:
 
 ### Acceptance Checks
 - Heatmap renders; CTA navigates.
-
+ok
 ---
 
 ## STEP 9 — Peak Hours & Staffing Hints
@@ -208,7 +208,7 @@ Create `PeakHours.tsx`:
 
 ### Acceptance Checks
 - Heatmap renders; CTA navigates.
-
+ok
 ---
 
 ## STEP 10 — Funnels
@@ -226,7 +226,7 @@ Create `Funnels.tsx`:
 
 ### Acceptance Checks
 - Funnels render with demo counts; steps show drop‑off labels.
-
+ok
 ---
 
 ## STEP 11 — Attribution (UTM & Source)
@@ -242,7 +242,7 @@ Create `Attribution.tsx`:
 
 ### Acceptance Checks
 - Filters work; CTAs navigate.
-
+ok
 ---
 
 ## STEP 12 — Saved Reports & Scheduling (UI‑Only)
@@ -260,7 +260,7 @@ Link from Analytics overflow.
 
 ### Acceptance Checks
 - Saving current view appends to list; scheduling UI stores data locally.
-
+ok
 ---
 
 ## STEP 13 — Export (CSV/PDF) Stubs
@@ -277,7 +277,7 @@ Link from `ExportBar`.
 
 ### Acceptance Checks
 - Opening from ExportBar works; selections persist until dismiss.
-
+ok
 ---
 
 ## STEP 14 — Definitions & Methodology
@@ -294,7 +294,7 @@ Link from Analytics overflow and inline `?` tooltips.
 
 ### Acceptance Checks
 - Links open; tooltips show brief definitions.
-
+ok
 ---
 
 ## STEP 15 — Cross‑App Hooks
@@ -313,7 +313,7 @@ Link from Analytics overflow and inline `?` tooltips.
 
 ### Acceptance Checks
 - Tapping CTAs navigates to the correct module with expected params.
-
+ok
 ---
 
 ## STEP 16 — Offline & Cache Stubs
@@ -329,7 +329,7 @@ Link from Analytics overflow and inline `?` tooltips.
 
 ### Acceptance Checks
 - Offline shows banner; cached badge appears; refresh re‑seeds data.
-
+ok
 ---
 
 ## STEP 17 — Performance & Accessibility
@@ -346,7 +346,7 @@ Link from Analytics overflow and inline `?` tooltips.
 
 ### Acceptance Checks
 - Scroll/interaction runs 60fps; screen readers can consume summaries.
-
+ok
 ---
 
 ## STEP 18 — Analytics Event Instrumentation
@@ -366,7 +366,7 @@ Using `lib/analytics.ts` add events:
 
 ### Acceptance Checks
 - Console logs events on interactions in dev.
-
+ok
 ---
 
 ## STEP 19 — Final Review & Gaps
@@ -381,7 +381,7 @@ Using `lib/analytics.ts` add events:
 
 ### Acceptance Checks
 - All checks pass; document created.
-
+ok
 ---
 
 ## Paste‑Ready Micro Prompts

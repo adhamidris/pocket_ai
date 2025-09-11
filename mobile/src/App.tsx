@@ -4,6 +4,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { ThemeProvider } from './providers/ThemeProvider'
 import { RootNavigator } from './navigation/RootNavigator'
 import './i18n'
+import { FixtureSwitcher } from './qa/FixtureSwitcher'
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -20,6 +21,7 @@ export default function App() {
       <QueryClientProvider client={queryClient}>
         <ThemeProvider>
           <RootNavigator />
+          <FixtureSwitcher />
         </ThemeProvider>
       </QueryClientProvider>
     </GestureHandlerRootView>

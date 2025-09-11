@@ -1,5 +1,5 @@
 import React from 'react'
-import { View, Text, ScrollView } from 'react-native'
+import { View, Text, ScrollView, FlatList } from 'react-native'
 import { tokens } from '../../ui/tokens'
 import { BreakdownRow } from '../../types/analytics'
 
@@ -17,9 +17,11 @@ const BreakdownTable: React.FC<BreakdownTableProps> = ({ rows, columns, testID }
               </View>
             ))}
           </View>
-          <ScrollView style={{ maxHeight: 260 }}>
-            {rows.map((r, idx) => (
-              <View key={idx} style={{ flexDirection: 'row', borderBottomWidth: 1, borderBottomColor: tokens.colors.border }}>
+          <FlatList
+            data={rows}
+            keyExtractor={(r) => r.name}
+            renderItem={({ item: r }) => (
+              <View style={{ flexDirection: 'row', borderBottomWidth: 1, borderBottomColor: tokens.colors.border }}>
                 <View style={{ paddingHorizontal: 12, paddingVertical: 8, minWidth: 120 }}>
                   <Text style={{ color: tokens.colors.cardForeground }}>{r.name}</Text>
                 </View>
@@ -27,13 +29,17 @@ const BreakdownTable: React.FC<BreakdownTableProps> = ({ rows, columns, testID }
                   <Text style={{ color: tokens.colors.cardForeground }}>{r.value}</Text>
                 </View>
                 {Object.entries(r.extra || {}).map(([k, v], i) => (
-                  <View key={i} style={{ paddingHorizontal: 12, paddingVertical: 8, minWidth: 120 }}>
+                  <View key={`${r.name}-${k}`} style={{ paddingHorizontal: 12, paddingVertical: 8, minWidth: 120 }}>
                     <Text style={{ color: tokens.colors.cardForeground }}>{v ?? '—'}</Text>
                   </View>
                 ))}
               </View>
-            ))}
-          </ScrollView>
+            )}
+            style={{ maxHeight: 260 }}
+            removeClippedSubviews
+            initialNumToRender={12}
+            windowSize={10}
+          />
         </View>
       </ScrollView>
     </View>

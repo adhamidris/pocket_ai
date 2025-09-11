@@ -4,8 +4,9 @@ import { useTranslation } from 'react-i18next'
 import { useNavigation } from '@react-navigation/native'
 import { useTheme } from '../../providers/ThemeProvider'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
-import { Sun, Moon, MoreHorizontal } from 'lucide-react-native'
+import { Sun, Moon, MoreHorizontal, HelpCircle } from 'lucide-react-native'
 import KpiTile from '../../components/dashboard/KpiTile'
+import { Anchor } from '../../components/help/Anchor'
 import AlertCard from '../../components/dashboard/AlertCard'
 import QuickActions from '../../components/dashboard/QuickActions'
 import SetupProgressCard from '../../components/dashboard/SetupProgressCard'
@@ -20,7 +21,9 @@ import EmptyState from '../../components/dashboard/EmptyState'
 import OfflineBanner from '../../components/dashboard/OfflineBanner'
 import SyncCenterSheet from '../../components/dashboard/SyncCenterSheet'
 import { track } from '../../lib/analytics'
+import OnboardingChecklist from '../Help/OnboardingChecklist'
 import AskDashboard from '../../components/dashboard/AskDashboard'
+import DashboardAskPanel from '../Assistant/DashboardAskPanel'
 
 export const DashboardScreen: React.FC = () => {
   const { t } = useTranslation()
@@ -133,6 +136,16 @@ export const DashboardScreen: React.FC = () => {
                 <MoreHorizontal size={18} color={theme.color.cardForeground as any} />
               </TouchableOpacity>
             ) : null}
+            <TouchableOpacity
+              onPress={() => navigation.navigate('HelpCenter', { initialTab: 'search', initialTag: 'Dashboard' })}
+              activeOpacity={0.85}
+              style={{ padding: 8, borderRadius: 16, minHeight: 44, minWidth: 44, alignItems: 'center', justifyContent: 'center' }}
+              hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+              accessibilityLabel="Open help"
+              accessibilityRole="button"
+            >
+              <HelpCircle size={18} color={theme.color.cardForeground as any} />
+            </TouchableOpacity>
           </View>
           <Text style={{
             color: theme.color.mutedForeground,
@@ -170,12 +183,19 @@ export const DashboardScreen: React.FC = () => {
           </View>
         )}
 
+        {/* Onboarding Checklist (global) */}
+        <View style={{ paddingHorizontal: 24, marginBottom: 16 }}>
+          <OnboardingChecklist />
+        </View>
+
         {/* KPIs */}
         <View style={{ paddingHorizontal: 24, marginBottom: 20, flexDirection: 'row', flexWrap: 'wrap', gap: 12 }}>
           {kpis.map((kpi) => (
-            <View key={kpi.kind} style={{ flexBasis: '47%', flexGrow: 1 }}>
-              <KpiTile item={kpi} loading={loadingKpis} testID={`kpi-${kpi.kind}`} />
-            </View>
+            <Anchor key={kpi.kind} testID={kpi.kind === 'frtP50' ? 'kpi-frt' : `kpi-${kpi.kind}`}>
+              <View style={{ flexBasis: '47%', flexGrow: 1 }}>
+                <KpiTile item={kpi} loading={loadingKpis} testID={`kpi-${kpi.kind}`} />
+              </View>
+            </Anchor>
           ))}
         </View>
 
@@ -198,15 +218,28 @@ export const DashboardScreen: React.FC = () => {
           </ScrollView>
         </View>
 
+        {/* Ask the Assistant (new compact panel) */}
+        <View style={{ paddingHorizontal: 24, marginBottom: 24 }}>
+          <DashboardAskPanel testID="dashboard-ask-panel" />
+        </View>
+
         {/* Quick Actions */}
         <View style={{ paddingHorizontal: 24, marginBottom: 24 }}>
-          <QuickActions actions={actions} onPress={handleActionPress} testID="quick-actions" />
+          <Anchor testID="quick-actions">
+            <QuickActions actions={actions} onPress={handleActionPress} testID="quick-actions" />
+          </Anchor>
         </View>
 
         {/* Setup Progress (only if any todo) */}
         {steps.some(s => s.status === 'todo') && (
           <View style={{ paddingHorizontal: 24, marginBottom: 24 }}>
-            <SetupProgressCard steps={steps} testID="setup-progress" />
+            <SetupProgressCard steps={steps} testID="setup-progress" onStepPress={(id: string) => {
+              if (id === 's2') {
+                // Deep-link to PublishThemeScreen when widget not themed
+                // @ts-ignore
+                navigation.navigate('Settings', { screen: 'Settings', params: { deeplink: 'publish' } })
+              }
+            }} />
           </View>
         )}
 
@@ -224,6 +257,7 @@ export const DashboardScreen: React.FC = () => {
 
         {/* Industry Tiles */}
         <View style={{ paddingHorizontal: 24, marginBottom: 32 }}>
+          <Anchor testID="industry-tiles">
           <IndustryTiles
             pack={pack}
             onTilePress={(title) => {
@@ -238,6 +272,7 @@ export const DashboardScreen: React.FC = () => {
             }}
             testID="industry-tiles"
           />
+          </Anchor>
         </View>
 
         {/* Spacer bottom */}

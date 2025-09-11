@@ -10,7 +10,7 @@ const StackedBarChart: React.FC<StackedBarChartProps> = ({ stacks, testID }) => 
   const totals = stacks.map((s) => s.parts.reduce((a, b) => a + (b.value || 0), 0))
   const max = Math.max(1, ...totals)
   return (
-    <View testID={testID}>
+    <View testID={testID} accessibilityRole="image" accessibilityLabel="Stacked bar chart" accessible>
       {stacks.map((s, idx) => {
         const total = totals[idx] || 1
         return (
@@ -24,6 +24,7 @@ const StackedBarChart: React.FC<StackedBarChartProps> = ({ stacks, testID }) => 
                 <View key={i} style={{ width: `${(p.value / total) * 100}%`, height: '100%', backgroundColor: colors[i % colors.length], opacity: 0.9 }} />
               ))}
             </View>
+            <Text style={{ color: tokens.colors.mutedForeground, fontSize: 12, marginTop: 2 }}>Total {total} across {s.parts.length} categories</Text>
           </View>
         )
       })}

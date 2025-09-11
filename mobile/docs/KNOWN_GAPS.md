@@ -11,3 +11,19 @@
 - Analytics `track()` logs to console only; no external telemetry.
 - i18n: New component strings are EN-only for now; AR translation deferred.
 - Theming tokens are static; components primarily read ThemeProvider at screen usage.
+
+## Help
+
+Implemented (UI-only): Help Center tabs, Quickstart checklist, Tours engine, contextual help icons & Command Palette, empty-state guides, What’s New, micro-surveys, Feedback screen, Assistant hooks, localization/a11y/offline stubs, analytics events.
+
+Deferred:
+- Remote CMS for docs, sync/versioning
+- Deep search & indexing across content
+- Multimedia tutorials (video/GIF/interactive)
+- Survey/feedback backend & dashboards
+- Versioned tour configs & experiments
+- Role-based checklists & progress sync
+- Accessibility polish (full SR coverage, keyboard nav)
+- Offline robustness (queues, retries, cache invalidation)
+- Telemetry pipeline & privacy filtering
+- Security & privacy hardening for help data

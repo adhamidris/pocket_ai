@@ -1,5 +1,5 @@
 import React from 'react'
-import { SafeAreaView, View, Text, TouchableOpacity, Alert, FlatList, TextInput } from 'react-native'
+import { SafeAreaView, View, Text, TouchableOpacity, Alert, FlatList, TextInput, DeviceEventEmitter } from 'react-native'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
 import { useTheme } from '../../providers/ThemeProvider'
 import { useNavigation, useRoute } from '@react-navigation/native'
@@ -7,6 +7,8 @@ import { FailureItem, KnowledgeSource } from '../../types/knowledge'
 import FailureRow from '../../components/knowledge/FailureRow'
 import TagChip from '../../components/crm/TagChip'
 import { track } from '../../lib/analytics'
+import UpsellInline from '../../components/billing/UpsellInline'
+import { useEntitlements } from '../../components/billing/entitlements'
 
 const rand = (min: number, max: number) => Math.floor(Math.random() * (max - min + 1)) + min
 const pick = <T,>(arr: T[]): T => arr[rand(0, arr.length - 1)]
@@ -61,6 +63,9 @@ const FailureLog: React.FC = () => {
     return arr
   }, [list, resolved, threshold, channel, intent, time, query])
 
+  const ents = useEntitlements()
+  const canAttach = !!ents['knowledgeSources']?.enabled
+
   const openActions = (item: FailureItem) => {
     const options = [
       { text: 'Open conversation', onPress: () => { track('knowledge.failure_action', { action: 'open' }); navigation.navigate('Conversations', { screen: 'ConversationThread', params: { id: item.conversationId } }) } },
@@ -82,6 +87,15 @@ const FailureLog: React.FC = () => {
   }
 
   const attachToSource = (item: FailureItem) => {
+    if (!canAttach) {
+      // Show inline upsell via alert replacement
+      // @ts-ignore
+      Alert.alert('Upgrade required', 'Attach failures to sources is premium. Upgrade to unlock.', [
+        { text: 'Upgrade', onPress: () => navigation.navigate('PlanMatrix', { highlightPlanId: 'starter' }) },
+        { text: 'Cancel', style: 'cancel' }
+      ])
+      return
+    }
     if (!sources.length) { Alert.alert('No sources', 'No sources to attach.'); return }
     const opts = sources.slice(0, 5).map((s) => ({ text: s.title, onPress: () => Alert.alert('Attached', `Attached to ${s.title} (UI-only).`) }))
     // @ts-ignore
@@ -97,7 +111,11 @@ const FailureLog: React.FC = () => {
             <Text style={{ color: theme.color.primary, fontWeight: '600' }}>{'< Back'}</Text>
           </TouchableOpacity>
           <Text style={{ color: theme.color.foreground, fontSize: 18, fontWeight: '700' }}>Failure Log</Text>
-          <View style={{ width: 64 }} />
+          <View style={{ flexDirection: 'row', gap: 8 }}>
+            <TouchableOpacity onPress={() => DeviceEventEmitter.emit('assistant.open', { text: 'Draft reply from FAQ for recent failures', persona: 'agent' })} accessibilityRole="button" accessibilityLabel="Draft reply from FAQ" style={{ paddingHorizontal: 10, paddingVertical: 6, borderRadius: 8, borderWidth: 1, borderColor: theme.color.border }}>
+              <Text style={{ color: theme.color.cardForeground, fontWeight: '600' }}>Draft reply</Text>
+            </TouchableOpacity>
+          </View>
         </View>
       </View>
 

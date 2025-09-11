@@ -14,6 +14,15 @@ what we implemented so far;
 5- cursor_build_plan_knowledge_v_1.md
 6- cursor_build_plan_agents_v_1.md
 7- cursor_build_plan_automations_v_1.md
+8- cursor_build_plan_analytics_v_1
+9- cursor_build_plan_security_privacy_v_1.md
+10- cursor_build_plan_settings_theming_v_1.md
+11- cursor_build_plan_billing_plans_v_1.md
+12- cursor_build_plan_hosted_chat_portal_v_1.md
+13- cursor_build_plan_assistant_voice_v_1.md
+14- cursor_build_plan_mcp_action_on_pack_v_1.md
+15- cursor_build_plan_help_docs_onboarding_v_1.md
+16- cursor_build_plan_qa_release_candidate_v_1.md
 
 KNOWN GAPS files;
 1- KNOWN_GAPS.md
@@ -23,9 +32,16 @@ KNOWN GAPS files;
 5- KNOWN_GAPS_Channels.md
 6- KNOWN_GAPS_Automations.md
 7- KNOWN_GAPS_Agents.md
+8- KNOWN_GAPS_Security.md
+9- KNOWN_GAPS_Settings.md
+10- KNOWN_GAPS_Analytics.md
+11- KNOWN_GAPS_Billing.md
+12- KNOWN_GAPS_Portal.md
+13- KNOWN_GAPS_Assistant.md
+14- KNOWN_GAPS_Actions.md
+15- the help_docs_onboarding is also in KNOWN_GAPS.md
+16- KNOWN_GAPS_RC.md
 
-We are in process of implementing;
-cursor_build_plan_analytics_v_1.md (We stopped at STEP 5 OUT OF 19)
 
 You are not to provide any summaries during the chat, just implementation and on each implementation you respond with "Ready".
 

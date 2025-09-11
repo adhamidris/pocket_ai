@@ -1,4 +1,6 @@
 import React from 'react'
+import { TouchableOpacity } from 'react-native'
+import { useNavigation } from '@react-navigation/native'
 import { ViewStyle } from 'react-native'
 import Box from '../../ui/Box'
 import { Text } from '../../ui/Text'
@@ -20,6 +22,15 @@ const formatValue = (value: number, unit?: DashboardKpi['unit']) => {
 }
 
 const KpiTile: React.FC<KpiTileProps> = ({ item, loading, testID, style }) => {
+  const navigation = useNavigation<any>()
+  const onPress = () => {
+    const premiumKinds = ['deflectionRate','attributionDepth','cohortRepeat']
+    if (premiumKinds.includes(item.kind)) {
+      // Navigate to PlanMatrix with a suggested plan id
+      navigation.navigate('PlanMatrix', { highlightPlanId: 'starter' })
+      return
+    }
+  }
   return (
     <Box
       testID={testID}
@@ -34,6 +45,7 @@ const KpiTile: React.FC<KpiTileProps> = ({ item, loading, testID, style }) => {
         style,
       ]}
     >
+      <TouchableOpacity onPress={onPress} accessibilityRole="button" accessibilityLabel={`Open ${item.kind}`}>
       {loading ? (
         <Skeleton variant="text" width={100} height={16} />
       ) : (
@@ -65,6 +77,7 @@ const KpiTile: React.FC<KpiTileProps> = ({ item, loading, testID, style }) => {
           </Text>
         </Box>
       )}
+      </TouchableOpacity>
     </Box>
   )
 }

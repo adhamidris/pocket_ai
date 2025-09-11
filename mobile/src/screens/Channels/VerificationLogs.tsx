@@ -2,14 +2,17 @@ import React from 'react'
 import { SafeAreaView, View, Text, TouchableOpacity, FlatList } from 'react-native'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
 import { useTheme } from '../../providers/ThemeProvider'
+import { useNavigation } from '@react-navigation/native'
 import { useNavigation, useRoute } from '@react-navigation/native'
 import { VerifyState } from '../../types/channels'
 import { track } from '../../lib/analytics'
+import EntitlementsGate from '../../components/billing/EntitlementsGate'
 
 interface LogItem { ts: number; state: VerifyState; message?: string }
 
 const VerificationLogs: React.FC = () => {
   const { theme } = useTheme()
+  const navigation = useNavigation<any>()
   const insets = useSafeAreaInsets()
   const navigation = useNavigation<any>()
   const route = useRoute<any>()
@@ -53,11 +56,14 @@ const VerificationLogs: React.FC = () => {
             <Text style={{ color: theme.color.primary, fontWeight: '600' }}>{'< Back'}</Text>
           </TouchableOpacity>
           <Text style={{ color: theme.color.foreground, fontSize: 18, fontWeight: '700' }}>Verification Logs</Text>
-          <View style={{ width: 64 }} />
+          <TouchableOpacity onPress={() => navigation.navigate('Security', { screen: 'AuditLog' })} accessibilityLabel="Open Audit Log" accessibilityRole="button" style={{ padding: 8 }}>
+            <Text style={{ color: theme.color.cardForeground, fontWeight: '600' }}>Audit</Text>
+          </TouchableOpacity>
         </View>
       </View>
 
       <View style={{ padding: 16 }}>
+        <EntitlementsGate require="channelsVerification">
         <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
           <Text style={{ color: theme.color.mutedForeground }}>Current: {current.state.toUpperCase()} {current.lastCheckedAt ? `• ${new Date(current.lastCheckedAt).toLocaleString()}` : ''}</Text>
           <TouchableOpacity onPress={runVerification} accessibilityLabel="Run verification" accessibilityRole="button" style={{ paddingHorizontal: 12, paddingVertical: 8, borderWidth: 1, borderColor: theme.color.border, borderRadius: 12 }}>
@@ -77,6 +83,7 @@ const VerificationLogs: React.FC = () => {
           )}
           ListEmptyComponent={<Text style={{ color: theme.color.mutedForeground }}>No verifications yet.</Text>}
         />
+        </EntitlementsGate>
       </View>
     </SafeAreaView>
   )

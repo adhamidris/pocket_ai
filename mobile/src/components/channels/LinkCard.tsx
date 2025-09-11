@@ -4,6 +4,7 @@ import { PublishLink } from '../../types/channels'
 import { Text } from '../../ui/Text'
 import { tokens } from '../../ui/tokens'
 import VerifyBadge from './VerifyBadge'
+import EntitlementsGate from '../billing/EntitlementsGate'
 
 export interface LinkCardProps {
   link: PublishLink
@@ -20,6 +21,7 @@ export interface LinkCardProps {
 
 const LinkCard: React.FC<LinkCardProps> = ({ link, onCopy, onRotate, onOpen, testID, themeName, themeColor, shortPreferred, onToggleShort, queued }) => {
   return (
+    <EntitlementsGate require="channelsShortLink">
     <View testID={testID} style={{ borderWidth: 1, borderColor: tokens.colors.border, borderRadius: 16, backgroundColor: tokens.colors.card, padding: 12 }}>
       <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
         <Text size={14} weight="700" color={tokens.colors.cardForeground} numberOfLines={1}>
@@ -69,6 +71,7 @@ const LinkCard: React.FC<LinkCardProps> = ({ link, onCopy, onRotate, onOpen, tes
         </TouchableOpacity>
       </View>
     </View>
+    </EntitlementsGate>
   )
 }
 

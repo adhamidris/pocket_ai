@@ -17,7 +17,9 @@ const PrivacyCenter: React.FC = () => {
             <Text style={{ color: theme.color.primary, fontWeight: '600' }}>{'< Back'}</Text>
           </TouchableOpacity>
           <Text style={{ color: theme.color.foreground, fontSize: 18, fontWeight: '700' }}>Security & Privacy Center</Text>
-          <View style={{ width: 64 }} />
+          <TouchableOpacity onPress={() => navigation.navigate('Security', { screen: 'PrivacyModes' })} accessibilityLabel="Privacy Modes" accessibilityRole="button" style={{ padding: 8 }}>
+            <Text style={{ color: theme.color.cardForeground, fontWeight: '600' }}>Modes</Text>
+          </TouchableOpacity>
         </View>
       </View>
       <View style={{ padding: 16 }}>

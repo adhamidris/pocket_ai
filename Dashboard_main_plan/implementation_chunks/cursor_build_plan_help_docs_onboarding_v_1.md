@@ -51,7 +51,7 @@ export interface HelpState { seenVersions:string[]; completedTours:string[]; dis
 
 ### Acceptance Checks
 - Types compile; exported from index barrel if used.
-
+ok
 ---
 
 ## STEP 2 — Primitive Components
@@ -77,7 +77,7 @@ In `mobile/src/components/help/`, create:
 
 ### Acceptance Checks
 - All primitives render with demo props; meet ≥44dp; provide `accessibilityLabel`s.
-
+ok
 ---
 
 ## STEP 3 — Help Center Screen
@@ -99,7 +99,7 @@ Register `HelpCenter` in navigator; open from `HelpButton` and Settings/About.
 
 ### Acceptance Checks
 - Search returns demo articles; starting a tour navigates to the correct surface.
-
+ok
 ---
 
 ## STEP 4 — Onboarding Checklist (Global)
@@ -117,7 +117,7 @@ Create `mobile/src/screens/Help/OnboardingChecklist.tsx`:
 
 ### Acceptance Checks
 - Tapping CTAs navigates; returning marks step done; progress updates.
-
+ok
 ---
 
 ## STEP 5 — Tours Engine
@@ -135,7 +135,7 @@ Create `mobile/src/screens/Help/TourRunner.tsx`:
 
 ### Acceptance Checks
 - Tours overlay anchors to elements by `testID`; completion persists and reflects in Help Center.
-
+ok
 ---
 
 ## STEP 6 — Contextual Help & Command Palette
@@ -150,7 +150,7 @@ Create `mobile/src/screens/Help/TourRunner.tsx`:
 
 ### Acceptance Checks
 - Palette opens from anywhere; selecting an item navigates; contextual help filters correctly.
-
+ok
 ---
 
 ## STEP 7 — Empty States & Embedded Guides
@@ -169,7 +169,7 @@ Replace generic blanks with `EmptyStateGuide` in:
 
 ### Acceptance Checks
 - Guides render when lists are empty; CTAs navigate.
-
+ok
 ---
 
 ## STEP 8 — Release Notes & What’s New
@@ -185,7 +185,7 @@ Create `mobile/src/screens/Help/WhatsNew.tsx`:
 
 ### Acceptance Checks
 - Banner appears once per version; “View details” opens highlights; dismiss persists.
-
+ok
 ---
 
 ## STEP 9 — Micro‑Surveys
@@ -202,7 +202,7 @@ Create `SurveyManager.tsx`:
 
 ### Acceptance Checks
 - Surveys appear under the right conditions; cooldown prevents spam; results persist.
-
+ok
 ---
 
 ## STEP 10 — Feedback & Contact
@@ -218,7 +218,7 @@ Create `FeedbackScreen.tsx`:
 
 ### Acceptance Checks
 - Submissions appear in local list; toasts show success.
-
+ok
 ---
 
 ## STEP 11 — Assistant‑Powered Help (UI‑only)
@@ -234,7 +234,7 @@ Create `FeedbackScreen.tsx`:
 
 ### Acceptance Checks
 - Hooks open Assistant overlay with prefilled text and persona `agent`.
-
+ok
 ---
 
 ## STEP 12 — Localization, Accessibility, Offline
@@ -250,7 +250,7 @@ Create `FeedbackScreen.tsx`:
 
 ### Acceptance Checks
 - Changing locale swaps copy; screen readers announce step counts; offline badge appears.
-
+ok
 ---
 
 ## STEP 13 — Analytics (Meta‑Events)
@@ -270,7 +270,7 @@ Using `lib/analytics.ts` instrument:
 
 ### Acceptance Checks
 - Console logs events during interactions in dev.
-
+ok
 ---
 
 ## STEP 14 — Final Review & Gaps
@@ -285,7 +285,7 @@ Using `lib/analytics.ts` instrument:
 
 ### Acceptance Checks
 - All checks pass; doc created.
-
+ok
 ---
 
 ## Paste‑Ready Micro Prompts

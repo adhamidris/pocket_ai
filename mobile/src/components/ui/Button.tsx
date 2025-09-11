@@ -18,7 +18,9 @@ export const Button: React.FC<{
   size?: Size
   disabled?: boolean
   loading?: boolean
-}> = ({ title, onPress, variant = 'default', size = 'md', disabled, loading }) => {
+  accessibilityLabel?: string
+  testID?: string
+}> = ({ title, onPress, variant = 'default', size = 'md', disabled, loading, accessibilityLabel, testID }) => {
   const { theme } = useTheme()
   const scaleValue = useRef(new Animated.Value(1)).current
 
@@ -73,6 +75,8 @@ export const Button: React.FC<{
         disabled={disabled || loading} 
         activeOpacity={1} 
         style={[{ height: HEIGHT[size], borderRadius: RADIUS[size], overflow: 'hidden', alignSelf: 'stretch' }]}
+        accessibilityLabel={accessibilityLabel ?? title}
+        testID={testID}
       > 
         <Animated.View style={{ 
           width: '100%', 
@@ -129,6 +133,8 @@ export const Button: React.FC<{
       disabled={disabled || loading} 
       activeOpacity={1} 
       style={[disabled && { opacity: 0.5 }]}
+      accessibilityLabel={accessibilityLabel ?? title}
+      testID={testID}
     > 
       <Animated.View style={[base, bg, { transform: [{ scale: scaleValue }] }]}>
         {loading && (

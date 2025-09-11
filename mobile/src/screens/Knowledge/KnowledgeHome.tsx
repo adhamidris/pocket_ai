@@ -10,6 +10,7 @@ import ListSkeleton from '../../components/knowledge/ListSkeleton'
 import OfflineBanner from '../../components/dashboard/OfflineBanner'
 import SyncCenterSheet from '../../components/dashboard/SyncCenterSheet'
 import { track } from '../../lib/analytics'
+import { EmptyStateGuide } from '../../components/help/EmptyStateGuide'
 
 const rand = (min: number, max: number) => Math.floor(Math.random() * (max - min + 1)) + min
 
@@ -69,6 +70,8 @@ const KnowledgeHome: React.FC = () => {
     { title: 'URL', data: filteredSources.filter((s) => s.kind === 'url') },
     { title: 'NOTE', data: filteredSources.filter((s) => s.kind === 'note') },
   ]), [filteredSources])
+
+  const hasAny = sections.some(s => s.data.length > 0)
 
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: theme.color.background }}>
@@ -141,6 +144,7 @@ const KnowledgeHome: React.FC = () => {
       </View>
 
       {/* Sources grouped */}
+      {hasAny ? (
       <SectionList
         sections={sections}
         keyExtractor={(item) => item.id}
@@ -189,6 +193,15 @@ const KnowledgeHome: React.FC = () => {
         windowSize={12}
         stickySectionHeadersEnabled
       />
+      ) : (
+        <View style={{ paddingHorizontal: 24, marginTop: 24 }}>
+          <EmptyStateGuide
+            title="Add your first source"
+            lines={["Connect URLs, upload files, or write notes."]}
+            cta={{ label: 'Add Source', onPress: () => navigation.navigate('Knowledge', { screen: 'AddUrlSource' }) }}
+          />
+        </View>
+      )}
 
       <SyncCenterSheet
         visible={syncOpen}

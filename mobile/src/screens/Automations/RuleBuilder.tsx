@@ -1,5 +1,5 @@
 import React from 'react'
-import { SafeAreaView, View, Text, TextInput, TouchableOpacity, ScrollView, Alert, Switch } from 'react-native'
+import { SafeAreaView, View, Text, TextInput, TouchableOpacity, ScrollView, Alert, Switch, DeviceEventEmitter } from 'react-native'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
 import { useTheme } from '../../providers/ThemeProvider'
 import { useNavigation, useRoute } from '@react-navigation/native'
@@ -7,6 +7,7 @@ import { Action, Condition, Rule } from '../../types/automations'
 import ConditionRow from '../../components/automations/ConditionRow'
 import ActionRow from '../../components/automations/ActionRow'
 import { track } from '../../lib/analytics'
+import { useEntitlements } from '../../components/billing/entitlements'
 
 export interface RuleBuilderParams {
   rule?: Rule
@@ -58,6 +59,7 @@ const RuleBuilder: React.FC = () => {
   }, [nameDraft])
 
   const preview = toEnglish(nameDraft, when, then, params.rule?.order)
+  const ents = useEntitlements()
 
   const addWhen = (c?: Condition) => setWhen((arr) => [...arr, c || ({ key: 'intent', op: 'is', value: '' } as any)])
   const removeWhen = (idx: number) => setWhen((arr) => arr.filter((_, i) => i !== idx))
@@ -68,8 +70,12 @@ const RuleBuilder: React.FC = () => {
     const id = params.rule?.id || `r-${Date.now()}`
     const order = params.rule?.order || (params.currentMaxOrder ? params.currentMaxOrder + 1 : 1)
     const rule: Rule = { id, name: name.trim() || 'Untitled rule', when, then, enabled, order }
-    track(params.rule ? 'rule.update' : 'rule.create')
+    const created = !params.rule
+    track(created ? 'rule.create' : 'rule.update')
     try { params.onSave && params.onSave(rule) } catch {}
+    if (created) {
+      try { DeviceEventEmitter.emit('rule.saved') } catch {}
+    }
     navigation.goBack()
   }
 
@@ -141,7 +147,21 @@ const RuleBuilder: React.FC = () => {
           <Text style={{ color: theme.color.cardForeground, fontWeight: '700', marginBottom: 6 }}>Quick THEN presets</Text>
           <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
             {presetsThen.map((p, idx) => (
-              <TouchableOpacity key={idx} onPress={() => addThen(p.action)} accessibilityLabel={`Add ${p.label}`} accessibilityRole="button" style={{ paddingHorizontal: 10, paddingVertical: 6, borderRadius: 10, borderWidth: 1, borderColor: theme.color.border }}>
+              <TouchableOpacity key={idx} onPress={() => {
+                if (p.action.key === 'deflect' && !ents['messages']?.enabled) {
+                  // Upsell for deflection
+                  Alert.alert('Upgrade required', 'Deflection is available on higher plans.', [
+                    { text: 'Upgrade', onPress: () => navigation.navigate('PlanMatrix', { highlightPlanId: 'starter' }) },
+                    { text: 'Cancel', style: 'cancel' }
+                  ])
+                  return
+                }
+                addThen(p.action)
+                if (p.label === 'Request CSAT') {
+                  // Nudge to Consent Center if needed (UI-only)
+                  setTimeout(() => navigation.navigate('Security', { screen: 'ConsentCenter' }), 200)
+                }
+              }} accessibilityLabel={`Add ${p.label}`} accessibilityRole="button" style={{ paddingHorizontal: 10, paddingVertical: 6, borderRadius: 10, borderWidth: 1, borderColor: theme.color.border }}>
                 <Text style={{ color: theme.color.mutedForeground }}>{p.label}</Text>
               </TouchableOpacity>
             ))}
@@ -178,7 +198,7 @@ const RuleBuilder: React.FC = () => {
 
         {/* Actions */}
         <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
-          <TouchableOpacity onPress={save} accessibilityLabel="Save rule" accessibilityRole="button" style={{ paddingHorizontal: 12, paddingVertical: 10, borderWidth: 1, borderColor: theme.color.border, borderRadius: 12 }}>
+          <TouchableOpacity onPress={() => { save(); setTimeout(() => DeviceEventEmitter.emit('assistant.open', { text: 'Simulate this rule', persona: 'ops' }), 200) }} accessibilityLabel="Save rule" accessibilityRole="button" style={{ paddingHorizontal: 12, paddingVertical: 10, borderWidth: 1, borderColor: theme.color.border, borderRadius: 12 }}>
             <Text style={{ color: theme.color.primary, fontWeight: '700' }}>Save</Text>
           </TouchableOpacity>
           <TouchableOpacity onPress={() => setEnabled((v) => !v)} accessibilityLabel="Toggle enabled" accessibilityRole="button" style={{ paddingHorizontal: 12, paddingVertical: 10, borderWidth: 1, borderColor: theme.color.border, borderRadius: 12 }}>
