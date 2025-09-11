@@ -26,7 +26,7 @@ const Attribution: React.FC<AttributionProps> = ({ testID }) => {
   const filtered = React.useMemo(() => rows.filter((r) => !campaign || r.campaign === campaign), [rows, campaign])
 
   const openUtmBuilder = () => { try { (require('../../lib/analytics') as any).track('analytics.cta', { target: 'utm_builder' }) } catch {}; navigation.navigate('Channels', { screen: 'UtmBuilder' }) }
-  const openConversationsForSource = (src: string) => { try { (require('../../lib/analytics') as any).track('analytics.cta', { target: 'open_conversations_source' }) } catch {}; navigation.navigate('Conversations', { screen: 'Conversations', params: { prefill: src } }) }
+  const openConversationsForSource = (src: string) => { try { (require('../../lib/analytics') as any).track('analytics.cta', { target: 'open_conversations_source' }) } catch {}; navigation.navigate('Conversations', { screen: 'ConversationsHome', params: { prefill: src } }) }
 
   return (
     <EntitlementsGate require="analyticsDepth">
@@ -105,5 +105,4 @@ const Attribution: React.FC<AttributionProps> = ({ testID }) => {
 }
 
 export default React.memo(Attribution)
-
 

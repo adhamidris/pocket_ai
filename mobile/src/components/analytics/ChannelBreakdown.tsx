@@ -55,7 +55,7 @@ const ChannelBreakdown: React.FC<ChannelBreakdownProps> = ({ testID }) => {
     })
   }
   const onOpenConversations = (channel: SocialChannel) => {
-    navigation.navigate('Conversations', { screen: 'Conversations', params: { filter: undefined, channel } })
+    navigation.navigate('Conversations', { screen: 'ConversationsHome', params: { filter: undefined, channel } })
   }
 
   return (
@@ -114,4 +114,3 @@ const ChannelBreakdown: React.FC<ChannelBreakdownProps> = ({ testID }) => {
 export default React.memo(ChannelBreakdown)
 
  
-

@@ -25,7 +25,7 @@ export const DeepLinkAudit: React.FC = () => {
       id: 'dash→conv',
       label: 'Dashboard → Conversations (filters) → back',
       run: async () => {
-        navigation.navigate('Main', { screen: 'Conversations', params: { screen: 'Conversations', params: { filter: 'urgent' } } })
+        navigation.navigate('Main', { screen: 'Conversations', params: { screen: 'ConversationsHome', params: { filter: 'urgent' } } })
         await new Promise(r => setTimeout(r, 200))
         mark('dash→conv', { status: 'ok', lastRoute: 'Conversations', params: { filter: 'urgent' } })
         await goBack()
@@ -166,5 +166,4 @@ export const DeepLinkAudit: React.FC = () => {
 }
 
 export default DeepLinkAudit
-
 

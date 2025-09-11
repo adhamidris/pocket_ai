@@ -59,7 +59,7 @@ export const TelemetryAudit: React.FC = () => {
   const triggerSamples = () => {
     // Navigate to some screens to fire built-in view events
     navigation.navigate('Main', { screen: 'Dashboard' })
-    setTimeout(() => navigation.navigate('Main', { screen: 'Conversations', params: { screen: 'Conversations' } }), 100)
+    setTimeout(() => navigation.navigate('Main', { screen: 'Conversations', params: { screen: 'ConversationsHome' } }), 100)
     setTimeout(() => navigation.navigate('Main', { screen: 'CRM', params: { screen: 'CRM' } }), 200)
     setTimeout(() => navigation.navigate('Main', { screen: 'Settings', params: { screen: 'SettingsHome' } }), 300)
     setTimeout(() => (Analytics as any).track('qa.telemetry.sample', { ok: true }), 400)
@@ -128,5 +128,4 @@ const Row: React.FC<{ left: string; right: string; warn?: boolean; muted?: boole
 }
 
 export default TelemetryAudit
-
 

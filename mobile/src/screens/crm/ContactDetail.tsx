@@ -56,7 +56,7 @@ export const ContactDetail: React.FC = () => {
     if (existingId) {
       navigation.navigate('Conversations', { screen: 'ConversationThread', params: { id: existingId } })
     } else {
-      navigation.navigate('Conversations', { screen: 'Conversations', params: { prefill: contact.name } })
+      navigation.navigate('Conversations', { screen: 'ConversationsHome', params: { prefill: contact.name } })
     }
   }
 
@@ -181,5 +181,4 @@ export const ContactDetail: React.FC = () => {
 }
 
 export default ContactDetail
-
 

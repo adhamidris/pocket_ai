@@ -12,7 +12,7 @@ import { Article, Checklist, Tour } from '../../types/help'
 import { defaultTours } from '../../content/help/tours'
 import { releaseNotes } from '../../content/help/releaseNotes'
 import AsyncStorage from '@react-native-async-storage/async-storage'
-import * as NetInfo from '@react-native-community/netinfo'
+import * as Network from 'expo-network'
 
 type TabKey = 'search' | 'quickstart' | 'tours' | 'whatsnew'
 
@@ -67,8 +67,25 @@ const HelpCenter: React.FC = () => {
     return () => clearTimeout(h)
   }, [query])
   useEffect(() => {
-    const sub = (NetInfo as any).addEventListener?.((state: any) => setOffline(!state?.isConnected))
-    return () => sub && sub()
+    // Prefer event listener if available; otherwise poll periodically
+    const anyNetwork: any = Network as any
+    if (anyNetwork?.addNetworkStateListener) {
+      const sub = anyNetwork.addNetworkStateListener((state: any) => setOffline(!state?.isConnected))
+      return () => {
+        try { sub?.remove?.() } catch {}
+      }
+    } else {
+      let mounted = true
+      const check = async () => {
+        try {
+          const s = await Network.getNetworkStateAsync()
+          if (mounted) setOffline(!(s?.isConnected))
+        } catch {}
+      }
+      check()
+      const id = setInterval(check, 3000)
+      return () => { mounted = false; clearInterval(id) }
+    }
   }, [])
 
   const filtered = useMemo(() => {
@@ -182,5 +199,3 @@ const HelpCenter: React.FC = () => {
 }
 
 export default HelpCenter
-
-

@@ -58,8 +58,8 @@ const SlaEditor: React.FC = () => {
         </View>
       </View>
 
-      <ScrollView style={{ padding: 16 }} contentContainerStyle={{ paddingBottom: 24 }}>
-        <EntitlementsGate require="automations">
+      <EntitlementsGate require="automations">
+        <ScrollView style={{ padding: 16 }} contentContainerStyle={{ paddingBottom: 24 }}>
         {offline && <OfflineBanner visible />}
         {/* Name & pause */}
         <View style={{ marginBottom: 12 }}>
@@ -100,12 +100,11 @@ const SlaEditor: React.FC = () => {
             <Text style={{ color: theme.color.primary, fontWeight: '700' }}>Save Policy</Text>
           </TouchableOpacity>
         </View>
-      </ScrollView>
+        </ScrollView>
       </EntitlementsGate>
     </SafeAreaView>
   )
 }
 
 export default SlaEditor
-
 

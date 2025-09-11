@@ -60,7 +60,7 @@ const AgentPerformance: React.FC<AgentPerformanceProps> = ({ testID }) => {
   }, [cards, kind, skill, sortBy])
 
   const openAgent = (id: string) => navigation.navigate('Agents', { screen: 'AgentDetail', params: { id } })
-  const openAssigned = (name: string) => navigation.navigate('Conversations', { screen: 'Conversations', params: { prefill: name, filter: 'assignedTo' } })
+  const openAssigned = (name: string) => navigation.navigate('Conversations', { screen: 'ConversationsHome', params: { prefill: name, filter: 'assignedTo' } })
 
   const FilterPill: React.FC<{ label: string; active: boolean; onPress: () => void }>=({ label, active, onPress }) => (
     <TouchableOpacity onPress={onPress} style={{ paddingHorizontal: 10, paddingVertical: 6, borderRadius: 12, borderWidth: 1, borderColor: active ? tokens.colors.primary : tokens.colors.border }}>
@@ -154,5 +154,4 @@ const AgentPerformance: React.FC<AgentPerformanceProps> = ({ testID }) => {
 }
 
 export default React.memo(AgentPerformance)
-
 

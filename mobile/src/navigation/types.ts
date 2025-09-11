@@ -9,8 +9,7 @@ export type RootTabParamList = {
 }
 
 export type ConversationsStackParamList = {
-  Conversations: { filter?: 'urgent'|'waiting30'|'unassigned'|'slaRisk'|'vip' } | undefined
+  ConversationsHome: { filter?: 'urgent'|'waiting30'|'unassigned'|'slaRisk'|'vip' } | { prefill?: string; channel?: string; selectedId?: string; contactId?: string } | undefined
   ConversationThread: { id: string }
 }
-
 

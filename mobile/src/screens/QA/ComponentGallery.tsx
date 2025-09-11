@@ -11,10 +11,10 @@ import VolumeByChannelMini from '../../components/dashboard/VolumeByChannelMini'
 import ConversationListItem from '../../components/conversations/ConversationListItem'
 import ContactRow from '../../components/crm/ContactRow'
 import PolicyCard from '../../components/security/PolicyCard'
-import ArticleViewer from '../../components/help/ArticleViewer'
+import { ArticleViewer } from '../../components/help/ArticleViewer'
 import Bubble from '../../components/portal/Bubble'
-import EmptyState from '../../components/ui/EmptyState'
-import Button from '../../components/ui/Button'
+import EmptyState from '../../components/dashboard/EmptyState'
+import { Button } from '../../components/ui/Button'
 
 export const ComponentGallery: React.FC = () => {
   const { theme, toggle } = useTheme()
@@ -108,7 +108,7 @@ export const ComponentGallery: React.FC = () => {
           </View>
           <View style={{ flexBasis: '48%', flexGrow: 1 }}>
             <Section title="Portal Bubble">
-              <Bubble message={bubbleMsg} />
+              <Bubble msg={bubbleMsg} />
             </Section>
           </View>
           <View style={{ flexBasis: '48%', flexGrow: 1 }}>
@@ -119,7 +119,7 @@ export const ComponentGallery: React.FC = () => {
           <View style={{ flexBasis: '48%', flexGrow: 1 }}>
             <Section title="UI Primitives">
               <View style={{ gap: 8 }}>
-                <Button label="Primary" onPress={() => {}} />
+                <Button title="Primary" onPress={() => {}} />
                 <EmptyState message="Empty state sample" />
               </View>
             </Section>
@@ -131,5 +131,3 @@ export const ComponentGallery: React.FC = () => {
 }
 
 export default ComponentGallery
-
-

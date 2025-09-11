@@ -89,10 +89,10 @@ const AgentDetail: React.FC = () => {
   }
 
   const assignTestConversation = () => {
-    navigation.navigate('Conversations', { screen: 'Conversations', params: { prefill: agent.name } })
+    navigation.navigate('Conversations', { screen: 'ConversationsHome', params: { prefill: agent.name } })
   }
   const viewAssigned = () => {
-    navigation.navigate('Conversations', { screen: 'Conversations', params: { filter: 'assignedTo', prefill: agent.name } })
+    navigation.navigate('Conversations', { screen: 'ConversationsHome', params: { filter: 'assignedTo', prefill: agent.name } })
   }
 
   const avatar = (
@@ -294,6 +294,5 @@ const AgentDetail: React.FC = () => {
 }
 
 export default AgentDetail
-
 
 

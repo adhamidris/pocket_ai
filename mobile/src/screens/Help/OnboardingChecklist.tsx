@@ -4,7 +4,7 @@ import { useNavigation } from '@react-navigation/native'
 import { useTheme } from '../../providers/ThemeProvider'
 import { Checklist, ChecklistStep } from '../../types/help'
 import AsyncStorage from '@react-native-async-storage/async-storage'
-import * as NetInfo from '@react-native-community/netinfo'
+import * as Network from 'expo-network'
 
 const initial: Checklist = {
   id: 'global-onboarding',
@@ -28,8 +28,22 @@ export const OnboardingChecklist: React.FC<{ onDismiss?: () => void }> = ({ onDi
   const [offline, setOffline] = useState<boolean>(false)
 
   useEffect(() => {
-    const sub = (NetInfo as any).addEventListener?.((state: any) => setOffline(!state?.isConnected))
-    return () => sub && sub()
+    const anyNetwork: any = Network as any
+    if (anyNetwork?.addNetworkStateListener) {
+      const sub = anyNetwork.addNetworkStateListener((state: any) => setOffline(!state?.isConnected))
+      return () => { try { sub?.remove?.() } catch {} }
+    } else {
+      let mounted = true
+      const check = async () => {
+        try {
+          const s = await Network.getNetworkStateAsync()
+          if (mounted) setOffline(!(s?.isConnected))
+        } catch {}
+      }
+      check()
+      const id = setInterval(check, 3000)
+      return () => { mounted = false; clearInterval(id) }
+    }
   }, [])
 
   useEffect(() => { (async () => { try { await AsyncStorage.setItem('help.cached.checklist', JSON.stringify(data)) } catch {} })() }, [data])
@@ -100,5 +114,3 @@ export const OnboardingChecklist: React.FC<{ onDismiss?: () => void }> = ({ onDi
 }
 
 export default OnboardingChecklist
-
-

@@ -13,7 +13,6 @@ import ImportExportSheet from '../../components/crm/ImportExportSheet'
 import OfflineBanner from '../../components/dashboard/OfflineBanner'
 import SyncCenterSheet from '../../components/dashboard/SyncCenterSheet'
 import { track } from '../../lib/analytics'
-import { DeviceEventEmitter } from 'react-native'
 import { getFixtures } from '../../qa/fixtures'
 
 const rand = (min: number, max: number) => Math.floor(Math.random() * (max - min + 1)) + min
@@ -320,5 +319,4 @@ export const CRMList: React.FC = () => {
 }
 
 export default CRMList
-
 

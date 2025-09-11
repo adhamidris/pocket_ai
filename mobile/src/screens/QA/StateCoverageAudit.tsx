@@ -65,7 +65,7 @@ export const StateCoverageAudit: React.FC = () => {
           {mode === 'error' && <ErrorBanner message="Simulated error — demo only" testID="conv-error" />}
           <View style={{ flexDirection: 'row', gap: 8, marginTop: 8 }}>
             <OpenBtn to="Conversations" label="Open Conversations" />
-            <OpenBtn to="Conversations" label="Open Urgent" params={{ screen: 'Conversations', params: { filter: 'urgent' } }} />
+            <OpenBtn to="Conversations" label="Open Urgent" params={{ screen: 'ConversationsHome', params: { filter: 'urgent' } }} />
           </View>
         </Section>
 
@@ -97,5 +97,4 @@ export const StateCoverageAudit: React.FC = () => {
 }
 
 export default StateCoverageAudit
-
 

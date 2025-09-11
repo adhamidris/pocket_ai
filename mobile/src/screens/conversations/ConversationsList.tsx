@@ -13,7 +13,6 @@ import { AnyAgent, AgentKind, AgentStatus, SkillTag } from '../../types/agents'
 import ListSkeleton from '../../components/conversations/ListSkeleton'
 import EmptyState from '../../components/conversations/EmptyState'
 import { EmptyStateGuide } from '../../components/help/EmptyStateGuide'
-import { DeviceEventEmitter } from 'react-native'
 import { track } from '../../lib/analytics'
 import { DeviceEventEmitter } from 'react-native'
 import { getFixtures } from '../../qa/fixtures'
@@ -275,5 +274,4 @@ export const ConversationsList: React.FC = () => {
 }
 
 export default ConversationsList
-
 

@@ -48,7 +48,7 @@ const IntentAnalytics: React.FC<IntentAnalyticsProps> = ({ testID }) => {
   })))
 
   const openConversations = (intent: string) => {
-    navigation.navigate('Conversations', { screen: 'Conversations', params: { prefill: intent, filter: undefined } })
+    navigation.navigate('Conversations', { screen: 'ConversationsHome', params: { prefill: intent, filter: undefined } })
   }
 
   const createAutomation = (intent: string) => {
@@ -129,5 +129,4 @@ const IntentAnalytics: React.FC<IntentAnalyticsProps> = ({ testID }) => {
 }
 
 export default React.memo(IntentAnalytics)
-
 

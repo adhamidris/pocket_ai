@@ -80,4 +80,3 @@ export const ScriptedWalks: React.FC = () => {
 
 export default ScriptedWalks
 
-

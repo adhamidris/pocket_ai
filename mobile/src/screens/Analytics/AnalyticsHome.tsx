@@ -192,7 +192,7 @@ const AnalyticsHome: React.FC = () => {
                     <View style={{ marginTop: 6 }}>
                       <TouchableOpacity onPress={() => {
                         // @ts-ignore
-                        (require('@react-navigation/native') as any).useNavigation().navigate('Conversations', { screen: 'Conversations' })
+                        (require('@react-navigation/native') as any).useNavigation().navigate('Conversations', { screen: 'ConversationsHome' })
                       }} accessibilityLabel="Open Conversations" accessibilityRole="button" style={{ paddingHorizontal: 12, paddingVertical: 8, borderRadius: 10, borderWidth: 1, borderColor: theme.color.border }}>
                         <Text style={{ color: theme.color.cardForeground, fontWeight: '600' }}>{tile.cta}</Text>
                       </TouchableOpacity>
@@ -263,5 +263,4 @@ const AnalyticsHome: React.FC = () => {
 }
 
 export default AnalyticsHome
-
 
