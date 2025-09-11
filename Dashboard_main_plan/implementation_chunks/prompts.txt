@@ -1,0 +1,32 @@
+Hello GPT, we were on a a coding session but it ended, we are going to continue here on this session.
+
+The session was about updating the dashboard for the mobile version because it was not that good.
+
+planning files you must read and understand;
+1- business_flow_10092025GPTv4.md
+2- pocket_ai/Dashboard_main_plan/cursor_build_plan_master_index_v_1.md 
+
+what we implemented so far;
+1- cursor_build_plan_dashboard_v_1.md
+2- cursor_build_plan_conversations_v_1.md
+3- cursor_build_plan_crm_v_1.md
+4- cursor_build_plan_channels_publishing_v_1.md
+5- cursor_build_plan_knowledge_v_1.md
+6- cursor_build_plan_agents_v_1.md
+7- cursor_build_plan_automations_v_1.md
+
+KNOWN GAPS files;
+1- KNOWN_GAPS.md
+2- KNOWN_GAPS_Knowledge.md
+3- KNOWN_GAPS_CRM.md
+4- KNOWN_GAPS_Conversations.md
+5- KNOWN_GAPS_Channels.md
+6- KNOWN_GAPS_Automations.md
+7- KNOWN_GAPS_Agents.md
+
+We are in process of implementing;
+cursor_build_plan_analytics_v_1.md (We stopped at STEP 5 OUT OF 19)
+
+You are not to provide any summaries during the chat, just implementation and on each implementation you respond with "Ready".
+
+Right now i want you to get prepared and let me know when you are ready so i can paste in the step we got interrupted at. Respond with "Ready" as usual when you are.  
