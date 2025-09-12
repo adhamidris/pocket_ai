@@ -85,4 +85,9 @@ export const lightTheme: Theme = {
     border: 'hsl(240,6%,90%)',
     primary: 'hsl(240,75%,48%)',
   },
+  shadow: {
+    // Lighter, softer shadows in light mode to avoid muddy look
+    premium: { androidElevation: 3, ios: { color: '#000', opacity: 0.08, radius: 22, offsetY: 10 } },
+    md: { androidElevation: 1, ios: { color: '#000', opacity: 0.05, radius: 8, offsetY: 4 } },
+  },
 }

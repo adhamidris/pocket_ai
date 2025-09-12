@@ -137,6 +137,16 @@ export const CRMScreen: React.FC = () => {
     return theme.color.mutedForeground
   }
 
+  const getTagStyle = (tag: string) => {
+    const color = getTagColor(tag)
+    const withAlpha = (c: string, a: number) =>
+      c.startsWith('hsl(')
+        ? c.replace('hsl(', 'hsla(').replace(')', `,${a})`)
+        : c
+    const bg = withAlpha(color, theme.dark ? 0.28 : 0.12)
+    return { color, bg }
+  }
+
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: theme.color.background }}>
       <View style={{ flex: 1 }}>
@@ -167,16 +177,16 @@ export const CRMScreen: React.FC = () => {
             <View style={{
               backgroundColor: theme.color.card,
               borderRadius: theme.radius.md,
-              paddingHorizontal: 12,
-              paddingVertical: 8,
+              paddingHorizontal: 14,
+              paddingVertical: 10,
               flex: 1
             }}>
-              <View style={{ alignItems: 'center', marginBottom: 4 }}>
-                <Users size={16} color={theme.color.primary as any} />
+              <View style={{ alignItems: 'center', marginBottom: 6 }}>
+                <Users size={18} color={theme.color.primary as any} />
               </View>
               <Text style={{
                 color: theme.color.cardForeground,
-                fontSize: 18,
+                fontSize: 20,
                 fontWeight: '700',
                 textAlign: 'center'
               }}>
@@ -184,7 +194,7 @@ export const CRMScreen: React.FC = () => {
               </Text>
               <Text style={{
                 color: theme.color.mutedForeground,
-                fontSize: 11,
+                fontSize: 12,
                 textAlign: 'center'
               }}>
                 Total
@@ -194,16 +204,16 @@ export const CRMScreen: React.FC = () => {
             <View style={{
               backgroundColor: theme.color.card,
               borderRadius: theme.radius.md,
-              paddingHorizontal: 12,
-              paddingVertical: 8,
+              paddingHorizontal: 14,
+              paddingVertical: 10,
               flex: 1
             }}>
-              <View style={{ alignItems: 'center', marginBottom: 4 }}>
-                <CheckCircle2 size={16} color={theme.color.success as any} />
+              <View style={{ alignItems: 'center', marginBottom: 6 }}>
+                <CheckCircle2 size={18} color={theme.color.success as any} />
               </View>
               <Text style={{
                 color: theme.color.cardForeground,
-                fontSize: 18,
+                fontSize: 20,
                 fontWeight: '700',
                 textAlign: 'center'
               }}>
@@ -211,7 +221,7 @@ export const CRMScreen: React.FC = () => {
               </Text>
               <Text style={{
                 color: theme.color.mutedForeground,
-                fontSize: 11,
+                fontSize: 12,
                 textAlign: 'center'
               }}>
                 Active
@@ -221,16 +231,16 @@ export const CRMScreen: React.FC = () => {
             <View style={{
               backgroundColor: theme.color.card,
               borderRadius: theme.radius.md,
-              paddingHorizontal: 12,
-              paddingVertical: 8,
+              paddingHorizontal: 14,
+              paddingVertical: 10,
               flex: 1
             }}>
-              <View style={{ alignItems: 'center', marginBottom: 4 }}>
-                <Crown size={16} color={theme.color.warning as any} />
+              <View style={{ alignItems: 'center', marginBottom: 6 }}>
+                <Crown size={18} color={theme.color.warning as any} />
               </View>
               <Text style={{
                 color: theme.color.cardForeground,
-                fontSize: 18,
+                fontSize: 20,
                 fontWeight: '700',
                 textAlign: 'center'
               }}>
@@ -238,7 +248,7 @@ export const CRMScreen: React.FC = () => {
               </Text>
               <Text style={{
                 color: theme.color.mutedForeground,
-                fontSize: 11,
+                fontSize: 12,
                 textAlign: 'center'
               }}>
                 VIP
@@ -248,16 +258,16 @@ export const CRMScreen: React.FC = () => {
             <View style={{
               backgroundColor: theme.color.card,
               borderRadius: theme.radius.md,
-              paddingHorizontal: 12,
-              paddingVertical: 8,
+              paddingHorizontal: 14,
+              paddingVertical: 10,
               flex: 1
             }}>
-              <View style={{ alignItems: 'center', marginBottom: 4 }}>
-                <DollarSign size={16} color={theme.color.success as any} />
+              <View style={{ alignItems: 'center', marginBottom: 6 }}>
+                <DollarSign size={18} color={theme.color.success as any} />
               </View>
               <Text style={{
                 color: theme.color.cardForeground,
-                fontSize: 14,
+                fontSize: 18,
                 fontWeight: '700',
                 textAlign: 'center'
               }}>
@@ -265,7 +275,7 @@ export const CRMScreen: React.FC = () => {
               </Text>
               <Text style={{
                 color: theme.color.mutedForeground,
-                fontSize: 11,
+                fontSize: 12,
                 textAlign: 'center'
               }}>
                 Value
@@ -281,8 +291,8 @@ export const CRMScreen: React.FC = () => {
                 onPress={() => setActiveTab(tab.key)}
                 style={{
                   flex: 1,
-                  paddingVertical: 10,
-                  paddingHorizontal: 14,
+                  paddingVertical: 12,
+                  paddingHorizontal: 16,
                   borderRadius: theme.radius.md,
                   backgroundColor: activeTab === tab.key 
                     ? (theme.color.primary as any) 
@@ -300,14 +310,14 @@ export const CRMScreen: React.FC = () => {
                   color={activeTab === tab.key 
                     ? ('#ffffff' as any) 
                     : (theme.color.mutedForeground as any)}
-                  size={16}
+                  size={18}
                 />
                 <Text style={{
                   color: activeTab === tab.key 
                     ? ('#ffffff' as any) 
                     : (theme.color.mutedForeground as any),
-                  fontWeight: '600',
-                  fontSize: 14
+                  fontWeight: '700',
+                  fontSize: 13
                 }}>
                   {tab.label}
                 </Text>
@@ -322,22 +332,22 @@ export const CRMScreen: React.FC = () => {
             flexDirection: 'row',
             backgroundColor: theme.dark ? theme.color.secondary : theme.color.accent,
             borderRadius: theme.radius.md,
-            padding: 10,
+            padding: 12,
             alignItems: 'center',
-            gap: 10,
+            gap: 12,
             borderWidth: 0,
             borderColor: 'transparent'
           }}>
-            <Search color={theme.color.mutedForeground} size={20} />
+            <Search color={theme.color.mutedForeground} size={22} />
             <Text style={{
               flex: 1,
               color: theme.color.mutedForeground,
-              fontSize: 15
+              fontSize: 16
             }}>
               {t('crm.searchPlaceholder')}
             </Text>
-            <TouchableOpacity>
-              <Filter color={theme.color.mutedForeground} size={20} />
+            <TouchableOpacity style={{ padding: 2 }}>
+              <Filter color={theme.color.mutedForeground} size={22} />
             </TouchableOpacity>
           </View>
         </View>
@@ -356,7 +366,7 @@ export const CRMScreen: React.FC = () => {
                   />
                 ))
               ) : (
-                <Card variant="premium" style={{ backgroundColor: theme.dark ? theme.color.secondary : theme.color.accent }}>
+                <Card variant="flat" style={{ backgroundColor: theme.dark ? theme.color.secondary : theme.color.accent }}>
                   <Text style={{
                     color: theme.color.mutedForeground,
                     textAlign: 'center',
@@ -370,7 +380,7 @@ export const CRMScreen: React.FC = () => {
           )}
 
           {activeTab === 'segments' && (
-            <Card variant="premium" style={{ backgroundColor: theme.dark ? theme.color.secondary : theme.color.accent }}>
+            <Card variant="flat" style={{ backgroundColor: theme.dark ? theme.color.secondary : theme.color.accent }}>
               <Text style={{
                 color: theme.color.cardForeground,
                 fontSize: 16,
@@ -428,7 +438,7 @@ export const CRMScreen: React.FC = () => {
           )}
 
           {activeTab === 'insights' && (
-            <Card variant="premium" style={{ backgroundColor: theme.dark ? theme.color.secondary : theme.color.accent }}>
+            <Card variant="flat" style={{ backgroundColor: theme.dark ? theme.color.secondary : theme.color.accent }}>
               <Text style={{
                 color: theme.color.cardForeground,
                 fontSize: 16,
@@ -480,26 +490,22 @@ export const CRMScreen: React.FC = () => {
                   }}>
                     Most Common Tags
                   </Text>
-                  <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 8 }}>
+                  <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 10, marginTop: 8 }}>
                     {['Technical', 'Enterprise', 'Billing', 'Integration'].map((tag) => {
-                      const color = getTagColor(tag)
+                      const { color, bg } = getTagStyle(tag)
                       return (
                         <View
                           key={tag}
                           style={{
-                            flexDirection: 'row',
-                            alignItems: 'center',
-                            gap: 4,
+                            backgroundColor: bg as any,
                             paddingHorizontal: 8,
                             paddingVertical: 3,
                             borderRadius: theme.radius.sm,
-                            backgroundColor: theme.color.card,
-                            borderWidth: 1,
-                            borderColor: color as any
+                            flexDirection: 'row',
+                            alignItems: 'center'
                           }}
                         >
-                          <View style={{ width: 5, height: 5, borderRadius: 2.5, backgroundColor: color as any }} />
-                          <Text style={{ color: color as any, fontSize: 11, fontWeight: '600' }}>
+                          <Text style={{ color: (theme.dark ? ('#ffffff' as any) : (color as any)), fontSize: 11, fontWeight: '600' }}>
                             {tag}
                           </Text>
                         </View>

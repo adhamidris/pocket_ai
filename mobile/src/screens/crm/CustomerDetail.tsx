@@ -175,6 +175,53 @@ export const CustomerDetail: React.FC<CustomerDetailProps> = ({
       createdAt: '2024-01-14T14:10:00Z',
     },
     {
+      id: 'C-1026',
+      title: 'Password reset failing',
+      type: 'bug',
+      tone: 'negative',
+      status: 'needs',
+      priority: 'high',
+      requiredActions: [
+        'Escalate to auth team',
+        'Verify reset email delivery & logs',
+      ],
+      aiActions: [
+        'Guided user through reset flow',
+        'Checked rate limits and recent errors',
+      ],
+      createdAt: '2024-01-15T08:05:00Z',
+    },
+    {
+      id: 'C-1027',
+      title: 'Upgrade plan inquiry',
+      type: 'inquiry',
+      tone: 'neutral',
+      status: 'needs',
+      priority: 'low',
+      requiredActions: [
+        'Share pricing tiers and limits',
+      ],
+      aiActions: [
+        'Summarized Pro vs. Enterprise features',
+      ],
+      createdAt: '2024-01-13T11:22:00Z',
+    },
+    {
+      id: 'C-1028',
+      title: 'Slack integration request',
+      type: 'request',
+      tone: 'positive',
+      status: 'needs',
+      priority: 'medium',
+      requiredActions: [
+        'Provide early-access steps',
+      ],
+      aiActions: [
+        'Collected workspace URL and scope needs',
+      ],
+      createdAt: '2024-01-13T09:40:00Z',
+    },
+    {
       id: 'C-1019',
       title: 'Webhook timeout',
       type: 'bug',
@@ -188,6 +235,51 @@ export const CustomerDetail: React.FC<CustomerDetailProps> = ({
       ],
       createdAt: '2024-01-12T09:20:00Z',
       updatedAt: '2024-01-12T10:05:00Z',
+    },
+    {
+      id: 'C-1018',
+      title: 'Billing address update',
+      type: 'billing',
+      tone: 'neutral',
+      status: 'resolved',
+      priority: 'low',
+      requiredActions: [
+        'Confirm address change with finance',
+      ],
+      aiActions: [
+        'Validated new address format',
+      ],
+      createdAt: '2024-01-10T15:00:00Z',
+      updatedAt: '2024-01-10T16:12:00Z',
+    },
+    {
+      id: 'C-1017',
+      title: 'Feature feedback on dashboard',
+      type: 'feedback',
+      tone: 'positive',
+      status: 'resolved',
+      priority: 'medium',
+      requiredActions: [],
+      aiActions: [
+        'Summarized feedback and tagged product',
+      ],
+      createdAt: '2024-01-09T13:35:00Z',
+      updatedAt: '2024-01-09T14:10:00Z',
+    },
+    {
+      id: 'C-1029',
+      title: 'Response delay complaint',
+      type: 'complaint',
+      tone: 'negative',
+      status: 'needs',
+      priority: 'medium',
+      requiredActions: [
+        'Apologize and share SLA timeline',
+      ],
+      aiActions: [
+        'Analyzed queue wait times',
+      ],
+      createdAt: '2024-01-15T07:55:00Z',
     },
   ]
 
@@ -281,7 +373,11 @@ export const CustomerDetail: React.FC<CustomerDetailProps> = ({
 
   return (
     <Modal visible={visible} onClose={onClose} size="lg">
-      <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingBottom: 12 }}>
+      <ScrollView 
+        showsVerticalScrollIndicator={false}
+        contentContainerStyle={{ paddingBottom: 12 }}
+        scrollEnabled={activeTab !== 'cases'}
+      >
         {/* Customer Header */}
         <View style={{
           flexDirection: 'row',
@@ -424,6 +520,7 @@ export const CustomerDetail: React.FC<CustomerDetailProps> = ({
         {/* Overview content */}
         {activeTab === 'overview' && (
           <Card
+            variant="flat"
             style={{
               paddingHorizontal: 16,
               paddingBottom: 16,
@@ -458,7 +555,7 @@ export const CustomerDetail: React.FC<CustomerDetailProps> = ({
                 return rows.map((row) => {
                   const IconComp = row.icon
                   return (
-                    <View key={row.key} style={{ flexDirection: 'row', alignItems: 'center', gap: 12, paddingVertical: 10 }}>
+                    <View key={row.key} style={{ flexDirection: 'row', alignItems: 'center', gap: 12, paddingVertical: 6 }}>
                       <IconComp size={14} color={theme.color.mutedForeground as any} />
                       <Text style={{ color: theme.color.cardForeground, fontSize: 13, flex: 1 }} numberOfLines={1}>
                         {row.text}
@@ -559,6 +656,7 @@ export const CustomerDetail: React.FC<CustomerDetailProps> = ({
         {/* Tab Content */}
         {activeTab === 'cases' && (
           <Card
+            variant="flat"
             style={{
               padding: 16,
               marginBottom: 16,
@@ -605,8 +703,13 @@ export const CustomerDetail: React.FC<CustomerDetailProps> = ({
               ))}
             </View>
 
-            {/* List cases (no nested cards for full width) */}
-            <View>
+            {/* Vertically scrollable cases wrapper (inner only) */}
+            <ScrollView
+              nestedScrollEnabled
+              showsVerticalScrollIndicator
+              style={{ maxHeight: 320 }}
+              contentContainerStyle={{ paddingBottom: 4 }}
+            >
               {mockCases.filter(c => c.status === caseFilter).map((c, idx, arr) => (
                 <View key={c.id} style={{ paddingVertical: 14, ...(idx !== arr.length - 1 ? { borderBottomWidth: 1, borderBottomColor: theme.color.border } : {}) }}>
                   {/* Date above title */}
@@ -648,11 +751,11 @@ export const CustomerDetail: React.FC<CustomerDetailProps> = ({
                   </View>
                 </View>
               ))}
-            </View>
+            </ScrollView>
           </Card>
         )}
         {activeTab === 'activity' && (
-          <Card>
+          <Card variant="flat">
             <Text style={{
               color: theme.color.cardForeground,
               fontSize: 16,
@@ -708,7 +811,7 @@ export const CustomerDetail: React.FC<CustomerDetailProps> = ({
         )}
 
         {activeTab === 'notes' && (
-          <Card>
+          <Card variant="flat">
             <View style={{
               flexDirection: 'row',
               justifyContent: 'space-between',
@@ -778,6 +881,15 @@ export const CustomerDetail: React.FC<CustomerDetailProps> = ({
               </View>
             </TouchableOpacity>
           </View>
+
+          {/* Exit button (full width) */}
+          <Button
+            title="Close"
+            variant="default"
+            size="lg"
+            fullWidth
+            onPress={onClose}
+          />
         </View>
       </ScrollView>
     </Modal>

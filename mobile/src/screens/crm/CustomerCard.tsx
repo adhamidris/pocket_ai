@@ -97,6 +97,16 @@ export const CustomerCard: React.FC<CustomerCardProps> = ({
     return theme.color.mutedForeground
   }
 
+  const getTagStyle = (tag: string) => {
+    const color = getTagColor(tag)
+    const withAlpha = (c: string, a: number) =>
+      c.startsWith('hsl(')
+        ? c.replace('hsl(', 'hsla(').replace(')', `,${a})`)
+        : c
+    const bg = withAlpha(color, theme.dark ? 0.28 : 0.12)
+    return { color, bg }
+  }
+
   const getChannelChip = (channel: Customer['channel']) => {
     const labelMap: Record<Customer['channel'], string> = {
       email: 'EM', web: 'WEB', whatsapp: 'WA', instagram: 'IG', twitter: 'TW', messenger: 'MS'
@@ -120,7 +130,7 @@ export const CustomerCard: React.FC<CustomerCardProps> = ({
 
   return (
     <TouchableOpacity onPress={() => onPress(customer)}>
-      <Card variant="premium" style={{ marginBottom: 12, backgroundColor: theme.dark ? theme.color.secondary : theme.color.accent, paddingHorizontal: 16, paddingVertical: 14 }}>
+      <Card variant="flat" style={{ marginBottom: 12, backgroundColor: theme.dark ? theme.color.secondary : theme.color.accent, paddingHorizontal: 16, paddingVertical: 14 }}>
         {/* Header */}
         <View style={{
           flexDirection: 'row',
@@ -227,24 +237,20 @@ export const CustomerCard: React.FC<CustomerCardProps> = ({
             <View style={{ flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', gap: 8 }}>
               <Tag size={14} color={theme.color.mutedForeground} />
               {customer.tags.slice(0, 3).map((tag, index) => {
-                const color = getTagColor(tag)
+                const { color, bg } = getTagStyle(tag)
                 return (
                   <View
                     key={index}
                     style={{
-                      flexDirection: 'row',
-                      alignItems: 'center',
-                      gap: 6,
+                      backgroundColor: bg as any,
                       paddingHorizontal: 8,
                       paddingVertical: 3,
                       borderRadius: theme.radius.sm,
-                      backgroundColor: theme.color.card,
-                      borderWidth: 0,
-                      borderColor: 'transparent'
+                      flexDirection: 'row',
+                      alignItems: 'center'
                     }}
                   >
-                    <View style={{ width: 5, height: 5, borderRadius: 2.5, backgroundColor: color as any }} />
-                    <Text style={{ color: theme.color.mutedForeground, fontSize: 11, fontWeight: '600' }}>
+                    <Text style={{ color: (theme.dark ? ('#ffffff' as any) : (color as any)), fontSize: 11, fontWeight: '600' }}>
                       {tag}
                     </Text>
                   </View>
@@ -252,17 +258,11 @@ export const CustomerCard: React.FC<CustomerCardProps> = ({
               })}
               {customer.tags.length > 3 && (
                 <View style={{
-                  flexDirection: 'row',
-                  alignItems: 'center',
-                  gap: 6,
+                  backgroundColor: theme.color.muted,
                   paddingHorizontal: 8,
                   paddingVertical: 3,
-                  borderRadius: theme.radius.sm,
-                  backgroundColor: theme.color.card,
-                  borderWidth: 0,
-                  borderColor: 'transparent'
+                  borderRadius: theme.radius.sm
                 }}>
-                  <View style={{ width: 5, height: 5, borderRadius: 2.5, backgroundColor: theme.color.mutedForeground }} />
                   <Text style={{ color: theme.color.mutedForeground, fontSize: 11, fontWeight: '600' }}>
                     +{customer.tags.length - 3}
                   </Text>

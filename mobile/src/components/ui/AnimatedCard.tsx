@@ -1,5 +1,5 @@
 import React, { useRef, useEffect } from 'react'
-import { Animated, TouchableOpacity, ViewStyle } from 'react-native'
+import { Animated, TouchableOpacity, ViewStyle, Platform } from 'react-native'
 import { useTheme } from '../../providers/ThemeProvider'
 
 interface AnimatedCardProps {
@@ -8,6 +8,7 @@ interface AnimatedCardProps {
   onPress?: () => void
   delay?: number
   animationType?: 'fadeIn' | 'slideUp' | 'scale'
+  variant?: 'default' | 'premium' | 'flat'
 }
 
 export const AnimatedCard: React.FC<AnimatedCardProps> = ({ 
@@ -15,7 +16,8 @@ export const AnimatedCard: React.FC<AnimatedCardProps> = ({
   style, 
   onPress,
   delay = 0,
-  animationType = 'fadeIn'
+  animationType = 'fadeIn',
+  variant = 'default'
 }) => {
   const { theme } = useTheme()
   const animatedValue = useRef(new Animated.Value(0)).current
@@ -109,15 +111,29 @@ export const AnimatedCard: React.FC<AnimatedCardProps> = ({
     }
   }
 
-  const cardStyle = {
+  const isFlat = variant === 'flat'
+  const usePremium = variant === 'premium'
+  const shadow = usePremium ? theme.shadow.premium : theme.shadow.md
+
+  const baseStyle: ViewStyle = {
     backgroundColor: theme.color.card,
     borderRadius: theme.radius.xl,
     padding: 20,
-    borderWidth: 1,
-    borderColor: theme.color.border,
-    ...theme.shadow.premium,
-    ...style,
+    borderWidth: isFlat ? 0 : 1,
+    borderColor: isFlat ? 'transparent' : theme.color.border,
+    ...(Platform.OS === 'ios'
+      ? (isFlat
+          ? { shadowColor: 'transparent', shadowOpacity: 0, shadowRadius: 0, shadowOffset: { width: 0, height: 0 } }
+          : { shadowColor: shadow.ios.color, shadowOpacity: shadow.ios.opacity, shadowRadius: shadow.ios.radius, shadowOffset: { width: 0, height: shadow.ios.offsetY } }
+        )
+      : (isFlat
+          ? { elevation: 0 }
+          : { elevation: shadow.androidElevation }
+        )
+    )
   }
+
+  const cardStyle = { ...baseStyle, ...style }
 
   if (onPress) {
     return (

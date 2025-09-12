@@ -298,23 +298,23 @@ export const ConversationsScreen: React.FC = () => {
               <View key={idx} style={{
                 backgroundColor: theme.dark ? theme.color.secondary : theme.color.card,
                 borderRadius: theme.radius.md,
-                paddingHorizontal: 12,
-                paddingVertical: 8,
+                paddingHorizontal: 14,
+                paddingVertical: 10,
                 flex: 1,
                 alignItems: 'center'
               }}>
-                <s.icon size={16} color={s.color as any} />
+                <s.icon size={18} color={s.color as any} />
                 <Text style={{
                   color: theme.color.cardForeground,
-                  fontSize: 16,
+                  fontSize: 18,
                   fontWeight: '700',
-                  marginTop: 4
+                  marginTop: 6
                 }}>
                   {s.value}
                 </Text>
                 <Text style={{
                   color: theme.color.mutedForeground,
-                  fontSize: 10
+                  fontSize: 12
                 }}>
                   {s.label}
                 </Text>
@@ -323,7 +323,7 @@ export const ConversationsScreen: React.FC = () => {
           </View>
 
           {/* Date Filter Bar */}
-          <View style={{ flexDirection: 'row', gap: 8, marginBottom: 12 }}>
+          <View style={{ flexDirection: 'row', gap: 10, marginBottom: 12 }}>
             {([
               { key: 'today', label: 'Today' },
               { key: '7d', label: '7d' },
@@ -333,8 +333,8 @@ export const ConversationsScreen: React.FC = () => {
                 key={r.key}
                 onPress={() => setSelectedRange(r.key)}
                 style={{
-                  paddingHorizontal: 12,
-                  paddingVertical: 8,
+                  paddingHorizontal: 14,
+                  paddingVertical: 10,
                   borderRadius: theme.radius.md,
                   backgroundColor: selectedRange === r.key
                     ? (theme.color.primary as any)
@@ -343,7 +343,8 @@ export const ConversationsScreen: React.FC = () => {
               >
                 <Text style={{
                   color: selectedRange === r.key ? ('#ffffff' as any) : (theme.color.mutedForeground as any),
-                  fontWeight: '600'
+                  fontWeight: '700',
+                  fontSize: 13
                 }}>
                   {r.label}
                 </Text>
@@ -352,8 +353,8 @@ export const ConversationsScreen: React.FC = () => {
             <TouchableOpacity
               onPress={() => { setSelectedRange('custom'); Alert.alert('Select date', 'Date picker coming soon') }}
               style={{
-                paddingHorizontal: 12,
-                paddingVertical: 8,
+                paddingHorizontal: 14,
+                paddingVertical: 10,
                 borderRadius: theme.radius.md,
                 backgroundColor: selectedRange === 'custom'
                   ? (theme.color.primary as any)
@@ -361,14 +362,15 @@ export const ConversationsScreen: React.FC = () => {
                 flexDirection: 'row',
                 alignItems: 'center',
                 justifyContent: 'center',
-                gap: 6,
+                gap: 8,
                 flex: 1
               }}
             >
-              <Calendar size={14} color={selectedRange === 'custom' ? ('#ffffff' as any) : (theme.color.mutedForeground as any)} />
+              <Calendar size={16} color={selectedRange === 'custom' ? ('#ffffff' as any) : (theme.color.mutedForeground as any)} />
               <Text style={{
                 color: selectedRange === 'custom' ? ('#ffffff' as any) : (theme.color.mutedForeground as any),
-                fontWeight: '600'
+                fontWeight: '700',
+                fontSize: 13
               }}>
                 Pick date
               </Text>
@@ -376,17 +378,15 @@ export const ConversationsScreen: React.FC = () => {
           </View>
 
           {/* Tabs */}
-          <View style={{
-            flexDirection: 'row'
-          }}>
+          <View style={{ flexDirection: 'row' }}>
             {tabs.map((tab) => (
               <TouchableOpacity
                 key={tab.key}
                 onPress={() => setActiveTab(tab.key)}
                 style={{
                   flex: 1,
-                  paddingVertical: 10,
-                  paddingHorizontal: 14,
+                  paddingVertical: 12,
+                  paddingHorizontal: 16,
                   borderRadius: theme.radius.md,
                   backgroundColor: activeTab === tab.key
                     ? (theme.color.primary as any)
@@ -401,7 +401,8 @@ export const ConversationsScreen: React.FC = () => {
                     ? ('#ffffff' as any)
                     : (theme.color.mutedForeground as any),
                   textAlign: 'center',
-                  fontWeight: '600'
+                  fontWeight: '700',
+                  fontSize: 13
                 }}>
                   {tab.label}
                 </Text>
@@ -416,22 +417,22 @@ export const ConversationsScreen: React.FC = () => {
             flexDirection: 'row',
             backgroundColor: theme.dark ? theme.color.secondary : theme.color.accent,
             borderRadius: theme.radius.md,
-            padding: 10,
+            padding: 12,
             alignItems: 'center',
-            gap: 10,
+            gap: 12,
             borderWidth: 0,
             borderColor: 'transparent'
           }}>
-            <Search color={theme.color.mutedForeground} size={20} />
+            <Search color={theme.color.mutedForeground} size={22} />
             <Text style={{
               flex: 1,
               color: theme.color.mutedForeground,
-              fontSize: 15
+              fontSize: 16
             }}>
               {t('conversations.searchPlaceholder')}
             </Text>
-            <TouchableOpacity>
-              <Filter color={theme.color.mutedForeground} size={20} />
+            <TouchableOpacity style={{ padding: 2 }}>
+              <Filter color={theme.color.mutedForeground} size={22} />
             </TouchableOpacity>
           </View>
         </View>

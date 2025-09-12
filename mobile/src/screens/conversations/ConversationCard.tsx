@@ -184,11 +184,11 @@ export const ConversationCard: React.FC<ConversationCardProps> = ({
 
   return (
     <TouchableOpacity onPress={() => onPress(conversation)}>
-      <Card variant="premium" style={{ 
+      <Card variant="flat" style={{ 
         marginBottom: 12,
         backgroundColor: theme.dark ? theme.color.secondary : theme.color.accent,
         paddingHorizontal: 16,
-        paddingVertical: 12
+        paddingVertical: 14
       }}>
         {/* Header */}
         <View style={{
@@ -200,10 +200,10 @@ export const ConversationCard: React.FC<ConversationCardProps> = ({
           <View style={{ flexDirection: 'row', alignItems: 'center', flex: 1, marginRight: 8 }}>
             {/* Avatar */}
             <View style={{
-              width: 44,
-              height: 44,
+              width: 52,
+              height: 52,
               backgroundColor: theme.dark ? theme.color.secondary : theme.color.card,
-              borderRadius: 22,
+              borderRadius: 26,
               alignItems: 'center',
               justifyContent: 'center',
               marginRight: 12,
@@ -212,8 +212,8 @@ export const ConversationCard: React.FC<ConversationCardProps> = ({
             }}>
               <Text style={{
                 color: theme.color.cardForeground,
-                fontSize: 14,
-                fontWeight: '600'
+                fontSize: 18,
+                fontWeight: '700'
               }}>
                 {getInitials(conversation.customerName)}
               </Text>
@@ -225,8 +225,8 @@ export const ConversationCard: React.FC<ConversationCardProps> = ({
                 <View style={{ flex: 1, flexDirection: 'row', alignItems: 'center', gap: 6, minWidth: 0 }}>
                   <Text style={{
                     color: theme.color.cardForeground,
-                    fontSize: 16,
-                    fontWeight: '600',
+                    fontSize: 17,
+                    fontWeight: '700',
                     flexShrink: 1
                   }} numberOfLines={1}>
                     {getDisplayName(conversation.customerName)}
@@ -250,7 +250,7 @@ export const ConversationCard: React.FC<ConversationCardProps> = ({
               </View>
               <Text style={{
                 color: theme.color.mutedForeground,
-                fontSize: 11,
+                fontSize: 12,
                 marginBottom: 4
               }} numberOfLines={1}>
                 Customer ID: {formatCustomerId(conversation.id)}
@@ -259,30 +259,30 @@ export const ConversationCard: React.FC<ConversationCardProps> = ({
           </View>
 
           {/* Status & Time */}
-          <View style={{ alignItems: 'flex-end', gap: 6 }}>
+          <View style={{ alignItems: 'flex-end', gap: 8 }}>
             <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
               <View style={{
                 flexDirection: 'row',
                 alignItems: 'center',
-                gap: 6,
+                gap: 8,
                 backgroundColor: theme.dark ? theme.color.secondary : theme.color.card,
                 borderWidth: 0,
                 borderColor: 'transparent',
                 borderRadius: theme.radius.sm,
-                paddingHorizontal: 8,
-                paddingVertical: 4
+                paddingHorizontal: 10,
+                paddingVertical: 5
               }}>
                 <View style={{
-                  width: 6,
-                  height: 6,
-                  borderRadius: 3,
+                  width: 8,
+                  height: 8,
+                  borderRadius: 4,
                   backgroundColor: (
                     conversation.status === 'active' ? theme.color.success :
                     conversation.status === 'waiting' ? theme.color.warning :
                     theme.color.mutedForeground
                   )
                 }} />
-                <Text style={{ color: theme.color.mutedForeground, fontSize: 12, fontWeight: '600' }}>
+                <Text style={{ color: theme.color.mutedForeground, fontSize: 12, fontWeight: '700' }}>
                   {conversation.status.toUpperCase()}
                 </Text>
               </View>
@@ -290,9 +290,9 @@ export const ConversationCard: React.FC<ConversationCardProps> = ({
               <TouchableOpacity
                 onPress={() => onMore(conversation)}
                 style={{
-                  width: 24,
-                  height: 24,
-                  borderRadius: 12,
+                  width: 28,
+                  height: 28,
+                  borderRadius: 14,
                   backgroundColor: theme.dark ? theme.color.secondary : theme.color.card,
                   alignItems: 'center',
                   justifyContent: 'center',
@@ -300,7 +300,7 @@ export const ConversationCard: React.FC<ConversationCardProps> = ({
                   borderColor: 'transparent'
                 }}
               >
-                <MoreHorizontal size={12} color={theme.color.mutedForeground} />
+                <MoreHorizontal size={14} color={theme.color.mutedForeground} />
               </TouchableOpacity>
             </View>
 
@@ -331,30 +331,39 @@ export const ConversationCard: React.FC<ConversationCardProps> = ({
           <View style={{ flex: 1 }}>
             <Text style={{
               color: theme.color.mutedForeground,
-              fontSize: 13,
-              fontWeight: '400'
+              fontSize: 14,
+              fontWeight: '400',
+              lineHeight: 20
             }} numberOfLines={2}>
               {conversation.lastMessage.text}
             </Text>
           </View>
 
           <View style={{ alignItems: 'flex-end', gap: 4 }}>
-            {getMessageStatusIcon(conversation.lastMessage.status)}
+            {(() => {
+              switch (conversation.lastMessage.status) {
+                case 'sending': return <Clock size={14} color={theme.color.mutedForeground} />
+                case 'sent': return <CheckCircle2 size={14} color={theme.color.mutedForeground} />
+                case 'delivered': return <CheckCircle2 size={14} color={theme.color.primary} />
+                case 'read': return <CheckCircle2 size={14} color={theme.color.success} />
+                default: return null
+              }
+            })()}
             
             {conversation.unreadCount > 0 && (
               <View style={{
                 backgroundColor: theme.color.primary,
                 borderRadius: 10,
-                minWidth: 20,
-                height: 20,
+                minWidth: 22,
+                height: 22,
                 alignItems: 'center',
                 justifyContent: 'center',
                 paddingHorizontal: 6
               }}>
                 <Text style={{
                   color: '#fff',
-                  fontSize: 11,
-                  fontWeight: '600'
+                  fontSize: 12,
+                  fontWeight: '700'
                 }}>
                   {conversation.unreadCount > 99 ? '99+' : conversation.unreadCount}
                 </Text>
@@ -365,7 +374,7 @@ export const ConversationCard: React.FC<ConversationCardProps> = ({
 
         {/* Tags */}
         {visibleTags.length > 0 && (
-          <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginTop: 8 }}>
+          <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 8 }}>
             {visibleTags.map((tag, index) => {
               const { color, bg } = getTagStyle(tag)
               return (
@@ -373,7 +382,7 @@ export const ConversationCard: React.FC<ConversationCardProps> = ({
                   key={index}
                   style={{
                     backgroundColor: bg as any,
-                    paddingHorizontal: 6,
+                    paddingHorizontal: 8,
                     paddingVertical: 3,
                     borderRadius: theme.radius.sm,
                     flexDirection: 'row',
@@ -382,7 +391,7 @@ export const ConversationCard: React.FC<ConversationCardProps> = ({
                 >
                   <Text style={{
                     color: (theme.dark ? ('#ffffff' as any) : (color as any)),
-                    fontSize: 10,
+                    fontSize: 11,
                     fontWeight: '600'
                   }}>
                     {tag}
@@ -393,14 +402,14 @@ export const ConversationCard: React.FC<ConversationCardProps> = ({
             {remainingCount > 0 && (
               <View style={{
                 backgroundColor: theme.color.muted,
-                paddingHorizontal: 6,
+                paddingHorizontal: 8,
                 paddingVertical: 3,
                 borderRadius: theme.radius.sm
               }}>
                 <Text style={{
                   color: theme.color.mutedForeground,
-                  fontSize: 10,
-                  fontWeight: '500'
+                  fontSize: 11,
+                  fontWeight: '600'
                 }}>
                   +{remainingCount}
                 </Text>

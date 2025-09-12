@@ -151,7 +151,7 @@ export const SkipLoginScreen: React.FC<Props> = ({ onBack, onLogin, onRegister }
               </MaskedView>
               <Text style={{ color: theme.color.foreground, fontSize: 24, fontWeight: '700', textAlign: 'center', lineHeight: 30, marginTop: 2 }}>AI Assistants</Text>
             </View>
-            <Text style={{ color: theme.color.mutedForeground, fontSize: 16, textAlign: 'center', marginTop: 8 }}>
+            <Text style={{ color: theme.color.mutedForeground, fontSize: 14, textAlign: 'center', marginTop: 8 }}>
               {typed}
             </Text>
           </View>
@@ -161,19 +161,19 @@ export const SkipLoginScreen: React.FC<Props> = ({ onBack, onLogin, onRegister }
             <View style={{ gap: 10 }}>
               <View
                 onLayout={(e) => setFieldWidth(e.nativeEvent.layout.width)}
-                style={{ backgroundColor: theme.color.accent, borderRadius: 12, paddingHorizontal: 10, paddingVertical: 6, borderWidth: 0, borderColor: 'transparent' }}
+                style={{ backgroundColor: theme.color.accent, borderRadius: 12, paddingHorizontal: 12, paddingVertical: 10, borderWidth: 0, borderColor: 'transparent' }}
               >
-                <Text style={{ color: theme.color.cardForeground, fontSize: 12, fontWeight: '600', marginBottom: 6 }}>Email</Text>
+                <Text style={{ color: theme.color.cardForeground, fontSize: 15, fontWeight: '700', marginBottom: 6 }}>Email</Text>
                 <TextInput
                   placeholder="you@company.com"
                   keyboardType="email-address"
                   placeholderTextColor={theme.color.placeholder}
                   underlineColorAndroid="transparent"
-                  style={{ color: theme.color.cardForeground, paddingVertical: 3, fontSize: 14 }}
+                  style={{ color: theme.color.cardForeground, paddingVertical: 4, fontSize: 15 }}
                 />
               </View>
-              <View style={{ backgroundColor: theme.color.accent, borderRadius: 12, paddingHorizontal: 10, paddingVertical: 6, borderWidth: 0, borderColor: 'transparent' }}>
-                <Text style={{ color: theme.color.cardForeground, fontSize: 12, fontWeight: '600', marginBottom: 6 }}>Password</Text>
+              <View style={{ backgroundColor: theme.color.accent, borderRadius: 12, paddingHorizontal: 12, paddingVertical: 10, borderWidth: 0, borderColor: 'transparent' }}>
+                <Text style={{ color: theme.color.cardForeground, fontSize: 15, fontWeight: '700', marginBottom: 6 }}>Password</Text>
                 <TextInput
                   placeholder="••••••••"
                   secureTextEntry
@@ -182,7 +182,7 @@ export const SkipLoginScreen: React.FC<Props> = ({ onBack, onLogin, onRegister }
                   importantForAutofill="no"
                   placeholderTextColor={theme.color.placeholder}
                   underlineColorAndroid="transparent"
-                  style={{ color: theme.color.cardForeground, paddingVertical: 3, fontSize: 14 }}
+                  style={{ color: theme.color.cardForeground, paddingVertical: 4, fontSize: 15 }}
                 />
               </View>
             </View>

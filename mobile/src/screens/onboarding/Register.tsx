@@ -42,7 +42,7 @@ export const RegisterScreen: React.FC<{ onBack: () => void, onLogin?: () => void
   const [focusWebsite, setFocusWebsite] = useState(false)
   const [showIndustryModal, setShowIndustryModal] = useState(false)
   // Business type (toggle chips)
-  const businessTypeOptions = ['Physical Products', 'Digital Products', 'Services']
+  const businessTypeOptions = ['Physical', 'Digital', 'Services']
   const [selectedBusinessTypes, setSelectedBusinessTypes] = useState<string[]>([])
   const [businessTypeCustomsByLob, setBusinessTypeCustomsByLob] = useState<Record<string, string[]>>({})
   const [businessTypeCustomInput, setBusinessTypeCustomInput] = useState('')
@@ -842,14 +842,14 @@ export const RegisterScreen: React.FC<{ onBack: () => void, onLogin?: () => void
     files: string[]; 
     theme: any 
   }> = ({ url, onUrlChange, onAttach, files, theme }) => (
-    <View style={{ gap: 8 }}>
-      <View style={{ flexDirection: 'row', gap: 8, alignItems: 'center' }}>
+    <View style={{ gap: 10 }}>
+      <View style={{ flexDirection: 'row', gap: 10, alignItems: 'center' }}>
         <View style={{
           flex: 1,
           backgroundColor: theme.dark ? theme.color.accent : theme.color.card,
-          borderRadius: 10,
+          borderRadius: 12,
           paddingHorizontal: 12,
-          paddingVertical: 8,
+          paddingVertical: 10,
           borderWidth: 1,
           borderColor: theme.color.border
         }}>
@@ -858,7 +858,7 @@ export const RegisterScreen: React.FC<{ onBack: () => void, onLogin?: () => void
             onChangeText={onUrlChange}
             placeholder="Insert URL here..."
             placeholderTextColor={theme.color.placeholder}
-            style={{ color: theme.color.cardForeground, fontSize: 14, paddingVertical: 2 }}
+            style={{ color: theme.color.cardForeground, fontSize: 15, paddingVertical: 4 }}
             autoCapitalize="none"
             keyboardType="url"
             underlineColorAndroid="transparent"
@@ -870,24 +870,24 @@ export const RegisterScreen: React.FC<{ onBack: () => void, onLogin?: () => void
           accessibilityRole="button"
           accessibilityLabel="Attach URL"
           style={{ 
-            width: 44,
-            height: 44,
-            borderRadius: 10,
-            borderWidth: 1,
-            borderColor: theme.color.border,
-            backgroundColor: 'transparent',
+            width: 48,
+            height: 48,
+            borderRadius: 12,
+            borderWidth: 0,
+            borderColor: 'transparent',
+            backgroundColor: theme.color.primary,
             alignItems: 'center',
             justifyContent: 'center'
           }}
         >
-          <Paperclip size={18} color={theme.color.cardForeground as any} />
+          <Paperclip size={18} color={'#fff' as any} />
         </TouchableOpacity>
       </View>
       {files && files.length > 0 ? (
-        <View style={{ gap: 4 }}>
+        <View style={{ gap: 6 }}>
           {files.map((f, i) => (
-            <View key={i} style={{ backgroundColor: theme.color.secondary, borderRadius: 8, paddingHorizontal: 10, paddingVertical: 8 }}>
-              <Text numberOfLines={1} ellipsizeMode="tail" style={{ color: theme.color.mutedForeground, fontSize: 12 }}>{f}</Text>
+            <View key={i} style={{ backgroundColor: theme.dark ? theme.color.secondary : theme.color.card, borderRadius: 10, paddingHorizontal: 12, paddingVertical: 8, borderWidth: 1, borderColor: theme.color.border }}>
+              <Text numberOfLines={1} ellipsizeMode="tail" style={{ color: theme.color.mutedForeground, fontSize: 13 }}>{f}</Text>
             </View>
           ))}
         </View>
@@ -959,28 +959,28 @@ export const RegisterScreen: React.FC<{ onBack: () => void, onLogin?: () => void
           >
             <Text style={{ color: '#fff', fontSize: 28, fontWeight: '700' }}>A</Text>
           </LinearGradient>
-          <Text style={{ color: theme.color.foreground, fontSize: 24, fontWeight: '700' }}>{headerTitle}</Text>
-          <Text style={{ color: theme.color.mutedForeground, marginTop: 4 }}>{typed}</Text>
+          <Text style={{ color: theme.color.foreground, fontSize: 26, fontWeight: '700' }}>{headerTitle}</Text>
+          <Text style={{ color: theme.color.mutedForeground, marginTop: 4, fontSize: 14 }}>{typed}</Text>
         </View>
 
         {step === 'form' ? (
           <>
             <View style={{ gap: 8 }}>
-              <View style={{ backgroundColor: theme.color.accent, borderRadius: 12, paddingHorizontal: 10, paddingVertical: 6, borderWidth: 0, borderColor: 'transparent', shadowColor: theme.color.primary, shadowOpacity: focusFirst ? 0.12 : 0, shadowRadius: 10, shadowOffset: { width: 0, height: 6 }, elevation: 0 }}>
-                <Text style={{ color: theme.color.cardForeground, fontSize: 14, marginBottom: 4 }}>First name</Text>
-                <TextInput value={firstName} onChangeText={setFirstName} placeholder="John" placeholderTextColor={theme.color.mutedForeground} underlineColorAndroid="transparent" onFocus={() => setFocusFirst(true)} onBlur={() => setFocusFirst(false)} style={{ color: theme.color.cardForeground, paddingVertical: 2, fontSize: 14, borderWidth: 0, borderColor: 'transparent' }} />
+              <View style={{ backgroundColor: theme.color.accent, borderRadius: 12, paddingHorizontal: 12, paddingVertical: 10, borderWidth: 0, borderColor: 'transparent', shadowColor: theme.color.primary, shadowOpacity: focusFirst ? 0.12 : 0, shadowRadius: 10, shadowOffset: { width: 0, height: 6 }, elevation: 0 }}>
+                <Text style={{ color: theme.color.cardForeground, fontSize: 15, fontWeight: '700', marginBottom: 6 }}>First name</Text>
+                <TextInput value={firstName} onChangeText={setFirstName} placeholder="John" placeholderTextColor={theme.color.mutedForeground} underlineColorAndroid="transparent" onFocus={() => setFocusFirst(true)} onBlur={() => setFocusFirst(false)} style={{ color: theme.color.cardForeground, paddingVertical: 4, fontSize: 15, borderWidth: 0, borderColor: 'transparent' }} />
               </View>
-              <View style={{ backgroundColor: theme.color.accent, borderRadius: 12, paddingHorizontal: 10, paddingVertical: 6, borderWidth: 0, borderColor: 'transparent', shadowColor: theme.color.primary, shadowOpacity: focusEmail ? 0.12 : 0, shadowRadius: 10, shadowOffset: { width: 0, height: 6 }, elevation: 0 }}>
-                <Text style={{ color: theme.color.cardForeground, fontSize: 14, marginBottom: 4 }}>Email</Text>
-                <TextInput value={email} onChangeText={setEmail} placeholder="you@company.com" keyboardType="email-address" placeholderTextColor={theme.color.mutedForeground} underlineColorAndroid="transparent" onFocus={() => setFocusEmail(true)} onBlur={() => setFocusEmail(false)} style={{ color: theme.color.cardForeground, paddingVertical: 2, fontSize: 14, borderWidth: 0, borderColor: 'transparent' }} />
+              <View style={{ backgroundColor: theme.color.accent, borderRadius: 12, paddingHorizontal: 12, paddingVertical: 10, borderWidth: 0, borderColor: 'transparent', shadowColor: theme.color.primary, shadowOpacity: focusEmail ? 0.12 : 0, shadowRadius: 10, shadowOffset: { width: 0, height: 6 }, elevation: 0 }}>
+                <Text style={{ color: theme.color.cardForeground, fontSize: 15, fontWeight: '700', marginBottom: 6 }}>Email</Text>
+                <TextInput value={email} onChangeText={setEmail} placeholder="you@company.com" keyboardType="email-address" placeholderTextColor={theme.color.mutedForeground} underlineColorAndroid="transparent" onFocus={() => setFocusEmail(true)} onBlur={() => setFocusEmail(false)} style={{ color: theme.color.cardForeground, paddingVertical: 4, fontSize: 15, borderWidth: 0, borderColor: 'transparent' }} />
               </View>
-              <View style={{ backgroundColor: theme.color.accent, borderRadius: 12, paddingHorizontal: 10, paddingVertical: 6, borderWidth: 0, borderColor: 'transparent', shadowColor: theme.color.primary, shadowOpacity: focusPass ? 0.12 : 0, shadowRadius: 10, shadowOffset: { width: 0, height: 6 }, elevation: 0 }}>
-                <Text style={{ color: theme.color.cardForeground, fontSize: 14, marginBottom: 4 }}>Password</Text>
-                <TextInput value={password} onChangeText={setPassword} placeholder="••••••••" secureTextEntry autoComplete="off" textContentType="none" importantForAutofill="no" placeholderTextColor={theme.color.mutedForeground} underlineColorAndroid="transparent" onFocus={() => setFocusPass(true)} onBlur={() => setFocusPass(false)} style={{ color: theme.color.cardForeground, paddingVertical: 2, fontSize: 14, borderWidth: 0, borderColor: 'transparent' }} />
+              <View style={{ backgroundColor: theme.color.accent, borderRadius: 12, paddingHorizontal: 12, paddingVertical: 10, borderWidth: 0, borderColor: 'transparent', shadowColor: theme.color.primary, shadowOpacity: focusPass ? 0.12 : 0, shadowRadius: 10, shadowOffset: { width: 0, height: 6 }, elevation: 0 }}>
+                <Text style={{ color: theme.color.cardForeground, fontSize: 15, fontWeight: '700', marginBottom: 6 }}>Password</Text>
+                <TextInput value={password} onChangeText={setPassword} placeholder="••••••••" secureTextEntry autoComplete="off" textContentType="none" importantForAutofill="no" placeholderTextColor={theme.color.mutedForeground} underlineColorAndroid="transparent" onFocus={() => setFocusPass(true)} onBlur={() => setFocusPass(false)} style={{ color: theme.color.cardForeground, paddingVertical: 4, fontSize: 15, borderWidth: 0, borderColor: 'transparent' }} />
               </View>
-              <View style={{ backgroundColor: theme.color.accent, borderRadius: 12, paddingHorizontal: 10, paddingVertical: 6, borderWidth: 0, borderColor: 'transparent', shadowColor: theme.color.primary, shadowOpacity: focusConfirm ? 0.12 : 0, shadowRadius: 10, shadowOffset: { width: 0, height: 6 }, elevation: 0 }}>
-                <Text style={{ color: theme.color.cardForeground, fontSize: 14, marginBottom: 4 }}>Confirm password</Text>
-                <TextInput value={confirm} onChangeText={setConfirm} placeholder="••••••••" secureTextEntry autoComplete="off" textContentType="none" importantForAutofill="no" placeholderTextColor={theme.color.mutedForeground} underlineColorAndroid="transparent" onFocus={() => setFocusConfirm(true)} onBlur={() => setFocusConfirm(false)} style={{ color: theme.color.cardForeground, paddingVertical: 2, fontSize: 14, borderWidth: 0, borderColor: 'transparent' }} />
+              <View style={{ backgroundColor: theme.color.accent, borderRadius: 12, paddingHorizontal: 12, paddingVertical: 10, borderWidth: 0, borderColor: 'transparent', shadowColor: theme.color.primary, shadowOpacity: focusConfirm ? 0.12 : 0, shadowRadius: 10, shadowOffset: { width: 0, height: 6 }, elevation: 0 }}>
+                <Text style={{ color: theme.color.cardForeground, fontSize: 15, fontWeight: '700', marginBottom: 6 }}>Confirm password</Text>
+                <TextInput value={confirm} onChangeText={setConfirm} placeholder="••••••••" secureTextEntry autoComplete="off" textContentType="none" importantForAutofill="no" placeholderTextColor={theme.color.mutedForeground} underlineColorAndroid="transparent" onFocus={() => setFocusConfirm(true)} onBlur={() => setFocusConfirm(false)} style={{ color: theme.color.cardForeground, paddingVertical: 4, fontSize: 15, borderWidth: 0, borderColor: 'transparent' }} />
               </View>
             </View>
 
@@ -1102,12 +1102,12 @@ export const RegisterScreen: React.FC<{ onBack: () => void, onLogin?: () => void
           // Step: business form
           <View style={{ marginTop: 4 }}>
             <View style={{ gap: 8 }}>
-              <View style={{ backgroundColor: theme.color.accent, borderRadius: 12, paddingHorizontal: 12, paddingVertical: 8, borderWidth: 0, borderColor: 'transparent', shadowColor: theme.color.primary, shadowOpacity: focusCompany ? 0.12 : 0, shadowRadius: 10, shadowOffset: { width: 0, height: 6 }, elevation: 0 }}>
-                <Text style={{ color: theme.color.mutedForeground, fontSize: 13, marginBottom: 4 }}>Business name</Text>
-                <TextInput value={company} onChangeText={setCompany} placeholder="Acme Inc" placeholderTextColor={theme.color.mutedForeground} underlineColorAndroid="transparent" onFocus={() => setFocusCompany(true)} onBlur={() => setFocusCompany(false)} style={{ color: theme.color.cardForeground, paddingVertical: 2, fontSize: 14, borderWidth: 0, borderColor: 'transparent' }} />
+              <View style={{ backgroundColor: theme.color.accent, borderRadius: 12, paddingHorizontal: 12, paddingVertical: 10, borderWidth: 0, borderColor: 'transparent', shadowColor: theme.color.primary, shadowOpacity: focusCompany ? 0.12 : 0, shadowRadius: 10, shadowOffset: { width: 0, height: 6 }, elevation: 0 }}>
+                <Text style={{ color: theme.color.cardForeground, fontSize: 15, fontWeight: '700', marginBottom: 6 }}>Business name</Text>
+                <TextInput value={company} onChangeText={setCompany} placeholder="Acme Inc" placeholderTextColor={theme.color.mutedForeground} underlineColorAndroid="transparent" onFocus={() => setFocusCompany(true)} onBlur={() => setFocusCompany(false)} style={{ color: theme.color.cardForeground, paddingVertical: 4, fontSize: 15, borderWidth: 0, borderColor: 'transparent' }} />
               </View>
-              <View style={{ backgroundColor: theme.color.accent, borderRadius: 12, paddingHorizontal: 12, paddingVertical: 8, borderWidth: 0, borderColor: 'transparent', shadowColor: theme.color.primary, shadowOpacity: focusIndustry ? 0.12 : 0, shadowRadius: 10, shadowOffset: { width: 0, height: 6 }, elevation: 0 }}>
-                <Text style={{ color: theme.color.mutedForeground, fontSize: 13, marginBottom: 4 }}>Industry</Text>
+              <View style={{ backgroundColor: theme.color.accent, borderRadius: 12, paddingHorizontal: 12, paddingVertical: 10, borderWidth: 0, borderColor: 'transparent', shadowColor: theme.color.primary, shadowOpacity: focusIndustry ? 0.12 : 0, shadowRadius: 10, shadowOffset: { width: 0, height: 6 }, elevation: 0 }}>
+                <Text style={{ color: theme.color.cardForeground, fontSize: 15, fontWeight: '700', marginBottom: 6 }}>Industry</Text>
                 <Pressable
                   ref={industryAnchorRef}
                   collapsable={false}
@@ -1115,7 +1115,7 @@ export const RegisterScreen: React.FC<{ onBack: () => void, onLogin?: () => void
                   hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
                 >
                   <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
-                    <Text style={{ color: industry ? theme.color.cardForeground : theme.color.mutedForeground, paddingVertical: 2, fontSize: 14 }}>
+                    <Text style={{ color: industry ? theme.color.cardForeground : theme.color.mutedForeground, paddingVertical: 2, fontSize: 15 }}>
                       {industry || 'Select industry'}
                     </Text>
                     <Text style={{ color: theme.color.mutedForeground, fontSize: 16 }}>▾</Text>
@@ -1125,8 +1125,8 @@ export const RegisterScreen: React.FC<{ onBack: () => void, onLogin?: () => void
               {/* 'Other' free-text branch removed to mirror web flow */}
 
               {/* Products/Services */}
-              <View style={{ backgroundColor: theme.color.accent, borderRadius: 12, paddingHorizontal: 10, paddingVertical: 8, borderWidth: 0, borderColor: 'transparent', shadowColor: theme.color.primary, shadowOpacity: focusLob ? 0.12 : 0, shadowRadius: 10, shadowOffset: { width: 0, height: 6 }, elevation: 0 }}>
-                <Text style={{ color: theme.color.mutedForeground, fontSize: 13, marginBottom: 6 }}>Industry nichees</Text>
+              <View style={{ backgroundColor: theme.color.accent, borderRadius: 12, paddingHorizontal: 12, paddingVertical: 10, borderWidth: 0, borderColor: 'transparent', shadowColor: theme.color.primary, shadowOpacity: focusLob ? 0.12 : 0, shadowRadius: 10, shadowOffset: { width: 0, height: 6 }, elevation: 0 }}>
+                <Text style={{ color: theme.color.cardForeground, fontSize: 15, fontWeight: '700', marginBottom: 8 }}>Industry nichees</Text>
                 <Pressable
                   ref={lobAnchorRef}
                   collapsable={false}
@@ -1141,9 +1141,9 @@ export const RegisterScreen: React.FC<{ onBack: () => void, onLogin?: () => void
                         const remaining = Math.max(0, merged.length - visible.length)
                         if (merged.length === 0) {
                           return (
-                            <Text style={{ color: theme.color.mutedForeground, paddingVertical: 2, fontSize: 14, flexShrink: 1 }} numberOfLines={1}>
+                            <Text style={{ color: theme.color.mutedForeground, paddingVertical: 2, fontSize: 15, flexShrink: 1 }} numberOfLines={1}>
                               {industry ? 'Select nichees' : 'Select industry first'}
-                    </Text>
+                            </Text>
                           )
                         }
                         return (
@@ -1153,15 +1153,15 @@ export const RegisterScreen: React.FC<{ onBack: () => void, onLogin?: () => void
                                 key={opt}
                                 onPress={(e) => { e.stopPropagation?.(); setSelectedLobs(prev => prev.filter(x => x !== opt)) }}
                                 activeOpacity={0.85}
-                                style={{ backgroundColor: theme.color.primary, borderRadius: 999, paddingLeft: 10, paddingRight: 10, paddingVertical: 6, position: 'relative' }}
+                                style={{ backgroundColor: theme.color.primary, borderRadius: 999, paddingLeft: 12, paddingRight: 12, paddingVertical: 8, position: 'relative' }}
                               >
-                                <Text style={{ color: '#fff', fontSize: 12, fontWeight: '600' }}>{opt}</Text>
+                                <Text style={{ color: '#fff', fontSize: 13, fontWeight: '700' }}>{opt}</Text>
                               </TouchableOpacity>
                             ))}
                             {remaining > 0 && (
-                              <View style={{ backgroundColor: theme.color.primary, borderRadius: 999, paddingHorizontal: 10, paddingVertical: 6, shadowColor: 'transparent', shadowOpacity: 0, shadowRadius: 0, shadowOffset: { width: 0, height: 0 }, elevation: 0, borderWidth: 0, borderColor: 'transparent' }}>
-                                <Text style={{ color: '#fff', fontSize: 12, fontWeight: '600' }}>+{remaining}</Text>
-                </View>
+                              <View style={{ backgroundColor: theme.color.primary, borderRadius: 999, paddingHorizontal: 12, paddingVertical: 8, shadowColor: 'transparent', shadowOpacity: 0, shadowRadius: 0, shadowOffset: { width: 0, height: 0 }, elevation: 0, borderWidth: 0, borderColor: 'transparent' }}>
+                                <Text style={{ color: '#fff', fontSize: 13, fontWeight: '700' }}>+{remaining}</Text>
+                              </View>
               )}
                           </View>
                         )
@@ -1180,9 +1180,9 @@ export const RegisterScreen: React.FC<{ onBack: () => void, onLogin?: () => void
                 const baseOptions = businessTypeOptions
                 const allowedAll = baseOptions
                 return (
-                  <View style={{ backgroundColor: theme.color.accent, borderRadius: 12, paddingHorizontal: 10, paddingVertical: 8, borderWidth: 0, borderColor: 'transparent', shadowColor: theme.color.primary, shadowOpacity: 0, shadowRadius: 10, shadowOffset: { width: 0, height: 6 }, elevation: 0 }}>
-                    <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 6 }}>
-                      <Text style={{ color: theme.color.mutedForeground, fontSize: 13, marginRight: 6 }}>Business type</Text>
+                  <View style={{ backgroundColor: theme.color.accent, borderRadius: 12, paddingHorizontal: 12, paddingVertical: 10, borderWidth: 0, borderColor: 'transparent', shadowColor: theme.color.primary, shadowOpacity: 0, shadowRadius: 10, shadowOffset: { width: 0, height: 6 }, elevation: 0 }}>
+                    <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 8 }}>
+                      <Text style={{ color: theme.color.cardForeground, fontSize: 15, fontWeight: '700', marginRight: 6 }}>Products type</Text>
                     </View>
                     <View style={{ flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center' }}>
                       {Array.from(new Set(allowedAll)).map((opt) => {
@@ -1193,15 +1193,15 @@ export const RegisterScreen: React.FC<{ onBack: () => void, onLogin?: () => void
                             onPress={() => setSelectedBusinessTypes(prev => selected ? prev.filter(x => x !== opt) : [...prev, opt])}
                             activeOpacity={0.85}
                             style={{
-                              paddingHorizontal: 10,
-                              paddingVertical: 6,
+                              paddingHorizontal: 12,
+                              paddingVertical: 8,
                               borderRadius: 999,
                               marginRight: 6,
                               marginBottom: 6,
                               backgroundColor: selected ? theme.color.primary : (theme.dark ? theme.color.secondary : theme.color.card),
                             }}
                           >
-                            <Text style={{ color: selected ? '#fff' : theme.color.mutedForeground, fontSize: 12, fontWeight: '600' }}>{opt}</Text>
+                            <Text style={{ color: selected ? '#fff' : theme.color.mutedForeground, fontSize: 13, fontWeight: '700' }}>{opt}</Text>
                           </TouchableOpacity>
                         )
                       })}
@@ -1218,9 +1218,9 @@ export const RegisterScreen: React.FC<{ onBack: () => void, onLogin?: () => void
                 collapsable={false}
                 onPress={openCountryMenu}
                 hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-                style={{ backgroundColor: theme.color.accent, borderRadius: 12, paddingHorizontal: 12, paddingVertical: 8, borderWidth: 0, borderColor: 'transparent', shadowColor: theme.color.primary, shadowOpacity: focusCountry ? 0.12 : 0, shadowRadius: 10, shadowOffset: { width: 0, height: 6 }, elevation: 0 }}
+                style={{ backgroundColor: theme.color.accent, borderRadius: 12, paddingHorizontal: 12, paddingVertical: 10, borderWidth: 0, borderColor: 'transparent', shadowColor: theme.color.primary, shadowOpacity: focusCountry ? 0.12 : 0, shadowRadius: 10, shadowOffset: { width: 0, height: 6 }, elevation: 0 }}
               >
-                <Text style={{ color: theme.color.mutedForeground, fontSize: 13, marginBottom: 4 }}>Country</Text>
+                <Text style={{ color: theme.color.cardForeground, fontSize: 15, fontWeight: '700', marginBottom: 6 }}>Country</Text>
                 <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
                   <View style={{ flexDirection: 'row', alignItems: 'center' }}>
                     {country ? (
@@ -1228,7 +1228,7 @@ export const RegisterScreen: React.FC<{ onBack: () => void, onLogin?: () => void
                         {(countryOptions.find(o => o.value === country)?.flag) || ''}
                       </Text>
                     ) : null}
-                    <Text style={{ color: country ? theme.color.cardForeground : theme.color.mutedForeground, paddingVertical: 2, fontSize: 14 }}>
+                    <Text style={{ color: country ? theme.color.cardForeground : theme.color.mutedForeground, paddingVertical: 2, fontSize: 15 }}>
                       {country || 'Select country'}
                     </Text>
                   </View>
@@ -1237,9 +1237,9 @@ export const RegisterScreen: React.FC<{ onBack: () => void, onLogin?: () => void
               </Pressable>
 
               {/* Website */}
-              <View style={{ backgroundColor: theme.color.accent, borderRadius: 12, paddingHorizontal: 10, paddingVertical: 6, borderWidth: 0, borderColor: 'transparent', shadowColor: theme.color.primary, shadowOpacity: focusWebsite ? 0.12 : 0, shadowRadius: 10, shadowOffset: { width: 0, height: 6 }, elevation: 0 }}>
-                <Text style={{ color: theme.color.mutedForeground, fontSize: 13, marginBottom: 4 }}>Website <Text style={{ color: theme.color.mutedForeground }}>(optional)</Text></Text>
-                <TextInput value={website} onChangeText={setWebsite} placeholder="https://example.com" autoCapitalize="none" keyboardType="url" placeholderTextColor={theme.color.mutedForeground} underlineColorAndroid="transparent" onFocus={() => setFocusWebsite(true)} onBlur={() => setFocusWebsite(false)} style={{ color: theme.color.cardForeground, paddingVertical: 2, fontSize: 14, borderWidth: 0, borderColor: 'transparent' }} />
+              <View style={{ backgroundColor: theme.color.accent, borderRadius: 12, paddingHorizontal: 12, paddingVertical: 10, borderWidth: 0, borderColor: 'transparent', shadowColor: theme.color.primary, shadowOpacity: focusWebsite ? 0.12 : 0, shadowRadius: 10, shadowOffset: { width: 0, height: 6 }, elevation: 0 }}>
+                <Text style={{ color: theme.color.cardForeground, fontSize: 15, fontWeight: '700', marginBottom: 6 }}>Website <Text style={{ color: theme.color.mutedForeground, fontWeight: '400' }}>(optional)</Text></Text>
+                <TextInput value={website} onChangeText={setWebsite} placeholder="https://example.com" autoCapitalize="none" keyboardType="url" placeholderTextColor={theme.color.mutedForeground} underlineColorAndroid="transparent" onFocus={() => setFocusWebsite(true)} onBlur={() => setFocusWebsite(false)} style={{ color: theme.color.cardForeground, paddingVertical: 4, fontSize: 15, borderWidth: 0, borderColor: 'transparent' }} />
               </View>
             </View>
 
@@ -1492,17 +1492,17 @@ export const RegisterScreen: React.FC<{ onBack: () => void, onLogin?: () => void
           <View style={{ marginTop: 4 }}>
             <View style={{ gap: 8 }}>
               {/* Agent name */}
-              <View style={{ backgroundColor: theme.color.accent, borderRadius: 12, paddingHorizontal: 10, paddingVertical: 6, borderWidth: 0, borderColor: 'transparent', shadowColor: theme.color.primary, shadowOpacity: focusCompany ? 0.12 : 0, shadowRadius: 10, shadowOffset: { width: 0, height: 6 }, elevation: 0 }}>
-                <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 4 }}>
-                  <Text style={{ color: theme.color.cardForeground, fontSize: 14, marginRight: 6 }}>Agent name</Text>
+              <View style={{ backgroundColor: theme.color.accent, borderRadius: 12, paddingHorizontal: 12, paddingVertical: 10, borderWidth: 0, borderColor: 'transparent', shadowColor: theme.color.primary, shadowOpacity: focusCompany ? 0.12 : 0, shadowRadius: 10, shadowOffset: { width: 0, height: 6 }, elevation: 0 }}>
+                <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 6 }}>
+                  <Text style={{ color: theme.color.cardForeground, fontSize: 15, fontWeight: '700', marginRight: 6 }}>Agent name</Text>
                 </View>
-                <TextInput value={agentName} onChangeText={setAgentName} placeholder="e.g., Nancy" placeholderTextColor={theme.color.mutedForeground} underlineColorAndroid="transparent" onFocus={() => setFocusAgentName(true)} onBlur={() => setFocusAgentName(false)} style={{ color: theme.color.cardForeground, paddingVertical: 2, fontSize: 14, borderWidth: 0, borderColor: 'transparent' }} />
+                <TextInput value={agentName} onChangeText={setAgentName} placeholder="e.g., Nancy" placeholderTextColor={theme.color.mutedForeground} underlineColorAndroid="transparent" onFocus={() => setFocusAgentName(true)} onBlur={() => setFocusAgentName(false)} style={{ color: theme.color.cardForeground, paddingVertical: 4, fontSize: 15, borderWidth: 0, borderColor: 'transparent' }} />
               </View>
 
               {/* Desired Title */}
-              <View style={{ backgroundColor: theme.color.accent, borderRadius: 12, paddingHorizontal: 10, paddingVertical: 6, borderWidth: 0, borderColor: 'transparent', shadowColor: theme.color.primary, shadowOpacity: focusIndustry ? 0.12 : 0, shadowRadius: 10, shadowOffset: { width: 0, height: 6 }, elevation: 0 }}>
-                <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 4 }}>
-                  <Text style={{ color: theme.color.cardForeground, fontSize: 14, marginRight: 6 }}>Role</Text>
+              <View style={{ backgroundColor: theme.color.accent, borderRadius: 12, paddingHorizontal: 12, paddingVertical: 10, borderWidth: 0, borderColor: 'transparent', shadowColor: theme.color.primary, shadowOpacity: focusIndustry ? 0.12 : 0, shadowRadius: 10, shadowOffset: { width: 0, height: 6 }, elevation: 0 }}>
+                <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 6 }}>
+                  <Text style={{ color: theme.color.cardForeground, fontSize: 15, fontWeight: '700', marginRight: 6 }}>Role</Text>
                 </View>
                 <Pressable
                   ref={titleAnchorRef}
@@ -1510,7 +1510,7 @@ export const RegisterScreen: React.FC<{ onBack: () => void, onLogin?: () => void
                   onPress={openTitleMenu}
                 >
                   <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
-                    <Text style={{ color: desiredTitle ? theme.color.cardForeground : theme.color.mutedForeground, paddingVertical: 2, fontSize: 14 }}>
+                    <Text style={{ color: desiredTitle ? theme.color.cardForeground : theme.color.mutedForeground, paddingVertical: 2, fontSize: 15 }}>
                       {desiredTitle || 'Select title'}
                     </Text>
                     <Text style={{ color: theme.color.mutedForeground, fontSize: 16 }}>▾</Text>
@@ -1519,13 +1519,13 @@ export const RegisterScreen: React.FC<{ onBack: () => void, onLogin?: () => void
               </View>
 
               {/* Agent tone */}
-              <View style={{ backgroundColor: theme.color.accent, borderRadius: 12, paddingHorizontal: 10, paddingVertical: 6, borderWidth: 0, borderColor: 'transparent', shadowColor: theme.color.primary, shadowOpacity: 0, shadowRadius: 10, shadowOffset: { width: 0, height: 6 }, elevation: 0 }}>
-                <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 4 }}>
-                  <Text style={{ color: theme.color.cardForeground, fontSize: 14, marginRight: 6 }}>Tone</Text>
+              <View style={{ backgroundColor: theme.color.accent, borderRadius: 12, paddingHorizontal: 12, paddingVertical: 10, borderWidth: 0, borderColor: 'transparent', shadowColor: theme.color.primary, shadowOpacity: 0, shadowRadius: 10, shadowOffset: { width: 0, height: 6 }, elevation: 0 }}>
+                <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 6 }}>
+                  <Text style={{ color: theme.color.cardForeground, fontSize: 15, fontWeight: '700', marginRight: 6 }}>Tone</Text>
                 </View>
                 <Pressable ref={toneAnchorRef} collapsable={false} onPress={openToneMenu}>
                   <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
-                    <Text style={{ color: agentTone ? theme.color.cardForeground : theme.color.mutedForeground, paddingVertical: 2, fontSize: 14 }}>
+                    <Text style={{ color: agentTone ? theme.color.cardForeground : theme.color.mutedForeground, paddingVertical: 2, fontSize: 15 }}>
                       {agentTone || 'Select tone'}
                     </Text>
                     <Text style={{ color: theme.color.mutedForeground, fontSize: 16 }}>▾</Text>
@@ -1534,9 +1534,9 @@ export const RegisterScreen: React.FC<{ onBack: () => void, onLogin?: () => void
               </View>
 
               {/* Agent traits (inline toggle chips) */}
-              <View style={{ backgroundColor: theme.color.accent, borderRadius: 12, paddingHorizontal: 10, paddingVertical: 8, borderWidth: 0, borderColor: 'transparent', shadowColor: theme.color.primary, shadowOpacity: 0, shadowRadius: 10, shadowOffset: { width: 0, height: 6 }, elevation: 0 }}>
-                <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 6 }}>
-                  <Text style={{ color: theme.color.cardForeground, fontSize: 14, marginRight: 6 }}>Traits</Text>
+              <View style={{ backgroundColor: theme.color.accent, borderRadius: 12, paddingHorizontal: 12, paddingVertical: 10, borderWidth: 0, borderColor: 'transparent', shadowColor: theme.color.primary, shadowOpacity: 0, shadowRadius: 10, shadowOffset: { width: 0, height: 6 }, elevation: 0 }}>
+                <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 8 }}>
+                  <Text style={{ color: theme.color.cardForeground, fontSize: 15, fontWeight: '700', marginRight: 6 }}>Traits</Text>
                 </View>
                 <View style={{ flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center' }}>
                   {traitOptions.map((opt) => {
@@ -1547,15 +1547,15 @@ export const RegisterScreen: React.FC<{ onBack: () => void, onLogin?: () => void
                         onPress={() => setSelectedTraits(prev => selected ? prev.filter(x => x !== opt) : [...prev, opt])}
                         activeOpacity={0.85}
                         style={{
-                          paddingHorizontal: 10,
-                          paddingVertical: 6,
+                          paddingHorizontal: 12,
+                          paddingVertical: 8,
                           borderRadius: 999,
                           marginRight: 6,
                           marginBottom: 6,
-                          backgroundColor: selected ? theme.color.primary : theme.color.secondary,
+                          backgroundColor: selected ? theme.color.primary : (theme.dark ? theme.color.secondary : theme.color.card),
                         }}
                       >
-                        <Text style={{ color: selected ? '#fff' : theme.color.mutedForeground, fontSize: 12, fontWeight: '600' }}>{opt}</Text>
+                        <Text style={{ color: selected ? '#fff' : theme.color.mutedForeground, fontSize: 13, fontWeight: '700' }}>{opt}</Text>
                       </TouchableOpacity>
                     )
                   })}
@@ -1563,9 +1563,9 @@ export const RegisterScreen: React.FC<{ onBack: () => void, onLogin?: () => void
               </View>
 
               {/* Escalation rules */}
-              <View style={{ backgroundColor: theme.color.accent, borderRadius: 12, paddingHorizontal: 10, paddingVertical: 6, borderWidth: 0, borderColor: 'transparent', shadowColor: theme.color.primary, shadowOpacity: 0, shadowRadius: 10, shadowOffset: { width: 0, height: 6 }, elevation: 0 }}>
-                <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 4 }}>
-                  <Text style={{ color: theme.color.cardForeground, fontSize: 14, marginRight: 6 }}>Escalation rules</Text>
+              <View style={{ backgroundColor: theme.color.accent, borderRadius: 12, paddingHorizontal: 12, paddingVertical: 10, borderWidth: 0, borderColor: 'transparent', shadowColor: theme.color.primary, shadowOpacity: 0, shadowRadius: 10, shadowOffset: { width: 0, height: 6 }, elevation: 0 }}>
+                <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 6 }}>
+                  <Text style={{ color: theme.color.cardForeground, fontSize: 15, fontWeight: '700', marginRight: 6 }}>Escalation rules</Text>
                   <Pressable ref={escalationTipRef} hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }} onPress={() => openTooltip(escalationTipRef, 'Tell the agent when to hand off to a human to protect CX and SLAs.') }>
                     <View style={{ width: 16, height: 16, borderRadius: 8, borderWidth: 0, borderColor: 'transparent', alignItems: 'center', justifyContent: 'center', backgroundColor: theme.dark ? '#000' : '#fff' }}>
                       <Text style={{ color: theme.color.primary, fontSize: 11, fontWeight: '500' }}>i</Text>
@@ -1574,7 +1574,7 @@ export const RegisterScreen: React.FC<{ onBack: () => void, onLogin?: () => void
                 </View>
                 <Pressable ref={escalationAnchorRef} collapsable={false} onPress={openEscalationMenu}>
                   <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
-                    <Text style={{ color: escalationRule ? theme.color.cardForeground : theme.color.mutedForeground, paddingVertical: 2, fontSize: 14 }}>
+                    <Text style={{ color: escalationRule ? theme.color.cardForeground : theme.color.mutedForeground, paddingVertical: 2, fontSize: 15 }}>
                       {escalationRule || 'Select rules'}
                     </Text>
                     <Text style={{ color: theme.color.mutedForeground, fontSize: 16 }}>▾</Text>
@@ -1596,8 +1596,8 @@ export const RegisterScreen: React.FC<{ onBack: () => void, onLogin?: () => void
           <View style={{ marginTop: 4 }}>
             <View style={{ gap: 12 }}>
               {/* Choose applicable materials */}
-              <View style={{ backgroundColor: theme.color.accent, borderRadius: 12, paddingHorizontal: 12, paddingVertical: 10 }}>
-                <Text style={{ color: theme.color.cardForeground, fontSize: 14, fontWeight: '700', marginBottom: 6 }}>Which materials do you want to upload?</Text>
+              <View style={{ backgroundColor: theme.color.accent, borderRadius: 12, paddingHorizontal: 12, paddingVertical: 12 }}>
+                <Text style={{ color: theme.color.cardForeground, fontSize: 15, fontWeight: '700', marginBottom: 8 }}>Which materials do you want to upload?</Text>
                 <View style={{ flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center' }}>
                   {uploadOptions.map((opt) => {
                     const selected = selectedUploadTypes.includes(opt.key)
@@ -1607,15 +1607,15 @@ export const RegisterScreen: React.FC<{ onBack: () => void, onLogin?: () => void
                         onPress={() => setSelectedUploadTypes(prev => selected ? prev.filter(x => x !== opt.key) : [...prev, opt.key])}
                         activeOpacity={0.85}
                         style={{
-                          paddingHorizontal: 10,
-                          paddingVertical: 6,
+                          paddingHorizontal: 12,
+                          paddingVertical: 8,
                           borderRadius: 999,
                           marginRight: 6,
                           marginBottom: 6,
-                          backgroundColor: selected ? theme.color.primary : theme.color.secondary,
+                          backgroundColor: selected ? theme.color.primary : (theme.dark ? theme.color.secondary : theme.color.card),
                         }}
                       >
-                        <Text style={{ color: selected ? '#fff' : theme.color.mutedForeground, fontSize: 12, fontWeight: '600' }}>{opt.label}</Text>
+                        <Text style={{ color: selected ? '#fff' : theme.color.mutedForeground, fontSize: 13, fontWeight: '700' }}>{opt.label}</Text>
                       </TouchableOpacity>
                     )
                   })}
@@ -1624,8 +1624,8 @@ export const RegisterScreen: React.FC<{ onBack: () => void, onLogin?: () => void
  
                {/* Vision */}
                {selectedUploadTypes.includes('vision') && (
-               <View style={{ backgroundColor: theme.color.accent, borderRadius: 12, paddingHorizontal: 12, paddingVertical: 10 }}>
-                 <Text style={{ color: theme.color.cardForeground, fontSize: 14, fontWeight: '700', marginBottom: 6 }}>Vision</Text>
+               <View style={{ backgroundColor: theme.color.accent, borderRadius: 12, paddingHorizontal: 12, paddingVertical: 12 }}>
+                 <Text style={{ color: theme.color.cardForeground, fontSize: 15, fontWeight: '700', marginBottom: 8 }}>Vision</Text>
                  <UploadInputRow 
                    url={visionUrl} 
                    onUrlChange={setVisionUrl} 
@@ -1633,13 +1633,13 @@ export const RegisterScreen: React.FC<{ onBack: () => void, onLogin?: () => void
                    files={visionFiles} 
                    theme={theme} 
                  />
-          </View>
-        )}
+              </View>
+              )}
  
                {/* Mission */}
                {selectedUploadTypes.includes('mission') && (
-               <View style={{ backgroundColor: theme.color.accent, borderRadius: 12, paddingHorizontal: 12, paddingVertical: 10 }}>
-                 <Text style={{ color: theme.color.cardForeground, fontSize: 14, fontWeight: '700', marginBottom: 6 }}>Mission</Text>
+               <View style={{ backgroundColor: theme.color.accent, borderRadius: 12, paddingHorizontal: 12, paddingVertical: 12 }}>
+                 <Text style={{ color: theme.color.cardForeground, fontSize: 15, fontWeight: '700', marginBottom: 8 }}>Mission</Text>
                  <UploadInputRow 
                    url={missionUrl} 
                    onUrlChange={setMissionUrl} 
@@ -1652,8 +1652,8 @@ export const RegisterScreen: React.FC<{ onBack: () => void, onLogin?: () => void
  
                {/* Products/Services Catalog */}
                {selectedUploadTypes.includes('catalog') && (
-               <View style={{ backgroundColor: theme.color.accent, borderRadius: 12, paddingHorizontal: 12, paddingVertical: 10 }}>
-                 <Text style={{ color: theme.color.cardForeground, fontSize: 14, fontWeight: '700', marginBottom: 6 }}>{catalogEntity} Catalog</Text>
+               <View style={{ backgroundColor: theme.color.accent, borderRadius: 12, paddingHorizontal: 12, paddingVertical: 12 }}>
+                 <Text style={{ color: theme.color.cardForeground, fontSize: 15, fontWeight: '700', marginBottom: 8 }}>{catalogEntity} Catalog</Text>
                  <UploadInputRow 
                    url={catalogUrl} 
                    onUrlChange={setCatalogUrl} 
@@ -1666,8 +1666,8 @@ export const RegisterScreen: React.FC<{ onBack: () => void, onLogin?: () => void
  
                {/* FAQs */}
                {selectedUploadTypes.includes('faqs') && (
-               <View style={{ backgroundColor: theme.color.accent, borderRadius: 12, paddingHorizontal: 12, paddingVertical: 10 }}>
-                 <Text style={{ color: theme.color.cardForeground, fontSize: 14, fontWeight: '700', marginBottom: 6 }}>FAQs</Text>
+               <View style={{ backgroundColor: theme.color.accent, borderRadius: 12, paddingHorizontal: 12, paddingVertical: 12 }}>
+                 <Text style={{ color: theme.color.cardForeground, fontSize: 15, fontWeight: '700', marginBottom: 8 }}>FAQs</Text>
                  <UploadInputRow 
                    url={faqsUrl} 
                    onUrlChange={setFaqsUrl} 
@@ -1680,8 +1680,8 @@ export const RegisterScreen: React.FC<{ onBack: () => void, onLogin?: () => void
  
                {/* Knowledge Base */}
                {selectedUploadTypes.includes('kb') && (
-               <View style={{ backgroundColor: theme.color.accent, borderRadius: 12, paddingHorizontal: 12, paddingVertical: 10 }}>
-                 <Text style={{ color: theme.color.cardForeground, fontSize: 14, fontWeight: '700', marginBottom: 6 }}>Knowledge Base</Text>
+               <View style={{ backgroundColor: theme.color.accent, borderRadius: 12, paddingHorizontal: 12, paddingVertical: 12 }}>
+                 <Text style={{ color: theme.color.cardForeground, fontSize: 15, fontWeight: '700', marginBottom: 8 }}>Knowledge Base</Text>
                  <UploadInputRow 
                    url={kbUrl} 
                    onUrlChange={setKbUrl} 
@@ -1694,8 +1694,8 @@ export const RegisterScreen: React.FC<{ onBack: () => void, onLogin?: () => void
  
                {/* SOPs */}
                {selectedUploadTypes.includes('sops') && (
-               <View style={{ backgroundColor: theme.color.accent, borderRadius: 12, paddingHorizontal: 12, paddingVertical: 10 }}>
-                 <Text style={{ color: theme.color.cardForeground, fontSize: 14, fontWeight: '700', marginBottom: 6 }}>SOPs</Text>
+               <View style={{ backgroundColor: theme.color.accent, borderRadius: 12, paddingHorizontal: 12, paddingVertical: 12 }}>
+                 <Text style={{ color: theme.color.cardForeground, fontSize: 15, fontWeight: '700', marginBottom: 8 }}>SOPs</Text>
                  <UploadInputRow 
                    url={sopsUrl} 
                    onUrlChange={setSopsUrl} 
@@ -1708,8 +1708,8 @@ export const RegisterScreen: React.FC<{ onBack: () => void, onLogin?: () => void
  
                {/* Terms & Conditions */}
                {selectedUploadTypes.includes('tc') && (
-               <View style={{ backgroundColor: theme.color.accent, borderRadius: 12, paddingHorizontal: 12, paddingVertical: 10 }}>
-                 <Text style={{ color: theme.color.cardForeground, fontSize: 14, fontWeight: '700', marginBottom: 6 }}>T&C</Text>
+               <View style={{ backgroundColor: theme.color.accent, borderRadius: 12, paddingHorizontal: 12, paddingVertical: 12 }}>
+                 <Text style={{ color: theme.color.cardForeground, fontSize: 15, fontWeight: '700', marginBottom: 8 }}>T&C</Text>
                  <UploadInputRow 
                    url={tcUrl} 
                    onUrlChange={setTcUrl} 
@@ -1744,18 +1744,18 @@ export const RegisterScreen: React.FC<{ onBack: () => void, onLogin?: () => void
           {titleMenuPos ? (() => { const plc = getMenuPlacement(titleMenuPos); return (
             <View style={{ position: 'absolute', left: titleMenuPos.x, top: plc.top, width: titleMenuPos.width }}>
               <View onLayout={(e) => setTitleContainerH(e.nativeEvent.layout.height)} style={{ backgroundColor: theme.color.card, borderRadius: 12, borderWidth: 0, borderColor: 'transparent', maxHeight: plc.maxHeight, shadowColor: '#000', shadowOpacity: 0.2, shadowRadius: 16, shadowOffset: { width: 0, height: 10 }, elevation: 10, overflow: 'hidden' }}>
-                <View style={{ paddingVertical: 8, paddingHorizontal: 12 }}>
-                  <Text style={{ color: theme.color.cardForeground, fontSize: 14, fontWeight: '700', marginBottom: 6 }}>Select title</Text>
+                <View style={{ paddingVertical: 10, paddingHorizontal: 12 }}>
+                  <Text style={{ color: theme.color.cardForeground, fontSize: 15, fontWeight: '700', marginBottom: 8 }}>Select title</Text>
                   {/* Add custom */}
                   <View style={{ marginBottom: 8 }}>
                     <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-                      <View style={{ flex: 1, backgroundColor: theme.color.accent, borderRadius: 8, paddingHorizontal: 10, paddingVertical: 6 }}>
+                      <View style={{ flex: 1, backgroundColor: theme.color.accent, borderRadius: 8, paddingHorizontal: 10, paddingVertical: 8 }}>
                         <TextInput
                           value={titleCustomInput}
                           onChangeText={setTitleCustomInput}
                           placeholder="Add custom"
                           placeholderTextColor={theme.color.mutedForeground}
-                          style={{ color: theme.color.cardForeground, fontSize: 14, paddingVertical: 2 }}
+                          style={{ color: theme.color.cardForeground, fontSize: 15, paddingVertical: 4 }}
                         />
                       </View>
                       <TouchableOpacity
@@ -1766,7 +1766,7 @@ export const RegisterScreen: React.FC<{ onBack: () => void, onLogin?: () => void
                           setTitleCustomInput('');
                           setShowTitleModal(false); setFocusTitle(false);
                         }}
-                        style={{ backgroundColor: theme.color.primary, borderRadius: 8, paddingHorizontal: 12, paddingVertical: 8 }}
+                        style={{ backgroundColor: theme.color.primary, borderRadius: 8, paddingHorizontal: 12, paddingVertical: 10 }}
                       >
                         <Text style={{ color: '#fff', fontWeight: '600' }}>Add</Text>
                       </TouchableOpacity>
@@ -1774,7 +1774,7 @@ export const RegisterScreen: React.FC<{ onBack: () => void, onLogin?: () => void
                   </View>
                   <ScrollView
                     showsVerticalScrollIndicator={true}
-                    contentContainerStyle={{ paddingTop: 6, paddingBottom: 12 }}
+                    contentContainerStyle={{ paddingTop: 8, paddingBottom: 12 }}
                     keyboardShouldPersistTaps="handled"
                     onContentSizeChange={(w,h)=>setTitleContentH(h)}
                     onScroll={(e)=>setTitleScrollY(e.nativeEvent.contentOffset.y)}
@@ -1782,8 +1782,8 @@ export const RegisterScreen: React.FC<{ onBack: () => void, onLogin?: () => void
                     style={{ maxHeight: Math.max(140, plc.maxHeight - 160) }}
                   >
                     {titleOptions.map((opt) => (
-                      <TouchableOpacity key={opt} onPress={() => { setDesiredTitle(opt); setShowTitleModal(false); setFocusTitle(false) }} hitSlop={{ top: 8, bottom: 8, left: 0, right: 0 }} style={{ paddingVertical: 8, paddingHorizontal: 8, borderRadius: 8, backgroundColor: opt === desiredTitle ? theme.color.accent : 'transparent', marginBottom: 3 }} activeOpacity={0.8}>
-                        <Text numberOfLines={1} ellipsizeMode="tail" style={{ color: theme.color.cardForeground, fontSize: 14 }}>{opt}</Text>
+                      <TouchableOpacity key={opt} onPress={() => { setDesiredTitle(opt); setShowTitleModal(false); setFocusTitle(false) }} hitSlop={{ top: 8, bottom: 8, left: 0, right: 0 }} style={{ paddingVertical: 10, paddingHorizontal: 10, borderRadius: 8, backgroundColor: opt === desiredTitle ? theme.color.accent : 'transparent', marginBottom: 4 }} activeOpacity={0.8}>
+                        <Text numberOfLines={1} ellipsizeMode="tail" style={{ color: theme.color.cardForeground, fontSize: 15 }}>{opt}</Text>
                       </TouchableOpacity>
                     ))}
                   </ScrollView>
@@ -1805,11 +1805,11 @@ export const RegisterScreen: React.FC<{ onBack: () => void, onLogin?: () => void
           {toneMenuPos ? (() => { const plc = getMenuPlacement(toneMenuPos); return (
             <View style={{ position: 'absolute', left: toneMenuPos.x, top: plc.top, width: toneMenuPos.width }}>
               <View onLayout={(e) => setToneContainerH(e.nativeEvent.layout.height)} style={{ backgroundColor: theme.color.card, borderRadius: 12, borderWidth: 0, borderColor: 'transparent', maxHeight: plc.maxHeight, shadowColor: '#000', shadowOpacity: 0.2, shadowRadius: 16, shadowOffset: { width: 0, height: 10 }, elevation: 10, overflow: 'hidden' }}>
-                <View style={{ paddingVertical: 8, paddingHorizontal: 12 }}>
-                  <Text style={{ color: theme.color.cardForeground, fontSize: 14, fontWeight: '700', marginBottom: 6 }}>Select tone</Text>
+                <View style={{ paddingVertical: 10, paddingHorizontal: 12 }}>
+                  <Text style={{ color: theme.color.cardForeground, fontSize: 15, fontWeight: '700', marginBottom: 8 }}>Select tone</Text>
                   <ScrollView
                     showsVerticalScrollIndicator={true}
-                    contentContainerStyle={{ paddingTop: 6, paddingBottom: 12 }}
+                    contentContainerStyle={{ paddingTop: 8, paddingBottom: 12 }}
                     keyboardShouldPersistTaps="handled"
                     onContentSizeChange={(w,h)=>setToneContentH(h)}
                     onScroll={(e)=>setToneScrollY(e.nativeEvent.contentOffset.y)}
@@ -1817,8 +1817,8 @@ export const RegisterScreen: React.FC<{ onBack: () => void, onLogin?: () => void
                     style={{ maxHeight: Math.max(140, plc.maxHeight - 160) }}
                   >
                     {toneOptions.map((opt) => (
-                      <TouchableOpacity key={opt} onPress={() => { setAgentTone(opt); setShowToneModal(false); setFocusTone(false) }} hitSlop={{ top: 8, bottom: 8, left: 0, right: 0 }} style={{ paddingVertical: 8, paddingHorizontal: 8, borderRadius: 8, backgroundColor: opt === agentTone ? theme.color.accent : 'transparent', marginBottom: 3 }} activeOpacity={0.8}>
-                        <Text numberOfLines={1} ellipsizeMode="tail" style={{ color: theme.color.cardForeground, fontSize: 14 }}>{opt}</Text>
+                      <TouchableOpacity key={opt} onPress={() => { setAgentTone(opt); setShowToneModal(false); setFocusTone(false) }} hitSlop={{ top: 8, bottom: 8, left: 0, right: 0 }} style={{ paddingVertical: 10, paddingHorizontal: 10, borderRadius: 8, backgroundColor: opt === agentTone ? theme.color.accent : 'transparent', marginBottom: 4 }} activeOpacity={0.8}>
+                        <Text numberOfLines={1} ellipsizeMode="tail" style={{ color: theme.color.cardForeground, fontSize: 15 }}>{opt}</Text>
                       </TouchableOpacity>
                     ))}
                   </ScrollView>
@@ -1842,11 +1842,11 @@ export const RegisterScreen: React.FC<{ onBack: () => void, onLogin?: () => void
           {escalationMenuPos ? (() => { const plc = getMenuPlacement(escalationMenuPos); return (
             <View style={{ position: 'absolute', left: escalationMenuPos.x, top: plc.top, width: escalationMenuPos.width }}>
               <View onLayout={(e) => setEscalationContainerH(e.nativeEvent.layout.height)} style={{ backgroundColor: theme.color.card, borderRadius: 12, borderWidth: 0, borderColor: 'transparent', maxHeight: plc.maxHeight, shadowColor: '#000', shadowOpacity: 0.2, shadowRadius: 16, shadowOffset: { width: 0, height: 10 }, elevation: 10, overflow: 'hidden' }}>
-                <View style={{ paddingVertical: 8, paddingHorizontal: 12 }}>
-                  <Text style={{ color: theme.color.cardForeground, fontSize: 14, fontWeight: '700', marginBottom: 6 }}>Escalation rules</Text>
+                <View style={{ paddingVertical: 10, paddingHorizontal: 12 }}>
+                  <Text style={{ color: theme.color.cardForeground, fontSize: 15, fontWeight: '700', marginBottom: 8 }}>Escalation rules</Text>
                   <ScrollView
                     showsVerticalScrollIndicator={true}
-                    contentContainerStyle={{ paddingTop: 6, paddingBottom: 12 }}
+                    contentContainerStyle={{ paddingTop: 8, paddingBottom: 12 }}
                     keyboardShouldPersistTaps="handled"
                     onContentSizeChange={(w,h)=>setEscalationContentH(h)}
                     onScroll={(e)=>setEscalationScrollY(e.nativeEvent.contentOffset.y)}
@@ -1854,8 +1854,8 @@ export const RegisterScreen: React.FC<{ onBack: () => void, onLogin?: () => void
                     style={{ maxHeight: Math.max(140, plc.maxHeight - 160) }}
                   >
                     {escalationOptions.map((opt) => (
-                      <TouchableOpacity key={opt} onPress={() => { setEscalationRule(opt); setShowEscalationModal(false); setFocusEscalation(false) }} hitSlop={{ top: 8, bottom: 8, left: 0, right: 0 }} style={{ paddingVertical: 8, paddingHorizontal: 8, borderRadius: 8, backgroundColor: opt === escalationRule ? theme.color.accent : 'transparent', marginBottom: 3 }} activeOpacity={0.8}>
-                        <Text numberOfLines={1} ellipsizeMode="tail" style={{ color: theme.color.cardForeground, fontSize: 14 }}>{opt}</Text>
+                      <TouchableOpacity key={opt} onPress={() => { setEscalationRule(opt); setShowEscalationModal(false); setFocusEscalation(false) }} hitSlop={{ top: 8, bottom: 8, left: 0, right: 0 }} style={{ paddingVertical: 10, paddingHorizontal: 10, borderRadius: 8, backgroundColor: opt === escalationRule ? theme.color.accent : 'transparent', marginBottom: 4 }} activeOpacity={0.8}>
+                        <Text numberOfLines={1} ellipsizeMode="tail" style={{ color: theme.color.cardForeground, fontSize: 15 }}>{opt}</Text>
                       </TouchableOpacity>
                     ))}
                   </ScrollView>

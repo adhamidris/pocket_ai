@@ -176,32 +176,32 @@ export const ChatScreen: React.FC<ChatScreenProps> = ({
           <TouchableOpacity 
             onPress={onClose}
             style={{
-              width: 32,
-              height: 32,
-              borderRadius: 16,
+              width: 36,
+              height: 36,
+              borderRadius: 18,
               backgroundColor: theme.color.muted,
               alignItems: 'center',
               justifyContent: 'center',
               marginRight: 12
             }}
           >
-            <ArrowLeft size={16} color={theme.color.mutedForeground} />
+            <ArrowLeft size={18} color={theme.color.mutedForeground} />
           </TouchableOpacity>
 
           {/* Customer Avatar */}
           <View style={{
-            width: 40,
-            height: 40,
+            width: 52,
+            height: 52,
             backgroundColor: theme.dark ? theme.color.secondary : theme.color.card,
-            borderRadius: 20,
+            borderRadius: 26,
             alignItems: 'center',
             justifyContent: 'center',
             marginRight: 12
           }}>
             <Text style={{
               color: theme.color.cardForeground,
-              fontSize: 14,
-              fontWeight: '600'
+              fontSize: 18,
+              fontWeight: '700'
             }}>
               {getInitials(conversation.customerName)}
             </Text>
@@ -212,14 +212,14 @@ export const ChatScreen: React.FC<ChatScreenProps> = ({
             <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 2 }}>
               <Text style={{
                 color: theme.color.cardForeground,
-                fontSize: 16,
-                fontWeight: '600',
+                fontSize: 17,
+                fontWeight: '700',
                 flex: 1
               }} numberOfLines={1}>
                 {conversation.customerName}
               </Text>
               {conversation.priority === 'urgent' && (
-                <AlertTriangle size={14} color={theme.color.error} />
+                <AlertTriangle size={16} color={theme.color.error} />
               )}
             </View>
             
@@ -230,7 +230,7 @@ export const ChatScreen: React.FC<ChatScreenProps> = ({
               {conversation.agentName && (
                 <Text style={{
                   color: theme.color.mutedForeground,
-                  fontSize: 12
+                  fontSize: 13
                 }}>
                   with {conversation.agentName}
                 </Text>
@@ -239,38 +239,38 @@ export const ChatScreen: React.FC<ChatScreenProps> = ({
           </View>
 
           {/* Actions */}
-          <View style={{ flexDirection: 'row', gap: 8 }}>
+          <View style={{ flexDirection: 'row', gap: 10 }}>
             <TouchableOpacity style={{
-              width: 36,
-              height: 36,
-              borderRadius: 18,
+              width: 40,
+              height: 40,
+              borderRadius: 20,
               backgroundColor: theme.dark ? theme.color.secondary : theme.color.card,
               alignItems: 'center',
               justifyContent: 'center'
             }}>
-              <Phone size={16} color={theme.color.success} />
+              <Phone size={18} color={theme.color.success} />
             </TouchableOpacity>
             
             <TouchableOpacity style={{
-              width: 36,
-              height: 36,
-              borderRadius: 18,
+              width: 40,
+              height: 40,
+              borderRadius: 20,
               backgroundColor: theme.dark ? theme.color.secondary : theme.color.card,
               alignItems: 'center',
               justifyContent: 'center'
             }}>
-              <Mail size={16} color={theme.color.primary} />
+              <Mail size={18} color={theme.color.primary} />
             </TouchableOpacity>
             
             <TouchableOpacity style={{
-              width: 36,
-              height: 36,
-              borderRadius: 18,
+              width: 40,
+              height: 40,
+              borderRadius: 20,
               backgroundColor: theme.dark ? theme.color.secondary : theme.color.card,
               alignItems: 'center',
               justifyContent: 'center'
             }}>
-              <MoreHorizontal size={16} color={theme.color.mutedForeground} />
+              <MoreHorizontal size={18} color={theme.color.mutedForeground} />
             </TouchableOpacity>
           </View>
         </View>

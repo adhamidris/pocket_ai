@@ -187,33 +187,23 @@ export const DashboardScreen: React.FC = () => {
           <AnimatedCard 
               animationType="slideUp"
               delay={100}
+              variant="flat"
               style={{ 
                 // Neutral background with left accent for urgency
                 backgroundColor: theme.dark ? theme.color.secondary : theme.color.accent,
                 borderColor: 'transparent',
                 borderWidth: 0,
-                padding: 12,
-                borderRadius: 0,
+                padding: 0,
                 position: 'relative',
-                ...(Platform.select({
-                  ios: {
-                    shadowColor: theme.shadow.premium.ios.color,
-                    shadowOpacity: theme.shadow.premium.ios.opacity,
-                    shadowRadius: theme.shadow.premium.ios.radius,
-                    shadowOffset: { width: 0, height: theme.shadow.premium.ios.offsetY },
-                  },
-                  android: {
-                    elevation: theme.shadow.premium.androidElevation,
-                  },
-                  default: {}
-                }) as any)
+                overflow: 'hidden'
               }}
               onPress={() => navigation.navigate('Conversations')}
             >
               {/* Left urgency accent */}
               <View style={{ position: 'absolute', left: 0, top: 0, bottom: 0, width: 4, backgroundColor: theme.color.warning }} />
-              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
-                <AlertTriangle size={24} color={theme.color.warning} />
+              <View style={{ padding: 14 }}>
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
+                <AlertTriangle size={26} color={theme.color.warning} />
                 <View style={{ flex: 1 }}>
                   <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 0, marginBottom: 6 }}>
                     <Animated.View
@@ -230,24 +220,25 @@ export const DashboardScreen: React.FC = () => {
                         opacity: pulse.interpolate({ inputRange: [0, 1], outputRange: [0.6, 1] }) as any
                       }}
                     />
-                    <Text style={{ color: theme.color.warning, fontSize: 12, fontWeight: '700' }}>Urgent</Text>
+                    <Text style={{ color: theme.color.warning, fontSize: 13, fontWeight: '700' }}>Urgent</Text>
                   </View>
                   <Text style={{
                     color: theme.dark ? (theme.color.cardForeground as any) : (theme.color.mutedForeground as any),
                     opacity: theme.dark ? 0.85 : 1,
-                    fontSize: 12,
-                    lineHeight: 16,
+                    fontSize: 13,
+                    lineHeight: 18,
                     marginTop: 0
                   }}>
                     {urgentCount > 0 ? `${urgentCount} unresolved conversations` : 'No urgent conversations right now'}
                   </Text>
                 </View>
                 <TouchableOpacity onPress={() => navigation.navigate('Conversations')} style={{ paddingHorizontal: 6, paddingVertical: 4 }}>
-                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
-                    <Text style={{ color: theme.color.warning, fontSize: 12, fontWeight: '700' }}>Review</Text>
-                    <ChevronRight size={12} color={theme.color.warning} />
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                    <Text style={{ color: theme.color.warning, fontSize: 13, fontWeight: '700' }}>Review</Text>
+                    <ChevronRight size={14} color={theme.color.warning} />
                   </View>
                 </TouchableOpacity>
+              </View>
               </View>
           </AnimatedCard>
         </View>
@@ -265,45 +256,34 @@ export const DashboardScreen: React.FC = () => {
               key={index} 
               animationType="fadeIn"
               delay={200 + (index * 100)}
+              variant="flat"
               style={{ 
                 flex: 1, 
                 minWidth: '47%',
-                padding: 12,
+                padding: 14,
                 backgroundColor: theme.dark ? theme.color.secondary : theme.color.accent,
                 borderColor: 'transparent',
-                borderWidth: 0,
-                ...(Platform.select({
-                  ios: {
-                    shadowColor: theme.shadow.md.ios.color,
-                    shadowOpacity: theme.shadow.md.ios.opacity,
-                    shadowRadius: theme.shadow.md.ios.radius,
-                    shadowOffset: { width: 0, height: theme.shadow.md.ios.offsetY },
-                  },
-                  android: {
-                    elevation: theme.shadow.md.androidElevation,
-                  },
-                  default: {}
-                }) as any)
+                borderWidth: 0
               }}
             >
-              <View style={{ flexDirection: 'row', alignItems: 'flex-start', gap: 12 }}>
+              <View style={{ flexDirection: 'row', alignItems: 'flex-start', gap: 14 }}>
                 <View style={{
-                  width: 36,
-                  height: 36,
+                  width: 40,
+                  height: 40,
                   backgroundColor: theme.color.primary,
-                  borderRadius: 18,
+                  borderRadius: 20,
                   alignItems: 'center',
                   justifyContent: 'center',
                   borderWidth: 0,
                   borderColor: 'transparent'
                 }}>
-                  <stat.icon color={'#ffffff' as any} size={18} />
+                  <stat.icon color={'#ffffff' as any} size={20} />
                 </View>
                 <View style={{ flex: 1 }}>
                   <View style={{ flexDirection: 'row', alignItems: 'baseline', gap: 6 }}>
                     <Text style={{
                       color: theme.color.cardForeground,
-                      fontSize: 20,
+                      fontSize: 22,
                       fontWeight: '700'
                     }}>
                       {stat.value}
@@ -311,16 +291,16 @@ export const DashboardScreen: React.FC = () => {
                     <Text style={{
                       color: theme.dark ? (theme.color.cardForeground as any) : (theme.color.mutedForeground as any),
                       opacity: theme.dark ? 0.85 : 1,
-                      fontSize: 13
+                      fontSize: 14
                     }}>
                       {stat.label}
                     </Text>
                   </View>
                   <Text style={{
                     color: theme.color.success,
-                    fontSize: 10,
-                    fontWeight: '500',
-                    marginTop: 4
+                    fontSize: 11,
+                    fontWeight: '600',
+                    marginTop: 6
                   }}>
                     {stat.trend}
                   </Text>
@@ -341,51 +321,40 @@ export const DashboardScreen: React.FC = () => {
             {t('dashboard.quickActions')}
           </Text>
           
-          <View style={{ gap: 12 }}>
+          <View style={{ gap: 14 }}>
             {quickActions.map((action, index) => (
               <AnimatedCard 
                 key={index} 
                 animationType="slideUp"
                 delay={600 + (index * 100)}
+                variant="flat"
                 onPress={action.onPress}
                 style={{
-                  padding: 16,
+                  padding: 18,
                   backgroundColor: theme.dark ? theme.color.secondary : theme.color.accent,
                   borderWidth: 0,
-                  borderColor: 'transparent',
-                  ...(Platform.select({
-                    ios: {
-                      shadowColor: theme.shadow.premium.ios.color,
-                      shadowOpacity: theme.shadow.premium.ios.opacity,
-                      shadowRadius: theme.shadow.premium.ios.radius,
-                      shadowOffset: { width: 0, height: theme.shadow.premium.ios.offsetY },
-                    },
-                    android: {
-                      elevation: theme.shadow.premium.androidElevation,
-                    },
-                    default: {}
-                  }) as any)
+                  borderColor: 'transparent'
                 }}
               >
-                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 16 }}>
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 18 }}>
                   <View style={{
-                    width: 44,
-                    height: 44,
+                    width: 48,
+                    height: 48,
                     backgroundColor: theme.dark ? theme.color.secondary : theme.color.card,
-                    borderRadius: 22,
+                    borderRadius: 24,
                     alignItems: 'center',
                     justifyContent: 'center',
                     borderWidth: 0,
                     borderColor: 'transparent'
                   }}>
-                    <action.icon color={action.color} size={22} />
+                    <action.icon color={action.color} size={24} />
                   </View>
                   
                   <View style={{ flex: 1 }}>
                     <Text style={{
                       color: theme.color.cardForeground,
-                      fontSize: 16,
-                      fontWeight: '600',
+                      fontSize: 17,
+                      fontWeight: '700',
                       marginBottom: 2
                     }}>
                       {action.title}
@@ -393,13 +362,13 @@ export const DashboardScreen: React.FC = () => {
                     <Text style={{
                       color: theme.dark ? (theme.color.cardForeground as any) : (theme.color.mutedForeground as any),
                       opacity: theme.dark ? 0.85 : 1,
-                      fontSize: 13
+                      fontSize: 14
                     }}>
                       {action.description}
                     </Text>
                   </View>
                   
-                  <ChevronRight size={20} color={theme.color.mutedForeground} />
+                  <ChevronRight size={22} color={theme.color.mutedForeground} />
                 </View>
               </AnimatedCard>
             ))}
@@ -432,7 +401,7 @@ export const DashboardScreen: React.FC = () => {
             </TouchableOpacity>
           </View>
           
-          <Card style={{ backgroundColor: theme.dark ? theme.color.secondary : theme.color.accent }}>
+          <Card variant="flat" style={{ backgroundColor: theme.dark ? theme.color.secondary : theme.color.accent }}>
             <View style={{ gap: 16 }}>
               {recentActivity.map((activity, index) => {
                 const ActivityIcon = getActivityIcon(activity.type)
@@ -442,29 +411,29 @@ export const DashboardScreen: React.FC = () => {
                   <View key={activity.id} style={{
                     flexDirection: 'row',
                     alignItems: 'flex-start',
-                    gap: 12,
+                    gap: 14,
                     paddingBottom: index < recentActivity.length - 1 ? 16 : 0,
                     borderBottomWidth: index < recentActivity.length - 1 ? 1 : 0,
                     borderBottomColor: theme.color.border
                   }}>
                     <View style={{
-                      width: 32,
-                      height: 32,
+                      width: 36,
+                      height: 36,
                       backgroundColor: theme.dark ? theme.color.secondary : theme.color.card,
-                      borderRadius: 16,
+                      borderRadius: 18,
                       alignItems: 'center',
                       justifyContent: 'center',
                       borderWidth: 1,
                       borderColor: theme.color.border
                     }}>
-                      <ActivityIcon size={16} color={color} />
+                      <ActivityIcon size={18} color={color} />
                     </View>
                     
                     <View style={{ flex: 1 }}>
                       <Text style={{
                         color: theme.color.cardForeground,
-                        fontSize: 14,
-                        fontWeight: '600',
+                        fontSize: 15,
+                        fontWeight: '700',
                         marginBottom: 2
                       }}>
                         {activity.title}
@@ -472,7 +441,7 @@ export const DashboardScreen: React.FC = () => {
                       <Text style={{
                         color: theme.dark ? (theme.color.cardForeground as any) : (theme.color.mutedForeground as any),
                         opacity: theme.dark ? 0.85 : 1,
-                        fontSize: 13,
+                        fontSize: 14,
                         marginBottom: 4
                       }}>
                         {activity.description}
@@ -480,7 +449,7 @@ export const DashboardScreen: React.FC = () => {
                       <Text style={{
                         color: theme.dark ? (theme.color.cardForeground as any) : (theme.color.mutedForeground as any),
                         opacity: theme.dark ? 0.7 : 1,
-                        fontSize: 11
+                        fontSize: 12
                       }}>
                         {activity.timestamp}
                       </Text>
