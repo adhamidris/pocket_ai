@@ -18,7 +18,8 @@ export const Button: React.FC<{
   size?: Size
   disabled?: boolean
   loading?: boolean
-}> = ({ title, onPress, variant = 'default', size = 'md', disabled, loading }) => {
+  fullWidth?: boolean
+}> = ({ title, onPress, variant = 'default', size = 'md', disabled, loading, fullWidth }) => {
   const { theme } = useTheme()
   const scaleValue = useRef(new Animated.Value(1)).current
 
@@ -130,7 +131,7 @@ export const Button: React.FC<{
       activeOpacity={1} 
       style={[disabled && { opacity: 0.5 }]}
     > 
-      <Animated.View style={[base, bg, { transform: [{ scale: scaleValue }] }]}>
+      <Animated.View style={[base, bg, { transform: [{ scale: scaleValue }], ...(fullWidth ? { width: '100%' } : {}) }]}>
         {loading && (
           <LoadingSpinner size={16} color={color} style={{ marginRight: 4 }} />
         )}

@@ -10,7 +10,10 @@ import {
   MessageCircle, 
   Calendar,
   Star,
-  MoreHorizontal
+  MoreHorizontal,
+  Crown,
+  DollarSign,
+  Tag
 } from 'lucide-react-native'
 
 interface Customer {
@@ -20,6 +23,7 @@ interface Customer {
   phone?: string
   avatar?: string
   status: 'active' | 'inactive' | 'vip'
+  channel: 'email' | 'web' | 'whatsapp' | 'instagram' | 'twitter' | 'messenger'
   lastContact: string
   totalConversations: number
   satisfaction: number
@@ -55,9 +59,9 @@ export const CustomerCard: React.FC<CustomerCardProps> = ({
 
   const formatValue = (value: number) => {
     if (value >= 1000) {
-      return `$${(value / 1000).toFixed(1)}k`
+      return `${(value / 1000).toFixed(1)}k`
     }
-    return `$${value}`
+    return `${value}`
   }
 
   const formatDate = (dateString: string) => {
@@ -66,15 +70,57 @@ export const CustomerCard: React.FC<CustomerCardProps> = ({
     const diffTime = Math.abs(now.getTime() - date.getTime())
     const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24))
     
-    if (diffDays === 1) return '1 day ago'
-    if (diffDays < 7) return `${diffDays} days ago`
-    if (diffDays < 30) return `${Math.ceil(diffDays / 7)} weeks ago`
-    return `${Math.ceil(diffDays / 30)} months ago`
+    if (diffDays < 1) return 'today'
+    if (diffDays === 1) return '1d'
+    if (diffDays < 7) return `${diffDays}d`
+    const weeks = Math.ceil(diffDays / 7)
+    if (diffDays < 30) return `${weeks}w`
+    const months = Math.ceil(diffDays / 30)
+    return `${months}mo`
+  }
+
+  const getDisplayName = (name: string) => {
+    const parts = name.trim().split(/\s+/)
+    if (parts.length === 0) return name
+    const first = parts[0]
+    const second = parts.length > 1 ? parts[1][0].toUpperCase() + '.' : ''
+    return second ? `${first} ${second}` : first
+  }
+
+  const getTagColor = (tag: string) => {
+    const t = tag.toLowerCase()
+    if (t === 'billing') return theme.color.warning
+    if (t === 'technical') return theme.color.primary
+    if (t === 'integration') return 'hsl(190,90%,45%)' // teal
+    if (t === 'enterprise') return 'hsl(262,83%,58%)' // purple
+    if (t === 'startup') return 'hsl(200,90%,50%)' // cyan
+    return theme.color.mutedForeground
+  }
+
+  const getChannelChip = (channel: Customer['channel']) => {
+    const labelMap: Record<Customer['channel'], string> = {
+      email: 'EM', web: 'WEB', whatsapp: 'WA', instagram: 'IG', twitter: 'TW', messenger: 'MS'
+    }
+    const colorMap: Record<Customer['channel'], string> = {
+      email: theme.color.primary,
+      web: 'hsl(210,10%,60%)',
+      whatsapp: 'hsl(142,71%,45%)',
+      instagram: 'hsl(291,70%,55%)',
+      twitter: 'hsl(200,90%,50%)',
+      messenger: 'hsl(240,75%,48%)'
+    }
+    const bg = theme.dark ? `${colorMap[channel].replace('hsl(', 'hsla(').replace(')', ',0.20)')}` : `${colorMap[channel].replace('hsl(', 'hsla(').replace(')', ',0.12)')}`
+    const fg = colorMap[channel]
+    return (
+      <View style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: bg as any, borderRadius: 10, paddingHorizontal: 6, paddingVertical: 2 }}>
+        <Text style={{ color: fg as any, fontSize: 10, fontWeight: '700' }}>{labelMap[channel]}</Text>
+      </View>
+    )
   }
 
   return (
     <TouchableOpacity onPress={() => onPress(customer)}>
-      <Card style={{ marginBottom: 12 }}>
+      <Card variant="premium" style={{ marginBottom: 12, backgroundColor: theme.dark ? theme.color.secondary : theme.color.accent, paddingHorizontal: 16, paddingVertical: 12 }}>
         {/* Header */}
         <View style={{
           flexDirection: 'row',
@@ -105,24 +151,37 @@ export const CustomerCard: React.FC<CustomerCardProps> = ({
             {/* Info */}
             <View style={{ flex: 1 }}>
               <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 4 }}>
-                <Text style={{
-                  color: theme.color.cardForeground,
-                  fontSize: 16,
-                  fontWeight: '600',
-                  flex: 1
-                }} numberOfLines={1}>
-                  {customer.name}
-                </Text>
-                {customer.status === 'vip' && (
-                  <Star size={14} color={theme.color.warning} fill={theme.color.warning} />
-                )}
+                <View style={{ flex: 1, flexDirection: 'row', alignItems: 'center', gap: 6, minWidth: 0 }}>
+                  <Text style={{
+                    color: theme.color.cardForeground,
+                    fontSize: 16,
+                    fontWeight: '600',
+                    flexShrink: 1
+                  }} numberOfLines={1}>
+                    {getDisplayName(customer.name)}
+                  </Text>
+                  {customer.status === 'vip' && (
+                    <View style={{
+                      flexDirection: 'row',
+                      alignItems: 'center',
+                      backgroundColor: '#f2c84b',
+                      borderRadius: 10,
+                      paddingHorizontal: 6,
+                      paddingVertical: 2,
+                      gap: 4
+                    }}>
+                      <Crown size={10} color={'#7a5d00'} fill={'#7a5d00'} />
+                      <Text style={{ color: '#7a5d00', fontSize: 10, fontWeight: '700' }}>VIP</Text>
+                    </View>
+                  )}
+                </View>
               </View>
               
               <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 6 }}>
                 <Mail size={12} color={theme.color.mutedForeground} />
                 <Text style={{
                   color: theme.color.mutedForeground,
-                  fontSize: 14,
+                  fontSize: 12,
                   flex: 1
                 }} numberOfLines={1}>
                   {customer.email}
@@ -134,7 +193,7 @@ export const CustomerCard: React.FC<CustomerCardProps> = ({
                   <Phone size={12} color={theme.color.mutedForeground} />
                   <Text style={{
                     color: theme.color.mutedForeground,
-                    fontSize: 14
+                    fontSize: 12
                   }}>
                     {customer.phone}
                   </Text>
@@ -143,82 +202,73 @@ export const CustomerCard: React.FC<CustomerCardProps> = ({
             </View>
           </View>
 
-          {/* Status & Actions */}
-          <View style={{ alignItems: 'flex-end', gap: 8 }}>
-            <View style={{
-              flexDirection: 'row',
-              alignItems: 'center',
-              gap: 6,
-              backgroundColor: theme.dark ? theme.color.secondary : theme.color.card,
-              borderRadius: theme.radius.sm,
-              paddingHorizontal: 8,
-              paddingVertical: 4
-            }}>
-              <View style={{
-                width: 6,
-                height: 6,
-                borderRadius: 3,
-                backgroundColor: (
-                  customer.status === 'vip' ? theme.color.warning :
-                  customer.status === 'active' ? theme.color.success :
-                  theme.color.mutedForeground
-                )
-              }} />
-              <Text style={{ color: theme.color.mutedForeground, fontSize: 12, fontWeight: '600' }}>
-                {customer.status.toUpperCase()}
-              </Text>
-            </View>
+          {/* Actions */}
+          <View style={{ alignItems: 'flex-end', gap: 6 }}>
+            {getChannelChip(customer.channel)}
             <TouchableOpacity
               onPress={() => onMore(customer)}
               style={{
-                width: 28,
-                height: 28,
-                borderRadius: 14,
+                width: 24,
+                height: 24,
+                borderRadius: 12,
                 backgroundColor: theme.dark ? theme.color.secondary : theme.color.card,
                 alignItems: 'center',
                 justifyContent: 'center'
               }}
             >
-              <MoreHorizontal size={14} color={theme.color.mutedForeground} />
+              <MoreHorizontal size={12} color={theme.color.mutedForeground} />
             </TouchableOpacity>
           </View>
         </View>
 
-        {/* Tags */}
+        {/* Tags (minimal chips with color accents) */}
         {customer.tags.length > 0 && (
-          <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginBottom: 12 }}>
-            {customer.tags.slice(0, 3).map((tag, index) => (
-              <View key={index} style={{
-                backgroundColor: theme.color.muted,
-                paddingHorizontal: 8,
-                paddingVertical: 4,
-                borderRadius: theme.radius.sm
-              }}>
-                <Text style={{
-                  color: theme.color.mutedForeground,
-                  fontSize: 11,
-                  fontWeight: '500'
+          <View style={{ marginBottom: 12 }}>
+            <View style={{ flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', gap: 6 }}>
+              <Tag size={12} color={theme.color.mutedForeground} />
+              {customer.tags.slice(0, 3).map((tag, index) => {
+                const color = getTagColor(tag)
+                return (
+                  <View
+                    key={index}
+                    style={{
+                      flexDirection: 'row',
+                      alignItems: 'center',
+                      gap: 4,
+                      paddingHorizontal: 6,
+                      paddingVertical: 2,
+                      borderRadius: theme.radius.sm,
+                      backgroundColor: theme.color.card,
+                      borderWidth: 0,
+                      borderColor: 'transparent'
+                    }}
+                  >
+                    <View style={{ width: 4, height: 4, borderRadius: 2, backgroundColor: color as any }} />
+                    <Text style={{ color: theme.color.mutedForeground, fontSize: 10, fontWeight: '500' }}>
+                      {tag}
+                    </Text>
+                  </View>
+                )
+              })}
+              {customer.tags.length > 3 && (
+                <View style={{
+                  flexDirection: 'row',
+                  alignItems: 'center',
+                  gap: 4,
+                  paddingHorizontal: 6,
+                  paddingVertical: 2,
+                  borderRadius: theme.radius.sm,
+                  backgroundColor: theme.color.card,
+                  borderWidth: 0,
+                  borderColor: 'transparent'
                 }}>
-                  {tag}
-                </Text>
-              </View>
-            ))}
-            {customer.tags.length > 3 && (
-              <View style={{
-                backgroundColor: theme.color.muted,
-                paddingHorizontal: 8,
-                paddingVertical: 4,
-                borderRadius: theme.radius.sm
-              }}>
-                <Text style={{
-                  color: theme.color.mutedForeground,
-                  fontSize: 11,
-                  fontWeight: '500'
-                }}>
-                  +{customer.tags.length - 3}
-                </Text>
-              </View>
-            )}
+                  <View style={{ width: 4, height: 4, borderRadius: 2, backgroundColor: theme.color.mutedForeground }} />
+                  <Text style={{ color: theme.color.mutedForeground, fontSize: 10, fontWeight: '500' }}>
+                    +{customer.tags.length - 3}
+                  </Text>
+                </View>
+              )}
+            </View>
           </View>
         )}
 
@@ -231,11 +281,11 @@ export const CustomerCard: React.FC<CustomerCardProps> = ({
           borderTopColor: theme.color.border
         }}>
           <View style={{ alignItems: 'center', flex: 1 }}>
-            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4, marginBottom: 2 }}>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4, marginBottom: 4 }}>
               <MessageCircle size={12} color={theme.color.primary} />
               <Text style={{
                 color: theme.color.cardForeground,
-                fontSize: 14,
+                fontSize: 13,
                 fontWeight: '600'
               }}>
                 {customer.totalConversations}
@@ -250,11 +300,11 @@ export const CustomerCard: React.FC<CustomerCardProps> = ({
           </View>
 
           <View style={{ alignItems: 'center', flex: 1 }}>
-            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4, marginBottom: 2 }}>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4, marginBottom: 4 }}>
               <Star size={12} color={theme.color.warning} />
               <Text style={{
                 color: theme.color.cardForeground,
-                fontSize: 14,
+                fontSize: 13,
                 fontWeight: '600'
               }}>
                 {customer.satisfaction}%
@@ -269,14 +319,16 @@ export const CustomerCard: React.FC<CustomerCardProps> = ({
           </View>
 
           <View style={{ alignItems: 'center', flex: 1 }}>
-            <Text style={{
-              color: theme.color.success,
-              fontSize: 14,
-              fontWeight: '600',
-              marginBottom: 2
-            }}>
-              {formatValue(customer.totalValue)}
-            </Text>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4, marginBottom: 4 }}>
+              <DollarSign size={12} color={theme.color.success} />
+              <Text style={{
+                color: theme.color.cardForeground,
+                fontSize: 13,
+                fontWeight: '600'
+              }}>
+                {formatValue(customer.totalValue)}
+              </Text>
+            </View>
             <Text style={{
               color: theme.color.mutedForeground,
               fontSize: 11
@@ -286,12 +338,12 @@ export const CustomerCard: React.FC<CustomerCardProps> = ({
           </View>
 
           <View style={{ alignItems: 'center', flex: 1 }}>
-            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4, marginBottom: 2 }}>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4, marginBottom: 4 }}>
               <Calendar size={12} color={theme.color.mutedForeground} />
               <Text style={{
                 color: theme.color.cardForeground,
-                fontSize: 12,
-                fontWeight: '500'
+                fontSize: 13,
+                fontWeight: '600'
               }}>
                 {formatDate(customer.lastContact)}
               </Text>
