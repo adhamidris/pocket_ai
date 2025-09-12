@@ -31,8 +31,8 @@ export const Modal: React.FC<ModalProps> = ({
   const getModalWidth = () => {
     switch (size) {
       case 'sm': return Math.min(320, width - 32)
-      case 'lg': return Math.min(500, width - 32)
-      default: return Math.min(400, width - 32)
+      case 'lg': return Math.min(720, width - 24)
+      default: return Math.min(420, width - 28)
     }
   }
 
@@ -49,7 +49,7 @@ export const Modal: React.FC<ModalProps> = ({
           backgroundColor: 'rgba(0,0,0,0.5)',
           justifyContent: 'center',
           alignItems: 'center',
-          padding: 16
+          padding: 8
         }}
         onPress={onClose}
       >
@@ -58,7 +58,7 @@ export const Modal: React.FC<ModalProps> = ({
             backgroundColor: theme.color.card,
             borderRadius: theme.radius.xl,
             width: getModalWidth(),
-            maxHeight: height * 0.8,
+            maxHeight: height * 0.9,
             borderWidth: 0,
             borderColor: 'transparent',
             shadowColor: '#000',
@@ -105,7 +105,7 @@ export const Modal: React.FC<ModalProps> = ({
           )}
 
           {/* Content */}
-          <View style={{ padding: 20 }}>
+          <View style={{ padding: 16 }}>
             {children}
           </View>
         </Pressable>
