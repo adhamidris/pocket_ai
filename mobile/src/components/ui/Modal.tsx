@@ -28,7 +28,7 @@ export const Modal: React.FC<ModalProps> = ({
   size = 'md'
 }) => {
   const { theme } = useTheme()
-  const { width, height } = Dimensions.get('window')
+  const { width: screenWidth, height: screenHeight } = Dimensions.get('window')
   const overlayOpacity = useRef(new Animated.Value(0)).current
 
   // Try to use expo-blur if available, else fall back to dim overlay
@@ -56,9 +56,17 @@ export const Modal: React.FC<ModalProps> = ({
 
   const getModalWidth = () => {
     switch (size) {
-      case 'sm': return Math.min(320, width - 32)
-      case 'lg': return Math.min(720, width - 24)
-      default: return Math.min(420, width - 28)
+      case 'sm': return Math.min(320, screenWidth - 32)
+      case 'lg': return Math.min(720, screenWidth - 24)
+      default: return Math.min(420, screenWidth - 28)
+    }
+  }
+
+  const getModalHeight = () => {
+    switch (size) {
+      case 'sm': return Math.min(420, Math.floor(screenHeight * 0.85))
+      case 'lg': return Math.min(720, Math.floor(screenHeight * 0.9))
+      default: return Math.min(560, Math.floor(screenHeight * 0.88))
     }
   }
 
@@ -94,7 +102,7 @@ export const Modal: React.FC<ModalProps> = ({
               backgroundColor: theme.color.card,
               borderRadius: theme.radius.xl,
               width: getModalWidth(),
-              maxHeight: height * 0.9,
+              height: getModalHeight(),
               borderWidth: 0,
               borderColor: 'transparent',
               shadowColor: '#000',
@@ -140,7 +148,7 @@ export const Modal: React.FC<ModalProps> = ({
           )}
 
           {/* Content */}
-          <View style={{ padding: 16 }}>
+          <View style={{ flex: 1, padding: 16 }}>
             {children}
           </View>
           </View>

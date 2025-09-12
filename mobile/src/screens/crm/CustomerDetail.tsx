@@ -373,8 +373,9 @@ export const CustomerDetail: React.FC<CustomerDetailProps> = ({
 
   return (
     <Modal visible={visible} onClose={onClose} size="lg">
-      <View style={{ paddingBottom: 12 }}>
-        {/* Customer Header */}
+      <View style={{ flex: 1 }}>
+        <View style={{ flex: 1, minHeight: 0, paddingBottom: 12 }}>
+          {/* Customer Header */}
         <View style={{
           flexDirection: 'row',
           alignItems: 'center',
@@ -655,7 +656,8 @@ export const CustomerDetail: React.FC<CustomerDetailProps> = ({
             variant="flat"
             style={{
               padding: 16,
-              marginBottom: 16,
+              marginBottom: 0,
+              flex: 1,
               ...(Platform.select({
                 ios: {
                   shadowColor: 'transparent',
@@ -700,18 +702,19 @@ export const CustomerDetail: React.FC<CustomerDetailProps> = ({
             </View>
 
             {/* Vertically scrollable cases wrapper (inner only) */}
-            <ScrollView
-              nestedScrollEnabled
-              showsVerticalScrollIndicator
-              keyboardShouldPersistTaps="always"
-              onStartShouldSetResponderCapture={() => true}
-              onMoveShouldSetResponderCapture={() => true}
-              scrollEventThrottle={16}
-              bounces
-              decelerationRate="fast"
-              style={{ height: 320 }}
-              contentContainerStyle={{ paddingBottom: 4 }}
-            >
+            <View style={{ flex: 1, minHeight: 0 }}>
+              <ScrollView
+                nestedScrollEnabled
+                showsVerticalScrollIndicator
+                keyboardShouldPersistTaps="always"
+                onStartShouldSetResponderCapture={() => true}
+                onMoveShouldSetResponderCapture={() => true}
+                scrollEventThrottle={16}
+                bounces
+                decelerationRate="fast"
+                style={{ flex: 1 }}
+                contentContainerStyle={{ paddingBottom: 4 }}
+              >
               {mockCases.filter(c => c.status === caseFilter).map((c, idx, arr) => (
                 <View key={c.id} style={{ paddingVertical: 14, ...(idx !== arr.length - 1 ? { borderBottomWidth: 1, borderBottomColor: theme.color.border } : {}) }}>
                   {/* Date above title */}
@@ -754,7 +757,8 @@ export const CustomerDetail: React.FC<CustomerDetailProps> = ({
                   </View>
                 </View>
               ))}
-            </ScrollView>
+              </ScrollView>
+            </View>
           </Card>
         )}
         {activeTab === 'activity' && (
@@ -846,8 +850,10 @@ export const CustomerDetail: React.FC<CustomerDetailProps> = ({
           </Card>
         )}
 
-        {/* Action Buttons */}
-        <View style={{ gap: 12, marginTop: 16, paddingBottom: 8 }}>
+        </View>
+
+        {/* Fixed Action Footer */}
+        <View style={{ gap: 12, paddingTop: 12, paddingBottom: 8, borderTopWidth: 1, borderTopColor: theme.color.border }}>
           <View style={{ flexDirection: 'row', gap: 12 }}>
             <TouchableOpacity
               onPress={() => {}}
