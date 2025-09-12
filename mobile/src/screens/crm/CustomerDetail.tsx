@@ -1,5 +1,5 @@
 import React, { useState } from 'react'
-import { View, Text, ScrollView, TouchableOpacity, Platform, Alert } from 'react-native'
+import { View, Text, ScrollView, TouchableOpacity, Platform, Alert, Pressable } from 'react-native'
 import { useTheme } from '../../providers/ThemeProvider'
 import { Card } from '../../components/ui/Card'
 import { Badge } from '../../components/ui/Badge'
@@ -27,7 +27,8 @@ import {
   Frown,
   Clock,
   Timer,
-  Flame
+  Flame,
+  ChevronRight
 } from 'lucide-react-native'
 import { Copy } from 'lucide-react-native'
 
@@ -369,6 +370,10 @@ export const CustomerDetail: React.FC<CustomerDetailProps> = ({
     if (t === 'enterprise') return 'hsl(262,83%,58%)' // purple
     if (t === 'startup') return 'hsl(200,90%,50%)' // cyan
     return theme.color.mutedForeground
+  }
+
+  const handleCasePress = (c: CaseItem) => {
+    Alert.alert('Case', `${c.id} — ${c.title}`)
   }
 
   return (
@@ -716,7 +721,18 @@ export const CustomerDetail: React.FC<CustomerDetailProps> = ({
                 contentContainerStyle={{ paddingBottom: 4 }}
               >
               {mockCases.filter(c => c.status === caseFilter).map((c, idx, arr) => (
-                <View key={c.id} style={{ paddingVertical: 14, ...(idx !== arr.length - 1 ? { borderBottomWidth: 1, borderBottomColor: theme.color.border } : {}) }}>
+                <View key={c.id} style={{ ...(idx !== arr.length - 1 ? { borderBottomWidth: 1, borderBottomColor: theme.color.border } : {}) }}>
+                  <Pressable
+                    onPress={() => handleCasePress(c)}
+                    android_ripple={{ color: (theme.dark ? 'rgba(255,255,255,0.12)' : 'rgba(0,0,0,0.08)') as any, foreground: true }}
+                    accessibilityRole="button"
+                    accessibilityLabel={`Open case ${c.id}`}
+                    style={({ pressed }) => ({
+                      paddingVertical: 14,
+                      borderRadius: 12,
+                      backgroundColor: pressed ? (theme.dark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.04)') : 'transparent'
+                    })}
+                  >
                   {/* Date above title */}
                   <View style={{ marginBottom: 6 }}>
                     <Text style={{ color: theme.color.mutedForeground, fontSize: 12 }}>
@@ -742,6 +758,7 @@ export const CustomerDetail: React.FC<CustomerDetailProps> = ({
                           <Text style={{ color: color as any, fontSize: 11, fontWeight: '700' }}>{c.priority.toUpperCase()}</Text>
                         </View>
                       )})()}
+                      <ChevronRight size={16} color={theme.color.mutedForeground as any} />
                     </View>
                   </View>
 
@@ -755,6 +772,7 @@ export const CustomerDetail: React.FC<CustomerDetailProps> = ({
                       {getCaseSummary(c)}
                     </Text>
                   </View>
+                  </Pressable>
                 </View>
               ))}
               </ScrollView>
@@ -853,7 +871,7 @@ export const CustomerDetail: React.FC<CustomerDetailProps> = ({
         </View>
 
         {/* Fixed Action Footer */}
-        <View style={{ gap: 12, paddingTop: 12, paddingBottom: 8, borderTopWidth: 1, borderTopColor: theme.color.border }}>
+        <View style={{ gap: 12, paddingTop: 8, paddingBottom: 8 }}>
           <View style={{ flexDirection: 'row', gap: 12 }}>
             <TouchableOpacity
               onPress={() => {}}
