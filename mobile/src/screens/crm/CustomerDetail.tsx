@@ -379,7 +379,7 @@ export const CustomerDetail: React.FC<CustomerDetailProps> = ({
   return (
     <Modal visible={visible} onClose={onClose} size="lg">
       <View style={{ flex: 1 }}>
-        <View style={{ flex: 1, minHeight: 0, paddingBottom: 12 }}>
+        <View style={{ flex: 1, minHeight: 0, paddingBottom: activeTab === 'cases' ? 0 : 12 }}>
           {/* Customer Header */}
         <View style={{
           flexDirection: 'row',
@@ -728,19 +728,19 @@ export const CustomerDetail: React.FC<CustomerDetailProps> = ({
                     accessibilityRole="button"
                     accessibilityLabel={`Open case ${c.id}`}
                     style={({ pressed }) => ({
-                      paddingVertical: 14,
+                      paddingVertical: 10,
                       borderRadius: 12,
                       backgroundColor: pressed ? (theme.dark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.04)') : 'transparent'
                     })}
                   >
                   {/* Date above title */}
-                  <View style={{ marginBottom: 6 }}>
+                  <View style={{ marginBottom: 4 }}>
                     <Text style={{ color: theme.color.mutedForeground, fontSize: 12 }}>
                       {formatShortDateTime(c.createdAt)}
                     </Text>
                   </View>
                   {/* Title (left) + chips (right) */}
-                  <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 10, marginBottom: 8 }}>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 10, marginBottom: 6 }}>
                     <Text style={{ color: theme.color.cardForeground, fontSize: 15, fontWeight: '700', flex: 1, minWidth: 0 }} numberOfLines={2} ellipsizeMode="tail">
                       {c.title}
                     </Text>
@@ -764,11 +764,11 @@ export const CustomerDetail: React.FC<CustomerDetailProps> = ({
 
                   {/* AI Diagnoses */}
                   <View>
-                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 6 }}>
+                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 4 }}>
                       <ClipboardList size={14} color={theme.color.mutedForeground as any} />
                       <Text style={{ color: theme.color.cardForeground, fontSize: 14, fontWeight: '700' }}>AI Diagnoses</Text>
                     </View>
-                    <Text style={{ color: theme.color.mutedForeground, fontSize: 13, lineHeight: 20 }}>
+                    <Text style={{ color: theme.color.mutedForeground, fontSize: 13, lineHeight: 18 }}>
                       {getCaseSummary(c)}
                     </Text>
                   </View>
