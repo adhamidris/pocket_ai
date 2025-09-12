@@ -475,7 +475,7 @@ export const CustomerDetail: React.FC<CustomerDetailProps> = ({
         </View>
 
         {/* Tabs (moved above Contact Info) */}
-        <View style={{ flexDirection: 'row', marginBottom: 12, backgroundColor: theme.color.muted, borderRadius: theme.radius.md, padding: 6 }}>
+        <View style={{ flexDirection: 'row', marginBottom: activeTab === 'cases' ? 6 : 12, backgroundColor: theme.color.muted, borderRadius: theme.radius.md, padding: 6 }}>
           {tabs.map((tab) => (
             <TouchableOpacity
               key={tab.key}
@@ -672,7 +672,7 @@ export const CustomerDetail: React.FC<CustomerDetailProps> = ({
           >
 
             {/* Sub-toggle: Needs Action / Resolved */}
-            <View style={{ flexDirection: 'row', backgroundColor: theme.color.muted, borderRadius: theme.radius.md, padding: 6, marginBottom: 10, marginHorizontal: -16, marginTop: -4 }}>
+            <View style={{ flexDirection: 'row', backgroundColor: theme.color.muted, borderRadius: theme.radius.md, padding: 6, marginBottom: 8, marginHorizontal: -16, marginTop: -12 }}>
               {([
                 { key: 'needs', label: 'Needs Action' },
                 { key: 'resolved', label: 'Resolved' },
