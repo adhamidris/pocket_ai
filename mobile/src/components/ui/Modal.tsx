@@ -69,9 +69,9 @@ export const Modal: React.FC<ModalProps> = ({
       animationType="fade"
       onRequestClose={onClose}
     >
-      <Pressable style={{ flex: 1 }} onPress={onClose}>
-        {/* Blurred/dim backdrop */}
-        <Animated.View pointerEvents="none" style={[StyleSheet.absoluteFillObject as any, { opacity: overlayOpacity }]}> 
+      <View style={{ flex: 1 }}>
+        {/* Blurred/dim backdrop with clickable overlay behind content */}
+        <Animated.View style={[StyleSheet.absoluteFillObject as any, { opacity: overlayOpacity }]}> 
           {BlurView ? (
             <BlurView
               tint={theme.dark ? 'dark' : 'light'}
@@ -83,11 +83,13 @@ export const Modal: React.FC<ModalProps> = ({
           )}
           {/* Add a subtle dark veil to improve contrast */}
           <View pointerEvents="none" style={[StyleSheet.absoluteFillObject as any, { backgroundColor: theme.dark ? 'rgba(0,0,0,0.2)' : 'rgba(0,0,0,0.15)' }]} />
+          {/* Overlay pressable to close modal when tapping outside content */}
+          <TouchableOpacity onPress={onClose} style={[StyleSheet.absoluteFillObject as any]} />
         </Animated.View>
 
         {/* Centered modal content */}
         <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', padding: 8 }}>
-          <Pressable 
+          <View 
             style={{
               backgroundColor: theme.color.card,
               borderRadius: theme.radius.xl,
@@ -102,7 +104,6 @@ export const Modal: React.FC<ModalProps> = ({
               elevation: 10,
               overflow: 'hidden'
             }}
-            onPress={(e) => e.stopPropagation()}
           >
           {/* Header */}
           {title && (
@@ -142,9 +143,9 @@ export const Modal: React.FC<ModalProps> = ({
           <View style={{ padding: 16 }}>
             {children}
           </View>
-          </Pressable>
+          </View>
         </View>
-      </Pressable>
+      </View>
     </RNModal>
   )
 }

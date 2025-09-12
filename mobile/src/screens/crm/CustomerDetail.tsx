@@ -373,11 +373,7 @@ export const CustomerDetail: React.FC<CustomerDetailProps> = ({
 
   return (
     <Modal visible={visible} onClose={onClose} size="lg">
-      <ScrollView 
-        showsVerticalScrollIndicator={false}
-        contentContainerStyle={{ paddingBottom: 12 }}
-        scrollEnabled={activeTab !== 'cases'}
-      >
+      <View style={{ paddingBottom: 12 }}>
         {/* Customer Header */}
         <View style={{
           flexDirection: 'row',
@@ -707,7 +703,13 @@ export const CustomerDetail: React.FC<CustomerDetailProps> = ({
             <ScrollView
               nestedScrollEnabled
               showsVerticalScrollIndicator
-              style={{ maxHeight: 320 }}
+              keyboardShouldPersistTaps="always"
+              onStartShouldSetResponderCapture={() => true}
+              onMoveShouldSetResponderCapture={() => true}
+              scrollEventThrottle={16}
+              bounces
+              decelerationRate="fast"
+              style={{ height: 320 }}
               contentContainerStyle={{ paddingBottom: 4 }}
             >
               {mockCases.filter(c => c.status === caseFilter).map((c, idx, arr) => (
@@ -718,18 +720,19 @@ export const CustomerDetail: React.FC<CustomerDetailProps> = ({
                       {formatShortDateTime(c.createdAt)}
                     </Text>
                   </View>
-                  {/* Title + chips */}
-                  <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
-                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10, flex: 1, minWidth: 0 }}>
-                      <Text style={{ color: theme.color.cardForeground, fontSize: 15, fontWeight: '700', flexShrink: 1 }} numberOfLines={1}>
-                        {c.title}
-                      </Text>
-                      {/* Main classification chip (type) inline with title */}
+                  {/* Title (left) + chips (right) */}
+                  <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 10, marginBottom: 8 }}>
+                    <Text style={{ color: theme.color.cardForeground, fontSize: 15, fontWeight: '700', flex: 1, minWidth: 0 }} numberOfLines={2} ellipsizeMode="tail">
+                      {c.title}
+                    </Text>
+                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, flexShrink: 0 }}>
+                      {/* Classification chip (type) */}
                       {(() => { const color = getCaseTypeColor(c.type); return (
                         <View style={{ backgroundColor: color as any, borderRadius: 12, paddingHorizontal: 6, paddingVertical: 3 }}>
                           <Text style={{ color: '#ffffff', fontSize: 11, fontWeight: '800' }}>{c.type.toUpperCase()}</Text>
                         </View>
                       )})()}
+                      {/* Urgency chip (priority) */}
                       {(() => { const { color, Icon } = getPriorityMeta(c.priority); const bg = `hsla(${(color as string).includes('hsl(') ? (color as string).slice(4,-1) : '0,0%,0%'},${theme.dark ? '0.20' : '0.12'})`; return (
                         <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, backgroundColor: bg as any, borderRadius: 12, paddingHorizontal: 6, paddingVertical: 3 }}>
                           <Icon size={12} color={color as any} />
@@ -891,7 +894,7 @@ export const CustomerDetail: React.FC<CustomerDetailProps> = ({
             onPress={onClose}
           />
         </View>
-      </ScrollView>
+      </View>
     </Modal>
   )
 }
