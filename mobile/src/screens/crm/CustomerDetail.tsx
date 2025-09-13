@@ -834,7 +834,7 @@ export const CustomerDetail: React.FC<CustomerDetailProps> = ({
             }}
           >
             {/* Static Case Header */}
-            <View style={{ gap: 6, marginBottom: 8 }}>
+            <View style={{ gap: 6, marginBottom: 10 }}>
               {/* ID left • Date right */}
               <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
                 <Text style={{ color: theme.color.mutedForeground, fontSize: 12 }} numberOfLines={1}>
@@ -884,7 +884,7 @@ export const CustomerDetail: React.FC<CustomerDetailProps> = ({
             </View>
 
             {/* Case details sub-tabs */}
-            <View style={{ backgroundColor: theme.color.muted, borderRadius: theme.radius.md, padding: 6, marginBottom: 8, flexDirection: 'row' }}>
+            <View style={{ backgroundColor: theme.color.muted, borderRadius: theme.radius.md, padding: 6, marginBottom: 10, flexDirection: 'row' }}>
               {([
                 { key: 'overview', label: 'Overview' },
                 { key: 'documents', label: 'Documents' },
