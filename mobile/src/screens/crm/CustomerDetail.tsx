@@ -65,6 +65,7 @@ export const CustomerDetail: React.FC<CustomerDetailProps> = ({
   const [activeTab, setActiveTab] = useState<'overview' | 'activity' | 'notes' | 'cases'>('overview')
   const [caseFilter, setCaseFilter] = useState<'needs' | 'resolved'>('needs')
   const [selectedCase, setSelectedCase] = useState<CaseItem | null>(null)
+  const [caseDetailsTab, setCaseDetailsTab] = useState<'overview' | 'documents' | 'history'>('overview')
 
   if (!customer) return null
 
@@ -832,6 +833,84 @@ export const CustomerDetail: React.FC<CustomerDetailProps> = ({
               }) as any),
             }}
           >
+            {/* Static Case Header */}
+            <View style={{ gap: 6, marginBottom: 8 }}>
+              {/* ID left • Date right */}
+              <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+                <Text style={{ color: theme.color.mutedForeground, fontSize: 12 }} numberOfLines={1}>
+                  {selectedCase.id}
+                </Text>
+                <Text style={{ color: theme.color.mutedForeground, fontSize: 12 }}>
+                  {formatShortDateTime(selectedCase.createdAt)}
+                </Text>
+              </View>
+
+              {/* Title + chips */}
+              <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 10 }}>
+                <Text style={{ color: theme.color.cardForeground, fontSize: 16, fontWeight: '800', flex: 1, minWidth: 0 }} numberOfLines={2} ellipsizeMode="tail">
+                  {selectedCase.title}
+                </Text>
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, flexShrink: 0 }}>
+                  {(() => { const color = getCaseTypeColor(selectedCase.type); return (
+                    <View style={{ backgroundColor: color as any, borderRadius: 12, paddingHorizontal: 6, paddingVertical: 3 }}>
+                      <Text style={{ color: '#ffffff', fontSize: 11, fontWeight: '800' }}>{selectedCase.type.toUpperCase()}</Text>
+                    </View>
+                  )})()}
+                  {(() => { const { color, Icon } = getPriorityMeta(selectedCase.priority); const bg = `hsla(${(color as string).includes('hsl(') ? (color as string).slice(4,-1) : '0,0%,0%'},${theme.dark ? '0.20' : '0.12'})`; return (
+                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, backgroundColor: bg as any, borderRadius: 12, paddingHorizontal: 6, paddingVertical: 3 }}>
+                      <Icon size={12} color={color as any} />
+                      <Text style={{ color: color as any, fontSize: 11, fontWeight: '700' }}>{selectedCase.priority.toUpperCase()}</Text>
+                    </View>
+                  )})()}
+                </View>
+              </View>
+
+              {/* Meta: Tone, Satisfaction */}
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
+                {(() => { const { color, Icon } = getToneMeta(selectedCase.tone); return (
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                    <Icon size={14} color={color as any} />
+                    <Text style={{ color: theme.color.cardForeground, fontSize: 13, fontWeight: '600' }}>Tone</Text>
+                    <Text style={{ color: color as any, fontSize: 13, fontWeight: '700' }}>{selectedCase.tone.toUpperCase()}</Text>
+                  </View>
+                )})()}
+                <View style={{ width: 1, height: 16, backgroundColor: theme.color.border }} />
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                  <Smile size={14} color={theme.color.warning as any} />
+                  <Text style={{ color: theme.color.cardForeground, fontSize: 13, fontWeight: '600' }}>Satisfaction</Text>
+                  <Text style={{ color: theme.color.warning, fontSize: 13, fontWeight: '700' }}>{customer.satisfaction}%</Text>
+                </View>
+              </View>
+            </View>
+
+            {/* Case details sub-tabs */}
+            <View style={{ backgroundColor: theme.color.muted, borderRadius: theme.radius.md, padding: 6, marginBottom: 8, flexDirection: 'row' }}>
+              {([
+                { key: 'overview', label: 'Overview' },
+                { key: 'documents', label: 'Documents' },
+                { key: 'history', label: 'History' },
+              ] as const).map(t => (
+                <TouchableOpacity
+                  key={t.key}
+                  onPress={() => setCaseDetailsTab(t.key)}
+                  style={{
+                    flexDirection: 'row',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    paddingVertical: 9,
+                    borderRadius: theme.radius.sm,
+                    backgroundColor: caseDetailsTab === t.key ? theme.color.card : 'transparent',
+                    marginBottom: 0,
+                    ...(t.key !== 'history' ? { marginRight: 6 } : {}),
+                    flex: 1
+                  }}
+                >
+                  <Text style={{ color: caseDetailsTab === t.key ? theme.color.primary : theme.color.mutedForeground, fontSize: 13, fontWeight: '700' }}>{t.label}</Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+
+            {/* Scrollable content area for sub-tabs */}
             <View style={{ flex: 1, minHeight: 0 }}>
               <ScrollView
                 nestedScrollEnabled
@@ -840,182 +919,139 @@ export const CustomerDetail: React.FC<CustomerDetailProps> = ({
                 style={{ flex: 1 }}
                 contentContainerStyle={{ paddingBottom: 8 }}
               >
-                {/* ID left • Date right */}
-                <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 4 }}>
-                  <Text style={{ color: theme.color.mutedForeground, fontSize: 12 }} numberOfLines={1}>
-                    {selectedCase.id}
-                  </Text>
-                  <Text style={{ color: theme.color.mutedForeground, fontSize: 12 }}>
-                    {formatShortDateTime(selectedCase.createdAt)}
-                  </Text>
-                </View>
-
-                {/* Title + chips */}
-                <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 10, marginBottom: 10 }}>
-                  <Text style={{ color: theme.color.cardForeground, fontSize: 16, fontWeight: '800', flex: 1, minWidth: 0 }} numberOfLines={2} ellipsizeMode="tail">
-                    {selectedCase.title}
-                  </Text>
-                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, flexShrink: 0 }}>
-                    {(() => { const color = getCaseTypeColor(selectedCase.type); return (
-                      <View style={{ backgroundColor: color as any, borderRadius: 12, paddingHorizontal: 6, paddingVertical: 3 }}>
-                        <Text style={{ color: '#ffffff', fontSize: 11, fontWeight: '800' }}>{selectedCase.type.toUpperCase()}</Text>
+                {caseDetailsTab === 'overview' && (
+                  <View>
+                    {/* AI Diagnoses */}
+                    <View style={{ marginBottom: 0 }}>
+                      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 6 }}>
+                        <ClipboardList size={14} color={theme.color.mutedForeground as any} />
+                        <Text style={{ color: theme.color.cardForeground, fontSize: 14, fontWeight: '700' }}>AI Diagnoses</Text>
                       </View>
-                    )})()}
-                    {(() => { const { color, Icon } = getPriorityMeta(selectedCase.priority); const bg = `hsla(${(color as string).includes('hsl(') ? (color as string).slice(4,-1) : '0,0%,0%'},${theme.dark ? '0.20' : '0.12'})`; return (
-                      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, backgroundColor: bg as any, borderRadius: 12, paddingHorizontal: 6, paddingVertical: 3 }}>
-                        <Icon size={12} color={color as any} />
-                        <Text style={{ color: color as any, fontSize: 11, fontWeight: '700' }}>{selectedCase.priority.toUpperCase()}</Text>
-                      </View>
-                    )})()}
-                  </View>
-                </View>
-
-                {/* Meta: Tone, Satisfaction */}
-                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12, marginBottom: 0 }}>
-                  {(() => { const { color, Icon } = getToneMeta(selectedCase.tone); return (
-                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-                      <Icon size={14} color={color as any} />
-                      <Text style={{ color: theme.color.cardForeground, fontSize: 13, fontWeight: '600' }}>Tone</Text>
-                      <Text style={{ color: color as any, fontSize: 13, fontWeight: '700' }}>{selectedCase.tone.toUpperCase()}</Text>
+                      <Text style={{ color: theme.color.mutedForeground, fontSize: 13, lineHeight: 20 }}>
+                        {getCaseSummary(selectedCase)}
+                      </Text>
                     </View>
-                  )})()}
-                  <View style={{ width: 1, height: 16, backgroundColor: theme.color.border }} />
-                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-                    <Smile size={14} color={theme.color.warning as any} />
-                    <Text style={{ color: theme.color.cardForeground, fontSize: 13, fontWeight: '600' }}>Satisfaction</Text>
-                    <Text style={{ color: theme.color.warning, fontSize: 13, fontWeight: '700' }}>{customer.satisfaction}%</Text>
-                  </View>
-                </View>
-                {/* Separator */}
-                <View style={{ height: 1, backgroundColor: theme.color.border, marginTop: 10, marginBottom: 10 }} />
-
-                {/* AI Diagnoses */}
-                <View style={{ marginBottom: 0 }}>
-                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 6 }}>
-                    <ClipboardList size={14} color={theme.color.mutedForeground as any} />
-                    <Text style={{ color: theme.color.cardForeground, fontSize: 14, fontWeight: '700' }}>AI Diagnoses</Text>
-                  </View>
-                  <Text style={{ color: theme.color.mutedForeground, fontSize: 13, lineHeight: 20 }}>
-                    {getCaseSummary(selectedCase)}
-                  </Text>
-                </View>
-                {/* Separator */}
-                <View style={{ height: 1, backgroundColor: theme.color.border, marginTop: 10, marginBottom: 10 }} />
-
-                {/* AI Actions Taken */}
-                <View style={{ marginBottom: 0 }}>
-                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 6 }}>
-                    <Bot size={14} color={theme.color.mutedForeground as any} />
-                    <Text style={{ color: theme.color.cardForeground, fontSize: 14, fontWeight: '700' }}>AI Actions Taken</Text>
-                  </View>
-                  <View style={{ gap: 8 }}>
-                    {selectedCase.aiActions.length === 0 ? (
-                      <Text style={{ color: theme.color.mutedForeground, fontSize: 13 }}>No AI actions recorded.</Text>
-                    ) : (
-                      selectedCase.aiActions.map((a, i) => (
-                        <View key={i} style={{ flexDirection: 'row', alignItems: 'flex-start' }}>
-                          <Text style={{ color: theme.color.cardForeground, fontSize: 13, flex: 1 }}>{a}</Text>
-                        </View>
-                      ))
-                    )}
-                  </View>
-                </View>
-                {/* Separator */}
-                <View style={{ height: 1, backgroundColor: theme.color.border, marginTop: 10, marginBottom: 10 }} />
-
-                {/* Suggested Actions */}
-                <View>
-                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 6 }}>
-                    <ClipboardList size={14} color={theme.color.mutedForeground as any} />
-                    <Text style={{ color: theme.color.cardForeground, fontSize: 14, fontWeight: '700' }}>Suggested Actions</Text>
-                  </View>
-                  <View style={{ gap: 8 }}>
-                    {selectedCase.requiredActions.length === 0 ? (
-                      <Text style={{ color: theme.color.mutedForeground, fontSize: 13 }}>No pending actions.</Text>
-                    ) : (
-                      selectedCase.requiredActions.map((a, i) => (
-                        <View key={i} style={{ flexDirection: 'row', alignItems: 'flex-start' }}>
-                          <Text style={{ color: theme.color.cardForeground, fontSize: 13, flex: 1 }}>{a}</Text>
-                        </View>
-                      ))
-                    )}
-                  </View>
-                </View>
-                {/* Separator */}
-                <View style={{ height: 1, backgroundColor: theme.color.border, marginTop: 10, marginBottom: 10 }} />
-
-                {/* Grabbed Documents */}
-                <View>
-                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 6 }}>
-                    <FileText size={14} color={theme.color.mutedForeground as any} />
-                    <Text style={{ color: theme.color.cardForeground, fontSize: 14, fontWeight: '700' }}>Grabbed Documents</Text>
-                  </View>
-                  <View style={{ gap: 2 }}>
-                    {['Invoice_2024-01-13_1025.pdf','Chat_Transcript_2024-01-15.txt','Screenshot_Account_Settings.png'].map((name, i) => (
-                      <View key={i} style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
-                        <Text style={{ color: theme.color.cardForeground, fontSize: 13, flex: 1, marginRight: 12 }} numberOfLines={1}>
-                          {name}
-                        </Text>
-                        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 2 }}>
-                          <TouchableOpacity
-                            onPress={() => Alert.alert('Open Document', name)}
-                            style={{ padding: 6, borderRadius: 8, backgroundColor: theme.dark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.04)' }}
-                            accessibilityRole="button"
-                            accessibilityLabel={`Open ${name}`}
-                          >
-                            <FileText size={16} color={theme.color.primary as any} />
-                          </TouchableOpacity>
-                          <TouchableOpacity
-                            onPress={() => Alert.alert('Download Document', name)}
-                            style={{ padding: 6, borderRadius: 8, backgroundColor: theme.dark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.04)' }}
-                            accessibilityRole="button"
-                            accessibilityLabel={`Download ${name}`}
-                          >
-                            <Download size={16} color={theme.color.success as any} />
-                          </TouchableOpacity>
-                        </View>
+                    {/* Separator */}
+                    <View style={{ height: 1, backgroundColor: theme.color.border, marginTop: 8, marginBottom: 8 }} />
+                    {/* AI Actions Taken */}
+                    <View style={{ marginBottom: 0 }}>
+                      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 6 }}>
+                        <Bot size={14} color={theme.color.mutedForeground as any} />
+                        <Text style={{ color: theme.color.cardForeground, fontSize: 14, fontWeight: '700' }}>AI Actions Taken</Text>
                       </View>
-                    ))}
-                  </View>
-                </View>
-                {/* Separator */}
-                <View style={{ height: 1, backgroundColor: theme.color.border, marginTop: 10, marginBottom: 10 }} />
-
-                {/* Case Updates */}
-                <View>
-                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 6 }}>
-                    <MessageCircle size={14} color={theme.color.mutedForeground as any} />
-                    <Text style={{ color: theme.color.cardForeground, fontSize: 14, fontWeight: '700' }}>Case Updates</Text>
-                  </View>
-                  <View style={{ gap: 8 }}>
-                    {[
-                      { id: 'u1', date: 'Jan 15, 10:32 AM', channel: 'whatsapp', text: 'Customer requested status on duplicate charge and expressed dissatisfaction; escalation requested.' },
-                      { id: 'u2', date: 'Jan 15, 11:05 AM', channel: 'email', text: 'Refund timeline communicated (3–5 business days); case escalated to billing for expedited review.' },
-                      { id: 'u3', date: 'Jan 16, 09:02 AM', channel: 'web', text: 'Customer requested daily status updates pending refund confirmation.' },
-                      { id: 'u4', date: 'Jan 17, 08:45 AM', channel: 'email', text: 'Refund initiated; transaction reference provided; advised to verify statement within 24–48 hours.' },
-                    ].map((u, idx, arr) => (
-                      <View key={u.id}>
-                        <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 2 }}>
-                          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-                            <Text style={{ color: theme.color.mutedForeground, fontSize: 12 }}>{u.date}</Text>
-                            {(() => { const cs = getChannelStyle(u.channel); return (
-                              <View style={{ backgroundColor: cs.bg as any, paddingHorizontal: 6, paddingVertical: 2, borderRadius: theme.radius.sm }}>
-                                <Text style={{ color: (theme.dark ? ('#ffffff' as any) : (cs.color as any)), fontSize: 10, fontWeight: '700' }}>{cs.label}</Text>
-                              </View>
-                            )})()}
-                          </View>
-                          <Text style={{ color: theme.color.mutedForeground, fontSize: 12 }}>Session Summary</Text>
-                        </View>
-                        <Text style={{ color: theme.color.cardForeground, fontSize: 13 }}>
-                          {u.text}
-                        </Text>
-                        {idx !== arr.length - 1 && (
-                          <View style={{ height: 1, backgroundColor: theme.color.border, marginTop: 8, marginBottom: 8 }} />
+                      <View style={{ gap: 8 }}>
+                        {selectedCase.aiActions.length === 0 ? (
+                          <Text style={{ color: theme.color.mutedForeground, fontSize: 13 }}>No AI actions recorded.</Text>
+                        ) : (
+                          selectedCase.aiActions.map((a, i) => (
+                            <View key={i} style={{ flexDirection: 'row', alignItems: 'flex-start' }}>
+                              <Text style={{ color: theme.color.cardForeground, fontSize: 13, flex: 1 }}>{a}</Text>
+                            </View>
+                          ))
                         )}
                       </View>
-                    ))}
+                    </View>
+                    {/* Separator */}
+                    <View style={{ height: 1, backgroundColor: theme.color.border, marginTop: 8, marginBottom: 8 }} />
+                    {/* Suggested Actions */}
+                    <View>
+                      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 6 }}>
+                        <ClipboardList size={14} color={theme.color.mutedForeground as any} />
+                        <Text style={{ color: theme.color.cardForeground, fontSize: 14, fontWeight: '700' }}>Suggested Actions</Text>
+                      </View>
+                      <View style={{ gap: 8 }}>
+                        {selectedCase.requiredActions.length === 0 ? (
+                          <Text style={{ color: theme.color.mutedForeground, fontSize: 13 }}>No pending actions.</Text>
+                        ) : (
+                          selectedCase.requiredActions.map((a, i) => (
+                            <View key={i} style={{ flexDirection: 'row', alignItems: 'flex-start' }}>
+                              <Text style={{ color: theme.color.cardForeground, fontSize: 13, flex: 1 }}>{a}</Text>
+                            </View>
+                          ))
+                        )}
+                      </View>
+                    </View>
                   </View>
-                </View>
+                )}
+
+                {caseDetailsTab === 'documents' && (
+                  <View>
+                    {/* Grabbed Documents */}
+                    <View>
+                      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 6 }}>
+                        <FileText size={14} color={theme.color.mutedForeground as any} />
+                        <Text style={{ color: theme.color.cardForeground, fontSize: 14, fontWeight: '700' }}>Grabbed Documents</Text>
+                      </View>
+                      <View style={{ gap: 2 }}>
+                        {['Invoice_2024-01-13_1025.pdf','Chat_Transcript_2024-01-15.txt','Screenshot_Account_Settings.png'].map((name, i) => (
+                          <View key={i} style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+                            <Text style={{ color: theme.color.cardForeground, fontSize: 13, flex: 1, marginRight: 12 }} numberOfLines={1}>
+                              {name}
+                            </Text>
+                            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 2 }}>
+                              <TouchableOpacity
+                                onPress={() => Alert.alert('Open Document', name)}
+                                style={{ padding: 6, borderRadius: 8, backgroundColor: theme.dark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.04)' }}
+                                accessibilityRole="button"
+                                accessibilityLabel={`Open ${name}`}
+                              >
+                                <FileText size={16} color={theme.color.primary as any} />
+                              </TouchableOpacity>
+                              <TouchableOpacity
+                                onPress={() => Alert.alert('Download Document', name)}
+                                style={{ padding: 6, borderRadius: 8, backgroundColor: theme.dark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.04)' }}
+                                accessibilityRole="button"
+                                accessibilityLabel={`Download ${name}`}
+                              >
+                                <Download size={16} color={theme.color.success as any} />
+                              </TouchableOpacity>
+                            </View>
+                          </View>
+                        ))}
+                      </View>
+                    </View>
+                  </View>
+                )}
+
+                {caseDetailsTab === 'history' && (
+                  <View>
+                    {/* Case Updates */}
+                    <View>
+                      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 6 }}>
+                        <MessageCircle size={14} color={theme.color.mutedForeground as any} />
+                        <Text style={{ color: theme.color.cardForeground, fontSize: 14, fontWeight: '700' }}>Case Updates</Text>
+                      </View>
+                      <View style={{ gap: 8 }}>
+                        {[
+                          { id: 'u1', date: 'Jan 15, 10:32 AM', channel: 'whatsapp', text: 'Customer requested status on duplicate charge and expressed dissatisfaction; escalation requested.' },
+                          { id: 'u2', date: 'Jan 15, 11:05 AM', channel: 'email', text: 'Refund timeline communicated (3–5 business days); case escalated to billing for expedited review.' },
+                          { id: 'u3', date: 'Jan 16, 09:02 AM', channel: 'web', text: 'Customer requested daily status updates pending refund confirmation.' },
+                          { id: 'u4', date: 'Jan 17, 08:45 AM', channel: 'email', text: 'Refund initiated; transaction reference provided; advised to verify statement within 24–48 hours.' },
+                        ].map((u, idx, arr) => (
+                          <View key={u.id}>
+                            <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 2 }}>
+                              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                                <Text style={{ color: theme.color.mutedForeground, fontSize: 12 }}>{u.date}</Text>
+                                {(() => { const cs = getChannelStyle(u.channel); return (
+                                  <View style={{ backgroundColor: cs.bg as any, paddingHorizontal: 6, paddingVertical: 2, borderRadius: theme.radius.sm }}>
+                                    <Text style={{ color: (theme.dark ? ('#ffffff' as any) : (cs.color as any)), fontSize: 10, fontWeight: '700' }}>{cs.label}</Text>
+                                  </View>
+                                )})()}
+                              </View>
+                              <Text style={{ color: theme.color.mutedForeground, fontSize: 12 }}>Session Summary</Text>
+                            </View>
+                            <Text style={{ color: theme.color.cardForeground, fontSize: 13 }}>
+                              {u.text}
+                            </Text>
+                            {idx !== arr.length - 1 && (
+                              <View style={{ height: 1, backgroundColor: theme.color.border, marginTop: 8, marginBottom: 8 }} />
+                            )}
+                          </View>
+                        ))}
+                      </View>
+                    </View>
+                  </View>
+                )}
               </ScrollView>
             </View>
           </Card>
