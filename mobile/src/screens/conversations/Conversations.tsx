@@ -3,7 +3,7 @@ import { View, Text, SafeAreaView, ScrollView, TouchableOpacity, Alert, Platform
 import { useTranslation } from 'react-i18next'
 import { useTheme } from '../../providers/ThemeProvider'
 import { Card } from '../../components/ui/Card'
-import { Search, Filter, MessageCircle, Clock, Users, AlertTriangle, CheckCircle2, Calendar } from 'lucide-react-native'
+import { Search, Filter, MessageCircle, Clock, Users, AlertTriangle, CheckCircle2 } from 'lucide-react-native'
 import { ConversationCard } from './ConversationCard'
 import { ChatScreen } from './ChatScreen'
 
@@ -35,7 +35,7 @@ export const ConversationsScreen: React.FC = () => {
   const { theme } = useTheme()
   // Align with Dashboard header spacing (avoid double safe-area padding)
   const [activeTab, setActiveTab] = useState<'active' | 'archived' | 'all'>('active')
-  const [selectedRange, setSelectedRange] = useState<'today' | '7d' | '30d' | 'custom'>('today')
+  // Removed date range toggle bar
   const [caseCategory, setCaseCategory] = useState<'all' | 'inquiries' | 'requests' | 'complaints'>('all')
   const [selectedConversation, setSelectedConversation] = useState<Conversation | null>(null)
   const [showChat, setShowChat] = useState(false)
@@ -345,60 +345,7 @@ export const ConversationsScreen: React.FC = () => {
             ))}
           </View>
 
-          {/* Date Filter Bar */}
-          <View style={{ flexDirection: 'row', gap: 10, marginBottom: 12 }}>
-            {([
-              { key: 'today', label: 'Today' },
-              { key: '7d', label: '7d' },
-              { key: '30d', label: '30d' },
-            ] as const).map((r) => (
-              <TouchableOpacity
-                key={r.key}
-                onPress={() => setSelectedRange(r.key)}
-                style={{
-                  paddingHorizontal: 14,
-                  paddingVertical: 10,
-                  borderRadius: theme.radius.md,
-                  backgroundColor: selectedRange === r.key
-                    ? (theme.color.primary as any)
-                    : (theme.dark ? theme.color.secondary : theme.color.accent)
-                }}
-              >
-                <Text style={{
-                  color: selectedRange === r.key ? ('#ffffff' as any) : (theme.color.mutedForeground as any),
-                  fontWeight: '700',
-                  fontSize: 13
-                }}>
-                  {r.label}
-                </Text>
-              </TouchableOpacity>
-            ))}
-            <TouchableOpacity
-              onPress={() => { setSelectedRange('custom'); Alert.alert('Select date', 'Date picker coming soon') }}
-              style={{
-                paddingHorizontal: 14,
-                paddingVertical: 10,
-                borderRadius: theme.radius.md,
-                backgroundColor: selectedRange === 'custom'
-                  ? (theme.color.primary as any)
-                  : (theme.dark ? theme.color.secondary : theme.color.accent),
-                flexDirection: 'row',
-                alignItems: 'center',
-                justifyContent: 'center',
-                gap: 8,
-                flex: 1
-              }}
-            >
-              <Calendar size={16} color={selectedRange === 'custom' ? ('#ffffff' as any) : (theme.color.mutedForeground as any)} />
-              <Text style={{
-                color: selectedRange === 'custom' ? ('#ffffff' as any) : (theme.color.mutedForeground as any),
-                fontWeight: '700',
-                fontSize: 13
-              }}>
-                Pick date
-              </Text>
-            </TouchableOpacity>
-          </View>
+          {/* Date Filter Bar removed per request */}
 
         {/* Case Category Toggles (equal width) */}
         <View style={{ flexDirection: 'row', marginBottom: 12 }}>
