@@ -3,7 +3,8 @@ import { View, Text, SafeAreaView, ScrollView, TouchableOpacity, Alert, Platform
 import { useTranslation } from 'react-i18next'
 import { useTheme } from '../../providers/ThemeProvider'
 import { Card } from '../../components/ui/Card'
-import { Search, Filter, MessageCircle, Clock, Users, AlertTriangle, CheckCircle2 } from 'lucide-react-native'
+import { Search, Calendar, MessageCircle, Clock, Users, AlertTriangle, CheckCircle2 } from 'lucide-react-native'
+import { Modal } from '../../components/ui/Modal'
 import { ConversationCard } from './ConversationCard'
 import { ChatScreen } from './ChatScreen'
 
@@ -35,7 +36,9 @@ export const ConversationsScreen: React.FC = () => {
   const { theme } = useTheme()
   // Align with Dashboard header spacing (avoid double safe-area padding)
   const [activeTab, setActiveTab] = useState<'active' | 'archived' | 'all'>('active')
-  // Removed date range toggle bar
+  // Date picker state
+  const [showDatePicker, setShowDatePicker] = useState(false)
+  const [selectedRange, setSelectedRange] = useState<'all' | 'today' | '7d' | '30d'>('all')
   const [caseCategory, setCaseCategory] = useState<'all' | 'inquiries' | 'requests' | 'complaints'>('all')
   const [selectedConversation, setSelectedConversation] = useState<Conversation | null>(null)
   const [showChat, setShowChat] = useState(false)
@@ -243,7 +246,18 @@ export const ConversationsScreen: React.FC = () => {
       }
     })()
 
-    if (caseCategory === 'all') return byStatus
+    // Apply date range filter if set
+    const byDate = (() => {
+      if (selectedRange === 'all') return byStatus
+      const now = new Date().getTime()
+      const ms = selectedRange === 'today' ? 24*60*60*1000 : selectedRange === '7d' ? 7*24*60*60*1000 : 30*24*60*60*1000
+      return byStatus.filter(c => {
+        const t = new Date(c.startedAt).getTime()
+        return now - t <= ms
+      })
+    })()
+
+    if (caseCategory === 'all') return byDate
 
     const pickCaseType = (tags: string[]): 'inquiry' | 'request' | 'complaint' | 'other' => {
       const lower = (tags || []).map(t => t.toLowerCase())
@@ -253,7 +267,7 @@ export const ConversationsScreen: React.FC = () => {
       return 'other'
     }
 
-    return byStatus.filter(c => {
+    return byDate.filter(c => {
       const type = pickCaseType(c.tags || [])
       if (caseCategory === 'inquiries') return type === 'inquiry'
       if (caseCategory === 'requests') return type === 'request'
@@ -436,8 +450,8 @@ export const ConversationsScreen: React.FC = () => {
             }}>
               {t('conversations.searchPlaceholder')}
             </Text>
-            <TouchableOpacity style={{ padding: 2 }}>
-              <Filter color={theme.color.mutedForeground} size={22} />
+            <TouchableOpacity style={{ padding: 2 }} onPress={() => setShowDatePicker(true)}>
+              <Calendar color={theme.color.mutedForeground} size={22} />
             </TouchableOpacity>
           </View>
         </View>
@@ -475,6 +489,28 @@ export const ConversationsScreen: React.FC = () => {
             setSelectedConversation(null)
           }}
         />
+
+        {/* Date Picker Modal (lightweight presets) */}
+        <Modal visible={showDatePicker} onClose={() => setShowDatePicker(false)} size="sm">
+          <View style={{ gap: 8 }}>
+            {[{key:'today',label:'Today'},{key:'7d',label:'Last 7 days'},{key:'30d',label:'Last 30 days'},{key:'all',label:'All time'}].map(opt => (
+              <TouchableOpacity
+                key={opt.key}
+                onPress={() => { setSelectedRange(opt.key as any); setShowDatePicker(false) }}
+                style={{
+                  paddingVertical: 12,
+                  paddingHorizontal: 12,
+                  borderRadius: theme.radius.md,
+                  backgroundColor: selectedRange === opt.key ? (theme.color.primary as any) : (theme.dark ? theme.color.secondary : theme.color.accent)
+                }}
+              >
+                <Text style={{ color: selectedRange === opt.key ? ('#ffffff' as any) : (theme.color.mutedForeground as any), fontWeight: '700', textAlign: 'center' }}>
+                  {opt.label}
+                </Text>
+              </TouchableOpacity>
+            ))}
+          </View>
+        </Modal>
       </View>
     </SafeAreaView>
   )

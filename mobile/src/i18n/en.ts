@@ -148,7 +148,7 @@ const en = {
     all: "All",
     noConversations: "No conversations yet",
     startConversation: "Start conversation",
-    searchPlaceholder: "Search conversations...",
+    searchPlaceholder: "Search cases...",
     filters: {
       agent: "Agent",
       status: "Status", 

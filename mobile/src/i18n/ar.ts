@@ -155,7 +155,7 @@ const ar = {
     all: "الكل",
     noConversations: "لا توجد محادثات بعد",
     startConversation: "ابدأ محادثة",
-    searchPlaceholder: "البحث في المحادثات...",
+    searchPlaceholder: "البحث في القضايا...",
     filters: {
       agent: "الوكيل",
       status: "الحالة",
