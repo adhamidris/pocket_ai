@@ -30,7 +30,8 @@ import {
   Copy,
   ClipboardList,
   FileText,
-  Download
+  Download,
+  MessageCircle
 } from 'lucide-react-native'
 
 interface Message {
@@ -361,6 +362,7 @@ export const ChatScreen: React.FC<ChatScreenProps> = ({
             paddingHorizontal: 16,
             paddingBottom: 16,
             marginBottom: 0,
+            flex: 1,
             ...(Platform.select({
               ios: { shadowColor: 'transparent', shadowOpacity: 0, shadowRadius: 0, shadowOffset: { width: 0, height: 0 } },
               android: { elevation: 0 },
@@ -406,7 +408,7 @@ export const ChatScreen: React.FC<ChatScreenProps> = ({
           </View>
         </View>
         {/* Slightly wider content area after header */}
-        <View style={{ marginHorizontal: -6 }}>
+        <View style={{ marginHorizontal: -6, flex: 1, minHeight: 0 }}>
           <View style={{ backgroundColor: theme.color.muted, borderRadius: theme.radius.md, padding: 6, marginTop: 0, marginBottom: 10, flexDirection: 'row' }}>
             {([
               { key: 'overview', label: 'Overview' },
@@ -436,12 +438,15 @@ export const ChatScreen: React.FC<ChatScreenProps> = ({
 
           {/* Tab content area */}
           {caseDetailsTab === 'chat' ? (
-          <ScrollView 
-            ref={scrollViewRef}
-            style={{ flex: 1, marginBottom: 16 }}
-            showsVerticalScrollIndicator={false}
-            contentContainerStyle={{ paddingBottom: 96 }}
-          >
+          <View style={{ flex: 1, minHeight: 0 }}>
+            <ScrollView 
+              ref={scrollViewRef}
+              nestedScrollEnabled
+              showsVerticalScrollIndicator
+              keyboardShouldPersistTaps="always"
+              style={{ flex: 1 }}
+              contentContainerStyle={{ paddingBottom: 8 }}
+            >
             {messages.map((message) => (
               <View key={message.id} style={{ marginBottom: 16 }}>
                 <View style={{
@@ -522,15 +527,16 @@ export const ChatScreen: React.FC<ChatScreenProps> = ({
                 </View>
               </View>
             )}
-          </ScrollView>
-        ) : (
+            </ScrollView>
+          </View>
+          ) : (
           <View style={{ flex: 1, minHeight: 0 }}>
             <ScrollView
               nestedScrollEnabled
               showsVerticalScrollIndicator
               keyboardShouldPersistTaps="always"
               style={{ flex: 1 }}
-              contentContainerStyle={{ paddingBottom: 96 }}
+              contentContainerStyle={{ paddingBottom: 8 }}
             >
               {(() => {
                 const caseType = pickCaseType(conversation.tags || [])
@@ -619,14 +625,28 @@ export const ChatScreen: React.FC<ChatScreenProps> = ({
                         </View>
                         <View style={{ gap: 2 }}>
                           {['Invoice_2024-01-13_1025.pdf','Chat_Transcript_2024-01-15.txt','Screenshot_Account_Settings.png'].map((name, i) => (
-                            <View key={i} style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingVertical: 8 }}>
-                              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-                                <FileText size={14} color={theme.color.mutedForeground as any} />
-                                <Text style={{ color: theme.color.cardForeground, fontSize: 13 }}>{name}</Text>
+                            <View key={i} style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+                              <Text style={{ color: theme.color.cardForeground, fontSize: 13, flex: 1, marginRight: 12 }} numberOfLines={1}>
+                                {name}
+                              </Text>
+                              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 2 }}>
+                                <TouchableOpacity
+                                  onPress={() => Alert.alert('Open Document', name)}
+                                  style={{ padding: 6, borderRadius: 8, backgroundColor: theme.dark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.04)' }}
+                                  accessibilityRole="button"
+                                  accessibilityLabel={`Open ${name}`}
+                                >
+                                  <FileText size={16} color={theme.color.primary as any} />
+                                </TouchableOpacity>
+                                <TouchableOpacity
+                                  onPress={() => Alert.alert('Download Document', name)}
+                                  style={{ padding: 6, borderRadius: 8, backgroundColor: theme.dark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.04)' }}
+                                  accessibilityRole="button"
+                                  accessibilityLabel={`Download ${name}`}
+                                >
+                                  <Download size={16} color={theme.color.success as any} />
+                                </TouchableOpacity>
                               </View>
-                              <TouchableOpacity style={{ padding: 4 }} onPress={() => Alert.alert('Download', `Downloading ${name}...`)}>
-                                <Download size={14} color={theme.color.mutedForeground as any} />
-                              </TouchableOpacity>
                             </View>
                           ))}
                         </View>
@@ -637,35 +657,40 @@ export const ChatScreen: React.FC<ChatScreenProps> = ({
                 if (caseDetailsTab === 'history') {
                   return (
                     <View>
-                      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 6 }}>
-                        <ClipboardList size={14} color={theme.color.mutedForeground as any} />
-                        <Text style={{ color: theme.color.cardForeground, fontSize: 14, fontWeight: '700' }}>Timeline</Text>
-                      </View>
-                      <View style={{ gap: 8 }}>
-                        {[
-                          { id: 'u1', date: formatShortDateTime(conversation.startedAt), channel: 'web', text: 'Chat session started by customer.' },
-                          { id: 'u2', date: formatShortDateTime(conversation.lastMessage.timestamp), channel: 'email', text: 'Follow-up message sent with resolution summary.' },
-                        ].map((u, idx, arr) => (
-                          <View key={u.id}>
-                            <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 2 }}>
-                              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-                                <Text style={{ color: theme.color.mutedForeground, fontSize: 12 }}>{u.date}</Text>
-                                {(() => { const cs = getChannelStyle(u.channel); return (
-                                  <View style={{ backgroundColor: cs.bg as any, paddingHorizontal: 6, paddingVertical: 2, borderRadius: theme.radius.sm }}>
-                                    <Text style={{ color: (theme.dark ? ('#ffffff' as any) : (cs.color as any)), fontSize: 10, fontWeight: '700' }}>{cs.label}</Text>
-                                  </View>
-                                )})()}
+                      {/* Case Updates */}
+                      <View>
+                        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 6 }}>
+                          <MessageCircle size={14} color={theme.color.mutedForeground as any} />
+                          <Text style={{ color: theme.color.cardForeground, fontSize: 14, fontWeight: '700' }}>Case Updates</Text>
+                        </View>
+                        <View style={{ gap: 8 }}>
+                          {[
+                            { id: 'u1', date: 'Jan 15, 10:32 AM', channel: 'whatsapp', text: 'Customer requested status on duplicate charge and expressed dissatisfaction; escalation requested.' },
+                            { id: 'u2', date: 'Jan 15, 11:05 AM', channel: 'email', text: 'Refund timeline communicated (3–5 business days); case escalated to billing for expedited review.' },
+                            { id: 'u3', date: 'Jan 16, 09:02 AM', channel: 'web', text: 'Customer requested daily status updates pending refund confirmation.' },
+                            { id: 'u4', date: 'Jan 17, 08:45 AM', channel: 'email', text: 'Refund initiated; transaction reference provided; advised to verify statement within 24–48 hours.' },
+                          ].map((u, idx, arr) => (
+                            <View key={u.id}>
+                              <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 2 }}>
+                                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                                  <Text style={{ color: theme.color.mutedForeground, fontSize: 12 }}>{u.date}</Text>
+                                  {(() => { const cs = getChannelStyle(u.channel); return (
+                                    <View style={{ backgroundColor: cs.bg as any, paddingHorizontal: 6, paddingVertical: 2, borderRadius: theme.radius.sm }}>
+                                      <Text style={{ color: (theme.dark ? ('#ffffff' as any) : (cs.color as any)), fontSize: 10, fontWeight: '700' }}>{cs.label}</Text>
+                                    </View>
+                                  )})()}
+                                </View>
+                                <Text style={{ color: theme.color.mutedForeground, fontSize: 12 }}>Session Summary</Text>
                               </View>
-                              <Text style={{ color: theme.color.mutedForeground, fontSize: 12 }}>Session Summary</Text>
+                              <Text style={{ color: theme.color.cardForeground, fontSize: 13 }}>
+                                {u.text}
+                              </Text>
+                              {idx !== arr.length - 1 && (
+                                <View style={{ height: 1, backgroundColor: theme.color.border, marginTop: 8, marginBottom: 8 }} />
+                              )}
                             </View>
-                            <Text style={{ color: theme.color.cardForeground, fontSize: 13 }}>
-                              {u.text}
-                            </Text>
-                            {idx !== arr.length - 1 && (
-                              <View style={{ height: 1, backgroundColor: theme.color.border, marginTop: 8, marginBottom: 8 }} />
-                            )}
-                          </View>
-                        ))}
+                          ))}
+                        </View>
                       </View>
                     </View>
                   )
@@ -678,10 +703,8 @@ export const ChatScreen: React.FC<ChatScreenProps> = ({
         </View>
         </Card>
 
-        {/* Fixed bottom Close button */}
-        <View style={{ position: 'absolute', left: 16, right: 16, bottom: 16 }}>
-          <Button title="Close" variant="default" size="lg" fullWidth onPress={onClose} />
-        </View>
+        {/* Back/Close button (full width) */}
+        <Button title="Close" variant="default" size="lg" fullWidth onPress={onClose} />
       </KeyboardAvoidingView>
     </Modal>
   )
