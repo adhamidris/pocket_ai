@@ -491,7 +491,7 @@ export const ConversationsScreen: React.FC = () => {
         />
 
         {/* Date Picker Modal (lightweight presets) */}
-        <Modal visible={showDatePicker} onClose={() => setShowDatePicker(false)} size="sm">
+        <Modal visible={showDatePicker} onClose={() => setShowDatePicker(false)} size="sm" autoHeight>
           <View style={{ gap: 8 }}>
             {[{key:'today',label:'Today'},{key:'7d',label:'Last 7 days'},{key:'30d',label:'Last 30 days'},{key:'all',label:'All time'}].map(opt => (
               <TouchableOpacity

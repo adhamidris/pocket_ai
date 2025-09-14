@@ -18,6 +18,9 @@ interface ModalProps {
   title?: string
   children: React.ReactNode
   size?: 'sm' | 'md' | 'lg'
+  // If true, the modal height adapts to content up to a max height,
+  // avoiding large unused whitespace for compact dialogs.
+  autoHeight?: boolean
 }
 
 export const Modal: React.FC<ModalProps> = ({ 
@@ -25,7 +28,8 @@ export const Modal: React.FC<ModalProps> = ({
   onClose, 
   title, 
   children,
-  size = 'md'
+  size = 'md',
+  autoHeight = false
 }) => {
   const { theme } = useTheme()
   const { width: screenWidth, height: screenHeight } = Dimensions.get('window')
@@ -102,7 +106,10 @@ export const Modal: React.FC<ModalProps> = ({
               backgroundColor: theme.color.card,
               borderRadius: theme.radius.xl,
               width: getModalWidth(),
-              height: getModalHeight(),
+              ...(autoHeight 
+                ? { maxHeight: getModalHeight() } 
+                : { height: getModalHeight() }
+              ),
               borderWidth: 0,
               borderColor: 'transparent',
               shadowColor: '#000',
@@ -148,7 +155,7 @@ export const Modal: React.FC<ModalProps> = ({
           )}
 
           {/* Content */}
-          <View style={{ flex: 1, padding: 16 }}>
+          <View style={{ padding: 16, ...(autoHeight ? {} : { flex: 1 }) }}>
             {children}
           </View>
           </View>
