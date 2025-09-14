@@ -184,9 +184,10 @@ export const ConversationCard: React.FC<ConversationCardProps> = ({
   return (
     <TouchableOpacity onPress={() => onPress(conversation)}>
       <Card variant="flat" style={{ 
-        marginBottom: 10,
-        paddingHorizontal: 14,
-        paddingVertical: 10
+        marginBottom: 12,
+        backgroundColor: theme.dark ? (theme.color.secondary as any) : (theme.color.accent as any),
+        paddingHorizontal: 16,
+        paddingVertical: 14
       }}>
         {/* ID left • Date right */}
         <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 4 }}>
