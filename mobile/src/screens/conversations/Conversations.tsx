@@ -36,6 +36,7 @@ export const ConversationsScreen: React.FC = () => {
   // Align with Dashboard header spacing (avoid double safe-area padding)
   const [activeTab, setActiveTab] = useState<'active' | 'archived' | 'all'>('active')
   const [selectedRange, setSelectedRange] = useState<'today' | '7d' | '30d' | 'custom'>('today')
+  const [caseCategory, setCaseCategory] = useState<'all' | 'inquiries' | 'requests' | 'complaints'>('all')
   const [selectedConversation, setSelectedConversation] = useState<Conversation | null>(null)
   const [showChat, setShowChat] = useState(false)
 
@@ -229,16 +230,36 @@ export const ConversationsScreen: React.FC = () => {
   ]
 
   const getFilteredConversations = () => {
-    switch (activeTab) {
-      case 'active': // "All"
-        return conversations
-      case 'archived': // "On Queue"
-        return conversations.filter(c => c.status === 'waiting')
-      case 'all': // "Resolved"
-        return conversations.filter(c => c.status === 'resolved')
-      default:
-        return conversations
+    const byStatus = (() => {
+      switch (activeTab) {
+        case 'active': // "All"
+          return conversations
+        case 'archived': // "Queue"
+          return conversations.filter(c => c.status === 'waiting')
+        case 'all': // "Resolved"
+          return conversations.filter(c => c.status === 'resolved')
+        default:
+          return conversations
+      }
+    })()
+
+    if (caseCategory === 'all') return byStatus
+
+    const pickCaseType = (tags: string[]): 'inquiry' | 'request' | 'complaint' | 'other' => {
+      const lower = (tags || []).map(t => t.toLowerCase())
+      if (lower.some(t => ['question', 'support', 'general', 'inquiry'].includes(t))) return 'inquiry'
+      if (lower.some(t => ['request', 'feature'].includes(t))) return 'request'
+      if (lower.some(t => ['complaint'].includes(t))) return 'complaint'
+      return 'other'
     }
+
+    return byStatus.filter(c => {
+      const type = pickCaseType(c.tags || [])
+      if (caseCategory === 'inquiries') return type === 'inquiry'
+      if (caseCategory === 'requests') return type === 'request'
+      if (caseCategory === 'complaints') return type === 'complaint'
+      return true
+    })
   }
 
   const filteredConversations = getFilteredConversations()
@@ -377,16 +398,51 @@ export const ConversationsScreen: React.FC = () => {
             </TouchableOpacity>
           </View>
 
-          {/* Tabs */}
-          <View style={{ flexDirection: 'row' }}>
+        {/* Case Category Toggles (equal width) */}
+        <View style={{ flexDirection: 'row', marginBottom: 12 }}>
+          {([
+            { key: 'inquiries', label: 'Inquiries' },
+            { key: 'requests', label: 'Requests' },
+            { key: 'complaints', label: 'Complaints' },
+          ] as const).map((c) => (
+            <TouchableOpacity
+              key={c.key}
+              onPress={() => setCaseCategory(prev => prev === c.key ? 'all' : c.key)}
+              style={{
+                flex: 1,
+                paddingVertical: 12,
+                paddingHorizontal: 16,
+                borderRadius: theme.radius.md,
+                backgroundColor: caseCategory === c.key
+                  ? (theme.color.primary as any)
+                  : (theme.dark ? theme.color.secondary : theme.color.accent),
+                borderWidth: 0,
+                borderColor: 'transparent',
+                marginRight: c.key !== 'complaints' ? 8 : 0
+              }}
+            >
+              <Text style={{
+                color: caseCategory === c.key ? ('#ffffff' as any) : (theme.color.mutedForeground as any),
+                textAlign: 'center',
+                fontWeight: '700',
+                fontSize: 13
+              }}>
+                {c.label}
+              </Text>
+            </TouchableOpacity>
+          ))}
+        </View>
+
+        {/* Tabs */}
+        <View style={{ flexDirection: 'row' }}>
             {tabs.map((tab) => (
               <TouchableOpacity
                 key={tab.key}
                 onPress={() => setActiveTab(tab.key)}
                 style={{
                   flex: 1,
-                  paddingVertical: 12,
-                  paddingHorizontal: 16,
+                  paddingVertical: 10,
+                  paddingHorizontal: 14,
                   borderRadius: theme.radius.md,
                   backgroundColor: activeTab === tab.key
                     ? (theme.color.primary as any)
