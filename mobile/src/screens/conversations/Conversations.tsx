@@ -317,25 +317,27 @@ export const ConversationsScreen: React.FC = () => {
               {icon: Clock, color: theme.color.warning, value: stats.waiting, label: 'Queue'},
               {icon: CheckCircle2, color: theme.color.success, value: stats.resolved, label: 'Resolved'}].map((s, idx) => (
               <View key={idx} style={{
-                backgroundColor: theme.dark ? theme.color.secondary : theme.color.card,
+                backgroundColor: theme.color.card,
                 borderRadius: theme.radius.md,
                 paddingHorizontal: 14,
                 paddingVertical: 10,
-                flex: 1,
-                alignItems: 'center'
+                flex: 1
               }}>
-                <s.icon size={18} color={s.color as any} />
+                <View style={{ alignItems: 'center', marginBottom: 6 }}>
+                  <s.icon size={18} color={s.color as any} />
+                </View>
                 <Text style={{
                   color: theme.color.cardForeground,
-                  fontSize: 18,
+                  fontSize: 20,
                   fontWeight: '700',
-                  marginTop: 6
+                  textAlign: 'center'
                 }}>
                   {s.value}
                 </Text>
                 <Text style={{
                   color: theme.color.mutedForeground,
-                  fontSize: 12
+                  fontSize: 12,
+                  textAlign: 'center'
                 }}>
                   {s.label}
                 </Text>
