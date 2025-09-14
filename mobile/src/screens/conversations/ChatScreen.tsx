@@ -349,7 +349,7 @@ export const ChatScreen: React.FC<ChatScreenProps> = ({
         {/* Case header moved above; content starts with tabs */}
         {/* Slightly wider content area after header */}
         <View style={{ marginHorizontal: -6, flex: 1, minHeight: 0 }}>
-          <View style={{ backgroundColor: theme.color.muted, borderRadius: theme.radius.md, padding: 6, marginTop: 0, marginBottom: 10, flexDirection: 'row' }}>
+          <View style={{ backgroundColor: theme.color.muted, borderRadius: theme.radius.md, padding: 6, marginTop: 0, marginBottom: 12, flexDirection: 'row' }}>
             {([
               { key: 'overview', label: 'Overview' },
               { key: 'documents', label: 'Documents' },
