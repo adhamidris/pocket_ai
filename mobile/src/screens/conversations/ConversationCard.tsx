@@ -10,7 +10,8 @@ import {
   Flame,
   Timer,
   ChevronRight,
-  ClipboardList
+  ClipboardList,
+  User
 } from 'lucide-react-native'
 
 interface Message {
@@ -149,6 +150,43 @@ export const ConversationCard: React.FC<ConversationCardProps> = ({
     const txt = conversation.lastMessage?.text || ''
     return txt.length > 60 ? txt.slice(0, 57) + '…' : txt || 'Customer case'
   })()
+  const phone = (conversation as any).customerPhone || '+1 (415) 555-0137'
+  
+  type Channel = 'email' | 'web' | 'whatsapp' | 'instagram' | 'twitter' | 'messenger'
+  const detectChannel = (): Channel => {
+    const lower = (conversation.tags || []).map(t => t.toLowerCase())
+    if (lower.includes('whatsapp')) return 'whatsapp'
+    if (lower.includes('instagram')) return 'instagram'
+    if (lower.includes('messenger')) return 'messenger'
+    if (lower.includes('twitter')) return 'twitter'
+    if (lower.includes('email')) return 'email'
+    if (lower.includes('web')) return 'web'
+    return conversation.customerEmail ? 'email' : 'web'
+  }
+  const getChannelChip = (channel: Channel) => {
+    const labelMap: Record<Channel, string> = {
+      email: 'EM', web: 'WEB', whatsapp: 'WA', instagram: 'IG', twitter: 'TW', messenger: 'MS'
+    }
+    const colorMap: Record<Channel, string> = {
+      email: theme.color.primary as any,
+      web: 'hsl(210,10%,60%)',
+      whatsapp: 'hsl(142,71%,45%)',
+      instagram: 'hsl(291,70%,55%)',
+      twitter: 'hsl(200,90%,50%)',
+      messenger: 'hsl(240,75%,48%)'
+    }
+    const withAlpha = (c: string, a: number) =>
+      c.startsWith('hsl(')
+        ? c.replace('hsl(', 'hsla(').replace(')', `,${a})`)
+        : c
+    const bg = withAlpha(colorMap[channel], theme.dark ? 0.20 : 0.12)
+    const fg = colorMap[channel]
+    return (
+      <View style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: bg as any, borderRadius: 12, paddingHorizontal: 8, paddingVertical: 3 }}>
+        <Text style={{ color: fg as any, fontSize: 11, fontWeight: '800' }}>{labelMap[channel]}</Text>
+      </View>
+    )
+  }
 
   const getCaseSummary = (type: string) => {
     const byType: Record<string, string[]> = {
@@ -198,6 +236,7 @@ export const ConversationCard: React.FC<ConversationCardProps> = ({
             {date}
           </Text>
         </View>
+
         {/* Title + chips */}
         <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 10 }}>
           <Text style={{ color: theme.color.cardForeground, fontSize: 15, fontWeight: '700', flex: 1, minWidth: 0 }} numberOfLines={2}>
@@ -224,6 +263,33 @@ export const ConversationCard: React.FC<ConversationCardProps> = ({
           <Text style={{ color: theme.color.mutedForeground, fontSize: 13, lineHeight: 20 }} numberOfLines={3}>
             {getCaseSummary(caseType)}
           </Text>
+        </View>
+
+        {/* Divider under description */}
+        <View style={{ height: 1, backgroundColor: theme.color.border, marginTop: 8, marginBottom: 8 }} />
+
+        {/* Minimal Customer Details inline: [User] Name | Phone   [Channel chip right-aligned] */}
+        <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+          {/* Left group: name + phone share space */}
+          <View style={{ flex: 1, minWidth: 0, flexDirection: 'row', alignItems: 'center' }}>
+            <User size={14} color={theme.color.mutedForeground as any} style={{ marginRight: 6 }} />
+            <Text
+              numberOfLines={1}
+              style={{ color: theme.color.cardForeground, fontSize: 13, fontWeight: '600', flexShrink: 1, minWidth: 0, marginRight: 8 }}
+            >
+              {conversation.customerName}
+            </Text>
+            <Text
+              numberOfLines={1}
+              style={{ color: theme.color.mutedForeground, fontSize: 12, flexShrink: 1, minWidth: 0 }}
+            >
+              {phone}
+            </Text>
+          </View>
+          {/* Right: channel chip */}
+          <View style={{ flexShrink: 0, marginLeft: 12 }}>
+            {getChannelChip(detectChannel())}
+          </View>
         </View>
       </Card>
     </TouchableOpacity>
