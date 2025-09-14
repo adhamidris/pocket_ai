@@ -31,7 +31,8 @@ import {
   ClipboardList,
   FileText,
   Download,
-  MessageCircle
+  MessageCircle,
+  ChevronRight
 } from 'lucide-react-native'
 
 interface Message {
@@ -61,12 +62,14 @@ interface ChatScreenProps {
   visible: boolean
   conversation: Conversation | null
   onClose: () => void
+  onOpenCustomer?: (customerId: string) => void
 }
 
 export const ChatScreen: React.FC<ChatScreenProps> = ({ 
   visible, 
   conversation, 
-  onClose 
+  onClose,
+  onOpenCustomer
 }) => {
   const { theme } = useTheme()
   const [isTyping, setIsTyping] = useState(false)
@@ -256,99 +259,72 @@ export const ChatScreen: React.FC<ChatScreenProps> = ({
         behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
         style={{ flex: 1, position: 'relative' }}
       >
-        {/* Chat Header (match CustomerDetail) */}
-        <View style={{
-          flexDirection: 'row',
-          alignItems: 'center',
-          paddingBottom: 4,
-          borderBottomWidth: 1,
-          borderBottomColor: theme.color.border,
-          marginBottom: 4
-        }}>
-          {/* Customer Avatar */}
-          <View style={{
-            width: 56,
-            height: 56,
-            backgroundColor: theme.dark ? theme.color.secondary : theme.color.card,
-            borderRadius: 28,
-            alignItems: 'center',
-            justifyContent: 'center',
-            marginRight: 12
-          }}>
-            <Text style={{
-              color: theme.color.cardForeground,
-              fontSize: 22,
-              fontWeight: '700'
-            }}>
-              {getInitials(conversation.customerName)}
-            </Text>
+        {/* Case Header promoted to main header */}
+        <View style={{ paddingTop: 4, paddingBottom: 12, paddingHorizontal: 8, marginBottom: 10, borderBottomWidth: 1, borderBottomColor: theme.color.border }}>
+          {/* ID left • Date right */}
+          <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+            <Text style={{ color: theme.color.mutedForeground, fontSize: 12 }}>{caseId}</Text>
+            <Text style={{ color: theme.color.mutedForeground, fontSize: 12 }}>{date}</Text>
           </View>
-
-          {/* Customer Info (similar to CustomerDetail header) */}
-          <View style={{ flex: 1 }}>
-            <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 8, marginBottom: 2 }}>
-              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, flexShrink: 1 }}>
-              <Text style={{
-                color: theme.color.cardForeground,
-                fontSize: 18,
-                fontWeight: '700',
-                flexShrink: 1,
-                minWidth: 0
-              }} numberOfLines={1}>
-                {conversation.customerName}
-              </Text>
-              {isVip && (
-                <View style={{
-                  flexDirection: 'row',
-                  alignItems: 'center',
-                  backgroundColor: '#f2c84b',
-                  borderRadius: 10,
-                  paddingHorizontal: 6,
-                  paddingVertical: 2,
-                  gap: 4
-                }}>
-                  <Crown size={10} color={'#7a5d00'} fill={'#7a5d00'} />
-                  <Text style={{ color: '#7a5d00', fontSize: 10, fontWeight: '700' }}>VIP</Text>
-                </View>
-              )}
+          {/* Title + chips */}
+          <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 10, marginTop: 6 }}>
+            <Text style={{ color: theme.color.cardForeground, fontSize: 16, fontWeight: '800', flex: 1, minWidth: 0 }} numberOfLines={2}>
+              {title}
+            </Text>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, flexShrink: 0 }}>
+              <View style={{ backgroundColor: typeColor as any, borderRadius: 12, paddingHorizontal: 6, paddingVertical: 3 }}>
+                <Text style={{ color: '#fff', fontSize: 11, fontWeight: '800' }}>{caseType.toUpperCase()}</Text>
               </View>
-              {/* Actions (compact) */}
-              <TouchableOpacity style={{
-                width: 32,
-                height: 32,
-                borderRadius: 16,
-                backgroundColor: theme.dark ? theme.color.secondary : theme.color.card,
-                alignItems: 'center',
-                justifyContent: 'center'
-              }}>
-                <MoreHorizontal size={18} color={theme.color.mutedForeground} />
-              </TouchableOpacity>
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, backgroundColor: bgAlpha(prColor as any) as any, borderRadius: 12, paddingHorizontal: 6, paddingVertical: 3 }}>
+                <PrIcon size={12} color={prColor as any} />
+                <Text style={{ color: prColor as any, fontSize: 11, fontWeight: '700' }}>{conversation.priority.toUpperCase()}</Text>
+              </View>
             </View>
-            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 4 }}>
-              <Text style={{ color: theme.color.mutedForeground, fontSize: 12 }} numberOfLines={1}>
-                Customer ID: {formatCustomerId(conversation.id)}
-              </Text>
+          </View>
+          {/* Meta & Customer row: tone/satisfaction (left) | divider | customer (right) */}
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12, marginTop: 6 }}>
+            {/* Left: stacked Tone above Satisfaction */}
+            <View style={{ flex: 1, flexDirection: 'column', alignItems: 'flex-start', gap: 6 }}>
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                <ToneIcon size={14} color={toneColor as any} />
+                <Text style={{ color: theme.color.cardForeground, fontSize: 13, fontWeight: '600' }}>Tone</Text>
+                <Text style={{ color: toneColor as any, fontSize: 13, fontWeight: '700' }}>{toneLabel}</Text>
+              </View>
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                <Smile size={14} color={theme.color.warning as any} />
+                <Text style={{ color: theme.color.cardForeground, fontSize: 13, fontWeight: '600' }}>Satisfaction</Text>
+                <Text style={{ color: theme.color.warning, fontSize: 13, fontWeight: '700' }}>{typeof conversation.satisfaction === 'number' ? `${conversation.satisfaction}%` : '—'}</Text>
+              </View>
+            </View>
+
+            {/* Divider */}
+            <View style={{ width: 1, height: 32, backgroundColor: theme.color.border }} />
+
+            {/* Right: Minimal customer details */}
+            <View style={{ flex: 1, minWidth: 0, flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+              <View style={{ flex: 1, minWidth: 0 }}>
+                <Text numberOfLines={1} style={{ color: theme.color.cardForeground, fontSize: 12, fontWeight: '600' }}>
+                  {conversation.customerName}
+                </Text>
+                <Text numberOfLines={1} style={{ color: theme.color.mutedForeground, fontSize: 11 }}>
+                  +1 (415) 555-0137
+                </Text>
+                <Text numberOfLines={1} style={{ color: theme.color.mutedForeground, fontSize: 11 }}>
+                  {formatCustomerId(conversation.id)}
+                </Text>
+              </View>
               <TouchableOpacity
                 onPress={() => {
-                  const id = formatCustomerId(conversation.id)
-                  // Best-effort copy on web
-                  // @ts-ignore navigator exists on web
-                  if (Platform.OS === 'web' && typeof navigator !== 'undefined' && navigator.clipboard?.writeText) {
-                    // @ts-ignore
-                    navigator.clipboard.writeText(id)
-                  }
-                  Alert.alert('Copied', 'Customer ID copied to clipboard')
+                  if (onOpenCustomer) return onOpenCustomer(conversation.id)
+                  Alert.alert('Customer Profile', `Open profile for ${conversation.customerName}`)
                 }}
-                style={{ padding: 4 }}
+                style={{ padding: 6, borderRadius: 8, backgroundColor: theme.dark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.04)' }}
+                accessibilityRole="button"
+                accessibilityLabel={`Open profile for ${conversation.customerName}`}
               >
-                <Copy size={14} color={theme.color.mutedForeground as any} />
+                <ChevronRight size={14} color={theme.color.mutedForeground as any} />
               </TouchableOpacity>
             </View>
-            {conversation.agentName ? (
-              <Text style={{ color: theme.color.mutedForeground, fontSize: 12 }}>
-                with {conversation.agentName}
-              </Text>
-            ) : null}
           </View>
         </View>
 
@@ -370,43 +346,7 @@ export const ChatScreen: React.FC<ChatScreenProps> = ({
             }) as any),
           }}
         >
-        {/* Static Case Header (exact CustomerDetail structure) */}
-        <View style={{ gap: 6, marginBottom: 10 }}>
-          {/* ID left • Date right */}
-          <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
-            <Text style={{ color: theme.color.mutedForeground, fontSize: 12 }}>{caseId}</Text>
-            <Text style={{ color: theme.color.mutedForeground, fontSize: 12 }}>{date}</Text>
-          </View>
-          {/* Title + chips */}
-          <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 10 }}>
-            <Text style={{ color: theme.color.cardForeground, fontSize: 16, fontWeight: '800', flex: 1, minWidth: 0 }} numberOfLines={2}>
-              {title}
-            </Text>
-            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, flexShrink: 0 }}>
-              <View style={{ backgroundColor: typeColor as any, borderRadius: 12, paddingHorizontal: 6, paddingVertical: 3 }}>
-                <Text style={{ color: '#fff', fontSize: 11, fontWeight: '800' }}>{caseType.toUpperCase()}</Text>
-              </View>
-              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, backgroundColor: bgAlpha(prColor as any) as any, borderRadius: 12, paddingHorizontal: 6, paddingVertical: 3 }}>
-                <PrIcon size={12} color={prColor as any} />
-                <Text style={{ color: prColor as any, fontSize: 11, fontWeight: '700' }}>{conversation.priority.toUpperCase()}</Text>
-              </View>
-            </View>
-          </View>
-          {/* Meta: Tone, Satisfaction */}
-          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
-            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-              <ToneIcon size={14} color={toneColor as any} />
-              <Text style={{ color: theme.color.cardForeground, fontSize: 13, fontWeight: '600' }}>Tone</Text>
-              <Text style={{ color: toneColor as any, fontSize: 13, fontWeight: '700' }}>{toneLabel}</Text>
-            </View>
-            <View style={{ width: 1, height: 16, backgroundColor: theme.color.border }} />
-            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-              <Smile size={14} color={theme.color.warning as any} />
-              <Text style={{ color: theme.color.cardForeground, fontSize: 13, fontWeight: '600' }}>Satisfaction</Text>
-              <Text style={{ color: theme.color.warning, fontSize: 13, fontWeight: '700' }}>{typeof conversation.satisfaction === 'number' ? `${conversation.satisfaction}%` : '—'}</Text>
-            </View>
-          </View>
-        </View>
+        {/* Case header moved above; content starts with tabs */}
         {/* Slightly wider content area after header */}
         <View style={{ marginHorizontal: -6, flex: 1, minHeight: 0 }}>
           <View style={{ backgroundColor: theme.color.muted, borderRadius: theme.radius.md, padding: 6, marginTop: 0, marginBottom: 10, flexDirection: 'row' }}>
@@ -442,7 +382,7 @@ export const ChatScreen: React.FC<ChatScreenProps> = ({
             <ScrollView 
               ref={scrollViewRef}
               nestedScrollEnabled
-              showsVerticalScrollIndicator
+              showsVerticalScrollIndicator={false}
               keyboardShouldPersistTaps="always"
               style={{ flex: 1 }}
               contentContainerStyle={{ paddingBottom: 8 }}
