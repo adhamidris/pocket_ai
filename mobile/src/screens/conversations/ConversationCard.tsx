@@ -4,13 +4,13 @@ import { useTheme } from '../../providers/ThemeProvider'
 import { Card } from '../../components/ui/Card'
 import { Badge } from '../../components/ui/Badge'
 import { 
-  User, 
-  Bot, 
-  Clock, 
-  MessageCircle,
+  Clock,
   CheckCircle2,
-  MoreHorizontal,
-  Crown
+  Crown,
+  Flame,
+  Timer,
+  ChevronRight,
+  ClipboardList
 } from 'lucide-react-native'
 
 interface Message {
@@ -67,18 +67,6 @@ export const ConversationCard: React.FC<ConversationCardProps> = ({
     }
   }
 
-  const getInitials = (name: string) => {
-    return name.split(' ').map(n => n[0]).join('').toUpperCase().slice(0, 2)
-  }
-
-  const getDisplayName = (name: string) => {
-    const parts = name.trim().split(/\s+/)
-    if (parts.length === 0) return name
-    const first = parts[0]
-    const second = parts.length > 1 ? parts[1][0].toUpperCase() + '.' : ''
-    return second ? `${first} ${second}` : first
-  }
-
   const formatCustomerId = (id: string) => {
     const padded = id.toString().padStart(4, '0')
     return `CUST-${padded}`
@@ -107,316 +95,135 @@ export const ConversationCard: React.FC<ConversationCardProps> = ({
     }
   }
 
-  const getMessageStatusIcon = (status?: string) => {
-    switch (status) {
-      case 'sending': return <Clock size={12} color={theme.color.mutedForeground} />
-      case 'sent': return <CheckCircle2 size={12} color={theme.color.mutedForeground} />
-      case 'delivered': return <CheckCircle2 size={12} color={theme.color.primary} />
-      case 'read': return <CheckCircle2 size={12} color={theme.color.success} />
-      default: return null
+  // Case helpers (align with CustomerDetail/ChatScreen)
+  const formatShortDateTime = (iso: string) => new Date(iso).toLocaleString('en-US', { month: 'short', day: 'numeric' })
+  const getCaseIdRef = (id: string) => `C-${id.toString().padStart(4, '0')}`
+  const pickCaseType = (tags: string[]): 'billing' | 'bug' | 'request' | 'inquiry' | 'complaint' | 'feedback' => {
+    const lower = (tags || []).map(t => t.toLowerCase())
+    if (lower.includes('billing')) return 'billing'
+    if (lower.includes('technical') || lower.includes('integration') || lower.includes('api')) return 'bug'
+    if (lower.includes('complaint')) return 'complaint'
+    if (lower.includes('request') || lower.includes('feature')) return 'request'
+    if (lower.includes('question') || lower.includes('support') || lower.includes('general')) return 'inquiry'
+    if (lower.includes('resolved') || lower.includes('closed') || lower.includes('done')) return 'feedback'
+    return 'inquiry'
+  }
+  const getCaseTypeColor = (type: string) => {
+    switch (type) {
+      case 'billing': return theme.color.warning
+      case 'bug': return theme.color.error
+      case 'complaint': return theme.color.error
+      case 'request': return theme.color.primary
+      case 'inquiry': return 'hsl(200,90%,50%)'
+      case 'feedback': return 'hsl(262,83%,58%)'
+      default: return theme.color.mutedForeground
     }
   }
-
-  const isVip = conversation.tags?.some(t => t.toLowerCase() === 'vip')
-  const displayTags = (conversation.tags || [])
-    .filter(t => t.toLowerCase() !== 'vip')
-    .filter(t => t.toLowerCase() !== 'resolved')
-
-  const getTagStyle = (tag: string) => {
-    const t = tag.toLowerCase()
-    // Fine-grained palette for better variety
-    const exactMap: Record<string, string> = {
-      // Ops/Severity
-      priority: theme.color.error,
-      urgent: theme.color.error,
-      escalated: theme.color.error,
-      // Finance
-      billing: theme.color.warning,
-      payment: theme.color.warning,
-      invoice: theme.color.warning,
-      // Tech flavors for variety
-      technical: theme.color.primary,                 // brand blue
-      integration: 'hsl(190,90%,45%)',               // teal
-      api: 'hsl(200,90%,50%)',                       // cyan
-      // Questions/support with distinct hues
-      question: 'hsl(262,83%,58%)',                  // purple
-      support: 'hsl(210,10%,60%)',                   // gray
-      help: 'hsl(210,10%,60%)',                      // gray
-      general: 'hsl(210,10%,60%)',                   // gray
-      // Product/feature requests
-      feature: 'hsl(291,70%,55%)',                   // violet/pink
-      request: 'hsl(291,70%,55%)',                   // violet/pink
-      // Positive/complete (generally filtered out above but safe default)
-      resolved: theme.color.success,
-      done: theme.color.success,
-      closed: theme.color.success,
+  const getPriorityMeta = (p: string) => {
+    switch (p) {
+      case 'urgent': return { color: theme.color.error, Icon: Flame }
+      case 'high': return { color: theme.color.error, Icon: Flame }
+      case 'medium': return { color: theme.color.warning, Icon: Timer }
+      case 'low': return { color: theme.color.mutedForeground, Icon: Clock }
+      default: return { color: theme.color.mutedForeground, Icon: Clock }
     }
-
-    const color = exactMap[t] || theme.color.mutedForeground
-
-    const withAlpha = (c: string, a: number) =>
-      c.startsWith('hsl(')
-        ? c.replace('hsl(', 'hsla(').replace(')', `,${a})`)
-        : c
-
-    const bg = withAlpha(color, theme.dark ? 0.28 : 0.12)
-    return { color, bg }
   }
+  const bgAlpha = (c: string) =>
+    (typeof c === 'string' && c.startsWith('hsl('))
+      ? c.replace('hsl(', 'hsla(').replace(')', `,${theme.dark ? '0.20' : '0.12'})`)
+      : (theme.dark ? 'rgba(255,255,255,0.12)' : 'rgba(0,0,0,0.06)')
 
-  const getTagFamily = (tag: string) => {
-    const t = tag.toLowerCase()
-    if (['priority', 'urgent', 'escalated'].includes(t)) return 'error'
-    if (['billing', 'payment', 'invoice'].includes(t)) return 'warning'
-    if (['technical', 'integration', 'api'].includes(t)) return 'primary'
-    if (['resolved', 'closed', 'done'].includes(t)) return 'success'
-    return 'neutral'
+  const caseId = getCaseIdRef(conversation.id)
+  const date = formatShortDateTime(conversation.startedAt)
+  const caseType = pickCaseType(conversation.tags || [])
+  const typeColor = getCaseTypeColor(caseType)
+  const { color: prColor, Icon: PrIcon } = getPriorityMeta(conversation.priority)
+  const title = (() => {
+    if ((conversation.tags || []).length > 0) {
+      const t = (conversation.tags || [])[0].toLowerCase()
+      if (t === 'billing') return 'Billing issue'
+      if (t === 'technical' || t === 'integration') return 'Integration/technical issue'
+      if (t === 'question') return 'Product question'
+      if (t === 'support') return 'Support request'
+    }
+    const txt = conversation.lastMessage?.text || ''
+    return txt.length > 60 ? txt.slice(0, 57) + '…' : txt || 'Customer case'
+  })()
+
+  const getCaseSummary = (type: string) => {
+    const byType: Record<string, string[]> = {
+      billing: [
+        'Duplicate transaction on the latest invoice.',
+        'Statement total reflects the unintended repeat charge.'
+      ],
+      request: [
+        'CSV export for analytics requested.',
+        'Needed to share reports with stakeholders.'
+      ],
+      bug: [
+        'Integration webhook experienced timeouts.',
+        'Event delivery intermittently failed in the affected window.'
+      ],
+      complaint: [
+        'Service outcome did not meet expectations.',
+        'Dissatisfaction reported with the recent experience.'
+      ],
+      inquiry: [
+        'Clarification requested on a product capability.',
+        'Information needed before proceeding.'
+      ],
+      feedback: [
+        'Constructive feedback shared on product/support.',
+        'Captured for future improvement planning.'
+      ],
+    }
+    const lines = byType[type] || []
+    return lines.slice(0, 2).join('\n')
   }
-
-  const orderedTags = [...displayTags].sort((a, b) => {
-    const order = ['error', 'warning', 'primary', 'neutral', 'success'] as const
-    const ai = order.indexOf(getTagFamily(a) as any)
-    const bi = order.indexOf(getTagFamily(b) as any)
-    if (ai !== bi) return ai - bi
-    return a.localeCompare(b)
-  })
-  const visibleTags = orderedTags.slice(0, 2)
-  const remainingCount = orderedTags.length - visibleTags.length
 
   return (
     <TouchableOpacity onPress={() => onPress(conversation)}>
       <Card variant="flat" style={{ 
-        marginBottom: 12,
-        backgroundColor: theme.dark ? theme.color.secondary : theme.color.accent,
-        paddingHorizontal: 16,
-        paddingVertical: 14
+        marginBottom: 10,
+        paddingHorizontal: 14,
+        paddingVertical: 10
       }}>
-        {/* Header */}
-        <View style={{
-          flexDirection: 'row',
-          justifyContent: 'space-between',
-          alignItems: 'flex-start',
-          marginBottom: 12
-        }}>
-          <View style={{ flexDirection: 'row', alignItems: 'center', flex: 1, marginRight: 8 }}>
-            {/* Avatar */}
-            <View style={{
-              width: 52,
-              height: 52,
-              backgroundColor: theme.dark ? theme.color.secondary : theme.color.card,
-              borderRadius: 26,
-              alignItems: 'center',
-              justifyContent: 'center',
-              marginRight: 12,
-              borderWidth: 0,
-              borderColor: 'transparent'
-            }}>
-              <Text style={{
-                color: theme.color.cardForeground,
-                fontSize: 18,
-                fontWeight: '700'
-              }}>
-                {getInitials(conversation.customerName)}
-              </Text>
+        {/* ID left • Date right */}
+        <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 4 }}>
+          <Text style={{ color: theme.color.mutedForeground, fontSize: 12 }} numberOfLines={1}>
+            {caseId}
+          </Text>
+          <Text style={{ color: theme.color.mutedForeground, fontSize: 12 }}>
+            {date}
+          </Text>
+        </View>
+        {/* Title + chips */}
+        <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 10 }}>
+          <Text style={{ color: theme.color.cardForeground, fontSize: 15, fontWeight: '700', flex: 1, minWidth: 0 }} numberOfLines={2}>
+            {title}
+          </Text>
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, flexShrink: 0 }}>
+            <View style={{ backgroundColor: typeColor as any, borderRadius: 12, paddingHorizontal: 6, paddingVertical: 3 }}>
+              <Text style={{ color: '#ffffff', fontSize: 11, fontWeight: '800' }}>{caseType.toUpperCase()}</Text>
             </View>
-
-            {/* Info */}
-            <View style={{ flex: 1 }}>
-              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 4 }}>
-                <View style={{ flex: 1, flexDirection: 'row', alignItems: 'center', gap: 6, minWidth: 0 }}>
-                  <Text style={{
-                    color: theme.color.cardForeground,
-                    fontSize: 17,
-                    fontWeight: '700',
-                    flexShrink: 1
-                  }} numberOfLines={1}>
-                    {getDisplayName(conversation.customerName)}
-                  </Text>
-                  {isVip && (
-                    <View style={{
-                      flexDirection: 'row',
-                      alignItems: 'center',
-                      backgroundColor: '#f2c84b',
-                      borderRadius: 10,
-                      paddingHorizontal: 6,
-                      paddingVertical: 2,
-                      gap: 4
-                    }}>
-                      <Crown size={10} color={'#7a5d00'} fill={'#7a5d00'} />
-                      <Text style={{ color: '#7a5d00', fontSize: 10, fontWeight: '700' }}>VIP</Text>
-                    </View>
-                  )}
-                </View>
-                {/* Removed inline urgent exclamation marker for cleaner look */}
-              </View>
-              <Text style={{
-                color: theme.color.mutedForeground,
-                fontSize: 12,
-                marginBottom: 4
-              }} numberOfLines={1}>
-                Customer ID: {formatCustomerId(conversation.id)}
-              </Text>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, backgroundColor: bgAlpha(prColor as any) as any, borderRadius: 12, paddingHorizontal: 6, paddingVertical: 3 }}>
+              <PrIcon size={12} color={prColor as any} />
+              <Text style={{ color: prColor as any, fontSize: 11, fontWeight: '700' }}>{conversation.priority.toUpperCase()}</Text>
             </View>
-          </View>
-
-          {/* Status & Time */}
-          <View style={{ alignItems: 'flex-end', gap: 8 }}>
-            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-              <View style={{
-                flexDirection: 'row',
-                alignItems: 'center',
-                gap: 8,
-                backgroundColor: theme.dark ? theme.color.secondary : theme.color.card,
-                borderWidth: 0,
-                borderColor: 'transparent',
-                borderRadius: theme.radius.sm,
-                paddingHorizontal: 10,
-                paddingVertical: 5
-              }}>
-                <View style={{
-                  width: 8,
-                  height: 8,
-                  borderRadius: 4,
-                  backgroundColor: (
-                    conversation.status === 'active' ? theme.color.success :
-                    conversation.status === 'waiting' ? theme.color.warning :
-                    theme.color.mutedForeground
-                  )
-                }} />
-                <Text style={{ color: theme.color.mutedForeground, fontSize: 12, fontWeight: '700' }}>
-                  {conversation.status.toUpperCase()}
-                </Text>
-              </View>
-              
-              <TouchableOpacity
-                onPress={() => onMore(conversation)}
-                style={{
-                  width: 28,
-                  height: 28,
-                  borderRadius: 14,
-                  backgroundColor: theme.dark ? theme.color.secondary : theme.color.card,
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  borderWidth: 0,
-                  borderColor: 'transparent'
-                }}
-              >
-                <MoreHorizontal size={14} color={theme.color.mutedForeground} />
-              </TouchableOpacity>
-            </View>
-
-            <Text style={{
-              color: theme.color.mutedForeground,
-              fontSize: 11
-            }}>
-              {formatTime(conversation.lastMessage.timestamp)}
-            </Text>
+            <ChevronRight size={16} color={theme.color.mutedForeground as any} />
           </View>
         </View>
 
-        {/* Last Message */}
-        <View style={{
-          flexDirection: 'row',
-          alignItems: 'flex-start',
-          gap: 8,
-          paddingTop: 8,
-          borderTopWidth: 1,
-          borderTopColor: theme.color.border
-        }}>
-          {conversation.lastMessage.isBot ? (
-            <Bot size={14} color={theme.color.primary} style={{ marginTop: 2 }} />
-          ) : (
-            <User size={14} color={theme.color.mutedForeground} style={{ marginTop: 2 }} />
-          )}
-          
-          <View style={{ flex: 1 }}>
-            <Text style={{
-              color: theme.color.mutedForeground,
-              fontSize: 14,
-              fontWeight: '400',
-              lineHeight: 20
-            }} numberOfLines={2}>
-              {conversation.lastMessage.text}
-            </Text>
+        {/* AI Diagnoses */}
+        <View style={{ marginTop: 8 }}>
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 6 }}>
+            <ClipboardList size={14} color={theme.color.mutedForeground as any} />
+            <Text style={{ color: theme.color.cardForeground, fontSize: 14, fontWeight: '700' }}>AI Diagnoses</Text>
           </View>
-
-          <View style={{ alignItems: 'flex-end', gap: 4 }}>
-            {(() => {
-              switch (conversation.lastMessage.status) {
-                case 'sending': return <Clock size={14} color={theme.color.mutedForeground} />
-                case 'sent': return <CheckCircle2 size={14} color={theme.color.mutedForeground} />
-                case 'delivered': return <CheckCircle2 size={14} color={theme.color.primary} />
-                case 'read': return <CheckCircle2 size={14} color={theme.color.success} />
-                default: return null
-              }
-            })()}
-            
-            {conversation.unreadCount > 0 && (
-              <View style={{
-                backgroundColor: theme.color.primary,
-                borderRadius: 10,
-                minWidth: 22,
-                height: 22,
-                alignItems: 'center',
-                justifyContent: 'center',
-                paddingHorizontal: 6
-              }}>
-                <Text style={{
-                  color: '#fff',
-                  fontSize: 12,
-                  fontWeight: '700'
-                }}>
-                  {conversation.unreadCount > 99 ? '99+' : conversation.unreadCount}
-                </Text>
-              </View>
-            )}
-          </View>
+          <Text style={{ color: theme.color.mutedForeground, fontSize: 13, lineHeight: 20 }} numberOfLines={3}>
+            {getCaseSummary(caseType)}
+          </Text>
         </View>
-
-        {/* Tags */}
-        {visibleTags.length > 0 && (
-          <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 8 }}>
-            {visibleTags.map((tag, index) => {
-              const { color, bg } = getTagStyle(tag)
-              return (
-                <View
-                  key={index}
-                  style={{
-                    backgroundColor: bg as any,
-                    paddingHorizontal: 8,
-                    paddingVertical: 3,
-                    borderRadius: theme.radius.sm,
-                    flexDirection: 'row',
-                    alignItems: 'center'
-                  }}
-                >
-                  <Text style={{
-                    color: (theme.dark ? ('#ffffff' as any) : (color as any)),
-                    fontSize: 11,
-                    fontWeight: '600'
-                  }}>
-                    {tag}
-                  </Text>
-                </View>
-              )
-            })}
-            {remainingCount > 0 && (
-              <View style={{
-                backgroundColor: theme.color.muted,
-                paddingHorizontal: 8,
-                paddingVertical: 3,
-                borderRadius: theme.radius.sm
-              }}>
-                <Text style={{
-                  color: theme.color.mutedForeground,
-                  fontSize: 11,
-                  fontWeight: '600'
-                }}>
-                  +{remainingCount}
-                </Text>
-              </View>
-            )}
-          </View>
-        )}
       </Card>
     </TouchableOpacity>
   )
