@@ -260,7 +260,7 @@ export const ChatScreen: React.FC<ChatScreenProps> = ({
         style={{ flex: 1, position: 'relative' }}
       >
         {/* Case Header promoted to main header */}
-        <View style={{ paddingTop: 4, paddingBottom: 12, paddingHorizontal: 8, marginBottom: 10, borderBottomWidth: 1, borderBottomColor: theme.color.border }}>
+        <View style={{ paddingTop: 4, paddingBottom: 12, paddingHorizontal: 8, marginBottom: 6, borderBottomWidth: 1, borderBottomColor: theme.color.border }}>
           {/* ID left • Date right */}
           <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
             <Text style={{ color: theme.color.mutedForeground, fontSize: 12 }}>{caseId}</Text>
@@ -272,17 +272,17 @@ export const ChatScreen: React.FC<ChatScreenProps> = ({
               {title}
             </Text>
             <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, flexShrink: 0 }}>
-              <View style={{ backgroundColor: typeColor as any, borderRadius: 12, paddingHorizontal: 6, paddingVertical: 3 }}>
-                <Text style={{ color: '#fff', fontSize: 11, fontWeight: '800' }}>{caseType.toUpperCase()}</Text>
+              <View style={{ backgroundColor: typeColor as any, borderRadius: 10, paddingHorizontal: 5, paddingVertical: 2 }}>
+                <Text style={{ color: '#fff', fontSize: 10, fontWeight: '800' }}>{caseType.toUpperCase()}</Text>
               </View>
-              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, backgroundColor: bgAlpha(prColor as any) as any, borderRadius: 12, paddingHorizontal: 6, paddingVertical: 3 }}>
-                <PrIcon size={12} color={prColor as any} />
-                <Text style={{ color: prColor as any, fontSize: 11, fontWeight: '700' }}>{conversation.priority.toUpperCase()}</Text>
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, backgroundColor: bgAlpha(prColor as any) as any, borderRadius: 10, paddingHorizontal: 5, paddingVertical: 2 }}>
+                <PrIcon size={11} color={prColor as any} />
+                <Text style={{ color: prColor as any, fontSize: 10, fontWeight: '700' }}>{conversation.priority.toUpperCase()}</Text>
               </View>
             </View>
           </View>
           {/* Meta & Customer row: tone/satisfaction (left) | divider | customer (right) */}
-          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12, marginTop: 6 }}>
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12, marginTop: 10 }}>
             {/* Left: stacked Tone above Satisfaction */}
             <View style={{ flex: 1, flexDirection: 'column', alignItems: 'flex-start', gap: 6 }}>
               <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
@@ -334,8 +334,8 @@ export const ChatScreen: React.FC<ChatScreenProps> = ({
         <Card
           variant="flat"
           style={{
-            paddingTop: 8,
-            paddingHorizontal: 16,
+            paddingTop: 4,
+            paddingHorizontal: 12,
             paddingBottom: 16,
             marginBottom: 0,
             flex: 1,
