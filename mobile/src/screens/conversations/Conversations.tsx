@@ -224,7 +224,7 @@ export const ConversationsScreen: React.FC = () => {
 
   const tabs = [
     { key: 'active' as const, label: 'All' },
-    { key: 'archived' as const, label: 'On Queue' },
+    { key: 'archived' as const, label: 'Queue' },
     { key: 'all' as const, label: 'Resolved' },
   ]
 
@@ -293,7 +293,7 @@ export const ConversationsScreen: React.FC = () => {
           <View style={{ flexDirection: 'row', gap: 12, marginBottom: 16 }}>
             {[{icon: MessageCircle, color: theme.color.primary, value: stats.total, label: 'Total'},
               {icon: Users, color: theme.color.success, value: stats.active, label: 'All'},
-              {icon: Clock, color: theme.color.warning, value: stats.waiting, label: 'On Queue'},
+              {icon: Clock, color: theme.color.warning, value: stats.waiting, label: 'Queue'},
               {icon: CheckCircle2, color: theme.color.success, value: stats.resolved, label: 'Resolved'}].map((s, idx) => (
               <View key={idx} style={{
                 backgroundColor: theme.dark ? theme.color.secondary : theme.color.card,
