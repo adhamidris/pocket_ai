@@ -27,7 +27,10 @@ import {
   Smile,
   Meh,
   Frown,
-  Copy
+  Copy,
+  ClipboardList,
+  FileText,
+  Download
 } from 'lucide-react-native'
 
 interface Message {
@@ -67,6 +70,7 @@ export const ChatScreen: React.FC<ChatScreenProps> = ({
   const { theme } = useTheme()
   const [isTyping, setIsTyping] = useState(false)
   const [messages, setMessages] = useState<Message[]>([])
+  const [caseDetailsTab, setCaseDetailsTab] = useState<'chat' | 'overview' | 'documents' | 'history'>('overview')
   const scrollViewRef = useRef<ScrollView>(null)
 
   useEffect(() => {
@@ -166,12 +170,90 @@ export const ChatScreen: React.FC<ChatScreenProps> = ({
       default: return theme.color.mutedForeground
     }
   }
+  // Case meta (align with CustomerDetail)
+  const caseId = getCaseIdRef(conversation.id)
+  const date = formatShortDate(conversation.startedAt || conversation.lastMessage.timestamp)
+  const caseType = pickCaseType(conversation.tags || [])
+  const typeColor = getCaseTypeColor(caseType)
+  const { color: prColor, Icon: PrIcon } = getPriorityMeta(conversation.priority)
+  const { color: toneColor, Icon: ToneIcon, label: toneLabel } = getToneMeta(conversation.priority)
+  const title = (() => {
+    if ((conversation.tags || []).length > 0) {
+      const t = conversation.tags[0].toLowerCase()
+      if (t === 'billing') return 'Billing issue'
+      if (t === 'technical' || t === 'integration') return 'Integration/technical issue'
+      if (t === 'question') return 'Product question'
+      if (t === 'support') return 'Support request'
+    }
+    const txt = conversation.lastMessage?.text || ''
+    return txt.length > 60 ? txt.slice(0, 57) + '…' : txt || 'Customer case'
+  })()
+  const bgAlpha = (c: string) => c.startsWith('hsl(')
+    ? c.replace('hsl(', 'hsla(').replace(')', `,${theme.dark ? '0.20' : '0.12'})`)
+    : (theme.dark ? 'rgba(255,255,255,0.12)' : 'rgba(0,0,0,0.06)')
+
+  // Case details helpers (cloned from CustomerDetail)
+  const formatShortDateTime = (iso: string) => {
+    const d = new Date(iso)
+    return d.toLocaleString('en-US', { month: 'short', day: 'numeric' })
+  }
+  const getCaseSummary = (t: string) => {
+    const byType: Record<string, string[]> = {
+      billing: [
+        'Duplicate transaction on the latest invoice.',
+        'Statement total reflects the unintended repeat charge.'
+      ],
+      request: [
+        'CSV export for analytics requested.',
+        'Needed to share reports with stakeholders.'
+      ],
+      bug: [
+        'Integration webhook experienced timeouts.',
+        'Event delivery intermittently failed in the affected window.'
+      ],
+      complaint: [
+        'Service outcome did not meet expectations.',
+        'Dissatisfaction reported with the recent experience.'
+      ],
+      inquiry: [
+        'Clarification requested on a product capability.',
+        'Information needed before proceeding.'
+      ],
+      feedback: [
+        'Constructive feedback shared on product/support.',
+        'Captured for future improvement planning.'
+      ],
+    }
+    const lines = byType[t] || []
+    return lines.slice(0, 3).join('\n')
+  }
+  const getChannelStyle = (channel: string) => {
+    const abbrMap: Record<string, string> = {
+      email: 'EM', whatsapp: 'WA', web: 'WEB', instagram: 'IG', messenger: 'MSG', twitter: 'TW',
+    }
+    const label = abbrMap[channel] || channel.slice(0, 3).toUpperCase()
+    let color: string = theme.color.mutedForeground as any
+    switch (channel) {
+      case 'email': color = theme.color.primary as any; break
+      case 'whatsapp': color = 'hsl(142,71%,45%)'; break
+      case 'web': color = 'hsl(200,90%,50%)'; break
+      case 'instagram': color = 'hsl(291,70%,55%)'; break
+      case 'messenger': color = 'hsl(262,83%,58%)'; break
+      case 'twitter': color = 'hsl(210,10%,60%)'; break
+    }
+    const withAlpha = (c: string, a: number) => c.startsWith('hsl(')
+      ? c.replace('hsl(', 'hsla(').replace(')', `,${a})`)
+      : c
+    const bg = withAlpha(color, (theme.dark ? 0.28 : 0.12))
+    return { label, color, bg }
+  }
+  
 
   return (
     <Modal visible={visible} onClose={onClose} size="lg">
       <KeyboardAvoidingView 
         behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-        style={{ flex: 1 }}
+        style={{ flex: 1, position: 'relative' }}
       >
         {/* Chat Header (match CustomerDetail) */}
         <View style={{
@@ -269,200 +351,336 @@ export const ChatScreen: React.FC<ChatScreenProps> = ({
           </View>
         </View>
 
-        {/* Case sub-header (match CustomerDetail selected case) */}
-        {(() => {
-          const caseId = getCaseIdRef(conversation.id)
-          const date = formatShortDate(conversation.startedAt || conversation.lastMessage.timestamp)
-          const caseType = pickCaseType(conversation.tags || [])
-          const typeColor = getCaseTypeColor(caseType)
-          const { color: prColor, Icon: PrIcon } = getPriorityMeta(conversation.priority)
-          const { color: toneColor, Icon: ToneIcon, label: toneLabel } = getToneMeta(conversation.priority)
-          const title = (() => {
-            if ((conversation.tags || []).length > 0) {
-              const t = conversation.tags[0].toLowerCase()
-              if (t === 'billing') return 'Billing issue'
-              if (t === 'technical' || t === 'integration') return 'Integration/technical issue'
-              if (t === 'question') return 'Product question'
-              if (t === 'support') return 'Support request'
-            }
-            const txt = conversation.lastMessage?.text || ''
-            return txt.length > 60 ? txt.slice(0, 57) + '…' : txt || 'Customer case'
-          })()
-          const bgAlpha = (c: string) => c.startsWith('hsl(') ? c.replace('hsl(', 'hsla(').replace(')', `,${theme.dark ? '0.20' : '0.12'})`) : (theme.dark ? 'rgba(255,255,255,0.12)' : 'rgba(0,0,0,0.06)')
-          return (
-            <Card
-              variant="flat"
-              style={{
-                paddingTop: 8,
-                paddingHorizontal: 16,
-                paddingBottom: 16,
-                marginBottom: 0,
-                ...(Platform.select({
-                  ios: { shadowColor: 'transparent', shadowOpacity: 0, shadowRadius: 0, shadowOffset: { width: 0, height: 0 } },
-                  android: { elevation: 0 },
-                  default: {},
-                }) as any),
-              }}
-            >
-              <View style={{ gap: 6, marginBottom: 10 }}>
-                {/* ID left • Date right */}
-                <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
-                  <Text style={{ color: theme.color.mutedForeground, fontSize: 12 }}>{caseId}</Text>
-                  <Text style={{ color: theme.color.mutedForeground, fontSize: 12 }}>{date}</Text>
+        {/* Case sub-header removed (merged into tabs card for parity with CustomerDetail) */}
+
+        {/* Case details sub-tabs (from CustomerDetail) */}
+        <Card
+          variant="flat"
+          style={{
+            paddingTop: 8,
+            paddingHorizontal: 16,
+            paddingBottom: 16,
+            marginBottom: 0,
+            ...(Platform.select({
+              ios: { shadowColor: 'transparent', shadowOpacity: 0, shadowRadius: 0, shadowOffset: { width: 0, height: 0 } },
+              android: { elevation: 0 },
+              default: {},
+            }) as any),
+          }}
+        >
+        {/* Static Case Header (exact CustomerDetail structure) */}
+        <View style={{ gap: 6, marginBottom: 10 }}>
+          {/* ID left • Date right */}
+          <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+            <Text style={{ color: theme.color.mutedForeground, fontSize: 12 }}>{caseId}</Text>
+            <Text style={{ color: theme.color.mutedForeground, fontSize: 12 }}>{date}</Text>
+          </View>
+          {/* Title + chips */}
+          <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 10 }}>
+            <Text style={{ color: theme.color.cardForeground, fontSize: 16, fontWeight: '800', flex: 1, minWidth: 0 }} numberOfLines={2}>
+              {title}
+            </Text>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, flexShrink: 0 }}>
+              <View style={{ backgroundColor: typeColor as any, borderRadius: 12, paddingHorizontal: 6, paddingVertical: 3 }}>
+                <Text style={{ color: '#fff', fontSize: 11, fontWeight: '800' }}>{caseType.toUpperCase()}</Text>
+              </View>
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, backgroundColor: bgAlpha(prColor as any) as any, borderRadius: 12, paddingHorizontal: 6, paddingVertical: 3 }}>
+                <PrIcon size={12} color={prColor as any} />
+                <Text style={{ color: prColor as any, fontSize: 11, fontWeight: '700' }}>{conversation.priority.toUpperCase()}</Text>
+              </View>
+            </View>
+          </View>
+          {/* Meta: Tone, Satisfaction */}
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+              <ToneIcon size={14} color={toneColor as any} />
+              <Text style={{ color: theme.color.cardForeground, fontSize: 13, fontWeight: '600' }}>Tone</Text>
+              <Text style={{ color: toneColor as any, fontSize: 13, fontWeight: '700' }}>{toneLabel}</Text>
+            </View>
+            <View style={{ width: 1, height: 16, backgroundColor: theme.color.border }} />
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+              <Smile size={14} color={theme.color.warning as any} />
+              <Text style={{ color: theme.color.cardForeground, fontSize: 13, fontWeight: '600' }}>Satisfaction</Text>
+              <Text style={{ color: theme.color.warning, fontSize: 13, fontWeight: '700' }}>{typeof conversation.satisfaction === 'number' ? `${conversation.satisfaction}%` : '—'}</Text>
+            </View>
+          </View>
+        </View>
+        {/* Slightly wider content area after header */}
+        <View style={{ marginHorizontal: -6 }}>
+          <View style={{ backgroundColor: theme.color.muted, borderRadius: theme.radius.md, padding: 6, marginTop: 0, marginBottom: 10, flexDirection: 'row' }}>
+            {([
+              { key: 'overview', label: 'Overview' },
+              { key: 'documents', label: 'Documents' },
+              { key: 'history', label: 'History' },
+              { key: 'chat', label: 'Chat' },
+            ] as const).map(t => (
+              <TouchableOpacity
+                key={t.key}
+                onPress={() => setCaseDetailsTab(t.key)}
+                style={{
+                  flexDirection: 'row',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  paddingVertical: 9,
+                  borderRadius: theme.radius.sm,
+                  backgroundColor: caseDetailsTab === t.key ? theme.color.card : 'transparent',
+                  marginBottom: 0,
+                  ...(t.key !== 'chat' ? { marginRight: 6 } : {}),
+                  flex: 1
+                }}
+              >
+                <Text style={{ color: caseDetailsTab === t.key ? theme.color.primary : theme.color.mutedForeground, fontSize: 13, fontWeight: '700' }}>{t.label}</Text>
+              </TouchableOpacity>
+            ))}
+          </View>
+
+          {/* Tab content area */}
+          {caseDetailsTab === 'chat' ? (
+          <ScrollView 
+            ref={scrollViewRef}
+            style={{ flex: 1, marginBottom: 16 }}
+            showsVerticalScrollIndicator={false}
+            contentContainerStyle={{ paddingBottom: 96 }}
+          >
+            {messages.map((message) => (
+              <View key={message.id} style={{ marginBottom: 16 }}>
+                <View style={{
+                  alignItems: message.isBot ? 'flex-start' : 'flex-end',
+                  marginBottom: 4
+                }}>
+                  <View style={{
+                    maxWidth: '80%',
+                    backgroundColor: message.isBot 
+                      ? theme.color.muted 
+                      : theme.color.primary,
+                    borderRadius: 16,
+                    paddingHorizontal: 16,
+                    paddingVertical: 12
+                  }}>
+                    <Text style={{
+                      color: message.isBot 
+                        ? theme.color.cardForeground 
+                        : '#fff',
+                      fontSize: 15,
+                      lineHeight: 20
+                    }}>
+                      {message.text}
+                    </Text>
+                  </View>
                 </View>
-                {/* Title + chips */}
-                <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 10 }}>
-                  <Text style={{ color: theme.color.cardForeground, fontSize: 16, fontWeight: '800', flex: 1, minWidth: 0 }} numberOfLines={2}>
-                    {title}
+                
+                {/* Message Info */}
+                <View style={{
+                  flexDirection: 'row',
+                  alignItems: 'center',
+                  justifyContent: message.isBot ? 'flex-start' : 'flex-end',
+                  gap: 6,
+                  paddingHorizontal: 4
+                }}>
+                  {message.isBot ? (
+                    <Bot size={12} color={theme.color.primary} />
+                  ) : (
+                    <User size={12} color={theme.color.mutedForeground} />
+                  )}
+                  
+                  <Text style={{
+                    color: theme.color.mutedForeground,
+                    fontSize: 11
+                  }}>
+                    {formatTime(message.timestamp)}
                   </Text>
-                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, flexShrink: 0 }}>
-                    <View style={{ backgroundColor: typeColor as any, borderRadius: 12, paddingHorizontal: 6, paddingVertical: 3 }}>
-                      <Text style={{ color: '#fff', fontSize: 11, fontWeight: '800' }}>{caseType.toUpperCase()}</Text>
-                    </View>
-                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, backgroundColor: bgAlpha(prColor as any) as any, borderRadius: 12, paddingHorizontal: 6, paddingVertical: 3 }}>
-                      <PrIcon size={12} color={prColor as any} />
-                      <Text style={{ color: prColor as any, fontSize: 11, fontWeight: '700' }}>{conversation.priority.toUpperCase()}</Text>
-                    </View>
-                  </View>
-                </View>
-                {/* Tone + Satisfaction */}
-                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
-                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-                    <ToneIcon size={14} color={toneColor as any} />
-                    <Text style={{ color: theme.color.cardForeground, fontSize: 13, fontWeight: '600' }}>Tone</Text>
-                    <Text style={{ color: toneColor as any, fontSize: 13, fontWeight: '700' }}>{toneLabel}</Text>
-                  </View>
-                  <View style={{ width: 1, height: 16, backgroundColor: theme.color.border }} />
-                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-                    <Smile size={14} color={theme.color.warning as any} />
-                    <Text style={{ color: theme.color.cardForeground, fontSize: 13, fontWeight: '600' }}>Satisfaction</Text>
-                    <Text style={{ color: theme.color.warning, fontSize: 13, fontWeight: '700' }}>{typeof conversation.satisfaction === 'number' ? `${conversation.satisfaction}%` : '—'}</Text>
-                  </View>
+                  
+                  {!message.isBot && getMessageStatusIcon(message.status)}
                 </View>
               </View>
-            </Card>
-          )
-        })()}
+            ))}
 
-        {/* Messages */}
-        <ScrollView 
-          ref={scrollViewRef}
-          style={{ flex: 1, marginBottom: 16 }}
-          showsVerticalScrollIndicator={false}
-        >
-          {messages.map((message, index) => (
-            <View key={message.id} style={{ marginBottom: 16 }}>
+            {/* Typing Indicator */}
+            {isTyping && (
               <View style={{
-                alignItems: message.isBot ? 'flex-start' : 'flex-end',
-                marginBottom: 4
+                alignItems: 'flex-start',
+                marginBottom: 16
               }}>
                 <View style={{
-                  maxWidth: '80%',
-                  backgroundColor: message.isBot 
-                    ? theme.color.muted 
-                    : theme.color.primary,
+                  backgroundColor: theme.color.muted,
                   borderRadius: 16,
                   paddingHorizontal: 16,
-                  paddingVertical: 12
+                  paddingVertical: 12,
+                  flexDirection: 'row',
+                  alignItems: 'center',
+                  gap: 8
                 }}>
+                  <Bot size={16} color={theme.color.primary} />
+                  <TypingDots color={theme.color.mutedForeground} />
                   <Text style={{
-                    color: message.isBot 
-                      ? theme.color.cardForeground 
-                      : '#fff',
-                    fontSize: 15,
-                    lineHeight: 20
+                    color: theme.color.mutedForeground,
+                    fontSize: 14,
+                    fontStyle: 'italic'
                   }}>
-                    {message.text}
+                    AI is typing...
                   </Text>
                 </View>
               </View>
-              
-              {/* Message Info */}
-              <View style={{
-                flexDirection: 'row',
-                alignItems: 'center',
-                justifyContent: message.isBot ? 'flex-start' : 'flex-end',
-                gap: 6,
-                paddingHorizontal: 4
-              }}>
-                {message.isBot ? (
-                  <Bot size={12} color={theme.color.primary} />
-                ) : (
-                  <User size={12} color={theme.color.mutedForeground} />
-                )}
-                
-                <Text style={{
-                  color: theme.color.mutedForeground,
-                  fontSize: 11
-                }}>
-                  {formatTime(message.timestamp)}
-                </Text>
-                
-                {!message.isBot && getMessageStatusIcon(message.status)}
-              </View>
-            </View>
-          ))}
-
-          {/* Typing Indicator */}
-          {isTyping && (
-            <View style={{
-              alignItems: 'flex-start',
-              marginBottom: 16
-            }}>
-              <View style={{
-                backgroundColor: theme.color.muted,
-                borderRadius: 16,
-                paddingHorizontal: 16,
-                paddingVertical: 12,
-                flexDirection: 'row',
-                alignItems: 'center',
-                gap: 8
-              }}>
-                <Bot size={16} color={theme.color.primary} />
-                <TypingDots color={theme.color.mutedForeground} />
-                <Text style={{
-                  color: theme.color.mutedForeground,
-                  fontSize: 14,
-                  fontStyle: 'italic'
-                }}>
-                  AI is typing...
-                </Text>
-              </View>
-            </View>
-          )}
-        </ScrollView>
-
-        {/* Message Input removed intentionally */}
-
-        {/* Quick Actions: three equal-width buttons across full row */}
-        <View style={{ flexDirection: 'row', gap: 8, marginTop: 12 }}>
-          <View style={{ flex: 1 }}>
-            <Button
-              title="Resolve"
-              variant="outline"
-              size="md"
-              fullWidth
-              onPress={() => Alert.alert('Resolve', 'Mark this conversation as resolved?')}
-            />
+            )}
+          </ScrollView>
+        ) : (
+          <View style={{ flex: 1, minHeight: 0 }}>
+            <ScrollView
+              nestedScrollEnabled
+              showsVerticalScrollIndicator
+              keyboardShouldPersistTaps="always"
+              style={{ flex: 1 }}
+              contentContainerStyle={{ paddingBottom: 96 }}
+            >
+              {(() => {
+                const caseType = pickCaseType(conversation.tags || [])
+                if (caseDetailsTab === 'overview') {
+                  const aiActionsByType: Record<string, string[]> = {
+                    billing: ['Collected invoice IDs from user', 'Summarized billing history to the customer'],
+                    request: ['Captured user use-case and frequency'],
+                    bug: ['Guided user through workaround', 'Checked rate limits and recent errors'],
+                    complaint: ['Analyzed queue wait times'],
+                    inquiry: ['Provided feature overview and examples'],
+                    feedback: ['Tagged product team with summary'],
+                  }
+                  const requiredActionsByType: Record<string, string[]> = {
+                    billing: ['Verify last two invoices', 'Issue refund for duplicate charge'],
+                    request: ['Create product ticket and tag as feature'],
+                    bug: ['Escalate to the engineering team', 'Verify recent errors and logs'],
+                    complaint: ['Apologize and share SLA timeline'],
+                    inquiry: ['Share documentation and clarify usage'],
+                    feedback: [],
+                  }
+                  const aiActions = aiActionsByType[caseType] || []
+                  const requiredActions = requiredActionsByType[caseType] || []
+                  return (
+                    <View>
+                      {/* AI Diagnoses */}
+                      <View style={{ marginBottom: 0 }}>
+                        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 6 }}>
+                          <ClipboardList size={14} color={theme.color.mutedForeground as any} />
+                          <Text style={{ color: theme.color.cardForeground, fontSize: 14, fontWeight: '700' }}>AI Diagnoses</Text>
+                        </View>
+                        <Text style={{ color: theme.color.mutedForeground, fontSize: 13, lineHeight: 20 }}>
+                          {getCaseSummary(caseType)}
+                        </Text>
+                      </View>
+                      {/* Separator */}
+                      <View style={{ height: 1, backgroundColor: theme.color.border, marginTop: 8, marginBottom: 8 }} />
+                      {/* AI Actions Taken */}
+                      <View style={{ marginBottom: 0 }}>
+                        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 6 }}>
+                          <Bot size={14} color={theme.color.mutedForeground as any} />
+                          <Text style={{ color: theme.color.cardForeground, fontSize: 14, fontWeight: '700' }}>AI Actions Taken</Text>
+                        </View>
+                        <View style={{ gap: 8 }}>
+                          {aiActions.length === 0 ? (
+                            <Text style={{ color: theme.color.mutedForeground, fontSize: 13 }}>No AI actions recorded.</Text>
+                          ) : (
+                            aiActions.map((a, i) => (
+                              <View key={i} style={{ flexDirection: 'row', alignItems: 'flex-start' }}>
+                                <Text style={{ color: theme.color.cardForeground, fontSize: 13, flex: 1 }}>{a}</Text>
+                              </View>
+                            ))
+                          )}
+                        </View>
+                      </View>
+                      {/* Separator */}
+                      <View style={{ height: 1, backgroundColor: theme.color.border, marginTop: 8, marginBottom: 8 }} />
+                      {/* Suggested Actions */}
+                      <View>
+                        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 6 }}>
+                          <ClipboardList size={14} color={theme.color.mutedForeground as any} />
+                          <Text style={{ color: theme.color.cardForeground, fontSize: 14, fontWeight: '700' }}>Suggested Actions</Text>
+                        </View>
+                        <View style={{ gap: 8 }}>
+                          {requiredActions.length === 0 ? (
+                            <Text style={{ color: theme.color.mutedForeground, fontSize: 13 }}>No pending actions.</Text>
+                          ) : (
+                            requiredActions.map((a, i) => (
+                              <View key={i} style={{ flexDirection: 'row', alignItems: 'flex-start' }}>
+                                <Text style={{ color: theme.color.cardForeground, fontSize: 13, flex: 1 }}>{a}</Text>
+                              </View>
+                            ))
+                          )}
+                        </View>
+                      </View>
+                    </View>
+                  )
+                }
+                if (caseDetailsTab === 'documents') {
+                  return (
+                    <View>
+                      {/* Grabbed Documents */}
+                      <View>
+                        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 6 }}>
+                          <FileText size={14} color={theme.color.mutedForeground as any} />
+                          <Text style={{ color: theme.color.cardForeground, fontSize: 14, fontWeight: '700' }}>Grabbed Documents</Text>
+                        </View>
+                        <View style={{ gap: 2 }}>
+                          {['Invoice_2024-01-13_1025.pdf','Chat_Transcript_2024-01-15.txt','Screenshot_Account_Settings.png'].map((name, i) => (
+                            <View key={i} style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingVertical: 8 }}>
+                              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                                <FileText size={14} color={theme.color.mutedForeground as any} />
+                                <Text style={{ color: theme.color.cardForeground, fontSize: 13 }}>{name}</Text>
+                              </View>
+                              <TouchableOpacity style={{ padding: 4 }} onPress={() => Alert.alert('Download', `Downloading ${name}...`)}>
+                                <Download size={14} color={theme.color.mutedForeground as any} />
+                              </TouchableOpacity>
+                            </View>
+                          ))}
+                        </View>
+                      </View>
+                    </View>
+                  )
+                }
+                if (caseDetailsTab === 'history') {
+                  return (
+                    <View>
+                      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 6 }}>
+                        <ClipboardList size={14} color={theme.color.mutedForeground as any} />
+                        <Text style={{ color: theme.color.cardForeground, fontSize: 14, fontWeight: '700' }}>Timeline</Text>
+                      </View>
+                      <View style={{ gap: 8 }}>
+                        {[
+                          { id: 'u1', date: formatShortDateTime(conversation.startedAt), channel: 'web', text: 'Chat session started by customer.' },
+                          { id: 'u2', date: formatShortDateTime(conversation.lastMessage.timestamp), channel: 'email', text: 'Follow-up message sent with resolution summary.' },
+                        ].map((u, idx, arr) => (
+                          <View key={u.id}>
+                            <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 2 }}>
+                              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                                <Text style={{ color: theme.color.mutedForeground, fontSize: 12 }}>{u.date}</Text>
+                                {(() => { const cs = getChannelStyle(u.channel); return (
+                                  <View style={{ backgroundColor: cs.bg as any, paddingHorizontal: 6, paddingVertical: 2, borderRadius: theme.radius.sm }}>
+                                    <Text style={{ color: (theme.dark ? ('#ffffff' as any) : (cs.color as any)), fontSize: 10, fontWeight: '700' }}>{cs.label}</Text>
+                                  </View>
+                                )})()}
+                              </View>
+                              <Text style={{ color: theme.color.mutedForeground, fontSize: 12 }}>Session Summary</Text>
+                            </View>
+                            <Text style={{ color: theme.color.cardForeground, fontSize: 13 }}>
+                              {u.text}
+                            </Text>
+                            {idx !== arr.length - 1 && (
+                              <View style={{ height: 1, backgroundColor: theme.color.border, marginTop: 8, marginBottom: 8 }} />
+                            )}
+                          </View>
+                        ))}
+                      </View>
+                    </View>
+                  )
+                }
+                return null
+              })()}
+            </ScrollView>
           </View>
-          <View style={{ flex: 1 }}>
-            <Button
-              title="Transfer"
-              variant="outline"
-              size="md"
-              fullWidth
-              onPress={() => Alert.alert('Transfer', 'Transfer to another agent?')}
-            />
-          </View>
-          <View style={{ flex: 1 }}>
-            <Button
-              title="Escalate"
-              variant="outline"
-              size="md"
-              fullWidth
-              onPress={() => Alert.alert('Escalate', 'Escalate to human agent?')}
-            />
-          </View>
+        )}
+        </View>
+        </Card>
+
+        {/* Fixed bottom Close button */}
+        <View style={{ position: 'absolute', left: 16, right: 16, bottom: 16 }}>
+          <Button title="Close" variant="default" size="lg" fullWidth onPress={onClose} />
         </View>
       </KeyboardAvoidingView>
     </Modal>
