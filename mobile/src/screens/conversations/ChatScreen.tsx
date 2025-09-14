@@ -368,7 +368,7 @@ export const ChatScreen: React.FC<ChatScreenProps> = ({
                   backgroundColor: caseDetailsTab === t.key ? theme.color.card : 'transparent',
                   marginBottom: 0,
                   ...(t.key !== 'chat' ? { marginRight: 6 } : {}),
-                  flex: 1
+                  flex: t.key === 'documents' ? 1.15 : 1
                 }}
               >
                 <Text style={{ color: caseDetailsTab === t.key ? theme.color.primary : theme.color.mutedForeground, fontSize: 13, fontWeight: '700' }}>{t.label}</Text>
