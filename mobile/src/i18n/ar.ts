@@ -1,9 +1,9 @@
 const ar = {
   // Navigation
   nav: {
-    dashboard: "لوحة التحكم",
-    conversations: "المحادثات",
-    crm: "إدارة العملاء", 
+    dashboard: "الرئيسية",
+    conversations: "القضايا",
+    crm: "العملاء", 
     agents: "الوكلاء",
     settings: "الإعدادات"
   },
@@ -134,7 +134,7 @@ const ar = {
 
   // Dashboard
   dashboard: {
-    title: "لوحة التحكم",
+    title: "الرئيسية",
     welcome: "مرحباً بك",
     stats: {
       activeConversations: "المحادثات النشطة",
@@ -149,7 +149,7 @@ const ar = {
 
   // Conversations
   conversations: {
-    title: "المحادثات",
+    title: "القضايا",
     active: "نشطة",
     archived: "مؤرشفة", 
     all: "الكل",
@@ -165,7 +165,7 @@ const ar = {
 
   // CRM
   crm: {
-    title: "إدارة العملاء",
+    title: "العملاء",
     customers: "العملاء",
     segments: "القطاعات",
     insights: "الإحصائيات",

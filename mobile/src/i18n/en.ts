@@ -1,9 +1,9 @@
 const en = {
   // Navigation
   nav: {
-    dashboard: "Dashboard",
-    conversations: "Conversations", 
-    crm: "CRM",
+    dashboard: "Home",
+    conversations: "Cases", 
+    crm: "Customers",
     agents: "Agents",
     settings: "Settings"
   },
@@ -127,7 +127,7 @@ const en = {
 
   // Dashboard
   dashboard: {
-    title: "Dashboard",
+    title: "Home",
     welcome: "Welcome back",
     stats: {
       activeConversations: "Active Conversations",
@@ -142,7 +142,7 @@ const en = {
 
   // Conversations
   conversations: {
-    title: "Conversations",
+    title: "Cases",
     active: "Active", 
     archived: "Archived",
     all: "All",
@@ -158,7 +158,7 @@ const en = {
 
   // CRM
   crm: {
-    title: "CRM",
+    title: "Customers",
     customers: "Customers",
     segments: "Segments",
     insights: "Insights",
