@@ -154,10 +154,10 @@ export const CreateAgent: React.FC<CreateAgentProps> = ({ visible, onClose, onSa
         {/* Agent Name */}
         <View
           ref={sectionRefs.basic}
-          style={{ marginBottom: 16 }}
+          style={{ marginBottom: 20 }}
           onLayout={(e) => setSectionLayout('basic', e.nativeEvent.layout.y, e.nativeEvent.layout.height)}
         >
-          <Text style={{ color: theme.color.cardForeground, fontSize: 16, fontWeight: '600', marginBottom: 16 }}>Agent Name</Text>
+          <Text style={{ color: theme.color.cardForeground, fontSize: 16, fontWeight: '600', marginBottom: 12 }}>Agent Name</Text>
           <Input
             value={formData.name}
             onChangeText={(text) => setFormData(prev => ({ ...prev, name: text }))}
@@ -166,7 +166,7 @@ export const CreateAgent: React.FC<CreateAgentProps> = ({ visible, onClose, onSa
             borderless
             surface="accent"
           />
-          <Text style={{ color: theme.color.mutedForeground, fontSize: 12, marginTop: 6 }}>
+          <Text style={{ color: theme.color.mutedForeground, fontSize: 12, marginTop: 8 }}>
             Use a friendly, recognizable name.
           </Text>
           
@@ -177,10 +177,10 @@ export const CreateAgent: React.FC<CreateAgentProps> = ({ visible, onClose, onSa
         {/* Role */}
         <View
           ref={sectionRefs.role}
-          style={{ marginBottom: 16 }}
+          style={{ marginBottom: 20 }}
           onLayout={(e) => setSectionLayout('role', e.nativeEvent.layout.y, e.nativeEvent.layout.height)}
         >
-          <Text style={{ color: theme.color.cardForeground, fontSize: 16, fontWeight: '600', marginBottom: 16 }}>
+          <Text style={{ color: theme.color.cardForeground, fontSize: 16, fontWeight: '600', marginBottom: 12 }}>
             Role
           </Text>
           <View style={{ flexDirection: 'row', flexWrap: 'wrap' }}>
@@ -219,7 +219,7 @@ export const CreateAgent: React.FC<CreateAgentProps> = ({ visible, onClose, onSa
               )
             })}
           </View>
-          <Text style={{ color: theme.color.mutedForeground, fontSize: 12, marginTop: 6 }}>
+          <Text style={{ color: theme.color.mutedForeground, fontSize: 12, marginTop: 8 }}>
             You can select multiple titles for this agent, or create separate agents for different roles if needed.
           </Text>
         </View>
@@ -228,10 +228,10 @@ export const CreateAgent: React.FC<CreateAgentProps> = ({ visible, onClose, onSa
         {/* Tone */}
         <View 
           ref={sectionRefs.tone} 
-          style={{ marginBottom: 16 }}
+          style={{ marginBottom: 20 }}
           onLayout={(e) => setSectionLayout('tone', e.nativeEvent.layout.y, e.nativeEvent.layout.height)}
         >
-          <Text style={{ color: theme.color.cardForeground, fontSize: 16, fontWeight: '600', marginBottom: 16 }}>
+          <Text style={{ color: theme.color.cardForeground, fontSize: 16, fontWeight: '600', marginBottom: 12 }}>
             Tone
           </Text>
           <View style={{ flexDirection: 'row', flexWrap: 'wrap' }}>
@@ -264,7 +264,7 @@ export const CreateAgent: React.FC<CreateAgentProps> = ({ visible, onClose, onSa
               )
             })}
           </View>
-          <Text style={{ color: theme.color.mutedForeground, fontSize: 12, marginTop: 6 }}>
+          <Text style={{ color: theme.color.mutedForeground, fontSize: 12, marginTop: 8 }}>
             Choose one tone for now — you can adjust this later.
           </Text>
         </View>
@@ -273,10 +273,10 @@ export const CreateAgent: React.FC<CreateAgentProps> = ({ visible, onClose, onSa
         {/* Traits */}
         <View 
           ref={sectionRefs.traits} 
-          style={{ marginBottom: 16 }}
+          style={{ marginBottom: 20 }}
           onLayout={(e) => setSectionLayout('traits', e.nativeEvent.layout.y, e.nativeEvent.layout.height)}
         >
-          <Text style={{ color: theme.color.cardForeground, fontSize: 16, fontWeight: '600', marginBottom: 16 }}>
+          <Text style={{ color: theme.color.cardForeground, fontSize: 16, fontWeight: '600', marginBottom: 12 }}>
             Traits
           </Text>
           <View style={{ flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center' }}>
@@ -312,7 +312,7 @@ export const CreateAgent: React.FC<CreateAgentProps> = ({ visible, onClose, onSa
               )
             })}
           </View>
-          <Text style={{ color: theme.color.mutedForeground, fontSize: 12, marginTop: 6 }}>
+          <Text style={{ color: theme.color.mutedForeground, fontSize: 12, marginTop: 8 }}>
             Pick a few traits to guide the agent’s personality and style.
           </Text>
         </View>
@@ -321,10 +321,10 @@ export const CreateAgent: React.FC<CreateAgentProps> = ({ visible, onClose, onSa
         {/* Escalation Rules */}
         <View 
           ref={sectionRefs.escalation} 
-          style={{ marginBottom: 16 }}
+          style={{ marginBottom: 20 }}
           onLayout={(e) => setSectionLayout('escalation', e.nativeEvent.layout.y, e.nativeEvent.layout.height)}
         >
-          <Text style={{ color: theme.color.cardForeground, fontSize: 16, fontWeight: '600', marginBottom: 16 }}>
+          <Text style={{ color: theme.color.cardForeground, fontSize: 16, fontWeight: '600', marginBottom: 12 }}>
             Escalation rules
           </Text>
           <View style={{ flexDirection: 'row', flexWrap: 'wrap' }}>
@@ -357,7 +357,7 @@ export const CreateAgent: React.FC<CreateAgentProps> = ({ visible, onClose, onSa
               )
             })}
           </View>
-          <Text style={{ color: theme.color.mutedForeground, fontSize: 12, marginTop: 6 }}>
+          <Text style={{ color: theme.color.mutedForeground, fontSize: 12, marginTop: 8 }}>
             Set when to hand off to a human. You can refine this later.
           </Text>
         </View>
