@@ -126,7 +126,11 @@ export const Button: React.FC<{
     }
   })()
 
-  const color = variant === 'default' || variant === 'secondary' ? '#fff' : theme.color.foreground
+  const color = (() => {
+    if (variant === 'default' || variant === 'secondary') return '#fff'
+    if (variant === 'link') return theme.color.mutedForeground
+    return theme.color.foreground
+  })()
 
   return (
     <TouchableOpacity 

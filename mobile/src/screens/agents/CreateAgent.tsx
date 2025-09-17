@@ -19,7 +19,7 @@ export const CreateAgent: React.FC<CreateAgentProps> = ({ visible, onClose, onSa
   
   const [formData, setFormData] = useState({
     name: '',
-    role: '',
+    roles: [] as string[],
     tone: '',
     traits: [] as string[],
     escalationRule: '',
@@ -107,7 +107,8 @@ export const CreateAgent: React.FC<CreateAgentProps> = ({ visible, onClose, onSa
       name: formData.name,
       persona: (formData.tone || 'professional').toLowerCase(),
       department: 'support',
-      role: formData.role,
+      role: formData.roles[0] || '',
+      roles: formData.roles,
       tone: formData.tone,
       traits: formData.traits,
       escalationRule: formData.escalationRule,
@@ -128,7 +129,8 @@ export const CreateAgent: React.FC<CreateAgentProps> = ({ visible, onClose, onSa
       tone: '',
       traits: [],
       escalationRule: '',
-      tools: []
+      tools: [],
+      roles: []
     })
   }
 
@@ -164,6 +166,9 @@ export const CreateAgent: React.FC<CreateAgentProps> = ({ visible, onClose, onSa
             borderless
             surface="accent"
           />
+          <Text style={{ color: theme.color.mutedForeground, fontSize: 12, marginTop: 6 }}>
+            Use a friendly, recognizable name.
+          </Text>
           
           {/* Description removed */}
         </View>
@@ -180,11 +185,17 @@ export const CreateAgent: React.FC<CreateAgentProps> = ({ visible, onClose, onSa
           </Text>
           <View style={{ flexDirection: 'row', flexWrap: 'wrap' }}>
             {roles.map((r) => {
-              const selected = formData.role === r
+              const selected = formData.roles.includes(r)
               return (
                 <TouchableOpacity
                   key={r}
-                  onPress={() => { setFormData(prev => ({ ...prev, role: r })); centerAfterLayout('role') }}
+                  onPress={() => {
+                    setFormData(prev => ({
+                      ...prev,
+                      roles: selected ? prev.roles.filter(x => x !== r) : [...prev.roles, r]
+                    }))
+                    centerAfterLayout('role')
+                  }}
                   activeOpacity={0.8}
                   style={{
                     marginRight: 8,
@@ -208,12 +219,15 @@ export const CreateAgent: React.FC<CreateAgentProps> = ({ visible, onClose, onSa
               )
             })}
           </View>
+          <Text style={{ color: theme.color.mutedForeground, fontSize: 12, marginTop: 6 }}>
+            You can select multiple titles for this agent, or create separate agents for different roles if needed.
+          </Text>
         </View>
 
         <View style={{ height: 1, backgroundColor: theme.color.border, marginBottom: 16 }} />
         {/* Tone */}
-        <View
-          ref={sectionRefs.tone}
+        <View 
+          ref={sectionRefs.tone} 
           style={{ marginBottom: 16 }}
           onLayout={(e) => setSectionLayout('tone', e.nativeEvent.layout.y, e.nativeEvent.layout.height)}
         >
@@ -250,12 +264,15 @@ export const CreateAgent: React.FC<CreateAgentProps> = ({ visible, onClose, onSa
               )
             })}
           </View>
+          <Text style={{ color: theme.color.mutedForeground, fontSize: 12, marginTop: 6 }}>
+            Choose one tone for now — you can adjust this later.
+          </Text>
         </View>
 
         <View style={{ height: 1, backgroundColor: theme.color.border, marginBottom: 16 }} />
         {/* Traits */}
-        <View
-          ref={sectionRefs.traits}
+        <View 
+          ref={sectionRefs.traits} 
           style={{ marginBottom: 16 }}
           onLayout={(e) => setSectionLayout('traits', e.nativeEvent.layout.y, e.nativeEvent.layout.height)}
         >
@@ -295,12 +312,15 @@ export const CreateAgent: React.FC<CreateAgentProps> = ({ visible, onClose, onSa
               )
             })}
           </View>
+          <Text style={{ color: theme.color.mutedForeground, fontSize: 12, marginTop: 6 }}>
+            Pick a few traits to guide the agent’s personality and style.
+          </Text>
         </View>
 
         <View style={{ height: 1, backgroundColor: theme.color.border, marginBottom: 16 }} />
         {/* Escalation Rules */}
-        <View
-          ref={sectionRefs.escalation}
+        <View 
+          ref={sectionRefs.escalation} 
           style={{ marginBottom: 16 }}
           onLayout={(e) => setSectionLayout('escalation', e.nativeEvent.layout.y, e.nativeEvent.layout.height)}
         >
@@ -337,6 +357,9 @@ export const CreateAgent: React.FC<CreateAgentProps> = ({ visible, onClose, onSa
               )
             })}
           </View>
+          <Text style={{ color: theme.color.mutedForeground, fontSize: 12, marginTop: 6 }}>
+            Set when to hand off to a human. You can refine this later.
+          </Text>
         </View>
 
         
@@ -346,12 +369,6 @@ export const CreateAgent: React.FC<CreateAgentProps> = ({ visible, onClose, onSa
             title="Create Agent"
             onPress={handleSave}
             variant="premium"
-            size="lg"
-          />
-          <Button
-            title={t('common.cancel')}
-            onPress={onClose}
-            variant="ghost"
             size="lg"
           />
         </View>
