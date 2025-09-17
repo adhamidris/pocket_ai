@@ -73,7 +73,7 @@ export const AgentsScreen: React.FC = () => {
     <SafeAreaView style={{ flex: 1, backgroundColor: theme.color.background }}>
       <View style={{ flex: 1 }}>
         {/* Header */}
-        <View style={{ paddingHorizontal: 24, paddingTop: insets.top + 12, paddingBottom: 16 }}>
+        <View style={{ paddingHorizontal: 24, paddingTop: 12, paddingBottom: 16 }}>
           <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
             <Text style={{
               color: theme.color.foreground,
@@ -98,12 +98,12 @@ export const AgentsScreen: React.FC = () => {
           </View>
 
           {/* Stats */}
-          <View style={{ flexDirection: 'row', gap: 16 }}>
+          <View style={{ flexDirection: 'row', gap: 12 }}>
             <View style={{
               backgroundColor: theme.color.card,
               borderRadius: theme.radius.md,
-              paddingHorizontal: 12,
-              paddingVertical: 8,
+              paddingHorizontal: 14,
+              paddingVertical: 10,
               flex: 1
             }}>
               <Text style={{
@@ -111,22 +111,23 @@ export const AgentsScreen: React.FC = () => {
                 fontSize: 20,
                 fontWeight: '700',
                 textAlign: 'center'
-              }}>
+              }} numberOfLines={1} ellipsizeMode="clip" allowFontScaling={false}>
                 {agents.filter(a => a.status === 'active').length}
               </Text>
               <Text style={{
                 color: theme.color.mutedForeground,
                 fontSize: 12,
-                textAlign: 'center'
-              }}>
+                textAlign: 'center',
+                flexShrink: 1
+              }} numberOfLines={1} ellipsizeMode="clip" allowFontScaling={false}>
                 Active
               </Text>
             </View>
             <View style={{
               backgroundColor: theme.color.card,
               borderRadius: theme.radius.md,
-              paddingHorizontal: 12,
-              paddingVertical: 8,
+              paddingHorizontal: 14,
+              paddingVertical: 10,
               flex: 1
             }}>
               <Text style={{
@@ -134,14 +135,15 @@ export const AgentsScreen: React.FC = () => {
                 fontSize: 20,
                 fontWeight: '700',
                 textAlign: 'center'
-              }}>
+              }} numberOfLines={1} ellipsizeMode="clip" allowFontScaling={false}>
                 {agents.filter(a => a.status === 'inactive').length}
               </Text>
               <Text style={{
                 color: theme.color.mutedForeground,
                 fontSize: 12,
-                textAlign: 'center'
-              }}>
+                textAlign: 'center',
+                flexShrink: 1
+              }} numberOfLines={1} ellipsizeMode="clip" allowFontScaling={false}>
                 Inactive
               </Text>
             </View>
@@ -152,7 +154,7 @@ export const AgentsScreen: React.FC = () => {
         <View style={{
           flexDirection: 'row',
           paddingHorizontal: 24,
-          marginBottom: 16
+          marginBottom: 12
         }}>
           {tabs.map((tab) => (
             <TouchableOpacity

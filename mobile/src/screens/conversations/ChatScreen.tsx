@@ -643,7 +643,30 @@ export const ChatScreen: React.FC<ChatScreenProps> = ({
         </View>
         </Card>
 
-        {/* Back/Close button (full width) */}
+        {/* Action buttons above Close */}
+        <View style={{ flexDirection: 'row', gap: 12, marginBottom: 8 }}>
+          <View style={{ flex: 1 }}>
+            <Button
+              title="Assign"
+              variant="default"
+              size="lg"
+              fullWidth
+              iconLeft={<User size={16} color={'#fff'} />}
+              onPress={() => {}}
+            />
+          </View>
+          <View style={{ flex: 1 }}>
+            <Button
+              title="Resolve"
+              variant="default"
+              size="lg"
+              fullWidth
+              iconLeft={<CheckCircle2 size={16} color={'#fff'} />}
+              onPress={() => {}}
+            />
+          </View>
+        </View>
+        {/* Close button (full width) */}
         <Button title="Close" variant="default" size="lg" fullWidth onPress={onClose} />
       </KeyboardAvoidingView>
     </Modal>

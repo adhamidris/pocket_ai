@@ -3,7 +3,7 @@ import { View, Text, SafeAreaView, ScrollView, TouchableOpacity, Alert, Platform
 import { useTranslation } from 'react-i18next'
 import { useTheme } from '../../providers/ThemeProvider'
 import { Card } from '../../components/ui/Card'
-import { Search, Calendar, MessageCircle, Clock, Users, AlertTriangle, CheckCircle2 } from 'lucide-react-native'
+import { Search, Calendar, MessageCircle, AlertTriangle, ClipboardList, FolderOpen } from 'lucide-react-native'
 import { Modal } from '../../components/ui/Modal'
 import { ConversationCard } from './ConversationCard'
 import { ChatScreen } from './ChatScreen'
@@ -35,7 +35,7 @@ export const ConversationsScreen: React.FC = () => {
   const { t } = useTranslation()
   const { theme } = useTheme()
   // Align with Dashboard header spacing (avoid double safe-area padding)
-  const [activeTab, setActiveTab] = useState<'active' | 'archived' | 'all'>('active')
+  const [activeTab, setActiveTab] = useState<'active' | 'all'>('active')
   // Date picker state
   const [showDatePicker, setShowDatePicker] = useState(false)
   const [selectedRange, setSelectedRange] = useState<'all' | 'today' | '7d' | '30d'>('all')
@@ -227,18 +227,15 @@ export const ConversationsScreen: React.FC = () => {
   ])
 
   const tabs = [
-    { key: 'active' as const, label: 'All' },
-    { key: 'archived' as const, label: 'Queue' },
+    { key: 'active' as const, label: 'Open' },
     { key: 'all' as const, label: 'Resolved' },
   ]
 
   const getFilteredConversations = () => {
     const byStatus = (() => {
       switch (activeTab) {
-        case 'active': // "All"
-          return conversations
-        case 'archived': // "Queue"
-          return conversations.filter(c => c.status === 'waiting')
+        case 'active': // "Open"
+          return conversations.filter(c => c.status === 'active' || c.status === 'waiting')
         case 'all': // "Resolved"
           return conversations.filter(c => c.status === 'resolved')
         default:
@@ -291,6 +288,23 @@ export const ConversationsScreen: React.FC = () => {
 
   const stats = getConversationStats()
 
+  // Category counts for header indicators
+  const pickCaseTypeHeader = (tags: string[]): 'inquiry' | 'request' | 'complaint' | 'other' => {
+    const lower = (tags || []).map(t => t.toLowerCase())
+    if (lower.some(t => ['question', 'support', 'general', 'inquiry'].includes(t))) return 'inquiry'
+    if (lower.some(t => ['request', 'feature'].includes(t))) return 'request'
+    if (lower.some(t => ['complaint'].includes(t))) return 'complaint'
+    return 'other'
+  }
+  const categoryCounts = conversations.reduce(({ inquiry, request, complaint }, c) => {
+    const type = pickCaseTypeHeader(c.tags || [])
+    if (type === 'inquiry') inquiry += 1
+    if (type === 'request') request += 1
+    if (type === 'complaint') complaint += 1
+    return { inquiry, request, complaint }
+  }, { inquiry: 0, request: 0, complaint: 0 })
+  const openCount = conversations.filter(c => c.status === 'active' || c.status === 'waiting').length
+
   const handleConversationPress = (conversation: Conversation) => {
     setSelectedConversation(conversation)
     setShowChat(true)
@@ -326,10 +340,10 @@ export const ConversationsScreen: React.FC = () => {
 
           {/* Stats Row */}
           <View style={{ flexDirection: 'row', gap: 12, marginBottom: 16 }}>
-            {[{icon: MessageCircle, color: theme.color.primary, value: stats.total, label: 'Total'},
-              {icon: Users, color: theme.color.success, value: stats.active, label: 'All'},
-              {icon: Clock, color: theme.color.warning, value: stats.waiting, label: 'Queue'},
-              {icon: CheckCircle2, color: theme.color.success, value: stats.resolved, label: 'Resolved'}].map((s, idx) => (
+            {[{icon: FolderOpen, color: theme.color.primary, value: openCount, label: 'Open'},
+              {icon: MessageCircle, color: theme.color.primary, value: categoryCounts.inquiry, label: 'Inquiries'},
+              {icon: ClipboardList, color: theme.color.warning, value: categoryCounts.request, label: 'Requests'},
+              {icon: AlertTriangle, color: theme.color.error, value: categoryCounts.complaint, label: 'Complaints'}].map((s, idx) => (
               <View key={idx} style={{
                 backgroundColor: theme.color.card,
                 borderRadius: theme.radius.md,
@@ -345,14 +359,15 @@ export const ConversationsScreen: React.FC = () => {
                   fontSize: 20,
                   fontWeight: '700',
                   textAlign: 'center'
-                }}>
+                }} numberOfLines={1} ellipsizeMode="clip" allowFontScaling={false}>
                   {s.value}
                 </Text>
                 <Text style={{
                   color: theme.color.mutedForeground,
                   fontSize: 12,
-                  textAlign: 'center'
-                }}>
+                  textAlign: 'center',
+                  flexShrink: 1
+                }} numberOfLines={1} ellipsizeMode="clip" allowFontScaling={false}>
                   {s.label}
                 </Text>
               </View>
@@ -361,43 +376,8 @@ export const ConversationsScreen: React.FC = () => {
 
           {/* Date Filter Bar removed per request */}
 
-        {/* Case Category Toggles (equal width) */}
-        <View style={{ flexDirection: 'row', marginBottom: 12 }}>
-          {([
-            { key: 'inquiries', label: 'Inquiries' },
-            { key: 'requests', label: 'Requests' },
-            { key: 'complaints', label: 'Complaints' },
-          ] as const).map((c) => (
-            <TouchableOpacity
-              key={c.key}
-              onPress={() => setCaseCategory(prev => prev === c.key ? 'all' : c.key)}
-              style={{
-                flex: 1,
-                paddingVertical: 12,
-                paddingHorizontal: 16,
-                borderRadius: theme.radius.md,
-                backgroundColor: caseCategory === c.key
-                  ? (theme.color.primary as any)
-                  : (theme.dark ? theme.color.secondary : theme.color.accent),
-                borderWidth: 0,
-                borderColor: 'transparent',
-                marginRight: c.key !== 'complaints' ? 8 : 0
-              }}
-            >
-              <Text style={{
-                color: caseCategory === c.key ? ('#ffffff' as any) : (theme.color.mutedForeground as any),
-                textAlign: 'center',
-                fontWeight: '700',
-                fontSize: 13
-              }}>
-                {c.label}
-              </Text>
-            </TouchableOpacity>
-          ))}
-        </View>
-
-        {/* Tabs */}
-        <View style={{ flexDirection: 'row' }}>
+          {/* Tabs */}
+          <View style={{ flexDirection: 'row', marginBottom: 12 }}>
             {tabs.map((tab) => (
               <TouchableOpacity
                 key={tab.key}
@@ -424,6 +404,41 @@ export const ConversationsScreen: React.FC = () => {
                   fontSize: 13
                 }}>
                   {tab.label}
+                </Text>
+              </TouchableOpacity>
+            ))}
+          </View>
+
+          {/* Case Category Toggles (equal width) */}
+          <View style={{ flexDirection: 'row' }}>
+            {([
+              { key: 'inquiries', label: 'Inquiries' },
+              { key: 'requests', label: 'Requests' },
+              { key: 'complaints', label: 'Complaints' },
+            ] as const).map((c) => (
+              <TouchableOpacity
+                key={c.key}
+                onPress={() => setCaseCategory(prev => prev === c.key ? 'all' : c.key)}
+                style={{
+                  flex: 1,
+                  paddingVertical: 12,
+                  paddingHorizontal: 16,
+                  borderRadius: theme.radius.md,
+                  backgroundColor: caseCategory === c.key
+                    ? (theme.color.primary as any)
+                    : (theme.dark ? theme.color.secondary : theme.color.accent),
+                  borderWidth: 0,
+                  borderColor: 'transparent',
+                  marginRight: c.key !== 'complaints' ? 8 : 0
+                }}
+              >
+                <Text style={{
+                  color: caseCategory === c.key ? ('#ffffff' as any) : (theme.color.mutedForeground as any),
+                  textAlign: 'center',
+                  fontWeight: '700',
+                  fontSize: 13
+                }}>
+                  {c.label}
                 </Text>
               </TouchableOpacity>
             ))}
@@ -463,8 +478,8 @@ export const ConversationsScreen: React.FC = () => {
               <ConversationCard
                 key={conversation.id}
                 conversation={conversation}
-                onPress={handleConversationPress}
-                onMore={handleConversationMore}
+                onPress={(c) => handleConversationPress(c as any)}
+                onMore={(c) => handleConversationMore(c as any)}
               />
             ))
           ) : (

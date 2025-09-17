@@ -19,7 +19,8 @@ export const Button: React.FC<{
   disabled?: boolean
   loading?: boolean
   fullWidth?: boolean
-}> = ({ title, onPress, variant = 'default', size = 'md', disabled, loading, fullWidth }) => {
+  iconLeft?: React.ReactNode
+}> = ({ title, onPress, variant = 'default', size = 'md', disabled, loading, fullWidth, iconLeft }) => {
   const { theme } = useTheme()
   const scaleValue = useRef(new Animated.Value(1)).current
 
@@ -102,6 +103,11 @@ export const Button: React.FC<{
           {loading && (
             <LoadingSpinner size={20} color="#fff" style={{ marginRight: 8 }} />
           )}
+          {iconLeft && (
+            <>
+              {iconLeft}
+            </>
+          )}
           <Text style={{ ...text, color: '#fff' }}>{title}</Text>
         </Animated.View>
       </TouchableOpacity>
@@ -134,6 +140,11 @@ export const Button: React.FC<{
       <Animated.View style={[base, bg, { transform: [{ scale: scaleValue }], ...(fullWidth ? { width: '100%' } : {}) }]}>
         {loading && (
           <LoadingSpinner size={16} color={color} style={{ marginRight: 4 }} />
+        )}
+        {iconLeft && (
+          <>
+            {iconLeft}
+          </>
         )}
         <Text style={{ ...text, color }}>{title}</Text>
       </Animated.View>

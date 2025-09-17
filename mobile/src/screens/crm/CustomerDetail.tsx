@@ -1,10 +1,11 @@
-import React, { useState } from 'react'
+import React, { useState, useEffect } from 'react'
 import { View, Text, ScrollView, TouchableOpacity, Platform, Alert, Pressable } from 'react-native'
 import { useTheme } from '../../providers/ThemeProvider'
 import { Card } from '../../components/ui/Card'
 import { Badge } from '../../components/ui/Badge'
 import { Button } from '../../components/ui/Button'
 import { Modal } from '../../components/ui/Modal'
+import { TypingDots } from '../../components/ui/PulseAnimation'
 import { 
   User, 
   Mail, 
@@ -65,9 +66,47 @@ export const CustomerDetail: React.FC<CustomerDetailProps> = ({
   const [activeTab, setActiveTab] = useState<'overview' | 'activity' | 'notes' | 'cases'>('overview')
   const [caseFilter, setCaseFilter] = useState<'needs' | 'resolved'>('needs')
   const [selectedCase, setSelectedCase] = useState<CaseItem | null>(null)
-  const [caseDetailsTab, setCaseDetailsTab] = useState<'overview' | 'documents' | 'history'>('overview')
+  const [caseDetailsTab, setCaseDetailsTab] = useState<'overview' | 'documents' | 'history' | 'chat'>('overview')
+  const [isTyping, setIsTyping] = useState(false)
+  const [messages, setMessages] = useState<Message[]>([])
 
-  if (!customer) return null
+  interface Message {
+    id: string
+    text: string
+    isBot: boolean
+    timestamp: string
+    status?: 'sending' | 'sent' | 'delivered' | 'read'
+  }
+
+  useEffect(() => {
+    if (selectedCase && caseDetailsTab === 'chat' && messages.length === 0) {
+      setMessages([
+        { id: 'm1', text: 'Hi, I was double charged on my latest invoice.', isBot: false, timestamp: new Date().toISOString(), status: 'read' },
+        { id: 'm2', text: 'I can help with that. Could you share the invoice IDs?', isBot: true, timestamp: new Date(Date.now() + 60_000).toISOString() },
+        { id: 'm3', text: 'INV-10021 and INV-10022.', isBot: false, timestamp: new Date(Date.now() + 120_000).toISOString(), status: 'delivered' },
+      ])
+      setIsTyping(false)
+    }
+  }, [selectedCase, caseDetailsTab])
+
+  const formatTime = (timestamp: string) => {
+    return new Date(timestamp).toLocaleTimeString('en-US', { 
+      hour: 'numeric', 
+      minute: '2-digit',
+      hour12: true 
+    })
+  }
+
+  const getMessageStatusIcon = (status?: string) => {
+    switch (status) {
+      case 'sending': return <Clock size={12} color={theme.color.mutedForeground as any} />
+      case 'sent': return <CheckCircle2 size={12} color={theme.color.mutedForeground as any} />
+      case 'delivered': return <CheckCircle2 size={12} color={theme.color.primary as any} />
+      case 'read': return <CheckCircle2 size={12} color={theme.color.success as any} />
+      default: return null
+    }
+  }
+
 
   const getInitials = (name: string) => {
     return name.split(' ').map(n => n[0]).join('').toUpperCase().slice(0, 2)
@@ -406,6 +445,8 @@ export const CustomerDetail: React.FC<CustomerDetailProps> = ({
   const handleCasePress = (c: CaseItem) => {
     Alert.alert('Case', `${c.id} — ${c.title}`)
   }
+
+  if (!customer) return null
 
   return (
     <Modal visible={visible} onClose={onClose} size="lg">
@@ -884,11 +925,12 @@ export const CustomerDetail: React.FC<CustomerDetailProps> = ({
             </View>
 
             {/* Case details sub-tabs */}
-            <View style={{ backgroundColor: theme.color.muted, borderRadius: theme.radius.md, padding: 6, marginBottom: 10, flexDirection: 'row' }}>
+            <View style={{ backgroundColor: theme.color.muted, borderRadius: theme.radius.md, padding: 4, marginBottom: 8, flexDirection: 'row' }}>
               {([
                 { key: 'overview', label: 'Overview' },
                 { key: 'documents', label: 'Documents' },
                 { key: 'history', label: 'History' },
+                { key: 'chat', label: 'Chat' },
               ] as const).map(t => (
                 <TouchableOpacity
                   key={t.key}
@@ -897,21 +939,21 @@ export const CustomerDetail: React.FC<CustomerDetailProps> = ({
                     flexDirection: 'row',
                     alignItems: 'center',
                     justifyContent: 'center',
-                    paddingVertical: 9,
+                    paddingVertical: 7,
                     borderRadius: theme.radius.sm,
                     backgroundColor: caseDetailsTab === t.key ? theme.color.card : 'transparent',
                     marginBottom: 0,
-                    ...(t.key !== 'history' ? { marginRight: 6 } : {}),
+                    ...(t.key !== 'chat' ? { marginRight: 6 } : {}),
                     flex: 1
                   }}
                 >
-                  <Text style={{ color: caseDetailsTab === t.key ? theme.color.primary : theme.color.mutedForeground, fontSize: 13, fontWeight: '700' }}>{t.label}</Text>
+                  <Text style={{ color: caseDetailsTab === t.key ? theme.color.primary : theme.color.mutedForeground, fontSize: 12, fontWeight: '700' }} numberOfLines={1} ellipsizeMode="clip" allowFontScaling={false}>{t.label}</Text>
                 </TouchableOpacity>
               ))}
             </View>
 
             {/* Scrollable content area for sub-tabs */}
-            <View style={{ flex: 1, minHeight: 0 }}>
+            <View style={{ flex: 1, minHeight: 0, marginTop: 4 }}>
               <ScrollView
                 nestedScrollEnabled
                 showsVerticalScrollIndicator
@@ -919,6 +961,78 @@ export const CustomerDetail: React.FC<CustomerDetailProps> = ({
                 style={{ flex: 1 }}
                 contentContainerStyle={{ paddingBottom: 8 }}
               >
+                {caseDetailsTab === 'chat' && (
+                  <View>
+                    {messages.map((message) => (
+                      <View key={message.id} style={{ marginBottom: 10 }}>
+                        <View style={{
+                          alignItems: message.isBot ? 'flex-start' : 'flex-end',
+                          marginBottom: 3
+                        }}>
+                          <View style={{
+                            maxWidth: '72%',
+                            backgroundColor: message.isBot 
+                              ? theme.color.muted 
+                              : theme.color.primary,
+                            borderRadius: 12,
+                            paddingHorizontal: 10,
+                            paddingVertical: 8
+                          }}>
+                            <Text style={{
+                              color: message.isBot 
+                                ? theme.color.cardForeground 
+                                : '#fff',
+                              fontSize: 13,
+                              lineHeight: 18
+                            }}>
+                              {message.text}
+                            </Text>
+                          </View>
+                        </View>
+                        <View style={{
+                          flexDirection: 'row',
+                          alignItems: 'center',
+                          justifyContent: message.isBot ? 'flex-start' : 'flex-end',
+                          gap: 6,
+                          paddingHorizontal: 2
+                        }}>
+                          {message.isBot ? (
+                            <Bot size={12} color={theme.color.primary as any} />
+                          ) : (
+                            <User size={12} color={theme.color.mutedForeground as any} />
+                          )}
+                          <Text style={{
+                            color: theme.color.mutedForeground,
+                            fontSize: 10
+                          }}>
+                            {formatTime(message.timestamp)}
+                          </Text>
+                          {!message.isBot && getMessageStatusIcon(message.status)}
+                        </View>
+                      </View>
+                    ))}
+
+                    {isTyping && (
+                      <View style={{ alignItems: 'flex-start', marginBottom: 10 }}>
+                        <View style={{
+                          backgroundColor: theme.color.muted,
+                          borderRadius: 12,
+                          paddingHorizontal: 10,
+                          paddingVertical: 8,
+                          flexDirection: 'row',
+                          alignItems: 'center',
+                          gap: 6
+                        }}>
+                          <Bot size={14} color={theme.color.primary as any} />
+                          <TypingDots color={theme.color.mutedForeground as any} />
+                          <Text style={{ color: theme.color.mutedForeground, fontSize: 12, fontStyle: 'italic' }}>
+                            AI is typing...
+                          </Text>
+                        </View>
+                      </View>
+                    )}
+                  </View>
+                )}
                 {caseDetailsTab === 'overview' && (
                   <View>
                     {/* AI Diagnoses */}
