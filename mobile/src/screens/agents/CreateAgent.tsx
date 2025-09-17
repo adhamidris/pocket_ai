@@ -1,5 +1,5 @@
 import React, { useState, useRef } from 'react'
-import { View, Text, ScrollView, Alert, findNodeHandle } from 'react-native'
+import { View, Text, ScrollView, Alert, findNodeHandle, TouchableOpacity } from 'react-native'
 import { useTranslation } from 'react-i18next'
 import { useTheme } from '../../providers/ThemeProvider'
 import { Input } from '../../components/ui/Input'
@@ -28,7 +28,8 @@ export const CreateAgent: React.FC<CreateAgentProps> = ({ visible, onClose, onSa
 
   // Smart auto-center on selection
   const scrollRef = useRef<ScrollView>(null)
-  const sectionRefs: Record<'basic'|'role'|'tone'|'traits'|'escalation'|'tools', React.RefObject<View>> = {
+  type SectionKey = 'basic' | 'role' | 'tone' | 'traits' | 'escalation' | 'tools'
+  const sectionRefs: Record<SectionKey, React.RefObject<View>> = {
     basic: useRef<View>(null as any),
     role: useRef<View>(null as any),
     tone: useRef<View>(null as any),
@@ -36,29 +37,23 @@ export const CreateAgent: React.FC<CreateAgentProps> = ({ visible, onClose, onSa
     escalation: useRef<View>(null as any),
     tools: useRef<View>(null as any),
   }
+  const [viewportHeight, setViewportHeight] = useState(0)
+  const [sectionLayouts, setSectionLayouts] = useState<Record<SectionKey, { y: number; height: number }>>({} as any)
 
-  const scrollSectionToCenter = (ref: React.RefObject<View>) => {
-    const scrollView = scrollRef.current
-    const node = ref.current
-    if (!scrollView || !node) return
-    node.measure((x, y, width, height, pageX, pageY) => {
-      // Measure ScrollView window box
-      // @ts-ignore measureInWindow is available at runtime
-      scrollView.measureInWindow?.((svX: number, svY: number, svW: number, svH: number) => {
-        const sectionTop = pageY
-        const sectionBottom = pageY + height
-        const sectionCenter = pageY + height / 2
-        const viewTop = svY
-        const viewBottom = svY + svH
-        const bandTop = viewTop + svH * 0.35
-        const bandBottom = viewBottom - svH * 0.35
-        const fullyVisible = sectionTop >= viewTop && sectionBottom <= viewBottom
-        const centerInBand = sectionCenter >= bandTop && sectionCenter <= bandBottom
-        if (fullyVisible && centerInBand) return
-        const targetY = Math.max(0, sectionCenter - svH / 2)
-        scrollView.scrollTo({ y: targetY, animated: true })
-      })
-    })
+  const setSectionLayout = (key: SectionKey, y: number, height: number) => {
+    setSectionLayouts(prev => ({ ...prev, [key]: { y, height } }))
+  }
+
+  const scrollSectionToCenter = (key: SectionKey) => {
+    const layout = sectionLayouts[key]
+    if (!scrollRef.current || !layout || viewportHeight === 0) return
+    const targetY = Math.max(0, layout.y + layout.height / 2 - viewportHeight / 2)
+    scrollRef.current.scrollTo({ y: targetY, animated: true })
+  }
+
+  const centerAfterLayout = (key: SectionKey) => {
+    // Defer to next frames to capture any reflow from chip wrapping
+    requestAnimationFrame(() => requestAnimationFrame(() => scrollSectionToCenter(key)))
   }
 
   const roles = [
@@ -148,15 +143,26 @@ export const CreateAgent: React.FC<CreateAgentProps> = ({ visible, onClose, onSa
 
   return (
     <Modal visible={visible} onClose={onClose} title={t('agents.createAgent')} size="lg">
-      <ScrollView ref={scrollRef} showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingHorizontal: 12, paddingBottom: 20 }}>
+      <ScrollView
+        ref={scrollRef}
+        showsVerticalScrollIndicator={false}
+        contentContainerStyle={{ paddingHorizontal: 12, paddingBottom: 20 }}
+        onLayout={(e) => setViewportHeight(e.nativeEvent.layout.height)}
+      >
         {/* Agent Name */}
-        <View ref={sectionRefs.basic} style={{ marginBottom: 16 }}>
+        <View
+          ref={sectionRefs.basic}
+          style={{ marginBottom: 16 }}
+          onLayout={(e) => setSectionLayout('basic', e.nativeEvent.layout.y, e.nativeEvent.layout.height)}
+        >
           <Text style={{ color: theme.color.cardForeground, fontSize: 16, fontWeight: '600', marginBottom: 16 }}>Agent Name</Text>
           <Input
             value={formData.name}
             onChangeText={(text) => setFormData(prev => ({ ...prev, name: text }))}
-            placeholder="e.g. Nancy Support Agent"
+            placeholder="e.g. Nancy"
             icon={<Bot size={20} color={theme.color.mutedForeground} />}
+            borderless
+            surface="accent"
           />
           
           {/* Description removed */}
@@ -164,47 +170,95 @@ export const CreateAgent: React.FC<CreateAgentProps> = ({ visible, onClose, onSa
 
         <View style={{ height: 1, backgroundColor: theme.color.border, marginBottom: 16 }} />
         {/* Role */}
-        <View ref={sectionRefs.role} style={{ marginBottom: 16 }}>
+        <View
+          ref={sectionRefs.role}
+          style={{ marginBottom: 16 }}
+          onLayout={(e) => setSectionLayout('role', e.nativeEvent.layout.y, e.nativeEvent.layout.height)}
+        >
           <Text style={{ color: theme.color.cardForeground, fontSize: 16, fontWeight: '600', marginBottom: 16 }}>
             Role
           </Text>
           <View style={{ flexDirection: 'row', flexWrap: 'wrap' }}>
-            {roles.map((r) => (
-              <View key={r} style={{ marginRight: 8, marginBottom: 8 }}>
-                <Button
-                  title={r}
-                  variant={formData.role === r ? 'default' : 'outline'}
-                  size="sm"
-                  onPress={() => { setFormData(prev => ({ ...prev, role: r })); scrollSectionToCenter(sectionRefs.role) }}
-                />
-              </View>
-            ))}
+            {roles.map((r) => {
+              const selected = formData.role === r
+              return (
+                <TouchableOpacity
+                  key={r}
+                  onPress={() => { setFormData(prev => ({ ...prev, role: r })); centerAfterLayout('role') }}
+                  activeOpacity={0.8}
+                  style={{
+                    marginRight: 8,
+                    marginBottom: 8,
+                    paddingVertical: 12,
+                    paddingHorizontal: 16,
+                    borderRadius: theme.radius.md,
+                    backgroundColor: selected ? (theme.color.primary as any) : (theme.dark ? theme.color.secondary : theme.color.accent),
+                    borderWidth: 0,
+                    borderColor: 'transparent'
+                  }}
+                >
+                  <Text style={{
+                    color: selected ? ('#ffffff' as any) : (theme.color.mutedForeground as any),
+                    fontWeight: '700',
+                    fontSize: 13
+                  }}>
+                    {r}
+                  </Text>
+                </TouchableOpacity>
+              )
+            })}
           </View>
         </View>
 
         <View style={{ height: 1, backgroundColor: theme.color.border, marginBottom: 16 }} />
         {/* Tone */}
-        <View ref={sectionRefs.tone} style={{ marginBottom: 16 }}>
+        <View
+          ref={sectionRefs.tone}
+          style={{ marginBottom: 16 }}
+          onLayout={(e) => setSectionLayout('tone', e.nativeEvent.layout.y, e.nativeEvent.layout.height)}
+        >
           <Text style={{ color: theme.color.cardForeground, fontSize: 16, fontWeight: '600', marginBottom: 16 }}>
             Tone
           </Text>
           <View style={{ flexDirection: 'row', flexWrap: 'wrap' }}>
-            {tones.map((t) => (
-              <View key={t} style={{ marginRight: 8, marginBottom: 8 }}>
-                <Button
-                  title={t}
-                  variant={formData.tone === t ? 'default' : 'outline'}
-                  size="sm"
-                  onPress={() => { setFormData(prev => ({ ...prev, tone: t })); scrollSectionToCenter(sectionRefs.tone) }}
-                />
-              </View>
-            ))}
+            {tones.map((t) => {
+              const selected = formData.tone === t
+              return (
+                <TouchableOpacity
+                  key={t}
+                  onPress={() => { setFormData(prev => ({ ...prev, tone: t })); centerAfterLayout('tone') }}
+                  activeOpacity={0.8}
+                  style={{
+                    marginRight: 8,
+                    marginBottom: 8,
+                    paddingVertical: 12,
+                    paddingHorizontal: 16,
+                    borderRadius: theme.radius.md,
+                    backgroundColor: selected ? (theme.color.primary as any) : (theme.dark ? theme.color.secondary : theme.color.accent),
+                    borderWidth: 0,
+                    borderColor: 'transparent'
+                  }}
+                >
+                  <Text style={{
+                    color: selected ? ('#ffffff' as any) : (theme.color.mutedForeground as any),
+                    fontWeight: '700',
+                    fontSize: 13
+                  }}>
+                    {t}
+                  </Text>
+                </TouchableOpacity>
+              )
+            })}
           </View>
         </View>
 
         <View style={{ height: 1, backgroundColor: theme.color.border, marginBottom: 16 }} />
         {/* Traits */}
-        <View ref={sectionRefs.traits} style={{ marginBottom: 16 }}>
+        <View
+          ref={sectionRefs.traits}
+          style={{ marginBottom: 16 }}
+          onLayout={(e) => setSectionLayout('traits', e.nativeEvent.layout.y, e.nativeEvent.layout.height)}
+        >
           <Text style={{ color: theme.color.cardForeground, fontSize: 16, fontWeight: '600', marginBottom: 16 }}>
             Traits
           </Text>
@@ -212,17 +266,32 @@ export const CreateAgent: React.FC<CreateAgentProps> = ({ visible, onClose, onSa
             {traitOptions.map((opt) => {
               const selected = formData.traits.includes(opt)
               return (
-                <View key={opt} style={{ marginRight: 8, marginBottom: 8 }}>
-                  <Button
-                    title={opt}
-                    variant={selected ? 'default' : 'outline'}
-                    size="sm"
-                    onPress={() => { setFormData(prev => ({
-                      ...prev,
-                      traits: selected ? prev.traits.filter(x => x !== opt) : [...prev.traits, opt]
-                    })); scrollSectionToCenter(sectionRefs.traits) }}
-                  />
-                </View>
+                <TouchableOpacity
+                  key={opt}
+                  onPress={() => { setFormData(prev => ({
+                    ...prev,
+                    traits: selected ? prev.traits.filter(x => x !== opt) : [...prev.traits, opt]
+                  })); centerAfterLayout('traits') }}
+                  activeOpacity={0.8}
+                  style={{
+                    marginRight: 8,
+                    marginBottom: 8,
+                    paddingVertical: 12,
+                    paddingHorizontal: 16,
+                    borderRadius: theme.radius.md,
+                    backgroundColor: selected ? (theme.color.primary as any) : (theme.dark ? theme.color.secondary : theme.color.accent),
+                    borderWidth: 0,
+                    borderColor: 'transparent'
+                  }}
+                >
+                  <Text style={{
+                    color: selected ? ('#ffffff' as any) : (theme.color.mutedForeground as any),
+                    fontWeight: '700',
+                    fontSize: 13
+                  }}>
+                    {opt}
+                  </Text>
+                </TouchableOpacity>
               )
             })}
           </View>
@@ -230,21 +299,43 @@ export const CreateAgent: React.FC<CreateAgentProps> = ({ visible, onClose, onSa
 
         <View style={{ height: 1, backgroundColor: theme.color.border, marginBottom: 16 }} />
         {/* Escalation Rules */}
-        <View ref={sectionRefs.escalation} style={{ marginBottom: 16 }}>
+        <View
+          ref={sectionRefs.escalation}
+          style={{ marginBottom: 16 }}
+          onLayout={(e) => setSectionLayout('escalation', e.nativeEvent.layout.y, e.nativeEvent.layout.height)}
+        >
           <Text style={{ color: theme.color.cardForeground, fontSize: 16, fontWeight: '600', marginBottom: 16 }}>
             Escalation rules
           </Text>
           <View style={{ flexDirection: 'row', flexWrap: 'wrap' }}>
-            {escalationOptions.map((opt) => (
-              <View key={opt} style={{ marginRight: 8, marginBottom: 8 }}>
-                <Button
-                  title={opt}
-                  variant={formData.escalationRule === opt ? 'default' : 'outline'}
-                  size="sm"
-                  onPress={() => { setFormData(prev => ({ ...prev, escalationRule: opt })); scrollSectionToCenter(sectionRefs.escalation) }}
-                />
-              </View>
-            ))}
+            {escalationOptions.map((opt) => {
+              const selected = formData.escalationRule === opt
+              return (
+                <TouchableOpacity
+                  key={opt}
+                  onPress={() => { setFormData(prev => ({ ...prev, escalationRule: opt })); centerAfterLayout('escalation') }}
+                  activeOpacity={0.8}
+                  style={{
+                    marginRight: 8,
+                    marginBottom: 8,
+                    paddingVertical: 12,
+                    paddingHorizontal: 16,
+                    borderRadius: theme.radius.md,
+                    backgroundColor: selected ? (theme.color.primary as any) : (theme.dark ? theme.color.secondary : theme.color.accent),
+                    borderWidth: 0,
+                    borderColor: 'transparent'
+                  }}
+                >
+                  <Text style={{
+                    color: selected ? ('#ffffff' as any) : (theme.color.mutedForeground as any),
+                    fontWeight: '700',
+                    fontSize: 13
+                  }}>
+                    {opt}
+                  </Text>
+                </TouchableOpacity>
+              )
+            })}
           </View>
         </View>
 

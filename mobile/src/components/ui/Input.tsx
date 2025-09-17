@@ -7,6 +7,8 @@ interface InputProps extends TextInputProps {
   error?: string
   icon?: React.ReactNode
   containerStyle?: ViewStyle
+  borderless?: boolean
+  surface?: 'default' | 'accent' | 'secondary'
 }
 
 export const Input: React.FC<InputProps> = ({ 
@@ -14,10 +16,21 @@ export const Input: React.FC<InputProps> = ({
   error, 
   icon, 
   containerStyle, 
+  borderless,
+  surface = 'default',
   style,
   ...props 
 }) => {
   const { theme } = useTheme()
+  
+  const bgColor = surface === 'accent'
+    ? (theme.dark ? theme.color.secondary : theme.color.accent)
+    : surface === 'secondary'
+      ? theme.color.secondary
+      : theme.color.background
+  
+  const textColor = surface === 'default' ? theme.color.foreground : theme.color.cardForeground
+  const placeholderColor = surface === 'default' ? theme.color.placeholder : theme.color.mutedForeground
 
   return (
     <View style={[{ marginBottom: 16 }, containerStyle]}>
@@ -34,9 +47,9 @@ export const Input: React.FC<InputProps> = ({
       <View style={{
         flexDirection: 'row',
         alignItems: 'center',
-        backgroundColor: theme.color.background,
-        borderWidth: 1,
-        borderColor: error ? theme.color.error : theme.color.border,
+        backgroundColor: bgColor,
+        borderWidth: borderless ? 0 : 1,
+        borderColor: borderless ? 'transparent' : (error ? theme.color.error : theme.color.border),
         borderRadius: theme.radius.md,
         paddingHorizontal: 12,
         height: 44
@@ -49,10 +62,10 @@ export const Input: React.FC<InputProps> = ({
         <TextInput
           style={[{
             flex: 1,
-            color: theme.color.foreground,
+            color: textColor,
             fontSize: 16
           }, style]}
-          placeholderTextColor={theme.color.placeholder}
+          placeholderTextColor={placeholderColor}
           {...props}
         />
       </View>

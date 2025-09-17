@@ -162,23 +162,24 @@ export const AgentsScreen: React.FC = () => {
               onPress={() => setActiveTab(tab.key)}
               style={{
                 flex: 1,
-                paddingVertical: 10,
-                paddingHorizontal: 14,
+                paddingVertical: 12,
+                paddingHorizontal: 16,
                 borderRadius: theme.radius.md,
-                backgroundColor: activeTab === tab.key 
-                  ? (theme.dark ? theme.color.secondary : theme.color.card) 
-                  : 'transparent',
+                backgroundColor: activeTab === tab.key
+                  ? (theme.color.primary as any)
+                  : (theme.dark ? theme.color.secondary : theme.color.accent),
                 borderWidth: 0,
                 borderColor: 'transparent',
                 marginRight: tab.key !== 'inactive' ? 8 : 0
               }}
             >
               <Text style={{
-                color: activeTab === tab.key 
-                  ? theme.color.cardForeground 
-                  : theme.color.mutedForeground,
+                color: activeTab === tab.key
+                  ? ('#ffffff' as any)
+                  : (theme.color.mutedForeground as any),
                 textAlign: 'center',
-                fontWeight: '600'
+                fontWeight: '700',
+                fontSize: 13
               }}>
                 {tab.label}
               </Text>
@@ -199,7 +200,7 @@ export const AgentsScreen: React.FC = () => {
               />
             ))
           ) : (
-            <Card>
+            <Card variant="flat" style={{ backgroundColor: theme.dark ? theme.color.secondary : theme.color.accent }}>
               <View style={{ alignItems: 'center', padding: 20 }}>
                 <View style={{
                   width: 60,
@@ -223,7 +224,7 @@ export const AgentsScreen: React.FC = () => {
                 <Button
                   title={t('agents.createAgent')}
                   onPress={() => setShowCreateModal(true)}
-                  variant="outline"
+                  variant="default"
                 />
               </View>
             </Card>
