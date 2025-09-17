@@ -1,11 +1,12 @@
-import React, { useState, useRef } from 'react'
-import { View, Text, ScrollView, Alert, findNodeHandle, TouchableOpacity } from 'react-native'
+import React, { useState, useRef, useEffect, useMemo } from 'react'
+import { View, Text, ScrollView, Alert, findNodeHandle, TouchableOpacity, Animated, Share, Platform } from 'react-native'
 import { useTranslation } from 'react-i18next'
 import { useTheme } from '../../providers/ThemeProvider'
 import { Input } from '../../components/ui/Input'
 import { Button } from '../../components/ui/Button'
 import { Modal } from '../../components/ui/Modal'
-import { Bot, User, Settings, BookOpen, Zap } from 'lucide-react-native'
+import { Bot, User, Settings, BookOpen, Zap, Copy } from 'lucide-react-native'
+import Svg, { Circle, Rect, G, Path, Defs, RadialGradient, Stop, Ellipse } from 'react-native-svg'
 
 interface CreateAgentProps {
   visible: boolean
@@ -25,6 +26,8 @@ export const CreateAgent: React.FC<CreateAgentProps> = ({ visible, onClose, onSa
     escalationRule: '',
     tools: [] as string[]
   })
+  const [step, setStep] = useState<'form' | 'share'>('form')
+  const [createdName, setCreatedName] = useState<string>('')
 
   // Smart auto-center on selection
   const scrollRef = useRef<ScrollView>(null)
@@ -120,12 +123,12 @@ export const CreateAgent: React.FC<CreateAgentProps> = ({ visible, onClose, onSa
     }
 
     onSave(newAgent)
-    onClose()
+    setCreatedName(formData.name)
+    setStep('share')
     
     // Reset form
     setFormData({
       name: '',
-      role: '',
       tone: '',
       traits: [],
       escalationRule: '',
@@ -143,14 +146,102 @@ export const CreateAgent: React.FC<CreateAgentProps> = ({ visible, onClose, onSa
     }))
   }
 
+  // Share step animations and typed message
+  const pupil = useRef(new Animated.Value(0)).current
+  const mouth = useRef(new Animated.Value(0)).current
+  const blink = useRef(new Animated.Value(0)).current
+  const mouthLoopRef = useRef<any>(null)
+  const mouthLoopRunningRef = useRef(false)
+  const [typedMsg, setTypedMsg] = useState('')
+
+  useEffect(() => {
+    if (!(visible && step === 'share')) return
+    const eyeLoop = Animated.loop(
+      Animated.sequence([
+        Animated.timing(pupil, { toValue: 1, duration: 2000, useNativeDriver: true }),
+        Animated.timing(pupil, { toValue: -1, duration: 2000, useNativeDriver: true }),
+      ])
+    )
+    mouthLoopRef.current = Animated.loop(
+      Animated.sequence([
+        Animated.timing(mouth, { toValue: 1, duration: 520, useNativeDriver: true }),
+        Animated.timing(mouth, { toValue: 0, duration: 640, useNativeDriver: true }),
+      ])
+    )
+    const blinkLoop = Animated.loop(
+      Animated.sequence([
+        Animated.delay(2600),
+        Animated.timing(blink, { toValue: 1, duration: 120, useNativeDriver: false }),
+        Animated.delay(80),
+        Animated.timing(blink, { toValue: 0, duration: 140, useNativeDriver: false })
+      ])
+    )
+    eyeLoop.start(); blinkLoop.start()
+    return () => { eyeLoop.stop(); mouthLoopRef.current?.stop(); mouthLoopRunningRef.current = false; blinkLoop.stop() }
+  }, [visible, step, pupil, mouth, blink])
+
+  useEffect(() => {
+    if (!(visible && step === 'share')) return
+    const full = (t('onboarding.shareAnywhere.message') as string) || "Hello there! I'm your AI assistant. I'm ready to serve your clients anywhere you place me.\nJust pin my link anywhere!"
+    setTypedMsg('')
+    let i = 0
+    const timer = setInterval(() => {
+      i++
+      setTypedMsg(full.slice(0, i))
+      if (i >= full.length) clearInterval(timer)
+    }, 28)
+    return () => clearInterval(timer)
+  }, [visible, step, t])
+
+  // Start/stop mouth animation in sync with streaming
+  useEffect(() => {
+    if (!(visible && step === 'share')) return
+    const full = (t('onboarding.shareAnywhere.message') as string) || ''
+    const isTyping = typedMsg.length < full.length
+    if (isTyping) {
+      if (!mouthLoopRunningRef.current) {
+        mouthLoopRef.current?.start()
+        mouthLoopRunningRef.current = true
+      }
+    } else if (mouthLoopRunningRef.current) {
+      mouthLoopRef.current?.stop()
+      mouthLoopRunningRef.current = false
+      Animated.timing(mouth, { toValue: 0, duration: 180, useNativeDriver: true }).start()
+    }
+  }, [typedMsg, visible, step, t])
+
+  const pupilOffset = pupil.interpolate({ inputRange: [-1, 1], outputRange: [-3, 3] })
+  const innerMouthH = mouth.interpolate({ inputRange: [0, 1], outputRange: [8, 16] })
+  const teethH = mouth.interpolate({ inputRange: [0, 1], outputRange: [4, 7] })
+  const tongueH = mouth.interpolate({ inputRange: [0, 1], outputRange: [3, 6] })
+  const eyelidHeight = blink.interpolate({ inputRange: [0, 1], outputRange: [0, 24] })
+  const AnimatedCircle: any = Animated.createAnimatedComponent(Circle)
+  const AnimatedRect: any = Animated.createAnimatedComponent(Rect)
+
+  const slugify = (s?: string) => (s || 'nancy-ai')
+    .toLowerCase()
+    .replace(/[^a-z0-9\s-]/g, '')
+    .trim()
+    .replace(/\s+/g, '-')
+  const link = useMemo(() => `pocket.com/yourbusiness/${slugify(createdName)}`, [createdName])
+
+  const handleShareLink = async () => {
+    const toShare = link.startsWith('http') ? link : `https://${link}`
+    try {
+      await Share.share({ message: toShare })
+    } catch {}
+  }
+
   return (
-    <Modal visible={visible} onClose={onClose} title={t('agents.createAgent')} size="lg">
+    <Modal visible={visible} onClose={() => { setStep('form'); onClose() }} title={step === 'form' ? t('agents.createAgent') : 'Share Me Anywhere'} size="lg" autoHeight={step === 'share'}>
       <ScrollView
         ref={scrollRef}
         showsVerticalScrollIndicator={false}
-        contentContainerStyle={{ paddingHorizontal: 12, paddingBottom: 20 }}
+        contentContainerStyle={{ paddingHorizontal: 24, paddingBottom: 20 }}
         onLayout={(e) => setViewportHeight(e.nativeEvent.layout.height)}
       >
+        {step === 'form' && (
+        <>
         {/* Agent Name */}
         <View
           ref={sectionRefs.basic}
@@ -372,6 +463,138 @@ export const CreateAgent: React.FC<CreateAgentProps> = ({ visible, onClose, onSa
             size="lg"
           />
         </View>
+        </>
+        )}
+
+        {step === 'share' && (
+          <View style={{ alignItems: 'center', alignSelf: 'stretch', paddingTop: 12 }}>
+          <View style={{ width: 200, height: 200, marginBottom: 8 }}>
+              <Svg width="200" height="200" viewBox="0 0 200 200">
+                <Defs>
+                  <RadialGradient id="cheekGrad" cx="50%" cy="50%" r="50%">
+                    <Stop offset="0%" stopColor="#f0a9a0" stopOpacity="0.25" />
+                    <Stop offset="100%" stopColor="#f0a9a0" stopOpacity="0" />
+                  </RadialGradient>
+                </Defs>
+                {/* Ears behind head (smaller) */}
+                <Circle cx="28" cy="100" r="10" fill="#f2c7b9" stroke={theme.color.border as any} strokeWidth={1} />
+                <Circle cx="172" cy="100" r="10" fill="#f2c7b9" stroke={theme.color.border as any} strokeWidth={1} />
+                {/* Head: more rounded human-robotic face */}
+                <Rect x="30" y="35" width="140" height="130" rx="60" fill="#f2c7b9" stroke={theme.color.border as any} strokeWidth={1} />
+                {/* Creative hair cap with smoother curvature */}
+                <Rect x="30" y="35" width="140" height="44" rx="34" fill="#2a2a2a" opacity={0.95} />
+                {/* Hair strands */}
+                <Path d="M40 52 C70 44 130 44 160 52" stroke="#4a4a4a" strokeWidth={1.6} strokeLinecap="round" fill="none" opacity={0.5} />
+                <Path d="M40 56 C72 48 128 48 160 56" stroke="#5a5a5a" strokeWidth={1.4} strokeLinecap="round" fill="none" opacity={0.45} />
+                <Path d="M40 60 C74 52 126 52 160 60" stroke="#6a6a6a" strokeWidth={1.2} strokeLinecap="round" fill="none" opacity={0.35} />
+                <Path d="M40 64 C76 56 124 56 160 64" stroke="#7a7a7a" strokeWidth={1.1} strokeLinecap="round" fill="none" opacity={0.3} />
+                {/* Center part */}
+                <Path d="M100 36 L100 58" stroke="#3a3a3a" strokeWidth={1.2} opacity={0.4} />
+                {/* Subtle chin contour (minimized and narrower) */}
+                <Path d="M60 150 Q100 160 140 150" stroke={theme.color.border as any} strokeWidth={0.6} fill="none" opacity={0.15} />
+                {/* Soft cheek blush (subtle shaping) */}
+                <Ellipse cx="76" cy="116" rx="14" ry="10" fill="url(#cheekGrad)" />
+                <Ellipse cx="124" cy="116" rx="14" ry="10" fill="url(#cheekGrad)" />
+                {/* Forehead soft highlight */}
+                <Path d="M68 68 Q100 58 132 68" stroke="#ffffff" strokeWidth={1} opacity={0.08} fill="none" strokeLinecap="round" />
+                {/* Cheek contours */}
+                <Path d="M58 118 Q72 126 86 120" stroke="#e6b0a0" strokeWidth={1.4} opacity={0.22} fill="none" strokeLinecap="round" />
+                <Path d="M142 118 Q128 126 114 120" stroke="#e6b0a0" strokeWidth={1.4} opacity={0.22} fill="none" strokeLinecap="round" />
+                {/* Temple micro-lines */}
+                <Path d="M46 108 L54 106" stroke="#d9a697" strokeWidth={1.1} opacity={0.18} strokeLinecap="round" />
+                <Path d="M154 108 L146 106" stroke="#d9a697" strokeWidth={1.1} opacity={0.18} strokeLinecap="round" />
+                {/* Eyes sockets */}
+                <G>
+                  <Rect x="52" y="72" width="36" height="26" rx="8" fill="#ffffff" />
+                  <Rect x="112" y="72" width="36" height="26" rx="8" fill="#ffffff" />
+                </G>
+                {/* Eyebrows */}
+                <Path d={`M 58 70 Q 70 64 82 70`} stroke={theme.color.cardForeground as any} strokeWidth={2.5} strokeLinecap="round" fill="none" opacity={0.65} />
+                <Path d={`M 118 70 Q 130 64 142 70`} stroke={theme.color.cardForeground as any} strokeWidth={2.5} strokeLinecap="round" fill="none" opacity={0.65} />
+                {/* Friendly iris + small pupil */}
+                <AnimatedCircle cx={Animated.add(new Animated.Value(70), pupilOffset) as any} cy={85 as any} r={7 as any} fill="#6db1ff" />
+                <AnimatedCircle cx={Animated.add(new Animated.Value(70), pupilOffset) as any} cy={85 as any} r={3 as any} fill="#0a0a0a" />
+                <AnimatedCircle cx={Animated.add(new Animated.Value(130), pupilOffset) as any} cy={85 as any} r={7 as any} fill="#6db1ff" />
+                <AnimatedCircle cx={Animated.add(new Animated.Value(130), pupilOffset) as any} cy={85 as any} r={3 as any} fill="#0a0a0a" />
+                {/* Catchlights */}
+                <Circle cx="66" cy="81" r="1.5" fill="#fff" opacity={0.8} />
+                <Circle cx="126" cy="81" r="1.5" fill="#fff" opacity={0.8} />
+                {/* Subtle eyelids */}
+                <Rect x="52" y="72" width="36" height="10" rx="6" fill={theme.color.secondary as any} opacity={0.18} />
+                <Rect x="112" y="72" width="36" height="10" rx="6" fill={theme.color.secondary as any} opacity={0.18} />
+                {/* Blink overlay (animated from top) - opaque to fully hide pupils */}
+                <AnimatedRect x={52 as any} y={72 as any} width={36 as any} height={eyelidHeight as any} rx={8 as any} fill="#f2c7b9" opacity={1} />
+                <AnimatedRect x={112 as any} y={72 as any} width={36 as any} height={eyelidHeight as any} rx={8 as any} fill="#f2c7b9" opacity={1} />
+                {/* Glasses frame */}
+                <G opacity={0.95}>
+                  {/* Left lens */}
+                  <Rect x="46" y="66" width="48" height="38" rx="12" fill="#ffffff" opacity={0.06} />
+                  <Rect x="46" y="66" width="48" height="38" rx="12" fill="none" stroke={theme.color.cardForeground as any} strokeWidth={2} />
+                  {/* Right lens */}
+                  <Rect x="106" y="66" width="48" height="38" rx="12" fill="#ffffff" opacity={0.06} />
+                  <Rect x="106" y="66" width="48" height="38" rx="12" fill="none" stroke={theme.color.cardForeground as any} strokeWidth={2} />
+                  {/* Bridge */}
+                  <Path d="M94 84 C98 80 104 80 108 84" stroke={theme.color.cardForeground as any} strokeWidth={2} fill="none" strokeLinecap="round" />
+                  {/* Arms */}
+                  <Path d="M46 82 L34 86" stroke={theme.color.cardForeground as any} strokeWidth={2} strokeLinecap="round" />
+                  <Path d="M154 82 L166 86" stroke={theme.color.cardForeground as any} strokeWidth={2} strokeLinecap="round" />
+                  {/* Lens highlights */}
+                  <Path d="M50 72 L78 98" stroke="#ffffff" strokeWidth={1.2} opacity={0.15} />
+                  <Path d="M110 72 L138 98" stroke="#ffffff" strokeWidth={1.2} opacity={0.15} />
+                </G>
+                {/* Small nose */}
+                <Path d="M97 112 Q100 116 103 112" stroke="#b97c70" strokeWidth={1.6} fill="none" strokeLinecap="round" opacity={0.85} />
+                <Circle cx="100" cy="118" r="1.2" fill="#b97c70" opacity={0.6} />
+                {/* Human mouth: inner mouth (dark), teeth and tongue */}
+                <AnimatedRect x={88 as any} y={131 as any} width={24 as any} height={innerMouthH as any} rx={6 as any} fill="#0a0a0a" opacity={0.9} />
+                <AnimatedRect x={89 as any} y={131 as any} width={22 as any} height={teethH as any} rx={2 as any} fill="#ffffff" opacity={0.95} />
+                <Rect x="96" y="131" width="1.5" height={6} fill="#0a0a0a" opacity={0.45} />
+                <Rect x="103" y="131" width="1.5" height={6} fill="#0a0a0a" opacity={0.45} />
+                <Rect x="110" y="131" width="1.5" height={6} fill="#0a0a0a" opacity={0.45} />
+                <AnimatedRect x={90 as any} y={Animated.add(new Animated.Value(131), Animated.subtract(innerMouthH as any, tongueH as any)) as any} width={20 as any} height={tongueH as any} rx={6 as any} fill="#c96b7c" opacity={0.9} />
+                {/* Antenna (smaller) */}
+                <Rect x="98.5" y="24" width="3" height="16" rx="1.5" fill={theme.color.primaryLight as any} />
+                <Circle cx="100" cy="20" r="5" fill={theme.color.primaryLight as any} />
+              </Svg>
+            </View>
+
+            <Text style={{
+              color: theme.color.foreground,
+              fontSize: 16,
+              textAlign: 'center',
+              lineHeight: 22,
+              marginTop: 4,
+              marginBottom: 16
+            }}>
+              {typedMsg}
+            </Text>
+
+            {/* Link mock (match ShareAnywhere) */}
+            <TouchableOpacity onPress={handleShareLink} activeOpacity={0.8} style={{
+              marginTop: 0,
+              paddingVertical: 12,
+              paddingHorizontal: 16,
+              borderRadius: 12,
+              backgroundColor: theme.color.accent,
+              borderWidth: 1,
+              borderColor: theme.color.border,
+              flexDirection: 'row',
+              alignItems: 'center',
+              gap: 10,
+              ...(Platform.OS === 'ios'
+                ? { shadowColor: (theme.shadow.md.ios.color as any), shadowOpacity: theme.shadow.md.ios.opacity, shadowRadius: theme.shadow.md.ios.radius, shadowOffset: { width: 0, height: theme.shadow.md.ios.offsetY } }
+                : { elevation: theme.shadow.md.androidElevation }
+              )
+            }}>
+              <Text style={{ color: theme.color.cardForeground, fontWeight: '600' }} numberOfLines={1}>{link}</Text>
+              <Copy size={18} color={theme.color.cardForeground as any} />
+            </TouchableOpacity>
+
+            <View style={{ marginTop: 20, alignSelf: 'stretch', marginHorizontal: -24 }}>
+              <Button title={t('onboarding.shareAnywhere.cta')} size="lg" variant="hero" onPress={() => { setStep('form'); onClose() }} fullWidth />
+            </View>
+          </View>
+        )}
       </ScrollView>
     </Modal>
   )
