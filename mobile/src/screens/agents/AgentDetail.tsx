@@ -3,7 +3,8 @@ import { View, Text, ScrollView, TouchableOpacity } from 'react-native'
 import { Modal } from '../../components/ui/Modal'
 import { useTheme } from '../../providers/ThemeProvider'
 import { Button } from '../../components/ui/Button'
-import { Bot, ClipboardList, Star, Settings, BarChart3, Briefcase } from 'lucide-react-native'
+import { Input } from '../../components/ui/Input'
+import { Bot, ClipboardList, Star, Settings, BarChart3, Briefcase, Target, Plus, X, Power } from 'lucide-react-native'
 
 interface AgentDetailProps {
   visible: boolean
@@ -28,10 +29,8 @@ interface AgentDetailProps {
 export const AgentDetail: React.FC<AgentDetailProps> = ({ visible, agent, onClose, onToggleStatus, onEdit }) => {
   const { theme } = useTheme()
   const [activeTab, setActiveTab] = useState<'overview'|'performance'|'settings'>('overview')
-  if (!agent) return null
 
-  const name = agent.name
-  const roleText = agent.role || (agent.roles || []).slice(0, 2).join(' • ')
+  // Guard must happen before accessing agent fields to avoid hook/order errors
   // Analytics removed from modal per request
 
   // --- Overview helpers ---
@@ -64,25 +63,58 @@ export const AgentDetail: React.FC<AgentDetailProps> = ({ visible, agent, onClos
     'Always escalate complex': { desc: 'Transfers complex scenarios to humans.', sample: 'This is complex—looping a human expert in now.' },
   }
 
-  const SectionTitle: React.FC<{ title: string; icon?: React.ReactNode }> = ({ title, icon }) => (
-    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 6 }}>
+  const SectionTitle: React.FC<{ title: string; icon?: React.ReactNode; mb?: number }> = ({ title, icon, mb }) => (
+    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: mb ?? 6 }}>
       {icon}
       <Text style={{ color: theme.color.cardForeground, fontSize: 14, fontWeight: '700' }}>{title}</Text>
     </View>
   )
 
   const Pill: React.FC<{ label: string }> = ({ label }) => (
-    <View style={{ backgroundColor: theme.dark ? theme.color.secondary : theme.color.card, borderRadius: 999, paddingHorizontal: 8, paddingVertical: 4, marginRight: 6, marginBottom: 6 }}>
-      <Text style={{ color: theme.color.mutedForeground, fontSize: 12, fontWeight: '700' }}>{label}</Text>
+    <View style={{ backgroundColor: theme.color.primary as any, borderRadius: 999, paddingHorizontal: 10, paddingVertical: 6, marginRight: 6, marginBottom: 6 }}>
+      <Text style={{ color: '#fff', fontSize: 12, fontWeight: '700' }}>{label}</Text>
     </View>
   )
+  // Prepared fallback message for sections with no active parameters (not used yet)
+  const FALLBACK_MESSAGE = 'No selections yet. Configure to get started.'
   const contentIndent = 24 // align sub-content under titles (icon 16 + gap 8)
+  const ACTION_BUTTON_HEIGHT = 44
+  const ACTION_BUTTON_RADIUS = 16
 
   const tabs = [
     { key: 'overview' as const, label: 'Overview', icon: Bot },
     { key: 'performance' as const, label: 'Performance', icon: BarChart3 },
     { key: 'settings' as const, label: 'Settings', icon: Settings },
   ]
+
+  // KPIs (performance) state
+  const commonKpis = [
+    'Customer Satisfaction',
+    'First Contact Resolution',
+    'Response Time',
+    'Resolution Rate',
+    'Escalation Rate',
+    'Sales Conversion',
+    'Deflection Rate',
+    'Average Handling Time'
+  ]
+  const [selectedKpis, setSelectedKpis] = useState<string[]>(['Customer Satisfaction', 'First Contact Resolution'])
+  const [customKpiText, setCustomKpiText] = useState('')
+
+  if (!agent) return null
+  const name = agent.name
+  const roleText = agent.role || (agent.roles || []).slice(0, 2).join(' • ')
+
+  const toggleKpi = (k: string) => {
+    setSelectedKpis(prev => prev.includes(k) ? prev.filter(x => x !== k) : [...prev, k])
+  }
+  const addCustomKpi = () => {
+    const t = customKpiText.trim()
+    if (!t) return
+    if (!selectedKpis.includes(t)) setSelectedKpis(prev => [...prev, t])
+    setCustomKpiText('')
+  }
+  const removeCustomKpi = (k: string) => setSelectedKpis(prev => prev.filter(x => x !== k))
 
   return (
     <Modal visible={visible} onClose={onClose} title={name} size="lg" autoHeight={false}>
@@ -226,11 +258,71 @@ export const AgentDetail: React.FC<AgentDetailProps> = ({ visible, agent, onClos
             )}
 
             {activeTab === 'performance' && (
-              <View style={{ gap: 10 }}>
-                <Text style={{ color: theme.color.cardForeground, fontSize: 14, fontWeight: '600' }}>Performance</Text>
-                <Text style={{ color: theme.color.mutedForeground, fontSize: 13 }}>
-                  Detailed KPIs coming soon. Current overview reflects core metrics.
-                </Text>
+              <View style={{ gap: 12 }}>
+                <SectionTitle title="KPIs" icon={<Target size={16} color={theme.color.mutedForeground as any} />} mb={4} />
+                <View style={{ paddingLeft: contentIndent }}>
+                  <Text style={{ color: theme.color.mutedForeground, fontSize: 13, marginBottom: 12 }}>
+                    Select the metrics you want the agent to prioritize during chats.
+                  </Text>
+                  {/* Common KPI toggles */}
+                  <View style={{ flexDirection: 'row', flexWrap: 'wrap', marginBottom: 8 }}>
+                    {commonKpis.map(k => {
+                      const selected = selectedKpis.includes(k)
+                      return (
+                        <TouchableOpacity
+                          key={k}
+                          onPress={() => toggleKpi(k)}
+                          activeOpacity={0.85}
+                          style={{
+                            paddingHorizontal: 13,
+                            paddingVertical: 9,
+                            borderRadius: 999,
+                            marginRight: 6,
+                            marginBottom: 6,
+                            backgroundColor: selected ? (theme.color.primary as any) : (theme.dark ? theme.color.secondary : theme.color.card)
+                          }}
+                        >
+                          <Text style={{ color: selected ? '#fff' : (theme.color.mutedForeground as any), fontSize: 12, fontWeight: '700' }}>{k}</Text>
+                        </TouchableOpacity>
+                      )
+                    })}
+                  </View>
+
+                  {/* Custom KPI input */}
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 4 }}>
+                    <View style={{ flex: 1 }}>
+                      <Input
+                        value={customKpiText}
+                        onChangeText={setCustomKpiText}
+                        placeholder="Add custom KPI"
+                        borderless
+                        surface="accent"
+                        size="sm"
+                        containerStyle={{ marginBottom: 0 }}
+                      />
+                    </View>
+                    <TouchableOpacity onPress={addCustomKpi} activeOpacity={0.8} style={{ width: 36, height: 36, borderRadius: 10, backgroundColor: theme.color.primary as any, alignItems: 'center', justifyContent: 'center' }}>
+                      <Plus size={16} color={'#fff'} />
+                    </TouchableOpacity>
+                  </View>
+
+                  {/* Show custom KPIs with remove */}
+                  <View style={{ flexDirection: 'row', flexWrap: 'wrap', marginTop: 6 }}>
+                    {selectedKpis.filter(k => !commonKpis.includes(k)).map(k => (
+                      <View key={`custom-${k}`} style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: theme.dark ? theme.color.secondary : theme.color.card, borderRadius: 999, paddingHorizontal: 10, paddingVertical: 6, marginRight: 6, marginBottom: 6, gap: 6 }}>
+                        <Text style={{ color: theme.color.mutedForeground, fontSize: 12, fontWeight: '700' }}>{k}</Text>
+                        <TouchableOpacity onPress={() => removeCustomKpi(k)} hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}>
+                          <X size={14} color={theme.color.mutedForeground as any} />
+                        </TouchableOpacity>
+                      </View>
+                    ))}
+                  </View>
+
+                  {/* Helper note */}
+                  <Text style={{ color: theme.color.mutedForeground, fontSize: 12, marginTop: 6 }}>
+                    Your selected KPIs will guide response strategies and prioritization. Backend integration to follow.
+                  </Text>
+                </View>
               </View>
             )}
 
@@ -247,21 +339,69 @@ export const AgentDetail: React.FC<AgentDetailProps> = ({ visible, agent, onClos
 
         {/* Actions (sticky at bottom) */}
         <View style={{ flexDirection: 'row', gap: 12 }}>
+          {/* Activate / Deactivate - filled, borderless */}
           <View style={{ flex: 1 }}>
-            <Button
-              title={agent.status === 'active' ? 'Deactivate' : 'Activate'}
-              variant={agent.status === 'active' ? 'danger' : 'default'}
-              size="lg"
-              fullWidth
+            <TouchableOpacity
               onPress={() => onToggleStatus?.(agent.id)}
-            />
+              activeOpacity={0.85}
+              style={{
+                height: ACTION_BUTTON_HEIGHT,
+                borderRadius: ACTION_BUTTON_RADIUS,
+                backgroundColor: (agent.status === 'active' ? theme.color.error : theme.color.success) as any,
+                alignItems: 'center',
+                justifyContent: 'center',
+                width: '100%'
+              }}
+              accessibilityLabel={`${agent.status === 'active' ? 'Deactivate' : 'Activate'} agent ${name}`}
+            >
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                <Power size={18} color={'#fff'} />
+                <Text style={{ color: '#fff', fontSize: 16, fontWeight: '600' }}>
+                  {agent.status === 'active' ? 'Deactivate' : 'Activate'}
+                </Text>
+              </View>
+            </TouchableOpacity>
           </View>
+
+          {/* Edit - neutral card-like, borderless */}
           <View style={{ flex: 1 }}>
-            <Button title="Edit" variant="secondary" size="lg" fullWidth onPress={() => onEdit?.(agent.id)} />
+            <TouchableOpacity
+              onPress={() => onEdit?.(agent.id)}
+              activeOpacity={0.85}
+              style={{
+                height: ACTION_BUTTON_HEIGHT,
+                borderRadius: ACTION_BUTTON_RADIUS,
+                backgroundColor: theme.dark ? (theme.color.secondary as any) : ('hsl(240,6%,92%)' as any),
+                alignItems: 'center',
+                justifyContent: 'center',
+                width: '100%'
+              }}
+              accessibilityLabel={`Edit agent ${name}`}
+            >
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                <Settings size={18} color={theme.color.primary as any} />
+                <Text style={{ color: theme.color.cardForeground, fontSize: 16, fontWeight: '600' }}>Edit</Text>
+              </View>
+            </TouchableOpacity>
           </View>
         </View>
 
-        <Button title="Close" variant="default" size="lg" fullWidth onPress={onClose} />
+        {/* Close - filled primary, borderless */}
+        <TouchableOpacity
+          onPress={onClose}
+          activeOpacity={0.85}
+          style={{
+            height: ACTION_BUTTON_HEIGHT,
+            borderRadius: ACTION_BUTTON_RADIUS,
+            backgroundColor: theme.color.primary as any,
+            alignItems: 'center',
+            justifyContent: 'center',
+            width: '100%'
+          }}
+          accessibilityLabel={'Close agent details'}
+        >
+          <Text style={{ color: '#fff', fontSize: 16, fontWeight: '600' }}>Close</Text>
+        </TouchableOpacity>
       </View>
     </Modal>
   )

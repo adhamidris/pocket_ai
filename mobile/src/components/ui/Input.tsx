@@ -9,6 +9,7 @@ interface InputProps extends TextInputProps {
   containerStyle?: ViewStyle
   borderless?: boolean
   surface?: 'default' | 'accent' | 'secondary'
+  size?: 'sm' | 'md'
 }
 
 export const Input: React.FC<InputProps> = ({ 
@@ -18,6 +19,7 @@ export const Input: React.FC<InputProps> = ({
   containerStyle, 
   borderless,
   surface = 'default',
+  size = 'md',
   style,
   ...props 
 }) => {
@@ -31,6 +33,7 @@ export const Input: React.FC<InputProps> = ({
   
   const textColor = surface === 'default' ? theme.color.foreground : theme.color.cardForeground
   const placeholderColor = surface === 'default' ? theme.color.placeholder : theme.color.mutedForeground
+  const height = size === 'sm' ? 36 : 44
 
   return (
     <View style={[{ marginBottom: 16 }, containerStyle]}>
@@ -52,7 +55,7 @@ export const Input: React.FC<InputProps> = ({
         borderColor: borderless ? 'transparent' : (error ? theme.color.error : theme.color.border),
         borderRadius: theme.radius.md,
         paddingHorizontal: 12,
-        height: 44
+        height
       }}>
         {icon && (
           <View style={{ marginRight: 8 }}>
