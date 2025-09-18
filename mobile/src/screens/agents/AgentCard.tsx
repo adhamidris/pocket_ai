@@ -2,6 +2,7 @@ import React from 'react'
 import { View, Text, TouchableOpacity } from 'react-native'
 import { useTheme } from '../../providers/ThemeProvider'
 import { Card } from '../../components/ui/Card'
+import { AnimatedCard } from '../../components/ui/AnimatedCard'
 import { Badge } from '../../components/ui/Badge'
 import { Button } from '../../components/ui/Button'
 import { 
@@ -73,19 +74,14 @@ export const AgentCard: React.FC<AgentCardProps> = ({
   const hasDescription = Boolean((agent.description || '').trim().length > 0)
 
   const CardContainer: React.FC<{ children: React.ReactNode }> = ({ children }) => (
-    onPress 
-      ? (
-          <TouchableOpacity activeOpacity={0.85} onPress={() => onPress(agent)}>
-            <Card variant="flat" style={{ marginBottom: 12, backgroundColor: theme.dark ? theme.color.secondary : theme.color.accent, paddingHorizontal: 16, paddingVertical: 14 }}>
-              {children}
-            </Card>
-          </TouchableOpacity>
-        )
-      : (
-          <Card variant="flat" style={{ marginBottom: 12, backgroundColor: theme.dark ? theme.color.secondary : theme.color.accent, paddingHorizontal: 16, paddingVertical: 14 }}>
-            {children}
-          </Card>
-        )
+    <AnimatedCard
+      variant="flat"
+      onPress={onPress ? () => onPress(agent) : undefined}
+      animationType="fadeIn"
+      style={{ marginBottom: 12, backgroundColor: theme.dark ? (theme.color.secondary as any) : (theme.color.accent as any), paddingHorizontal: 16, paddingVertical: 14, borderWidth: 0, borderColor: 'transparent' }}
+    >
+      {children}
+    </AnimatedCard>
   )
 
   return (
