@@ -199,6 +199,21 @@ export const AgentsScreen: React.FC = () => {
                 onDelete={handleDeleteAgent}
               />
             ))
+          ) : activeTab === 'active' && agents.some(a => a.status === 'inactive') ? (
+            // Preview the first inactive agent as if active so users can quickly activate it here
+            (() => {
+              const inactive = agents.find(a => a.status === 'inactive')!
+              const preview = { ...inactive, status: 'active' as const }
+              return (
+                <AgentCard
+                  key={`preview-${inactive.id}`}
+                  agent={preview}
+                  onToggleStatus={handleToggleStatus}
+                  onEdit={handleEditAgent}
+                  onDelete={handleDeleteAgent}
+                />
+              )
+            })()
           ) : (
             <Card variant="flat" style={{ backgroundColor: theme.dark ? theme.color.secondary : theme.color.accent }}>
               <View style={{ alignItems: 'center', padding: 20 }}>

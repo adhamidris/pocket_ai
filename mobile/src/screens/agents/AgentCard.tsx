@@ -220,12 +220,12 @@ export const AgentCard: React.FC<AgentCardProps> = ({
             width: 36,
             height: 36,
             borderRadius: 18,
-            backgroundColor: theme.color.error + '20',
+            backgroundColor: 'rgba(255,59,48,0.12)',
             alignItems: 'center',
             justifyContent: 'center'
           }}
         >
-          <Trash2 size={16} color={theme.color.error} />
+          <Trash2 size={16} color={'#ff3b30'} />
         </TouchableOpacity>
       </View>
     </Card>
