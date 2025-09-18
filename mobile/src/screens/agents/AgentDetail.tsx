@@ -75,6 +75,9 @@ export const AgentDetail: React.FC<AgentDetailProps> = ({ visible, agent, onClos
       <Text style={{ color: '#fff', fontSize: 12, fontWeight: '700' }}>{label}</Text>
     </View>
   )
+  const SectionDivider: React.FC = () => (
+    <View style={{ height: 1, backgroundColor: theme.color.border, marginVertical: 0 }} />
+  )
   // Prepared fallback message for sections with no active parameters (not used yet)
   const FALLBACK_MESSAGE = 'No selections yet. Configure to get started.'
   const contentIndent = 24 // align sub-content under titles (icon 16 + gap 8)
@@ -117,7 +120,7 @@ export const AgentDetail: React.FC<AgentDetailProps> = ({ visible, agent, onClos
   const removeCustomKpi = (k: string) => setSelectedKpis(prev => prev.filter(x => x !== k))
 
   return (
-    <Modal visible={visible} onClose={onClose} title={name} size="lg" autoHeight={false}>
+    <Modal visible={visible} onClose={onClose} size="lg" autoHeight={false}>
       <View style={{ gap: 12, flex: 1, minHeight: 0 }}>
         {/* Header: Avatar + name/role + status */}
         <View style={{ flexDirection: 'row', alignItems: 'center' }}>
@@ -130,11 +133,31 @@ export const AgentDetail: React.FC<AgentDetailProps> = ({ visible, agent, onClos
               <Text style={{ color: theme.color.mutedForeground, fontSize: 12 }} numberOfLines={1}>{roleText}</Text>
             ) : null}
           </View>
-          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, backgroundColor: theme.dark ? theme.color.secondary : theme.color.card, borderRadius: theme.radius.sm, paddingHorizontal: 8, paddingVertical: 4 }}>
-            <View style={{ width: 6, height: 6, borderRadius: 3, backgroundColor: agent.status === 'active' ? theme.color.success : theme.color.mutedForeground }} />
-            <Text style={{ color: theme.color.mutedForeground, fontSize: 12, fontWeight: '600' }}>{agent.status}</Text>
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, backgroundColor: theme.dark ? theme.color.secondary : theme.color.card, borderRadius: theme.radius.sm, paddingHorizontal: 8, paddingVertical: 4 }}>
+              <View style={{ width: 6, height: 6, borderRadius: 3, backgroundColor: agent.status === 'active' ? theme.color.success : theme.color.mutedForeground }} />
+              <Text style={{ color: theme.color.mutedForeground, fontSize: 12, fontWeight: '600' }}>{agent.status}</Text>
+            </View>
+            <TouchableOpacity
+              onPress={onClose}
+              activeOpacity={0.85}
+              style={{
+                width: 32,
+                height: 32,
+                borderRadius: 16,
+                backgroundColor: theme.color.muted,
+                alignItems: 'center',
+                justifyContent: 'center'
+              }}
+              accessibilityLabel={'Close agent details'}
+            >
+              <X size={16} color={theme.color.mutedForeground as any} />
+            </TouchableOpacity>
           </View>
         </View>
+
+        {/* Separator between header and tabs */}
+        <View style={{ height: 1, backgroundColor: theme.color.border }} />
 
         {/* Tabs bar */}
         <View style={{ flexDirection: 'row', backgroundColor: theme.color.muted, borderRadius: theme.radius.md, padding: 6 }}>
@@ -164,7 +187,7 @@ export const AgentDetail: React.FC<AgentDetailProps> = ({ visible, agent, onClos
             contentContainerStyle={{ paddingBottom: 12, paddingHorizontal: 0 }}
           >
             {activeTab === 'overview' && (
-              <View style={{ gap: 12 }}>
+              <View style={{ gap: 6 }}>
                 {/* Analytics removed */}
 
                 {/* Role */}
@@ -183,6 +206,7 @@ export const AgentDetail: React.FC<AgentDetailProps> = ({ visible, agent, onClos
                     ))}
                   </View>
                 </View>
+                <SectionDivider />
 
                 {/* Tone */}
                 <View>
@@ -203,6 +227,7 @@ export const AgentDetail: React.FC<AgentDetailProps> = ({ visible, agent, onClos
                     )}
                   </View>
                 </View>
+                <SectionDivider />
 
                 {/* Traits */}
                 <View>
@@ -226,6 +251,7 @@ export const AgentDetail: React.FC<AgentDetailProps> = ({ visible, agent, onClos
                     )}
                   </View>
                 </View>
+                <SectionDivider />
 
                 {/* Escalation */}
                 <View>
@@ -246,6 +272,7 @@ export const AgentDetail: React.FC<AgentDetailProps> = ({ visible, agent, onClos
                     )}
                   </View>
                 </View>
+                {agent.description ? <SectionDivider /> : null}
 
                 {/* About */}
                 {agent.description ? (
