@@ -5,7 +5,7 @@ import * as Haptics from 'expo-haptics'
 import { useTheme } from '../../providers/ThemeProvider'
 import { LoadingSpinner } from './LoadingSpinner'
 
-type Variant = 'default' | 'secondary' | 'outline' | 'ghost' | 'link' | 'premium' | 'hero' | 'glass'
+type Variant = 'default' | 'secondary' | 'outline' | 'ghost' | 'link' | 'premium' | 'hero' | 'glass' | 'danger'
 type Size = 'sm' | 'md' | 'lg' | 'xl'
 
 const HEIGHT: Record<Size, number> = { sm: 36, md: 40, lg: 48, xl: 56 }
@@ -118,6 +118,7 @@ export const Button: React.FC<{
     switch (variant) {
       case 'default': return { backgroundColor: theme.color.primary, ...(theme.shadow.md as any) }
       case 'secondary': return { backgroundColor: theme.color.secondary }
+      case 'danger': return { backgroundColor: theme.color.error }
       case 'outline': return { backgroundColor: theme.color.background, borderWidth: 1, borderColor: theme.color.border }
       case 'ghost': return { backgroundColor: 'transparent' }
       case 'glass': return { backgroundColor: 'rgba(255,255,255,0.08)', borderWidth: 1, borderColor: 'rgba(255,255,255,0.2)' }
@@ -127,8 +128,9 @@ export const Button: React.FC<{
   })()
 
   const color = (() => {
-    if (variant === 'default' || variant === 'secondary') return '#fff'
+    if (variant === 'default' || variant === 'danger') return '#fff'
     if (variant === 'link') return theme.color.mutedForeground
+    if (variant === 'secondary') return theme.color.foreground
     return theme.color.foreground
   })()
 
