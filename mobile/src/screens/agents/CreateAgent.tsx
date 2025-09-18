@@ -41,16 +41,34 @@ export const CreateAgent: React.FC<CreateAgentProps> = ({ visible, onClose, onSa
     tools: useRef<View>(null as any),
   }
   const [viewportHeight, setViewportHeight] = useState(0)
+  const [contentHeight, setContentHeight] = useState(0)
   const [sectionLayouts, setSectionLayouts] = useState<Record<SectionKey, { y: number; height: number }>>({} as any)
 
   const setSectionLayout = (key: SectionKey, y: number, height: number) => {
     setSectionLayouts(prev => ({ ...prev, [key]: { y, height } }))
   }
 
+  // Slight downward bias so section hints (below options) are in view
+  const SCROLL_BIAS: Record<SectionKey, number> = {
+    basic: 0,
+    role: 56,
+    tone: 56,
+    traits: 56,
+    escalation: 56,
+    tools: 56,
+  }
+
   const scrollSectionToCenter = (key: SectionKey) => {
     const layout = sectionLayouts[key]
     if (!scrollRef.current || !layout || viewportHeight === 0) return
-    const targetY = Math.max(0, layout.y + layout.height / 2 - viewportHeight / 2)
+    const bias = SCROLL_BIAS[key] || 0
+    let targetY = layout.y + layout.height / 2 - viewportHeight / 2 + bias
+    if (contentHeight > 0) {
+      const maxY = Math.max(0, contentHeight - viewportHeight)
+      targetY = Math.min(maxY, Math.max(0, targetY))
+    } else {
+      targetY = Math.max(0, targetY)
+    }
     scrollRef.current.scrollTo({ y: targetY, animated: true })
   }
 
@@ -239,6 +257,7 @@ export const CreateAgent: React.FC<CreateAgentProps> = ({ visible, onClose, onSa
         showsVerticalScrollIndicator={false}
         contentContainerStyle={{ paddingHorizontal: 24, paddingBottom: 20 }}
         onLayout={(e) => setViewportHeight(e.nativeEvent.layout.height)}
+        onContentSizeChange={(_, h) => setContentHeight(h)}
       >
         {step === 'form' && (
         <>
