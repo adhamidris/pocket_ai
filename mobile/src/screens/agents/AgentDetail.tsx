@@ -76,6 +76,7 @@ export const AgentDetail: React.FC<AgentDetailProps> = ({ visible, agent, onClos
       <Text style={{ color: theme.color.mutedForeground, fontSize: 12, fontWeight: '700' }}>{label}</Text>
     </View>
   )
+  const contentIndent = 24 // align sub-content under titles (icon 16 + gap 8)
 
   const tabs = [
     { key: 'overview' as const, label: 'Overview', icon: Bot },
@@ -126,7 +127,10 @@ export const AgentDetail: React.FC<AgentDetailProps> = ({ visible, agent, onClos
 
         {/* Scrollable content under tabs (does not overlap buttons) */}
         <View style={{ flex: 1, minHeight: 0 }}>
-          <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingBottom: 8 }}>
+          <ScrollView
+            showsVerticalScrollIndicator={false}
+            contentContainerStyle={{ paddingBottom: 12, paddingHorizontal: 0 }}
+          >
             {activeTab === 'overview' && (
               <View style={{ gap: 12 }}>
                 {/* Analytics removed */}
@@ -134,73 +138,81 @@ export const AgentDetail: React.FC<AgentDetailProps> = ({ visible, agent, onClos
                 {/* Role */}
                 <View>
                   <SectionTitle title="Role" icon={<Briefcase size={16} color={theme.color.mutedForeground as any} />} />
-                  <View style={{ flexDirection: 'row', flexWrap: 'wrap', marginBottom: 6 }}>
+                  <View style={{ paddingLeft: contentIndent }}>
+                    <View style={{ flexDirection: 'row', flexWrap: 'wrap', marginBottom: 6 }}>
+                      {(agent.roles && agent.roles.length > 0 ? agent.roles : (agent.role ? [agent.role] : [])).map(r => (
+                        <Pill key={r} label={r} />
+                      ))}
+                    </View>
                     {(agent.roles && agent.roles.length > 0 ? agent.roles : (agent.role ? [agent.role] : [])).map(r => (
-                      <Pill key={r} label={r} />
+                      <Text key={`roler-${r}`} style={{ color: theme.color.mutedForeground, fontSize: 13, marginBottom: 2 }}>
+                        {roleDescriptions[r] || 'Configured role.'}
+                      </Text>
                     ))}
                   </View>
-                  {(agent.roles && agent.roles.length > 0 ? agent.roles : (agent.role ? [agent.role] : [])).map(r => (
-                    <Text key={`roler-${r}`} style={{ color: theme.color.mutedForeground, fontSize: 13, marginBottom: 2 }}>
-                      {roleDescriptions[r] || 'Configured role.'}
-                    </Text>
-                  ))}
                 </View>
 
                 {/* Tone */}
                 <View>
                   <SectionTitle title="Tone" icon={<Star size={16} color={theme.color.mutedForeground as any} />} />
-                  <View style={{ flexDirection: 'row', flexWrap: 'wrap', marginBottom: 6 }}>
-                    {agent.tone ? <Pill label={agent.tone} /> : <Text style={{ color: theme.color.mutedForeground, fontSize: 13 }}>Not configured.</Text>}
+                  <View style={{ paddingLeft: contentIndent }}>
+                    <View style={{ flexDirection: 'row', flexWrap: 'wrap', marginBottom: 6 }}>
+                      {agent.tone ? <Pill label={agent.tone} /> : <Text style={{ color: theme.color.mutedForeground, fontSize: 13 }}>Not configured.</Text>}
+                    </View>
+                    {agent.tone && (
+                      <>
+                        <Text style={{ color: theme.color.mutedForeground, fontSize: 13, marginBottom: 2 }}>
+                          {(toneDescriptions[agent.tone]?.desc) || 'Configured tone.'}
+                        </Text>
+                        <Text style={{ color: theme.color.cardForeground, fontSize: 13, fontStyle: 'italic' }}>
+                          “{(toneDescriptions[agent.tone]?.sample) || 'Hello! How can I help you today?'}”
+                        </Text>
+                      </>
+                    )}
                   </View>
-                  {agent.tone && (
-                    <>
-                      <Text style={{ color: theme.color.mutedForeground, fontSize: 13, marginBottom: 2 }}>
-                        {(toneDescriptions[agent.tone]?.desc) || 'Configured tone.'}
-                      </Text>
-                      <Text style={{ color: theme.color.cardForeground, fontSize: 13, fontStyle: 'italic' }}>
-                        “{(toneDescriptions[agent.tone]?.sample) || 'Hello! How can I help you today?'}”
-                      </Text>
-                    </>
-                  )}
                 </View>
 
                 {/* Traits */}
                 <View>
                   <SectionTitle title="Traits" icon={<Bot size={16} color={theme.color.mutedForeground as any} />} />
-                  <View style={{ flexDirection: 'row', flexWrap: 'wrap', marginBottom: 6 }}>
-                    {(agent.traits && agent.traits.length > 0)
-                      ? agent.traits.map(t => <Pill key={t} label={t} />)
-                      : <Text style={{ color: theme.color.mutedForeground, fontSize: 13 }}>Not configured.</Text>
-                    }
+                  <View style={{ paddingLeft: contentIndent }}>
+                    <View style={{ flexDirection: 'row', flexWrap: 'wrap', marginBottom: 6 }}>
+                      {(agent.traits && agent.traits.length > 0)
+                        ? agent.traits.map(t => <Pill key={t} label={t} />)
+                        : <Text style={{ color: theme.color.mutedForeground, fontSize: 13 }}>Not configured.</Text>
+                      }
+                    </View>
+                    {agent.traits && agent.traits.length > 0 && (
+                      <>
+                        <Text style={{ color: theme.color.mutedForeground, fontSize: 13, marginBottom: 2 }}>
+                          {agent.traits.map(t => traitDescriptions[t] || 'Configured trait.').join(' ')}
+                        </Text>
+                        <Text style={{ color: theme.color.cardForeground, fontSize: 13, fontStyle: 'italic' }}>
+                          “I’ve reviewed the details carefully and here’s the best path forward.”
+                        </Text>
+                      </>
+                    )}
                   </View>
-                  {agent.traits && agent.traits.length > 0 && (
-                    <>
-                      <Text style={{ color: theme.color.mutedForeground, fontSize: 13, marginBottom: 2 }}>
-                        {agent.traits.map(t => traitDescriptions[t] || 'Configured trait.').join(' ')}
-                      </Text>
-                      <Text style={{ color: theme.color.cardForeground, fontSize: 13, fontStyle: 'italic' }}>
-                        “I’ve reviewed the details carefully and here’s the best path forward.”
-                      </Text>
-                    </>
-                  )}
                 </View>
 
                 {/* Escalation */}
                 <View>
                   <SectionTitle title="Escalation" icon={<ClipboardList size={16} color={theme.color.mutedForeground as any} />} />
-                  <View style={{ flexDirection: 'row', flexWrap: 'wrap', marginBottom: 6 }}>
-                    {agent.escalationRule ? <Pill label={agent.escalationRule} /> : <Text style={{ color: theme.color.mutedForeground, fontSize: 13 }}>Not configured.</Text>}
+                  <View style={{ paddingLeft: contentIndent }}>
+                    <View style={{ flexDirection: 'row', flexWrap: 'wrap', marginBottom: 6 }}>
+                      {agent.escalationRule ? <Pill label={agent.escalationRule} /> : <Text style={{ color: theme.color.mutedForeground, fontSize: 13 }}>Not configured.</Text>}
+                    </View>
+                    {agent.escalationRule && (
+                      <>
+                        <Text style={{ color: theme.color.mutedForeground, fontSize: 13, marginBottom: 2 }}>
+                          {(escalationDescriptions[agent.escalationRule]?.desc) || 'Configured escalation policy.'}
+                        </Text>
+                        <Text style={{ color: theme.color.cardForeground, fontSize: 13, fontStyle: 'italic' }}>
+                          “{(escalationDescriptions[agent.escalationRule]?.sample) || 'Passing this to a human specialist.'}”
+                        </Text>
+                      </>
+                    )}
                   </View>
-                  {agent.escalationRule && (
-                    <>
-                      <Text style={{ color: theme.color.mutedForeground, fontSize: 13, marginBottom: 2 }}>
-                        {(escalationDescriptions[agent.escalationRule]?.desc) || 'Configured escalation policy.'}
-                      </Text>
-                      <Text style={{ color: theme.color.cardForeground, fontSize: 13, fontStyle: 'italic' }}>
-                        “{(escalationDescriptions[agent.escalationRule]?.sample) || 'Passing this to a human specialist.'}”
-                      </Text>
-                    </>
-                  )}
                 </View>
 
                 {/* About */}
