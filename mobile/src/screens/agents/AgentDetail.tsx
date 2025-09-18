@@ -4,7 +4,7 @@ import { Modal } from '../../components/ui/Modal'
 import { useTheme } from '../../providers/ThemeProvider'
 import { Button } from '../../components/ui/Button'
 import { Input } from '../../components/ui/Input'
-import { Bot, ClipboardList, Star, Settings, BarChart3, Briefcase, Target, Plus, X, Power } from 'lucide-react-native'
+import { Bot, ClipboardList, Star, Settings, BarChart3, Briefcase, Target, Plus, X, Power, MessageCircle } from 'lucide-react-native'
 
 interface AgentDetailProps {
   visible: boolean
@@ -220,9 +220,12 @@ export const AgentDetail: React.FC<AgentDetailProps> = ({ visible, agent, onClos
                         <Text style={{ color: theme.color.mutedForeground, fontSize: 13, marginBottom: 2 }}>
                           {(toneDescriptions[agent.tone]?.desc) || 'Configured tone.'}
                         </Text>
-                        <Text style={{ color: theme.color.cardForeground, fontSize: 13, fontStyle: 'italic' }}>
-                          “{(toneDescriptions[agent.tone]?.sample) || 'Hello! How can I help you today?'}”
-                        </Text>
+                        <View style={{ flexDirection: 'row', alignItems: 'flex-start', gap: 6, marginTop: 2 }}>
+                          <MessageCircle size={12} color={theme.color.mutedForeground as any} />
+                          <Text style={{ color: theme.color.cardForeground, fontSize: 13, fontStyle: 'italic', flex: 1 }}>
+                            “{(toneDescriptions[agent.tone]?.sample) || 'Hello! How can I help you today?'}”
+                          </Text>
+                        </View>
                       </>
                     )}
                   </View>
@@ -244,9 +247,12 @@ export const AgentDetail: React.FC<AgentDetailProps> = ({ visible, agent, onClos
                         <Text style={{ color: theme.color.mutedForeground, fontSize: 13, marginBottom: 2 }}>
                           {agent.traits.map(t => traitDescriptions[t] || 'Configured trait.').join(' ')}
                         </Text>
-                        <Text style={{ color: theme.color.cardForeground, fontSize: 13, fontStyle: 'italic' }}>
-                          “I’ve reviewed the details carefully and here’s the best path forward.”
-                        </Text>
+                        <View style={{ flexDirection: 'row', alignItems: 'flex-start', gap: 6, marginTop: 2 }}>
+                          <MessageCircle size={12} color={theme.color.mutedForeground as any} />
+                          <Text style={{ color: theme.color.cardForeground, fontSize: 13, fontStyle: 'italic', flex: 1 }}>
+                            “I’ve reviewed the details carefully and here’s the best path forward.”
+                          </Text>
+                        </View>
                       </>
                     )}
                   </View>
@@ -265,9 +271,12 @@ export const AgentDetail: React.FC<AgentDetailProps> = ({ visible, agent, onClos
                         <Text style={{ color: theme.color.mutedForeground, fontSize: 13, marginBottom: 2 }}>
                           {(escalationDescriptions[agent.escalationRule]?.desc) || 'Configured escalation policy.'}
                         </Text>
-                        <Text style={{ color: theme.color.cardForeground, fontSize: 13, fontStyle: 'italic' }}>
-                          “{(escalationDescriptions[agent.escalationRule]?.sample) || 'Passing this to a human specialist.'}”
-                        </Text>
+                        <View style={{ flexDirection: 'row', alignItems: 'flex-start', gap: 6, marginTop: 2 }}>
+                          <MessageCircle size={12} color={theme.color.mutedForeground as any} />
+                          <Text style={{ color: theme.color.cardForeground, fontSize: 13, fontStyle: 'italic', flex: 1 }}>
+                            “{(escalationDescriptions[agent.escalationRule]?.sample) || 'Passing this to a human specialist.'}”
+                          </Text>
+                        </View>
                       </>
                     )}
                   </View>
