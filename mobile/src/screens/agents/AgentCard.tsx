@@ -41,13 +41,15 @@ interface AgentCardProps {
   onToggleStatus: (id: string) => void
   onEdit: (agent: Agent) => void
   onDelete: (id: string) => void
+  onPress?: (agent: Agent) => void
 }
 
 export const AgentCard: React.FC<AgentCardProps> = ({ 
   agent, 
   onToggleStatus, 
   onEdit, 
-  onDelete 
+  onDelete,
+  onPress,
 }) => {
   const { theme } = useTheme()
 
@@ -70,8 +72,24 @@ export const AgentCard: React.FC<AgentCardProps> = ({
   const hasRole = Boolean(agent.role || (agent.roles && agent.roles.length > 0))
   const hasDescription = Boolean((agent.description || '').trim().length > 0)
 
+  const CardContainer: React.FC<{ children: React.ReactNode }> = ({ children }) => (
+    onPress 
+      ? (
+          <TouchableOpacity activeOpacity={0.85} onPress={() => onPress(agent)}>
+            <Card variant="flat" style={{ marginBottom: 12, backgroundColor: theme.dark ? theme.color.secondary : theme.color.accent, paddingHorizontal: 16, paddingVertical: 14 }}>
+              {children}
+            </Card>
+          </TouchableOpacity>
+        )
+      : (
+          <Card variant="flat" style={{ marginBottom: 12, backgroundColor: theme.dark ? theme.color.secondary : theme.color.accent, paddingHorizontal: 16, paddingVertical: 14 }}>
+            {children}
+          </Card>
+        )
+  )
+
   return (
-    <Card variant="flat" style={{ marginBottom: 12, backgroundColor: theme.dark ? theme.color.secondary : theme.color.accent, paddingHorizontal: 16, paddingVertical: 14 }}>
+    <CardContainer>
       {/* Header */}
       <View style={{
         flexDirection: 'row',
@@ -246,6 +264,6 @@ export const AgentCard: React.FC<AgentCardProps> = ({
           <Trash2 size={16} color={theme.color.error as any} />
         </TouchableOpacity>
       </View>
-    </Card>
+    </CardContainer>
   )
 }

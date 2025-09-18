@@ -8,6 +8,7 @@ import { Button } from '../../components/ui/Button'
 import { Bot, Plus } from 'lucide-react-native'
 import { CreateAgent } from './CreateAgent'
 import { AgentCard } from './AgentCard'
+import { AgentDetail } from './AgentDetail'
 
 interface Agent {
   id: string
@@ -29,6 +30,8 @@ export const AgentsScreen: React.FC = () => {
   const [activeTab, setActiveTab] = useState<'active' | 'inactive'>('active')
   const [showCreateModal, setShowCreateModal] = useState(false)
   const [agents, setAgents] = useState<Agent[]>([])
+  const [selectedAgent, setSelectedAgent] = useState<Agent | null>(null)
+  const [showAgentDetail, setShowAgentDetail] = useState(false)
 
   const tabs = [
     { key: 'active' as const, label: t('agents.active') },
@@ -197,6 +200,7 @@ export const AgentsScreen: React.FC = () => {
                 onToggleStatus={handleToggleStatus}
                 onEdit={handleEditAgent}
                 onDelete={handleDeleteAgent}
+                onPress={(a) => { setSelectedAgent(a as any); setShowAgentDetail(true) }}
               />
             ))
           ) : activeTab === 'active' && agents.some(a => a.status === 'inactive') ? (
@@ -211,6 +215,7 @@ export const AgentsScreen: React.FC = () => {
                   onToggleStatus={handleToggleStatus}
                   onEdit={handleEditAgent}
                   onDelete={handleDeleteAgent}
+                  onPress={(a) => { setSelectedAgent(a as any); setShowAgentDetail(true) }}
                 />
               )
             })()
@@ -251,6 +256,15 @@ export const AgentsScreen: React.FC = () => {
           visible={showCreateModal}
           onClose={() => setShowCreateModal(false)}
           onSave={handleCreateAgent}
+        />
+
+        {/* Agent Detail Modal */}
+        <AgentDetail
+          visible={showAgentDetail}
+          agent={selectedAgent as any}
+          onClose={() => { setShowAgentDetail(false); setSelectedAgent(null) }}
+          onToggleStatus={(id) => { handleToggleStatus(id); setShowAgentDetail(false) }}
+          onEdit={(id) => { const ag = agents.find(a => a.id === id); if (ag) handleEditAgent(ag) }}
         />
       </View>
     </SafeAreaView>
