@@ -71,8 +71,20 @@ export const AgentDetail: React.FC<AgentDetailProps> = ({ visible, agent, onClos
   )
 
   const Pill: React.FC<{ label: string }> = ({ label }) => (
-    <View style={{ backgroundColor: theme.color.primary as any, borderRadius: 999, paddingHorizontal: 10, paddingVertical: 6, marginRight: 6, marginBottom: 6 }}>
-      <Text style={{ color: '#fff', fontSize: 12, fontWeight: '700' }}>{label}</Text>
+    <View
+      style={{
+        backgroundColor: theme.dark ? (theme.color.secondary as any) : (theme.color.accent as any),
+        borderRadius: 999,
+        paddingHorizontal: 10,
+        paddingVertical: 6,
+        marginRight: 6,
+        marginBottom: 6,
+      }}
+    >
+      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+        <View style={{ width: 6, height: 6, borderRadius: 3, backgroundColor: theme.color.primary as any }} />
+        <Text style={{ color: theme.color.primary as any, fontSize: 12, fontWeight: '600' }}>{label}</Text>
+      </View>
     </View>
   )
   const SectionDivider: React.FC = () => (
@@ -172,10 +184,7 @@ export const AgentDetail: React.FC<AgentDetailProps> = ({ visible, agent, onClos
                 backgroundColor: activeTab === tab.key ? theme.color.card : 'transparent'
               }}
             >
-              <View style={{ alignItems: 'center', gap: 4 }}>
-                <tab.icon size={18} color={activeTab === tab.key ? (theme.color.primary as any) : (theme.color.mutedForeground as any)} />
-                <Text style={{ color: activeTab === tab.key ? (theme.color.primary as any) : (theme.color.mutedForeground as any), fontSize: 12, fontWeight: '700' }}>{tab.label}</Text>
-              </View>
+              <Text style={{ textAlign: 'center', color: activeTab === tab.key ? (theme.color.primary as any) : (theme.color.mutedForeground as any), fontSize: 12, fontWeight: '700' }}>{tab.label}</Text>
             </TouchableOpacity>
           ))}
         </View>
@@ -315,10 +324,17 @@ export const AgentDetail: React.FC<AgentDetailProps> = ({ visible, agent, onClos
                             borderRadius: 999,
                             marginRight: 6,
                             marginBottom: 6,
-                            backgroundColor: selected ? (theme.color.primary as any) : (theme.dark ? theme.color.secondary : theme.color.card)
+                            backgroundColor: selected ? (theme.dark ? theme.color.secondary : theme.color.accent) : (theme.dark ? theme.color.secondary : theme.color.card)
                           }}
                         >
-                          <Text style={{ color: selected ? '#fff' : (theme.color.mutedForeground as any), fontSize: 12, fontWeight: '700' }}>{k}</Text>
+                          {selected ? (
+                            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                              <View style={{ width: 6, height: 6, borderRadius: 3, backgroundColor: theme.color.primary as any }} />
+                              <Text style={{ color: theme.color.primary as any, fontSize: 12, fontWeight: '600' }}>{k}</Text>
+                            </View>
+                          ) : (
+                            <Text style={{ color: theme.color.mutedForeground as any, fontSize: 12, fontWeight: '600' }}>{k}</Text>
+                          )}
                         </TouchableOpacity>
                       )
                     })}
@@ -345,8 +361,22 @@ export const AgentDetail: React.FC<AgentDetailProps> = ({ visible, agent, onClos
                   {/* Show custom KPIs with remove */}
                   <View style={{ flexDirection: 'row', flexWrap: 'wrap', marginTop: 6 }}>
                     {selectedKpis.filter(k => !commonKpis.includes(k)).map(k => (
-                      <View key={`custom-${k}`} style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: theme.dark ? theme.color.secondary : theme.color.card, borderRadius: 999, paddingHorizontal: 10, paddingVertical: 6, marginRight: 6, marginBottom: 6, gap: 6 }}>
-                        <Text style={{ color: theme.color.mutedForeground, fontSize: 12, fontWeight: '700' }}>{k}</Text>
+                      <View 
+                        key={`custom-${k}`}
+                        style={{ 
+                          flexDirection: 'row', 
+                          alignItems: 'center', 
+                          backgroundColor: theme.dark ? (theme.color.secondary as any) : (theme.color.accent as any), 
+                          borderRadius: 999, 
+                          paddingHorizontal: 10, 
+                          paddingVertical: 6, 
+                          marginRight: 6, 
+                          marginBottom: 6, 
+                          gap: 6
+                        }}
+                      >
+                        <View style={{ width: 6, height: 6, borderRadius: 3, backgroundColor: theme.color.primary as any }} />
+                        <Text style={{ color: theme.color.primary as any, fontSize: 12, fontWeight: '600' }}>{k}</Text>
                         <TouchableOpacity onPress={() => removeCustomKpi(k)} hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}>
                           <X size={14} color={theme.color.mutedForeground as any} />
                         </TouchableOpacity>
