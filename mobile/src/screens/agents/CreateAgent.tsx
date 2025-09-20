@@ -31,7 +31,7 @@ export const CreateAgent: React.FC<CreateAgentProps> = ({ visible, onClose, onSa
 
   // Smart auto-center on selection
   const scrollRef = useRef<ScrollView>(null)
-  type SectionKey = 'basic' | 'role' | 'tone' | 'traits' | 'escalation' | 'tools'
+  type SectionKey = 'basic' | 'role' | 'tone' | 'traits' | 'escalation' | 'tools' | 'dataAccess'
   const sectionRefs: Record<SectionKey, React.RefObject<View>> = {
     basic: useRef<View>(null as any),
     role: useRef<View>(null as any),
@@ -39,6 +39,7 @@ export const CreateAgent: React.FC<CreateAgentProps> = ({ visible, onClose, onSa
     traits: useRef<View>(null as any),
     escalation: useRef<View>(null as any),
     tools: useRef<View>(null as any),
+    dataAccess: useRef<View>(null as any),
   }
   const [viewportHeight, setViewportHeight] = useState(0)
   const [contentHeight, setContentHeight] = useState(0)
@@ -56,6 +57,7 @@ export const CreateAgent: React.FC<CreateAgentProps> = ({ visible, onClose, onSa
     traits: 56,
     escalation: 56,
     tools: 56,
+    dataAccess: 56,
   }
 
   const scrollSectionToCenter = (key: SectionKey) => {
@@ -134,6 +136,10 @@ export const CreateAgent: React.FC<CreateAgentProps> = ({ visible, onClose, onSa
       traits: formData.traits,
       escalationRule: formData.escalationRule,
       tools: formData.tools,
+      dataAccess: {
+        mode: dataAccessMode,
+        selectedCollections: dataAccessSelected,
+      },
       status: 'inactive',
       createdAt: new Date().toISOString(),
       conversations: 0,
@@ -153,6 +159,8 @@ export const CreateAgent: React.FC<CreateAgentProps> = ({ visible, onClose, onSa
       tools: [],
       roles: []
     })
+    setDataAccessMode('all')
+    setDataAccessSelected([])
   }
 
   const toggleTool = (toolKey: string) => {
@@ -162,6 +170,22 @@ export const CreateAgent: React.FC<CreateAgentProps> = ({ visible, onClose, onSa
         ? prev.tools.filter(t => t !== toolKey)
         : [...prev.tools, toolKey]
     }))
+  }
+
+  // Data Access (quick setup)
+  type DataAccessMode = 'all' | 'select'
+  const [dataAccessMode, setDataAccessMode] = useState<DataAccessMode>('all')
+  const [dataAccessSelected, setDataAccessSelected] = useState<string[]>([])
+  const availableCollections = [
+    'Company Vision',
+    'Mission Statement',
+    'Support SOPs',
+    'Product Knowledge Base',
+    'Security Policies',
+    'HR Handbook',
+  ]
+  const toggleCollection = (c: string) => {
+    setDataAccessSelected(prev => prev.includes(c) ? prev.filter(x => x !== c) : [...prev, c])
   }
 
   // Share step animations and typed message
@@ -470,6 +494,72 @@ export const CreateAgent: React.FC<CreateAgentProps> = ({ visible, onClose, onSa
           <Text style={{ color: theme.color.mutedForeground, fontSize: 12, marginTop: 8 }}>
             Set when to hand off to a human. You can refine this later.
           </Text>
+        </View>
+
+        <View style={{ height: 1, backgroundColor: theme.color.border, marginBottom: 16 }} />
+        {/* Data Access (quick setup) */}
+        <View
+          ref={sectionRefs.dataAccess}
+          style={{ marginBottom: 20 }}
+          onLayout={(e) => setSectionLayout('dataAccess', e.nativeEvent.layout.y, e.nativeEvent.layout.height)}
+        >
+          <Text style={{ color: theme.color.cardForeground, fontSize: 16, fontWeight: '600', marginBottom: 12 }}>
+            Data Access
+          </Text>
+          {/* Segmented control: All vs Select */}
+          <View style={{ backgroundColor: theme.color.muted, borderRadius: theme.radius.md, padding: 6, flexDirection: 'row', marginBottom: 12 }}>
+            {(['all','select'] as DataAccessMode[]).map(mode => (
+              <TouchableOpacity
+                key={mode}
+                onPress={() => { setDataAccessMode(mode); centerAfterLayout('dataAccess') }}
+                activeOpacity={0.85}
+                style={{ flex: 1, paddingVertical: 10, borderRadius: theme.radius.sm, backgroundColor: dataAccessMode === mode ? theme.color.card : 'transparent' }}
+              >
+                <Text style={{ textAlign: 'center', color: dataAccessMode === mode ? (theme.color.primary as any) : (theme.color.mutedForeground as any), fontSize: 12, fontWeight: '700' }}>
+                  {mode === 'all' ? 'Grant all access' : 'Select collections'}
+                </Text>
+              </TouchableOpacity>
+            ))}
+          </View>
+
+          {/* Collections multi-select */}
+          {dataAccessMode === 'select' && (
+            <View>
+              <View style={{ flexDirection: 'row', flexWrap: 'wrap' }}>
+                {availableCollections.map(col => {
+                  const selected = dataAccessSelected.includes(col)
+                  return (
+                    <TouchableOpacity
+                      key={col}
+                      onPress={() => { toggleCollection(col); centerAfterLayout('dataAccess') }}
+                      activeOpacity={0.85}
+                      style={{
+                        marginRight: 8,
+                        marginBottom: 8,
+                        paddingVertical: 10,
+                        paddingHorizontal: 14,
+                        borderRadius: theme.radius.md,
+                        backgroundColor: selected ? (theme.color.primary as any) : (theme.dark ? theme.color.secondary : theme.color.accent),
+                      }}
+                    >
+                      <Text style={{ color: selected ? ('#ffffff' as any) : (theme.color.mutedForeground as any), fontWeight: '700', fontSize: 13 }}>
+                        {col}
+                      </Text>
+                    </TouchableOpacity>
+                  )
+                })}
+              </View>
+              <Text style={{ color: theme.color.mutedForeground, fontSize: 12, marginTop: 4 }}>
+                Selected: {dataAccessSelected.length} {dataAccessSelected.length === 1 ? 'collection' : 'collections'}
+              </Text>
+            </View>
+          )}
+
+          {dataAccessMode === 'all' && (
+            <Text style={{ color: theme.color.mutedForeground, fontSize: 12 }}>
+              This agent will have access to all current and future files.
+            </Text>
+          )}
         </View>
 
         

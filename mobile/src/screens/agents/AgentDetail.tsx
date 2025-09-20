@@ -4,7 +4,7 @@ import { Modal } from '../../components/ui/Modal'
 import { useTheme } from '../../providers/ThemeProvider'
 import { Button } from '../../components/ui/Button'
 import { Input } from '../../components/ui/Input'
-import { Bot, ClipboardList, Star, Settings, BarChart3, Briefcase, Target, Plus, X, Power, MessageCircle } from 'lucide-react-native'
+import { Bot, ClipboardList, Star, Settings, BarChart3, Briefcase, Target, Plus, X, Power, MessageCircle, BookOpen } from 'lucide-react-native'
 
 interface AgentDetailProps {
   visible: boolean
@@ -20,6 +20,7 @@ interface AgentDetailProps {
     resolvedCases?: number
     satisfaction?: number
     createdAt?: string
+    dataAccess?: { mode?: 'all' | 'select'; selectedCollections?: string[] }
   } | null
   onClose: () => void
   onToggleStatus?: (id: string) => void
@@ -28,7 +29,7 @@ interface AgentDetailProps {
 
 export const AgentDetail: React.FC<AgentDetailProps> = ({ visible, agent, onClose, onToggleStatus, onEdit }) => {
   const { theme } = useTheme()
-  const [activeTab, setActiveTab] = useState<'overview'|'performance'|'settings'>('overview')
+  const [activeTab, setActiveTab] = useState<'overview'|'performance'|'access'|'settings'>('overview')
 
   // Guard must happen before accessing agent fields to avoid hook/order errors
   // Analytics removed from modal per request
@@ -99,6 +100,7 @@ export const AgentDetail: React.FC<AgentDetailProps> = ({ visible, agent, onClos
   const tabs = [
     { key: 'overview' as const, label: 'Overview', icon: Bot },
     { key: 'performance' as const, label: 'Performance', icon: BarChart3 },
+    { key: 'access' as const, label: 'Access', icon: BookOpen },
     { key: 'settings' as const, label: 'Settings', icon: Settings },
   ]
 
@@ -115,6 +117,22 @@ export const AgentDetail: React.FC<AgentDetailProps> = ({ visible, agent, onClos
   ]
   const [selectedKpis, setSelectedKpis] = useState<string[]>(['Customer Satisfaction', 'First Contact Resolution'])
   const [customKpiText, setCustomKpiText] = useState('')
+  
+  // Access state (frontend only)
+  type DataAccessMode = 'all' | 'select'
+  const availableCollections = [
+    'Company Vision',
+    'Mission Statement',
+    'Support SOPs',
+    'Product Knowledge Base',
+    'Security Policies',
+    'HR Handbook',
+  ]
+  const initialMode = (agent?.dataAccess?.mode as DataAccessMode) || 'all'
+  const initialSelected = (agent?.dataAccess?.selectedCollections || []) as string[]
+  const [accessMode, setAccessMode] = useState<DataAccessMode>(initialMode)
+  const [accessSelected, setAccessSelected] = useState<string[]>(initialSelected)
+  const toggleAccessCollection = (c: string) => setAccessSelected(prev => prev.includes(c) ? prev.filter(x => x !== c) : [...prev, c])
 
   if (!agent) return null
   const name = agent.name
@@ -217,6 +235,30 @@ export const AgentDetail: React.FC<AgentDetailProps> = ({ visible, agent, onClos
                 </View>
                 <SectionDivider />
 
+                {/* Access summary */}
+                <View>
+                  <SectionTitle title="Access" icon={<BookOpen size={16} color={theme.color.mutedForeground as any} />} />
+                  <View style={{ paddingLeft: contentIndent }}>
+                    <View style={{ flexDirection: 'row', flexWrap: 'wrap', marginBottom: 6, alignItems: 'center' }}>
+                      <Pill label={agent.dataAccess?.mode === 'all' ? 'Access: All files' : `Access: ${(agent.dataAccess?.selectedCollections || []).length} collections`} />
+                    </View>
+                    {agent.dataAccess?.mode === 'select' && (agent.dataAccess?.selectedCollections?.length || 0) > 0 && (
+                      <View style={{ flexDirection: 'row', flexWrap: 'wrap', marginBottom: 6 }}>
+                        {(agent.dataAccess?.selectedCollections || []).slice(0, 2).map(c => (
+                          <Pill key={`ac-${c}`} label={c} />
+                        ))}
+                        {((agent.dataAccess?.selectedCollections || []).length > 2) && (
+                          <Pill label={`+${(agent.dataAccess?.selectedCollections || []).length - 2} more`} />
+                        )}
+                      </View>
+                    )}
+                    <TouchableOpacity onPress={() => setActiveTab('access')} activeOpacity={0.85}>
+                      <Text style={{ color: theme.color.primary as any, fontSize: 12, fontWeight: '700' }}>Manage Access</Text>
+                    </TouchableOpacity>
+                  </View>
+                </View>
+                <SectionDivider />
+
                 {/* Tone */}
                 <View>
                   <SectionTitle title="Tone" icon={<Star size={16} color={theme.color.mutedForeground as any} />} />
@@ -305,7 +347,7 @@ export const AgentDetail: React.FC<AgentDetailProps> = ({ visible, agent, onClos
             {activeTab === 'performance' && (
               <View style={{ gap: 12 }}>
                 <SectionTitle title="KPIs" icon={<Target size={16} color={theme.color.mutedForeground as any} />} mb={4} />
-                <View style={{ paddingLeft: contentIndent }}>
+                <View>
                   <Text style={{ color: theme.color.mutedForeground, fontSize: 13, marginBottom: 12 }}>
                     Select the metrics you want the agent to prioritize during chats.
                   </Text>
@@ -361,20 +403,7 @@ export const AgentDetail: React.FC<AgentDetailProps> = ({ visible, agent, onClos
                   {/* Show custom KPIs with remove */}
                   <View style={{ flexDirection: 'row', flexWrap: 'wrap', marginTop: 6 }}>
                     {selectedKpis.filter(k => !commonKpis.includes(k)).map(k => (
-                      <View 
-                        key={`custom-${k}`}
-                        style={{ 
-                          flexDirection: 'row', 
-                          alignItems: 'center', 
-                          backgroundColor: theme.dark ? (theme.color.secondary as any) : (theme.color.accent as any), 
-                          borderRadius: 999, 
-                          paddingHorizontal: 10, 
-                          paddingVertical: 6, 
-                          marginRight: 6, 
-                          marginBottom: 6, 
-                          gap: 6
-                        }}
-                      >
+                      <View key={`custom-${k}`} style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: theme.dark ? theme.color.secondary : theme.color.accent, borderRadius: 999, paddingHorizontal: 10, paddingVertical: 6, marginRight: 6, marginBottom: 6, gap: 6 }}>
                         <View style={{ width: 6, height: 6, borderRadius: 3, backgroundColor: theme.color.primary as any }} />
                         <Text style={{ color: theme.color.primary as any, fontSize: 12, fontWeight: '600' }}>{k}</Text>
                         <TouchableOpacity onPress={() => removeCustomKpi(k)} hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}>
@@ -387,6 +416,71 @@ export const AgentDetail: React.FC<AgentDetailProps> = ({ visible, agent, onClos
                   {/* Helper note */}
                   <Text style={{ color: theme.color.mutedForeground, fontSize: 12, marginTop: 6 }}>
                     Your selected KPIs will guide response strategies and prioritization. Backend integration to follow.
+                  </Text>
+                </View>
+              </View>
+            )}
+
+            {activeTab === 'access' && (
+              <View style={{ gap: 12 }}>
+                <SectionTitle title="Data Access" icon={<BookOpen size={16} color={theme.color.mutedForeground as any} />} mb={4} />
+                <View>
+                  {/* Segmented control */}
+                  <View style={{ backgroundColor: theme.color.muted, borderRadius: theme.radius.md, padding: 6, flexDirection: 'row', marginBottom: 10 }}>
+                    {(['all','select'] as DataAccessMode[]).map(mode => (
+                      <TouchableOpacity
+                        key={`acc-${mode}`}
+                        onPress={() => setAccessMode(mode)}
+                        activeOpacity={0.85}
+                        style={{ flex: 1, paddingVertical: 10, borderRadius: theme.radius.sm, backgroundColor: accessMode === mode ? theme.color.card : 'transparent' }}
+                      >
+                        <Text style={{ textAlign: 'center', color: accessMode === mode ? (theme.color.primary as any) : (theme.color.mutedForeground as any), fontSize: 12, fontWeight: '700' }}>
+                          {mode === 'all' ? 'Grant all access' : 'Select collections'}
+                        </Text>
+                      </TouchableOpacity>
+                    ))}
+                  </View>
+
+                  {accessMode === 'all' && (
+                    <Text style={{ color: theme.color.mutedForeground, fontSize: 12 }}>
+                      This agent will have access to all current and future files.
+                    </Text>
+                  )}
+
+                  {accessMode === 'select' && (
+                    <View>
+                      <View style={{ flexDirection: 'row', flexWrap: 'wrap' }}>
+                        {availableCollections.map(col => {
+                          const selected = accessSelected.includes(col)
+                          return (
+                            <TouchableOpacity
+                              key={`col-${col}`}
+                              onPress={() => toggleAccessCollection(col)}
+                              activeOpacity={0.85}
+                              style={{
+                                marginRight: 8,
+                                marginBottom: 8,
+                                paddingVertical: 10,
+                                paddingHorizontal: 14,
+                                borderRadius: theme.radius.md,
+                                backgroundColor: selected ? (theme.color.primary as any) : (theme.dark ? theme.color.secondary : theme.color.accent)
+                              }}
+                            >
+                              <Text style={{ color: selected ? ('#ffffff' as any) : (theme.color.mutedForeground as any), fontWeight: '700', fontSize: 13 }}>
+                                {col}
+                              </Text>
+                            </TouchableOpacity>
+                          )
+                        })}
+                      </View>
+                      <Text style={{ color: theme.color.mutedForeground, fontSize: 12, marginTop: 4 }}>
+                        Selected: {accessSelected.length} {accessSelected.length === 1 ? 'collection' : 'collections'}
+                      </Text>
+                    </View>
+                  )}
+
+                  <Text style={{ color: theme.color.mutedForeground, fontSize: 12, marginTop: 8 }}>
+                    Changes here are UI-only for now and will sync later.
                   </Text>
                 </View>
               </View>
