@@ -99,8 +99,8 @@ export const AgentDetail: React.FC<AgentDetailProps> = ({ visible, agent, onClos
 
   const tabs = [
     { key: 'overview' as const, label: 'Overview', icon: Bot },
-    { key: 'performance' as const, label: 'Performance', icon: BarChart3 },
-    { key: 'access' as const, label: 'Access', icon: BookOpen },
+    { key: 'performance' as const, label: 'KPIs', icon: BarChart3 },
+    { key: 'access' as const, label: 'Knowledge', icon: BookOpen },
     { key: 'settings' as const, label: 'Settings', icon: Settings },
   ]
 
@@ -235,12 +235,12 @@ export const AgentDetail: React.FC<AgentDetailProps> = ({ visible, agent, onClos
                 </View>
                 <SectionDivider />
 
-                {/* Access summary */}
+                {/* Knowledge summary */}
                 <View>
-                  <SectionTitle title="Access" icon={<BookOpen size={16} color={theme.color.mutedForeground as any} />} />
+                  <SectionTitle title="Knowledge" icon={<BookOpen size={16} color={theme.color.mutedForeground as any} />} />
                   <View style={{ paddingLeft: contentIndent }}>
                     <View style={{ flexDirection: 'row', flexWrap: 'wrap', marginBottom: 6, alignItems: 'center' }}>
-                      <Pill label={agent.dataAccess?.mode === 'all' ? 'Access: All files' : `Access: ${(agent.dataAccess?.selectedCollections || []).length} collections`} />
+                      <Pill label={agent.dataAccess?.mode === 'all' ? 'Knowledge: All files' : `Knowledge: ${(agent.dataAccess?.selectedCollections || []).length} collections`} />
                     </View>
                     {agent.dataAccess?.mode === 'select' && (agent.dataAccess?.selectedCollections?.length || 0) > 0 && (
                       <View style={{ flexDirection: 'row', flexWrap: 'wrap', marginBottom: 6 }}>
@@ -253,7 +253,7 @@ export const AgentDetail: React.FC<AgentDetailProps> = ({ visible, agent, onClos
                       </View>
                     )}
                     <TouchableOpacity onPress={() => setActiveTab('access')} activeOpacity={0.85}>
-                      <Text style={{ color: theme.color.primary as any, fontSize: 12, fontWeight: '700' }}>Manage Access</Text>
+                      <Text style={{ color: theme.color.primary as any, fontSize: 12, fontWeight: '700' }}>Manage Knowledge</Text>
                     </TouchableOpacity>
                   </View>
                 </View>
@@ -423,7 +423,7 @@ export const AgentDetail: React.FC<AgentDetailProps> = ({ visible, agent, onClos
 
             {activeTab === 'access' && (
               <View style={{ gap: 12 }}>
-                <SectionTitle title="Data Access" icon={<BookOpen size={16} color={theme.color.mutedForeground as any} />} mb={4} />
+                <SectionTitle title="Knowledge" icon={<BookOpen size={16} color={theme.color.mutedForeground as any} />} mb={4} />
                 <View>
                   {/* Segmented control */}
                   <View style={{ backgroundColor: theme.color.muted, borderRadius: theme.radius.md, padding: 6, flexDirection: 'row', gap: 6, marginBottom: 10 }}>
@@ -435,7 +435,7 @@ export const AgentDetail: React.FC<AgentDetailProps> = ({ visible, agent, onClos
                         style={{ flex: 1, paddingVertical: 10, borderRadius: theme.radius.sm, backgroundColor: accessMode === mode ? theme.color.card : 'transparent' }}
                       >
                         <Text style={{ textAlign: 'center', color: accessMode === mode ? (theme.color.primary as any) : (theme.color.mutedForeground as any), fontSize: 12, fontWeight: '700' }}>
-                          {mode === 'all' ? 'Grant all access' : 'Select collections'}
+                          {mode === 'all' ? 'Grant all knowledge' : 'Select collections'}
                         </Text>
                       </TouchableOpacity>
                     ))}
@@ -443,7 +443,7 @@ export const AgentDetail: React.FC<AgentDetailProps> = ({ visible, agent, onClos
 
                   {accessMode === 'all' && (
                     <Text style={{ color: theme.color.mutedForeground, fontSize: 12 }}>
-                      This agent will have access to all current and future files.
+                      This agent will have knowledge of all current and future files.
                     </Text>
                   )}
 
@@ -479,9 +479,7 @@ export const AgentDetail: React.FC<AgentDetailProps> = ({ visible, agent, onClos
                     </View>
                   )}
 
-                  <Text style={{ color: theme.color.mutedForeground, fontSize: 12, marginTop: 8 }}>
-                    Changes here are UI-only for now and will sync later.
-                  </Text>
+                  {/* Removed UI-only disclaimer for Knowledge tab */}
                 </View>
               </View>
             )}
