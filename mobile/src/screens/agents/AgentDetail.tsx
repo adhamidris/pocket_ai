@@ -1,5 +1,5 @@
 import React, { useState } from 'react'
-import { View, Text, ScrollView, TouchableOpacity } from 'react-native'
+import { View, Text, ScrollView, TouchableOpacity, Alert } from 'react-native'
 import { Modal } from '../../components/ui/Modal'
 import { useTheme } from '../../providers/ThemeProvider'
 import { Button } from '../../components/ui/Button'
@@ -499,28 +499,35 @@ export const AgentDetail: React.FC<AgentDetailProps> = ({ visible, agent, onClos
 
         {/* Actions (sticky at bottom) */}
         <View style={{ flexDirection: 'row', gap: 12 }}>
-          {/* Activate / Deactivate - filled, borderless */}
+          {/* Activate / Deactivate - soft danger for Deactivate, primary for Activate */}
           <View style={{ flex: 1 }}>
-            <TouchableOpacity
-              onPress={() => onToggleStatus?.(agent.id)}
-              activeOpacity={0.85}
-              style={{
-                height: ACTION_BUTTON_HEIGHT,
-                borderRadius: ACTION_BUTTON_RADIUS,
-                backgroundColor: (agent.status === 'active' ? theme.color.error : theme.color.success) as any,
-                alignItems: 'center',
-                justifyContent: 'center',
-                width: '100%'
-              }}
+            <Button
+              title={agent.status === 'active' ? 'Deactivate' : 'Activate'}
+              variant={agent.status === 'active' ? 'dangerSoft' : 'default'}
+              size="lg"
+              fullWidth
               accessibilityLabel={`${agent.status === 'active' ? 'Deactivate' : 'Activate'} agent ${name}`}
-            >
-              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-                <Power size={18} color={'#fff'} />
-                <Text style={{ color: '#fff', fontSize: 16, fontWeight: '600' }}>
-                  {agent.status === 'active' ? 'Deactivate' : 'Activate'}
-                </Text>
-              </View>
-            </TouchableOpacity>
+              iconLeft={
+                <Power
+                  size={18}
+                  color={agent.status === 'active' ? (theme.color.error as any) : '#fff'}
+                />
+              }
+              onPress={() => {
+                if (agent.status === 'active') {
+                  Alert.alert(
+                    'Deactivate agent?',
+                    'This agent can be re-activated later.',
+                    [
+                      { text: 'Cancel', style: 'cancel' },
+                      { text: 'Deactivate', style: 'destructive', onPress: () => onToggleStatus?.(agent.id) }
+                    ]
+                  )
+                } else {
+                  onToggleStatus?.(agent.id)
+                }
+              }}
+            />
           </View>
 
           {/* Edit - neutral card-like, borderless */}

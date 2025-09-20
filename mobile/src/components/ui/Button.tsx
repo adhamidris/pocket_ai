@@ -5,11 +5,11 @@ import * as Haptics from 'expo-haptics'
 import { useTheme } from '../../providers/ThemeProvider'
 import { LoadingSpinner } from './LoadingSpinner'
 
-type Variant = 'default' | 'secondary' | 'outline' | 'ghost' | 'link' | 'premium' | 'hero' | 'glass' | 'danger'
-type Size = 'sm' | 'md' | 'lg' | 'xl'
+type Variant = 'default' | 'secondary' | 'outline' | 'ghost' | 'link' | 'premium' | 'hero' | 'glass' | 'danger' | 'dangerSoft'
+type Size = 'xs' | 'sm' | 'md' | 'lg' | 'xl'
 
-const HEIGHT: Record<Size, number> = { sm: 36, md: 40, lg: 48, xl: 56 }
-const RADIUS: Record<Size, number> = { sm: 12, md: 12, lg: 16, xl: 16 }
+const HEIGHT: Record<Size, number> = { xs: 32, sm: 36, md: 40, lg: 48, xl: 56 }
+const RADIUS: Record<Size, number> = { xs: 10, sm: 12, md: 12, lg: 16, xl: 16 }
 
 export const Button: React.FC<{
   title: string
@@ -20,9 +20,15 @@ export const Button: React.FC<{
   loading?: boolean
   fullWidth?: boolean
   iconLeft?: React.ReactNode
-}> = ({ title, onPress, variant = 'default', size = 'md', disabled, loading, fullWidth, iconLeft }) => {
+  accessibilityLabel?: string
+}> = ({ title, onPress, variant = 'default', size = 'md', disabled, loading, fullWidth, iconLeft, accessibilityLabel }) => {
   const { theme } = useTheme()
   const scaleValue = useRef(new Animated.Value(1)).current
+
+  const withAlpha = (c: string, a: number) =>
+    c.startsWith('hsl(')
+      ? c.replace('hsl(', 'hsla(').replace(')', `,${a})`)
+      : c
 
   const handlePressIn = () => {
     if (!disabled && !loading) {
@@ -53,7 +59,7 @@ export const Button: React.FC<{
   const base: ViewStyle = {
     height: HEIGHT[size],
     borderRadius: RADIUS[size],
-    paddingHorizontal: size === 'xl' ? 20 : size === 'lg' ? 16 : 12,
+    paddingHorizontal: size === 'xl' ? 20 : size === 'lg' ? 16 : size === 'xs' ? 10 : 12,
     alignItems: 'center', 
     justifyContent: 'center',
     flexDirection: 'row',
@@ -62,7 +68,7 @@ export const Button: React.FC<{
   
   const text: TextStyle = { 
     color: theme.color.foreground, 
-    fontSize: 16, 
+    fontSize: size === 'xl' ? 18 : size === 'xs' ? 14 : 16, 
     fontWeight: '600' 
   }
 
@@ -74,6 +80,7 @@ export const Button: React.FC<{
         onPress={handlePress}
         disabled={disabled || loading} 
         activeOpacity={1} 
+        accessibilityLabel={accessibilityLabel}
         style={[{ height: HEIGHT[size], borderRadius: RADIUS[size], overflow: 'hidden', alignSelf: 'stretch' }]}
       > 
         <Animated.View style={{ 
@@ -83,7 +90,7 @@ export const Button: React.FC<{
           alignItems: 'center',
           justifyContent: 'center',
           flexDirection: 'row',
-          paddingHorizontal: size === 'xl' ? 20 : size === 'lg' ? 16 : 12
+          paddingHorizontal: size === 'xl' ? 20 : size === 'lg' ? 16 : size === 'xs' ? 10 : 12
         }}>
           <LinearGradient
             pointerEvents="none"
@@ -119,6 +126,7 @@ export const Button: React.FC<{
       case 'default': return { backgroundColor: theme.color.primary, ...(theme.shadow.md as any) }
       case 'secondary': return { backgroundColor: theme.color.secondary }
       case 'danger': return { backgroundColor: theme.color.error }
+      case 'dangerSoft': return { backgroundColor: withAlpha(theme.color.error, theme.dark ? 0.22 : 0.12) }
       case 'outline': return { backgroundColor: theme.color.background, borderWidth: 1, borderColor: theme.color.border }
       case 'ghost': return { backgroundColor: 'transparent' }
       case 'glass': return { backgroundColor: 'rgba(255,255,255,0.08)', borderWidth: 1, borderColor: 'rgba(255,255,255,0.2)' }
@@ -129,6 +137,7 @@ export const Button: React.FC<{
 
   const color = (() => {
     if (variant === 'default' || variant === 'danger') return '#fff'
+    if (variant === 'dangerSoft') return theme.color.error
     if (variant === 'link') return theme.color.mutedForeground
     if (variant === 'secondary') return theme.color.foreground
     return theme.color.foreground
@@ -141,6 +150,7 @@ export const Button: React.FC<{
       onPress={handlePress}
       disabled={disabled || loading} 
       activeOpacity={1} 
+      accessibilityLabel={accessibilityLabel}
       style={[disabled && { opacity: 0.5 }]}
     > 
       <Animated.View style={[base, bg, { transform: [{ scale: scaleValue }], ...(fullWidth ? { width: '100%' } : {}) }]}>

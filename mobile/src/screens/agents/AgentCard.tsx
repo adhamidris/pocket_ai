@@ -1,5 +1,5 @@
 import React from 'react'
-import { View, Text, TouchableOpacity } from 'react-native'
+import { View, Text, TouchableOpacity, Alert } from 'react-native'
 import { useTheme } from '../../providers/ThemeProvider'
 import { Card } from '../../components/ui/Card'
 import { AnimatedCard } from '../../components/ui/AnimatedCard'
@@ -14,8 +14,6 @@ import {
   Settings,
   Trash2,
   Briefcase,
-  ClipboardList,
-  CheckCircle2,
   Star
 } from 'lucide-react-native'
 
@@ -170,75 +168,69 @@ export const AgentCard: React.FC<AgentCardProps> = ({
         </TouchableOpacity>
       </View>
 
-      {/* Analytics */}
-      <View style={{
-        flexDirection: 'row',
-        justifyContent: 'space-between',
-        marginBottom: 10,
-        paddingTop: 8,
-        paddingBottom: 10,
-        borderTopWidth: 1,
-        borderTopColor: theme.color.border
-      }}>
-        {/* Conversations */}
-        <View style={{ alignItems: 'center', flex: 1 }}>
-          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4, marginBottom: 4 }}>
-            <MessageCircle size={14} color={theme.color.primary as any} />
-            <Text style={{ color: theme.color.cardForeground, fontSize: 16, fontWeight: '600' }}>
-              {agent.conversations}
-            </Text>
+      {/* Analytics (compact mini-summary; only for active agents) */}
+      {agent.status === 'active' && (
+        <View style={{
+          flexDirection: 'row',
+          justifyContent: 'space-between',
+          alignItems: 'center',
+          marginBottom: 8,
+          paddingTop: 6,
+        }}>
+          {/* Chats */}
+          <View style={{ alignItems: 'center', flex: 1 }}>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4, marginBottom: 2 }}>
+              <MessageCircle size={12} color={theme.color.mutedForeground as any} />
+              <Text style={{ color: theme.color.cardForeground, fontSize: 15, fontWeight: '600' }}>
+                {agent.conversations}
+              </Text>
+            </View>
+            <Text style={{ color: theme.color.mutedForeground, fontSize: 11 }}>Chats</Text>
           </View>
-          <Text style={{ color: theme.color.mutedForeground, fontSize: 12 }}>Chats</Text>
-        </View>
 
-        {/* Open cases */}
-        <View style={{ alignItems: 'center', flex: 1 }}>
-          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4, marginBottom: 4 }}>
-            <ClipboardList size={14} color={theme.color.warning as any} />
-            <Text style={{ color: theme.color.cardForeground, fontSize: 16, fontWeight: '600' }}>
-              {agent.openCases ?? 0}
-            </Text>
+          {/* CSAT */}
+          <View style={{ alignItems: 'center', flex: 1 }}>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4, marginBottom: 2 }}>
+              <Star size={12} color={theme.color.mutedForeground as any} />
+              <Text style={{ color: theme.color.cardForeground, fontSize: 15, fontWeight: '600' }}>
+                {(agent.satisfaction ?? 0)}%
+              </Text>
+            </View>
+            <Text style={{ color: theme.color.mutedForeground, fontSize: 11 }}>CSAT</Text>
           </View>
-          <Text style={{ color: theme.color.mutedForeground, fontSize: 12 }}>Open</Text>
         </View>
-
-        {/* Resolved */}
-        <View style={{ alignItems: 'center', flex: 1 }}>
-          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4, marginBottom: 4 }}>
-            <CheckCircle2 size={14} color={theme.color.success as any} />
-            <Text style={{ color: theme.color.cardForeground, fontSize: 16, fontWeight: '600' }}>
-              {agent.resolvedCases ?? 0}
-            </Text>
-          </View>
-          <Text style={{ color: theme.color.mutedForeground, fontSize: 12 }}>Resolved</Text>
-        </View>
-
-        {/* Avg CSAT */}
-        <View style={{ alignItems: 'center', flex: 1 }}>
-          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4, marginBottom: 4 }}>
-            <Star size={14} color={theme.color.warning as any} />
-            <Text style={{ color: theme.color.cardForeground, fontSize: 16, fontWeight: '600' }}>
-              {(agent.satisfaction ?? 0)}%
-            </Text>
-          </View>
-          <Text style={{ color: theme.color.mutedForeground, fontSize: 12 }}>Satisfaction</Text>
-        </View>
-      </View>
+      )}
 
       {/* Actions */}
       <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
         {/* Left actions */}
         <Button
           title={agent.status === 'active' ? 'Deactivate' : 'Activate'}
-          variant={agent.status === 'active' ? 'danger' : 'default'}
-          size="sm"
-          iconLeft={<Power size={14} color={'#fff'} />}
-          onPress={() => onToggleStatus(agent.id)}
+          variant={agent.status === 'active' ? 'dangerSoft' : 'default'}
+          size="xs"
+          iconLeft={
+            <Power size={14} color={agent.status === 'active' ? (theme.color.error as any) : '#fff'} />
+          }
+          accessibilityLabel={`${agent.status === 'active' ? 'Deactivate' : 'Activate'} agent ${agent.name}`}
+          onPress={() => {
+            if (agent.status === 'active') {
+              Alert.alert(
+                'Deactivate agent?',
+                `This agent can be re-activated later.`,
+                [
+                  { text: 'Cancel', style: 'cancel' },
+                  { text: 'Deactivate', style: 'destructive', onPress: () => onToggleStatus(agent.id) }
+                ]
+              )
+            } else {
+              onToggleStatus(agent.id)
+            }
+          }}
         />
         <Button
           title="Edit"
           variant="secondary"
-          size="sm"
+          size="xs"
           iconLeft={<Settings size={14} color={theme.color.foreground as any} />}
           onPress={() => onEdit(agent)}
         />
@@ -247,17 +239,18 @@ export const AgentCard: React.FC<AgentCardProps> = ({
         {/* Delete on the very right */}
         <TouchableOpacity
           onPress={() => onDelete(agent.id)}
+          hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
           style={{
-            width: 36,
-            height: 36,
-            borderRadius: 18,
+            width: 32,
+            height: 32,
+            borderRadius: 16,
             backgroundColor: dangerBg as any,
             alignItems: 'center',
             justifyContent: 'center'
           }}
           accessibilityLabel={`Delete agent ${agent.name}`}
         >
-          <Trash2 size={16} color={theme.color.error as any} />
+          <Trash2 size={14} color={theme.color.error as any} />
         </TouchableOpacity>
       </View>
     </CardContainer>
