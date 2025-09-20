@@ -190,7 +190,7 @@ export const AgentDetail: React.FC<AgentDetailProps> = ({ visible, agent, onClos
         <View style={{ height: 1, backgroundColor: theme.color.border }} />
 
         {/* Tabs bar */}
-        <View style={{ flexDirection: 'row', backgroundColor: theme.color.muted, borderRadius: theme.radius.md, padding: 6 }}>
+        <View style={{ flexDirection: 'row', backgroundColor: theme.color.muted, borderRadius: theme.radius.md, padding: 6, gap: 6 }}>
           {tabs.map((tab) => (
             <TouchableOpacity
               key={tab.key}
@@ -426,7 +426,7 @@ export const AgentDetail: React.FC<AgentDetailProps> = ({ visible, agent, onClos
                 <SectionTitle title="Data Access" icon={<BookOpen size={16} color={theme.color.mutedForeground as any} />} mb={4} />
                 <View>
                   {/* Segmented control */}
-                  <View style={{ backgroundColor: theme.color.muted, borderRadius: theme.radius.md, padding: 6, flexDirection: 'row', marginBottom: 10 }}>
+                  <View style={{ backgroundColor: theme.color.muted, borderRadius: theme.radius.md, padding: 6, flexDirection: 'row', gap: 6, marginBottom: 10 }}>
                     {(['all','select'] as DataAccessMode[]).map(mode => (
                       <TouchableOpacity
                         key={`acc-${mode}`}
