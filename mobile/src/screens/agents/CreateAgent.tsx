@@ -6,6 +6,7 @@ import { Input } from '../../components/ui/Input'
 import { Button } from '../../components/ui/Button'
 import { Modal } from '../../components/ui/Modal'
 import { Bot, User, Settings, BookOpen, Zap, Copy } from 'lucide-react-native'
+import { AGENT_ROLES, AGENT_TONES, AGENT_TRAITS, ESCALATION_OPTIONS } from '../../config/agentOptions'
 import Svg, { Circle, Rect, G, Path, Defs, RadialGradient, Stop, Ellipse } from 'react-native-svg'
 
 interface CreateAgentProps {
@@ -79,37 +80,10 @@ export const CreateAgent: React.FC<CreateAgentProps> = ({ visible, onClose, onSa
     requestAnimationFrame(() => requestAnimationFrame(() => scrollSectionToCenter(key)))
   }
 
-  const roles = [
-    'Support Agent',
-    'Sales Associate',
-    'Technical Specialist',
-    'Billing Assistant'
-  ]
-
-  const tones = [
-    'Friendly',
-    'Professional',
-    'Empathetic',
-    'Concise',
-    'Playful',
-    'Formal'
-  ]
-
-  const traitOptions = [
-    'Patient',
-    'Proactive',
-    'Detail-oriented',
-    'Persuasive',
-    'Analytical',
-    'Creative'
-  ]
-
-  const escalationOptions = [
-    'Never escalate',
-    'Escalate on negative sentiment',
-    'Escalate on SLA risk',
-    'Always escalate complex'
-  ]
+  const roles = AGENT_ROLES
+  const tones = AGENT_TONES
+  const traitOptions = AGENT_TRAITS
+  const escalationOptions = ESCALATION_OPTIONS
 
   const availableTools = [
     { key: 'email', label: 'Email Integration' },

@@ -1,11 +1,12 @@
 import React, { useState, useEffect } from 'react'
-import { View, Text, ScrollView, TouchableOpacity, Alert } from 'react-native'
+import { View, Text, ScrollView, TouchableOpacity, Alert, Animated, StyleSheet } from 'react-native'
 import { Modal } from '../../components/ui/Modal'
 import { Card } from '../../components/ui/Card'
 import { useTheme } from '../../providers/ThemeProvider'
 import { Button } from '../../components/ui/Button'
 import { Input } from '../../components/ui/Input'
 import { Bot, Settings, BarChart3, Target, Plus, X, Power, BookOpen, ChevronRight } from 'lucide-react-native'
+import { AGENT_ROLES, AGENT_TONES, AGENT_TRAITS, ESCALATION_OPTIONS } from '../../config/agentOptions'
 
 interface AgentDetailProps {
   visible: boolean
@@ -22,13 +23,18 @@ interface AgentDetailProps {
     satisfaction?: number
     createdAt?: string
     dataAccess?: { mode?: 'all' | 'select'; selectedCollections?: string[] }
+    tone?: string
+    traits?: string[]
+    escalationRule?: string
+    tools?: string[]
   } | null
   onClose: () => void
   onToggleStatus?: (id: string) => void
   onEdit?: (agentId: string) => void
+  onUpdateAgent?: (id: string, patch: Partial<{ roles: string[]; role?: string; tone?: string; traits?: string[]; escalationRule?: string }>) => void
 }
 
-export const AgentDetail: React.FC<AgentDetailProps> = ({ visible, agent, onClose, onToggleStatus, onEdit }) => {
+export const AgentDetail: React.FC<AgentDetailProps> = ({ visible, agent, onClose, onToggleStatus, onEdit, onUpdateAgent }) => {
   const { theme } = useTheme()
   const [activeTab, setActiveTab] = useState<'overview'|'performance'|'access'>('overview')
 
@@ -129,6 +135,93 @@ export const AgentDetail: React.FC<AgentDetailProps> = ({ visible, agent, onClos
   const [selectedKpis, setSelectedKpis] = useState<string[]>(['Customer Satisfaction', 'First Contact Resolution'])
   const [customKpiText, setCustomKpiText] = useState('')
 
+  // Edit mode & draft
+  const [editMode, setEditMode] = useState(false)
+  const [draftRoles, setDraftRoles] = useState<string[]>([])
+  const [draftTone, setDraftTone] = useState<string | undefined>(undefined)
+  const [draftTraits, setDraftTraits] = useState<string[]>([])
+  const [draftEscalation, setDraftEscalation] = useState<string | undefined>(undefined)
+
+  useEffect(() => {
+    if (!agent) return
+    const roles = (agent.roles && agent.roles.length > 0) ? agent.roles : (agent.role ? [agent.role] : [])
+    setDraftRoles(roles)
+    setDraftTone(agent.tone)
+    setDraftTraits(agent.traits || [])
+    setDraftEscalation(agent.escalationRule)
+  }, [agent?.id])
+
+  const isDirty = (() => {
+    if (!agent) return false
+    const baseRoles = (agent.roles && agent.roles.length > 0) ? agent.roles : (agent.role ? [agent.role] : [])
+    const eqArr = (a: string[], b: string[]) => a.length === b.length && a.every(x => b.includes(x))
+    return (
+      !eqArr(baseRoles, draftRoles) ||
+      (agent.tone || '') !== (draftTone || '') ||
+      !eqArr(agent.traits || [], draftTraits) ||
+      (agent.escalationRule || '') !== (draftEscalation || '')
+    )
+  })()
+
+  const handleSave = () => {
+    if (!agent || !onUpdateAgent) { setEditMode(false); return }
+    setSaving(true)
+    // Simulate network latency
+    setTimeout(() => {
+      const patch: any = {
+        roles: draftRoles,
+        role: draftRoles[0] || '',
+        tone: draftTone,
+        traits: draftTraits,
+        escalationRule: draftEscalation,
+      }
+      onUpdateAgent(agent.id, patch)
+      setSaving(false)
+      // Center saved overlay animation
+      setSavedCenterVisible(true)
+      Animated.parallel([
+        Animated.timing(savedAnim, { toValue: 1, duration: 220, useNativeDriver: true }),
+        Animated.timing(contentOpacity, { toValue: 0.22, duration: 220, useNativeDriver: true })
+      ]).start(() => {
+        setTimeout(() => {
+          Animated.parallel([
+            Animated.timing(savedAnim, { toValue: 0, duration: 220, useNativeDriver: true }),
+            Animated.timing(contentOpacity, { toValue: 1, duration: 220, useNativeDriver: true })
+          ]).start(() => {
+            setSavedCenterVisible(false)
+            setEditMode(false)
+          })
+        }, 800)
+      })
+    }, 800)
+  }
+
+  // Save/loading states and Saved overlay
+  const [saving, setSaving] = useState(false)
+  const [savedCenterVisible, setSavedCenterVisible] = useState(false)
+  const savedAnim = React.useRef(new Animated.Value(0)).current
+  const contentOpacity = React.useRef(new Animated.Value(1)).current
+
+  const withAlpha = (c: string, a: number) => c.startsWith('hsl(') ? c.replace('hsl(', 'hsla(').replace(')', `,${a})`) : c
+  const successBg = withAlpha(theme.color.success, theme.dark ? 0.22 : 0.12)
+
+  // Intercept close if there are unsaved edits
+  const handleClose = () => {
+    if (saving) { return }
+    if (editMode && isDirty) {
+      Alert.alert(
+        'Discard changes?',
+        'You have unsaved changes. Do you want to discard them?',
+        [
+          { text: 'Keep editing', style: 'cancel' },
+          { text: 'Discard', style: 'destructive', onPress: () => { setEditMode(false); onClose() } }
+        ]
+      )
+      return
+    }
+    onClose()
+  }
+
   // Customize feature removed per request
   // Access state (frontend only)
   type DataAccessMode = 'all' | 'select'
@@ -162,8 +255,9 @@ export const AgentDetail: React.FC<AgentDetailProps> = ({ visible, agent, onClos
   const removeCustomKpi = (k: string) => setSelectedKpis(prev => prev.filter(x => x !== k))
 
   return (
-    <Modal visible={visible} onClose={onClose} size="lg" autoHeight={false}>
+    <Modal visible={visible} onClose={handleClose} size="lg" autoHeight={false}>
       <View style={{ gap: 12, flex: 1, minHeight: 0 }}>
+        {/* Overlay now handled inside content wrapper to avoid whitening header/actions */}
         {/* Header: Avatar + name/role + status */}
         <View style={{ flexDirection: 'row', alignItems: 'center' }}>
           <View style={{ width: 44, height: 44, borderRadius: 22, backgroundColor: theme.dark ? theme.color.secondary : theme.color.card, alignItems: 'center', justifyContent: 'center', marginRight: 12 }}>
@@ -205,7 +299,8 @@ export const AgentDetail: React.FC<AgentDetailProps> = ({ visible, agent, onClos
         </View>
 
         {/* Scrollable content under tabs (does not overlap buttons) */}
-        <View style={{ flex: 1, minHeight: 0 }}>
+        <View style={{ flex: 1, minHeight: 0, position: 'relative' }}>
+          <Animated.View style={{ flex: 1, minHeight: 0, opacity: contentOpacity }}>
           <ScrollView
             showsVerticalScrollIndicator={false}
             contentContainerStyle={{ paddingBottom: 12, paddingHorizontal: 0 }}
@@ -219,16 +314,45 @@ export const AgentDetail: React.FC<AgentDetailProps> = ({ visible, agent, onClos
                 <View>
                   <SectionTitle title="Role" />
                   <View style={{ paddingLeft: contentIndent }}>
-                    <View style={{ flexDirection: 'row', flexWrap: 'wrap', marginBottom: 6 }}>
-                      {(agent.roles && agent.roles.length > 0 ? agent.roles : (agent.role ? [agent.role] : [])).map(r => (
-                        <Pill key={r} label={r} />
-                      ))}
-                    </View>
-                    {(agent.roles && agent.roles.length > 0 ? agent.roles : (agent.role ? [agent.role] : [])).map(r => (
-                      <Text key={`roler-${r}`} style={{ color: theme.color.cardForeground, fontSize: 13, marginBottom: 2 }}>
-                        {roleDescriptions[r] || 'Configured role.'}
-                      </Text>
-                    ))}
+                    {!editMode ? (
+                      <>
+                        <View style={{ flexDirection: 'row', flexWrap: 'wrap', marginBottom: 6 }}>
+                          {(agent.roles && agent.roles.length > 0 ? agent.roles : (agent.role ? [agent.role] : [])).map(r => (
+                            <Pill key={r} label={r} />
+                          ))}
+                        </View>
+                        {(agent.roles && agent.roles.length > 0 ? agent.roles : (agent.role ? [agent.role] : [])).map(r => (
+                          <Text key={`roler-${r}`} style={{ color: theme.color.cardForeground, fontSize: 13, marginBottom: 2 }}>
+                            {roleDescriptions[r] || 'Configured role.'}
+                          </Text>
+                        ))}
+                      </>
+                    ) : (
+                      <View style={{ flexDirection: 'row', flexWrap: 'wrap' }}>
+                        {AGENT_ROLES.map(r => {
+                          const selected = draftRoles.includes(r)
+                          return (
+                            <TouchableOpacity
+                              key={`role-${r}`}
+                              onPress={() => setDraftRoles(prev => selected ? prev.filter(x => x !== r) : [...prev, r])}
+                              activeOpacity={0.8}
+                              style={{
+                                marginRight: 8,
+                                marginBottom: 8,
+                                paddingVertical: 10,
+                                paddingHorizontal: 14,
+                                borderRadius: theme.radius.md,
+                                backgroundColor: selected ? (theme.color.primary as any) : (theme.dark ? theme.color.secondary : theme.color.accent)
+                              }}
+                            >
+                              <Text style={{ color: selected ? ('#ffffff' as any) : (theme.color.mutedForeground as any), fontWeight: '700', fontSize: 13 }}>
+                                {r}
+                              </Text>
+                            </TouchableOpacity>
+                          )
+                        })}
+                      </View>
+                    )}
                   </View>
                 </View>
                 <SectionDivider />
@@ -266,20 +390,49 @@ export const AgentDetail: React.FC<AgentDetailProps> = ({ visible, agent, onClos
                 <View>
                   <SectionTitle title="Tone" />
                   <View style={{ paddingLeft: contentIndent }}>
-                    <View style={{ flexDirection: 'row', flexWrap: 'wrap', marginBottom: 6 }}>
-                      {agent.tone ? <Pill label={agent.tone} /> : <Text style={{ color: theme.color.mutedForeground, fontSize: 13 }}>Not configured.</Text>}
-                    </View>
-                    {agent.tone && (
+                    {!editMode ? (
                       <>
-                        <Text style={{ color: theme.color.cardForeground, fontSize: 13, marginBottom: 2 }}>
-                          {(toneDescriptions[agent.tone]?.desc) || 'Configured tone.'}
-                        </Text>
-                        <View style={{ flexDirection: 'row', alignItems: 'flex-start', gap: 6, marginTop: 2 }}>
-                          <Text style={{ color: theme.color.mutedForeground, fontSize: 13, fontStyle: 'italic', flex: 1 }}>
-                            “{(toneDescriptions[agent.tone]?.sample) || 'Hello! How can I help you today?'}”
-                          </Text>
+                        <View style={{ flexDirection: 'row', flexWrap: 'wrap', marginBottom: 6 }}>
+                          {agent.tone ? <Pill label={agent.tone} /> : <Text style={{ color: theme.color.mutedForeground, fontSize: 13 }}>Not configured.</Text>}
                         </View>
+                        {agent.tone && (
+                          <>
+                            <Text style={{ color: theme.color.cardForeground, fontSize: 13, marginBottom: 2 }}>
+                              {(toneDescriptions[agent.tone]?.desc) || 'Configured tone.'}
+                            </Text>
+                            <View style={{ flexDirection: 'row', alignItems: 'flex-start', gap: 6, marginTop: 2 }}>
+                              <Text style={{ color: theme.color.mutedForeground, fontSize: 13, fontStyle: 'italic', flex: 1 }}>
+                                “{(toneDescriptions[agent.tone]?.sample) || 'Hello! How can I help you today?'}”
+                              </Text>
+                            </View>
+                          </>
+                        )}
                       </>
+                    ) : (
+                      <View style={{ flexDirection: 'row', flexWrap: 'wrap' }}>
+                        {AGENT_TONES.map(tn => {
+                          const selected = draftTone === tn
+                          return (
+                            <TouchableOpacity
+                              key={`tone-${tn}`}
+                              onPress={() => setDraftTone(tn)}
+                              activeOpacity={0.8}
+                              style={{
+                                marginRight: 8,
+                                marginBottom: 8,
+                                paddingVertical: 10,
+                                paddingHorizontal: 14,
+                                borderRadius: theme.radius.md,
+                                backgroundColor: selected ? (theme.color.primary as any) : (theme.dark ? theme.color.secondary : theme.color.accent)
+                              }}
+                            >
+                              <Text style={{ color: selected ? ('#ffffff' as any) : (theme.color.mutedForeground as any), fontWeight: '700', fontSize: 13 }}>
+                                {tn}
+                              </Text>
+                            </TouchableOpacity>
+                          )
+                        })}
+                      </View>
                     )}
                   </View>
                 </View>
@@ -289,23 +442,52 @@ export const AgentDetail: React.FC<AgentDetailProps> = ({ visible, agent, onClos
                 <View>
                   <SectionTitle title="Traits" />
                   <View style={{ paddingLeft: contentIndent }}>
-                    <View style={{ flexDirection: 'row', flexWrap: 'wrap', marginBottom: 6 }}>
-                      {(agent.traits && agent.traits.length > 0)
-                        ? agent.traits.map(t => <Pill key={t} label={t} />)
-                        : <Text style={{ color: theme.color.mutedForeground, fontSize: 13 }}>Not configured.</Text>
-                      }
-                    </View>
-                    {agent.traits && agent.traits.length > 0 && (
+                    {!editMode ? (
                       <>
-                        <Text style={{ color: theme.color.cardForeground, fontSize: 13, marginBottom: 2 }}>
-                          {agent.traits.map(t => traitDescriptions[t] || 'Configured trait.').join(' ')}
-                        </Text>
-                        <View style={{ flexDirection: 'row', alignItems: 'flex-start', gap: 6, marginTop: 2 }}>
-                          <Text style={{ color: theme.color.mutedForeground, fontSize: 13, fontStyle: 'italic', flex: 1 }}>
-                            “I’ve reviewed the details carefully and here’s the best path forward.”
-                          </Text>
+                        <View style={{ flexDirection: 'row', flexWrap: 'wrap', marginBottom: 6 }}>
+                          {(agent.traits && agent.traits.length > 0)
+                            ? agent.traits.map(t => <Pill key={t} label={t} />)
+                            : <Text style={{ color: theme.color.mutedForeground, fontSize: 13 }}>Not configured.</Text>
+                          }
                         </View>
+                        {agent.traits && agent.traits.length > 0 && (
+                          <>
+                            <Text style={{ color: theme.color.cardForeground, fontSize: 13, marginBottom: 2 }}>
+                              {agent.traits.map(t => traitDescriptions[t] || 'Configured trait.').join(' ')}
+                            </Text>
+                            <View style={{ flexDirection: 'row', alignItems: 'flex-start', gap: 6, marginTop: 2 }}>
+                              <Text style={{ color: theme.color.mutedForeground, fontSize: 13, fontStyle: 'italic', flex: 1 }}>
+                                “I’ve reviewed the details carefully and here’s the best path forward.”
+                              </Text>
+                            </View>
+                          </>
+                        )}
                       </>
+                    ) : (
+                      <View style={{ flexDirection: 'row', flexWrap: 'wrap' }}>
+                        {AGENT_TRAITS.map(tr => {
+                          const selected = draftTraits.includes(tr)
+                          return (
+                            <TouchableOpacity
+                              key={`trait-${tr}`}
+                              onPress={() => setDraftTraits(prev => selected ? prev.filter(x => x !== tr) : [...prev, tr])}
+                              activeOpacity={0.8}
+                              style={{
+                                marginRight: 8,
+                                marginBottom: 8,
+                                paddingVertical: 10,
+                                paddingHorizontal: 14,
+                                borderRadius: theme.radius.md,
+                                backgroundColor: selected ? (theme.color.primary as any) : (theme.dark ? theme.color.secondary : theme.color.accent)
+                              }}
+                            >
+                              <Text style={{ color: selected ? ('#ffffff' as any) : (theme.color.mutedForeground as any), fontWeight: '700', fontSize: 13 }}>
+                                {tr}
+                              </Text>
+                            </TouchableOpacity>
+                          )
+                        })}
+                      </View>
                     )}
                   </View>
                 </View>
@@ -315,20 +497,49 @@ export const AgentDetail: React.FC<AgentDetailProps> = ({ visible, agent, onClos
                 <View>
                   <SectionTitle title="Escalation" />
                   <View style={{ paddingLeft: contentIndent }}>
-                    <View style={{ flexDirection: 'row', flexWrap: 'wrap', marginBottom: 6 }}>
-                      {agent.escalationRule ? <Pill label={agent.escalationRule} /> : <Text style={{ color: theme.color.mutedForeground, fontSize: 13 }}>Not configured.</Text>}
-                    </View>
-                    {agent.escalationRule && (
+                    {!editMode ? (
                       <>
-                        <Text style={{ color: theme.color.cardForeground, fontSize: 13, marginBottom: 2 }}>
-                          {(escalationDescriptions[agent.escalationRule]?.desc) || 'Configured escalation policy.'}
-                        </Text>
-                        <View style={{ flexDirection: 'row', alignItems: 'flex-start', gap: 6, marginTop: 2 }}>
-                          <Text style={{ color: theme.color.mutedForeground, fontSize: 13, fontStyle: 'italic', flex: 1 }}>
-                            “{(escalationDescriptions[agent.escalationRule]?.sample) || 'Passing this to a human specialist.'}”
-                          </Text>
+                        <View style={{ flexDirection: 'row', flexWrap: 'wrap', marginBottom: 6 }}>
+                          {agent.escalationRule ? <Pill label={agent.escalationRule} /> : <Text style={{ color: theme.color.mutedForeground, fontSize: 13 }}>Not configured.</Text>}
                         </View>
+                        {agent.escalationRule && (
+                          <>
+                            <Text style={{ color: theme.color.cardForeground, fontSize: 13, marginBottom: 2 }}>
+                              {(escalationDescriptions[agent.escalationRule]?.desc) || 'Configured escalation policy.'}
+                            </Text>
+                            <View style={{ flexDirection: 'row', alignItems: 'flex-start', gap: 6, marginTop: 2 }}>
+                              <Text style={{ color: theme.color.mutedForeground, fontSize: 13, fontStyle: 'italic', flex: 1 }}>
+                                “{(escalationDescriptions[agent.escalationRule]?.sample) || 'Passing this to a human specialist.'}”
+                              </Text>
+                            </View>
+                          </>
+                        )}
                       </>
+                    ) : (
+                      <View style={{ flexDirection: 'row', flexWrap: 'wrap' }}>
+                        {ESCALATION_OPTIONS.map(opt => {
+                          const selected = draftEscalation === opt
+                          return (
+                            <TouchableOpacity
+                              key={`esc-${opt}`}
+                              onPress={() => setDraftEscalation(opt)}
+                              activeOpacity={0.8}
+                              style={{
+                                marginRight: 8,
+                                marginBottom: 8,
+                                paddingVertical: 10,
+                                paddingHorizontal: 14,
+                                borderRadius: theme.radius.md,
+                                backgroundColor: selected ? (theme.color.primary as any) : (theme.dark ? theme.color.secondary : theme.color.accent)
+                              }}
+                            >
+                              <Text style={{ color: selected ? ('#ffffff' as any) : (theme.color.mutedForeground as any), fontWeight: '700', fontSize: 13 }}>
+                                {opt}
+                              </Text>
+                            </TouchableOpacity>
+                          )
+                        })}
+                      </View>
                     )}
                   </View>
                 </View>
@@ -491,67 +702,91 @@ export const AgentDetail: React.FC<AgentDetailProps> = ({ visible, agent, onClos
 
             {/* Customize tab removed */}
           </ScrollView>
+          </Animated.View>
+          {savedCenterVisible && (
+            <Animated.View style={{ position: 'absolute', left: 0, right: 0, top: 0, bottom: 0, alignItems: 'center', justifyContent: 'center', zIndex: 10, opacity: savedAnim, transform: [{ scale: savedAnim.interpolate({ inputRange: [0, 1], outputRange: [0.96, 1] }) }] }}>
+              <View style={{ backgroundColor: successBg as any, borderRadius: 14, paddingHorizontal: 16, paddingVertical: 10 }}>
+                <Text style={{ color: theme.color.success, fontSize: 14, fontWeight: '700' }}>Saved</Text>
+              </View>
+            </Animated.View>
+          )}
         </View>
 
         {/* Actions (sticky at bottom) */}
         <View style={{ flexDirection: 'row', gap: 12 }}>
-          {/* Activate / Deactivate - soft danger for Deactivate, primary for Activate */}
-          <View style={{ flex: 1 }}>
-            <Button
-              title={agent.status === 'active' ? 'Deactivate' : 'Activate'}
-              variant={agent.status === 'active' ? 'dangerSoft' : 'default'}
-              size="lg"
-              fullWidth
-              accessibilityLabel={`${agent.status === 'active' ? 'Deactivate' : 'Activate'} agent ${name}`}
-              iconLeft={
-                <Power
-                  size={18}
-                  color={agent.status === 'active' ? (theme.color.error as any) : '#fff'}
+          {editMode ? (
+            <>
+              <View style={{ flex: 1 }}>
+                <Button
+                  title="Save Changes"
+                  variant="default"
+                  size="lg"
+                  fullWidth
+                  disabled={!isDirty || saving}
+                  loading={saving}
+                  onPress={handleSave}
                 />
-              }
-              onPress={() => {
-                if (agent.status === 'active') {
-                  Alert.alert(
-                    'Deactivate agent?',
-                    'This agent can be re-activated later.',
-                    [
-                      { text: 'Cancel', style: 'cancel' },
-                      { text: 'Deactivate', style: 'destructive', onPress: () => onToggleStatus?.(agent.id) }
-                    ]
-                  )
-                } else {
-                  onToggleStatus?.(agent.id)
-                }
-              }}
-            />
-          </View>
-
-          {/* Edit - neutral card-like, borderless */}
-          <View style={{ flex: 1 }}>
-            <TouchableOpacity
-              onPress={() => onEdit?.(agent.id)}
-              activeOpacity={0.85}
-              style={{
-                height: ACTION_BUTTON_HEIGHT,
-                borderRadius: ACTION_BUTTON_RADIUS,
-                backgroundColor: theme.dark ? (theme.color.secondary as any) : ('hsl(240,6%,92%)' as any),
-                alignItems: 'center',
-                justifyContent: 'center',
-                width: '100%'
-              }}
-              accessibilityLabel={`Edit agent ${name}`}
-            >
-              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-                <Settings size={18} color={theme.color.primary as any} />
-                <Text style={{ color: theme.color.cardForeground, fontSize: 16, fontWeight: '600' }}>Edit</Text>
               </View>
-            </TouchableOpacity>
-          </View>
+              <View style={{ flex: 1 }}>
+                <Button
+                  title="Cancel"
+                  variant="secondary"
+                  size="lg"
+                  fullWidth
+                  disabled={saving}
+                  onPress={() => setEditMode(false)}
+                />
+              </View>
+            </>
+          ) : (
+            <>
+              {/* Activate / Deactivate */}
+              <View style={{ flex: 1 }}>
+                <Button
+                  title={agent.status === 'active' ? 'Deactivate' : 'Activate'}
+                  variant={agent.status === 'active' ? 'dangerSoft' : 'default'}
+                  size="lg"
+                  fullWidth
+                  accessibilityLabel={`${agent.status === 'active' ? 'Deactivate' : 'Activate'} agent ${name}`}
+                  iconLeft={
+                    <Power
+                      size={18}
+                      color={agent.status === 'active' ? (theme.color.error as any) : '#fff'}
+                    />
+                  }
+                  onPress={() => {
+                    if (agent.status === 'active') {
+                      Alert.alert(
+                        'Deactivate agent?',
+                        'This agent can be re-activated later.',
+                        [
+                          { text: 'Cancel', style: 'cancel' },
+                          { text: 'Deactivate', style: 'destructive', onPress: () => onToggleStatus?.(agent.id) }
+                        ]
+                      )
+                    } else {
+                      onToggleStatus?.(agent.id)
+                    }
+                  }}
+                />
+              </View>
+              {/* Edit */}
+              <View style={{ flex: 1 }}>
+                <Button
+                  title="Edit"
+                  variant="secondary"
+                  size="lg"
+                  fullWidth
+                  onPress={() => setEditMode(true)}
+                />
+              </View>
+            </>
+          )}
         </View>
 
         {/* Close - filled primary, borderless */}
         <TouchableOpacity
-          onPress={onClose}
+          onPress={handleClose}
           activeOpacity={0.85}
           style={{
             height: ACTION_BUTTON_HEIGHT,

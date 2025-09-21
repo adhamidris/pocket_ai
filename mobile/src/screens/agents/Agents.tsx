@@ -54,8 +54,11 @@ export const AgentsScreen: React.FC = () => {
   }
 
   const handleEditAgent = (agent: Agent) => {
-    // TODO: Implement edit functionality
     Alert.alert('Edit Agent', `Edit functionality for ${agent.name} coming soon!`)
+  }
+
+  const handleUpdateAgent = (id: string, patch: Partial<Agent & { roles: string[]; role?: string; tone?: string; traits?: string[]; escalationRule?: string }>) => {
+    setAgents(prev => prev.map(a => a.id === id ? { ...a, ...patch } as any : a))
   }
 
   const handleDeleteAgent = (agentId: string) => {
@@ -259,6 +262,7 @@ export const AgentsScreen: React.FC = () => {
           onClose={() => { setShowAgentDetail(false); setSelectedAgent(null) }}
           onToggleStatus={(id) => { handleToggleStatus(id); setShowAgentDetail(false) }}
           onEdit={(id) => { const ag = agents.find(a => a.id === id); if (ag) handleEditAgent(ag) }}
+          onUpdateAgent={handleUpdateAgent}
         />
       </View>
     </SafeAreaView>
