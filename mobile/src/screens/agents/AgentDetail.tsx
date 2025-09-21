@@ -5,7 +5,7 @@ import { Card } from '../../components/ui/Card'
 import { useTheme } from '../../providers/ThemeProvider'
 import { Button } from '../../components/ui/Button'
 import { Input } from '../../components/ui/Input'
-import { Bot, Settings, BarChart3, Target, Plus, X, Power, BookOpen, ChevronRight } from 'lucide-react-native'
+import { Bot, Settings, BarChart3, Target, Plus, X, Power, BookOpen, ChevronRight, CheckCircle } from 'lucide-react-native'
 import { AGENT_ROLES, AGENT_TONES, AGENT_TRAITS, ESCALATION_OPTIONS } from '../../config/agentOptions'
 
 interface AgentDetailProps {
@@ -181,7 +181,7 @@ export const AgentDetail: React.FC<AgentDetailProps> = ({ visible, agent, onClos
       setSavedCenterVisible(true)
       Animated.parallel([
         Animated.timing(savedAnim, { toValue: 1, duration: 220, useNativeDriver: true }),
-        Animated.timing(contentOpacity, { toValue: 0.22, duration: 220, useNativeDriver: true })
+        Animated.timing(contentOpacity, { toValue: 0.10, duration: 220, useNativeDriver: true })
       ]).start(() => {
         setTimeout(() => {
           Animated.parallel([
@@ -360,7 +360,7 @@ export const AgentDetail: React.FC<AgentDetailProps> = ({ visible, agent, onClos
                 {/* Knowledge summary */}
                 <View>
                   <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 4 }}>
-                    <SectionTitle title="Knowledge" />
+                    <SectionTitle title="Knowledge" mb={0} />
                     <TouchableOpacity onPress={() => setActiveTab('access')} activeOpacity={0.85} accessibilityLabel={'Manage Knowledge'}>
                       <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
                         <Text style={{ color: theme.color.primary as any, fontSize: 12, fontWeight: '700' }}>Manage Knowledge</Text>
@@ -706,7 +706,10 @@ export const AgentDetail: React.FC<AgentDetailProps> = ({ visible, agent, onClos
           {savedCenterVisible && (
             <Animated.View style={{ position: 'absolute', left: 0, right: 0, top: 0, bottom: 0, alignItems: 'center', justifyContent: 'center', zIndex: 10, opacity: savedAnim, transform: [{ scale: savedAnim.interpolate({ inputRange: [0, 1], outputRange: [0.96, 1] }) }] }}>
               <View style={{ backgroundColor: successBg as any, borderRadius: 14, paddingHorizontal: 16, paddingVertical: 10 }}>
-                <Text style={{ color: theme.color.success, fontSize: 14, fontWeight: '700' }}>Saved</Text>
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                  <CheckCircle size={16} color={theme.color.success as any} />
+                  <Text style={{ color: theme.color.success, fontSize: 14, fontWeight: '700' }}>Saved</Text>
+                </View>
               </View>
             </Animated.View>
           )}
@@ -730,10 +733,11 @@ export const AgentDetail: React.FC<AgentDetailProps> = ({ visible, agent, onClos
               <View style={{ flex: 1 }}>
                 <Button
                   title="Cancel"
-                  variant="secondary"
+                  variant="dangerSoft"
                   size="lg"
                   fullWidth
                   disabled={saving}
+                  accessibilityLabel={'Cancel editing agent'}
                   onPress={() => setEditMode(false)}
                 />
               </View>
@@ -774,9 +778,10 @@ export const AgentDetail: React.FC<AgentDetailProps> = ({ visible, agent, onClos
               <View style={{ flex: 1 }}>
                 <Button
                   title="Edit"
-                  variant="secondary"
+                  variant="card"
                   size="lg"
                   fullWidth
+                  iconLeft={<Settings size={18} color={theme.color.cardForeground as any} />}
                   onPress={() => setEditMode(true)}
                 />
               </View>

@@ -5,7 +5,7 @@ import * as Haptics from 'expo-haptics'
 import { useTheme } from '../../providers/ThemeProvider'
 import { LoadingSpinner } from './LoadingSpinner'
 
-type Variant = 'default' | 'secondary' | 'outline' | 'ghost' | 'link' | 'premium' | 'hero' | 'glass' | 'danger' | 'dangerSoft'
+type Variant = 'default' | 'secondary' | 'outline' | 'ghost' | 'link' | 'premium' | 'hero' | 'glass' | 'danger' | 'dangerSoft' | 'card'
 type Size = 'xs' | 'sm' | 'md' | 'lg' | 'xl'
 
 const HEIGHT: Record<Size, number> = { xs: 32, sm: 36, md: 40, lg: 48, xl: 56 }
@@ -125,6 +125,7 @@ export const Button: React.FC<{
     switch (variant) {
       case 'default': return { backgroundColor: theme.color.primary, ...(theme.shadow.md as any) }
       case 'secondary': return { backgroundColor: theme.color.secondary }
+      case 'card': return { backgroundColor: theme.dark ? theme.color.secondary : theme.color.accent, borderWidth: 0, borderColor: 'transparent' }
       case 'danger': return { backgroundColor: theme.color.error }
       case 'dangerSoft': return { backgroundColor: withAlpha(theme.color.error, theme.dark ? 0.22 : 0.12) }
       case 'outline': return { backgroundColor: theme.color.background, borderWidth: 1, borderColor: theme.color.border }
@@ -139,6 +140,7 @@ export const Button: React.FC<{
     if (variant === 'default' || variant === 'danger') return '#fff'
     if (variant === 'dangerSoft') return theme.color.error
     if (variant === 'link') return theme.color.mutedForeground
+    if (variant === 'card') return theme.color.cardForeground
     if (variant === 'secondary') return theme.color.foreground
     return theme.color.foreground
   })()
