@@ -8,7 +8,6 @@ import { Button } from '../../components/ui/Button'
 import { 
   Bot, 
   Power, 
-  MoreHorizontal, 
   MessageCircle, 
   Clock,
   Settings,
@@ -87,7 +86,7 @@ export const AgentCard: React.FC<AgentCardProps> = ({
       {/* Header */}
       <View style={{
         flexDirection: 'row',
-        justifyContent: 'space-between',
+        justifyContent: 'flex-start',
         alignItems: 'flex-start',
         marginBottom: (hasRole || hasDescription) ? 8 : 4
       }}>
@@ -153,19 +152,6 @@ export const AgentCard: React.FC<AgentCardProps> = ({
         )}
 
         </View>
-
-        <TouchableOpacity
-          style={{
-            width: 32,
-            height: 32,
-            borderRadius: 16,
-            backgroundColor: theme.dark ? theme.color.secondary : theme.color.card,
-            alignItems: 'center',
-            justifyContent: 'center'
-          }}
-        >
-          <MoreHorizontal size={16} color={theme.color.mutedForeground} />
-        </TouchableOpacity>
       </View>
 
       {/* Analytics (compact mini-summary; only for active agents) */}

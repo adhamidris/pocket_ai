@@ -507,6 +507,7 @@ export const ChatScreen: React.FC<ChatScreenProps> = ({
                           <ClipboardList size={14} color={theme.color.mutedForeground as any} />
                           <Text style={{ color: theme.color.cardForeground, fontSize: 14, fontWeight: '700' }}>AI Diagnoses</Text>
                         </View>
+                        
                         <Text style={{ color: theme.color.mutedForeground, fontSize: 13, lineHeight: 20 }}>
                           {getCaseSummary(caseType)}
                         </Text>

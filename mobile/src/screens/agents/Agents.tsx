@@ -1,11 +1,11 @@
 import React, { useState } from 'react'
-import { View, Text, SafeAreaView, ScrollView, TouchableOpacity, Alert } from 'react-native'
-import { useSafeAreaInsets } from 'react-native-safe-area-context'
+import { View, Text, ScrollView, TouchableOpacity, Alert } from 'react-native'
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context'
 import { useTranslation } from 'react-i18next'
 import { useTheme } from '../../providers/ThemeProvider'
 import { Card } from '../../components/ui/Card'
 import { Button } from '../../components/ui/Button'
-import { Bot, Plus } from 'lucide-react-native'
+import { Plus } from 'lucide-react-native'
 import { CreateAgent } from './CreateAgent'
 import { AgentCard } from './AgentCard'
 import { AgentDetail } from './AgentDetail'
@@ -32,6 +32,7 @@ export const AgentsScreen: React.FC = () => {
   const [agents, setAgents] = useState<Agent[]>([])
   const [selectedAgent, setSelectedAgent] = useState<Agent | null>(null)
   const [showAgentDetail, setShowAgentDetail] = useState(false)
+  
 
   const tabs = [
     { key: 'active' as const, label: t('agents.active') },
@@ -221,31 +222,24 @@ export const AgentsScreen: React.FC = () => {
             })()
           ) : (
             <Card variant="flat" style={{ backgroundColor: theme.dark ? theme.color.secondary : theme.color.accent }}>
-              <View style={{ alignItems: 'center', padding: 20 }}>
-                <View style={{
-                  width: 60,
-                  height: 60,
-                  backgroundColor: theme.color.muted,
-                  borderRadius: 30,
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  marginBottom: 16
-                }}>
-                  <Bot color={theme.color.mutedForeground} size={28} />
-                </View>
+              <View style={{ alignItems: 'center', padding: 12 }}>
                 <Text style={{
                   color: theme.color.mutedForeground,
                   textAlign: 'center',
-                  fontStyle: 'italic',
-                  marginBottom: 20
+                  fontSize: 12,
+                  marginBottom: 12,
+                  marginTop: 2
                 }}>
                   {agents.length === 0 ? t('agents.noAgents') : `No ${activeTab} agents`}
                 </Text>
-                <Button
-                  title={t('agents.createAgent')}
-                  onPress={() => setShowCreateModal(true)}
-                  variant="default"
-                />
+                {activeTab !== 'inactive' && (
+                  <Button
+                    title={t('agents.createAgent')}
+                    onPress={() => setShowCreateModal(true)}
+                    variant="default"
+                    size="sm"
+                  />
+                )}
               </View>
             </Card>
           )}

@@ -1,4 +1,4 @@
-import React, { useState } from 'react'
+import React, { useState, useEffect } from 'react'
 import { View, Text, ScrollView, TouchableOpacity, Alert } from 'react-native'
 import { Modal } from '../../components/ui/Modal'
 import { useTheme } from '../../providers/ThemeProvider'
@@ -29,7 +29,7 @@ interface AgentDetailProps {
 
 export const AgentDetail: React.FC<AgentDetailProps> = ({ visible, agent, onClose, onToggleStatus, onEdit }) => {
   const { theme } = useTheme()
-  const [activeTab, setActiveTab] = useState<'overview'|'performance'|'access'|'settings'>('overview')
+  const [activeTab, setActiveTab] = useState<'overview'|'performance'|'access'>('overview')
 
   // Guard must happen before accessing agent fields to avoid hook/order errors
   // Analytics removed from modal per request
@@ -101,7 +101,6 @@ export const AgentDetail: React.FC<AgentDetailProps> = ({ visible, agent, onClos
     { key: 'overview' as const, label: 'Overview', icon: Bot },
     { key: 'performance' as const, label: 'KPIs', icon: BarChart3 },
     { key: 'access' as const, label: 'Knowledge', icon: BookOpen },
-    { key: 'settings' as const, label: 'Settings', icon: Settings },
   ]
 
   // KPIs (performance) state
@@ -117,7 +116,8 @@ export const AgentDetail: React.FC<AgentDetailProps> = ({ visible, agent, onClos
   ]
   const [selectedKpis, setSelectedKpis] = useState<string[]>(['Customer Satisfaction', 'First Contact Resolution'])
   const [customKpiText, setCustomKpiText] = useState('')
-  
+
+  // Customize feature removed per request
   // Access state (frontend only)
   type DataAccessMode = 'all' | 'select'
   const availableCollections = [
@@ -484,14 +484,7 @@ export const AgentDetail: React.FC<AgentDetailProps> = ({ visible, agent, onClos
               </View>
             )}
 
-            {activeTab === 'settings' && (
-              <View style={{ gap: 10 }}>
-                <Text style={{ color: theme.color.cardForeground, fontSize: 14, fontWeight: '600' }}>Configuration</Text>
-                <Text style={{ color: theme.color.mutedForeground, fontSize: 13 }}>
-                  Edit agent settings from the main Agents page.
-                </Text>
-              </View>
-            )}
+            {/* Customize tab removed */}
           </ScrollView>
         </View>
 
