@@ -4,7 +4,7 @@ import { Modal } from '../../components/ui/Modal'
 import { useTheme } from '../../providers/ThemeProvider'
 import { Button } from '../../components/ui/Button'
 import { Input } from '../../components/ui/Input'
-import { Bot, ClipboardList, Star, Settings, BarChart3, Briefcase, Target, Plus, X, Power, MessageCircle, BookOpen } from 'lucide-react-native'
+import { Bot, Settings, BarChart3, Target, Plus, X, Power, BookOpen, ChevronRight } from 'lucide-react-native'
 
 interface AgentDetailProps {
   visible: boolean
@@ -49,6 +49,14 @@ export const AgentDetail: React.FC<AgentDetailProps> = ({ visible, agent, onClos
     Playful: { desc: 'Light, upbeat tone when appropriate.', sample: 'Gotcha! Let’s sort this out in no time.' },
     Formal: { desc: 'Courteous and precise, suitable for official contexts.', sample: 'I would be pleased to assist with your request.' },
   }
+  const formatAgentId = (id: string) => {
+    const n = parseInt(id as any, 10)
+    if (!Number.isNaN(n)) return `AG-${n.toString().padStart(4, '0')}`
+    const digits = (id.match(/\d+/g) || []).join('')
+    if (digits.length > 0) return `AG-${digits.slice(-4).padStart(4, '0')}`
+    const ref = id.replace(/[^a-zA-Z0-9]/g, '').toUpperCase()
+    return `AG-${ref.slice(-4).padStart(4, '0')}`
+  }
   const traitDescriptions: Record<string, string> = {
     Patient: 'Gives users space, explains calmly.',
     Proactive: 'Offers next steps without being asked.',
@@ -71,21 +79,24 @@ export const AgentDetail: React.FC<AgentDetailProps> = ({ visible, agent, onClos
     </View>
   )
 
-  const Pill: React.FC<{ label: string }> = ({ label }) => (
+  const Pill: React.FC<{ label: string; dotColor?: string }> = ({ label, dotColor }) => (
     <View
       style={{
-        backgroundColor: theme.dark ? (theme.color.secondary as any) : (theme.color.accent as any),
-        borderRadius: 999,
-        paddingHorizontal: 10,
-        paddingVertical: 6,
-        marginRight: 6,
-        marginBottom: 6,
+        backgroundColor: theme.color.card,
+        borderRadius: theme.radius.sm,
+        paddingHorizontal: 8,
+        paddingVertical: 3,
+        marginRight: 8,
+        marginBottom: 8,
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 6,
+        borderWidth: 0,
+        borderColor: 'transparent'
       }}
     >
-      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-        <View style={{ width: 6, height: 6, borderRadius: 3, backgroundColor: theme.color.primary as any }} />
-        <Text style={{ color: theme.color.primary as any, fontSize: 12, fontWeight: '600' }}>{label}</Text>
-      </View>
+      <View style={{ width: 5, height: 5, borderRadius: 2.5, backgroundColor: (dotColor || theme.color.primary) as any }} />
+      <Text style={{ color: theme.color.mutedForeground as any, fontSize: 11, fontWeight: '500' }}>{label}</Text>
     </View>
   )
   const SectionDivider: React.FC = () => (
@@ -93,7 +104,7 @@ export const AgentDetail: React.FC<AgentDetailProps> = ({ visible, agent, onClos
   )
   // Prepared fallback message for sections with no active parameters (not used yet)
   const FALLBACK_MESSAGE = 'No selections yet. Configure to get started.'
-  const contentIndent = 24 // align sub-content under titles (icon 16 + gap 8)
+  const contentIndent = 0 // no icon in section headers; remove extra indent
   const ACTION_BUTTON_HEIGHT = 44
   const ACTION_BUTTON_RADIUS = 16
 
@@ -159,9 +170,9 @@ export const AgentDetail: React.FC<AgentDetailProps> = ({ visible, agent, onClos
           </View>
           <View style={{ flex: 1, minWidth: 0 }}>
             <Text style={{ color: theme.color.cardForeground, fontSize: 18, fontWeight: '700' }} numberOfLines={1}>{name}</Text>
-            {roleText ? (
-              <Text style={{ color: theme.color.mutedForeground, fontSize: 12 }} numberOfLines={1}>{roleText}</Text>
-            ) : null}
+            <Text style={{ color: theme.color.mutedForeground, fontSize: 12 }} numberOfLines={1}>
+              Agent ID: {formatAgentId(agent.id)}
+            </Text>
           </View>
           <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
             <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, backgroundColor: theme.dark ? theme.color.secondary : theme.color.card, borderRadius: theme.radius.sm, paddingHorizontal: 8, paddingVertical: 4 }}>
@@ -219,7 +230,7 @@ export const AgentDetail: React.FC<AgentDetailProps> = ({ visible, agent, onClos
 
                 {/* Role */}
                 <View>
-                  <SectionTitle title="Role" icon={<Briefcase size={16} color={theme.color.mutedForeground as any} />} />
+                  <SectionTitle title="Role" />
                   <View style={{ paddingLeft: contentIndent }}>
                     <View style={{ flexDirection: 'row', flexWrap: 'wrap', marginBottom: 6 }}>
                       {(agent.roles && agent.roles.length > 0 ? agent.roles : (agent.role ? [agent.role] : [])).map(r => (
@@ -227,7 +238,7 @@ export const AgentDetail: React.FC<AgentDetailProps> = ({ visible, agent, onClos
                       ))}
                     </View>
                     {(agent.roles && agent.roles.length > 0 ? agent.roles : (agent.role ? [agent.role] : [])).map(r => (
-                      <Text key={`roler-${r}`} style={{ color: theme.color.mutedForeground, fontSize: 13, marginBottom: 2 }}>
+                      <Text key={`roler-${r}`} style={{ color: theme.color.cardForeground, fontSize: 13, marginBottom: 2 }}>
                         {roleDescriptions[r] || 'Configured role.'}
                       </Text>
                     ))}
@@ -237,7 +248,15 @@ export const AgentDetail: React.FC<AgentDetailProps> = ({ visible, agent, onClos
 
                 {/* Knowledge summary */}
                 <View>
-                  <SectionTitle title="Knowledge" icon={<BookOpen size={16} color={theme.color.mutedForeground as any} />} />
+                  <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 4 }}>
+                    <SectionTitle title="Knowledge" />
+                    <TouchableOpacity onPress={() => setActiveTab('access')} activeOpacity={0.85} accessibilityLabel={'Manage Knowledge'}>
+                      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                        <Text style={{ color: theme.color.primary as any, fontSize: 12, fontWeight: '700' }}>Manage Knowledge</Text>
+                        <ChevronRight size={12} color={theme.color.primary as any} />
+                      </View>
+                    </TouchableOpacity>
+                  </View>
                   <View style={{ paddingLeft: contentIndent }}>
                     <View style={{ flexDirection: 'row', flexWrap: 'wrap', marginBottom: 6, alignItems: 'center' }}>
                       <Pill label={agent.dataAccess?.mode === 'all' ? 'Knowledge: All files' : `Knowledge: ${(agent.dataAccess?.selectedCollections || []).length} collections`} />
@@ -252,28 +271,24 @@ export const AgentDetail: React.FC<AgentDetailProps> = ({ visible, agent, onClos
                         )}
                       </View>
                     )}
-                    <TouchableOpacity onPress={() => setActiveTab('access')} activeOpacity={0.85}>
-                      <Text style={{ color: theme.color.primary as any, fontSize: 12, fontWeight: '700' }}>Manage Knowledge</Text>
-                    </TouchableOpacity>
                   </View>
                 </View>
                 <SectionDivider />
 
                 {/* Tone */}
                 <View>
-                  <SectionTitle title="Tone" icon={<Star size={16} color={theme.color.mutedForeground as any} />} />
+                  <SectionTitle title="Tone" />
                   <View style={{ paddingLeft: contentIndent }}>
                     <View style={{ flexDirection: 'row', flexWrap: 'wrap', marginBottom: 6 }}>
                       {agent.tone ? <Pill label={agent.tone} /> : <Text style={{ color: theme.color.mutedForeground, fontSize: 13 }}>Not configured.</Text>}
                     </View>
                     {agent.tone && (
                       <>
-                        <Text style={{ color: theme.color.mutedForeground, fontSize: 13, marginBottom: 2 }}>
+                        <Text style={{ color: theme.color.cardForeground, fontSize: 13, marginBottom: 2 }}>
                           {(toneDescriptions[agent.tone]?.desc) || 'Configured tone.'}
                         </Text>
                         <View style={{ flexDirection: 'row', alignItems: 'flex-start', gap: 6, marginTop: 2 }}>
-                          <MessageCircle size={12} color={theme.color.mutedForeground as any} />
-                          <Text style={{ color: theme.color.cardForeground, fontSize: 13, fontStyle: 'italic', flex: 1 }}>
+                          <Text style={{ color: theme.color.mutedForeground, fontSize: 13, fontStyle: 'italic', flex: 1 }}>
                             “{(toneDescriptions[agent.tone]?.sample) || 'Hello! How can I help you today?'}”
                           </Text>
                         </View>
@@ -285,7 +300,7 @@ export const AgentDetail: React.FC<AgentDetailProps> = ({ visible, agent, onClos
 
                 {/* Traits */}
                 <View>
-                  <SectionTitle title="Traits" icon={<Bot size={16} color={theme.color.mutedForeground as any} />} />
+                  <SectionTitle title="Traits" />
                   <View style={{ paddingLeft: contentIndent }}>
                     <View style={{ flexDirection: 'row', flexWrap: 'wrap', marginBottom: 6 }}>
                       {(agent.traits && agent.traits.length > 0)
@@ -295,12 +310,11 @@ export const AgentDetail: React.FC<AgentDetailProps> = ({ visible, agent, onClos
                     </View>
                     {agent.traits && agent.traits.length > 0 && (
                       <>
-                        <Text style={{ color: theme.color.mutedForeground, fontSize: 13, marginBottom: 2 }}>
+                        <Text style={{ color: theme.color.cardForeground, fontSize: 13, marginBottom: 2 }}>
                           {agent.traits.map(t => traitDescriptions[t] || 'Configured trait.').join(' ')}
                         </Text>
                         <View style={{ flexDirection: 'row', alignItems: 'flex-start', gap: 6, marginTop: 2 }}>
-                          <MessageCircle size={12} color={theme.color.mutedForeground as any} />
-                          <Text style={{ color: theme.color.cardForeground, fontSize: 13, fontStyle: 'italic', flex: 1 }}>
+                          <Text style={{ color: theme.color.mutedForeground, fontSize: 13, fontStyle: 'italic', flex: 1 }}>
                             “I’ve reviewed the details carefully and here’s the best path forward.”
                           </Text>
                         </View>
@@ -312,19 +326,18 @@ export const AgentDetail: React.FC<AgentDetailProps> = ({ visible, agent, onClos
 
                 {/* Escalation */}
                 <View>
-                  <SectionTitle title="Escalation" icon={<ClipboardList size={16} color={theme.color.mutedForeground as any} />} />
+                  <SectionTitle title="Escalation" />
                   <View style={{ paddingLeft: contentIndent }}>
                     <View style={{ flexDirection: 'row', flexWrap: 'wrap', marginBottom: 6 }}>
                       {agent.escalationRule ? <Pill label={agent.escalationRule} /> : <Text style={{ color: theme.color.mutedForeground, fontSize: 13 }}>Not configured.</Text>}
                     </View>
                     {agent.escalationRule && (
                       <>
-                        <Text style={{ color: theme.color.mutedForeground, fontSize: 13, marginBottom: 2 }}>
+                        <Text style={{ color: theme.color.cardForeground, fontSize: 13, marginBottom: 2 }}>
                           {(escalationDescriptions[agent.escalationRule]?.desc) || 'Configured escalation policy.'}
                         </Text>
                         <View style={{ flexDirection: 'row', alignItems: 'flex-start', gap: 6, marginTop: 2 }}>
-                          <MessageCircle size={12} color={theme.color.mutedForeground as any} />
-                          <Text style={{ color: theme.color.cardForeground, fontSize: 13, fontStyle: 'italic', flex: 1 }}>
+                          <Text style={{ color: theme.color.mutedForeground, fontSize: 13, fontStyle: 'italic', flex: 1 }}>
                             “{(escalationDescriptions[agent.escalationRule]?.sample) || 'Passing this to a human specialist.'}”
                           </Text>
                         </View>
@@ -423,7 +436,7 @@ export const AgentDetail: React.FC<AgentDetailProps> = ({ visible, agent, onClos
 
             {activeTab === 'access' && (
               <View style={{ gap: 12 }}>
-                <SectionTitle title="Knowledge" icon={<BookOpen size={16} color={theme.color.mutedForeground as any} />} mb={4} />
+                <SectionTitle title="Knowledge" mb={4} />
                 <View>
                   {/* Segmented control */}
                   <View style={{ backgroundColor: theme.color.muted, borderRadius: theme.radius.md, padding: 6, flexDirection: 'row', gap: 6, marginBottom: 10 }}>

@@ -8,12 +8,8 @@ import { Button } from '../../components/ui/Button'
 import { 
   Bot, 
   Power, 
-  MessageCircle, 
-  Clock,
   Settings,
-  Trash2,
-  Briefcase,
-  Star
+  Trash2
 } from 'lucide-react-native'
 
 interface Agent {
@@ -165,8 +161,7 @@ export const AgentCard: React.FC<AgentCardProps> = ({
         }}>
           {/* Chats */}
           <View style={{ alignItems: 'center', flex: 1 }}>
-            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4, marginBottom: 2 }}>
-              <MessageCircle size={12} color={theme.color.mutedForeground as any} />
+            <View style={{ alignItems: 'center', marginBottom: 2 }}>
               <Text style={{ color: theme.color.cardForeground, fontSize: 15, fontWeight: '600' }}>
                 {agent.conversations}
               </Text>
@@ -176,8 +171,7 @@ export const AgentCard: React.FC<AgentCardProps> = ({
 
           {/* CSAT */}
           <View style={{ alignItems: 'center', flex: 1 }}>
-            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4, marginBottom: 2 }}>
-              <Star size={12} color={theme.color.mutedForeground as any} />
+            <View style={{ alignItems: 'center', marginBottom: 2 }}>
               <Text style={{ color: theme.color.cardForeground, fontSize: 15, fontWeight: '600' }}>
                 {(agent.satisfaction ?? 0)}%
               </Text>
