@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react'
 import { View, Text, ScrollView, TouchableOpacity, Alert } from 'react-native'
 import { Modal } from '../../components/ui/Modal'
+import { Card } from '../../components/ui/Card'
 import { useTheme } from '../../providers/ThemeProvider'
 import { Button } from '../../components/ui/Button'
 import { Input } from '../../components/ui/Input'
@@ -73,9 +74,9 @@ export const AgentDetail: React.FC<AgentDetailProps> = ({ visible, agent, onClos
   }
 
   const SectionTitle: React.FC<{ title: string; icon?: React.ReactNode; mb?: number }> = ({ title, icon, mb }) => (
-    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: mb ?? 6 }}>
+    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: mb ?? 8 }}>
       {icon}
-      <Text style={{ color: theme.color.cardForeground, fontSize: 14, fontWeight: '700' }}>{title}</Text>
+      <Text style={{ color: theme.color.cardForeground, fontSize: 16, fontWeight: '600' }}>{title}</Text>
     </View>
   )
 
@@ -100,7 +101,7 @@ export const AgentDetail: React.FC<AgentDetailProps> = ({ visible, agent, onClos
     </View>
   )
   const SectionDivider: React.FC = () => (
-    <View style={{ height: 1, backgroundColor: theme.color.border, marginVertical: 0 }} />
+    <View style={{ height: 1, backgroundColor: theme.color.border, marginVertical: 6 }} />
   )
   // Prepared fallback message for sections with no active parameters (not used yet)
   const FALLBACK_MESSAGE = 'No selections yet. Configure to get started.'
@@ -179,21 +180,6 @@ export const AgentDetail: React.FC<AgentDetailProps> = ({ visible, agent, onClos
               <View style={{ width: 6, height: 6, borderRadius: 3, backgroundColor: agent.status === 'active' ? theme.color.success : theme.color.mutedForeground }} />
               <Text style={{ color: theme.color.mutedForeground, fontSize: 12, fontWeight: '600' }}>{agent.status}</Text>
             </View>
-            <TouchableOpacity
-              onPress={onClose}
-              activeOpacity={0.85}
-              style={{
-                width: 32,
-                height: 32,
-                borderRadius: 16,
-                backgroundColor: theme.color.muted,
-                alignItems: 'center',
-                justifyContent: 'center'
-              }}
-              accessibilityLabel={'Close agent details'}
-            >
-              <X size={16} color={theme.color.mutedForeground as any} />
-            </TouchableOpacity>
           </View>
         </View>
 
@@ -225,8 +211,9 @@ export const AgentDetail: React.FC<AgentDetailProps> = ({ visible, agent, onClos
             contentContainerStyle={{ paddingBottom: 12, paddingHorizontal: 0 }}
           >
             {activeTab === 'overview' && (
-              <View style={{ gap: 6 }}>
-                {/* Analytics removed */}
+              <Card variant="flat" style={{ paddingHorizontal: 16, paddingBottom: 16, paddingTop: 8, marginBottom: 12 }}>
+                <View style={{ gap: 6 }}>
+                  {/* Analytics removed */}
 
                 {/* Role */}
                 <View>
@@ -351,14 +338,16 @@ export const AgentDetail: React.FC<AgentDetailProps> = ({ visible, agent, onClos
                 {agent.description ? (
                   <View>
                     <SectionTitle title="About" />
-                    <Text style={{ color: theme.color.mutedForeground, fontSize: 14, lineHeight: 20 }}>{agent.description}</Text>
+                    <Text style={{ color: theme.color.cardForeground, fontSize: 14, lineHeight: 20 }}>{agent.description}</Text>
                   </View>
                 ) : null}
-              </View>
+                </View>
+              </Card>
             )}
 
             {activeTab === 'performance' && (
-              <View style={{ gap: 12 }}>
+              <Card variant="flat" style={{ paddingHorizontal: 16, paddingBottom: 16, paddingTop: 8, marginBottom: 12 }}>
+                <View style={{ gap: 12 }}>
                 <SectionTitle title="KPIs" icon={<Target size={16} color={theme.color.mutedForeground as any} />} mb={4} />
                 <View>
                   <Text style={{ color: theme.color.mutedForeground, fontSize: 13, marginBottom: 12 }}>
@@ -431,11 +420,13 @@ export const AgentDetail: React.FC<AgentDetailProps> = ({ visible, agent, onClos
                     Your selected KPIs will guide response strategies and prioritization. Backend integration to follow.
                   </Text>
                 </View>
-              </View>
+                </View>
+              </Card>
             )}
 
             {activeTab === 'access' && (
-              <View style={{ gap: 12 }}>
+              <Card variant="flat" style={{ paddingHorizontal: 16, paddingBottom: 16, paddingTop: 8, marginBottom: 12 }}>
+                <View style={{ gap: 12 }}>
                 <SectionTitle title="Knowledge" mb={4} />
                 <View>
                   {/* Segmented control */}
@@ -494,7 +485,8 @@ export const AgentDetail: React.FC<AgentDetailProps> = ({ visible, agent, onClos
 
                   {/* Removed UI-only disclaimer for Knowledge tab */}
                 </View>
-              </View>
+                </View>
+              </Card>
             )}
 
             {/* Customize tab removed */}
