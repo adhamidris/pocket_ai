@@ -248,7 +248,12 @@ export const AgentDetail: React.FC<AgentDetailProps> = ({ visible, agent, onClos
   const toggleAccessCollection = (c: string) => setAccessSelected(prev => prev.includes(c) ? prev.filter(x => x !== c) : [...prev, c])
 
   if (!agent) return null
-  const name = agent.name
+  const capitalizeFirst = (s: string) => {
+    if (!s) return s as any
+    const t = (s as any).toString().trim()
+    return t.charAt(0).toUpperCase() + t.slice(1)
+  }
+  const name = capitalizeFirst(agent.name)
   const roleText = agent.role || (agent.roles || []).slice(0, 2).join(' • ')
 
   const toggleKpi = (k: string) => {
@@ -808,7 +813,7 @@ export const AgentDetail: React.FC<AgentDetailProps> = ({ visible, agent, onClos
                 <Button
                   title={agent.status === 'active' ? 'Deactivate' : 'Activate'}
                   variant={agent.status === 'active' ? 'dangerSoft' : 'default'}
-                  size="lg"
+                  size="md"
                   fullWidth
                   accessibilityLabel={`${agent.status === 'active' ? 'Deactivate' : 'Activate'} agent ${name}`}
                   iconLeft={
@@ -838,7 +843,7 @@ export const AgentDetail: React.FC<AgentDetailProps> = ({ visible, agent, onClos
                 <Button
                   title="Edit"
                   variant="card"
-                  size="lg"
+                  size="md"
                   fullWidth
                   iconLeft={<Settings size={18} color={theme.color.cardForeground as any} />}
                   onPress={() => setEditMode(true)}

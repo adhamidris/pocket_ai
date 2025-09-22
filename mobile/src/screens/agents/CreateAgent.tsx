@@ -114,7 +114,7 @@ export const CreateAgent: React.FC<CreateAgentProps> = ({ visible, onClose, onSa
         mode: dataAccessMode,
         selectedCollections: dataAccessSelected,
       },
-      status: 'inactive',
+      status: 'active',
       createdAt: new Date().toISOString(),
       conversations: 0,
       responseTime: '0s'

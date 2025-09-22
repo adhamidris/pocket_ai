@@ -1,16 +1,8 @@
 import React from 'react'
-import { View, Text, TouchableOpacity, Alert } from 'react-native'
+import { View, Text, TouchableOpacity } from 'react-native'
 import { useTheme } from '../../providers/ThemeProvider'
 import { Card } from '../../components/ui/Card'
-import { AnimatedCard } from '../../components/ui/AnimatedCard'
-import { Badge } from '../../components/ui/Badge'
-import { Button } from '../../components/ui/Button'
-import { 
-  Bot, 
-  Power, 
-  Settings,
-  Trash2
-} from 'lucide-react-native'
+import { Bot, ChevronRight } from 'lucide-react-native'
 
 interface Agent {
   id: string
@@ -47,6 +39,14 @@ export const AgentCard: React.FC<AgentCardProps> = ({
 }) => {
   const { theme } = useTheme()
 
+  // Short role descriptions (match Agent Detail modal tone)
+  const roleDescriptions: Record<string, string> = {
+    'Support Agent': 'Handles customer issues and questions efficiently.',
+    'Sales Associate': 'Engages leads and highlights value to convert.',
+    'Technical Specialist': 'Guides users through technical workflows and fixes.',
+    'Billing Assistant': 'Clarifies invoices, refunds, and payment matters.',
+  }
+
   const getPersonaIcon = (persona: string) => {
     switch (persona) {
       case 'friendly': return '😊'
@@ -65,20 +65,50 @@ export const AgentCard: React.FC<AgentCardProps> = ({
   const dangerBg = withAlpha(theme.color.error, theme.dark ? 0.22 : 0.12)
   const hasRole = Boolean(agent.role || (agent.roles && agent.roles.length > 0))
   const hasDescription = Boolean((agent.description || '').trim().length > 0)
+  // Demo usage (tokens→$): estimate spend from conversations or id; cap by total
+  const totalBudget = 50 // $ demo budget
+  const estimateSpent = () => {
+    const conv = (agent.conversations as any) ?? 0
+    const base = Math.min(totalBudget * 0.8, conv * 0.12)
+    if (base > 0) return parseFloat(base.toFixed(2))
+    const digits = ((agent.id as any).toString().match(/\d+/g) || ['0']).join('')
+    const num = parseInt(digits || '0', 10)
+    const deriv = ((num % 3000) / 3000) * (totalBudget * 0.6)
+    return parseFloat(deriv.toFixed(2))
+  }
+  const spent = estimateSpent()
+  const remaining = parseFloat(Math.max(0, totalBudget - spent).toFixed(2))
 
-  const CardContainer: React.FC<{ children: React.ReactNode }> = ({ children }) => (
-    <AnimatedCard
-      variant="flat"
-      onPress={onPress ? () => onPress(agent) : undefined}
-      animationType="fadeIn"
-      style={{ marginBottom: 12, backgroundColor: theme.dark ? (theme.color.secondary as any) : (theme.color.accent as any), paddingHorizontal: 16, paddingVertical: 14, borderWidth: 0, borderColor: 'transparent' }}
-    >
-      {children}
-    </AnimatedCard>
-  )
+  const capitalizeFirst = (s: string) => {
+    if (!s) return s
+    const trimmed = s.trim()
+    return trimmed.charAt(0).toUpperCase() + trimmed.slice(1)
+  }
+
+  // ID meta removed on card per request
+
+  const CardContainer: React.FC<{ children: React.ReactNode }> = ({ children }) => {
+    const content = (
+      <Card
+        variant="flat"
+        style={{ marginBottom: 12, backgroundColor: theme.dark ? (theme.color.secondary as any) : (theme.color.accent as any), paddingHorizontal: 16, paddingVertical: 14 }}
+      >
+        {children}
+      </Card>
+    )
+    if (onPress) {
+      return (
+        <TouchableOpacity onPress={() => onPress(agent)}>
+          {content}
+        </TouchableOpacity>
+      )
+    }
+    return content
+  }
 
   return (
     <CardContainer>
+      {/* Agent ID removed from card */}
       {/* Header */}
       <View style={{
         flexDirection: 'row',
@@ -88,25 +118,16 @@ export const AgentCard: React.FC<AgentCardProps> = ({
       }}>
         <View style={{ flex: 1, marginRight: 12 }}>
           <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 2 }}>
-            <View style={{
-              width: 32,
-              height: 32,
-              backgroundColor: theme.dark ? theme.color.secondary : theme.color.card,
-              borderRadius: 16,
-              alignItems: 'center',
-              justifyContent: 'center'
-            }}>
-              <Bot size={18} color={theme.color.primary as any} />
-            </View>
             <View style={{ flex: 1, minWidth: 0 }}>
               <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                <Bot size={14} color={theme.color.primary as any} />
                 <Text style={{
                   color: theme.color.cardForeground,
-                  fontSize: 18,
-                  fontWeight: '600',
+                  fontSize: 15,
+                  fontWeight: '700',
                   flex: 1
                 }} numberOfLines={1}>
-                  {agent.name}
+                  {capitalizeFirst(agent.name)}
                 </Text>
                 <View style={{
                   flexDirection: 'row',
@@ -121,118 +142,66 @@ export const AgentCard: React.FC<AgentCardProps> = ({
                     width: 6,
                     height: 6,
                     borderRadius: 3,
-                    backgroundColor: agent.status === 'active' ? theme.color.success : theme.color.mutedForeground
+                    backgroundColor: theme.color.success
                   }} />
                   <Text style={{ color: theme.color.mutedForeground, fontSize: 12, fontWeight: '600' }}>
-                    {agent.status}
+                    Active
                   </Text>
                 </View>
+                {onPress ? <ChevronRight size={16} color={theme.color.mutedForeground as any} /> : null}
               </View>
               {hasRole && (
-                <Text style={{ color: theme.color.mutedForeground, fontSize: 12, marginTop: 2 }} numberOfLines={1}>
-                  {agent.role || (agent.roles || []).slice(0, 2).join(' • ')}
-                </Text>
-              )}
-            </View>
-          </View>
+                 <>
+                   <Text style={{ color: theme.color.mutedForeground, fontSize: 12, marginTop: 2 }} numberOfLines={1}>
+                     {agent.role || (agent.roles || []).slice(0, 2).join(' • ')}
+                   </Text>
+                   {/* Compact role description below the role name(s) */}
+                   <Text style={{ color: theme.color.mutedForeground, fontSize: 13, lineHeight: 20, marginTop: 4 }} numberOfLines={3}>
+                     {roleDescriptions[(agent.role || (agent.roles || [])[0] || '')] || 'Configured role.'}
+                   </Text>
+                 </>
+               )}
+             </View>
+           </View>
 
         {hasDescription && (
           <Text style={{
             color: theme.color.mutedForeground,
-            fontSize: 14,
-            marginTop: hasRole ? 2 : 0,
+            fontSize: 13,
+            lineHeight: 20,
+            marginTop: hasRole ? 4 : 2,
             marginBottom: 8
           }}>
-              {agent.description}
-            </Text>
+            {agent.description}
+          </Text>
         )}
 
         </View>
       </View>
 
-      {/* Analytics (compact mini-summary; only for active agents) */}
-      {agent.status === 'active' && (
-        <View style={{
-          flexDirection: 'row',
-          justifyContent: 'space-between',
-          alignItems: 'center',
-          marginBottom: 8,
-          paddingTop: 6,
-        }}>
-          {/* Chats */}
-          <View style={{ alignItems: 'center', flex: 1 }}>
-            <View style={{ alignItems: 'center', marginBottom: 2 }}>
-              <Text style={{ color: theme.color.cardForeground, fontSize: 15, fontWeight: '600' }}>
-                {agent.conversations}
-              </Text>
-            </View>
-            <Text style={{ color: theme.color.mutedForeground, fontSize: 11 }}>Chats</Text>
-          </View>
+      {/* Removed analytics summary (Chats & CSAT) per request */}
 
-          {/* CSAT */}
-          <View style={{ alignItems: 'center', flex: 1 }}>
-            <View style={{ alignItems: 'center', marginBottom: 2 }}>
-              <Text style={{ color: theme.color.cardForeground, fontSize: 15, fontWeight: '600' }}>
-                {(agent.satisfaction ?? 0)}%
-              </Text>
-            </View>
-            <Text style={{ color: theme.color.mutedForeground, fontSize: 11 }}>CSAT</Text>
-          </View>
+      {/* Divider before usage */}
+      <View style={{ height: 1, backgroundColor: theme.color.border, marginTop: 8, marginBottom: 8 }} />
+
+      {/* Usage summary (demo) */}
+      <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+        <View style={{ alignItems: 'center', flex: 1 }}>
+          <Text style={{ color: theme.color.cardForeground, fontSize: 16, fontWeight: '700' }}>
+            ${spent.toFixed(2)}
+          </Text>
+          <Text style={{ color: theme.color.mutedForeground, fontSize: 11 }}>Spent</Text>
         </View>
-      )}
-
-      {/* Actions */}
-      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-        {/* Left actions */}
-        <Button
-          title={agent.status === 'active' ? 'Deactivate' : 'Activate'}
-          variant={agent.status === 'active' ? 'dangerSoft' : 'default'}
-          size="xs"
-          iconLeft={
-            <Power size={14} color={agent.status === 'active' ? (theme.color.error as any) : '#fff'} />
-          }
-          accessibilityLabel={`${agent.status === 'active' ? 'Deactivate' : 'Activate'} agent ${agent.name}`}
-          onPress={() => {
-            if (agent.status === 'active') {
-              Alert.alert(
-                'Deactivate agent?',
-                `This agent can be re-activated later.`,
-                [
-                  { text: 'Cancel', style: 'cancel' },
-                  { text: 'Deactivate', style: 'destructive', onPress: () => onToggleStatus(agent.id) }
-                ]
-              )
-            } else {
-              onToggleStatus(agent.id)
-            }
-          }}
-        />
-        <Button
-          title="Edit"
-          variant="secondary"
-          size="xs"
-          iconLeft={<Settings size={14} color={theme.color.foreground as any} />}
-          onPress={() => onEdit(agent)}
-        />
-        {/* Spacer to push delete to the far right */}
-        <View style={{ flex: 1 }} />
-        {/* Delete on the very right */}
-        <TouchableOpacity
-          onPress={() => onDelete(agent.id)}
-          hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
-          style={{
-            width: 32,
-            height: 32,
-            borderRadius: 16,
-            backgroundColor: dangerBg as any,
-            alignItems: 'center',
-            justifyContent: 'center'
-          }}
-          accessibilityLabel={`Delete agent ${agent.name}`}
-        >
-          <Trash2 size={14} color={theme.color.error as any} />
-        </TouchableOpacity>
+        <View style={{ alignItems: 'center', flex: 1 }}>
+          <Text style={{ color: theme.color.cardForeground, fontSize: 16, fontWeight: '700' }}>
+            ${remaining.toFixed(2)}
+          </Text>
+          <Text style={{ color: theme.color.mutedForeground, fontSize: 11 }}>Remaining</Text>
+        </View>
       </View>
+      {/* Progress bar removed per request */}
+
+      {/* Actions removed (Deactivate, Edit, Delete) per request */}
     </CardContainer>
   )
 }

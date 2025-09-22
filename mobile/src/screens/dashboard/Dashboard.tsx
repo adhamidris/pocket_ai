@@ -1,5 +1,6 @@
 import React from 'react'
 import { View, Text, SafeAreaView, ScrollView, TouchableOpacity, Animated, Platform } from 'react-native'
+// Decorative SVG removed
 import { useTranslation } from 'react-i18next'
 import { useNavigation } from '@react-navigation/native'
 import { useTheme } from '../../providers/ThemeProvider'
@@ -28,6 +29,11 @@ export const DashboardScreen: React.FC = () => {
   const navigation = useNavigation<any>()
   const pulse = React.useRef(new Animated.Value(0)).current
   const demoCompany = 'Pocket AI'
+
+  const withAlpha = (c: string, a: number) =>
+    c.startsWith('hsl(')
+      ? c.replace('hsl(', 'hsla(').replace(')', `,${a})`)
+      : c
 
   React.useEffect(() => {
     const loop = Animated.loop(

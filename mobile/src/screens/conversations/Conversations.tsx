@@ -338,41 +338,7 @@ export const ConversationsScreen: React.FC = () => {
             {t('conversations.title')}
           </Text>
 
-          {/* Stats Row */}
-          <View style={{ flexDirection: 'row', gap: 12, marginBottom: 16 }}>
-            {[{icon: FolderOpen, color: theme.color.primary, value: openCount, label: 'Open'},
-              {icon: MessageCircle, color: theme.color.primary, value: categoryCounts.inquiry, label: 'Inquiries'},
-              {icon: ClipboardList, color: theme.color.warning, value: categoryCounts.request, label: 'Requests'},
-              {icon: AlertTriangle, color: theme.color.error, value: categoryCounts.complaint, label: 'Complaints'}].map((s, idx) => (
-              <View key={idx} style={{
-                backgroundColor: theme.color.card,
-                borderRadius: theme.radius.md,
-                paddingHorizontal: 14,
-                paddingVertical: 10,
-                flex: 1
-              }}>
-                <View style={{ alignItems: 'center', marginBottom: 6 }}>
-                  <s.icon size={18} color={s.color as any} />
-                </View>
-                <Text style={{
-                  color: theme.color.cardForeground,
-                  fontSize: 20,
-                  fontWeight: '700',
-                  textAlign: 'center'
-                }} numberOfLines={1} ellipsizeMode="clip" allowFontScaling={false}>
-                  {s.value}
-                </Text>
-                <Text style={{
-                  color: theme.color.mutedForeground,
-                  fontSize: 12,
-                  textAlign: 'center',
-                  flexShrink: 1
-                }} numberOfLines={1} ellipsizeMode="clip" allowFontScaling={false}>
-                  {s.label}
-                </Text>
-              </View>
-            ))}
-          </View>
+          {/* Stats Row removed per request */}
 
           {/* Date Filter Bar removed per request */}
 
