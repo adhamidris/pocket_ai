@@ -5,7 +5,7 @@ import * as Haptics from 'expo-haptics'
 import { useTheme } from '../../providers/ThemeProvider'
 import { LoadingSpinner } from './LoadingSpinner'
 
-type Variant = 'default' | 'secondary' | 'outline' | 'ghost' | 'link' | 'premium' | 'hero' | 'glass' | 'danger' | 'dangerSoft' | 'card'
+type Variant = 'default' | 'secondary' | 'outline' | 'ghost' | 'link' | 'premium' | 'hero' | 'glass' | 'danger' | 'dangerSoft' | 'success' | 'successSoft' | 'card'
 type Size = 'xs' | 'sm' | 'md' | 'lg' | 'xl'
 
 const HEIGHT: Record<Size, number> = { xs: 32, sm: 36, md: 40, lg: 48, xl: 56 }
@@ -29,6 +29,26 @@ export const Button: React.FC<{
     c.startsWith('hsl(')
       ? c.replace('hsl(', 'hsla(').replace(')', `,${a})`)
       : c
+
+  const desaturateHsl = (c: string, ratio: number) => {
+    // Reduce saturation by a ratio (0-1). Only handles hsl/hsla strings; returns original if not hsl(a)
+    const m = c.match(/^hsl\(\s*(\d+(?:\.\d+)?)\s*,\s*(\d+(?:\.\d+)?)%\s*,\s*(\d+(?:\.\d+)?)%\s*\)$/i)
+    if (m) {
+      const h = parseFloat(m[1])
+      const s = Math.max(0, Math.min(100, parseFloat(m[2]) * ratio))
+      const l = parseFloat(m[3])
+      return `hsl(${h},${s}%,${l}%)`
+    }
+    const m2 = c.match(/^hsla\(\s*(\d+(?:\.\d+)?)\s*,\s*(\d+(?:\.\d+)?)%\s*,\s*(\d+(?:\.\d+)?)%\s*,\s*([\d.]+)\s*\)$/i)
+    if (m2) {
+      const h = parseFloat(m2[1])
+      const s = Math.max(0, Math.min(100, parseFloat(m2[2]) * ratio))
+      const l = parseFloat(m2[3])
+      const a = parseFloat(m2[4])
+      return `hsla(${h},${s}%,${l}%,${a})`
+    }
+    return c
+  }
 
   const handlePressIn = () => {
     if (!disabled && !loading) {
@@ -125,6 +145,8 @@ export const Button: React.FC<{
     switch (variant) {
       case 'default': return { backgroundColor: theme.color.primary, ...(theme.shadow.md as any) }
       case 'secondary': return { backgroundColor: theme.color.secondary }
+      case 'success': return { backgroundColor: desaturateHsl(theme.color.success, theme.dark ? 0.88 : 0.82) }
+      case 'successSoft': return { backgroundColor: withAlpha(desaturateHsl(theme.color.success, theme.dark ? 0.70 : 0.60), theme.dark ? 0.20 : 0.10) }
       case 'card': return { backgroundColor: theme.dark ? theme.color.secondary : theme.color.accent, borderWidth: 0, borderColor: 'transparent' }
       case 'danger': return { backgroundColor: theme.color.error }
       case 'dangerSoft': return { backgroundColor: withAlpha(theme.color.error, theme.dark ? 0.22 : 0.12) }
@@ -137,8 +159,9 @@ export const Button: React.FC<{
   })()
 
   const color = (() => {
-    if (variant === 'default' || variant === 'danger') return '#fff'
+    if (variant === 'default' || variant === 'danger' || variant === 'success') return '#fff'
     if (variant === 'dangerSoft') return theme.color.error
+    if (variant === 'successSoft') return theme.color.success
     if (variant === 'link') return theme.color.mutedForeground
     if (variant === 'card') return theme.color.cardForeground
     if (variant === 'secondary') return theme.color.foreground

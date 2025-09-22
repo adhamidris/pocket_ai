@@ -119,6 +119,7 @@ export const AgentDetail: React.FC<AgentDetailProps> = ({ visible, agent, onClos
     { key: 'overview' as const, label: 'Overview', icon: Bot },
     { key: 'performance' as const, label: 'KPIs', icon: BarChart3 },
     { key: 'access' as const, label: 'Knowledge', icon: BookOpen },
+    { key: 'analytics' as const, label: 'Analytics', icon: BarChart3 },
   ]
 
   // KPIs (performance) state
@@ -150,6 +151,13 @@ export const AgentDetail: React.FC<AgentDetailProps> = ({ visible, agent, onClos
     setDraftTraits(agent.traits || [])
     setDraftEscalation(agent.escalationRule)
   }, [agent?.id])
+
+  // When entering edit mode, restrict editing to the Overview tab
+  useEffect(() => {
+    if (editMode && activeTab !== 'overview') {
+      setActiveTab('overview')
+    }
+  }, [editMode])
 
   const isDirty = (() => {
     if (!agent) return false
@@ -280,23 +288,25 @@ export const AgentDetail: React.FC<AgentDetailProps> = ({ visible, agent, onClos
         {/* Separator between header and tabs */}
         <View style={{ height: 1, backgroundColor: theme.color.border }} />
 
-        {/* Tabs bar */}
-        <View style={{ flexDirection: 'row', backgroundColor: theme.color.muted, borderRadius: theme.radius.md, padding: 6, gap: 6 }}>
-          {tabs.map((tab) => (
-            <TouchableOpacity
-              key={tab.key}
-              onPress={() => setActiveTab(tab.key)}
-              style={{
-                flex: 1,
-                paddingVertical: 10,
-                borderRadius: theme.radius.sm,
-                backgroundColor: activeTab === tab.key ? theme.color.card : 'transparent'
-              }}
-            >
-              <Text style={{ textAlign: 'center', color: activeTab === tab.key ? (theme.color.primary as any) : (theme.color.mutedForeground as any), fontSize: 12, fontWeight: '700' }}>{tab.label}</Text>
-            </TouchableOpacity>
-          ))}
-        </View>
+        {/* Tabs bar (hidden during edit) */}
+        {!editMode && (
+          <View style={{ flexDirection: 'row', backgroundColor: theme.color.muted, borderRadius: theme.radius.md, padding: 6, gap: 6 }}>
+            {tabs.map((tab) => (
+              <TouchableOpacity
+                key={tab.key}
+                onPress={() => setActiveTab(tab.key)}
+                style={{
+                  flex: 1,
+                  paddingVertical: 10,
+                  borderRadius: theme.radius.sm,
+                  backgroundColor: activeTab === tab.key ? theme.color.card : 'transparent'
+                }}
+              >
+                <Text style={{ textAlign: 'center', color: activeTab === tab.key ? (theme.color.primary as any) : (theme.color.mutedForeground as any), fontSize: 12, fontWeight: '700' }}>{tab.label}</Text>
+              </TouchableOpacity>
+            ))}
+          </View>
+        )}
 
         {/* Scrollable content under tabs (does not overlap buttons) */}
         <View style={{ flex: 1, minHeight: 0, position: 'relative' }}>
@@ -361,12 +371,14 @@ export const AgentDetail: React.FC<AgentDetailProps> = ({ visible, agent, onClos
                 <View>
                   <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 4 }}>
                     <SectionTitle title="Knowledge" mb={0} />
-                    <TouchableOpacity onPress={() => setActiveTab('access')} activeOpacity={0.85} accessibilityLabel={'Manage Knowledge'}>
-                      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-                        <Text style={{ color: theme.color.primary as any, fontSize: 12, fontWeight: '700' }}>Manage Knowledge</Text>
-                        <ChevronRight size={12} color={theme.color.primary as any} />
-                      </View>
-                    </TouchableOpacity>
+                    {!editMode && (
+                      <TouchableOpacity onPress={() => setActiveTab('access')} activeOpacity={0.85} accessibilityLabel={'Manage Knowledge'}>
+                        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                          <Text style={{ color: theme.color.primary as any, fontSize: 12, fontWeight: '700' }}>Manage Knowledge</Text>
+                          <ChevronRight size={12} color={theme.color.primary as any} />
+                        </View>
+                      </TouchableOpacity>
+                    )}
                   </View>
                   <View style={{ paddingLeft: contentIndent }}>
                     <View style={{ flexDirection: 'row', flexWrap: 'wrap', marginBottom: 6, alignItems: 'center' }}>
@@ -401,7 +413,7 @@ export const AgentDetail: React.FC<AgentDetailProps> = ({ visible, agent, onClos
                               {(toneDescriptions[agent.tone]?.desc) || 'Configured tone.'}
                             </Text>
                             <View style={{ flexDirection: 'row', alignItems: 'flex-start', gap: 6, marginTop: 2 }}>
-                              <Text style={{ color: theme.color.mutedForeground, fontSize: 13, fontStyle: 'italic', flex: 1 }}>
+                              <Text style={{ color: theme.color.mutedForeground, fontSize: 13, flex: 1 }}>
                                 “{(toneDescriptions[agent.tone]?.sample) || 'Hello! How can I help you today?'}”
                               </Text>
                             </View>
@@ -456,7 +468,7 @@ export const AgentDetail: React.FC<AgentDetailProps> = ({ visible, agent, onClos
                               {agent.traits.map(t => traitDescriptions[t] || 'Configured trait.').join(' ')}
                             </Text>
                             <View style={{ flexDirection: 'row', alignItems: 'flex-start', gap: 6, marginTop: 2 }}>
-                              <Text style={{ color: theme.color.mutedForeground, fontSize: 13, fontStyle: 'italic', flex: 1 }}>
+                              <Text style={{ color: theme.color.mutedForeground, fontSize: 13, flex: 1 }}>
                                 “I’ve reviewed the details carefully and here’s the best path forward.”
                               </Text>
                             </View>
@@ -508,7 +520,7 @@ export const AgentDetail: React.FC<AgentDetailProps> = ({ visible, agent, onClos
                               {(escalationDescriptions[agent.escalationRule]?.desc) || 'Configured escalation policy.'}
                             </Text>
                             <View style={{ flexDirection: 'row', alignItems: 'flex-start', gap: 6, marginTop: 2 }}>
-                              <Text style={{ color: theme.color.mutedForeground, fontSize: 13, fontStyle: 'italic', flex: 1 }}>
+                              <Text style={{ color: theme.color.mutedForeground, fontSize: 13, flex: 1 }}>
                                 “{(escalationDescriptions[agent.escalationRule]?.sample) || 'Passing this to a human specialist.'}”
                               </Text>
                             </View>
@@ -559,7 +571,7 @@ export const AgentDetail: React.FC<AgentDetailProps> = ({ visible, agent, onClos
             {activeTab === 'performance' && (
               <Card variant="flat" style={{ paddingHorizontal: 16, paddingBottom: 16, paddingTop: 8, marginBottom: 12 }}>
                 <View style={{ gap: 12 }}>
-                <SectionTitle title="KPIs" icon={<Target size={16} color={theme.color.mutedForeground as any} />} mb={4} />
+                <SectionTitle title="KPIs" mb={4} />
                 <View>
                   <Text style={{ color: theme.color.mutedForeground, fontSize: 13, marginBottom: 12 }}>
                     Select the metrics you want the agent to prioritize during chats.
@@ -701,6 +713,53 @@ export const AgentDetail: React.FC<AgentDetailProps> = ({ visible, agent, onClos
             )}
 
             {/* Customize tab removed */}
+          {activeTab === 'analytics' && (
+            <Card variant="flat" style={{ paddingHorizontal: 16, paddingBottom: 16, paddingTop: 8, marginBottom: 12 }}>
+              <View style={{ gap: 12 }}>
+                <SectionTitle title="Analytics" />
+                <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
+                  {/* Conversations conducted */}
+                  <View style={{ flexBasis: '48%', flexGrow: 1 }}>
+                    <View style={{ backgroundColor: theme.dark ? theme.color.secondary : theme.color.accent, borderRadius: theme.radius.md, paddingHorizontal: 14, paddingVertical: 12 }}>
+                      <Text style={{ color: theme.color.mutedForeground, fontSize: 11, fontWeight: '600', marginBottom: 6 }}>Conversations</Text>
+                      <Text style={{ color: theme.color.cardForeground, fontSize: 20, fontWeight: '700' }}>{agent.conversations ?? 0}</Text>
+                    </View>
+                  </View>
+                  {/* Resolved cases */}
+                  <View style={{ flexBasis: '48%', flexGrow: 1 }}>
+                    <View style={{ backgroundColor: theme.dark ? theme.color.secondary : theme.color.accent, borderRadius: theme.radius.md, paddingHorizontal: 14, paddingVertical: 12 }}>
+                      <Text style={{ color: theme.color.mutedForeground, fontSize: 11, fontWeight: '600', marginBottom: 6 }}>Resolved Cases</Text>
+                      <Text style={{ color: theme.color.cardForeground, fontSize: 20, fontWeight: '700' }}>{agent.resolvedCases ?? 0}</Text>
+                    </View>
+                  </View>
+                  {/* Unresolved cases */}
+                  <View style={{ flexBasis: '48%', flexGrow: 1 }}>
+                    <View style={{ backgroundColor: theme.dark ? theme.color.secondary : theme.color.accent, borderRadius: theme.radius.md, paddingHorizontal: 14, paddingVertical: 12 }}>
+                      <Text style={{ color: theme.color.mutedForeground, fontSize: 11, fontWeight: '600', marginBottom: 6 }}>Unresolved Cases</Text>
+                      <Text style={{ color: theme.color.cardForeground, fontSize: 20, fontWeight: '700' }}>{agent.openCases ?? 0}</Text>
+                    </View>
+                  </View>
+                  {/* Satisfaction ratio */}
+                  <View style={{ flexBasis: '48%', flexGrow: 1 }}>
+                    <View style={{ backgroundColor: theme.dark ? theme.color.secondary : theme.color.accent, borderRadius: theme.radius.md, paddingHorizontal: 14, paddingVertical: 12 }}>
+                      <Text style={{ color: theme.color.mutedForeground, fontSize: 11, fontWeight: '600', marginBottom: 6 }}>Satisfaction</Text>
+                      <Text style={{ color: theme.color.cardForeground, fontSize: 20, fontWeight: '700', marginBottom: 8 }}>{typeof agent.satisfaction === 'number' ? `${agent.satisfaction}%` : '—'}</Text>
+                      <View style={{ height: 6, backgroundColor: theme.color.muted, borderRadius: 999, overflow: 'hidden' }}>
+                        <View style={{ width: `${Math.max(0, Math.min(100, typeof agent.satisfaction === 'number' ? agent.satisfaction : 0))}%`, height: '100%', backgroundColor: theme.color.success }} />
+                      </View>
+                    </View>
+                  </View>
+                  {/* Average response time */}
+                  <View style={{ flexBasis: '100%', flexGrow: 1 }}>
+                    <View style={{ backgroundColor: theme.dark ? theme.color.secondary : theme.color.accent, borderRadius: theme.radius.md, paddingHorizontal: 14, paddingVertical: 12 }}>
+                      <Text style={{ color: theme.color.mutedForeground, fontSize: 11, fontWeight: '600', marginBottom: 6 }}>Avg Response Time</Text>
+                      <Text style={{ color: theme.color.cardForeground, fontSize: 20, fontWeight: '700' }}>{(agent as any).responseTime || '—'}</Text>
+                    </View>
+                  </View>
+                </View>
+              </View>
+            </Card>
+          )}
           </ScrollView>
           </Animated.View>
           {savedCenterVisible && (
@@ -722,7 +781,7 @@ export const AgentDetail: React.FC<AgentDetailProps> = ({ visible, agent, onClos
               <View style={{ flex: 1 }}>
                 <Button
                   title="Save Changes"
-                  variant="default"
+                  variant={isDirty ? 'success' : 'successSoft'}
                   size="lg"
                   fullWidth
                   disabled={!isDirty || saving}
