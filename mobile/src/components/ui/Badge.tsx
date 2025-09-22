@@ -17,24 +17,29 @@ export const Badge: React.FC<BadgeProps> = ({
 }) => {
   const { theme } = useTheme()
 
+  const withAlpha = (c: string, a: number) =>
+    c.startsWith('hsl(')
+      ? c.replace('hsl(', 'hsla(').replace(')', `,${a})`)
+      : c
+
   const getColors = () => {
     switch (variant) {
       case 'success':
         return {
-          bg: theme.color.success + '20',
-          border: theme.color.success + '40',
+          bg: withAlpha(theme.color.success, theme.dark ? 0.22 : 0.12),
+          border: withAlpha(theme.color.success, theme.dark ? 0.32 : 0.24),
           text: theme.color.success
         }
       case 'error':
         return {
-          bg: theme.color.error + '20',
-          border: theme.color.error + '40', 
+          bg: withAlpha(theme.color.error, theme.dark ? 0.22 : 0.12),
+          border: withAlpha(theme.color.error, theme.dark ? 0.32 : 0.24), 
           text: theme.color.error
         }
       case 'warning':
         return {
-          bg: theme.color.warning + '20',
-          border: theme.color.warning + '40',
+          bg: withAlpha(theme.color.warning, theme.dark ? 0.22 : 0.12),
+          border: withAlpha(theme.color.warning, theme.dark ? 0.32 : 0.24),
           text: theme.color.warning
         }
       case 'secondary':
@@ -45,8 +50,8 @@ export const Badge: React.FC<BadgeProps> = ({
         }
       default:
         return {
-          bg: theme.color.primary + '20',
-          border: theme.color.primary + '40',
+          bg: withAlpha(theme.color.primary, theme.dark ? 0.22 : 0.12),
+          border: withAlpha(theme.color.primary, theme.dark ? 0.32 : 0.24),
           text: theme.color.primary
         }
     }

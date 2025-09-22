@@ -252,7 +252,14 @@ export const SettingsScreen: React.FC = () => {
                 {group.title}
               </Text>
               
-              <Card>
+              <Card
+                variant="flat"
+                style={{
+                  backgroundColor: theme.dark ? (theme.color.secondary as any) : (theme.color.accent as any),
+                  paddingHorizontal: 12,
+                  paddingVertical: 8
+                }}
+              >
                 {group.items.map((item, itemIndex) => (
                   <TouchableOpacity
                     key={itemIndex}
@@ -260,19 +267,19 @@ export const SettingsScreen: React.FC = () => {
                     style={{
                       flexDirection: 'row',
                       alignItems: 'center',
-                      paddingVertical: 16,
+                      paddingVertical: 12,
                       borderBottomWidth: itemIndex < group.items.length - 1 ? 1 : 0,
                       borderBottomColor: theme.color.border
                     }}
                   >
                     <View style={{
-                      width: 40,
-                      height: 40,
+                      width: 36,
+                      height: 36,
                       backgroundColor: theme.dark ? theme.color.secondary : theme.color.card,
-                      borderRadius: 20,
+                      borderRadius: 18,
                       alignItems: 'center',
                       justifyContent: 'center',
-                      marginRight: 16
+                      marginRight: 10
                     }}>
                       <item.icon color={theme.color.mutedForeground} size={20} />
                     </View>

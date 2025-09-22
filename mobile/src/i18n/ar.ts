@@ -201,7 +201,11 @@ const ar = {
       subscription: "الاشتراك",
       integrations: "التكاملات",
       notifications: "الإشعارات", 
-      support: "الدعم"
+      support: "الدعم",
+      preferences: "التفضيلات",
+      language: "اللغة",
+      help: "المساعدة",
+      privacy: "الخصوصية"
     },
     account: {
       profile: "الملف الشخصي",

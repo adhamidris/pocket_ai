@@ -1,9 +1,8 @@
 import React, { useState } from 'react'
-import { View, Text, TouchableOpacity, Alert, Switch } from 'react-native'
+import { View, Text, TouchableOpacity, Alert, Switch, Image } from 'react-native'
 import { useTheme } from '../../providers/ThemeProvider'
 import { Card } from '../../components/ui/Card'
 import { Button } from '../../components/ui/Button'
-import { Badge } from '../../components/ui/Badge'
 import { Input } from '../../components/ui/Input'
 import { Modal } from '../../components/ui/Modal'
 import { 
@@ -80,6 +79,11 @@ export const ProfileSection: React.FC<ProfileSectionProps> = ({ onThemeToggle, i
     return name.split(' ').map(n => n[0]).join('').toUpperCase().slice(0, 2)
   }
 
+  const withAlpha = (c: string, a: number) =>
+    c.startsWith('hsl(')
+      ? c.replace('hsl(', 'hsla(').replace(')', `,${a})`)
+      : c
+
   const formatDate = (dateString: string) => {
     return new Date(dateString).toLocaleDateString('en-US', {
       year: 'numeric',
@@ -117,26 +121,38 @@ export const ProfileSection: React.FC<ProfileSectionProps> = ({ onThemeToggle, i
   return (
     <View>
       {/* Profile Header */}
-      <Card style={{ marginBottom: 16 }}>
-        <View style={{ alignItems: 'center', marginBottom: 20 }}>
+      <Card
+        variant="flat"
+        style={{ marginBottom: 12, backgroundColor: theme.dark ? (theme.color.secondary as any) : (theme.color.accent as any), paddingHorizontal: 14, paddingVertical: 12 }}
+      >
+        <View style={{ alignItems: 'center', marginBottom: 8 }}>
           {/* Avatar */}
           <View style={{ position: 'relative', marginBottom: 12 }}>
-            <View style={{
-              width: 80,
-              height: 80,
-              backgroundColor: theme.color.primary + '20',
-              borderRadius: 40,
-              alignItems: 'center',
-              justifyContent: 'center'
-            }}>
-              <Text style={{
-                color: theme.color.primary,
-                fontSize: 28,
-                fontWeight: '700'
+            {userProfile.avatar ? (
+              <Image
+                source={{ uri: userProfile.avatar }}
+                style={{ width: 80, height: 80, borderRadius: 40, borderWidth: 0 }}
+              />
+            ) : (
+              <View style={{
+                width: 80,
+                height: 80,
+                backgroundColor: withAlpha(theme.color.primary, theme.dark ? 0.22 : 0.12) as any,
+                borderRadius: 40,
+                alignItems: 'center',
+                justifyContent: 'center',
+                borderWidth: 0,
+                borderColor: 'transparent'
               }}>
-                {getInitials(userProfile.name)}
-              </Text>
-            </View>
+                <Text style={{
+                  color: theme.color.primary,
+                  fontSize: 28,
+                  fontWeight: '700'
+                }}>
+                  {getInitials(userProfile.name)}
+                </Text>
+              </View>
+            )}
             
             <TouchableOpacity style={{
               position: 'absolute',
@@ -160,7 +176,7 @@ export const ProfileSection: React.FC<ProfileSectionProps> = ({ onThemeToggle, i
             color: theme.color.cardForeground,
             fontSize: 22,
             fontWeight: '700',
-            marginBottom: 4
+            marginBottom: 1
           }}>
             {userProfile.name}
           </Text>
@@ -168,21 +184,19 @@ export const ProfileSection: React.FC<ProfileSectionProps> = ({ onThemeToggle, i
           <Text style={{
             color: theme.color.mutedForeground,
             fontSize: 14,
-            marginBottom: 8
+            marginBottom: 4
           }}>
             {userProfile.role} at {userProfile.company}
           </Text>
 
-          <Badge variant="success" size="sm">
-            Pro Plan
-          </Badge>
+          {/* Removed plan badge per request */}
         </View>
 
         {/* Quick Stats */}
         <View style={{
           flexDirection: 'row',
-          justifyContent: 'space-between',
-          paddingTop: 16,
+          gap: 8,
+          paddingTop: 8,
           borderTopWidth: 1,
           borderTopColor: theme.color.border
         }}>
@@ -191,7 +205,7 @@ export const ProfileSection: React.FC<ProfileSectionProps> = ({ onThemeToggle, i
               color: theme.color.cardForeground,
               fontSize: 18,
               fontWeight: '700',
-              marginBottom: 2
+              marginBottom: 0
             }}>
               156
             </Text>
@@ -208,7 +222,7 @@ export const ProfileSection: React.FC<ProfileSectionProps> = ({ onThemeToggle, i
               color: theme.color.cardForeground,
               fontSize: 18,
               fontWeight: '700',
-              marginBottom: 2
+              marginBottom: 0
             }}>
               98%
             </Text>
@@ -225,7 +239,7 @@ export const ProfileSection: React.FC<ProfileSectionProps> = ({ onThemeToggle, i
               color: theme.color.cardForeground,
               fontSize: 18,
               fontWeight: '700',
-              marginBottom: 2
+              marginBottom: 0
             }}>
               45d
             </Text>
@@ -240,12 +254,15 @@ export const ProfileSection: React.FC<ProfileSectionProps> = ({ onThemeToggle, i
       </Card>
 
       {/* Contact Information */}
-      <Card style={{ marginBottom: 16 }}>
+      <Card
+        variant="flat"
+        style={{ marginBottom: 12, backgroundColor: theme.dark ? (theme.color.secondary as any) : (theme.color.accent as any), paddingHorizontal: 14, paddingVertical: 12 }}
+      >
         <View style={{
           flexDirection: 'row',
           justifyContent: 'space-between',
           alignItems: 'center',
-          marginBottom: 16
+          marginBottom: 8
         }}>
           <Text style={{
             color: theme.color.cardForeground,
@@ -256,21 +273,15 @@ export const ProfileSection: React.FC<ProfileSectionProps> = ({ onThemeToggle, i
           </Text>
           <TouchableOpacity
             onPress={() => setShowEditModal(true)}
-            style={{
-              width: 32,
-              height: 32,
-              backgroundColor: theme.color.primary + '20',
-              borderRadius: 16,
-              alignItems: 'center',
-              justifyContent: 'center'
-            }}
+            style={{ padding: 4 }}
+            hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
           >
-            <Edit size={16} color={theme.color.primary} />
+            <Edit size={16} color={theme.color.mutedForeground as any} />
           </TouchableOpacity>
         </View>
         
-        <View style={{ gap: 12 }}>
-          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
+        <View style={{ gap: 6 }}>
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10, paddingVertical: 8 }}>
             <Mail size={16} color={theme.color.mutedForeground} />
             <Text style={{
               color: theme.color.cardForeground,
@@ -282,7 +293,7 @@ export const ProfileSection: React.FC<ProfileSectionProps> = ({ onThemeToggle, i
           </View>
           
           {userProfile.phone && (
-            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10, paddingVertical: 8 }}>
               <Phone size={16} color={theme.color.mutedForeground} />
               <Text style={{
                 color: theme.color.cardForeground,
@@ -295,7 +306,7 @@ export const ProfileSection: React.FC<ProfileSectionProps> = ({ onThemeToggle, i
           )}
           
           {userProfile.location && (
-            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10, paddingVertical: 8 }}>
               <MapPin size={16} color={theme.color.mutedForeground} />
               <Text style={{
                 color: theme.color.cardForeground,
@@ -310,21 +321,25 @@ export const ProfileSection: React.FC<ProfileSectionProps> = ({ onThemeToggle, i
       </Card>
 
       {/* Preferences */}
-      <Card style={{ marginBottom: 16 }}>
+      <Card
+        variant="flat"
+        style={{ marginBottom: 12, backgroundColor: theme.dark ? (theme.color.secondary as any) : (theme.color.accent as any), paddingHorizontal: 14, paddingVertical: 12 }}
+      >
         <Text style={{
           color: theme.color.cardForeground,
           fontSize: 16,
           fontWeight: '600',
-          marginBottom: 16
+          marginBottom: 8
         }}>
           Preferences
         </Text>
         
-        <View style={{ gap: 16 }}>
+        <View style={{ gap: 6 }}>
           <View style={{
             flexDirection: 'row',
             justifyContent: 'space-between',
-            alignItems: 'center'
+            alignItems: 'center',
+            paddingVertical: 8
           }}>
             <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12, flex: 1 }}>
               <Bell size={16} color={theme.color.mutedForeground} />
@@ -347,7 +362,10 @@ export const ProfileSection: React.FC<ProfileSectionProps> = ({ onThemeToggle, i
             <Switch
               value={userProfile.preferences.notifications}
               onValueChange={(value) => handlePreferenceChange('notifications', value)}
-              trackColor={{ false: theme.color.muted, true: theme.color.primary + '40' }}
+              trackColor={{
+                false: withAlpha(theme.color.muted, theme.dark ? 0.35 : 0.2) as any,
+                true: withAlpha(theme.color.muted, theme.dark ? 0.35 : 0.2) as any
+              }}
               thumbColor={userProfile.preferences.notifications ? theme.color.primary : theme.color.mutedForeground}
             />
           </View>
@@ -355,7 +373,8 @@ export const ProfileSection: React.FC<ProfileSectionProps> = ({ onThemeToggle, i
           <View style={{
             flexDirection: 'row',
             justifyContent: 'space-between',
-            alignItems: 'center'
+            alignItems: 'center',
+            paddingVertical: 8
           }}>
             <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12, flex: 1 }}>
               <Mail size={16} color={theme.color.mutedForeground} />
@@ -378,7 +397,10 @@ export const ProfileSection: React.FC<ProfileSectionProps> = ({ onThemeToggle, i
             <Switch
               value={userProfile.preferences.emailUpdates}
               onValueChange={(value) => handlePreferenceChange('emailUpdates', value)}
-              trackColor={{ false: theme.color.muted, true: theme.color.primary + '40' }}
+              trackColor={{
+                false: withAlpha(theme.color.muted, theme.dark ? 0.35 : 0.2) as any,
+                true: withAlpha(theme.color.muted, theme.dark ? 0.35 : 0.2) as any
+              }}
               thumbColor={userProfile.preferences.emailUpdates ? theme.color.primary : theme.color.mutedForeground}
             />
           </View>
@@ -386,7 +408,8 @@ export const ProfileSection: React.FC<ProfileSectionProps> = ({ onThemeToggle, i
           <View style={{
             flexDirection: 'row',
             justifyContent: 'space-between',
-            alignItems: 'center'
+            alignItems: 'center',
+            paddingVertical: 8
           }}>
             <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12, flex: 1 }}>
               <Moon size={16} color={theme.color.mutedForeground} />
@@ -409,7 +432,10 @@ export const ProfileSection: React.FC<ProfileSectionProps> = ({ onThemeToggle, i
             <Switch
               value={isDark}
               onValueChange={onThemeToggle}
-              trackColor={{ false: theme.color.muted, true: theme.color.primary + '40' }}
+              trackColor={{
+                false: withAlpha(theme.color.muted, theme.dark ? 0.35 : 0.2) as any,
+                true: withAlpha(theme.color.muted, theme.dark ? 0.35 : 0.2) as any
+              }}
               thumbColor={isDark ? theme.color.primary : theme.color.mutedForeground}
             />
           </View>
@@ -417,21 +443,24 @@ export const ProfileSection: React.FC<ProfileSectionProps> = ({ onThemeToggle, i
       </Card>
 
       {/* Account Actions */}
-      <Card>
+      <Card
+        variant="flat"
+        style={{ backgroundColor: theme.dark ? (theme.color.secondary as any) : (theme.color.accent as any), paddingHorizontal: 14, paddingVertical: 12 }}
+      >
         <Text style={{
           color: theme.color.cardForeground,
           fontSize: 16,
           fontWeight: '600',
-          marginBottom: 16
+          marginBottom: 8
         }}>
           Account
         </Text>
         
-        <View style={{ gap: 12 }}>
+        <View style={{ gap: 6 }}>
           <TouchableOpacity style={{
             flexDirection: 'row',
             alignItems: 'center',
-            gap: 12,
+            gap: 10,
             paddingVertical: 8
           }}>
             <Shield size={16} color={theme.color.mutedForeground} />
@@ -447,7 +476,7 @@ export const ProfileSection: React.FC<ProfileSectionProps> = ({ onThemeToggle, i
           <TouchableOpacity style={{
             flexDirection: 'row',
             alignItems: 'center',
-            gap: 12,
+            gap: 10,
             paddingVertical: 8
           }}>
             <Globe size={16} color={theme.color.mutedForeground} />
@@ -463,7 +492,7 @@ export const ProfileSection: React.FC<ProfileSectionProps> = ({ onThemeToggle, i
           <TouchableOpacity style={{
             flexDirection: 'row',
             alignItems: 'center',
-            gap: 12,
+            gap: 10,
             paddingVertical: 8
           }}>
             <SettingsIcon size={16} color={theme.color.mutedForeground} />

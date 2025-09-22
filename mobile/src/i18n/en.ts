@@ -194,7 +194,11 @@ const en = {
       subscription: "Subscription", 
       integrations: "Integrations",
       notifications: "Notifications",
-      support: "Support"
+      support: "Support",
+      preferences: "Preferences",
+      language: "Language",
+      help: "Help",
+      privacy: "Privacy"
     },
     account: {
       profile: "Profile",
