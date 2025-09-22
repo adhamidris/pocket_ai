@@ -64,15 +64,15 @@ export const Badge: React.FC<BadgeProps> = ({
   return (
     <View style={[{
       backgroundColor: colors.bg,
-      borderWidth: 1,
-      borderColor: colors.border,
-      borderRadius: theme.radius.sm,
-      alignSelf: 'flex-start',
+      borderWidth: 0,
+      borderColor: 'transparent',
+      borderRadius: theme.radius.md,
       ...padding
     }, style]}>
       <Text style={{
         color: colors.text,
         fontSize,
+        lineHeight: fontSize + 2,
         fontWeight: '600'
       }}>
         {children}

@@ -1,5 +1,5 @@
 import React, { useState } from 'react'
-import { View, Text, TouchableOpacity, Alert } from 'react-native'
+import { View, Text, TouchableOpacity, Alert, ScrollView } from 'react-native'
 import { useTheme } from '../../providers/ThemeProvider'
 import { Card } from '../../components/ui/Card'
 import { Button } from '../../components/ui/Button'
@@ -9,7 +9,6 @@ import {
   Crown,
   CreditCard,
   Calendar,
-  TrendingUp,
   Zap,
   Users,
   MessageCircle,
@@ -191,13 +190,7 @@ export const SubscriptionSection: React.FC = () => {
     }
   }
 
-  const getPlanColor = (planId: string) => {
-    switch (planId) {
-      case 'enterprise': return theme.color.warning
-      case 'pro': return theme.color.primary
-      default: return theme.color.success
-    }
-  }
+  const getPlanColor = (_planId: string) => theme.color.primary
 
   const handleUpgrade = (planId: string) => {
     Alert.alert(
@@ -219,15 +212,16 @@ export const SubscriptionSection: React.FC = () => {
   return (
     <View>
       {/* Current Plan */}
-      <Card style={{ marginBottom: 16 }}>
+      <Card variant="flat" style={{ marginBottom: 16, backgroundColor: theme.dark ? (theme.color.secondary as any) : (theme.color.accent as any) }}>
         <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12, marginBottom: 16 }}>
           <View style={{
             width: 44,
             height: 44,
-            backgroundColor: getPlanColor(currentPlan.id) + '20',
+            backgroundColor: theme.dark ? (theme.color.secondary as any) : (theme.color.card as any),
             borderRadius: 22,
             alignItems: 'center',
-            justifyContent: 'center'
+            justifyContent: 'center',
+            borderWidth: 0
           }}>
             {React.createElement(getPlanIcon(currentPlan.id), {
               size: 22,
@@ -247,6 +241,11 @@ export const SubscriptionSection: React.FC = () => {
               {currentPlan.popular && (
                 <Badge variant="default" size="sm">Popular</Badge>
               )}
+              {subscription.status && (
+                <Badge variant={subscription.status === 'active' ? 'success' : 'secondary'} size="sm">
+                  {subscription.status.charAt(0).toUpperCase() + subscription.status.slice(1)}
+                </Badge>
+              )}
             </View>
             <Text style={{
               color: theme.color.mutedForeground,
@@ -255,10 +254,6 @@ export const SubscriptionSection: React.FC = () => {
               ${subscription.amount}/{currentPlan.period}
             </Text>
           </View>
-
-          <Badge variant="success" size="sm">
-            {subscription.status.toUpperCase()}
-          </Badge>
         </View>
 
         <View style={{
@@ -285,14 +280,14 @@ export const SubscriptionSection: React.FC = () => {
 
         <Button
           title="Manage Subscription"
-          variant="outline"
+          variant="card"
           size="md"
           onPress={() => setShowUpgradeModal(true)}
         />
       </Card>
 
       {/* Usage Stats */}
-      <Card style={{ marginBottom: 16 }}>
+      <Card variant="flat" style={{ marginBottom: 16, backgroundColor: theme.dark ? (theme.color.secondary as any) : (theme.color.accent as any) }}>
         <Text style={{
           color: theme.color.cardForeground,
           fontSize: 16,
@@ -332,7 +327,7 @@ export const SubscriptionSection: React.FC = () => {
               <View style={{
                 height: '100%',
                 width: `${getUsagePercentage(subscription.usage.conversations.used, subscription.usage.conversations.limit)}%`,
-                backgroundColor: getUsageColor(getUsagePercentage(subscription.usage.conversations.used, subscription.usage.conversations.limit))
+                backgroundColor: theme.color.primary
               }} />
             </View>
           </View>
@@ -341,7 +336,7 @@ export const SubscriptionSection: React.FC = () => {
           <View>
             <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
               <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-                <Bot size={16} color={theme.color.success} />
+                <Bot size={16} color={theme.color.primary} />
                 <Text style={{
                   color: theme.color.cardForeground,
                   fontSize: 14,
@@ -366,50 +361,18 @@ export const SubscriptionSection: React.FC = () => {
               <View style={{
                 height: '100%',
                 width: `${getUsagePercentage(subscription.usage.agents.used, subscription.usage.agents.limit)}%`,
-                backgroundColor: getUsageColor(getUsagePercentage(subscription.usage.agents.used, subscription.usage.agents.limit))
+                backgroundColor: theme.color.primary
               }} />
             </View>
           </View>
 
-          {/* API Calls */}
-          <View>
-            <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
-              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-                <TrendingUp size={16} color={theme.color.warning} />
-                <Text style={{
-                  color: theme.color.cardForeground,
-                  fontSize: 14,
-                  fontWeight: '500'
-                }}>
-                  API Calls
-                </Text>
-              </View>
-              <Text style={{
-                color: theme.color.mutedForeground,
-                fontSize: 12
-              }}>
-                {formatUsage(subscription.usage.apiCalls.used, subscription.usage.apiCalls.limit)}
-              </Text>
-            </View>
-            <View style={{
-              height: 6,
-              backgroundColor: theme.color.muted,
-              borderRadius: 3,
-              overflow: 'hidden'
-            }}>
-              <View style={{
-                height: '100%',
-                width: `${getUsagePercentage(subscription.usage.apiCalls.used, subscription.usage.apiCalls.limit)}%`,
-                backgroundColor: getUsageColor(getUsagePercentage(subscription.usage.apiCalls.used, subscription.usage.apiCalls.limit))
-              }} />
-            </View>
-          </View>
+          
 
           {/* Storage */}
           <View>
             <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
               <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-                <Database size={16} color={theme.color.mutedForeground} />
+                <Database size={16} color={theme.color.primary} />
                 <Text style={{
                   color: theme.color.cardForeground,
                   fontSize: 14,
@@ -434,7 +397,7 @@ export const SubscriptionSection: React.FC = () => {
               <View style={{
                 height: '100%',
                 width: `${getUsagePercentage(subscription.usage.storage.used, subscription.usage.storage.limit)}%`,
-                backgroundColor: getUsageColor(getUsagePercentage(subscription.usage.storage.used, subscription.usage.storage.limit))
+                backgroundColor: theme.color.primary
               }} />
             </View>
           </View>
@@ -442,7 +405,7 @@ export const SubscriptionSection: React.FC = () => {
       </Card>
 
       {/* Quick Actions */}
-      <Card>
+      <Card variant="flat" style={{ backgroundColor: theme.dark ? (theme.color.secondary as any) : (theme.color.accent as any) }}>
         <Text style={{
           color: theme.color.cardForeground,
           fontSize: 16,
@@ -462,7 +425,7 @@ export const SubscriptionSection: React.FC = () => {
               paddingVertical: 8
             }}
           >
-            <Crown size={16} color={theme.color.warning} />
+            <Crown size={16} color={theme.color.primary} />
             <Text style={{
               color: theme.color.cardForeground,
               fontSize: 14,
@@ -479,7 +442,7 @@ export const SubscriptionSection: React.FC = () => {
             gap: 12,
             paddingVertical: 8
           }}>
-            <CreditCard size={16} color={theme.color.mutedForeground} />
+            <CreditCard size={16} color={theme.color.primary} />
             <Text style={{
               color: theme.color.cardForeground,
               fontSize: 14,
@@ -496,7 +459,7 @@ export const SubscriptionSection: React.FC = () => {
             gap: 12,
             paddingVertical: 8
           }}>
-            <Calendar size={16} color={theme.color.mutedForeground} />
+            <Calendar size={16} color={theme.color.primary} />
             <Text style={{
               color: theme.color.cardForeground,
               fontSize: 14,
@@ -511,28 +474,30 @@ export const SubscriptionSection: React.FC = () => {
 
       {/* Upgrade Modal */}
       <Modal visible={showUpgradeModal} onClose={() => setShowUpgradeModal(false)} title="Choose Your Plan" size="lg">
-        <View style={{ gap: 16 }}>
+        <ScrollView contentContainerStyle={{ gap: 16, paddingBottom: 8 }} showsVerticalScrollIndicator={false}>
           {plans.map((plan) => {
             const PlanIcon = getPlanIcon(plan.id)
             const isCurrentPlan = plan.id === subscription.plan
             
             return (
-              <Card key={plan.id} style={{
-                borderWidth: 2,
-                borderColor: plan.popular 
-                  ? theme.color.primary 
-                  : isCurrentPlan 
-                    ? theme.color.success 
-                    : theme.color.border
-              }}>
+              <Card
+                key={plan.id}
+                variant="flat"
+                style={{
+                  borderWidth: isCurrentPlan ? 2 : 0,
+                  borderColor: isCurrentPlan ? (theme.color.primary as any) : 'transparent',
+                  backgroundColor: theme.dark ? (theme.color.secondary as any) : (theme.color.accent as any)
+                }}
+              >
                 <View style={{ flexDirection: 'row', alignItems: 'flex-start', gap: 12, marginBottom: 12 }}>
                   <View style={{
                     width: 40,
                     height: 40,
-                    backgroundColor: getPlanColor(plan.id) + '20',
+                    backgroundColor: theme.dark ? (theme.color.secondary as any) : (theme.color.card as any),
                     borderRadius: 20,
                     alignItems: 'center',
-                    justifyContent: 'center'
+                    justifyContent: 'center',
+                    borderWidth: 0
                   }}>
                     <PlanIcon size={20} color={getPlanColor(plan.id)} />
                   </View>
@@ -550,7 +515,7 @@ export const SubscriptionSection: React.FC = () => {
                         <Badge variant="default" size="sm">Popular</Badge>
                       )}
                       {isCurrentPlan && (
-                        <Badge variant="success" size="sm">Current</Badge>
+                        <Badge variant="success" size="sm">Active</Badge>
                       )}
                     </View>
                     
@@ -574,9 +539,9 @@ export const SubscriptionSection: React.FC = () => {
                 </View>
 
                 <View style={{ gap: 6, marginBottom: 16 }}>
-                  {plan.features.slice(0, 4).map((feature, index) => (
+                  {plan.features.map((feature, index) => (
                     <View key={index} style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-                      <Check size={14} color={theme.color.success} />
+                      <Check size={14} color={theme.color.primary} />
                       <Text style={{
                         color: theme.color.cardForeground,
                         fontSize: 13
@@ -585,21 +550,11 @@ export const SubscriptionSection: React.FC = () => {
                       </Text>
                     </View>
                   ))}
-                  {plan.features.length > 4 && (
-                    <Text style={{
-                      color: theme.color.mutedForeground,
-                      fontSize: 12,
-                      fontStyle: 'italic',
-                      marginLeft: 22
-                    }}>
-                      +{plan.features.length - 4} more features
-                    </Text>
-                  )}
                 </View>
 
                 <Button
-                  title={isCurrentPlan ? 'Current Plan' : `Upgrade to ${plan.name}`}
-                  variant={isCurrentPlan ? 'ghost' : plan.popular ? 'premium' : 'outline'}
+                  title={isCurrentPlan ? 'Active' : `Upgrade to ${plan.name}`}
+                  variant={isCurrentPlan ? 'ghost' : plan.popular ? 'premium' : 'card'}
                   size="md"
                   onPress={() => isCurrentPlan ? null : handleUpgrade(plan.id)}
                   disabled={isCurrentPlan}
@@ -608,7 +563,7 @@ export const SubscriptionSection: React.FC = () => {
               </Card>
             )
           })}
-        </View>
+        </ScrollView>
       </Modal>
     </View>
   )

@@ -46,7 +46,13 @@ interface ProfileSectionProps {
 
 export const ProfileSection: React.FC<ProfileSectionProps> = ({ onThemeToggle, isDark }) => {
   const { theme } = useTheme()
-  const [showEditModal, setShowEditModal] = useState(false)
+  // Modal edit state for Contact Information
+  const [showContactModal, setShowContactModal] = useState(false)
+  const [contactForm, setContactForm] = useState({
+    email: '',
+    phone: '',
+    location: ''
+  })
   
   // Mock user profile data
   const [userProfile, setUserProfile] = useState<UserProfile>({
@@ -68,13 +74,6 @@ export const ProfileSection: React.FC<ProfileSectionProps> = ({ onThemeToggle, i
     }
   })
 
-  const [editForm, setEditForm] = useState({
-    name: userProfile.name,
-    phone: userProfile.phone || '',
-    company: userProfile.company || '',
-    location: userProfile.location || ''
-  })
-
   const getInitials = (name: string) => {
     return name.split(' ').map(n => n[0]).join('').toUpperCase().slice(0, 2)
   }
@@ -92,16 +91,23 @@ export const ProfileSection: React.FC<ProfileSectionProps> = ({ onThemeToggle, i
     })
   }
 
-  const handleSaveProfile = () => {
+  const startEditContact = () => {
+    setContactForm({
+      email: userProfile.email,
+      phone: userProfile.phone || '',
+      location: userProfile.location || ''
+    })
+    setShowContactModal(true)
+  }
+
+  const saveContact = () => {
     setUserProfile(prev => ({
       ...prev,
-      name: editForm.name,
-      phone: editForm.phone,
-      company: editForm.company,
-      location: editForm.location
+      email: contactForm.email,
+      phone: contactForm.phone,
+      location: contactForm.location
     }))
-    setShowEditModal(false)
-    Alert.alert('Success', 'Profile updated successfully!')
+    setShowContactModal(false)
   }
 
   const handlePreferenceChange = (key: keyof UserProfile['preferences'], value: boolean) => {
@@ -137,15 +143,14 @@ export const ProfileSection: React.FC<ProfileSectionProps> = ({ onThemeToggle, i
               <View style={{
                 width: 80,
                 height: 80,
-                backgroundColor: withAlpha(theme.color.primary, theme.dark ? 0.22 : 0.12) as any,
+                backgroundColor: theme.color.card,
                 borderRadius: 40,
                 alignItems: 'center',
                 justifyContent: 'center',
-                borderWidth: 0,
-                borderColor: 'transparent'
+                borderWidth: 0
               }}>
                 <Text style={{
-                  color: theme.color.primary,
+                  color: theme.color.cardForeground,
                   fontSize: 28,
                   fontWeight: '700'
                 }}>
@@ -253,7 +258,8 @@ export const ProfileSection: React.FC<ProfileSectionProps> = ({ onThemeToggle, i
         </View>
       </Card>
 
-      {/* Contact Information */}
+      {/* Contact Information */
+      }
       <Card
         variant="flat"
         style={{ marginBottom: 12, backgroundColor: theme.dark ? (theme.color.secondary as any) : (theme.color.accent as any), paddingHorizontal: 14, paddingVertical: 12 }}
@@ -272,47 +278,34 @@ export const ProfileSection: React.FC<ProfileSectionProps> = ({ onThemeToggle, i
             Contact Information
           </Text>
           <TouchableOpacity
-            onPress={() => setShowEditModal(true)}
+            onPress={startEditContact}
             style={{ padding: 4 }}
             hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
           >
             <Edit size={16} color={theme.color.mutedForeground as any} />
           </TouchableOpacity>
         </View>
-        
         <View style={{ gap: 6 }}>
           <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10, paddingVertical: 8 }}>
             <Mail size={16} color={theme.color.mutedForeground} />
-            <Text style={{
-              color: theme.color.cardForeground,
-              fontSize: 14,
-              flex: 1
-            }}>
+            <Text style={{ color: theme.color.cardForeground, fontSize: 14, flex: 1 }}>
               {userProfile.email}
             </Text>
           </View>
-          
-          {userProfile.phone && (
+
+          {Boolean(userProfile.phone) && (
             <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10, paddingVertical: 8 }}>
               <Phone size={16} color={theme.color.mutedForeground} />
-              <Text style={{
-                color: theme.color.cardForeground,
-                fontSize: 14,
-                flex: 1
-              }}>
+              <Text style={{ color: theme.color.cardForeground, fontSize: 14, flex: 1 }}>
                 {userProfile.phone}
               </Text>
             </View>
           )}
-          
-          {userProfile.location && (
+
+          {Boolean(userProfile.location) && (
             <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10, paddingVertical: 8 }}>
               <MapPin size={16} color={theme.color.mutedForeground} />
-              <Text style={{
-                color: theme.color.cardForeground,
-                fontSize: 14,
-                flex: 1
-              }}>
+              <Text style={{ color: theme.color.cardForeground, fontSize: 14, flex: 1 }}>
                 {userProfile.location}
               </Text>
             </View>
@@ -507,50 +500,49 @@ export const ProfileSection: React.FC<ProfileSectionProps> = ({ onThemeToggle, i
         </View>
       </Card>
 
-      {/* Edit Profile Modal */}
-      <Modal visible={showEditModal} onClose={() => setShowEditModal(false)} title="Edit Profile">
-        <View style={{ gap: 16 }}>
+      {/* Edit Contact Information Modal */}
+      <Modal
+        visible={showContactModal}
+        onClose={() => setShowContactModal(false)}
+        title="Edit Contact Information"
+        size="md"
+        autoHeight
+      >
+        <View style={{ gap: 4 }}>
           <Input
-            label="Full Name"
-            value={editForm.name}
-            onChangeText={(text) => setEditForm(prev => ({ ...prev, name: text }))}
-            icon={<User size={20} color={theme.color.mutedForeground} />}
+            label="Email"
+            value={contactForm.email}
+            onChangeText={(text) => setContactForm(prev => ({ ...prev, email: text }))}
+            keyboardType="email-address"
+            autoCapitalize="none"
+            autoCorrect={false}
+            icon={<Mail size={16} color={theme.color.mutedForeground} />}
+            surface="secondary"
+            borderless
           />
-          
+
           <Input
             label="Phone Number"
-            value={editForm.phone}
-            onChangeText={(text) => setEditForm(prev => ({ ...prev, phone: text }))}
-            icon={<Phone size={20} color={theme.color.mutedForeground} />}
+            value={contactForm.phone}
+            onChangeText={(text) => setContactForm(prev => ({ ...prev, phone: text }))}
             keyboardType="phone-pad"
+            icon={<Phone size={16} color={theme.color.mutedForeground} />}
+            surface="secondary"
+            borderless
           />
-          
-          <Input
-            label="Company"
-            value={editForm.company}
-            onChangeText={(text) => setEditForm(prev => ({ ...prev, company: text }))}
-          />
-          
+
           <Input
             label="Location"
-            value={editForm.location}
-            onChangeText={(text) => setEditForm(prev => ({ ...prev, location: text }))}
-            icon={<MapPin size={20} color={theme.color.mutedForeground} />}
+            value={contactForm.location}
+            onChangeText={(text) => setContactForm(prev => ({ ...prev, location: text }))}
+            icon={<MapPin size={16} color={theme.color.mutedForeground} />}
+            surface="secondary"
+            borderless
           />
-          
-          <View style={{ flexDirection: 'row', gap: 12, marginTop: 20 }}>
-            <Button
-              title="Save Changes"
-              onPress={handleSaveProfile}
-              variant="premium"
-              size="lg"
-            />
-            <Button
-              title="Cancel"
-              onPress={() => setShowEditModal(false)}
-              variant="ghost"
-              size="lg"
-            />
+
+          <View style={{ flexDirection: 'row', gap: 8, justifyContent: 'flex-end', marginTop: 4 }}>
+            <Button title="Cancel" variant="ghost" size="sm" onPress={() => setShowContactModal(false)} />
+            <Button title="Save" variant="default" size="sm" onPress={saveContact} />
           </View>
         </View>
       </Modal>

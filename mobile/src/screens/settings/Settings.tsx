@@ -131,7 +131,7 @@ export const SettingsScreen: React.FC = () => {
   if (activeSection === 'profile') {
     return (
       <SafeAreaView style={{ flex: 1, backgroundColor: theme.color.background }}>
-        <ScrollView style={{ flex: 1 }}>
+        <ScrollView style={{ flex: 1 }} contentContainerStyle={{ paddingBottom: insets.bottom }}>
           {/* Header */}
           <View style={{ paddingHorizontal: 24, paddingTop: 12, paddingBottom: 16 }}>
             <TouchableOpacity 
@@ -178,7 +178,7 @@ export const SettingsScreen: React.FC = () => {
   if (activeSection === 'subscription') {
     return (
       <SafeAreaView style={{ flex: 1, backgroundColor: theme.color.background }}>
-        <ScrollView style={{ flex: 1 }}>
+        <ScrollView style={{ flex: 1 }} contentContainerStyle={{ paddingBottom: insets.bottom }}>
           {/* Header */}
           <View style={{ paddingHorizontal: 24, paddingTop: 12, paddingBottom: 16 }}>
             <TouchableOpacity 
@@ -225,7 +225,7 @@ export const SettingsScreen: React.FC = () => {
   // Main settings screen
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: theme.color.background }}>
-      <ScrollView style={{ flex: 1 }}>
+      <ScrollView style={{ flex: 1 }} contentContainerStyle={{ paddingBottom: insets.bottom }}>
         {/* Header */}
         <View style={{ paddingHorizontal: 24, paddingTop: 12, paddingBottom: 16 }}>
           <Text style={{
@@ -329,7 +329,7 @@ export const SettingsScreen: React.FC = () => {
         </View>
 
         {/* Sign Out */}
-        <View style={{ padding: 24 }}>
+        <View style={{ paddingHorizontal: 24, paddingVertical: 12 }}>
           <TouchableOpacity
             onPress={handleSignOut}
             style={{
