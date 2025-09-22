@@ -329,79 +329,50 @@ export const CRMScreen: React.FC = () => {
           )}
 
           {activeTab === 'insights' && (
-            <Card variant="flat" style={{ backgroundColor: theme.dark ? theme.color.secondary : theme.color.accent }}>
-              <Text style={{
-                color: theme.color.cardForeground,
-                fontSize: 16,
-                fontWeight: '600',
-                marginBottom: 16
-              }}>
-                Customer Insights
-              </Text>
-              <View style={{ gap: 16 }}>
-                <View>
-                  <Text style={{ 
-                    color: theme.color.mutedForeground, 
-                    fontSize: 14, 
-                    marginBottom: 4 
-                  }}>
-                    Average Satisfaction
-                  </Text>
-                  <Text style={{ 
-                    color: theme.color.cardForeground, 
-                    fontSize: 24, 
-                    fontWeight: '700' 
-                  }}>
-                    {Math.round(customers.reduce((sum, c) => sum + c.satisfaction, 0) / customers.length)}%
-                  </Text>
-                </View>
-                
-                <View>
-                  <Text style={{ 
-                    color: theme.color.mutedForeground, 
-                    fontSize: 14, 
-                    marginBottom: 4 
-                  }}>
-                    Total Customer Value
-                  </Text>
-                  <Text style={{ 
-                    color: theme.color.success, 
-                    fontSize: 24, 
-                    fontWeight: '700' 
-                  }}>
-                    ${stats.totalValue.toLocaleString()}
-                  </Text>
-                </View>
-                
-                <View>
-                  <Text style={{ 
-                    color: theme.color.mutedForeground, 
-                    fontSize: 14, 
-                    marginBottom: 4 
-                  }}>
-                    Most Common Tags
-                  </Text>
-                  <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 10, marginTop: 8 }}>
-                    {['Technical', 'Enterprise', 'Billing', 'Integration'].map((tag) => {
-                      const { color, bg } = getTagStyle(tag)
-                      return (
-                        <View
-                          key={tag}
-                          style={{
-                            backgroundColor: bg as any,
-                            paddingHorizontal: 8,
-                            paddingVertical: 3,
-                            borderRadius: theme.radius.sm,
-                            flexDirection: 'row',
-                            alignItems: 'center'
-                          }}
-                        >
-                          <Text style={{ color: (theme.dark ? ('#ffffff' as any) : (color as any)), fontSize: 11, fontWeight: '600' }}>
-                            {tag}
-                          </Text>
-                        </View>
-                      )
-                    })}
+            <Card variant="flat" style={{ paddingHorizontal: 16, paddingBottom: 16, paddingTop: 8, marginBottom: 12 }}>
+              <View style={{ gap: 12 }}>
+                <Text style={{ color: theme.color.cardForeground, fontSize: 16, fontWeight: '700' }}>Customer Insights</Text>
+                <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
+                  {/* Average Satisfaction */}
+                  <View style={{ flexBasis: '48%', flexGrow: 1 }}>
+                    <View style={{ backgroundColor: theme.dark ? theme.color.secondary : theme.color.accent, borderRadius: theme.radius.md, paddingHorizontal: 14, paddingVertical: 12 }}>
+                      <Text style={{ color: theme.color.mutedForeground, fontSize: 11, fontWeight: '600', marginBottom: 6 }}>Average Satisfaction</Text>
+                      <Text style={{ color: theme.color.cardForeground, fontSize: 20, fontWeight: '700', marginBottom: 0 }}>
+                        {Math.round(customers.reduce((sum, c) => sum + c.satisfaction, 0) / customers.length)}%
+                      </Text>
+                    </View>
+                  </View>
+
+                  {/* Total Customer Value */}
+                  <View style={{ flexBasis: '48%', flexGrow: 1 }}>
+                    <View style={{ backgroundColor: theme.dark ? theme.color.secondary : theme.color.accent, borderRadius: theme.radius.md, paddingHorizontal: 14, paddingVertical: 12 }}>
+                      <Text style={{ color: theme.color.mutedForeground, fontSize: 11, fontWeight: '600', marginBottom: 6 }}>Total Customer Value</Text>
+                      <Text style={{ color: theme.color.cardForeground, fontSize: 20, fontWeight: '700' }}>
+                        ${stats.totalValue.toLocaleString()}
+                      </Text>
+                    </View>
+                  </View>
+
+                  {/* Most Common Tags */}
+                  <View style={{ flexBasis: '100%', flexGrow: 1 }}>
+                    <View style={{ backgroundColor: theme.dark ? theme.color.secondary : theme.color.accent, borderRadius: theme.radius.md, paddingHorizontal: 14, paddingVertical: 12 }}>
+                      <Text style={{ color: theme.color.mutedForeground, fontSize: 11, fontWeight: '600', marginBottom: 6 }}>Most Common Tags</Text>
+                      <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
+                        {['Technical', 'Enterprise', 'Billing', 'Integration'].map((tag) => {
+                          const { color, bg } = getTagStyle(tag)
+                          return (
+                            <View
+                              key={tag}
+                              style={{ backgroundColor: bg as any, paddingHorizontal: 8, paddingVertical: 4, borderRadius: theme.radius.sm }}
+                            >
+                              <Text style={{ color: (theme.dark ? ('#ffffff' as any) : (color as any)), fontSize: 11, fontWeight: '600' }}>
+                                {tag}
+                              </Text>
+                            </View>
+                          )
+                        })}
+                      </View>
+                    </View>
                   </View>
                 </View>
               </View>

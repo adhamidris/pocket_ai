@@ -133,7 +133,7 @@ export const SettingsScreen: React.FC = () => {
       <SafeAreaView style={{ flex: 1, backgroundColor: theme.color.background }}>
         <ScrollView style={{ flex: 1 }}>
           {/* Header */}
-          <View style={{ paddingHorizontal: 24, paddingTop: insets.top + 12, paddingBottom: 16 }}>
+          <View style={{ paddingHorizontal: 24, paddingTop: 12, paddingBottom: 16 }}>
             <TouchableOpacity 
               onPress={() => setActiveSection('main')}
               style={{
@@ -180,7 +180,7 @@ export const SettingsScreen: React.FC = () => {
       <SafeAreaView style={{ flex: 1, backgroundColor: theme.color.background }}>
         <ScrollView style={{ flex: 1 }}>
           {/* Header */}
-          <View style={{ paddingHorizontal: 24, paddingTop: insets.top + 12, paddingBottom: 16 }}>
+          <View style={{ paddingHorizontal: 24, paddingTop: 12, paddingBottom: 16 }}>
             <TouchableOpacity 
               onPress={() => setActiveSection('main')}
               style={{
@@ -227,7 +227,7 @@ export const SettingsScreen: React.FC = () => {
     <SafeAreaView style={{ flex: 1, backgroundColor: theme.color.background }}>
       <ScrollView style={{ flex: 1 }}>
         {/* Header */}
-        <View style={{ paddingHorizontal: 24, paddingTop: insets.top + 12, paddingBottom: 16 }}>
+        <View style={{ paddingHorizontal: 24, paddingTop: 12, paddingBottom: 16 }}>
           <Text style={{
             color: theme.color.foreground,
             fontSize: 32,
@@ -236,12 +236,7 @@ export const SettingsScreen: React.FC = () => {
           }}>
             {t('settings.title')}
           </Text>
-          <Text style={{
-            color: theme.color.mutedForeground,
-            fontSize: 16
-          }}>
-            {t('settings.subtitle')}
-          </Text>
+          {/* Removed subtitle due to missing i18n key */}
         </View>
 
         {/* Settings Groups */}
@@ -349,7 +344,7 @@ export const SettingsScreen: React.FC = () => {
               fontSize: 16,
               fontWeight: '600'
             }}>
-              {t('settings.signOut')}
+              Sign Out
             </Text>
           </TouchableOpacity>
         </View>

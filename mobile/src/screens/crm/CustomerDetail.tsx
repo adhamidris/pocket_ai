@@ -1243,7 +1243,7 @@ export const CustomerDetail: React.FC<CustomerDetailProps> = ({
               </Text>
               <Button
                 title="Add Note"
-                variant="outline"
+                variant="secondary"
                 size="sm"
                 onPress={() => {}}
               />
