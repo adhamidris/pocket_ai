@@ -13,7 +13,7 @@ import { useIsMobile } from "@/hooks/use-mobile";
 import { Badge } from "@/components/ui/badge";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
-import { HelpCircle, ChevronDown } from "lucide-react";
+import { HelpCircle, ChevronDown, Paperclip } from "lucide-react";
 import {
   Select,
   SelectContent,
@@ -31,6 +31,7 @@ import {
   FormLabel,
   FormMessage,
 } from "@/components/ui/form";
+import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/components/ui/accordion";
 import { Link } from "react-router-dom";
 import { toast } from "@/components/ui/sonner";
 import {
@@ -44,7 +45,7 @@ import {
 const Register = () => {
   const { t, dir, lang } = useI18n();
   const isMobile = useIsMobile();
-  const [step, setStep] = useState<'form' | 'role' | 'business'>("form");
+  const [step, setStep] = useState<'form' | 'role' | 'business' | 'agent' | 'uploads'>("form");
   const [pickedRole, setPickedRole] = useState<'business' | 'entrepreneur' | 'employee' | null>(null);
 
   /* Phone field temporarily disabled
@@ -109,6 +110,28 @@ const Register = () => {
     country: string;
     website: string;
     productsType: string[];
+    // Agent setup
+    agentName: string;
+    agentTitle: string;
+    agentTone: string;
+    agentTraits: string[];
+    agentEscalation: string;
+    // Uploads step
+    uploadsVision: string[];
+    uploadsMission: string[];
+    uploadsCatalog: string[];
+    uploadsFaqs: string[];
+    uploadsKb: string[];
+    uploadsSops: string[];
+    uploadsTc: string[];
+    // temp inputs
+    uploadsVisionUrl: string;
+    uploadsMissionUrl: string;
+    uploadsCatalogUrl: string;
+    uploadsFaqsUrl: string;
+    uploadsKbUrl: string;
+    uploadsSopsUrl: string;
+    uploadsTcUrl: string;
   };
 
   const form = useForm<RegisterFormValues>({
@@ -129,6 +152,25 @@ const Register = () => {
       country: "",
       website: "",
       productsType: [],
+      agentName: "",
+      agentTitle: "",
+      agentTone: "",
+      agentTraits: [],
+      agentEscalation: "",
+      uploadsVision: [],
+      uploadsMission: [],
+      uploadsCatalog: [],
+      uploadsFaqs: [],
+      uploadsKb: [],
+      uploadsSops: [],
+      uploadsTc: [],
+      uploadsVisionUrl: "",
+      uploadsMissionUrl: "",
+      uploadsCatalogUrl: "",
+      uploadsFaqsUrl: "",
+      uploadsKbUrl: "",
+      uploadsSopsUrl: "",
+      uploadsTcUrl: "",
     },
     mode: "onTouched",
   });
@@ -212,11 +254,18 @@ const Register = () => {
   const [typedBusiness, setTypedBusiness] = useState("");
   const bizIntervalRef = useRef<number | null>(null);
   const bizTimeoutRef = useRef<number | null>(null);
+  const agentSub = 'Set up your agent basics';
+  const [typedAgent, setTypedAgent] = useState("");
+  const agentIntervalRef = useRef<number | null>(null);
+  const agentTimeoutRef = useRef<number | null>(null);
   const [lobOpen, setLobOpen] = useState(false);
   const [industryOpen, setIndustryOpen] = useState(false);
   const [showIndustryCustom, setShowIndustryCustom] = useState(false);
   const [lobCustomInput, setLobCustomInput] = useState("");
   const [lobQuery, setLobQuery] = useState("");
+  // Uploads step selection (web)
+  const [selectedUploadTypes, setSelectedUploadTypes] = useState<string[]>(['vision','faqs','catalog']);
+  const [openUploadIds, setOpenUploadIds] = useState<string[]>(['vision','faqs','catalog']);
 
   useEffect(() => {
     if (step !== 'business') return () => {};
@@ -239,6 +288,29 @@ const Register = () => {
       if (bizTimeoutRef.current) window.clearTimeout(bizTimeoutRef.current);
     };
   }, [step, businessSub]);
+
+  // Agent-step typing effect
+  useEffect(() => {
+    if (step !== 'agent') return () => {};
+    const start = () => {
+      let i = 0;
+      if (agentIntervalRef.current) window.clearInterval(agentIntervalRef.current);
+      if (agentTimeoutRef.current) window.clearTimeout(agentTimeoutRef.current);
+      agentIntervalRef.current = window.setInterval(() => {
+        i += 1;
+        setTypedAgent(agentSub.slice(0, i));
+        if (i >= agentSub.length) {
+          if (agentIntervalRef.current) window.clearInterval(agentIntervalRef.current);
+          agentTimeoutRef.current = window.setTimeout(start, 1400);
+        }
+      }, 80);
+    };
+    start();
+    return () => {
+      if (agentIntervalRef.current) window.clearInterval(agentIntervalRef.current);
+      if (agentTimeoutRef.current) window.clearTimeout(agentTimeoutRef.current);
+    };
+  }, [step]);
 
   // Helper to map broader industry buckets to LoB presets
   const mapIndustryToLoBKey = (v?: string) => {
@@ -570,7 +642,7 @@ const Register = () => {
                   {typedRole}
                 </p>
               </>
-            ) : (
+            ) : step === 'business' ? (
               <>
                 <h1 className="text-2xl md:text-3xl font-bold text-secondary-foreground text-center register-header-title">
                   {t("auth.register.businessTitlePrefix")} {" "}
@@ -578,6 +650,26 @@ const Register = () => {
                 </h1>
                 <p className="mt-1 text-center text-sm md:text-base streaming-text opacity-80 font-medium tracking-wide">
                   {typedBusiness}
+                </p>
+              </>
+            ) : step === 'agent' ? (
+              <>
+                <h1 className="text-2xl md:text-3xl font-bold text-secondary-foreground text-center register-header-title">
+                  Agent {" "}
+                  <span className="text-gradient-hero">Setup</span>
+                </h1>
+                <p className="mt-1 text-center text-sm md:text-base streaming-text opacity-80 font-medium tracking-wide">
+                  {typedAgent}
+                </p>
+              </>
+            ) : (
+              <>
+                <h1 className="text-2xl md:text-3xl font-bold text-secondary-foreground text-center register-header-title">
+                  Knowledge {" "}
+                  <span className="text-gradient-hero">Uploads</span>
+                </h1>
+                <p className="mt-1 text-center text-sm md:text-base streaming-text opacity-80 font-medium tracking-wide">
+                  Add links to your key docs so your agent gets smart fast
                 </p>
               </>
             )}
@@ -1039,47 +1131,47 @@ const Register = () => {
                           }}
                         />
                         {/* Products type (Physical / Digital / Services) to mirror mobile */}
-                        <FormField
-                          control={form.control}
-                          name={"productsType" as any}
-                          render={({ field }) => {
-                            const value: string[] = Array.isArray(field.value) ? field.value : [];
-                            const selectedNiches: string[] = Array.isArray((form.watch as any)("lineOfBusiness")) ? (form.watch as any)("lineOfBusiness") : [];
-                            const customNiches: string[] = Array.isArray((form.watch as any)("lineOfBusinessCustom")) ? (form.watch as any)("lineOfBusinessCustom") : [];
-                            const hasAnyNiche = (selectedNiches.length + customNiches.length) > 0;
-                            if (!hasAnyNiche) return null;
+                          <FormField
+                            control={form.control}
+                            name={"productsType" as any}
+                            render={({ field }) => {
+                              const value: string[] = Array.isArray(field.value) ? field.value : [];
+                              const selectedNiches: string[] = Array.isArray((form.watch as any)("lineOfBusiness")) ? (form.watch as any)("lineOfBusiness") : [];
+                              const customNiches: string[] = Array.isArray((form.watch as any)("lineOfBusinessCustom")) ? (form.watch as any)("lineOfBusinessCustom") : [];
+                              const hasAnyNiche = (selectedNiches.length + customNiches.length) > 0;
+                              if (!hasAnyNiche) return null;
 
-                            const toggle = (opt: string, checked: boolean) => {
-                              const set = new Set(value);
-                              if (checked) set.add(opt); else set.delete(opt);
-                              (form.setValue as any)("productsType", Array.from(set), { shouldDirty: true, shouldTouch: true });
-                            };
-                            const opts = ["Physical", "Digital", "Services"];
-                            return (
+                              const toggle = (opt: string, checked: boolean) => {
+                                const set = new Set(value);
+                                if (checked) set.add(opt); else set.delete(opt);
+                                (form.setValue as any)("productsType", Array.from(set), { shouldDirty: true, shouldTouch: true });
+                              };
+                              const opts = ["Physical", "Digital", "Services"];
+                              return (
                               <div className="md:col-span-2">
                                 <FormItem>
                                   <div className="flex items-center gap-3 md:gap-4 w-full">
                                     <FormLabel className="shrink-0 min-w-[7rem] md:min-w-[8rem]">Products Type</FormLabel>
                                     <div className="flex-1 flex items-center justify-between gap-4 md:gap-6">
-                                      {opts.map(opt => {
-                                        const checked = value.includes(opt);
-                                        return (
+                                    {opts.map(opt => {
+                                      const checked = value.includes(opt);
+                                      return (
                                           <div key={opt} className="flex-1">
                                             <label className="flex items-center justify-start gap-2 text-sm cursor-pointer select-none w-full py-1.5">
                                               <Checkbox className="h-4 w-4 bg-input border border-border shadow-sm focus-visible:ring-2 focus-visible:ring-ring data-[state=checked]:bg-primary data-[state=checked]:border-primary" checked={checked} onCheckedChange={(ck)=>toggle(opt, Boolean(ck))} />
-                                              <span>{opt}</span>
-                                            </label>
+                                          <span>{opt}</span>
+                                        </label>
                                           </div>
-                                        );
-                                      })}
+                                      );
+                                    })}
                                     </div>
                                   </div>
                                   <FormMessage />
                                 </FormItem>
                               </div>
-                            );
-                          }}
-                        />
+                              );
+                            }}
+                          />
                       </>
                     )}
                   </div>
@@ -1214,7 +1306,265 @@ const Register = () => {
 
                   <div className="flex items-center justify-between gap-3 pt-2">
                     <Button type="button" variant="ghost" onClick={() => setStep('role')}>Back</Button>
-                    <Button type="button" className="bg-gradient-primary text-white hover:opacity-90">Next</Button>
+                    <Button type="button" className="bg-gradient-primary text-white hover:opacity-90" onClick={() => setStep('agent')}>Next</Button>
+                  </div>
+                </form>
+              </Form>
+            </div>
+
+            {/* Step 4 (Agent): Agent setup */}
+            <div className={`${step === 'agent' ? 'animate-panel-in' : 'hidden'}`}>
+              <Form {...form}>
+                <form className="space-y-4" noValidate dir={dir}>
+                  <FormField
+                    control={form.control}
+                    name={'agentName' as any}
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>Agent name</FormLabel>
+                        <FormControl>
+                          <Input className="bg-input border-0" placeholder="e.g., Nancy" {...field} />
+                        </FormControl>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <FormField
+                      control={form.control}
+                      name={'agentTitle' as any}
+                      render={({ field }) => (
+                        <FormItem>
+                          <FormLabel>Desired title</FormLabel>
+                          <Select onValueChange={field.onChange} value={field.value}>
+                            <FormControl>
+                              <SelectTrigger className="bg-input border-0 ring-0 focus:ring-0 focus-visible:ring-0 data-[state=open]:ring-0">
+                                <SelectValue placeholder="Select a title" />
+                              </SelectTrigger>
+                            </FormControl>
+                            <SelectContent>
+                              {['Customer Support Agent','Support Specialist','Customer Success Representative','Sales Support Agent','Front Desk Representative','Account Manager','Helpdesk Agent'].map(opt => (
+                                <SelectItem key={opt} value={opt}>{opt}</SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                          <FormMessage />
+                        </FormItem>
+                      )}
+                    />
+
+                    <FormField
+                      control={form.control}
+                      name={'agentTone' as any}
+                      render={({ field }) => (
+                        <FormItem>
+                          <FormLabel>Tone</FormLabel>
+                          <Select onValueChange={field.onChange} value={field.value}>
+                            <FormControl>
+                              <SelectTrigger className="bg-input border-0 ring-0 focus:ring-0 focus-visible:ring-0 data-[state=open]:ring-0">
+                                <SelectValue placeholder="Select tone" />
+                              </SelectTrigger>
+                            </FormControl>
+                            <SelectContent>
+                              {['Friendly','Professional','Empathetic','Concise','Cheerful','Calm'].map(opt => (
+                                <SelectItem key={opt} value={opt}>{opt}</SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                          <FormMessage />
+                        </FormItem>
+                      )}
+                    />
+                  </div>
+
+                  <FormField
+                    control={form.control}
+                    name={'agentTraits' as any}
+                    render={({ field }) => {
+                      const value: string[] = Array.isArray(field.value) ? field.value : [];
+                      const toggle = (opt: string) => {
+                        const set = new Set(value);
+                        if (set.has(opt)) set.delete(opt); else set.add(opt);
+                        (form.setValue as any)('agentTraits', Array.from(set), { shouldDirty: true, shouldTouch: true });
+                      };
+                      const traits = ['Helpful','Proactive','Patient','Detail‑oriented','Persuasive','Resourceful'];
+                      return (
+                        <FormItem>
+                          <FormLabel>Traits</FormLabel>
+                          <div className="grid place-items-center w-full">
+                            <div className="inline-flex flex-wrap gap-2 justify-start text-left">
+                              {traits.map(opt => {
+                                const active = value.includes(opt);
+                                return (
+                                  <button type="button" key={opt} onClick={() => toggle(opt)} className={`px-3 h-8 rounded-md text-sm border ${active ? 'bg-primary text-primary-foreground border-primary' : 'bg-input text-foreground/90 border-border'} hover:opacity-90`}>
+                                    {opt}
+                                  </button>
+                                );
+                              })}
+                            </div>
+                          </div>
+                          <FormMessage />
+                        </FormItem>
+                      );
+                    }}
+                  />
+
+                  <FormField
+                    control={form.control}
+                    name={'agentEscalation' as any}
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>Escalation rule</FormLabel>
+                        <Select onValueChange={field.onChange} value={field.value}>
+                          <FormControl>
+                            <SelectTrigger className="bg-input border-0 ring-0 focus:ring-0 focus-visible:ring-0 data-[state=open]:ring-0">
+                              <SelectValue placeholder="Choose escalation rule" />
+                            </SelectTrigger>
+                          </FormControl>
+                          <SelectContent>
+                            {[
+                              'Escalate if user asks for human',
+                              'Escalate after 2 failed answers',
+                              'Escalate on billing/security topics',
+                              'Never escalate automatically',
+                            ].map(opt => (
+                              <SelectItem key={opt} value={opt}>{opt}</SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+
+                  <div className="flex items-center justify-between gap-3 pt-2">
+                    <Button type="button" variant="ghost" onClick={() => setStep('business')}>Back</Button>
+                    <Button type="button" className="bg-gradient-primary text-white hover:opacity-90" onClick={() => setStep('uploads')}>Next</Button>
+                  </div>
+                </form>
+              </Form>
+            </div>
+
+            {/* Step 5 (Uploads): Knowledge uploads */}
+            <div className={`${step === 'uploads' ? 'animate-panel-in' : 'hidden'}`}>
+              <Form {...form}>
+                <form className="space-y-4" noValidate dir={dir}>
+                  {(() => {
+                    const pt: string[] = Array.isArray((form.watch as any)("productsType")) ? (form.watch as any)("productsType") : [];
+                    const hasProducts = pt.some((p)=> /physical|product/i.test(p));
+                    const hasServices = pt.some((p)=> /service/i.test(p));
+                    const catalogEntity = hasProducts && hasServices ? 'Products & Services' : hasProducts ? 'Products' : hasServices ? 'Services' : 'Products/Services';
+                    const configs = [
+                      { id: 'vision', label: 'Vision', fv: 'uploadsVision' as const, fi: 'uploadsVisionUrl' as const, placeholder: 'https://your-site.com/vision' },
+                      { id: 'mission', label: 'Mission', fv: 'uploadsMission' as const, fi: 'uploadsMissionUrl' as const, placeholder: 'https://your-site.com/mission' },
+                      { id: 'catalog', label: `${catalogEntity} Catalog`, fv: 'uploadsCatalog' as const, fi: 'uploadsCatalogUrl' as const, placeholder: 'https://your-site.com/catalog' },
+                      { id: 'faqs', label: 'FAQs', fv: 'uploadsFaqs' as const, fi: 'uploadsFaqsUrl' as const, placeholder: 'https://your-site.com/faqs' },
+                      { id: 'kb', label: 'Knowledge Base', fv: 'uploadsKb' as const, fi: 'uploadsKbUrl' as const, placeholder: 'https://help.your-site.com' },
+                      { id: 'sops', label: 'SOPs', fv: 'uploadsSops' as const, fi: 'uploadsSopsUrl' as const, placeholder: 'https://drive.google.com/...' },
+                      { id: 'tc', label: 'T&C', fv: 'uploadsTc' as const, fi: 'uploadsTcUrl' as const, placeholder: 'https://your-site.com/terms' },
+                    ] as const;
+
+                    return (
+                      <>
+                        <div className="flex items-center justify-between">
+                          <div className="text-sm text-muted-foreground">Select what you want to attach</div>
+                          <DropdownMenu>
+                            <DropdownMenuTrigger asChild>
+                              <Button type="button" size="sm" variant="secondary">+ Add more</Button>
+                            </DropdownMenuTrigger>
+                            <DropdownMenuContent align="end" className="min-w-[16rem]">
+                              {configs.map((c)=>{
+                                const active = selectedUploadTypes.includes(c.id);
+                                return (
+                                  <DropdownMenuCheckboxItem
+                                    key={c.id}
+                                    checked={active}
+                                    onCheckedChange={(ck)=>{
+                                      setSelectedUploadTypes(prev => {
+                                        const set = new Set(prev);
+                                        if (!ck) {
+                                          set.delete(c.id);
+                                          (form.setValue as any)(c.fv, [], { shouldDirty: true, shouldTouch: true });
+                                          (form.setValue as any)(c.fi, '', { shouldDirty: true, shouldTouch: true });
+                                          setOpenUploadIds(ids => ids.filter(id => id !== c.id));
+                                        } else {
+                                          set.add(c.id);
+                                          setOpenUploadIds(ids => Array.from(new Set([...ids, c.id])));
+                                        }
+                                        return Array.from(set);
+                                      });
+                                    }}
+                                  >{c.label}</DropdownMenuCheckboxItem>
+                                );
+                              })}
+                            </DropdownMenuContent>
+                          </DropdownMenu>
+                        </div>
+
+                        <Accordion type="multiple" value={openUploadIds} onValueChange={(v:any)=> setOpenUploadIds(Array.isArray(v)? v : [])} className="mt-2">
+                          {configs.filter(c => selectedUploadTypes.includes(c.id)).map((cfg) => (
+                            <AccordionItem key={cfg.id} value={cfg.id} className="border border-border rounded-md bg-secondary/40 mb-2">
+                              <AccordionTrigger className="px-3 py-2 hover:no-underline">
+                                <div className="flex items-center justify-between w-full">
+                                  <div className="font-medium text-sm">{cfg.label}</div>
+                                  <div className="text-xs text-muted-foreground">Added {(((form.watch as any)(cfg.fv) as string[] )|| []).length}</div>
+                                </div>
+                              </AccordionTrigger>
+                              <AccordionContent className="px-3 pb-3">
+                                <div className="flex items-center gap-2">
+                                  <Input
+                                    className="bg-input border-0 flex-1"
+                                    placeholder={cfg.placeholder}
+                                    value={(form.watch as any)(cfg.fi) || ''}
+                                    onChange={(e)=> (form.setValue as any)(cfg.fi, e.target.value, { shouldDirty: true })}
+                                    onKeyDown={(e)=>{
+                                      if (e.key === 'Enter') {
+                                        e.preventDefault();
+                                        const url = String((form.getValues as any)(cfg.fi) || '').trim();
+                                        if (!url) return;
+                                        const list: string[] = Array.isArray((form.getValues as any)(cfg.fv)) ? (form.getValues as any)(cfg.fv) : [];
+                                        if (!list.includes(url)) {
+                                          (form.setValue as any)(cfg.fv, [...list, url], { shouldDirty: true, shouldTouch: true });
+                                        }
+                                        (form.setValue as any)(cfg.fi, '', { shouldDirty: true, shouldTouch: true });
+                                      }
+                                    }}
+                                  />
+                                  <Button type="button" variant="secondary" size="icon" className="shrink-0" onClick={()=>{
+                                    const url = String((form.getValues as any)(cfg.fi) || '').trim();
+                                    if (!url) return;
+                                    const list: string[] = Array.isArray((form.getValues as any)(cfg.fv)) ? (form.getValues as any)(cfg.fv) : [];
+                                    if (!list.includes(url)) {
+                                      (form.setValue as any)(cfg.fv, [...list, url], { shouldDirty: true, shouldTouch: true });
+                                    }
+                                    (form.setValue as any)(cfg.fi, '', { shouldDirty: true, shouldTouch: true });
+                                  }}>
+                                    <Paperclip className="w-4 h-4" />
+                                  </Button>
+                                </div>
+                                <div className="mt-2 flex flex-wrap gap-2">
+                                  {((form.watch as any)(cfg.fv) as string[] || []).map((u: string)=> (
+                                    <span key={u} className="inline-flex items-center gap-2 px-2.5 h-7 rounded-md text-xs border bg-input border-border">
+                                      <span className="max-w-[16rem] truncate">{u}</span>
+                                      <button type="button" className="text-muted-foreground hover:text-foreground" onClick={()=>{
+                                        const list: string[] = Array.isArray((form.getValues as any)(cfg.fv)) ? (form.getValues as any)(cfg.fv) : [];
+                                        (form.setValue as any)(cfg.fv, list.filter((x)=> x !== u), { shouldDirty: true, shouldTouch: true });
+                                      }}>×</button>
+                                    </span>
+                                  ))}
+                                </div>
+                              </AccordionContent>
+                            </AccordionItem>
+                          ))}
+                        </Accordion>
+                      </>
+                    );
+                  })()}
+
+                  <div className="flex items-center justify-between gap-3 pt-2">
+                    <Button type="button" variant="ghost" onClick={() => setStep('agent')}>Back</Button>
+                    <Button type="button" className="bg-gradient-primary text-white hover:opacity-90">Finish</Button>
                   </div>
                 </form>
               </Form>
