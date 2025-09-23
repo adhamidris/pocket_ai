@@ -13,6 +13,7 @@ import Compliance from "./pages/Compliance";
 import Cookies from "./pages/Cookies";
 import Security from "./pages/Security";
 import Integrations from "./pages/Integrations";
+import Dashboard from "./pages/Dashboard";
 import ScrollToTop from "@/components/ScrollToTop";
 
 const queryClient = new QueryClient();
@@ -34,6 +35,7 @@ const App = () => (
           <Route path="/cookies" element={<Cookies />} />
           <Route path="/security" element={<Security />} />
           <Route path="/integrations" element={<Integrations />} />
+          <Route path="/dashboard" element={<Dashboard />} />
           {/* ADD ALL CUSTOM ROUTES ABOVE THE CATCH-ALL "*" ROUTE */}
           <Route path="*" element={<NotFound />} />
         </Routes>
