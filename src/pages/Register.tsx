@@ -5,6 +5,7 @@ import { zodResolver } from "@hookform/resolvers/zod";
 import { useI18n } from "@/i18n/I18nProvider";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Checkbox } from "@/components/ui/checkbox";
 import Header from "@/components/Header";
 import MobileAppPromo from "@/components/MobileAppPromo";
 import Footer from "@/components/Footer";
@@ -99,7 +100,18 @@ const Register = () => {
     [t /*, phoneRegex*/]
   );
 
-  const form = useForm<z.infer<typeof schema>>({
+  type RegisterFormValues = z.infer<typeof schema> & {
+    businessName: string;
+    industry: string;
+    specifyIndustry: string;
+    lineOfBusiness: string[];
+    lineOfBusinessCustom: string[];
+    country: string;
+    website: string;
+    productsType: string[];
+  };
+
+  const form = useForm<RegisterFormValues>({
     defaultValues: {
       firstName: "",
       email: "",
@@ -109,13 +121,14 @@ const Register = () => {
       confirmPassword: "",
       role: "business",
       // Business step defaults
+      businessName: "",
       industry: "",
       specifyIndustry: "",
       lineOfBusiness: [],
       lineOfBusinessCustom: [],
-      companySize: "",
       country: "",
       website: "",
+      productsType: [],
     },
     mode: "onTouched",
   });
@@ -325,7 +338,7 @@ const Register = () => {
     }
   }, [step, form]);
 
-  // Options for Line of Products/Services per industry
+  // Options for industry niches per industry (match mobile)
   const lobOptionsByIndustry: Record<string, string[]> = {
     'E‑commerce': [
       'Apparel',
@@ -928,6 +941,7 @@ const Register = () => {
                         )}
                       />
                     ) : (
+                      <>
                       <FormField key="right-lineOfBusiness"
                         control={form.control}
                         name={"lineOfBusiness" as any}
@@ -938,19 +952,19 @@ const Register = () => {
                           const industry = (form.watch as any)("industry") as string | undefined;
                           const key = mapIndustryToLoBKey(industry);
                           const baseOptions = lobOptionsByIndustry[key] || lobOptionsByIndustry['Other'];
-                          const options = baseOptions.filter(o => !o.toLowerCase().includes('services'));
+                          const options = baseOptions;
                           const maxVisible = 2; // reserve space for +N reliably
                           const visible = allSel.slice(0, maxVisible);
                           const remaining = Math.max(0, allSel.length - visible.length);
                           return (
                               <FormItem className="fade-in">
-                                <FormLabel>Products/Services</FormLabel>
-                                <DropdownMenu open={lobOpen} onOpenChange={setLobOpen}>
+                                <FormLabel>Industry niches</FormLabel>
+                                <DropdownMenu open={!!industry && lobOpen} onOpenChange={(open)=> industry ? setLobOpen(open) : setLobOpen(false)}>
                                   <DropdownMenuTrigger asChild>
-                                    <button type="button" className="w-full min-h-10 px-2 py-1.5 rounded-md bg-input border-0 text-left text-sm text-foreground/90 flex items-center justify-between">
+                                    <button type="button" disabled={!industry} className={`w-full min-h-10 px-2 py-1.5 rounded-md bg-input border-0 text-left text-sm text-foreground/90 flex items-center justify-between ${!industry ? 'opacity-60 cursor-not-allowed' : ''}`}>
                                       {allSel.length === 0 ? (
                                         <>
-                                          <span className="text-muted-foreground flex-1 overflow-hidden text-ellipsis whitespace-nowrap">Select Products/Services</span>
+                                          <span className="text-muted-foreground flex-1 overflow-hidden text-ellipsis whitespace-nowrap">{industry ? 'Select niches' : 'Select industry first'}</span>
                                           <ChevronDown className="w-4 h-4 text-muted-foreground shrink-0 ms-1" />
                                         </>
                                       ) : (
@@ -973,44 +987,50 @@ const Register = () => {
                                     </button>
                                   </DropdownMenuTrigger>
                                   <DropdownMenuContent align="start" className="min-w-[18rem]">
-                                    <div className="px-2 py-1.5">
-                                      <Input value={lobQuery} onChange={(e)=>setLobQuery(e.target.value)} placeholder="Search products/services" className="h-8 bg-input" />
-                                    </div>
-                                    {options.filter(o=> !lobQuery.trim() || o.toLowerCase().includes(lobQuery.toLowerCase())).map((opt) => {
-                                      const checked = selected.includes(opt);
-                                      return (
-                                        <DropdownMenuCheckboxItem
-                                          key={opt}
-                                          checked={checked}
-                                          onSelect={(e) => e.preventDefault()}
-                                          onCheckedChange={(ck) => {
-                                            const curr = new Set(selected);
-                                            if (ck) curr.add(opt); else curr.delete(opt);
-                                            (form.setValue as any)("lineOfBusiness", Array.from(curr), { shouldDirty: true, shouldTouch: true });
-                                          }}
-                                        >
-                                          {opt}
-                                        </DropdownMenuCheckboxItem>
-                                      );
-                                    })}
-                                    <DropdownMenuSeparator />
-                                    <div className="px-2 py-1.5">
-                                      <div className="flex items-center gap-2">
-                                        <Input value={lobCustomInput} onChange={(e)=>setLobCustomInput(e.target.value)} placeholder="Add custom" className="h-8 bg-input" />
-                                        <Button type="button" size="sm" onClick={()=>{
-                                          const v = lobCustomInput.trim();
-                                          if(!v) return;
-                                          const prev = Array.isArray((form.getValues as any)("lineOfBusinessCustom")) ? (form.getValues as any)("lineOfBusinessCustom") : [];
-                                          if (!prev.includes(v) && !selected.includes(v)) {
-                                            (form.setValue as any)("lineOfBusinessCustom", [...prev, v], { shouldDirty: true, shouldTouch: true });
-                                          }
-                                          setLobCustomInput("");
-                                        }}>Add</Button>
-                                      </div>
-                                    </div>
-                                    <div className="px-2 py-1.5">
-                                      <Button type="button" size="sm" className="w-full" onClick={() => setLobOpen(false)}>Done</Button>
-                                    </div>
+                                    {industry ? (
+                                      <>
+                                        <div className="px-2 py-1.5">
+                                          <Input value={lobQuery} onChange={(e)=>setLobQuery(e.target.value)} placeholder="Search niches" className="h-8 bg-input" />
+                                        </div>
+                                        {options.filter(o=> !lobQuery.trim() || o.toLowerCase().includes(lobQuery.toLowerCase())).map((opt) => {
+                                          const checked = selected.includes(opt);
+                                          return (
+                                            <DropdownMenuCheckboxItem
+                                              key={opt}
+                                              checked={checked}
+                                              onSelect={(e) => e.preventDefault()}
+                                              onCheckedChange={(ck) => {
+                                                const curr = new Set(selected);
+                                                if (ck) curr.add(opt); else curr.delete(opt);
+                                                (form.setValue as any)("lineOfBusiness", Array.from(curr), { shouldDirty: true, shouldTouch: true });
+                                              }}
+                                            >
+                                              {opt}
+                                            </DropdownMenuCheckboxItem>
+                                          );
+                                        })}
+                                        <DropdownMenuSeparator />
+                                        <div className="px-2 py-1.5">
+                                          <div className="flex items-center gap-2">
+                                            <Input value={lobCustomInput} onChange={(e)=>setLobCustomInput(e.target.value)} placeholder="Add custom" className="h-8 bg-input" />
+                                            <Button type="button" size="sm" onClick={()=>{
+                                              const v = lobCustomInput.trim();
+                                              if(!v) return;
+                                              const prev = Array.isArray((form.getValues as any)("lineOfBusinessCustom")) ? (form.getValues as any)("lineOfBusinessCustom") : [];
+                                              if (!prev.includes(v) && !selected.includes(v)) {
+                                                (form.setValue as any)("lineOfBusinessCustom", [...prev, v], { shouldDirty: true, shouldTouch: true });
+                                              }
+                                              setLobCustomInput("");
+                                            }}>Add</Button>
+                                          </div>
+                                        </div>
+                                        <div className="px-2 py-1.5">
+                                          <Button type="button" size="sm" className="w-full" onClick={() => setLobOpen(false)}>Done</Button>
+                                        </div>
+                                      </>
+                                    ) : (
+                                      <div className="px-3 py-2 text-sm text-muted-foreground">Select industry first</div>
+                                    )}
                                   </DropdownMenuContent>
                                 </DropdownMenu>
                                 <FormMessage />
@@ -1018,6 +1038,49 @@ const Register = () => {
                             );
                           }}
                         />
+                        {/* Products type (Physical / Digital / Services) to mirror mobile */}
+                        <div className="md:col-span-2">
+                          <FormField
+                            control={form.control}
+                            name={"productsType" as any}
+                            render={({ field }) => {
+                              const value: string[] = Array.isArray(field.value) ? field.value : [];
+                              const selectedNiches: string[] = Array.isArray((form.watch as any)("lineOfBusiness")) ? (form.watch as any)("lineOfBusiness") : [];
+                              const customNiches: string[] = Array.isArray((form.watch as any)("lineOfBusinessCustom")) ? (form.watch as any)("lineOfBusinessCustom") : [];
+                              const hasAnyNiche = (selectedNiches.length + customNiches.length) > 0;
+                              if (!hasAnyNiche) return null;
+
+                              const toggle = (opt: string, checked: boolean) => {
+                                const set = new Set(value);
+                                if (checked) set.add(opt); else set.delete(opt);
+                                (form.setValue as any)("productsType", Array.from(set), { shouldDirty: true, shouldTouch: true });
+                              };
+                              const opts = ["Physical", "Digital", "Services"];
+                              return (
+                                <FormItem>
+                                  <div className="flex items-center gap-3 md:gap-4 w-full">
+                                    <FormLabel className="shrink-0 min-w-[7rem] md:min-w-[8rem]">Products Type</FormLabel>
+                                    <div className="flex-1 flex items-center justify-between gap-4 md:gap-6">
+                                      {opts.map(opt => {
+                                        const checked = value.includes(opt);
+                                        return (
+                                          <div key={opt} className="flex-1">
+                                            <label className="flex items-center justify-start gap-2 text-sm cursor-pointer select-none w-full py-1.5">
+                                              <Checkbox className="h-4 w-4" checked={checked} onCheckedChange={(ck)=>toggle(opt, Boolean(ck))} />
+                                              <span>{opt}</span>
+                                            </label>
+                                          </div>
+                                        );
+                                      })}
+                                    </div>
+                                  </div>
+                                  <FormMessage />
+                                </FormItem>
+                              );
+                            }}
+                          />
+                        </div>
+                      </>
                     )}
                   </div>
 
@@ -1035,13 +1098,13 @@ const Register = () => {
                           const remaining = Math.max(0, selected.length - visible.length);
                           return (
                               <FormItem className="fade-in">
-                                <FormLabel>Line of Products/Services</FormLabel>
-                                <DropdownMenu open={lobOpen} onOpenChange={setLobOpen}>
+                                <FormLabel>Industry niches</FormLabel>
+                                <DropdownMenu open={!!industry && lobOpen} onOpenChange={(open)=> industry ? setLobOpen(open) : setLobOpen(false)}>
                                   <DropdownMenuTrigger asChild>
-                                    <button type="button" className="w-full min-h-10 px-2 py-1.5 rounded-md bg-input border-0 text-left text-sm text-foreground/90 flex items-center justify-between">
+                                    <button type="button" disabled={!industry} className={`w-full min-h-10 px-2 py-1.5 rounded-md bg-input border-0 text-left text-sm text-foreground/90 flex items-center justify-between ${!industry ? 'opacity-60 cursor-not-allowed' : ''}`}>
                                       {selected.length === 0 ? (
                                         <>
-                                          <span className="text-muted-foreground flex-1 overflow-hidden text-ellipsis whitespace-nowrap">Select Products/Services</span>
+                                          <span className="text-muted-foreground flex-1 overflow-hidden text-ellipsis whitespace-nowrap">{industry ? 'Select niches' : 'Select industry first'}</span>
                                           <ChevronDown className="w-4 h-4 text-muted-foreground shrink-0 ms-1" />
                                         </>
                                       ) : (
@@ -1064,27 +1127,33 @@ const Register = () => {
                                     </button>
                                   </DropdownMenuTrigger>
                                   <DropdownMenuContent align="start" className="min-w-[18rem]">
-                                    {options.map((opt) => {
-                                      const checked = selected.includes(opt);
-                                      return (
-                                        <DropdownMenuCheckboxItem
-                                          key={opt}
-                                          checked={checked}
-                                          onSelect={(e) => e.preventDefault()}
-                                          onCheckedChange={(ck) => {
-                                            const curr = new Set(selected);
-                                            if (ck) curr.add(opt); else curr.delete(opt);
-                                            (form.setValue as any)("lineOfBusiness", Array.from(curr), { shouldDirty: true, shouldTouch: true });
-                                          }}
-                                        >
-                                          {opt}
-                                        </DropdownMenuCheckboxItem>
-                                      );
-                                    })}
-                                    <DropdownMenuSeparator />
-                                    <div className="px-2 py-1.5">
-                                      <Button type="button" size="sm" className="w-full" onClick={() => setLobOpen(false)}>Done</Button>
-                                    </div>
+                                    {industry ? (
+                                      <>
+                                        {options.map((opt) => {
+                                          const checked = selected.includes(opt);
+                                          return (
+                                            <DropdownMenuCheckboxItem
+                                              key={opt}
+                                              checked={checked}
+                                              onSelect={(e) => e.preventDefault()}
+                                              onCheckedChange={(ck) => {
+                                                const curr = new Set(selected);
+                                                if (ck) curr.add(opt); else curr.delete(opt);
+                                                (form.setValue as any)("lineOfBusiness", Array.from(curr), { shouldDirty: true, shouldTouch: true });
+                                              }}
+                                            >
+                                              {opt}
+                                            </DropdownMenuCheckboxItem>
+                                          );
+                                        })}
+                                        <DropdownMenuSeparator />
+                                        <div className="px-2 py-1.5">
+                                          <Button type="button" size="sm" className="w-full" onClick={() => setLobOpen(false)}>Done</Button>
+                                        </div>
+                                      </>
+                                    ) : (
+                                      <div className="px-3 py-2 text-sm text-muted-foreground">Select industry first</div>
+                                    )}
                                   </DropdownMenuContent>
                                 </DropdownMenu>
                                 <FormMessage />
@@ -1095,29 +1164,7 @@ const Register = () => {
                         
                       </div>
                     ) : (
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4 fade-in">
-                      <FormField key={`cs-field-${(form.watch as any)("industry") || 'none'}`}
-                        control={form.control}
-                        name={"companySize" as any}
-                        render={({ field }) => (
-                      <FormItem>
-                            <FormLabel>Company size</FormLabel>
-                            <Select key={`cs-${(form.watch as any)("industry") || 'none'}`} onValueChange={field.onChange} value={field.value || undefined}>
-                              <FormControl>
-                                <SelectTrigger className="bg-input border-0">
-                                  <SelectValue placeholder="Select Size" />
-                                </SelectTrigger>
-                              </FormControl>
-                              <SelectContent>
-                                {['1-10','11-50','51-200','201-1000','1000+'].map(opt => (
-                                  <SelectItem key={opt} value={opt}>{opt}</SelectItem>
-                                ))}
-                              </SelectContent>
-                            </Select>
-                            <FormMessage />
-                          </FormItem>
-                        )}
-                      />
+                    <div className="grid grid-cols-1 gap-4 fade-in">
                       <FormField
                         control={form.control}
                         name={"country" as any}
