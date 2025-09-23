@@ -25,10 +25,11 @@ export const Input: React.FC<InputProps> = ({
 }) => {
   const { theme } = useTheme()
   
+  // Make inputs stand out on accent/secondary surfaces by using card background
   const bgColor = surface === 'accent'
-    ? (theme.dark ? theme.color.secondary : theme.color.accent)
+    ? theme.color.card
     : surface === 'secondary'
-      ? theme.color.secondary
+      ? theme.color.card
       : theme.color.background
   
   const textColor = surface === 'default' ? theme.color.foreground : theme.color.cardForeground
@@ -54,7 +55,7 @@ export const Input: React.FC<InputProps> = ({
         borderWidth: borderless ? 0 : 1,
         borderColor: borderless ? 'transparent' : (error ? theme.color.error : theme.color.border),
         borderRadius: theme.radius.md,
-        paddingHorizontal: 12,
+        paddingHorizontal: 14,
         height
       }}>
         {icon && (

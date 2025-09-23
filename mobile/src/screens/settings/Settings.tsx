@@ -1,12 +1,15 @@
 import React, { useState } from 'react'
-import { View, Text, SafeAreaView, ScrollView, TouchableOpacity, Alert } from 'react-native'
-import { useSafeAreaInsets } from 'react-native-safe-area-context'
+import { View, Text, ScrollView, TouchableOpacity, Alert } from 'react-native'
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context'
 import { useTranslation } from 'react-i18next'
 import { useTheme } from '../../providers/ThemeProvider'
 import { Card } from '../../components/ui/Card'
 import { Button } from '../../components/ui/Button'
 import { ProfileSection } from './ProfileSection'
+import { NotificationsSection } from './NotificationsSection'
 import { SubscriptionSection } from './SubscriptionSection'
+import { PrivacySection } from './PrivacySection'
+import { LanguageSection } from './LanguageSection'
 import { 
   User, 
   Bell, 
@@ -15,18 +18,19 @@ import {
   LogOut,
   CreditCard,
   Globe,
-  FileText,
-  Info,
   ChevronRight,
   Star,
   MessageCircle
 } from 'lucide-react-native'
+import { rateApp } from '../../utils/rateApp'
+import { ContactSupportSection } from './ContactSupportSection'
+import { HelpSection } from './HelpSection'
 
 export const SettingsScreen: React.FC = () => {
   const { t } = useTranslation()
   const { theme, isDark, toggle } = useTheme()
   const insets = useSafeAreaInsets()
-  const [activeSection, setActiveSection] = useState<'profile' | 'subscription' | 'main'>('main')
+  const [activeSection, setActiveSection] = useState<'profile' | 'subscription' | 'notifications' | 'language' | 'privacy' | 'help' | 'contact' | 'main'>('main')
 
   const handleSignOut = () => {
     Alert.alert(
@@ -64,7 +68,7 @@ export const SettingsScreen: React.FC = () => {
           icon: Bell, 
           label: t('settings.sections.notifications'), 
           subtitle: 'Configure notification preferences',
-          onPress: () => Alert.alert('Notifications', 'Notification settings coming soon!')
+          onPress: () => setActiveSection('notifications')
         },
       ]
     },
@@ -74,8 +78,13 @@ export const SettingsScreen: React.FC = () => {
         { 
           icon: Globe, 
           label: t('settings.sections.language'), 
-          subtitle: 'English (US)',
-          onPress: () => Alert.alert('Language', 'Language settings coming soon!')
+          subtitle: ((): string => {
+            try {
+              const i18n = require('../../i18n').default
+              return i18n.language === 'ar' ? 'Arabic' : 'English (US)'
+            } catch { return 'English (US)' }
+          })(),
+          onPress: () => setActiveSection('language')
         },
       ]
     },
@@ -86,42 +95,25 @@ export const SettingsScreen: React.FC = () => {
           icon: HelpCircle, 
           label: t('settings.sections.help'), 
           subtitle: 'Get help and support',
-          onPress: () => Alert.alert('Help', 'Help center coming soon!')
+          onPress: () => setActiveSection('help')
         },
         { 
           icon: Shield, 
           label: t('settings.sections.privacy'), 
           subtitle: 'Privacy policy and terms',
-          onPress: () => Alert.alert('Privacy', 'Privacy settings coming soon!')
-        },
-        { 
-          icon: FileText, 
-          label: 'Documentation', 
-          subtitle: 'API docs and guides',
-          onPress: () => Alert.alert('Documentation', 'Documentation coming soon!')
+          onPress: () => setActiveSection('privacy')
         },
         { 
           icon: Star, 
           label: 'Rate App', 
           subtitle: 'Rate us on the App Store',
-          onPress: () => Alert.alert('Rate App', 'Thank you for your feedback!')
+          onPress: () => { rateApp() }
         },
         { 
           icon: MessageCircle, 
           label: 'Contact Support', 
           subtitle: 'Get in touch with our team',
-          onPress: () => Alert.alert('Contact', 'Support chat coming soon!')
-        },
-      ]
-    },
-    {
-      title: 'App Info',
-      items: [
-        { 
-          icon: Info, 
-          label: 'About', 
-          subtitle: 'Version 1.0.0 (Build 1)',
-          onPress: () => Alert.alert('About', 'Perfect UI Mobile App v1.0.0')
+          onPress: () => setActiveSection('contact')
         },
       ]
     }
@@ -216,6 +208,126 @@ export const SettingsScreen: React.FC = () => {
 
           <View style={{ paddingHorizontal: 24 }}>
             <SubscriptionSection />
+          </View>
+        </ScrollView>
+      </SafeAreaView>
+    )
+  }
+
+  if (activeSection === 'notifications') {
+    return (
+      <SafeAreaView style={{ flex: 1, backgroundColor: theme.color.background }}>
+        <ScrollView style={{ flex: 1 }} contentContainerStyle={{ paddingBottom: insets.bottom }}>
+          {/* Header */}
+          <View style={{ paddingHorizontal: 24, paddingTop: 12, paddingBottom: 16 }}>
+            <TouchableOpacity 
+              onPress={() => setActiveSection('main')}
+              style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 16 }}
+            >
+              <Text style={{ color: theme.color.primary, fontSize: 16, fontWeight: '500' }}>← Back to Settings</Text>
+            </TouchableOpacity>
+            <Text style={{ color: theme.color.foreground, fontSize: 32, fontWeight: '700', marginBottom: 8 }}>Notifications</Text>
+            <Text style={{ color: theme.color.mutedForeground, fontSize: 16 }}>Manage alerts and preferences</Text>
+          </View>
+
+          <View style={{ paddingHorizontal: 24 }}>
+            <NotificationsSection />
+          </View>
+        </ScrollView>
+      </SafeAreaView>
+    )
+  }
+
+  if (activeSection === 'help') {
+    return (
+      <SafeAreaView style={{ flex: 1, backgroundColor: theme.color.background }}>
+        <ScrollView style={{ flex: 1 }} contentContainerStyle={{ paddingBottom: insets.bottom }}>
+          {/* Header */}
+          <View style={{ paddingHorizontal: 24, paddingTop: 12, paddingBottom: 16 }}>
+            <TouchableOpacity 
+              onPress={() => setActiveSection('main')}
+              style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 16 }}
+            >
+              <Text style={{ color: theme.color.primary, fontSize: 16, fontWeight: '500' }}>← Back to Settings</Text>
+            </TouchableOpacity>
+            <Text style={{ color: theme.color.foreground, fontSize: 32, fontWeight: '700', marginBottom: 8 }}>Help & Support</Text>
+            <Text style={{ color: theme.color.mutedForeground, fontSize: 16 }}>Find answers or contact support</Text>
+          </View>
+
+          <View style={{ paddingHorizontal: 24 }}>
+            <HelpSection />
+          </View>
+        </ScrollView>
+      </SafeAreaView>
+    )
+  }
+
+  if (activeSection === 'contact') {
+    return (
+      <SafeAreaView style={{ flex: 1, backgroundColor: theme.color.background }}>
+        <ScrollView style={{ flex: 1 }} contentContainerStyle={{ paddingBottom: insets.bottom }}>
+          {/* Header */}
+          <View style={{ paddingHorizontal: 24, paddingTop: 12, paddingBottom: 16 }}>
+            <TouchableOpacity 
+              onPress={() => setActiveSection('main')}
+              style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 16 }}
+            >
+              <Text style={{ color: theme.color.primary, fontSize: 16, fontWeight: '500' }}>← Back to Settings</Text>
+            </TouchableOpacity>
+            <Text style={{ color: theme.color.foreground, fontSize: 32, fontWeight: '700', marginBottom: 8 }}>Contact Support</Text>
+            <Text style={{ color: theme.color.mutedForeground, fontSize: 16 }}>Email us or send a request</Text>
+          </View>
+
+          <View style={{ paddingHorizontal: 24 }}>
+            <ContactSupportSection />
+          </View>
+        </ScrollView>
+      </SafeAreaView>
+    )
+  }
+
+  if (activeSection === 'language') {
+    return (
+      <SafeAreaView style={{ flex: 1, backgroundColor: theme.color.background }}>
+        <ScrollView style={{ flex: 1 }} contentContainerStyle={{ paddingBottom: insets.bottom }}>
+          {/* Header */}
+          <View style={{ paddingHorizontal: 24, paddingTop: 12, paddingBottom: 16 }}>
+            <TouchableOpacity 
+              onPress={() => setActiveSection('main')}
+              style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 16 }}
+            >
+              <Text style={{ color: theme.color.primary, fontSize: 16, fontWeight: '500' }}>← Back to Settings</Text>
+            </TouchableOpacity>
+            <Text style={{ color: theme.color.foreground, fontSize: 32, fontWeight: '700', marginBottom: 8 }}>Language & Region</Text>
+            <Text style={{ color: theme.color.mutedForeground, fontSize: 16 }}>Choose app language and region</Text>
+          </View>
+
+          <View style={{ paddingHorizontal: 24 }}>
+            <LanguageSection />
+          </View>
+        </ScrollView>
+      </SafeAreaView>
+    )
+  }
+
+  if (activeSection === 'privacy') {
+    return (
+      <SafeAreaView style={{ flex: 1, backgroundColor: theme.color.background }}>
+        <ScrollView style={{ flex: 1 }} contentContainerStyle={{ paddingBottom: insets.bottom }}>
+          {/* Header */}
+          <View style={{ paddingHorizontal: 24, paddingTop: 12, paddingBottom: 16 }}>
+            <TouchableOpacity 
+              onPress={() => setActiveSection('main')}
+              style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 16 }}
+            >
+              <Text style={{ color: theme.color.primary, fontSize: 16, fontWeight: '500' }}>← Back to Settings</Text>
+            </TouchableOpacity>
+            <Text style={{ color: theme.color.foreground, fontSize: 32, fontWeight: '700', marginBottom: 8 }}>Privacy & Terms</Text>
+            <Text style={{ color: theme.color.mutedForeground, fontSize: 16 }}>Policy and Terms of Service</Text>
+          </View>
+
+          <View style={{ paddingHorizontal: 24 }}>
+            <PrivacySection />
           </View>
         </ScrollView>
       </SafeAreaView>
@@ -330,30 +442,15 @@ export const SettingsScreen: React.FC = () => {
 
         {/* Sign Out */}
         <View style={{ paddingHorizontal: 24, paddingVertical: 12 }}>
-          <TouchableOpacity
+          <Button
+            title="Sign Out"
+            variant="dangerSoft"
+            size="lg"
+            fullWidth
             onPress={handleSignOut}
-            style={{
-              flexDirection: 'row',
-              alignItems: 'center',
-              justifyContent: 'center',
-              gap: 12,
-              backgroundColor: theme.color.card,
-              borderWidth: 0,
-              borderColor: 'transparent',
-              borderRadius: theme.radius.lg,
-              paddingVertical: 16,
-              paddingHorizontal: 24
-            }}
-          >
-            <LogOut size={20} color={theme.color.mutedForeground} />
-            <Text style={{
-              color: theme.color.mutedForeground,
-              fontSize: 16,
-              fontWeight: '600'
-            }}>
-              Sign Out
-            </Text>
-          </TouchableOpacity>
+            accessibilityLabel="Sign out"
+            iconLeft={<LogOut size={18} color={theme.color.error as any} />}
+          />
         </View>
       </ScrollView>
     </SafeAreaView>

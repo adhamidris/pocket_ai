@@ -1,5 +1,5 @@
 import React, { useState } from 'react'
-import { View, Text, TouchableOpacity, Alert, ScrollView } from 'react-native'
+import { View, Text, TouchableOpacity, Alert, ScrollView, Animated } from 'react-native'
 import { useTheme } from '../../providers/ThemeProvider'
 import { Card } from '../../components/ui/Card'
 import { Button } from '../../components/ui/Button'
@@ -192,6 +192,40 @@ export const SubscriptionSection: React.FC = () => {
 
   const getPlanColor = (_planId: string) => theme.color.primary
 
+  // Subtle LED-like lightening effect on the icon itself (no size animation)
+  const PlanIconAnimated: React.FC<{ 
+    Icon: React.ComponentType<{ size: number; color: string }>
+    size: number
+    iconSize: number
+    color: string
+    delay?: number
+  }> = ({ Icon, size, iconSize, color, delay = 0 }) => {
+    const glow = React.useRef(new Animated.Value(0.2)).current
+
+    React.useEffect(() => {
+      const loop = Animated.loop(
+        Animated.sequence([
+          Animated.delay(delay),
+          Animated.timing(glow, { toValue: 1, duration: 1200, useNativeDriver: true }),
+          Animated.timing(glow, { toValue: 0.2, duration: 1200, useNativeDriver: true }),
+        ])
+      )
+      loop.start()
+      return () => loop.stop()
+    }, [delay, glow])
+
+    return (
+      <View style={{ width: size, height: size, alignItems: 'center', justifyContent: 'center', borderRadius: size / 2, backgroundColor: theme.dark ? (theme.color.secondary as any) : (theme.color.card as any) }}>
+        {/* Base icon */}
+        <Icon size={iconSize} color={color} />
+        {/* Lightening overlay icon */}
+        <Animated.View style={{ position: 'absolute', opacity: glow as any }}>
+          <Icon size={iconSize} color={theme.color.primaryLight as any} />
+        </Animated.View>
+      </View>
+    )
+  }
+
   const handleUpgrade = (planId: string) => {
     Alert.alert(
       'Upgrade Plan',
@@ -214,20 +248,13 @@ export const SubscriptionSection: React.FC = () => {
       {/* Current Plan */}
       <Card variant="flat" style={{ marginBottom: 16, backgroundColor: theme.dark ? (theme.color.secondary as any) : (theme.color.accent as any) }}>
         <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12, marginBottom: 16 }}>
-          <View style={{
-            width: 44,
-            height: 44,
-            backgroundColor: theme.dark ? (theme.color.secondary as any) : (theme.color.card as any),
-            borderRadius: 22,
-            alignItems: 'center',
-            justifyContent: 'center',
-            borderWidth: 0
-          }}>
-            {React.createElement(getPlanIcon(currentPlan.id), {
-              size: 22,
-              color: getPlanColor(currentPlan.id)
-            })}
-          </View>
+          <PlanIconAnimated 
+            Icon={getPlanIcon(currentPlan.id) as any}
+            size={44}
+            iconSize={22}
+            color={getPlanColor(currentPlan.id) as any}
+            delay={currentPlan.id === 'starter' ? 0 : currentPlan.id === 'pro' ? 200 : 400}
+          />
           
           <View style={{ flex: 1 }}>
             <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 2 }}>
@@ -490,17 +517,13 @@ export const SubscriptionSection: React.FC = () => {
                 }}
               >
                 <View style={{ flexDirection: 'row', alignItems: 'flex-start', gap: 12, marginBottom: 12 }}>
-                  <View style={{
-                    width: 40,
-                    height: 40,
-                    backgroundColor: theme.dark ? (theme.color.secondary as any) : (theme.color.card as any),
-                    borderRadius: 20,
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    borderWidth: 0
-                  }}>
-                    <PlanIcon size={20} color={getPlanColor(plan.id)} />
-                  </View>
+                  <PlanIconAnimated 
+                    Icon={PlanIcon as any}
+                    size={40}
+                    iconSize={20}
+                    color={getPlanColor(plan.id) as any}
+                    delay={plan.id === 'starter' ? 0 : plan.id === 'pro' ? 200 : 400}
+                  />
                   
                   <View style={{ flex: 1 }}>
                     <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 2 }}>
@@ -552,14 +575,16 @@ export const SubscriptionSection: React.FC = () => {
                   ))}
                 </View>
 
-                <Button
-                  title={isCurrentPlan ? 'Active' : `Upgrade to ${plan.name}`}
-                  variant={isCurrentPlan ? 'ghost' : plan.popular ? 'premium' : 'card'}
-                  size="md"
-                  onPress={() => isCurrentPlan ? null : handleUpgrade(plan.id)}
-                  disabled={isCurrentPlan}
-                  loading={false}
-                />
+                {!isCurrentPlan && (
+                  <Button
+                    title={`Upgrade to ${plan.name}`}
+                    variant={plan.popular ? 'premium' : 'default'}
+                    size="md"
+                    fullWidth
+                    onPress={() => handleUpgrade(plan.id)}
+                    loading={false}
+                  />
+                )}
               </Card>
             )
           })}
