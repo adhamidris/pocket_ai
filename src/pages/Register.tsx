@@ -1039,24 +1039,24 @@ const Register = () => {
                           }}
                         />
                         {/* Products type (Physical / Digital / Services) to mirror mobile */}
-                        <div className="md:col-span-2">
-                          <FormField
-                            control={form.control}
-                            name={"productsType" as any}
-                            render={({ field }) => {
-                              const value: string[] = Array.isArray(field.value) ? field.value : [];
-                              const selectedNiches: string[] = Array.isArray((form.watch as any)("lineOfBusiness")) ? (form.watch as any)("lineOfBusiness") : [];
-                              const customNiches: string[] = Array.isArray((form.watch as any)("lineOfBusinessCustom")) ? (form.watch as any)("lineOfBusinessCustom") : [];
-                              const hasAnyNiche = (selectedNiches.length + customNiches.length) > 0;
-                              if (!hasAnyNiche) return null;
+                        <FormField
+                          control={form.control}
+                          name={"productsType" as any}
+                          render={({ field }) => {
+                            const value: string[] = Array.isArray(field.value) ? field.value : [];
+                            const selectedNiches: string[] = Array.isArray((form.watch as any)("lineOfBusiness")) ? (form.watch as any)("lineOfBusiness") : [];
+                            const customNiches: string[] = Array.isArray((form.watch as any)("lineOfBusinessCustom")) ? (form.watch as any)("lineOfBusinessCustom") : [];
+                            const hasAnyNiche = (selectedNiches.length + customNiches.length) > 0;
+                            if (!hasAnyNiche) return null;
 
-                              const toggle = (opt: string, checked: boolean) => {
-                                const set = new Set(value);
-                                if (checked) set.add(opt); else set.delete(opt);
-                                (form.setValue as any)("productsType", Array.from(set), { shouldDirty: true, shouldTouch: true });
-                              };
-                              const opts = ["Physical", "Digital", "Services"];
-                              return (
+                            const toggle = (opt: string, checked: boolean) => {
+                              const set = new Set(value);
+                              if (checked) set.add(opt); else set.delete(opt);
+                              (form.setValue as any)("productsType", Array.from(set), { shouldDirty: true, shouldTouch: true });
+                            };
+                            const opts = ["Physical", "Digital", "Services"];
+                            return (
+                              <div className="md:col-span-2">
                                 <FormItem>
                                   <div className="flex items-center gap-3 md:gap-4 w-full">
                                     <FormLabel className="shrink-0 min-w-[7rem] md:min-w-[8rem]">Products Type</FormLabel>
@@ -1076,10 +1076,10 @@ const Register = () => {
                                   </div>
                                   <FormMessage />
                                 </FormItem>
-                              );
-                            }}
-                          />
-                        </div>
+                              </div>
+                            );
+                          }}
+                        />
                       </>
                     )}
                   </div>
