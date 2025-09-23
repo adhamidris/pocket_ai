@@ -1066,7 +1066,7 @@ const Register = () => {
                                         return (
                                           <div key={opt} className="flex-1">
                                             <label className="flex items-center justify-start gap-2 text-sm cursor-pointer select-none w-full py-1.5">
-                                              <Checkbox className="h-4 w-4" checked={checked} onCheckedChange={(ck)=>toggle(opt, Boolean(ck))} />
+                                              <Checkbox className="h-4 w-4 bg-input border border-border shadow-sm focus-visible:ring-2 focus-visible:ring-ring data-[state=checked]:bg-primary data-[state=checked]:border-primary" checked={checked} onCheckedChange={(ck)=>toggle(opt, Boolean(ck))} />
                                               <span>{opt}</span>
                                             </label>
                                           </div>
