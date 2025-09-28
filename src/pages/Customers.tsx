@@ -343,8 +343,9 @@ const Customers = () => {
             {/* Table */}
             <div className="mt-3">
               <Card className="border border-border bg-card/60">
-                <Table>
-                  <TableHeader className="sticky top-[52px] bg-card/90 backdrop-blur z-10">
+                <div className="relative overflow-x-auto overflow-y-auto max-h-[70vh]">
+                  <Table>
+                    <TableHeader className="sticky top-0 bg-card/90 backdrop-blur z-10">
                     <TableRow className="hover:bg-transparent">
                       <TableHead className="w-8">
                         <Checkbox checked={allSelectedOnPage} onCheckedChange={toggleSelectAllOnPage} aria-label="Select all" className={someSelectedOnPage ? "data-[state=indeterminate]:opacity-100" : ""} />
@@ -360,8 +361,8 @@ const Customers = () => {
                       <TableHead>Owner</TableHead>
                       <TableHead className="w-8" />
                     </TableRow>
-                  </TableHeader>
-                  <TableBody>
+                    </TableHeader>
+                    <TableBody>
                     {pageItems.length === 0 ? (
                       <TableRow>
                         <TableCell colSpan={11}>
@@ -429,45 +430,31 @@ const Customers = () => {
                         </TableRow>
                       ))
                     )}
-                  </TableBody>
-                </Table>
+                    </TableBody>
+                  </Table>
+                </div>
               </Card>
             </div>
 
             {/* Pagination */}
             <div className="sticky bottom-0 z-10 border-t border-border/60 bg-background/95 backdrop-blur mt-3 py-2">
-              <div className="flex items-center justify-between px-2">
-                <div className="text-xs text-muted-foreground">{total} customers • Page {page} of {pageCount}</div>
-                <div className="flex items-center gap-2">
-                  <DropdownMenu>
-                    <DropdownMenuTrigger asChild>
-                      <Button variant="outline" size="sm">{pageSize}/page</Button>
-                    </DropdownMenuTrigger>
-                    <DropdownMenuContent align="end">
-                      {[10,25,50,100].map((n) => (
-                        <DropdownMenuItem key={n} onClick={() => { setPageSize(n); localStorage.setItem('customers.pageSize', String(n)); }}>
-                          Show {n}
-                        </DropdownMenuItem>
-                      ))}
-                    </DropdownMenuContent>
-                  </DropdownMenu>
-                  <Pagination>
-                    <PaginationContent>
-                      <PaginationItem>
-                        <PaginationPrevious href="#" onClick={() => setPage((p) => Math.max(1, p-1))} />
-                      </PaginationItem>
-                      {Array.from({ length: pageCount }).slice(0, 5).map((_, i) => (
-                        <PaginationItem key={i}>
-                          <PaginationLink href="#" isActive={page === i+1} onClick={() => setPage(i+1)}>{i+1}</PaginationLink>
-                        </PaginationItem>
-                      ))}
-                      <PaginationItem>
-                        <PaginationNext href="#" onClick={() => setPage((p) => Math.min(pageCount, p+1))} />
-                      </PaginationItem>
-                    </PaginationContent>
-                  </Pagination>
-                </div>
-              </div>
+              <Pagination>
+                <PaginationContent>
+                  <PaginationItem>
+                    <PaginationPrevious onClick={() => setPage((p) => Math.max(1, p - 1))} href="#" />
+                  </PaginationItem>
+                  {Array.from({ length: pageCount }).map((_, i) => (
+                    <PaginationItem key={i}>
+                      <PaginationLink href="#" isActive={page === i + 1} onClick={() => setPage(i + 1)}>
+                        {i + 1}
+                      </PaginationLink>
+                    </PaginationItem>
+                  ))}
+                  <PaginationItem>
+                    <PaginationNext onClick={() => setPage((p) => Math.min(pageCount, p + 1))} href="#" />
+                  </PaginationItem>
+                </PaginationContent>
+              </Pagination>
             </div>
           </section>
         </div>

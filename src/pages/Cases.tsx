@@ -54,6 +54,7 @@ import {
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { useEffect } from "react";
+import { cn } from "@/lib/utils";
 
 type Priority = "low" | "medium" | "high" | "urgent";
 type Status = "open" | "resolved";
@@ -129,6 +130,15 @@ const priorityColor = (p: Priority) => {
       return "bg-amber-500/10 text-amber-700 dark:text-amber-300";
     case "urgent":
       return "bg-rose-500/10 text-rose-600 dark:text-rose-300";
+  }
+};
+
+const statusColor = (s: Status) => {
+  switch (s) {
+    case "open":
+      return "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20";
+    case "resolved":
+      return "bg-muted text-muted-foreground border border-border/60";
   }
 };
 
@@ -306,6 +316,13 @@ const useDebouncedValue = (value: string, delay = 300) => {
   return debounced;
 };
 
+const formatCustomerId = (item: CaseItem | null) => {
+  if (!item) return "CUST-0001";
+  const digits = item.id.replace(/\D/g, "");
+  const numeric = digits ? parseInt(digits, 10) : 1;
+  return `CUST-${numeric.toString().padStart(4, "0")}`;
+};
+
 const Cases = () => {
   const [status, setStatus] = React.useState<Status>("open");
   const [categories, setCategories] = React.useState<Set<Category>>(new Set());
@@ -317,12 +334,13 @@ const Cases = () => {
     id: true,
     customer: true,
     title: true,
+    description: true,
     priority: true,
     status: true,
     channel: true,
-    assignee: true,
+    assignee: false,
     started: true,
-    unread: true,
+    unread: false,
     actions: true,
   });
   const [selected, setSelected] = React.useState<Set<string>>(new Set());
@@ -338,7 +356,17 @@ const Cases = () => {
   React.useEffect(() => {
     try {
       const raw = localStorage.getItem("cases.columns");
-      if (raw) setVisible({ ...visible, ...JSON.parse(raw) });
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        setVisible((prev) => ({
+          ...prev,
+          ...parsed,
+          // enforce defaults for removed/added columns
+          assignee: false,
+          unread: false,
+          description: true,
+        }));
+      }
     } catch {}
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -423,12 +451,7 @@ const Cases = () => {
     return <Icon className="w-4 h-4" />;
   };
 
-  const maskEmail = (email: string) => {
-    // Mask by default; adjust when integrating RBAC
-    const [user, domain] = email.split("@");
-    const maskedUser = user.length <= 3 ? user[0] + "**" : user.slice(0, 3) + "***";
-    return `${maskedUser}@${domain}`;
-  };
+  const maskEmail = (email: string) => email;
 
   // Responsive switch ≤1023px → cards
   const [isNarrow, setIsNarrow] = React.useState(false);
@@ -441,8 +464,6 @@ const Cases = () => {
   }, []);
 
   const dialogHeightClass = isNarrow ? "h-[95vh]" : "h-[80vh]";
-  const detailScrollClass = isNarrow ? "h-[calc(95vh-170px)]" : "h-[calc(80vh-170px)]";
-  const chatSectionClass = isNarrow ? "h-[calc(95vh-132px)]" : "h-[calc(80vh-132px)]";
   const caseType = React.useMemo(() => deriveCaseType(active), [active]);
   const diagnoses = AI_DIAGNOSES[caseType] || [];
   const aiActions = AI_ACTIONS_TAKEN[caseType] || [];
@@ -474,6 +495,25 @@ const Cases = () => {
       { name: "Feedback_Form_Response.pdf", size: "78 KB", type: "PDF" },
     ],
   };
+
+  const SectionBlock = ({
+    title,
+    children,
+    cardClassName,
+    headingClassName,
+  }: {
+    title: string;
+    children: React.ReactNode;
+    cardClassName?: string;
+    headingClassName?: string;
+  }) => (
+    <div className="space-y-2">
+      <div className={cn("text-xs font-semibold uppercase tracking-wide text-muted-foreground", headingClassName)}>
+        {title}
+      </div>
+      <Card className={cn("border border-border/60 bg-muted/15 px-3 py-3", cardClassName)}>{children}</Card>
+    </div>
+  );
 
   // Keyboard shortcuts
   useEffect(() => {
@@ -711,7 +751,9 @@ const Cases = () => {
                     </Button>
                   </DropdownMenuTrigger>
                   <DropdownMenuContent align="end">
-                    {Object.entries(visible).map(([key, val]) => (
+                    {Object.entries(visible)
+                      .filter(([key]) => key !== 'assignee' && key !== 'unread')
+                      .map(([key, val]) => (
                       <DropdownMenuCheckboxItem
                         key={key}
                         checked={val}
@@ -785,30 +827,34 @@ const Cases = () => {
             <Card className="border border-border bg-card/60">
               {/* Table on wide screens; Card list on narrow */}
               {!isNarrow ? (
-              <Table className="">
-                <TableHeader className="sticky top-[52px] bg-card/90 backdrop-blur z-10">
-                  <TableRow className="hover:bg-transparent">
-                    <TableHead className="w-8">
-                      <Checkbox checked={allSelectedOnPage || allSelectedFiltered} onCheckedChange={toggleHeaderSelect} aria-label="Select all filtered" className={someSelectedOnPage ? "data-[state=indeterminate]:opacity-100" : ""} />
-                    </TableHead>
-                    {visible.id && <TableHead className="w-[100px]">ID</TableHead>}
-                    {visible.customer && <TableHead className="min-w-[200px]">Customer</TableHead>}
-                    {visible.title && <TableHead className="min-w-[260px]">Title / Snippet</TableHead>}
-                    {visible.priority && <TableHead>Priority</TableHead>}
-                    {visible.status && <TableHead>Status</TableHead>}
-                    {visible.channel && <TableHead>Channel</TableHead>}
-                    {visible.assignee && <TableHead>Assignee</TableHead>}
-                    {visible.started && <TableHead>Started</TableHead>}
-                    {visible.unread && <TableHead className="text-right">Unread</TableHead>}
-                    {visible.actions && <TableHead className="w-8" />}
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
+              <div className="relative overflow-x-auto overflow-y-auto max-h-[70vh]">
+                <Table className="[&_th]:px-3 [&_td]:px-3 [&_th]:py-2.5 [&_td]:py-2.5">
+                  <TableHeader className="sticky top-0 bg-card/90 backdrop-blur z-10">
+                    <TableRow className="hover:bg-transparent">
+                      <TableHead className="w-8">
+                        <Checkbox checked={allSelectedOnPage || allSelectedFiltered} onCheckedChange={toggleHeaderSelect} aria-label="Select all filtered" className={someSelectedOnPage ? "data-[state=indeterminate]:opacity-100" : ""} />
+                      </TableHead>
+                      {visible.id && <TableHead className="w-[100px]">Case ID</TableHead>}
+                      {visible.priority && <TableHead className="w-[110px] text-center">Priority</TableHead>}
+                      {visible.title && <TableHead className="min-w-[220px]">Case Title</TableHead>}
+                      {visible.description && <TableHead className="min-w-[260px]">Description</TableHead>}
+                      {visible.status && <TableHead className="w-[120px]">Status</TableHead>}
+                      {visible.customer && <TableHead className="min-w-[200px]">Customer</TableHead>}
+                      {visible.channel && <TableHead className="w-[120px]">Channel</TableHead>}
+                      {visible.started && <TableHead className="w-[120px] text-right">Started</TableHead>}
+                      {visible.actions && <TableHead className="w-8" />}
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
                   {false ? (
                     [...Array(6)].map((_, i) => (
                       <TableRow key={i}>
                         <TableCell className="w-8"><Skeleton className="h-4 w-4 rounded" /></TableCell>
                         {visible.id && <TableCell><Skeleton className="h-4 w-16" /></TableCell>}
+                        {visible.priority && <TableCell><Skeleton className="h-5 w-16 rounded-full" /></TableCell>}
+                        {visible.title && <TableCell><Skeleton className="h-3 w-48" /></TableCell>}
+                        {visible.description && <TableCell><Skeleton className="h-3 w-64" /></TableCell>}
+                        {visible.status && <TableCell><Skeleton className="h-3 w-14" /></TableCell>}
                         {visible.customer && (
                           <TableCell>
                             <div className="flex items-center gap-2">
@@ -820,19 +866,25 @@ const Cases = () => {
                             </div>
                           </TableCell>
                         )}
-                        {visible.title && <TableCell><Skeleton className="h-3 w-64" /></TableCell>}
-                        {visible.priority && <TableCell><Skeleton className="h-5 w-16 rounded-full" /></TableCell>}
-                        {visible.status && <TableCell><Skeleton className="h-3 w-14" /></TableCell>}
                         {visible.channel && <TableCell><Skeleton className="h-4 w-4 rounded" /></TableCell>}
-                        {visible.assignee && <TableCell><Skeleton className="h-3 w-24" /></TableCell>}
                         {visible.started && <TableCell><Skeleton className="h-3 w-20" /></TableCell>}
-                        {visible.unread && <TableCell className="text-right"><Skeleton className="h-3 w-6 ml-auto" /></TableCell>}
                         {visible.actions && <TableCell />}
                       </TableRow>
                     ))
                   ) : pageItems.length === 0 ? (
                     <TableRow>
-                      <TableCell colSpan={11}>
+                      <TableCell colSpan={
+                        1 +
+                        (visible.id ? 1 : 0) +
+                        (visible.customer ? 1 : 0) +
+                        (visible.title ? 1 : 0) +
+                        (visible.description ? 1 : 0) +
+                        (visible.priority ? 1 : 0) +
+                        (visible.status ? 1 : 0) +
+                        (visible.channel ? 1 : 0) +
+                        (visible.started ? 1 : 0) +
+                        (visible.actions ? 1 : 0)
+                      }>
                         <div className="p-6 text-sm text-muted-foreground flex items-center justify-between">
                           <div>No cases match your filters.</div>
                           {(categories.size > 0 || query || (dateRange.from && dateRange.to)) && (
@@ -867,37 +919,39 @@ const Cases = () => {
                             aria-label={`Select ${item.id}`}
                           />
                         </TableCell>
-                        {visible.id && <TableCell className="font-medium">{item.id}</TableCell>}
-                        {visible.customer && (
-                          <TableCell>
-                            <div className="flex items-center gap-2">
-                              <Avatar className="h-8 w-8">
-                                {item.customer.avatar && <AvatarImage src={item.customer.avatar} />}
-                                <AvatarFallback>{item.customer.name.slice(0, 2).toUpperCase()}</AvatarFallback>
-                              </Avatar>
-                              <div className="leading-tight">
-                                <div className="text-sm font-medium">{item.customer.name}</div>
-                                <div className="text-xs text-muted-foreground" title={'Email hidden'}>{maskEmail(item.customer.email)}</div>
-                              </div>
-                            </div>
+                        {visible.id && <TableCell className="font-mono text-xs text-muted-foreground">{item.id}</TableCell>}
+                        {visible.priority && (
+                          <TableCell className="text-center">
+                            <Badge className={`${priorityColor(item.priority)} capitalize`}>{item.priority}</Badge>
                           </TableCell>
                         )}
                         {visible.title && (
-                          <TableCell className="max-w-[520px]">
-                            <div className="truncate">
-                              <span className="font-medium mr-2">{item.title}</span>
-                              <span className="text-muted-foreground">{item.snippet}</span>
-                            </div>
+                          <TableCell className="max-w-[320px]">
+                            <div className="truncate font-medium">{item.title}</div>
                           </TableCell>
                         )}
-                        {visible.priority && (
-                          <TableCell>
-                            <Badge className={`${priorityColor(item.priority)} capitalize`}>{item.priority}</Badge>
+                        {visible.description && (
+                          <TableCell className="max-w-[420px]">
+                            <div className="truncate text-muted-foreground">{item.snippet}</div>
                           </TableCell>
                         )}
                         {visible.status && (
                           <TableCell className="capitalize">
                             {item.status}
+                          </TableCell>
+                        )}
+                        {visible.customer && (
+                          <TableCell className="max-w-[240px]">
+                            <div className="flex items-center gap-2 min-w-0">
+                              <Avatar className="h-8 w-8">
+                                {item.customer.avatar && <AvatarImage src={item.customer.avatar} />}
+                                <AvatarFallback>{item.customer.name.slice(0, 2).toUpperCase()}</AvatarFallback>
+                              </Avatar>
+                              <div className="leading-tight min-w-0">
+                                <div className="text-sm font-medium truncate">{item.customer.name}</div>
+                                <div className="text-xs text-muted-foreground truncate" title={'Email hidden'}>{maskEmail(item.customer.email)}</div>
+                              </div>
+                            </div>
                           </TableCell>
                         )}
                         {visible.channel && (
@@ -908,19 +962,7 @@ const Cases = () => {
                             </div>
                           </TableCell>
                         )}
-                        {visible.assignee && (
-                          <TableCell>
-                            <div className="flex items-center gap-2">
-                              <Avatar className="h-6 w-6">
-                                {item.assignee?.avatar && <AvatarImage src={item.assignee.avatar} />}
-                                <AvatarFallback>{(item.assignee?.name || "-").slice(0, 2).toUpperCase()}</AvatarFallback>
-                              </Avatar>
-                              <span className="text-sm">{item.assignee?.name || "—"}</span>
-                            </div>
-                          </TableCell>
-                        )}
-                        {visible.started && <TableCell>{formatRelative(item.startedAt)}</TableCell>}
-                        {visible.unread && <TableCell className="text-right font-medium">{item.unread || 0}</TableCell>}
+                        {visible.started && <TableCell className="text-right tabular-nums whitespace-nowrap">{formatRelative(item.startedAt)}</TableCell>}
                         {visible.actions && (
                           <TableCell onClick={(e) => e.stopPropagation()}>
                             <DropdownMenu>
@@ -942,8 +984,9 @@ const Cases = () => {
                       </TableRow>
                     ))
                   )}
-                </TableBody>
-              </Table>
+                  </TableBody>
+                </Table>
+              </div>
               ) : (
                 <div className="divide-y divide-border/60">
                   {false ? (
@@ -1029,182 +1072,194 @@ const Cases = () => {
           <div className="flex h-full flex-col">
             <div className="px-4 py-3 border-b border-border/60 bg-card/80 backdrop-blur">
               <DialogTitle className="sr-only">{active?.title || "Case details"}</DialogTitle>
-              <div className="flex items-start justify-between gap-3 pr-12">
-                <div className="flex flex-col gap-1">
-                  <span className="text-xs font-medium text-muted-foreground uppercase tracking-wide">{active?.id}</span>
-                  <div className="flex flex-wrap items-center gap-2">
-                    <span className="font-semibold">{active?.title}</span>
+                <div className="flex flex-col gap-1 pr-12">
+                  <span className="text-[10px] font-medium text-muted-foreground uppercase tracking-wide">{active?.id}</span>
+                  <div className="flex flex-wrap items-center gap-2 text-sm">
+                    <span className="font-semibold text-base sm:text-lg">{active?.title}</span>
                     <Badge className={`${active ? priorityColor(active.priority) : ''} capitalize`}>{active?.priority}</Badge>
+                    {active && <Badge className={`${statusColor(active.status)} capitalize`}>{active.status}</Badge>}
+                    <div className="ml-auto text-xs text-muted-foreground">
+                      {active && `Started ${formatRelative(active.startedAt)}`}
+                    </div>
                   </div>
                 </div>
-                <div className="flex flex-wrap items-center justify-end gap-2 sm:flex-nowrap">
-                  <Button size="sm" className="gap-1"><User className="w-4 h-4" /> Assign</Button>
-                  <Button size="sm" className="gap-1"><CheckCircle2 className="w-4 h-4" /> Resolve</Button>
-                </div>
-              </div>
             </div>
 
             <Tabs defaultValue="overview" className="flex-1 flex flex-col">
-              <div className="px-4 pt-2">
-                <TabsList className="grid grid-cols-4 w-full">
-                  <TabsTrigger value="overview">Overview</TabsTrigger>
-                  <TabsTrigger value="documents">Documents</TabsTrigger>
-                  <TabsTrigger value="history">History</TabsTrigger>
-                  <TabsTrigger value="chat">Chat</TabsTrigger>
+              <div className="px-4 pt-3">
+                <TabsList className="grid grid-cols-4 gap-2 w-full rounded-lg border border-border/40 bg-muted/70 p-1">
+                  <TabsTrigger
+                    value="overview"
+                    className="rounded-md px-3 py-2 text-xs font-semibold tracking-wide transition-colors data-[state=active]:bg-primary data-[state=active]:text-primary-foreground data-[state=active]:shadow-sm data-[state=inactive]:bg-transparent data-[state=inactive]:text-muted-foreground"
+                  >
+                    Overview
+                  </TabsTrigger>
+                  <TabsTrigger
+                    value="documents"
+                    className="rounded-md px-3 py-2 text-xs font-semibold tracking-wide transition-colors data-[state=active]:bg-primary data-[state=active]:text-primary-foreground data-[state=active]:shadow-sm data-[state=inactive]:bg-transparent data-[state=inactive]:text-muted-foreground"
+                  >
+                    Documents
+                  </TabsTrigger>
+                  <TabsTrigger
+                    value="history"
+                    className="rounded-md px-3 py-2 text-xs font-semibold tracking-wide transition-colors data-[state=active]:bg-primary data-[state=active]:text-primary-foreground data-[state=active]:shadow-sm data-[state=inactive]:bg-transparent data-[state=inactive]:text-muted-foreground"
+                  >
+                    History
+                  </TabsTrigger>
+                  <TabsTrigger
+                    value="chat"
+                    className="rounded-md px-3 py-2 text-xs font-semibold tracking-wide transition-colors data-[state=active]:bg-primary data-[state=active]:text-primary-foreground data-[state=active]:shadow-sm data-[state=inactive]:bg-transparent data-[state=inactive]:text-muted-foreground"
+                  >
+                    Chat
+                  </TabsTrigger>
                 </TabsList>
               </div>
               <div className="flex-1 min-h-0">
-                <TabsContent value="overview" className="h-full">
-                  <ScrollArea className={`${detailScrollClass} px-4 py-3`}>
+                <TabsContent value="overview" className="flex flex-1 min-h-0">
+                  <ScrollArea className="flex-1 min-h-0 px-4 py-4">
                     {active && (
-                      <div className="space-y-4">
-                        <Card className="p-3 space-y-3">
-                          <div>
-                            <div className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Customer</div>
-                            <div className="mt-3 flex items-center gap-3">
-                              <Avatar className="h-9 w-9">
-                                {active.customer.avatar && <AvatarImage src={active.customer.avatar} />}
-                                <AvatarFallback>{active.customer.name.slice(0, 2).toUpperCase()}</AvatarFallback>
-                              </Avatar>
-                              <div>
-                                <div className="text-sm font-semibold">{active.customer.name}</div>
-                                <div className="text-xs text-muted-foreground">{active.customer.email}</div>
-                              </div>
-                            </div>
-                          </div>
-                          <Separator />
-                          <div className="grid grid-cols-2 gap-3 text-sm">
+                      <div className="flex flex-col gap-4">
+                        <SectionBlock title="Customer" cardClassName="p-0">
+                          <Link
+                            to="/dashboard/customers"
+                            className="flex w-full items-center gap-3 px-3 py-3 group hover:bg-muted/40 rounded-md transition-colors"
+                            aria-label="Open customer profile"
+                          >
+                            <Avatar className="h-10 w-10">
+                              {active.customer.avatar && <AvatarImage src={active.customer.avatar} />}
+                              <AvatarFallback>{active.customer.name.slice(0, 2).toUpperCase()}</AvatarFallback>
+                            </Avatar>
                             <div className="space-y-1">
-                              <div className="text-xs text-muted-foreground">Status</div>
-                              <div className="capitalize">{active.status}</div>
+                              <div className="text-sm font-semibold">{active.customer.name}</div>
+                              <div className="text-xs text-muted-foreground">{maskEmail(active.customer.email)}</div>
                             </div>
-                            <div className="space-y-1">
-                              <div className="text-xs text-muted-foreground">Started</div>
-                              <div>{formatRelative(active.startedAt)}</div>
-                            </div>
-                            <div className="space-y-1">
-                              <div className="text-xs text-muted-foreground">Channel</div>
-                              <div className="inline-flex items-center gap-1 text-muted-foreground">
-                                <ActiveIcon channel={active.channel} />
-                                <span className="capitalize">{active.channel}</span>
-                              </div>
-                            </div>
-                            <div className="space-y-1">
-                              <div className="text-xs text-muted-foreground">Assignee</div>
-                              <div>{active.assignee?.name || "—"}</div>
-                            </div>
-                          </div>
-                        </Card>
+                            <ChevronRight className="ml-auto w-4 h-4 text-muted-foreground transition-transform group-hover:translate-x-0.5 group-hover:text-foreground" />
+                          </Link>
+                        </SectionBlock>
 
-                        <Card className="p-3 space-y-4">
+                        <div className="flex flex-col gap-3">
                           {[
                             { title: "AI Diagnoses", lines: diagnoses, empty: "No diagnoses available." },
                             { title: "AI Actions Taken", lines: aiActions, empty: "No AI actions recorded." },
                             { title: "Suggested Actions", lines: suggestedActions, empty: "No pending actions." },
                           ].map((section) => (
-                            <div key={section.title} className="space-y-2">
-                              <span className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">{section.title}</span>
-                              <div className="rounded-lg border border-border/60 bg-muted/15 px-3 py-2 space-y-2">
-                                {section.lines.length > 0 ? (
-                                  section.lines.map((line, lineIdx) => (
-                                    <div key={`${section.title}-${lineIdx}`} className="grid grid-cols-[auto,1fr] gap-x-2 gap-y-1 text-sm leading-snug text-foreground">
-                                      <span className="mt-[7px] h-1.5 w-1.5 rounded-full bg-muted-foreground/50" />
-                                      <span>{line}</span>
-                                    </div>
-                                  ))
-                                ) : (
-                                  <div className="text-sm text-muted-foreground">{section.empty}</div>
-                                )}
-                              </div>
-                            </div>
+                            <SectionBlock key={section.title} title={section.title} cardClassName="space-y-2">
+                              {section.lines.length > 0 ? (
+                                section.lines.map((line, lineIdx) => (
+                                  <div key={`${section.title}-${lineIdx}`} className="text-sm leading-snug text-foreground">
+                                    {line}
+                                  </div>
+                                ))
+                              ) : (
+                                <div className="text-sm text-muted-foreground">{section.empty}</div>
+                              )}
+                            </SectionBlock>
                           ))}
-                        </Card>
+                        </div>
                       </div>
                     )}
                   </ScrollArea>
                 </TabsContent>
 
-                <TabsContent value="documents" className="h-full">
-                  <ScrollArea className={`${detailScrollClass} px-4 py-3`}>
-                    <div className="space-y-3">
-                      <div className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Documents</div>
-                      <div className="space-y-2">
-                        {(demoDocumentsByType[caseType] || []).length === 0 ? (
-                          <div className="text-sm text-muted-foreground">No documents attached.</div>
-                        ) : (
-                          demoDocumentsByType[caseType].map((f, idx) => (
-                            <div key={`${f.name}-${idx}`} className="flex items-center gap-3 rounded-lg border border-border/60 bg-muted/20 px-3 py-2">
-                              <div className="flex h-9 w-9 items-center justify-center rounded-md bg-muted">
-                                <FileText className="w-4 h-4 text-muted-foreground" />
-                              </div>
-                              <div className="flex-1 min-w-0">
-                                <div className="text-sm font-medium truncate">{f.name}</div>
-                                <div className="text-xs text-muted-foreground">{f.type} • {f.size}</div>
-                              </div>
-                              <div className="flex items-center gap-2">
-                                <Button variant="ghost" size="sm">Open</Button>
-                                <Button variant="secondary" size="sm">Download</Button>
+                <TabsContent value="documents" className="flex flex-1 min-h-0">
+                  <ScrollArea className="flex-1 min-h-0 px-4 py-4">
+                    {active ? (
+                      <div className="flex flex-col gap-4">
+                        <SectionBlock title="Documents" cardClassName="space-y-3">
+                          {(demoDocumentsByType[caseType] || []).length === 0 ? (
+                            <div className="text-sm text-muted-foreground">No documents attached.</div>
+                          ) : (
+                            demoDocumentsByType[caseType].map((f, idx) => {
+                              const isLast = idx === demoDocumentsByType[caseType].length - 1;
+                              return (
+                                <React.Fragment key={`${f.name}-${idx}`}>
+                                  <div className="flex items-center gap-3">
+                                    <div className="flex h-9 w-9 items-center justify-center rounded-md bg-muted">
+                                      <FileText className="w-4 h-4 text-muted-foreground" />
+                                    </div>
+                                    <div className="flex-1 min-w-0">
+                                      <div className="text-sm font-semibold leading-snug">{f.name}</div>
+                                      <div className="text-xs text-muted-foreground leading-tight">{f.type} • {f.size}</div>
+                                    </div>
+                                    <div className="flex items-center gap-2">
+                                      <Button variant="ghost" size="sm">Open</Button>
+                                      <Button variant="secondary" size="sm">Download</Button>
+                                    </div>
+                                  </div>
+                                  {!isLast && <Separator className="bg-border/60" />}
+                                </React.Fragment>
+                              );
+                            })
+                          )}
+                        </SectionBlock>
+                      </div>
+                    ) : (
+                      <div className="flex h-full items-center justify-center text-sm text-muted-foreground">Select a case to view documents.</div>
+                    )}
+                  </ScrollArea>
+                </TabsContent>
+
+                <TabsContent value="history" className="flex flex-1 min-h-0">
+                  <ScrollArea className="flex-1 min-h-0 px-4 py-4">
+                    {active ? (
+                      <div className="flex flex-col gap-4">
+                        <SectionBlock title="Case Updates" cardClassName="space-y-3">
+                          {historyItems.length === 0 ? (
+                            <div className="text-sm text-muted-foreground">No history entries.</div>
+                          ) : (
+                            historyItems.map((item, idx) => {
+                              const isLast = idx === historyItems.length - 1;
+                              return (
+                                <React.Fragment key={item.id}>
+                                  <div className="space-y-1.5">
+                                    <div className="text-[11px] text-muted-foreground leading-tight">{item.date}</div>
+                                    <div className="text-sm text-foreground leading-snug">{item.text}</div>
+                                  </div>
+                                  {!isLast && <Separator className="bg-border/60" />}
+                                </React.Fragment>
+                              );
+                            })
+                          )}
+                        </SectionBlock>
+                      </div>
+                    ) : (
+                      <div className="flex h-full items-center justify-center text-sm text-muted-foreground">Select a case to view history.</div>
+                    )}
+                  </ScrollArea>
+                </TabsContent>
+
+                <TabsContent value="chat" className="flex flex-1 min-h-0">
+                  <ScrollArea className="flex-1 min-h-0 px-4 py-4">
+                    {active ? (
+                      <div className="flex flex-col gap-4">
+                        <SectionBlock title="Chat Transcript" cardClassName="space-y-3">
+                          <div className="space-y-3">
+                            <div className="flex items-start gap-2">
+                              <Avatar className="h-7 w-7"><AvatarFallback>CU</AvatarFallback></Avatar>
+                              <div className="rounded-lg border border-border/60 px-3 py-2 max-w-[75%]">
+                                <div className="text-sm leading-snug">Hi, I was charged twice for last month.</div>
                               </div>
                             </div>
-                          ))
-                        )}
+                            <div className="flex items-start gap-2 justify-end">
+                              <div className="rounded-lg border border-border/60 px-3 py-2 max-w-[75%] bg-primary/10">
+                                <div className="text-sm leading-snug">Sorry about that! Let me check your invoice.</div>
+                              </div>
+                              <Avatar className="h-7 w-7"><AvatarFallback>AG</AvatarFallback></Avatar>
+                            </div>
+                          </div>
+                        </SectionBlock>
                       </div>
-                    </div>
+                    ) : (
+                      <div className="flex h-full items-center justify-center text-sm text-muted-foreground">Select a case to view chat.</div>
+                    )}
                   </ScrollArea>
-                </TabsContent>
-
-                <TabsContent value="history" className="h-full">
-                  <ScrollArea className={`${detailScrollClass} px-4 py-3`}>
-                    <Card className="p-3 space-y-3 border border-border/60">
-                      <div className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Case Updates</div>
-                      <div className="space-y-3">
-                        {historyItems.length === 0 ? (
-                          <div className="text-sm text-muted-foreground">No history entries.</div>
-                        ) : (
-                          historyItems.map((item, idx) => {
-                            const isLast = idx === historyItems.length - 1;
-                            return (
-                              <React.Fragment key={item.id}>
-                                <div className="space-y-2">
-                                  <div className="text-[11px] text-muted-foreground">{item.date}</div>
-                                  <div className="text-sm text-foreground">{item.text}</div>
-                                </div>
-                                {!isLast && <div className="my-3 h-px bg-gradient-to-r from-transparent via-border/60 to-transparent" />}
-                              </React.Fragment>
-                            );
-                          })
-                        )}
-                      </div>
-                    </Card>
-                  </ScrollArea>
-                </TabsContent>
-
-                <TabsContent value="chat" className="h-full">
-                  <div className={`${chatSectionClass} flex flex-col`}>
-                    <div className="px-4 py-2 border-b border-border/60 bg-card/70 backdrop-blur text-xs text-muted-foreground">Read-only transcript</div>
-                    <ScrollArea className="flex-1 px-4 py-3">
-                      <div className="space-y-3">
-                        <div className="flex items-start gap-2">
-                          <Avatar className="h-7 w-7"><AvatarFallback>CU</AvatarFallback></Avatar>
-                          <div className="rounded-lg border border-border/60 p-2 max-w-[75%]"><div className="text-sm">Hi, I was charged twice for last month.</div></div>
-                        </div>
-                        <div className="flex items-start gap-2 justify-end">
-                          <div className="rounded-lg border border-border/60 p-2 max-w-[75%] bg-primary/10"><div className="text-sm">Sorry about that! Let me check your invoice.</div></div>
-                          <Avatar className="h-7 w-7"><AvatarFallback>AG</AvatarFallback></Avatar>
-                        </div>
-                      </div>
-                    </ScrollArea>
-                  </div>
                 </TabsContent>
               </div>
             </Tabs>
 
-            <div className="px-4 py-3 border-t border-border/60 flex items-center justify-between">
-              <div className="text-xs text-muted-foreground">Actions may be restricted by permissions.</div>
-              <div className="flex items-center gap-2">
-                <Button variant="outline" size="sm">Reassign…</Button>
-                <Button size="sm" className="gap-1"><CheckCircle2 className="w-4 h-4" /> Resolve</Button>
-              </div>
+            <div className="px-4 py-3 border-t border-border/60 flex items-center justify-end gap-2">
+              <Button size="sm" className="gap-1"><User className="w-4 h-4" /> Assign</Button>
+              <Button size="sm" className="gap-1"><CheckCircle2 className="w-4 h-4" /> Resolve</Button>
             </div>
           </div>
         </DialogContent>
