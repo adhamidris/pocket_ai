@@ -117,7 +117,17 @@ const Footer = () => {
         {/* Bottom Bar */}
         <div className="mt-16 pt-8 border-t border-border flex justify-center items-center">
           <div className="text-muted-foreground text-sm text-center flex flex-col items-center gap-2">
-            <div>{t("footer.bottom.copyright")}</div>
+            <div className="text-sm text-muted-foreground">
+              All rights reserved to{' '}
+              <a
+                href="https://adhamidris-portfolio.netlify.app/"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-primary hover:underline"
+              >
+                Adham Idris
+              </a>
+            </div>
             <div className="flex items-center gap-3">
               <Link to="/privacy" className="text-muted-foreground hover:text-foreground transition-colors">
                 {t("footer.bottom.privacy")}
