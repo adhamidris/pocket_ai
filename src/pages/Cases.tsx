@@ -1096,24 +1096,27 @@ const Cases = () => {
                           </div>
                         </Card>
 
-                        <Card className="p-3 space-y-3">
+                        <Card className="p-3 space-y-4">
                           {[
                             { title: "AI Diagnoses", lines: diagnoses, empty: "No diagnoses available." },
                             { title: "AI Actions Taken", lines: aiActions, empty: "No AI actions recorded." },
                             { title: "Suggested Actions", lines: suggestedActions, empty: "No pending actions." },
                           ].map((section) => (
-                            <React.Fragment key={section.title}>
-                              <div className="space-y-2">
-                                <div className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">{section.title}</div>
-                                <div className="p-3 rounded-md border border-border/60 bg-muted/30 text-sm space-y-1">
-                                  {section.lines.length > 0 ? (
-                                    section.lines.map((line, lineIdx) => <div key={`${section.title}-${lineIdx}`}>{line}</div>)
-                                  ) : (
-                                    <div className="text-muted-foreground">{section.empty}</div>
-                                  )}
-                                </div>
+                            <div key={section.title} className="space-y-2">
+                              <span className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">{section.title}</span>
+                              <div className="rounded-lg border border-border/60 bg-muted/15 px-3 py-2 space-y-2">
+                                {section.lines.length > 0 ? (
+                                  section.lines.map((line, lineIdx) => (
+                                    <div key={`${section.title}-${lineIdx}`} className="grid grid-cols-[auto,1fr] gap-x-2 gap-y-1 text-sm leading-snug text-foreground">
+                                      <span className="mt-[7px] h-1.5 w-1.5 rounded-full bg-muted-foreground/50" />
+                                      <span>{line}</span>
+                                    </div>
+                                  ))
+                                ) : (
+                                  <div className="text-sm text-muted-foreground">{section.empty}</div>
+                                )}
                               </div>
-                            </React.Fragment>
+                            </div>
                           ))}
                         </Card>
                       </div>
