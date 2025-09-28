@@ -1,4 +1,35 @@
 const ar = {
+  dashboard: {
+    title: "لوحة التحكم",
+    urgent: {
+      label: "عاجل",
+      noUrgent: "لا توجد محادثات عاجلة الآن",
+      review: "مراجعة",
+    },
+    stats: {
+      todayMessages: "رسائل اليوم",
+      responseTime: "متوسط زمن الاستجابة",
+      satisfaction: "الرضا",
+      activeConversations: "محادثات نشطة",
+    },
+    quickActions: {
+      conversations: {
+        title: "المحادثات",
+        subtitle: "2 نشطة، 1 تنتظر",
+      },
+      agents: {
+        title: "الوكلاء",
+        subtitle: "إعداد المساعدين الذكيين",
+      },
+      customers: {
+        title: "العملاء",
+        subtitle: "4 عملاء، 1 مميّز",
+      },
+    },
+    recentActivity: "النشاط الأخير",
+    viewAll: "عرض الكل",
+    emptyFeed: "لا يوجد نشاط للعرض بعد.",
+  },
   nav: {
     brand: "Pocket",
     features: "الميزات",

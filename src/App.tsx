@@ -14,6 +14,10 @@ import Cookies from "./pages/Cookies";
 import Security from "./pages/Security";
 import Integrations from "./pages/Integrations";
 import Dashboard from "./pages/Dashboard";
+import Customers from "./pages/Customers";
+import Conversations from "./pages/Conversations";
+import Cases from "./pages/Cases";
+import Agents from "./pages/Agents";
 import ScrollToTop from "@/components/ScrollToTop";
 
 const queryClient = new QueryClient();
@@ -36,6 +40,10 @@ const App = () => (
           <Route path="/security" element={<Security />} />
           <Route path="/integrations" element={<Integrations />} />
           <Route path="/dashboard" element={<Dashboard />} />
+          <Route path="/dashboard/customers" element={<Customers />} />
+          <Route path="/dashboard/cases" element={<Cases />} />
+          <Route path="/dashboard/conversations" element={<Conversations />} />
+          <Route path="/dashboard/agents" element={<Agents />} />
           {/* ADD ALL CUSTOM ROUTES ABOVE THE CATCH-ALL "*" ROUTE */}
           <Route path="*" element={<NotFound />} />
         </Routes>

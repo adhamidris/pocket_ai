@@ -1,4 +1,35 @@
 const en = {
+  dashboard: {
+    title: "Dashboard",
+    urgent: {
+      label: "Urgent",
+      noUrgent: "No urgent conversations right now",
+      review: "Review",
+    },
+    stats: {
+      todayMessages: "Today Messages",
+      responseTime: "Avg Response Time",
+      satisfaction: "Satisfaction",
+      activeConversations: "Active Conversations",
+    },
+    quickActions: {
+      conversations: {
+        title: "Conversations",
+        subtitle: "2 active, 1 waiting",
+      },
+      agents: {
+        title: "Agents",
+        subtitle: "Configure AI assistants",
+      },
+      customers: {
+        title: "Customers",
+        subtitle: "4 customers, 1 VIP",
+      },
+    },
+    recentActivity: "Recent Activity",
+    viewAll: "View all",
+    emptyFeed: "No activity to show yet.",
+  },
   nav: {
     brand: "Pocket",
     features: "Features",
