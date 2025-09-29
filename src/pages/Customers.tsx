@@ -38,8 +38,6 @@ import {
   Timer,
   Flame,
   Smile,
-  Meh,
-  Frown,
   FileText,
   Download,
   ClipboardList,
@@ -199,6 +197,7 @@ type CaseTone = 'positive' | 'neutral' | 'negative' | 'frustrated';
 type CaseItem = {
   id: string;
   title: string;
+  description: string;
   type: CaseType;
   tone: CaseTone;
   status: CaseStatusFilter;
@@ -238,6 +237,7 @@ const CASE_DATA: CaseItem[] = [
   {
     id: 'C-1024',
     title: 'Double charge',
+    description: 'Customer reports being charged twice on the same invoice and requests a refund.',
     type: 'billing',
     tone: 'frustrated',
     status: 'needs',
@@ -255,6 +255,7 @@ const CASE_DATA: CaseItem[] = [
   {
     id: 'C-1025',
     title: 'Export analytics',
+    description: 'User wants an export option to share analytics with their team on a weekly basis.',
     type: 'request',
     tone: 'neutral',
     status: 'needs',
@@ -266,6 +267,7 @@ const CASE_DATA: CaseItem[] = [
   {
     id: 'C-1026',
     title: 'Password reset failing',
+    description: 'Reset emails are not reaching the account owner, blocking access to the product.',
     type: 'bug',
     tone: 'negative',
     status: 'needs',
@@ -283,6 +285,7 @@ const CASE_DATA: CaseItem[] = [
   {
     id: 'C-1027',
     title: 'Upgrade plan inquiry',
+    description: 'Customer evaluates plan tiers and needs guidance on the best fit for usage.',
     type: 'inquiry',
     tone: 'neutral',
     status: 'needs',
@@ -294,6 +297,7 @@ const CASE_DATA: CaseItem[] = [
   {
     id: 'C-1028',
     title: 'Slack integration request',
+    description: 'Customer asks for early access to the Slack integration to streamline alerts.',
     type: 'request',
     tone: 'positive',
     status: 'needs',
@@ -305,6 +309,7 @@ const CASE_DATA: CaseItem[] = [
   {
     id: 'C-1019',
     title: 'Webhook timeout',
+    description: 'Intermittent webhook timeouts are causing delays in downstream system updates.',
     type: 'bug',
     tone: 'positive',
     status: 'resolved',
@@ -320,6 +325,7 @@ const CASE_DATA: CaseItem[] = [
   {
     id: 'C-1018',
     title: 'Billing address update',
+    description: 'Need to adjust billing address on file and confirm the change with finance.',
     type: 'billing',
     tone: 'neutral',
     status: 'resolved',
@@ -332,6 +338,7 @@ const CASE_DATA: CaseItem[] = [
   {
     id: 'C-1017',
     title: 'Feature feedback on dashboard',
+    description: 'Positive feedback on dashboard but highlights UI tweaks to improve clarity.',
     type: 'feedback',
     tone: 'positive',
     status: 'resolved',
@@ -344,6 +351,7 @@ const CASE_DATA: CaseItem[] = [
   {
     id: 'C-1029',
     title: 'Response delay complaint',
+    description: 'Customer dissatisfaction due to perceived delays in support response times.',
     type: 'complaint',
     tone: 'negative',
     status: 'needs',
@@ -453,20 +461,32 @@ const formatTime = (iso: string) => {
   return date.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
 };
 
-const getToneMeta = (tone: CaseTone) => {
-  switch (tone) {
-    case 'positive':
-      return { Icon: Smile, label: 'Positive', color: 'text-emerald-500', bg: 'bg-emerald-500/10' };
-    case 'neutral':
-      return { Icon: Meh, label: 'Neutral', color: 'text-muted-foreground', bg: 'bg-muted/70' };
-    case 'negative':
-      return { Icon: Frown, label: 'Negative', color: 'text-rose-500', bg: 'bg-rose-500/10' };
-    case 'frustrated':
-      return { Icon: AlertTriangle, label: 'Frustrated', color: 'text-amber-500', bg: 'bg-amber-500/10' };
-    default:
-      return { Icon: Meh, label: 'Neutral', color: 'text-muted-foreground', bg: 'bg-muted/70' };
-  }
-};
+const SectionBlock = ({
+  title,
+  children,
+  icon: Icon,
+  action,
+  cardClassName,
+  headingClassName,
+}: {
+  title: string;
+  children: React.ReactNode;
+  icon?: React.ComponentType<{ className?: string }>;
+  action?: React.ReactNode;
+  cardClassName?: string;
+  headingClassName?: string;
+}) => (
+  <div className="space-y-2">
+    <div className={cn('flex items-center justify-between text-[11px] font-semibold uppercase tracking-wide text-muted-foreground', headingClassName)}>
+      <div className="flex items-center gap-2">
+        {Icon && <Icon className="h-3.5 w-3.5" />}
+        <span>{title}</span>
+      </div>
+      {action ? <div className="flex items-center gap-2">{action}</div> : null}
+    </div>
+    <Card className={cn('border border-border/60 bg-muted/15 px-3 py-3', cardClassName)}>{children}</Card>
+  </div>
+);
 
 const getPriorityMeta = (priority: CasePriority) => {
   switch (priority) {
@@ -484,21 +504,21 @@ const getPriorityMeta = (priority: CasePriority) => {
 const getCaseTypeMeta = (type: CaseType) => {
   switch (type) {
     case 'billing':
-      return { label: 'BILLING', className: 'bg-amber-500 text-amber-50' };
+      return { label: 'Billing', className: 'border border-border/60 bg-muted/50 text-muted-foreground/90' };
     case 'bug':
-      return { label: 'BUG', className: 'bg-rose-500 text-rose-50' };
+      return { label: 'Bug', className: 'border border-border/60 bg-muted/50 text-muted-foreground/90' };
     case 'complaint':
-      return { label: 'COMPLAINT', className: 'bg-rose-600 text-rose-50' };
+      return { label: 'Complaint', className: 'border border-border/60 bg-muted/50 text-muted-foreground/90' };
     case 'request':
-      return { label: 'REQUEST', className: 'bg-sky-500 text-sky-50' };
+      return { label: 'Request', className: 'border border-border/60 bg-muted/50 text-muted-foreground/90' };
     case 'inquiry':
-      return { label: 'INQUIRY', className: 'bg-cyan-500 text-cyan-50' };
+      return { label: 'Inquiry', className: 'border border-border/60 bg-muted/50 text-muted-foreground/90' };
     case 'feedback':
-      return { label: 'FEEDBACK', className: 'bg-purple-500 text-purple-50' };
+      return { label: 'Feedback', className: 'border border-border/60 bg-muted/50 text-muted-foreground/90' };
     case 'lead':
-      return { label: 'LEAD', className: 'bg-emerald-500 text-emerald-50' };
+      return { label: 'Lead', className: 'border border-border/60 bg-muted/50 text-muted-foreground/90' };
     default:
-      return { label: type.toUpperCase(), className: 'bg-muted text-foreground' };
+      return { label: type.charAt(0).toUpperCase() + type.slice(1), className: 'border border-border/60 bg-muted/50 text-muted-foreground/90' };
   }
 };
 
@@ -539,7 +559,7 @@ const Customers = () => {
   const [viewportWidth, setViewportWidth] = React.useState(() => (typeof window !== 'undefined' ? window.innerWidth : 0));
   const panelWidth = React.useMemo(() => {
     if (isNarrow || !viewportWidth) return undefined;
-    const calculated = Math.min(Math.max(viewportWidth * 0.48, 460), 760);
+    const calculated = Math.min(Math.max(viewportWidth * 0.58, 560), 920);
     return `${Math.round(calculated)}px`;
   }, [isNarrow, viewportWidth]);
   const [caseFilter, setCaseFilter] = React.useState<CaseStatusFilter>('needs');
@@ -634,7 +654,6 @@ const Customers = () => {
     if (active.address) rows.push({ key: 'address', Icon: MapPin, value: active.address });
     return rows;
   }, [active]);
-  const selectedCaseToneMeta = React.useMemo(() => (selectedCase ? getToneMeta(selectedCase.tone) : null), [selectedCase]);
   const selectedCasePriorityMeta = React.useMemo(() => (selectedCase ? getPriorityMeta(selectedCase.priority) : null), [selectedCase]);
   const selectedCaseTypeMeta = React.useMemo(() => (selectedCase ? getCaseTypeMeta(selectedCase.type) : null), [selectedCase]);
   const selectedCaseSummary = React.useMemo(() => (selectedCase ? formatCaseSummary(selectedCase).split('\n').filter(Boolean) : []), [selectedCase]);
@@ -884,27 +903,21 @@ const Customers = () => {
             <div className="px-4 py-3 border-b border-border/60 bg-card/80 backdrop-blur">
               <SheetHeader>
                 <SheetTitle className="flex flex-col gap-3">
-                  <div className="flex items-start gap-3">
+                  <div className="flex items-center gap-3">
                     <Avatar className="h-10 w-10">
                       {active?.avatar && <AvatarImage src={active.avatar} />}
                       <AvatarFallback>{active?.name ? active.name.slice(0, 2).toUpperCase() : 'CU'}</AvatarFallback>
                     </Avatar>
                     <div className="flex-1 flex flex-col gap-1">
-                      <span className="text-xs font-medium tracking-wide text-muted-foreground uppercase">{formattedCustomerId}</span>
+                      <span className="text-[10px] font-medium text-muted-foreground uppercase tracking-wide">{formattedCustomerId}</span>
                       <span className="text-lg font-semibold leading-none">{active?.name ?? 'Customer'}</span>
-                      <div className="text-xs text-muted-foreground">
-                        {joinedLabel ? `Customer since ${joinedLabel}` : 'Customer since —'}
-                      </div>
                     </div>
-                    <Button variant="outline" size="icon" className="ml-auto">
-                      <Edit className="h-4 w-4" />
-                    </Button>
                   </div>
                 </SheetTitle>
               </SheetHeader>
             </div>
 
-            <Tabs value={tab} onValueChange={(value) => setTab(value as CustomerTab)} className="flex-1 flex flex-col">
+            <Tabs value={tab} onValueChange={(value) => setTab(value as CustomerTab)} className="flex-1 flex flex-col overflow-hidden">
               {selectedCase === null && (
                 <div className="px-4 pt-3">
                   <TabsList className="grid grid-cols-4 gap-2 w-full rounded-lg border border-border/40 bg-muted/70 p-1">
@@ -935,66 +948,56 @@ const Customers = () => {
                   </TabsList>
                 </div>
               )}
-              <div className="flex-1 min-h-0 p-4 space-y-4">
+              <div className="flex-1 min-h-0 overflow-y-auto px-4 pb-4 space-y-4">
                 <TabsContent value="overview">
-                  <Card className="p-4 space-y-6">
-                    <div>
-                      <div className="flex items-center gap-2 text-sm font-semibold text-card-foreground">
-                        <User className="h-4 w-4 text-muted-foreground" />
-                        <span>Contact information</span>
-                      </div>
-                      <div className="mt-3 space-y-2 text-sm">
-                        {!active ? (
-                          <div className="text-xs text-muted-foreground">Select a customer to view details.</div>
-                        ) : contactRows.length === 0 ? (
-                          <div className="text-xs text-muted-foreground">No contact details available.</div>
-                        ) : (
-                          contactRows.map(({ key, Icon, value }) => (
-                            <div key={key} className="flex items-center gap-3">
+                  <div className="space-y-4 pt-4">
+                    <SectionBlock
+                      title="Contact Information"
+                      icon={User}
+                      cardClassName="space-y-3 text-sm"
+                    >
+                      {!active ? (
+                        <div className="text-xs text-muted-foreground">Select a customer to view details.</div>
+                      ) : contactRows.length === 0 ? (
+                        <div className="text-xs text-muted-foreground">No contact details available.</div>
+                      ) : (
+                        <div className="space-y-2">
+                          {contactRows.map(({ key, Icon, value }) => (
+                            <div key={key} className="flex items-center gap-3 text-card-foreground">
                               <Icon className="h-4 w-4 text-muted-foreground" />
-                              <span className="break-words text-sm text-card-foreground">{value}</span>
+                              <span className="break-words text-sm">{value}</span>
                             </div>
-                          ))
-                        )}
+                          ))}
+                        </div>
+                      )}
+                    </SectionBlock>
+
+                    <SectionBlock
+                      title="Customer Stats"
+                      icon={Activity}
+                      cardClassName="grid grid-cols-2 gap-3 text-center"
+                    >
+                      <div className="space-y-1.5">
+                        <div className="text-xl font-semibold text-card-foreground">{active?.conversations ?? '—'}</div>
+                        <div className="text-xs leading-4 text-muted-foreground">Conversations</div>
                       </div>
-                    </div>
-
-                    <Separator />
-
-                    <div>
-                      <div className="flex items-center gap-2 text-sm font-semibold text-card-foreground">
-                        <Activity className="h-4 w-4 text-muted-foreground" />
-                        <span>Customer stats</span>
+                      <div className="space-y-1.5">
+                        <div className="text-xl font-semibold text-card-foreground">{active ? `${active.satisfaction}%` : '—'}</div>
+                        <div className="text-xs leading-4 text-muted-foreground">Satisfaction</div>
                       </div>
-                      <div className="mt-4 grid grid-cols-3 gap-3 text-center">
-                        <div className="space-y-1">
-                          <div className="text-lg font-semibold text-primary">{active?.conversations ?? '—'}</div>
-                          <div className="text-xs text-muted-foreground">Conversations</div>
-                        </div>
-                        <div className="space-y-1">
-                          <div className="text-lg font-semibold text-amber-500">{active ? `${active.satisfaction}%` : '—'}</div>
-                          <div className="text-xs text-muted-foreground">Satisfaction</div>
-                        </div>
-                        <div className="space-y-1">
-                          <div className="text-lg font-semibold text-emerald-500">{active ? formatCurrencyCompact(active.totalValue) : '—'}</div>
-                          <div className="text-xs text-muted-foreground">Value</div>
-                        </div>
-                      </div>
-                    </div>
+                    </SectionBlock>
 
-                    <Separator />
-
-                    <div>
-                      <div className="flex items-center justify-between">
-                        <div className="flex items-center gap-2 text-sm font-semibold text-card-foreground">
-                          <Tag className="h-4 w-4 text-muted-foreground" />
-                          <span>Tags</span>
-                        </div>
+                    <SectionBlock
+                      title="Tags"
+                      icon={Tag}
+                      action={(
                         <Button variant="outline" size="icon" className="h-8 w-8" aria-label="Add tag">
                           <Plus className="h-4 w-4" />
                         </Button>
-                      </div>
-                      <div className="mt-3 flex flex-wrap gap-2">
+                      )}
+                      cardClassName="space-y-3"
+                    >
+                      <div className="flex flex-wrap gap-2">
                         {active?.tags?.length ? (
                           active.tags.map((tag) => (
                             <Badge key={tag} variant="secondary" className="px-3 py-1 text-xs font-medium">
@@ -1005,15 +1008,15 @@ const Customers = () => {
                           <div className="text-xs text-muted-foreground">No tags yet.</div>
                         )}
                       </div>
-                    </div>
-                  </Card>
+                    </SectionBlock>
+                  </div>
                 </TabsContent>
 
-                <TabsContent value="cases">
+                <TabsContent value="cases" className="flex h-full min-h-0 flex-col">
                   {selectedCase === null ? (
                     <Card className="p-0 flex-1 flex flex-col">
-                      <div className="px-4 pt-4">
-                        <div className="grid grid-cols-2 gap-2 rounded-lg bg-muted/70 p-1 text-xs font-semibold">
+                      <div className="sticky top-0 z-10 border-b border-border/60 bg-card px-4 pt-4 pb-3">
+                        <div className="grid grid-cols-2 gap-2 rounded-lg border border-border/40 bg-muted/70 p-1 text-xs font-semibold">
                           {([
                             { key: 'needs', label: 'Needs action' },
                             { key: 'resolved', label: 'Resolved' },
@@ -1023,9 +1026,10 @@ const Customers = () => {
                               type="button"
                               onClick={() => setCaseFilter(key)}
                               className={cn(
-                                'flex items-center justify-center gap-2 rounded-md px-3 py-2 transition',
-                                caseFilter === key ? 'bg-card text-primary shadow-sm' : 'text-muted-foreground'
+                                'flex items-center justify-center gap-2 rounded-md px-3 py-2 text-xs font-semibold tracking-wide transition-colors',
+                                caseFilter === key ? 'bg-primary text-primary-foreground shadow-sm' : 'bg-transparent text-muted-foreground'
                               )}
+                              aria-pressed={caseFilter === key}
                             >
                               {key === 'needs' ? <AlertTriangle className="h-4 w-4" /> : <CheckCircle2 className="h-4 w-4" />}
                               <span>{label}</span>
@@ -1033,41 +1037,36 @@ const Customers = () => {
                           ))}
                         </div>
                       </div>
-                      <div className="px-4 pb-4 space-y-3">
-                        {filteredCases.map((item) => {
-                          const toneMeta = getToneMeta(item.tone);
+                      <div className="flex-1 px-4 pb-4 space-y-3">
+                        {filteredCases.map((item, idx) => {
                           const priorityMeta = getPriorityMeta(item.priority);
                           const typeMeta = getCaseTypeMeta(item.type);
+                          const isLast = idx === filteredCases.length - 1;
                           return (
-                            <button
-                              key={item.id}
-                              type="button"
-                              onClick={() => setSelectedCase(item)}
-                              className="w-full rounded-lg border border-border/60 bg-card/80 px-4 py-3 text-left transition hover:border-primary/40 hover:bg-muted/50"
-                            >
-                              <div className="flex items-center justify-between text-[11px] text-muted-foreground">
-                                <span>{item.id}</span>
-                                <span>{formatShortDate(item.createdAt)}</span>
-                              </div>
-                              <div className="mt-2 flex flex-wrap items-start gap-3">
-                                <div className="flex-1 space-y-2">
-                                  <div className="text-sm font-semibold text-card-foreground">{item.title}</div>
-                                  <div className="flex flex-wrap items-center gap-2">
-                                    <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-semibold tracking-wide ${typeMeta.className}`}>
-                                      {typeMeta.label}
-                                    </span>
-                                    <span className={cn('inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-semibold', priorityMeta.bg, priorityMeta.color)}>
-                                      <priorityMeta.Icon className="h-3 w-3" />
-                                      {priorityMeta.label}
-                                    </span>
+                            <React.Fragment key={item.id}>
+                              <button
+                                type="button"
+                                onClick={() => setSelectedCase(item)}
+                                className="w-full rounded-lg border border-border/60 bg-card/80 px-4 py-3 text-left transition hover:border-primary/40 hover:bg-muted/50"
+                              >
+                                <div className="flex items-center justify-between text-[11px] font-medium text-muted-foreground">
+                                  <span className="uppercase tracking-wide opacity-80">{item.id}</span>
+                                  <span className="font-normal opacity-70">{formatShortDate(item.createdAt)}</span>
+                                </div>
+                                <div className="mt-2 flex flex-wrap items-start gap-3">
+                                  <div className="flex-1 space-y-3">
+                                    <div className="flex flex-wrap items-center gap-2">
+                                      <div className="text-[15px] font-semibold leading-snug text-card-foreground">{item.title}</div>
+                                      <span className={`inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium tracking-wide ${typeMeta.className}`}>
+                                        {typeMeta.label}
+                                      </span>
+                                    </div>
+                                    <p className="text-sm leading-5 text-muted-foreground line-clamp-2">{item.description}</p>
                                   </div>
                                 </div>
-                                <span className={cn('inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase', toneMeta.bg, toneMeta.color)}>
-                                  <toneMeta.Icon className="h-3 w-3" />
-                                  {toneMeta.label}
-                                </span>
-                              </div>
-                            </button>
+                              </button>
+                              {!isLast && <Separator className="bg-border/60" />}
+                            </React.Fragment>
                           );
                         })}
                         {filteredCases.length === 0 && (
@@ -1078,164 +1077,154 @@ const Customers = () => {
                       </div>
                     </Card>
                   ) : (
-                    <Card className="p-4 space-y-5">
-                      <div className="flex items-center justify-between text-[11px] text-muted-foreground">
-                        <span>{selectedCase.id}</span>
-                        <span>{formatShortDate(selectedCase.createdAt)}</span>
-                      </div>
-                      <div className="flex flex-wrap items-start gap-4">
-                        <div className="flex-1">
-                          <div className="text-base font-semibold text-card-foreground">{selectedCase.title}</div>
+                    <div className="space-y-4">
+                      <Card className="p-4 space-y-3">
+                        <div className="flex flex-wrap items-center justify-between gap-y-1 text-[11px] font-medium text-muted-foreground">
+                          <span className="uppercase tracking-wide opacity-80">{selectedCase.id}</span>
+                          <span className="font-normal opacity-70">{formatShortDate(selectedCase.createdAt)}</span>
                         </div>
-                        <div className="flex flex-wrap items-center gap-2">
+                        <div className="flex flex-wrap items-center gap-2 mt-1">
+                          <div className="text-lg font-semibold leading-tight text-card-foreground">{selectedCase.title}</div>
                           {selectedCaseTypeMeta && (
-                            <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase ${selectedCaseTypeMeta.className}`}>
+                            <span className="inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium tracking-wide border border-border/60 bg-muted/70 text-muted-foreground/80">
                               {selectedCaseTypeMeta.label}
                             </span>
                           )}
-                          {selectedCasePriorityMeta && (
-                            <span className={cn('inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase', selectedCasePriorityMeta.bg, selectedCasePriorityMeta.color)}>
-                              <selectedCasePriorityMeta.Icon className="h-3 w-3" />
-                              {selectedCasePriorityMeta.label}
-                            </span>
-                          )}
                         </div>
-                      </div>
-                      <div className="flex flex-wrap items-center gap-4 text-sm text-muted-foreground">
-                        {selectedCaseToneMeta && (
-                          <span className={cn('inline-flex items-center gap-2 rounded-full px-3 py-1 text-xs font-semibold', selectedCaseToneMeta.bg, selectedCaseToneMeta.color)}>
-                            <selectedCaseToneMeta.Icon className="h-3 w-3" />
-                            Tone: {selectedCaseToneMeta.label}
-                          </span>
-                        )}
-                        <span className="inline-flex items-center gap-2 rounded-full bg-amber-500/10 px-3 py-1 text-xs font-semibold text-amber-500">
-                          <Smile className="h-3 w-3" /> Satisfaction: {active ? `${active.satisfaction}%` : '—'}
-                        </span>
-                      </div>
-                      <div className="grid grid-cols-4 gap-2 rounded-md bg-muted/60 p-1 text-[11px] font-semibold">
-                        {([
-                          { key: 'overview', label: 'Overview' },
-                          { key: 'documents', label: 'Documents' },
-                          { key: 'history', label: 'History' },
-                          { key: 'chat', label: 'Chat' },
-                        ] as const).map(({ key, label }) => (
-                          <button
-                            key={key}
-                            type="button"
-                            onClick={() => setCaseDetailsTab(key)}
-                            className={cn(
-                              'rounded-md px-3 py-2 transition',
-                              caseDetailsTab === key ? 'bg-card text-primary shadow-sm' : 'text-muted-foreground'
-                            )}
-                          >
-                            {label}
-                          </button>
-                        ))}
-                      </div>
+                        <div className="grid grid-cols-4 gap-2 rounded-lg border border-border/40 bg-muted/70 p-1 text-xs font-semibold tracking-wide mt-1.5">
+                          {([
+                            { key: 'overview', label: 'Overview' },
+                            { key: 'documents', label: 'Documents' },
+                            { key: 'history', label: 'History' },
+                            { key: 'chat', label: 'Chat' },
+                          ] as const).map(({ key, label }) => (
+                            <button
+                              key={key}
+                              type="button"
+                              onClick={() => setCaseDetailsTab(key)}
+                              className={cn(
+                                'rounded-md px-3 py-2 text-xs font-semibold tracking-wide transition-colors',
+                                caseDetailsTab === key ? 'bg-primary text-primary-foreground shadow-sm' : 'bg-transparent text-muted-foreground'
+                              )}
+                            >
+                              {label}
+                            </button>
+                          ))}
+                        </div>
+                      </Card>
 
                       {caseDetailsTab === 'overview' && (
-                        <div className="space-y-5 text-sm">
-                          <div>
-                            <div className="flex items-center gap-2 text-sm font-semibold text-card-foreground">
-                              <ClipboardList className="h-4 w-4 text-muted-foreground" />
-                              <span>AI diagnoses</span>
-                            </div>
-                            <div className="mt-2 space-y-2 text-muted-foreground">
-                              {selectedCaseSummary.map((line, idx) => (
-                                <p key={idx}>{line}</p>
-                              ))}
-                            </div>
-                          </div>
-                          <Separator />
-                          <div>
-                            <div className="flex items-center gap-2 text-sm font-semibold text-card-foreground">
-                              <Bot className="h-4 w-4 text-muted-foreground" />
-                              <span>AI actions taken</span>
-                            </div>
-                            <div className="mt-2 space-y-2 text-muted-foreground">
-                              {selectedCase.aiActions.length ? (
-                                selectedCase.aiActions.map((action, idx) => (
-                                  <p key={idx}>{action}</p>
-                                ))
-                              ) : (
-                                <p>No AI actions recorded.</p>
-                              )}
-                            </div>
-                          </div>
-                          <Separator />
-                          <div>
-                            <div className="flex items-center gap-2 text-sm font-semibold text-card-foreground">
-                              <ClipboardList className="h-4 w-4 text-muted-foreground" />
-                              <span>Suggested actions</span>
-                            </div>
-                            <div className="mt-2 space-y-2 text-muted-foreground">
-                              {selectedCase.requiredActions.length ? (
-                                selectedCase.requiredActions.map((action, idx) => (
-                                  <p key={idx}>{action}</p>
-                                ))
-                              ) : (
-                                <p>No pending actions.</p>
-                              )}
-                            </div>
-                          </div>
+                        <div className="space-y-4">
+                          <SectionBlock
+                            title="AI Diagnoses"
+                            cardClassName="space-y-2 text-sm"
+                          >
+                            {selectedCaseSummary.map((line, idx) => (
+                              <p key={idx} className="text-card-foreground/90">
+                                {line}
+                              </p>
+                            ))}
+                          </SectionBlock>
+
+                          <SectionBlock
+                            title="AI Actions Taken"
+                            cardClassName="space-y-2 text-sm"
+                          >
+                            {selectedCase.aiActions.length ? (
+                              selectedCase.aiActions.map((action, idx) => (
+                                <p key={idx} className="text-card-foreground/90">
+                                  {action}
+                                </p>
+                              ))
+                            ) : (
+                              <p className="text-muted-foreground">No AI actions recorded.</p>
+                            )}
+                          </SectionBlock>
+
+                          <SectionBlock
+                            title="Suggested Actions"
+                            cardClassName="space-y-2 text-sm"
+                          >
+                            {selectedCase.requiredActions.length ? (
+                              selectedCase.requiredActions.map((action, idx) => (
+                                <p key={idx} className="text-card-foreground/90">
+                                  {action}
+                                </p>
+                              ))
+                            ) : (
+                              <p className="text-muted-foreground">No pending actions.</p>
+                            )}
+                          </SectionBlock>
                         </div>
                       )}
 
                       {caseDetailsTab === 'documents' && (
-                        <div className="space-y-3 text-sm">
-                          <div className="flex items-center gap-2 text-sm font-semibold text-card-foreground">
-                            <FileText className="h-4 w-4 text-muted-foreground" />
-                            <span>Grabbed documents</span>
-                          </div>
-                          <div className="space-y-2">
-                            {CASE_DOCUMENTS.map((doc) => (
-                              <div key={doc.name} className="flex items-center justify-between rounded-md border border-border/60 bg-background/80 px-3 py-2 text-sm">
-                                <span className="truncate pr-3 text-card-foreground">{doc.name}</span>
-                                <div className="flex items-center gap-2">
-                                  <Button variant="ghost" size="icon" className="h-8 w-8 text-primary" aria-label={`Open ${doc.name}`}>
-                                    <FileText className="h-4 w-4" />
-                                  </Button>
-                                  <Button variant="ghost" size="icon" className="h-8 w-8 text-emerald-500" aria-label={`Download ${doc.name}`}>
-                                    <Download className="h-4 w-4" />
-                                  </Button>
-                                </div>
-                              </div>
-                            ))}
-                          </div>
-                        </div>
+                        <SectionBlock
+                          title="DOCUMENTS"
+                          cardClassName="space-y-3 text-sm"
+                        >
+                          {CASE_DOCUMENTS.length === 0 ? (
+                            <div className="text-sm text-muted-foreground">No documents attached.</div>
+                          ) : (
+                            CASE_DOCUMENTS.map((doc, idx) => {
+                              const isLast = idx === CASE_DOCUMENTS.length - 1;
+                              return (
+                                <React.Fragment key={doc.name}>
+                                  <div className="flex items-center gap-3">
+                                    <div className="flex h-9 w-9 items-center justify-center rounded-md bg-muted/70">
+                                      <FileText className="h-4 w-4 text-muted-foreground" />
+                                    </div>
+                                    <div className="min-w-0 flex-1">
+                                      <div className="text-sm font-semibold leading-snug text-card-foreground">{doc.name}</div>
+                                      <div className="text-xs leading-tight text-muted-foreground/90">PDF • 250 KB</div>
+                                    </div>
+                                    <div className="flex items-center gap-2">
+                                      <Button variant="ghost" size="sm" className="text-xs font-medium">Open</Button>
+                                      <Button variant="secondary" size="sm" className="text-xs font-medium">Download</Button>
+                                    </div>
+                                  </div>
+                                  {!isLast && <Separator className="bg-border/60" />}
+                                </React.Fragment>
+                              );
+                            })
+                          )}
+                        </SectionBlock>
                       )}
 
                       {caseDetailsTab === 'history' && (
-                        <div className="space-y-4 text-sm">
-                          <div className="flex items-center gap-2 text-sm font-semibold text-card-foreground">
-                            <MessageCircle className="h-4 w-4 text-muted-foreground" />
-                            <span>Case updates</span>
-                          </div>
-                          <div className="space-y-4">
-                            {CASE_TIMELINE.map((entry, idx) => {
+                        <SectionBlock
+                          title="Case Updates"
+                          cardClassName="space-y-3 text-sm"
+                        >
+                          {CASE_TIMELINE.length === 0 ? (
+                            <div className="text-sm text-muted-foreground">No history entries.</div>
+                          ) : (
+                            CASE_TIMELINE.map((entry, idx) => {
                               const meta = getChannelMeta(entry.channel);
+                              const isLast = idx === CASE_TIMELINE.length - 1;
                               return (
-                                <div key={entry.id} className="space-y-2">
-                                  <div className="flex items-center justify-between text-[11px] text-muted-foreground">
-                                    <div className="flex items-center gap-2">
+                                <React.Fragment key={entry.id}>
+                                  <div className="space-y-1.5">
+                                    <div className="flex items-center justify-between text-[11px] text-muted-foreground leading-tight">
                                       <span>{entry.date}</span>
-                                      <span className={cn('inline-flex items-center rounded-full px-2 py-0.5 font-semibold uppercase', meta.className)}>
-                                        {meta.label}
-                                      </span>
+                                      <span>{meta.label}</span>
                                     </div>
-                                    <span>Session summary</span>
+                                    <div className="text-sm leading-snug text-card-foreground">{entry.text}</div>
                                   </div>
-                                  <p className="text-sm text-card-foreground">{entry.text}</p>
-                                  {idx !== CASE_TIMELINE.length - 1 && <Separator className="my-2" />}
-                                </div>
+                                  {!isLast && <Separator className="bg-border/60" />}
+                                </React.Fragment>
                               );
-                            })}
-                          </div>
-                        </div>
+                            })
+                          )}
+                        </SectionBlock>
                       )}
 
                       {caseDetailsTab === 'chat' && (
-                        <div className="space-y-4 text-sm">
+                        <SectionBlock
+                          title="Chat Transcript"
+                          icon={MessageCircle}
+                          cardClassName="space-y-3 text-sm"
+                        >
                           {caseMessages.map((message) => (
                             <div key={message.id} className={cn('flex flex-col gap-1', message.isBot ? 'items-start' : 'items-end')}>
                               <div className={cn(
@@ -1256,58 +1245,81 @@ const Customers = () => {
                               </div>
                             </div>
                           ))}
-                        </div>
+                        </SectionBlock>
                       )}
-                    </Card>
+                    </div>
                   )}
                 </TabsContent>
 
                 <TabsContent value="activity">
-                  <Card className="p-4 space-y-4">
-                    <div className="text-sm font-semibold text-card-foreground">Recent activity</div>
-                    <div className="space-y-4">
-                      {CUSTOMER_ACTIVITY.map((item, idx) => (
+                  <div className="space-y-4 pt-4">
+                    <SectionBlock
+                      title="Recent Activity"
+                      icon={Activity}
+                      cardClassName="space-y-4 text-sm"
+                    >
+                      {CUSTOMER_ACTIVITY.map((item) => (
                         <div key={item.id} className="space-y-2 border-b border-border/60 pb-4 last:border-b-0 last:pb-0">
                           <div className="text-sm font-semibold text-card-foreground">{item.title}</div>
                           <p className="text-sm text-muted-foreground">{item.description}</p>
                           <div className="text-xs text-muted-foreground">{item.timestamp} • by {item.agent}</div>
-                          {idx !== CUSTOMER_ACTIVITY.length - 1 && <span className="sr-only">separator</span>}
                         </div>
                       ))}
-                    </div>
-                  </Card>
+                    </SectionBlock>
+                  </div>
                 </TabsContent>
 
                 <TabsContent value="notes">
-                  <Card className="p-4 space-y-3">
-                    <div className="flex items-center justify-between">
-                      <div className="text-sm font-semibold text-card-foreground">Notes</div>
-                      <Button variant="outline" size="sm">Add note</Button>
-                    </div>
-                    <p className="text-sm italic text-muted-foreground text-center">
-                      No notes yet. Add the first note to track important information about this customer.
-                    </p>
-                  </Card>
+                  <div className="space-y-4 pt-4">
+                    <SectionBlock
+                      title="Notes"
+                      icon={ClipboardList}
+                      action={<Button variant="outline" size="sm">Add note</Button>}
+                      cardClassName="space-y-3 text-sm"
+                    >
+                      <p className="text-sm italic text-muted-foreground text-center">
+                        No notes yet. Add the first note to track important information about this customer.
+                      </p>
+                    </SectionBlock>
+                  </div>
                 </TabsContent>
               </div>
             </Tabs>
 
             <div className="px-4 py-3 border-t border-border/60 space-y-3">
               <div className="flex flex-col gap-2 sm:flex-row">
-                <Button variant="outline" className="flex-1 justify-center gap-2">
-                  <Mail className="h-4 w-4" />
-                  Send email
+                <Button
+                  variant="ghost"
+                  className={cn(
+                    'flex-1 justify-center gap-2 rounded-lg border border-border/40 bg-muted/30 text-sm font-medium text-card-foreground shadow-none',
+                    'hover:bg-muted/50 hover:text-card-foreground'
+                  )}
+                >
+                  <Mail className="h-4 w-4 text-muted-foreground" />
+                  <span>Send email</span>
                 </Button>
-                <Button variant="outline" className="flex-1 justify-center gap-2">
-                  <Phone className="h-4 w-4" />
-                  Call customer
+                <Button
+                  variant="ghost"
+                  className={cn(
+                    'flex-1 justify-center gap-2 rounded-lg border border-border/40 bg-muted/30 text-sm font-medium text-card-foreground shadow-none',
+                    'hover:bg-muted/50 hover:text-card-foreground'
+                  )}
+                >
+                  <Phone className="h-4 w-4 text-muted-foreground" />
+                  <span>Call customer</span>
                 </Button>
               </div>
               {tab === 'cases' && selectedCase ? (
-                <Button className="w-full" onClick={() => setSelectedCase(null)}>Back to cases</Button>
-              ) : (
-                <Button className="w-full" onClick={() => setPanelOpen(false)}>Close</Button>
-              )}
+                <Button
+                  className={cn(
+                    'w-full justify-center rounded-lg text-sm font-semibold tracking-wide',
+                    'bg-primary text-primary-foreground shadow-sm hover:bg-primary/90'
+                  )}
+                  onClick={() => setSelectedCase(null)}
+                >
+                  Back to cases
+                </Button>
+              ) : null}
             </div>
           </div>
         </SheetContent>
