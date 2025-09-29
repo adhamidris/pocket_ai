@@ -8,11 +8,9 @@ import {
   EllipsisVertical,
   Filter,
   Inbox,
-  Layers3,
   ListFilter,
   Mail,
   MessageCircle,
-  MoreHorizontal,
   Search,
   User,
   Users,
@@ -20,6 +18,9 @@ import {
   AlertTriangle,
   Phone,
   FileText,
+  ArrowUpDown,
+  ArrowUp,
+  ArrowDown,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -51,8 +52,7 @@ import {
   PaginationNext,
   PaginationPrevious,
 } from "@/components/ui/pagination";
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
-import { Alert, AlertDescription } from "@/components/ui/alert";
+import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
 import { useEffect } from "react";
 import { cn } from "@/lib/utils";
 
@@ -133,6 +133,19 @@ const priorityColor = (p: Priority) => {
   }
 };
 
+const priorityDot = (p: Priority) => {
+  switch (p) {
+    case "low":
+      return "bg-muted-foreground/40";
+    case "medium":
+      return "bg-blue-500/80 dark:bg-blue-400/80";
+    case "high":
+      return "bg-amber-500/80 dark:bg-amber-300/80";
+    case "urgent":
+      return "bg-rose-500/80 dark:bg-rose-300/80";
+  }
+};
+
 const statusColor = (s: Status) => {
   switch (s) {
     case "open":
@@ -141,6 +154,7 @@ const statusColor = (s: Status) => {
       return "bg-muted text-muted-foreground border border-border/60";
   }
 };
+
 
 const channelIcon = (ch: Channel) => {
   switch (ch) {
@@ -335,9 +349,10 @@ const Cases = () => {
     customer: true,
     title: true,
     description: true,
+    type: true,
     priority: true,
     status: true,
-    channel: true,
+    channel: false,
     assignee: false,
     started: true,
     unread: false,
@@ -349,7 +364,7 @@ const Cases = () => {
   const [density, setDensity] = React.useState<"comfortable" | "compact">("comfortable");
   const [detailsOpen, setDetailsOpen] = React.useState(false);
   const [active, setActive] = React.useState<CaseItem | null>(null);
-  const [helpOpen, setHelpOpen] = React.useState(false);
+  
   const [focusedIndex, setFocusedIndex] = React.useState<number>(-1);
 
   // Column visibility persistence
@@ -364,7 +379,9 @@ const Cases = () => {
           // enforce defaults for removed/added columns
           assignee: false,
           unread: false,
+          channel: false,
           description: true,
+          type: true,
         }));
       }
     } catch {}
@@ -390,6 +407,14 @@ const Cases = () => {
   };
 
   const pageSize = 25;
+  type SortKey = 'priority' | 'status' | 'started' | null;
+  const [sortKey, setSortKey] = React.useState<SortKey>('started');
+  const [sortDir, setSortDir] = React.useState<'asc' | 'desc'>('desc');
+  const toggleSort = (key: Exclude<SortKey, null>) => {
+    setSortDir((prev) => (sortKey === key ? (prev === 'asc' ? 'desc' : 'asc') : (key === 'started' ? 'desc' : 'desc')));
+    setSortKey(key);
+    setPage(1);
+  };
   const [page, setPage] = React.useState(1);
   React.useEffect(() => setPage(1), [status, categories, debouncedQuery, dateRange]);
 
@@ -416,8 +441,26 @@ const Cases = () => {
     return arr;
   }, [status, categories, debouncedQuery, dateRange]);
 
-  const pageItems = filtered.slice((page - 1) * pageSize, page * pageSize);
-  const total = filtered.length;
+  const sorted = React.useMemo(() => {
+    const arr = [...filtered];
+    if (!sortKey) return arr;
+    const dir = sortDir === 'asc' ? 1 : -1;
+    if (sortKey === 'started') {
+      return arr.sort((a, b) => (new Date(a.startedAt).getTime() - new Date(b.startedAt).getTime()) * dir);
+    }
+    if (sortKey === 'priority') {
+      const rank: Record<Priority, number> = { low: 0, medium: 1, high: 2, urgent: 3 };
+      return arr.sort((a, b) => (rank[a.priority] - rank[b.priority]) * dir);
+    }
+    if (sortKey === 'status') {
+      const rank: Record<Status, number> = { resolved: 0, open: 1 };
+      return arr.sort((a, b) => (rank[a.status] - rank[b.status]) * dir);
+    }
+    return arr;
+  }, [filtered, sortKey, sortDir]);
+
+  const pageItems = sorted.slice((page - 1) * pageSize, page * pageSize);
+  const total = sorted.length;
   const pageCount = Math.max(1, Math.ceil(total / pageSize));
 
   const allSelectedFiltered = selectAllFiltered && (total > 0);
@@ -521,9 +564,7 @@ const Cases = () => {
       const tag = (e.target as HTMLElement)?.tagName?.toLowerCase();
       const isTyping = tag === 'input' || tag === 'textarea' || (e.target as HTMLElement)?.isContentEditable;
       if (isTyping) return;
-      if (e.key === '?' || (e.shiftKey && e.key === '/')) {
-        setHelpOpen(true); return;
-      }
+      // help dialog removed
       if (!pageItems.length) return;
       if (e.key === 'ArrowDown') { e.preventDefault(); setFocusedIndex((i) => Math.min(pageItems.length - 1, i + 1)); }
       if (e.key === 'ArrowUp') { e.preventDefault(); setFocusedIndex((i) => Math.max(0, i - 1)); }
@@ -535,134 +576,63 @@ const Cases = () => {
     return () => document.removeEventListener('keydown', handler);
   }, [pageItems, focusedIndex]);
 
-  // Saved views persistence
-  type SavedView = {
-    name: string;
-    status: Status;
-    categories: Category[];
-    q: string;
-    from?: string;
-    to?: string;
-    columns?: typeof visible;
-    density?: typeof density;
-  };
-  const [savedViews, setSavedViews] = React.useState<SavedView[]>([]);
-  const [activeView, setActiveView] = React.useState<string | null>(null);
-  useEffect(() => {
-    try {
-      const raw = localStorage.getItem('cases.savedViews');
-      if (raw) setSavedViews(JSON.parse(raw));
-    } catch {}
-  }, []);
-  const persistViews = (next: SavedView[]) => {
-    setSavedViews(next);
-    localStorage.setItem('cases.savedViews', JSON.stringify(next));
-  };
-  const saveCurrentAs = () => {
-    const name = window.prompt('Save current filters as view name:');
-    if (!name) return;
-    const v: SavedView = {
-      name,
-      status,
-      categories: Array.from(categories),
-      q: query,
-      from: dateRange.from?.toISOString(),
-      to: dateRange.to?.toISOString(),
-      columns: visible,
-      density,
-    };
-    const next = [...savedViews.filter((s) => s.name !== name), v];
-    persistViews(next);
-    setActiveView(name);
-  };
-  const applyView = (name: string) => {
-    const v = savedViews.find((s) => s.name === name);
-    if (!v) return;
-    setActiveView(name);
-    setStatus(v.status);
-    setCategories(new Set(v.categories));
-    setQuery(v.q);
-    setDateRange({ from: v.from ? new Date(v.from) : undefined, to: v.to ? new Date(v.to) : undefined });
-    if (v.columns) setVisible(v.columns);
-    if (v.density) setDensity(v.density);
-  };
-  const updateActiveView = () => {
-    if (!activeView) return saveCurrentAs();
-    const v: SavedView = {
-      name: activeView,
-      status,
-      categories: Array.from(categories),
-      q: query,
-      from: dateRange.from?.toISOString(),
-      to: dateRange.to?.toISOString(),
-      columns: visible,
-      density,
-    };
-    const next = [...savedViews.filter((s) => s.name !== activeView), v];
-    persistViews(next);
-  };
-
   return (
     <div className="min-h-screen bg-background flex">
       <Sidebar />
       <main className="flex-1 overflow-auto">
         <div className="w-full px-4 md:px-6 lg:px-8 py-6">
-          {/* Page header with segmented control */}
-          <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between mb-3">
+          {/* Page header */}
+          <div className="flex flex-col gap-1 mb-3">
             <div className="flex items-center gap-3">
               <div className="text-xl md:text-2xl font-semibold">Cases</div>
               <Badge variant="secondary" className="hidden md:inline-flex">{filtered.length} results</Badge>
-            </div>
-            <div>
-              <Tabs value={status} onValueChange={(v) => setStatus(v as Status)}>
-                <TabsList className="grid grid-cols-2 w-[220px]">
-                  <TabsTrigger value="open">Open</TabsTrigger>
-                  <TabsTrigger value="resolved">Resolved</TabsTrigger>
-                </TabsList>
-              </Tabs>
             </div>
           </div>
 
           {/* Toolbar */}
           <div className="sticky top-0 z-10 bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60 border-y border-border/60">
-            <div className="py-2 flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
-              <div className="flex items-center gap-2 flex-wrap">
-                <Button variant="outline" size="sm" className={categories.has("Inquiry") ? "bg-primary/10 border-primary/30" : ""} onClick={() => toggleCategory("Inquiry")}>
-                  Inquiries
-                </Button>
-                <Button variant="outline" size="sm" className={categories.has("Request") ? "bg-primary/10 border-primary/30" : ""} onClick={() => toggleCategory("Request")}>
-                  Requests
-                </Button>
-                <Button variant="outline" size="sm" className={categories.has("Complaint") ? "bg-primary/10 border-primary/30" : ""} onClick={() => toggleCategory("Complaint")}>
-                  Complaints
-                </Button>
+              <div className="py-2 flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
+                <div className="flex items-center gap-2 flex-wrap">
+                <Tabs value={status} onValueChange={(v) => setStatus(v as Status)}>
+                  <TabsList className="rounded-lg border border-border/40 bg-muted/70 p-1 flex">
+                    <TabsTrigger
+                      value="open"
+                      className="rounded-md px-3 py-1.5 text-xs font-semibold tracking-wide transition-colors data-[state=active]:bg-primary data-[state=active]:text-primary-foreground data-[state=active]:shadow-sm data-[state=inactive]:bg-transparent data-[state=inactive]:text-muted-foreground"
+                    >
+                      Open
+                    </TabsTrigger>
+                    <TabsTrigger
+                      value="resolved"
+                      className="rounded-md px-3 py-1.5 text-xs font-semibold tracking-wide transition-colors data-[state=active]:bg-primary data-[state=active]:text-primary-foreground data-[state=active]:shadow-sm data-[state=inactive]:bg-transparent data-[state=inactive]:text-muted-foreground"
+                    >
+                      Resolved
+                    </TabsTrigger>
+                  </TabsList>
+                </Tabs>
+                <div className="inline-flex h-8 items-center gap-1 rounded-full border border-border/40 bg-muted/70 px-1">
+                  {(["Inquiry", "Request", "Complaint"] as Category[]).map((name) => {
+                    const active = categories.has(name);
+                    return (
+                      <button
+                        key={name}
+                        type="button"
+                        aria-pressed={active}
+                        onClick={() => toggleCategory(name)}
+                        className={cn(
+                          "rounded-full px-3 text-xs font-medium transition-colors",
+                          active
+                            ? "bg-primary text-primary-foreground shadow-sm"
+                            : "text-muted-foreground hover:text-foreground"
+                        )}
+                      >
+                        {name}s
+                      </button>
+                    );
+                  })}
+                </div>
                 {categories.size > 0 && (
                   <Button variant="ghost" size="sm" onClick={clearFilters} className="text-muted-foreground">Clear</Button>
                 )}
-                {/* Saved views (persisted) */}
-                <DropdownMenu>
-                  <DropdownMenuTrigger asChild>
-                    <Button variant="outline" size="sm" className="gap-2">
-                      <Layers3 className="w-4 h-4" />
-                      {activeView ? activeView : 'Saved Views'}
-                      <ChevronDown className="w-4 h-4" />
-                    </Button>
-                  </DropdownMenuTrigger>
-                  <DropdownMenuContent align="start">
-                    <DropdownMenuLabel>My Views</DropdownMenuLabel>
-                    {savedViews.length === 0 && (
-                      <DropdownMenuItem disabled>No views saved</DropdownMenuItem>
-                    )}
-                    {savedViews.map((v) => (
-                      <DropdownMenuItem key={v.name} onClick={() => applyView(v.name)}>{v.name}</DropdownMenuItem>
-                    ))}
-                    <DropdownMenuSeparator />
-                    <DropdownMenuItem onClick={saveCurrentAs}>Save current as…</DropdownMenuItem>
-                    <DropdownMenuItem onClick={updateActiveView} disabled={!activeView}>Update “{activeView || '—'}”</DropdownMenuItem>
-                    <DropdownMenuSeparator />
-                    <DropdownMenuItem onClick={() => { persistViews([]); setActiveView(null); }}>Clear all saved</DropdownMenuItem>
-                  </DropdownMenuContent>
-                </DropdownMenu>
               </div>
               <div className="flex items-center gap-2 w-full md:w-auto">
                 {/* Date range */}
@@ -751,72 +721,46 @@ const Cases = () => {
                     </Button>
                   </DropdownMenuTrigger>
                   <DropdownMenuContent align="end">
-                    {Object.entries(visible)
-                      .filter(([key]) => key !== 'assignee' && key !== 'unread')
-                      .map(([key, val]) => (
+                    {[
+                      ["id", "Case ID"],
+                      ["priority", "Priority"],
+                      ["type", "Type"],
+                      ["title", "Case Title"],
+                      ["description", "Description"],
+                      ["status", "Status"],
+                      ["customer", "Customer"],
+                      ["started", "Started"],
+                    ].map(([key, label]) => (
                       <DropdownMenuCheckboxItem
                         key={key}
-                        checked={val}
-                        onCheckedChange={(v) => setVisible((prev) => ({ ...prev, [key]: Boolean(v) }))}
+                        checked={(visible as any)[key]}
+                        onCheckedChange={(v) => setVisible((prev) => ({ ...(prev as any), [key]: Boolean(v) }))}
                       >
-                        {key.charAt(0).toUpperCase() + key.slice(1)}
+                        {label}
                       </DropdownMenuCheckboxItem>
                     ))}
                   </DropdownMenuContent>
                 </DropdownMenu>
 
-                {/* Density toggle */}
-                <DropdownMenu>
-                  <DropdownMenuTrigger asChild>
-                    <Button variant="outline" size="sm" className="gap-2">
-                      <MoreHorizontal className="w-4 h-4" /> View
-                    </Button>
-                  </DropdownMenuTrigger>
-                  <DropdownMenuContent align="end">
-                    <DropdownMenuCheckboxItem checked={density === "comfortable"} onCheckedChange={() => setDensity("comfortable")}>
-                      Comfortable
-                    </DropdownMenuCheckboxItem>
-                    <DropdownMenuCheckboxItem checked={density === "compact"} onCheckedChange={() => setDensity("compact")}>
-                      Compact
-                    </DropdownMenuCheckboxItem>
-                  </DropdownMenuContent>
-                </DropdownMenu>
+                
 
-                {/* Help & Shortcuts */}
-                <Dialog open={helpOpen} onOpenChange={setHelpOpen}>
-                  <DialogTrigger asChild>
-                    <Button variant="outline" size="sm" className="w-9 p-0">?</Button>
-                  </DialogTrigger>
-                  <DialogContent>
-                    <DialogHeader>
-                      <DialogTitle>Keyboard Shortcuts</DialogTitle>
-                    </DialogHeader>
-                    <div className="text-sm space-y-1">
-                      <div>↑/↓: Navigate list</div>
-                      <div>Enter: Open details</div>
-                      <div>A: Assign</div>
-                      <div>R: Resolve</div>
-                      <div>?: Toggle this help</div>
-                    </div>
-                  </DialogContent>
-                </Dialog>
-
-                {/* Bulk actions (enabled on selection) */}
-                <DropdownMenu>
-                  <DropdownMenuTrigger asChild>
-                    <Button size="sm" disabled={selectedCount === 0} className="gap-2">
-                      <User className="w-4 h-4" /> Bulk actions {selectedCount > 0 ? `(${selectedCount})` : ''}
-                      <ChevronDown className="w-4 h-4" />
-                    </Button>
-                  </DropdownMenuTrigger>
-                  <DropdownMenuContent align="end">
-                    <DropdownMenuItem disabled={selectedCount === 0}>Assign…</DropdownMenuItem>
-                    <DropdownMenuItem disabled={selectedCount === 0}>Resolve</DropdownMenuItem>
-                    <DropdownMenuItem disabled={selectedCount === 0}>Mark as read</DropdownMenuItem>
-                    <DropdownMenuSeparator />
-                    <DropdownMenuItem disabled={selectedCount === 0}>Archive</DropdownMenuItem>
-                  </DropdownMenuContent>
-                </DropdownMenu>
+                {selectedCount > 0 && (
+                  <DropdownMenu>
+                    <DropdownMenuTrigger asChild>
+                      <Button size="sm" className="gap-2">
+                        <User className="w-4 h-4" /> Bulk actions ({selectedCount})
+                        <ChevronDown className="w-4 h-4" />
+                      </Button>
+                    </DropdownMenuTrigger>
+                    <DropdownMenuContent align="end">
+                      <DropdownMenuItem>Assign…</DropdownMenuItem>
+                      <DropdownMenuItem>Resolve</DropdownMenuItem>
+                      <DropdownMenuItem>Mark as read</DropdownMenuItem>
+                      <DropdownMenuSeparator />
+                      <DropdownMenuItem>Archive</DropdownMenuItem>
+                    </DropdownMenuContent>
+                  </DropdownMenu>
+                )}
               </div>
             </div>
           </div>
@@ -835,13 +779,62 @@ const Cases = () => {
                         <Checkbox checked={allSelectedOnPage || allSelectedFiltered} onCheckedChange={toggleHeaderSelect} aria-label="Select all filtered" className={someSelectedOnPage ? "data-[state=indeterminate]:opacity-100" : ""} />
                       </TableHead>
                       {visible.id && <TableHead className="w-[100px]">Case ID</TableHead>}
-                      {visible.priority && <TableHead className="w-[110px] text-center">Priority</TableHead>}
+                      {visible.priority && (
+                        <TableHead className="w-[110px]">
+                          <button
+                            type="button"
+                            className="inline-flex items-center gap-1 font-medium hover:text-foreground"
+                            onClick={() => toggleSort('priority')}
+                            aria-label="Sort by priority"
+                          >
+                            Priority
+                            {sortKey === 'priority' ? (
+                              sortDir === 'asc' ? <ArrowUp className="w-3.5 h-3.5" /> : <ArrowDown className="w-3.5 h-3.5" />
+                            ) : (
+                              <ArrowUpDown className="w-3.5 h-3.5 opacity-50" />
+                            )}
+                          </button>
+                        </TableHead>
+                      )}
+                      {visible.type && <TableHead className="w-[120px]">Type</TableHead>}
                       {visible.title && <TableHead className="min-w-[220px]">Case Title</TableHead>}
                       {visible.description && <TableHead className="min-w-[260px]">Description</TableHead>}
-                      {visible.status && <TableHead className="w-[120px]">Status</TableHead>}
+                      {visible.status && (
+                        <TableHead className="w-[120px]">
+                          <button
+                            type="button"
+                            className="inline-flex items-center gap-1 font-medium hover:text-foreground"
+                            onClick={() => toggleSort('status')}
+                            aria-label="Sort by status"
+                          >
+                            Status
+                            {sortKey === 'status' ? (
+                              sortDir === 'asc' ? <ArrowUp className="w-3.5 h-3.5" /> : <ArrowDown className="w-3.5 h-3.5" />
+                            ) : (
+                              <ArrowUpDown className="w-3.5 h-3.5 opacity-50" />
+                            )}
+                          </button>
+                        </TableHead>
+                      )}
                       {visible.customer && <TableHead className="min-w-[200px]">Customer</TableHead>}
                       {visible.channel && <TableHead className="w-[120px]">Channel</TableHead>}
-                      {visible.started && <TableHead className="w-[120px] text-right">Started</TableHead>}
+                      {visible.started && (
+                        <TableHead className="w-[120px] text-right">
+                          <button
+                            type="button"
+                            className="flex w-full items-center justify-end gap-1 font-medium hover:text-foreground"
+                            onClick={() => toggleSort('started')}
+                            aria-label="Sort by started"
+                          >
+                            Started
+                            {sortKey === 'started' ? (
+                              sortDir === 'asc' ? <ArrowUp className="w-3.5 h-3.5" /> : <ArrowDown className="w-3.5 h-3.5" />
+                            ) : (
+                              <ArrowUpDown className="w-3.5 h-3.5 opacity-50" />
+                            )}
+                          </button>
+                        </TableHead>
+                      )}
                       {visible.actions && <TableHead className="w-8" />}
                     </TableRow>
                   </TableHeader>
@@ -852,6 +845,7 @@ const Cases = () => {
                         <TableCell className="w-8"><Skeleton className="h-4 w-4 rounded" /></TableCell>
                         {visible.id && <TableCell><Skeleton className="h-4 w-16" /></TableCell>}
                         {visible.priority && <TableCell><Skeleton className="h-5 w-16 rounded-full" /></TableCell>}
+                        {visible.type && <TableCell><Skeleton className="h-3 w-16" /></TableCell>}
                         {visible.title && <TableCell><Skeleton className="h-3 w-48" /></TableCell>}
                         {visible.description && <TableCell><Skeleton className="h-3 w-64" /></TableCell>}
                         {visible.status && <TableCell><Skeleton className="h-3 w-14" /></TableCell>}
@@ -879,6 +873,7 @@ const Cases = () => {
                         (visible.customer ? 1 : 0) +
                         (visible.title ? 1 : 0) +
                         (visible.description ? 1 : 0) +
+                        (visible.type ? 1 : 0) +
                         (visible.priority ? 1 : 0) +
                         (visible.status ? 1 : 0) +
                         (visible.channel ? 1 : 0) +
@@ -921,8 +916,16 @@ const Cases = () => {
                         </TableCell>
                         {visible.id && <TableCell className="font-mono text-xs text-muted-foreground">{item.id}</TableCell>}
                         {visible.priority && (
-                          <TableCell className="text-center">
-                            <Badge className={`${priorityColor(item.priority)} capitalize`}>{item.priority}</Badge>
+                          <TableCell className="whitespace-nowrap">
+                            <span className="inline-flex items-center gap-2 text-muted-foreground capitalize">
+                              <span className={`h-2 w-2 rounded-full ${priorityDot(item.priority)}`} aria-hidden="true" />
+                              {item.priority}
+                            </span>
+                          </TableCell>
+                        )}
+                        {visible.type && (
+                          <TableCell className="whitespace-nowrap">
+                            <span className="text-muted-foreground capitalize">{item.category}</span>
                           </TableCell>
                         )}
                         {visible.title && (
