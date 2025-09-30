@@ -1,6 +1,7 @@
 import React from "react";
 import { Link } from "react-router-dom";
 import {
+  Building2,
   CalendarDays,
   ChevronDown,
   ChevronRight,
@@ -14,6 +15,8 @@ import {
   Search,
   User,
   Users,
+  Plus,
+  Upload,
   CheckCircle2,
   AlertTriangle,
   Phone,
@@ -52,7 +55,7 @@ import {
   PaginationNext,
   PaginationPrevious,
 } from "@/components/ui/pagination";
-import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
+import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { useEffect } from "react";
 import { cn } from "@/lib/utils";
 
@@ -81,8 +84,10 @@ const Sidebar = ({ active = "Cases" as const }) => {
   const items = [
     { label: "Home", to: "/dashboard" },
     { label: "Cases", to: "/dashboard/cases" },
+    { label: "Leads", to: "/dashboard/leads" },
     { label: "Customers", to: "/dashboard/customers" },
     { label: "Agents", to: "/dashboard/agents" },
+    { label: "Knowledge", to: "/dashboard/knowledge" },
   ] as const;
   return (
     <aside className="hidden md:flex w-56 shrink-0 border-r border-border/70 bg-card/60 backdrop-blur-sm min-h-screen sticky top-0">
@@ -123,35 +128,22 @@ const Sidebar = ({ active = "Cases" as const }) => {
 const priorityColor = (p: Priority) => {
   switch (p) {
     case "low":
-      return "bg-muted text-muted-foreground";
+      return "bg-muted/40 text-muted-foreground border border-muted-foreground/20";
     case "medium":
-      return "bg-blue-500/10 text-blue-600 dark:text-blue-400";
+      return "bg-blue-500/15 text-blue-600 dark:text-blue-300 border border-blue-500/25";
     case "high":
-      return "bg-amber-500/10 text-amber-700 dark:text-amber-300";
+      return "bg-amber-400/20 text-amber-700 dark:text-amber-200 border border-amber-400/30";
     case "urgent":
-      return "bg-rose-500/10 text-rose-600 dark:text-rose-300";
-  }
-};
-
-const priorityDot = (p: Priority) => {
-  switch (p) {
-    case "low":
-      return "bg-muted-foreground/40";
-    case "medium":
-      return "bg-blue-500/80 dark:bg-blue-400/80";
-    case "high":
-      return "bg-amber-500/80 dark:bg-amber-300/80";
-    case "urgent":
-      return "bg-rose-500/80 dark:bg-rose-300/80";
+      return "bg-rose-500/20 text-rose-600 dark:text-rose-200 border border-rose-500/30";
   }
 };
 
 const statusColor = (s: Status) => {
   switch (s) {
     case "open":
-      return "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20";
+      return "bg-emerald-500/15 text-emerald-600 dark:text-emerald-300 border border-emerald-500/30";
     case "resolved":
-      return "bg-muted text-muted-foreground border border-border/60";
+      return "bg-muted/40 text-muted-foreground border border-muted-foreground/20";
   }
 };
 
@@ -337,13 +329,36 @@ const formatCustomerId = (item: CaseItem | null) => {
   return `CUST-${numeric.toString().padStart(4, "0")}`;
 };
 
+const StatCard = React.memo(
+  ({
+    label,
+    value,
+    delta,
+  }: {
+    label: string;
+    value: string;
+    delta?: string;
+  }) => {
+    return (
+      <Card className="border border-border/70 bg-muted/70 backdrop-blur">
+        <div className="p-5 space-y-2">
+          <span className="text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground/70">{label}</span>
+          <div className="flex items-baseline justify-between gap-2">
+            <span className="text-3xl font-semibold tracking-tight text-foreground">{value}</span>
+            {delta && <span className="text-xs font-medium text-muted-foreground">{delta}</span>}
+          </div>
+        </div>
+      </Card>
+    );
+  }
+);
+
 const Cases = () => {
-  const [status, setStatus] = React.useState<Status>("open");
-  const [categories, setCategories] = React.useState<Set<Category>>(new Set());
+  const [statusFilter, setStatusFilter] = React.useState<"all" | Status>("all");
+  const [categoryFilter, setCategoryFilter] = React.useState<"all" | Category>("all");
   const [query, setQuery] = React.useState("");
   const debouncedQuery = useDebouncedValue(query, 300);
-  const [dateOpen, setDateOpen] = React.useState(false);
-  const [dateRange, setDateRange] = React.useState<{ from: Date | undefined; to: Date | undefined }>({ from: undefined, to: undefined });
+  const [dateFilter, setDateFilter] = React.useState<"7" | "14" | "30" | "all">("7");
   const [visible, setVisible] = React.useState({
     id: true,
     customer: true,
@@ -363,9 +378,21 @@ const Cases = () => {
   const [deselectedIds, setDeselectedIds] = React.useState<Set<string>>(new Set());
   const [density, setDensity] = React.useState<"comfortable" | "compact">("comfortable");
   const [detailsOpen, setDetailsOpen] = React.useState(false);
+  const [viewportWidth, setViewportWidth] = React.useState(() => (typeof window !== "undefined" ? window.innerWidth : 0));
   const [active, setActive] = React.useState<CaseItem | null>(null);
   
   const [focusedIndex, setFocusedIndex] = React.useState<number>(-1);
+
+  const openCasesCount = React.useMemo(() => seedCases.filter((c) => c.status === "open").length, []);
+  const urgentCasesCount = React.useMemo(() => seedCases.filter((c) => c.priority === "urgent" && c.status === "open").length, []);
+  const avgOpenAge = React.useMemo(() => {
+    const openCases = seedCases.filter((c) => c.status === "open");
+    if (!openCases.length) return "—";
+    const now = Date.now();
+    const avgMs = openCases.reduce((acc, item) => acc + (now - new Date(item.startedAt).getTime()), 0) / openCases.length;
+    const hours = Math.max(1, Math.round(avgMs / (1000 * 60 * 60)));
+    return `${hours}h`;
+  }, []);
 
   // Column visibility persistence
   React.useEffect(() => {
@@ -391,19 +418,20 @@ const Cases = () => {
     localStorage.setItem("cases.columns", JSON.stringify(visible));
   }, [visible]);
 
-  const toggleCategory = (c: Category) => {
-    setCategories((prev) => {
-      const next = new Set(prev);
-      if (next.has(c)) next.delete(c);
-      else next.add(c);
-      return next;
-    });
-  };
+  const categoryOptions: { value: "all" | Category; label: string }[] = React.useMemo(
+    () => [
+      { value: "all", label: "All types" },
+      { value: "Inquiry", label: "Inquiries" },
+      { value: "Request", label: "Requests" },
+      { value: "Complaint", label: "Complaints" },
+    ],
+    []
+  );
 
   const clearFilters = () => {
-    setCategories(new Set());
+    setCategoryFilter("all");
     setQuery("");
-    setDateRange({ from: undefined, to: undefined });
+    setDateFilter("all");
   };
 
   const pageSize = 25;
@@ -416,11 +444,16 @@ const Cases = () => {
     setPage(1);
   };
   const [page, setPage] = React.useState(1);
-  React.useEffect(() => setPage(1), [status, categories, debouncedQuery, dateRange]);
+  React.useEffect(() => setPage(1), [statusFilter, categoryFilter, debouncedQuery, dateFilter]);
 
   const filtered = React.useMemo(() => {
-    let arr = seedCases.filter((c) => c.status === status);
-    if (categories.size > 0) arr = arr.filter((c) => categories.has(c.category));
+    let arr = seedCases;
+    if (statusFilter !== "all") {
+      arr = arr.filter((c) => c.status === statusFilter);
+    }
+    if (categoryFilter !== "all") {
+      arr = arr.filter((c) => c.category === categoryFilter);
+    }
     if (debouncedQuery) {
       const q = debouncedQuery.toLowerCase();
       arr = arr.filter(
@@ -431,15 +464,14 @@ const Cases = () => {
           c.customer.email.toLowerCase().includes(q)
       );
     }
-    if (dateRange.from && dateRange.to) {
-      arr = arr.filter((c) => {
-        const d = new Date(c.startedAt).getTime();
-        return d >= dateRange.from!.getTime() && d <= dateRange.to!.getTime();
-      });
+    if (dateFilter !== "all") {
+      const days = Number(dateFilter);
+      const cutoff = Date.now() - days * 24 * 60 * 60 * 1000;
+      arr = arr.filter((c) => new Date(c.startedAt).getTime() >= cutoff);
     }
     arr.sort((a, b) => new Date(b.startedAt).getTime() - new Date(a.startedAt).getTime());
     return arr;
-  }, [status, categories, debouncedQuery, dateRange]);
+  }, [statusFilter, categoryFilter, debouncedQuery, dateFilter]);
 
   const sorted = React.useMemo(() => {
     const arr = [...filtered];
@@ -487,7 +519,7 @@ const Cases = () => {
     setDetailsOpen(true);
   };
 
-  const densityRow = density === "compact" ? "h-10" : "h-12";
+  const densityRow = density === "compact" ? "h-11" : "h-14";
 
   const ActiveIcon = ({ channel }: { channel: Channel }) => {
     const Icon = channelIcon(channel);
@@ -506,7 +538,20 @@ const Cases = () => {
     return () => mq.removeEventListener("change", onChange);
   }, []);
 
-  const dialogHeightClass = isNarrow ? "h-[95vh]" : "h-[80vh]";
+  React.useEffect(() => {
+    if (typeof window === "undefined") return;
+    const onResize = () => setViewportWidth(window.innerWidth);
+    window.addEventListener("resize", onResize);
+    return () => window.removeEventListener("resize", onResize);
+  }, []);
+
+  const panelWidth = React.useMemo(() => {
+    if (isNarrow || !viewportWidth) return undefined;
+    const sidebar = 264;
+    const gutter = 24;
+    const calculated = Math.max(viewportWidth - sidebar - gutter, 560);
+    return `${Math.min(Math.round(calculated), 1080)}px`;
+  }, [isNarrow, viewportWidth]);
   const caseType = React.useMemo(() => deriveCaseType(active), [active]);
   const diagnoses = AI_DIAGNOSES[caseType] || [];
   const aiActions = AI_ACTIONS_TAKEN[caseType] || [];
@@ -554,7 +599,7 @@ const Cases = () => {
       <div className={cn("text-xs font-semibold uppercase tracking-wide text-muted-foreground", headingClassName)}>
         {title}
       </div>
-      <Card className={cn("border border-border/60 bg-muted/15 px-3 py-3", cardClassName)}>{children}</Card>
+      <Card className={cn("border border-border/70 bg-muted/70 backdrop-blur px-3 py-3", cardClassName)}>{children}</Card>
     </div>
   );
 
@@ -581,142 +626,105 @@ const Cases = () => {
       <Sidebar />
       <main className="flex-1 overflow-auto">
         <div className="w-full px-4 md:px-6 lg:px-8 py-6">
-          {/* Page header */}
-          <div className="flex flex-col gap-1 mb-3">
-            <div className="flex items-center gap-3">
-              <div className="text-xl md:text-2xl font-semibold">Cases</div>
-              <Badge variant="secondary" className="hidden md:inline-flex">{filtered.length} results</Badge>
-            </div>
-          </div>
-
-          {/* Toolbar */}
-          <div className="sticky top-0 z-10 bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60 border-y border-border/60">
-              <div className="py-2 flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
-                <div className="flex items-center gap-2 flex-wrap">
-                <Tabs value={status} onValueChange={(v) => setStatus(v as Status)}>
-                  <TabsList className="rounded-lg border border-border/40 bg-muted/70 p-1 flex">
-                    <TabsTrigger
-                      value="open"
-                      className="rounded-md px-3 py-1.5 text-xs font-semibold tracking-wide transition-colors data-[state=active]:bg-primary data-[state=active]:text-primary-foreground data-[state=active]:shadow-sm data-[state=inactive]:bg-transparent data-[state=inactive]:text-muted-foreground"
-                    >
-                      Open
-                    </TabsTrigger>
-                    <TabsTrigger
-                      value="resolved"
-                      className="rounded-md px-3 py-1.5 text-xs font-semibold tracking-wide transition-colors data-[state=active]:bg-primary data-[state=active]:text-primary-foreground data-[state=active]:shadow-sm data-[state=inactive]:bg-transparent data-[state=inactive]:text-muted-foreground"
-                    >
-                      Resolved
-                    </TabsTrigger>
-                  </TabsList>
-                </Tabs>
-                <div className="inline-flex h-8 items-center gap-1 rounded-full border border-border/40 bg-muted/70 px-1">
-                  {(["Inquiry", "Request", "Complaint"] as Category[]).map((name) => {
-                    const active = categories.has(name);
-                    return (
-                      <button
-                        key={name}
-                        type="button"
-                        aria-pressed={active}
-                        onClick={() => toggleCategory(name)}
-                        className={cn(
-                          "rounded-full px-3 text-xs font-medium transition-colors",
-                          active
-                            ? "bg-primary text-primary-foreground shadow-sm"
-                            : "text-muted-foreground hover:text-foreground"
-                        )}
-                      >
-                        {name}s
-                      </button>
-                    );
-                  })}
-                </div>
-                {categories.size > 0 && (
-                  <Button variant="ghost" size="sm" onClick={clearFilters} className="text-muted-foreground">Clear</Button>
-                )}
+          <section className="flex flex-col gap-6">
+            <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
+              <div className="flex items-center gap-3">
+                <div className="text-xl md:text-2xl font-semibold">Cases</div>
+                <Badge variant="secondary" className="hidden md:inline-flex">{filtered.length} results</Badge>
               </div>
-              <div className="flex items-center gap-2 w-full md:w-auto">
-                {/* Date range */}
-                <Popover open={dateOpen} onOpenChange={setDateOpen}>
-                  <PopoverTrigger asChild>
-                    <Button variant="outline" size="sm" className="gap-2 w-full md:w-auto justify-start">
-                      <CalendarDays className="w-4 h-4" />
-                      {dateRange.from && dateRange.to ? (
-                        <span>
-                          {dateRange.from.toLocaleDateString()} – {dateRange.to.toLocaleDateString()}
-                        </span>
-                      ) : (
-                        <span>Date range</span>
-                      )}
+              <div className="flex items-center gap-2">
+                <Button className="gap-2">
+                  <Plus className="w-4 h-4" />
+                  New Case
+                </Button>
+                <DropdownMenu>
+                  <DropdownMenuTrigger asChild>
+                    <Button variant="outline" className="gap-2 text-sm">
+                      <Upload className="w-4 h-4" />
+                      Import Cases
+                      <ChevronDown className="w-4 h-4 text-muted-foreground" />
                     </Button>
-                  </PopoverTrigger>
-                  <PopoverContent className="w-auto p-3" align="end">
-                    <div className="flex gap-3">
-                      <div>
-                        <div className="text-xs text-muted-foreground mb-1">Pick range</div>
-                        <Calendar
-                          initialFocus
-                          mode="range"
-                          selected={dateRange as any}
-                          onSelect={(r: any) => setDateRange({ from: r?.from, to: r?.to })}
-                          numberOfMonths={2}
-                        />
-                      </div>
-                      <div className="w-44 space-y-2">
-                        <div className="text-xs text-muted-foreground">Presets</div>
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          className="w-full justify-start"
-                          onClick={() => {
-                            const now = new Date();
-                            setDateRange({ from: now, to: now });
-                          }}
-                        >
-                          Today
-                        </Button>
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          className="w-full justify-start"
-                          onClick={() => {
-                            const to = new Date();
-                            const from = new Date(Date.now() - 1000 * 60 * 60 * 24 * 7);
-                            setDateRange({ from, to });
-                          }}
-                        >
-                          Last 7 days
-                        </Button>
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          className="w-full justify-start"
-                          onClick={() => {
-                            const to = new Date();
-                            const from = new Date(Date.now() - 1000 * 60 * 60 * 24 * 30);
-                            setDateRange({ from, to });
-                          }}
-                        >
-                          Last 30 days
-                        </Button>
-                        <Separator />
-                        <Button variant="outline" size="sm" className="w-full" onClick={() => setDateRange({ from: undefined, to: undefined })}>
-                          Clear
-                        </Button>
-                      </div>
-                    </div>
-                  </PopoverContent>
-                </Popover>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="end" className="w-44">
+                    <DropdownMenuItem>Upload CSV</DropdownMenuItem>
+                    <DropdownMenuItem>Sync HubSpot</DropdownMenuItem>
+                    <DropdownMenuItem>Connect Salesforce</DropdownMenuItem>
+                    <DropdownMenuSeparator />
+                    <DropdownMenuItem>API ingest</DropdownMenuItem>
+                  </DropdownMenuContent>
+                </DropdownMenu>
+              </div>
+            </div>
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+              <StatCard label="Open cases" value={`${openCasesCount}`} delta="Target < 15" />
+              <StatCard label="Urgent cases" value={`${urgentCasesCount}`} delta={urgentCasesCount ? `${urgentCasesCount} need escalation` : "All clear"} />
+              <StatCard label="Avg. time open" value={avgOpenAge} delta="Goal < 12h" />
+            </div>
 
-                {/* Search */}
+            {/* Toolbar */}
+            <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+              <div className="flex flex-col gap-3 md:flex-row md:items-center md:flex-wrap">
                 <div className="relative w-full md:w-64">
                   <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
-                  <Input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search name, email, text…" className="pl-9 bg-input border-0" />
+                  <Input
+                    value={query}
+                    onChange={(e) => setQuery(e.target.value)}
+                    placeholder="Search name, email, text…"
+                    className="pl-9 border border-border/60 bg-muted/70 focus-visible:ring-0 focus-visible:border-border"
+                  />
                 </div>
-
+                <DropdownMenu>
+                  <DropdownMenuTrigger asChild>
+                    <Button variant="outline" className="gap-2 text-sm focus-visible:outline-none focus-visible:ring-0">
+                      <Building2 className="w-4 h-4" />
+                      {statusFilter === "all" ? "All Cases" : statusFilter === "open" ? "Open" : "Resolved"}
+                      <ChevronDown className="w-4 h-4 text-muted-foreground" />
+                    </Button>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="start" className="w-40">
+                    <DropdownMenuItem onClick={() => setStatusFilter("all")}>All Cases</DropdownMenuItem>
+                    <DropdownMenuItem onClick={() => setStatusFilter("open")}>Open</DropdownMenuItem>
+                    <DropdownMenuItem onClick={() => setStatusFilter("resolved")}>Resolved</DropdownMenuItem>
+                  </DropdownMenuContent>
+                </DropdownMenu>
+                <DropdownMenu>
+                  <DropdownMenuTrigger asChild>
+                    <Button variant="outline" className="gap-2 text-sm focus-visible:outline-none focus-visible:ring-0">
+                      <Filter className="w-4 h-4" />
+                      {categoryOptions.find((option) => option.value === categoryFilter)?.label ?? "All types"}
+                      <ChevronDown className="w-4 h-4 text-muted-foreground" />
+                    </Button>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="start" className="w-44">
+                    {categoryOptions.map((option) => (
+                      <DropdownMenuItem key={option.value} onClick={() => setCategoryFilter(option.value)}>
+                        {option.label}
+                      </DropdownMenuItem>
+                    ))}
+                  </DropdownMenuContent>
+                </DropdownMenu>
+                <DropdownMenu>
+                  <DropdownMenuTrigger asChild>
+                    <Button variant="outline" className="gap-2 text-sm focus-visible:outline-none focus-visible:ring-0">
+                      <CalendarDays className="w-4 h-4" />
+                      {dateFilter === "all" ? "All time" : `Last ${dateFilter} days`}
+                      <ChevronDown className="w-4 h-4 text-muted-foreground" />
+                    </Button>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="start" className="w-36">
+                    <DropdownMenuItem onClick={() => setDateFilter("7")}>Last 7 days</DropdownMenuItem>
+                    <DropdownMenuItem onClick={() => setDateFilter("14")}>Last 14 days</DropdownMenuItem>
+                    <DropdownMenuItem onClick={() => setDateFilter("30")}>Last 30 days</DropdownMenuItem>
+                    <DropdownMenuSeparator />
+                    <DropdownMenuItem onClick={() => setDateFilter("all")}>All time</DropdownMenuItem>
+                  </DropdownMenuContent>
+                </DropdownMenu>
+              </div>
+              <div className="flex items-center gap-2">
                 {/* Column visibility */}
                 <DropdownMenu>
                   <DropdownMenuTrigger asChild>
-                    <Button variant="outline" size="sm" className="gap-2">
+                    <Button variant="outline" className="gap-2 text-sm focus-visible:outline-none focus-visible:ring-0">
                       <ListFilter className="w-4 h-4" /> Columns
                     </Button>
                   </DropdownMenuTrigger>
@@ -742,8 +750,6 @@ const Cases = () => {
                   </DropdownMenuContent>
                 </DropdownMenu>
 
-                
-
                 {selectedCount > 0 && (
                   <DropdownMenu>
                     <DropdownMenuTrigger asChild>
@@ -763,17 +769,17 @@ const Cases = () => {
                 )}
               </div>
             </div>
-          </div>
 
           {/* Table */}
-          <div className="mt-3">
-            {/* Error area reserved for future API errors */}
-            <Card className="border border-border bg-card/60">
-              {/* Table on wide screens; Card list on narrow */}
-              {!isNarrow ? (
-              <div className="relative overflow-x-auto overflow-y-auto max-h-[70vh]">
-                <Table className="[&_th]:px-3 [&_td]:px-3 [&_th]:py-2.5 [&_td]:py-2.5">
-                  <TableHeader className="sticky top-0 bg-card/90 backdrop-blur z-10">
+          <div className="grid grid-cols-12 gap-4">
+            <div className="col-span-12 space-y-4">
+              {/* Error area reserved for future API errors */}
+              <Card className="border border-border/70 bg-card/90 shadow-sm backdrop-blur">
+                {/* Table on wide screens; Card list on narrow */}
+                {!isNarrow ? (
+                <div className="relative overflow-x-auto overflow-y-auto max-h-[70vh]">
+                  <Table className="rounded-xl border border-border/70 bg-background/60 shadow-sm backdrop-blur [&_th]:px-3 [&_td]:px-3 [&_th:first-child]:pl-4 [&_td:first-child]:pl-4 [&_th:last-child]:pr-4 [&_td:last-child]:pr-4 [&_th]:py-3 [&_td]:py-3">
+                  <TableHeader className="sticky top-0 z-10 bg-muted/70 backdrop-blur border-b border-border/80">
                     <TableRow className="hover:bg-transparent">
                       <TableHead className="w-8">
                         <Checkbox checked={allSelectedOnPage || allSelectedFiltered} onCheckedChange={toggleHeaderSelect} aria-label="Select all filtered" className={someSelectedOnPage ? "data-[state=indeterminate]:opacity-100" : ""} />
@@ -797,8 +803,8 @@ const Cases = () => {
                         </TableHead>
                       )}
                       {visible.type && <TableHead className="w-[120px]">Type</TableHead>}
-                      {visible.title && <TableHead className="min-w-[220px]">Case Title</TableHead>}
-                      {visible.description && <TableHead className="min-w-[260px]">Description</TableHead>}
+                      {visible.title && <TableHead className="w-[220px]">Case Title</TableHead>}
+                      {visible.description && <TableHead className="w-[320px]">Description</TableHead>}
                       {visible.status && (
                         <TableHead className="w-[120px]">
                           <button
@@ -882,7 +888,7 @@ const Cases = () => {
                       }>
                         <div className="p-6 text-sm text-muted-foreground flex items-center justify-between">
                           <div>No cases match your filters.</div>
-                          {(categories.size > 0 || query || (dateRange.from && dateRange.to)) && (
+                          {(categoryFilter !== "all" || debouncedQuery || dateFilter !== "all") && (
                             <Button variant="ghost" size="sm" onClick={clearFilters}>
                               Clear all
                             </Button>
@@ -892,8 +898,12 @@ const Cases = () => {
                     </TableRow>
                   ) : (
                     pageItems.map((item) => (
-                      <TableRow key={item.id} className={`${densityRow} cursor-pointer ${focusedIndex >= 0 && pageItems[focusedIndex]?.id === item.id ? 'ring-1 ring-primary' : ''}`} onClick={() => openDetails(item)}>
-                        <TableCell className="w-8" onClick={(e) => e.stopPropagation()}>
+                      <TableRow key={item.id} className={cn(
+                        densityRow,
+                        "group cursor-pointer bg-transparent transition-colors hover:bg-muted/60 dark:hover:bg-white/10 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-offset-0 focus-visible:ring-primary",
+                        focusedIndex >= 0 && pageItems[focusedIndex]?.id === item.id ? "ring-1 ring-primary" : ""
+                      )} onClick={() => openDetails(item)}>
+                        <TableCell className="w-10" onClick={(e) => e.stopPropagation()}>
                           <Checkbox
                             checked={allSelectedFiltered ? !deselectedIds.has(item.id) : selected.has(item.id)}
                             onCheckedChange={(v) => {
@@ -914,58 +924,59 @@ const Cases = () => {
                             aria-label={`Select ${item.id}`}
                           />
                         </TableCell>
-                        {visible.id && <TableCell className="font-mono text-xs text-muted-foreground">{item.id}</TableCell>}
+                        {visible.id && <TableCell className="font-mono text-xs text-foreground/70">{item.id}</TableCell>}
                         {visible.priority && (
                           <TableCell className="whitespace-nowrap">
-                            <span className="inline-flex items-center gap-2 text-muted-foreground capitalize">
-                              <span className={`h-2 w-2 rounded-full ${priorityDot(item.priority)}`} aria-hidden="true" />
+                            <Badge className={cn("capitalize", priorityColor(item.priority))}>
                               {item.priority}
-                            </span>
+                            </Badge>
                           </TableCell>
                         )}
                         {visible.type && (
                           <TableCell className="whitespace-nowrap">
-                            <span className="text-muted-foreground capitalize">{item.category}</span>
+                            <span className="text-foreground/80 capitalize font-medium">{item.category}</span>
                           </TableCell>
                         )}
                         {visible.title && (
-                          <TableCell className="max-w-[320px]">
-                            <div className="truncate font-medium">{item.title}</div>
+                          <TableCell className="w-[220px] pr-1">
+                            <div className="truncate font-semibold text-foreground">{item.title}</div>
                           </TableCell>
                         )}
                         {visible.description && (
-                          <TableCell className="max-w-[420px]">
-                            <div className="truncate text-muted-foreground">{item.snippet}</div>
+                          <TableCell className="w-[320px] pl-1">
+                            <div className="truncate text-foreground/70">{item.snippet}</div>
                           </TableCell>
                         )}
                         {visible.status && (
-                          <TableCell className="capitalize">
-                            {item.status}
+                          <TableCell className="whitespace-nowrap">
+                            <Badge className={cn("capitalize", statusColor(item.status))}>{item.status}</Badge>
                           </TableCell>
                         )}
                         {visible.customer && (
                           <TableCell className="max-w-[240px]">
-                            <div className="flex items-center gap-2 min-w-0">
-                              <Avatar className="h-8 w-8">
+                            <div className="flex items-center gap-3 min-w-0">
+                              <Avatar className="h-9 w-9 shadow-sm">
                                 {item.customer.avatar && <AvatarImage src={item.customer.avatar} />}
                                 <AvatarFallback>{item.customer.name.slice(0, 2).toUpperCase()}</AvatarFallback>
                               </Avatar>
                               <div className="leading-tight min-w-0">
-                                <div className="text-sm font-medium truncate">{item.customer.name}</div>
-                                <div className="text-xs text-muted-foreground truncate" title={'Email hidden'}>{maskEmail(item.customer.email)}</div>
+                                <div className="text-sm font-semibold truncate text-foreground">{item.customer.name}</div>
+                                <div className="text-xs text-foreground/60 truncate" title={'Email hidden'}>{maskEmail(item.customer.email)}</div>
                               </div>
                             </div>
                           </TableCell>
                         )}
                         {visible.channel && (
                           <TableCell>
-                            <div className="inline-flex items-center gap-1 text-muted-foreground">
-                              <ActiveIcon channel={item.channel} />
-                              <span className="hidden xl:inline capitalize">{item.channel}</span>
+                            <div className="inline-flex items-center gap-2 text-foreground/70">
+                              <span className="inline-flex h-7 w-7 items-center justify-center rounded-full border border-border/80 bg-muted/50 text-foreground/70">
+                                <ActiveIcon channel={item.channel} />
+                              </span>
+                              <span className="hidden xl:inline capitalize font-medium">{item.channel}</span>
                             </div>
                           </TableCell>
                         )}
-                        {visible.started && <TableCell className="text-right tabular-nums whitespace-nowrap">{formatRelative(item.startedAt)}</TableCell>}
+                        {visible.started && <TableCell className="text-right tabular-nums whitespace-nowrap text-foreground/70">{formatRelative(item.startedAt)}</TableCell>}
                         {visible.actions && (
                           <TableCell onClick={(e) => e.stopPropagation()}>
                             <DropdownMenu>
@@ -990,8 +1001,8 @@ const Cases = () => {
                   </TableBody>
                 </Table>
               </div>
-              ) : (
-                <div className="divide-y divide-border/60">
+                ) : (
+                  <div className="divide-y divide-border/60">
                   {false ? (
                     [...Array(6)].map((_, i) => (
                       <div key={i} className="p-3 flex items-start gap-3">
@@ -1041,51 +1052,60 @@ const Cases = () => {
                       </div>
                     ))
                   )}
-                </div>
-              )}
-            </Card>
+                  </div>
+                )}
+              </Card>
+
+              {/* Pagination */}
+              <div className="sticky bottom-0 z-10 border-t border-border/60 bg-background/95 backdrop-blur mt-3 py-2">
+                <Pagination>
+                  <PaginationContent>
+                    <PaginationItem>
+                      <PaginationPrevious onClick={() => setPage((p) => Math.max(1, p - 1))} href="#" />
+                    </PaginationItem>
+                    {Array.from({ length: pageCount }).map((_, i) => (
+                      <PaginationItem key={i}>
+                        <PaginationLink href="#" isActive={page === i + 1} onClick={() => setPage(i + 1)}>
+                          {i + 1}
+                        </PaginationLink>
+                      </PaginationItem>
+                    ))}
+                    <PaginationItem>
+                      <PaginationNext onClick={() => setPage((p) => Math.min(pageCount, p + 1))} href="#" />
+                    </PaginationItem>
+                  </PaginationContent>
+                </Pagination>
+              </div>
+            </div>
           </div>
 
-          {/* Pagination */}
-          <div className="sticky bottom-0 z-10 border-t border-border/60 bg-background/95 backdrop-blur mt-3 py-2">
-            <Pagination>
-              <PaginationContent>
-                <PaginationItem>
-                  <PaginationPrevious onClick={() => setPage((p) => Math.max(1, p - 1))} href="#" />
-                </PaginationItem>
-                {Array.from({ length: pageCount }).map((_, i) => (
-                  <PaginationItem key={i}>
-                    <PaginationLink href="#" isActive={page === i + 1} onClick={() => setPage(i + 1)}>
-                      {i + 1}
-                    </PaginationLink>
-                  </PaginationItem>
-                ))}
-                <PaginationItem>
-                  <PaginationNext onClick={() => setPage((p) => Math.min(pageCount, p + 1))} href="#" />
-                </PaginationItem>
-              </PaginationContent>
-            </Pagination>
-          </div>
+          </section>
         </div>
       </main>
 
       {/* Case details modal */}
-      <Dialog open={detailsOpen} onOpenChange={setDetailsOpen}>
-        <DialogContent className={`${isNarrow ? 'max-w-[95vw]' : 'max-w-4xl'} ${dialogHeightClass} max-h-[95vh] w-full p-0 gap-0 overflow-hidden`}>
+      <Sheet open={detailsOpen} onOpenChange={setDetailsOpen}>
+        <SheetContent
+          side="right"
+          className={`${isNarrow ? 'w-screen' : 'sm:max-w-none max-w-none'} p-0 bg-card/95 backdrop-blur border-l border-border/60`}
+          style={isNarrow ? undefined : panelWidth ? { width: panelWidth } : undefined}
+        >
           <div className="flex h-full flex-col">
             <div className="px-4 py-3 border-b border-border/60 bg-card/80 backdrop-blur">
-              <DialogTitle className="sr-only">{active?.title || "Case details"}</DialogTitle>
-                <div className="flex flex-col gap-1 pr-12">
-                  <span className="text-[10px] font-medium text-muted-foreground uppercase tracking-wide">{active?.id}</span>
-                  <div className="flex flex-wrap items-center gap-2 text-sm">
-                    <span className="font-semibold text-base sm:text-lg">{active?.title}</span>
-                    <Badge className={`${active ? priorityColor(active.priority) : ''} capitalize`}>{active?.priority}</Badge>
-                    {active && <Badge className={`${statusColor(active.status)} capitalize`}>{active.status}</Badge>}
-                    <div className="ml-auto text-xs text-muted-foreground">
-                      {active && `Started ${formatRelative(active.startedAt)}`}
-                    </div>
+              <SheetHeader>
+                <SheetTitle className="sr-only">{active?.title || "Case details"}</SheetTitle>
+              </SheetHeader>
+              <div className="flex flex-col gap-1 pr-12">
+                <span className="text-[10px] font-medium text-muted-foreground uppercase tracking-wide">{active?.id}</span>
+                <div className="flex flex-wrap items-center gap-2 text-sm">
+                  <span className="font-semibold text-base sm:text-lg">{active?.title}</span>
+                  <Badge className={`${active ? priorityColor(active.priority) : ''} capitalize`}>{active?.priority}</Badge>
+                  {active && <Badge className={`${statusColor(active.status)} capitalize`}>{active.status}</Badge>}
+                  <div className="ml-auto text-xs text-muted-foreground">
+                    {active && `Started ${formatRelative(active.startedAt)}`}
                   </div>
                 </div>
+              </div>
             </div>
 
             <Tabs defaultValue="overview" className="flex-1 flex flex-col">
@@ -1260,13 +1280,31 @@ const Cases = () => {
               </div>
             </Tabs>
 
-            <div className="px-4 py-3 border-t border-border/60 flex items-center justify-end gap-2">
-              <Button size="sm" className="gap-1"><User className="w-4 h-4" /> Assign</Button>
-              <Button size="sm" className="gap-1"><CheckCircle2 className="w-4 h-4" /> Resolve</Button>
+            <div className="px-4 py-3 border-t border-border/60 space-y-3">
+              <div className="flex flex-col gap-2 sm:flex-row">
+                <Button
+                  className={cn(
+                    'flex-1 justify-center gap-2 rounded-lg border border-border/70 bg-muted/70 text-sm font-medium text-card-foreground shadow-none transition',
+                    'hover:bg-muted/60 hover:border-border/60 hover:text-card-foreground hover:shadow-sm'
+                  )}
+                >
+                  <User className="h-4 w-4 text-muted-foreground" />
+                  <span>Assign</span>
+                </Button>
+                <Button
+                  className={cn(
+                    'flex-1 justify-center gap-2 rounded-lg text-sm font-semibold tracking-wide',
+                    'bg-primary text-primary-foreground shadow-sm hover:bg-primary/90'
+                  )}
+                >
+                  <CheckCircle2 className="h-4 w-4" />
+                  <span>Resolve</span>
+                </Button>
+              </div>
             </div>
           </div>
-        </DialogContent>
-      </Dialog>
+        </SheetContent>
+      </Sheet>
 
       {/* Mobile bulk actions bar */}
       {isNarrow && selectedCount > 0 && (

@@ -5,6 +5,7 @@ const Sidebar = () => {
   const items = [
     { label: "Home", to: "/dashboard" },
     { label: "Conversations", to: "/dashboard/conversations", active: true },
+    { label: "Leads", to: "/dashboard/leads" },
     { label: "Customers", to: "/dashboard/customers" },
   ];
   return (

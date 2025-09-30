@@ -10,10 +10,7 @@ import { Card } from "@/components/ui/card";
 import { Separator } from "@/components/ui/separator";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
-import { Drawer, DrawerContent, DrawerHeader, DrawerTitle, DrawerFooter, DrawerTrigger, DrawerClose } from "@/components/ui/drawer";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
-import { Calendar } from "@/components/ui/calendar";
-import { Slider } from "@/components/ui/slider";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { DropdownMenu, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuContent, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { Pagination, PaginationContent, PaginationItem, PaginationNext, PaginationPrevious, PaginationLink } from "@/components/ui/pagination";
@@ -24,7 +21,6 @@ import {
   Mail,
   MessageCircle,
   Phone,
-  Filter,
   UserPlus,
   Edit,
   User,
@@ -42,6 +38,8 @@ import {
   Download,
   ClipboardList,
   Plus,
+  CalendarDays,
+  Users,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -70,8 +68,10 @@ const Sidebar = () => {
   const items = [
     { label: "Home", to: "/dashboard" },
     { label: "Cases", to: "/dashboard/cases" },
+    { label: "Leads", to: "/dashboard/leads" },
     { label: "Customers", to: "/dashboard/customers", active: true },
     { label: "Agents", to: "/dashboard/agents" },
+    { label: "Knowledge", to: "/dashboard/knowledge" },
   ];
   return (
     <aside className="hidden md:flex w-56 shrink-0 border-r border-border/70 bg-card/60 backdrop-blur-sm min-h-screen sticky top-0">
@@ -188,6 +188,30 @@ const useDebounced = (val: string, delay = 300) => {
   React.useEffect(() => { const id = setTimeout(() => setD(val), delay); return () => clearTimeout(id); }, [val, delay]);
   return d;
 };
+
+const StatCard = React.memo(
+  ({
+    label,
+    value,
+    delta,
+  }: {
+    label: string;
+    value: string;
+    delta?: string;
+  }) => {
+    return (
+      <Card className="border border-border/70 bg-muted/70 backdrop-blur">
+        <div className="p-5 space-y-2">
+          <span className="text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground/70">{label}</span>
+          <div className="flex items-baseline justify-between gap-2">
+            <span className="text-3xl font-semibold tracking-tight text-foreground">{value}</span>
+            {delta && <span className="text-xs font-medium text-muted-foreground">{delta}</span>}
+          </div>
+        </div>
+      </Card>
+    );
+  }
+);
 
 type CaseType = 'billing' | 'request' | 'bug' | 'inquiry' | 'complaint' | 'feedback' | 'lead';
 type CasePriority = 'low' | 'medium' | 'high';
@@ -484,7 +508,7 @@ const SectionBlock = ({
       </div>
       {action ? <div className="flex items-center gap-2">{action}</div> : null}
     </div>
-    <Card className={cn('border border-border/60 bg-muted/15 px-3 py-3', cardClassName)}>{children}</Card>
+    <Card className={cn('border border-border/70 bg-muted/70 backdrop-blur px-3 py-3', cardClassName)}>{children}</Card>
   </div>
 );
 
@@ -517,8 +541,10 @@ const getCaseTypeMeta = (type: CaseType) => {
       return { label: 'Feedback', className: 'border border-border/60 bg-muted/50 text-muted-foreground/90' };
     case 'lead':
       return { label: 'Lead', className: 'border border-border/60 bg-muted/50 text-muted-foreground/90' };
-    default:
-      return { label: type.charAt(0).toUpperCase() + type.slice(1), className: 'border border-border/60 bg-muted/50 text-muted-foreground/90' };
+    default: {
+      const _exhaustiveCheck: never = type;
+      return { label: 'Unknown', className: 'border border-border/60 bg-muted/50 text-muted-foreground/90' };
+    }
   }
 };
 
@@ -530,8 +556,10 @@ const getChannelMeta = (channel: CaseTimelineEntry['channel']) => {
       return { label: 'WA', className: 'bg-emerald-500/15 text-emerald-500' };
     case 'web':
       return { label: 'WEB', className: 'bg-sky-500/15 text-sky-500' };
-    default:
-      return { label: channel.toUpperCase(), className: 'bg-muted text-muted-foreground' };
+    default: {
+      const _exhaustiveCheck: never = channel;
+      return { label: 'OTHER', className: 'bg-muted text-muted-foreground' };
+    }
   }
 };
 
@@ -544,23 +572,23 @@ const Customers = () => {
   const [tab, setTab] = React.useState<CustomerTab>('overview');
   const [query, setQuery] = React.useState("");
   const q = useDebounced(query, 300);
-  const [status, setStatus] = React.useState<Status | "All">("All");
-  const [channels, setChannels] = React.useState<Set<Channel>>(new Set());
-  const [tags, setTags] = React.useState<Set<string>>(new Set());
-  const [openFilters, setOpenFilters] = React.useState(false);
+  const [segmentFilter, setSegmentFilter] = React.useState<'all' | 'vip' | 'enterprise' | 'trial' | 'churn-risk'>('all');
+  const [ownerFilter, setOwnerFilter] = React.useState<'all' | 'ai' | 'team'>('all');
   const [joinedRange, setJoinedRange] = React.useState<DateRange | undefined>(undefined);
   const [valueRange, setValueRange] = React.useState<[number, number]>([0, 20000]);
   const [selected, setSelected] = React.useState<Set<string>>(new Set());
   const [density, setDensity] = React.useState<"compact" | "comfortable">("compact");
-  const rowH = density === "compact" ? "h-11" : "h-13";
+  const rowH = density === "compact" ? "h-11" : "h-14";
   const [pageSize, setPageSize] = React.useState<number>(() => Number(localStorage.getItem("customers.pageSize") || 25));
   const [page, setPage] = React.useState(1);
   const [isNarrow, setIsNarrow] = React.useState(false);
   const [viewportWidth, setViewportWidth] = React.useState(() => (typeof window !== 'undefined' ? window.innerWidth : 0));
   const panelWidth = React.useMemo(() => {
     if (isNarrow || !viewportWidth) return undefined;
-    const calculated = Math.min(Math.max(viewportWidth * 0.58, 560), 920);
-    return `${Math.round(calculated)}px`;
+    const sidebar = 264; // matches desktop sidebar width (Tailwind approx w-64 + gap)
+    const gutter = 24; // spacing between main content and sheet
+    const calculated = Math.max(viewportWidth - sidebar - gutter, 560);
+    return `${Math.min(Math.round(calculated), 1080)}px`;
   }, [isNarrow, viewportWidth]);
   const [caseFilter, setCaseFilter] = React.useState<CaseStatusFilter>('needs');
   const [selectedCase, setSelectedCase] = React.useState<CaseItem | null>(null);
@@ -595,33 +623,27 @@ const Customers = () => {
     setCaseDetailsTab('overview');
   }, [selectedCase?.id]);
 
-  const toggleTag = (t: string) => setTags((prev) => {
-    const next = new Set(prev);
-    if (next.has(t)) {
-      next.delete(t);
-    } else {
-      next.add(t);
-    }
-    return next;
-  });
-  const toggleChannel = (c: Channel) => setChannels((prev) => {
-    const next = new Set(prev);
-    if (next.has(c)) {
-      next.delete(c);
-    } else {
-      next.add(c);
-    }
-    return next;
-  });
 
   const filtered = React.useMemo(() => {
     let arr = [...items];
-    if (status !== "All") arr = arr.filter((i) => i.status === status);
-    if (channels.size) arr = arr.filter((i) => channels.has(i.channel));
-    if (tags.size) arr = arr.filter((i) => i.tags.some((t) => tags.has(t)));
     if (q) {
       const needle = q.toLowerCase();
       arr = arr.filter((i) => i.name.toLowerCase().includes(needle) || i.email.toLowerCase().includes(needle) || i.tags.join(" ").toLowerCase().includes(needle));
+    }
+    if (segmentFilter !== 'all') {
+      arr = arr.filter((i) => {
+        if (segmentFilter === 'vip') return i.vip;
+        if (segmentFilter === 'enterprise') return i.tags.includes('Enterprise');
+        if (segmentFilter === 'trial') return i.tags.includes('Trial');
+        if (segmentFilter === 'churn-risk') return i.tags.some((t) => t.toLowerCase().includes('churn'));
+        return true;
+      });
+    }
+    if (ownerFilter !== 'all') {
+      const needle = ownerFilter === 'ai' ? 'AI' : ownerFilter === 'team' ? 'team' : '';
+      if (needle) {
+        arr = arr.filter((i) => i.owner.toLowerCase().includes(needle));
+      }
     }
     if (joinedRange?.from && joinedRange?.to) {
       arr = arr.filter((i) => {
@@ -633,9 +655,9 @@ const Customers = () => {
     // default sort by last contact desc
     arr.sort((a, b) => new Date(b.lastContact).getTime() - new Date(a.lastContact).getTime());
     return arr;
-  }, [items, status, channels, tags, q, joinedRange, valueRange]);
+  }, [items, q, joinedRange, valueRange]);
 
-  useEffect(() => setPage(1), [status, channels, tags, q, joinedRange, valueRange, pageSize]);
+  useEffect(() => setPage(1), [q, segmentFilter, ownerFilter, joinedRange, valueRange, pageSize]);
   const total = filtered.length;
   const pageCount = Math.max(1, Math.ceil(total / pageSize));
   const pageItems = filtered.slice((page - 1) * pageSize, page * pageSize);
@@ -670,9 +692,9 @@ const Customers = () => {
       <Sidebar />
       <main className="flex-1 overflow-auto">
         <div className="w-full px-4 md:px-6 lg:px-8 py-6">
-          <section>
+          <section className="flex flex-col gap-6">
             {/* Header */}
-            <div className="mb-4 flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
+            <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
               <div className="text-xl md:text-2xl font-semibold">Customers</div>
               <div className="flex items-center gap-2">
                 <Dialog>
@@ -699,194 +721,234 @@ const Customers = () => {
                     </div>
                   </DialogContent>
                 </Dialog>
+                <Button variant="outline" className="gap-2 text-sm" onClick={() => alert('Import customers coming soon!')}>
+                  <Download className="w-4 h-4" />
+                  Import Customers
+                </Button>
               </div>
             </div>
 
+            {/* Analytics */}
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+              <StatCard label="New customers" value="18" delta="Up 12% vs last period" />
+              <StatCard label="Satisfied customers" value="92%" delta="CSAT ≥ 90%" />
+              <StatCard label="Expansion opportunities" value="7" delta="In active ABM sequences" />
+            </div>
+
             {/* Toolbar */}
-            <div className="sticky top-0 z-10 bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60 border-y border-border/60">
-              <div className="py-2 flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
-                <div className="flex items-center gap-2 flex-wrap">
-                  {/* Status chips */}
-                  <Button size="sm" variant={status === 'All' ? 'default' : 'outline'} onClick={() => setStatus('All')}>All</Button>
-                  <Button size="sm" variant={status === 'Active' ? 'default' : 'outline'} onClick={() => setStatus('Active')}>Active</Button>
-                  <Button size="sm" variant={status === 'Inactive' ? 'default' : 'outline'} onClick={() => setStatus('Inactive')}>Inactive</Button>
-
-                  {/* Channel chips */}
-                  <Button size="sm" variant={channels.has('email') ? 'default' : 'outline'} onClick={() => toggleChannel('email')}>Email</Button>
-                  <Button size="sm" variant={channels.has('chat') ? 'default' : 'outline'} onClick={() => toggleChannel('chat')}>Web</Button>
-                  <Button size="sm" variant={channels.has('whatsapp') ? 'default' : 'outline'} onClick={() => toggleChannel('whatsapp')}>WA</Button>
-                  <Button size="sm" variant={channels.has('phone') ? 'default' : 'outline'} onClick={() => toggleChannel('phone')}>Phone</Button>
-
-                  {/* Tag chips */}
-                  <Button size="sm" variant={tags.has('VIP') ? 'default' : 'outline'} onClick={() => toggleTag('VIP')}>VIP</Button>
-                  <Button size="sm" variant={tags.has('Enterprise') ? 'default' : 'outline'} onClick={() => toggleTag('Enterprise')}>Enterprise</Button>
-                  <Button size="sm" variant={tags.has('Trial') ? 'default' : 'outline'} onClick={() => toggleTag('Trial')}>Trial</Button>
+            <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+              <div className="flex flex-col gap-3 md:flex-row md:items-center md:flex-wrap">
+                <div className="relative w-full md:w-64">
+                  <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
+                  <Input
+                    value={query}
+                    onChange={(e) => setQuery(e.target.value)}
+                    placeholder="Search name, email, tags…"
+                    className="pl-9 border border-border/60 bg-muted/70 focus-visible:ring-0 focus-visible:border-border"
+                  />
                 </div>
-                <div className="flex items-center gap-2 w-full md:w-auto">
-                  {/* Search */}
-                  <div className="relative w-full md:w-64">
-                    <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
-                    <Input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search name, email, tags…" className="pl-9 bg-input border-0" />
-                  </div>
-
-                  {/* Filters drawer */}
-                  <Drawer open={openFilters} onOpenChange={setOpenFilters}>
-                    <DrawerTrigger asChild>
-                      <Button variant="outline" size="sm" className="gap-2"><Filter className="w-4 h-4" /> Filters</Button>
-                    </DrawerTrigger>
-                    <DrawerContent>
-                      <DrawerHeader>
-                        <DrawerTitle>Advanced Filters</DrawerTitle>
-                      </DrawerHeader>
-                      <div className="p-4 grid grid-cols-1 md:grid-cols-2 gap-4">
-                        <div>
-                          <div className="text-sm font-medium mb-2">Joined range</div>
-                          <Calendar mode="range" selected={joinedRange} onSelect={setJoinedRange} numberOfMonths={2} />
-                        </div>
-                        <div>
-                          <div className="text-sm font-medium mb-2">Value range</div>
-                          <div className="text-xs text-muted-foreground mb-2">${valueRange[0].toLocaleString()} – ${valueRange[1].toLocaleString()}</div>
-                          <Slider min={0} max={25000} step={100} value={valueRange} onValueChange={(value) => setValueRange([value[0] ?? 0, value[1] ?? 0])} />
-                        </div>
-                      </div>
-                      <DrawerFooter>
-                        <Button onClick={() => setOpenFilters(false)}>Apply</Button>
-                        <DrawerClose asChild>
-                          <Button variant="outline">Close</Button>
-                        </DrawerClose>
-                      </DrawerFooter>
-                    </DrawerContent>
-                  </Drawer>
-
-                  {/* Bulk actions */}
-                  <DropdownMenu>
-                    <DropdownMenuTrigger asChild>
-                      <Button size="sm" disabled={selected.size === 0} className="gap-2">
-                        Bulk actions
-                        <ChevronDown className="w-4 h-4" />
-                      </Button>
-                    </DropdownMenuTrigger>
-                    <DropdownMenuContent align="end">
-                      <DropdownMenuItem disabled={selected.size === 0}>Assign Owner…</DropdownMenuItem>
-                      <DropdownMenuItem disabled={selected.size === 0}>Add Tag…</DropdownMenuItem>
-                      <DropdownMenuSeparator />
-                      <DropdownMenuItem disabled={selected.size === 0}>Export CSV</DropdownMenuItem>
-                    </DropdownMenuContent>
-                  </DropdownMenu>
-                </div>
+                <DropdownMenu>
+                  <DropdownMenuTrigger asChild>
+                    <Button variant="outline" className="gap-2 text-sm">
+                      <Users className="w-4 h-4" />
+                      {segmentFilter === 'all' ? 'All segments' : segmentFilter.replace('-', ' ')}
+                      <ChevronDown className="w-4 h-4 text-muted-foreground" />
+                    </Button>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="start" className="w-48">
+                    <DropdownMenuItem onClick={() => setSegmentFilter('all')}>All segments</DropdownMenuItem>
+                    <DropdownMenuSeparator />
+                    <DropdownMenuItem onClick={() => setSegmentFilter('vip')}>VIP customers</DropdownMenuItem>
+                    <DropdownMenuItem onClick={() => setSegmentFilter('enterprise')}>Enterprise</DropdownMenuItem>
+                    <DropdownMenuItem onClick={() => setSegmentFilter('trial')}>Trial</DropdownMenuItem>
+                    <DropdownMenuItem onClick={() => setSegmentFilter('churn-risk')}>Churn risk</DropdownMenuItem>
+                  </DropdownMenuContent>
+                </DropdownMenu>
+                <DropdownMenu>
+                  <DropdownMenuTrigger asChild>
+                    <Button variant="outline" className="gap-2 text-sm">
+                      <CalendarDays className="w-4 h-4" />
+                      {joinedRange?.from && joinedRange?.to ? 'Custom range' : 'Any time'}
+                      <ChevronDown className="w-4 h-4 text-muted-foreground" />
+                    </Button>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="start" className="w-40">
+                    <DropdownMenuItem
+                      onClick={() => {
+                        const to = new Date();
+                        const from = new Date(Date.now() - 1000 * 60 * 60 * 24 * 7);
+                        setJoinedRange({ from, to });
+                      }}
+                    >
+                      Last 7 days
+                    </DropdownMenuItem>
+                    <DropdownMenuItem
+                      onClick={() => {
+                        const to = new Date();
+                        const from = new Date(Date.now() - 1000 * 60 * 60 * 24 * 30);
+                        setJoinedRange({ from, to });
+                      }}
+                    >
+                      Last 30 days
+                    </DropdownMenuItem>
+                    <DropdownMenuItem
+                      onClick={() => {
+                        const to = new Date();
+                        const from = new Date(Date.now() - 1000 * 60 * 60 * 24 * 90);
+                        setJoinedRange({ from, to });
+                      }}
+                    >
+                      Last 90 days
+                    </DropdownMenuItem>
+                    <DropdownMenuSeparator />
+                    <DropdownMenuItem onClick={() => setJoinedRange(undefined)}>Any time</DropdownMenuItem>
+                  </DropdownMenuContent>
+                </DropdownMenu>
+              </div>
+              <div className="flex items-center gap-2">
+                <DropdownMenu>
+                  <DropdownMenuTrigger asChild>
+                    <Button variant="outline" className="gap-2 text-sm">
+                      <Users className="w-4 h-4" />
+                      {ownerFilter === 'all' ? 'All owners' : ownerFilter === 'ai' ? 'AI owners' : 'Team owners'}
+                      <ChevronDown className="w-4 h-4 text-muted-foreground" />
+                    </Button>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="start" className="w-40">
+                    <DropdownMenuItem onClick={() => setOwnerFilter('all')}>All owners</DropdownMenuItem>
+                    <DropdownMenuSeparator />
+                    <DropdownMenuItem onClick={() => setOwnerFilter('ai')}>AI owners</DropdownMenuItem>
+                    <DropdownMenuItem onClick={() => setOwnerFilter('team')}>Team members</DropdownMenuItem>
+                  </DropdownMenuContent>
+                </DropdownMenu>
               </div>
             </div>
 
             {/* Table */}
-            <div className="mt-3">
-              <Card className="border border-border bg-card/60">
-                <div className="relative overflow-x-auto overflow-y-auto max-h-[70vh]">
-                  <Table>
-                    <TableHeader className="sticky top-0 bg-card/90 backdrop-blur z-10">
-                    <TableRow className="hover:bg-transparent">
-                      <TableHead className="w-8">
-                        <Checkbox checked={allSelectedOnPage} onCheckedChange={toggleSelectAllOnPage} aria-label="Select all" className={someSelectedOnPage ? "data-[state=indeterminate]:opacity-100" : ""} />
-                      </TableHead>
-                      <TableHead className="min-w-[220px]">Customer</TableHead>
-                      <TableHead>Email</TableHead>
-                      <TableHead>Conversations</TableHead>
-                      <TableHead>Satisfaction</TableHead>
-                      <TableHead>Last Contact</TableHead>
-                      <TableHead className="w-8" />
-                    </TableRow>
-                    </TableHeader>
-                    <TableBody>
-                    {pageItems.length === 0 ? (
-                    <TableRow>
-                      <TableCell colSpan={7}>
-                          <div className="p-6 text-sm text-muted-foreground flex items-center justify-between">
-                            <div>No customers match your filters.</div>
-                            {(status !== 'All' || channels.size || tags.size || q || (joinedRange.from && joinedRange.to) || valueRange[0] !== 0 || valueRange[1] !== 20000) && (
-                              <Button variant="ghost" size="sm" onClick={() => { setStatus('All'); setChannels(new Set()); setTags(new Set()); setQuery(''); setJoinedRange(undefined); setValueRange([0,20000]); }}>
-                                Clear all
-                              </Button>
-                            )}
-                          </div>
-                        </TableCell>
+            <div className="grid grid-cols-12 gap-4">
+              <div className="col-span-12 space-y-4">
+                <Card className="border border-border/70 bg-card/90 shadow-sm backdrop-blur">
+                  <div className="relative overflow-x-auto overflow-y-auto max-h-[70vh]">
+                    <Table className="rounded-xl border border-border/70 bg-background/60 shadow-sm backdrop-blur [&_th]:px-3 [&_td]:px-3 [&_th:first-child]:pl-4 [&_td:first-child]:pl-4 [&_th:last-child]:pr-4 [&_td:last-child]:pr-4 [&_th]:py-3 [&_td]:py-3">
+                      <TableHeader className="sticky top-0 z-10 bg-muted/70 backdrop-blur border-b border-border/80">
+                      <TableRow className="hover:bg-transparent">
+                        <TableHead className="w-8">
+                          <Checkbox checked={allSelectedOnPage} onCheckedChange={toggleSelectAllOnPage} aria-label="Select all" className={someSelectedOnPage ? "data-[state=indeterminate]:opacity-100" : ""} />
+                        </TableHead>
+                        <TableHead className="w-[240px]">Customer</TableHead>
+                        <TableHead className="w-[220px]">Email</TableHead>
+                        <TableHead className="w-[140px] text-right">Conversations</TableHead>
+                        <TableHead className="w-[140px] text-right">Satisfaction</TableHead>
+                        <TableHead className="w-[160px] text-right">Last Contact</TableHead>
+                        <TableHead className="w-10" />
                       </TableRow>
-                    ) : (
-                      pageItems.map((c) => (
-                        <TableRow key={c.id} className={`${rowH} cursor-pointer`} onClick={() => openPanel(c)}>
-                          <TableCell className="w-8" onClick={(e) => e.stopPropagation()}>
-                            <Checkbox
-                              checked={selected.has(c.id)}
-                              onCheckedChange={(value) =>
-                                setSelected((prev) => {
-                                  const next = new Set(prev);
-                                  if (value) {
-                                    next.add(c.id);
-                                  } else {
-                                    next.delete(c.id);
-                                  }
-                                  return next;
-                                })
-                              }
-                            />
-                          </TableCell>
-                          <TableCell>
-                            <div className="flex items-center gap-2">
-                              <Avatar className="h-8 w-8">
-                                {c.avatar && <AvatarImage src={c.avatar} />}
-                                <AvatarFallback>{c.name.slice(0,2).toUpperCase()}</AvatarFallback>
-                              </Avatar>
-                              <div className="leading-tight">
-                                <div className="text-sm font-medium flex items-center gap-2">
-                                  <span>{c.name}</span>
-                                </div>
-                              </div>
+                      </TableHeader>
+                      <TableBody>
+                      {pageItems.length === 0 ? (
+                      <TableRow>
+                        <TableCell colSpan={7}>
+                            <div className="p-6 text-sm text-muted-foreground flex items-center justify-between">
+                              <div>No customers match your filters.</div>
+                              {(q || (joinedRange.from && joinedRange.to) || valueRange[0] !== 0 || valueRange[1] !== 20000) && (
+                                <Button variant="ghost" size="sm" onClick={() => { setQuery(''); setJoinedRange(undefined); setValueRange([0,20000]); }}>
+                                  Clear all
+                                </Button>
+                              )}
                             </div>
                           </TableCell>
-                          <TableCell className="text-sm">{maskEmail(c.email)}</TableCell>
-                          <TableCell>{c.conversations}</TableCell>
-                          <TableCell>{c.satisfaction}%</TableCell>
-                          <TableCell>{formatRelative(c.lastContact)}</TableCell>
-                          
-                          <TableCell onClick={(e)=>e.stopPropagation()}>
-                            <DropdownMenu>
-                              <DropdownMenuTrigger asChild>
-                                <Button variant="ghost" size="icon"><EllipsisVertical className="w-4 h-4" /></Button>
-                              </DropdownMenuTrigger>
-                              <DropdownMenuContent align="end">
-                                <DropdownMenuItem onClick={() => openPanel(c)}>View</DropdownMenuItem>
-                                <DropdownMenuItem onClick={() => window.open(`mailto:${c.email}`)}><Mail className="w-4 h-4 mr-2" /> Email</DropdownMenuItem>
-                                <DropdownMenuSeparator />
-                                <DropdownMenuItem>Create Case…</DropdownMenuItem>
-                              </DropdownMenuContent>
-                            </DropdownMenu>
-                          </TableCell>
                         </TableRow>
-                      ))
-                    )}
-                    </TableBody>
-                  </Table>
-                </div>
-              </Card>
-            </div>
+                      ) : (
+                        pageItems.map((c) => (
+                          <TableRow
+                            key={c.id}
+                            className={cn(
+                              rowH,
+                              "group cursor-pointer bg-transparent transition-colors hover:bg-muted/60 dark:hover:bg-white/10 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-offset-0 focus-visible:ring-primary"
+                            )}
+                            onClick={() => openPanel(c)}
+                          >
+                            <TableCell className="w-10" onClick={(e) => e.stopPropagation()}>
+                              <Checkbox
+                                checked={selected.has(c.id)}
+                                onCheckedChange={(value) =>
+                                  setSelected((prev) => {
+                                    const next = new Set(prev);
+                                    if (value) {
+                                      next.add(c.id);
+                                    } else {
+                                      next.delete(c.id);
+                                    }
+                                    return next;
+                                  })
+                                }
+                              />
+                            </TableCell>
+                            <TableCell className="w-[240px]">
+                              <div className="flex items-center gap-3 min-w-0">
+                                <Avatar className="h-9 w-9 shadow-sm">
+                                  {c.avatar && <AvatarImage src={c.avatar} />}
+                                  <AvatarFallback>{c.name.slice(0,2).toUpperCase()}</AvatarFallback>
+                                </Avatar>
+                                <div className="leading-tight min-w-0">
+                                  <div className="text-sm font-semibold truncate text-foreground flex items-center gap-2">
+                                    <span>{c.name}</span>
+                                    {c.vip && <Badge variant="secondary" className="text-xs">VIP</Badge>}
+                                  </div>
+                                  <div className="text-xs text-foreground/60 truncate">{c.owner}</div>
+                                </div>
+                              </div>
+                            </TableCell>
+                            <TableCell className="text-sm text-foreground/70">{maskEmail(c.email)}</TableCell>
+                            <TableCell className="text-right text-foreground/80 tabular-nums">{c.conversations}</TableCell>
+                            <TableCell className="text-right">
+                              <Badge className="bg-emerald-500/15 text-emerald-600 dark:text-emerald-300 border border-emerald-500/25">
+                                {c.satisfaction}%
+                              </Badge>
+                            </TableCell>
+                            <TableCell className="text-right text-foreground/70 tabular-nums whitespace-nowrap">{formatRelative(c.lastContact)}</TableCell>
+                            
+                            <TableCell onClick={(e)=>e.stopPropagation()}>
+                              <DropdownMenu>
+                                <DropdownMenuTrigger asChild>
+                                  <Button variant="ghost" size="icon"><EllipsisVertical className="w-4 h-4" /></Button>
+                                </DropdownMenuTrigger>
+                                <DropdownMenuContent align="end">
+                                  <DropdownMenuItem onClick={() => openPanel(c)}>View</DropdownMenuItem>
+                                  <DropdownMenuItem onClick={() => window.open(`mailto:${c.email}`)}><Mail className="w-4 h-4 mr-2" /> Email</DropdownMenuItem>
+                                  <DropdownMenuSeparator />
+                                  <DropdownMenuItem>Create Case…</DropdownMenuItem>
+                                </DropdownMenuContent>
+                              </DropdownMenu>
+                            </TableCell>
+                          </TableRow>
+                        ))
+                      )}
+                      </TableBody>
+                    </Table>
+                  </div>
+                </Card>
 
-            {/* Pagination */}
-            <div className="sticky bottom-0 z-10 border-t border-border/60 bg-background/95 backdrop-blur mt-3 py-2">
-              <Pagination>
-                <PaginationContent>
-                  <PaginationItem>
-                    <PaginationPrevious onClick={() => setPage((p) => Math.max(1, p - 1))} href="#" />
-                  </PaginationItem>
-                  {Array.from({ length: pageCount }).map((_, i) => (
-                    <PaginationItem key={i}>
-                      <PaginationLink href="#" isActive={page === i + 1} onClick={() => setPage(i + 1)}>
-                        {i + 1}
-                      </PaginationLink>
-                    </PaginationItem>
-                  ))}
-                  <PaginationItem>
-                    <PaginationNext onClick={() => setPage((p) => Math.min(pageCount, p + 1))} href="#" />
-                  </PaginationItem>
-                </PaginationContent>
-              </Pagination>
+                {/* Pagination */}
+                <div className="sticky bottom-0 z-10 border-t border-border/60 bg-background/95 backdrop-blur mt-3 py-2">
+                  <Pagination>
+                    <PaginationContent>
+                      <PaginationItem>
+                        <PaginationPrevious onClick={() => setPage((p) => Math.max(1, p - 1))} href="#" />
+                      </PaginationItem>
+                      {Array.from({ length: pageCount }).map((_, i) => (
+                        <PaginationItem key={i}>
+                          <PaginationLink href="#" isActive={page === i + 1} onClick={() => setPage(i + 1)}>
+                            {i + 1}
+                          </PaginationLink>
+                        </PaginationItem>
+                      ))}
+                      <PaginationItem>
+                        <PaginationNext onClick={() => setPage((p) => Math.min(pageCount, p + 1))} href="#" />
+                      </PaginationItem>
+                    </PaginationContent>
+                  </Pagination>
+                </div>
+              </div>
             </div>
           </section>
         </div>
@@ -896,7 +958,7 @@ const Customers = () => {
       <Sheet open={panelOpen} onOpenChange={setPanelOpen}>
         <SheetContent
           side="right"
-          className={`${isNarrow ? 'w-screen' : 'sm:max-w-none max-w-none'} p-0`}
+          className={`${isNarrow ? 'w-screen' : 'sm:max-w-none max-w-none'} p-0 bg-card/95 backdrop-blur border-l border-border/60`}
           style={isNarrow ? undefined : panelWidth ? { width: panelWidth } : undefined}
         >
           <div className="h-full flex flex-col">

@@ -65,8 +65,10 @@ const Sidebar = () => {
   const items = [
     { label: "Home", to: "/dashboard" },
     { label: "Cases", to: "/dashboard/cases" },
+    { label: "Leads", to: "/dashboard/leads" },
     { label: "Customers", to: "/dashboard/customers" },
     { label: "Agents", to: "/dashboard/agents", active: true },
+    { label: "Knowledge", to: "/dashboard/knowledge" },
   ];
 
   return (
@@ -233,8 +235,10 @@ const Agents = () => {
   const [customKpiInput, setCustomKpiInput] = React.useState('');
   const panelWidth = React.useMemo(() => {
     if (isNarrow || !viewportWidth) return undefined;
-    const calculated = Math.min(Math.max(viewportWidth * 0.28, 340), 460);
-    return `${Math.round(calculated)}px`;
+    const sidebar = 264;
+    const gutter = 24;
+    const calculated = Math.max(viewportWidth - sidebar - gutter, 560);
+    return `${Math.min(Math.round(calculated), 1080)}px`;
   }, [isNarrow, viewportWidth]);
   const embedScript = React.useMemo(() => `<script src="https://cdn.pocket.ai/widget.js" data-agent="${active?.id || 'AGENT_ID'}" async></script>`, [active?.id]);
   const selectedKpis = React.useMemo(() => active?.kpis ?? [], [active?.kpis]);
@@ -449,16 +453,23 @@ const Agents = () => {
           <div className="sticky top-0 z-10 bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60 border-y border-border/60">
             <div className="py-2 flex flex-col gap-2">
               <div className="flex flex-wrap items-center gap-2">
-                {/* Status chips */}
-                <Button size="sm" variant={status === 'All' ? 'default' : 'outline'} onClick={() => setStatus('All')}>All</Button>
-                <Button size="sm" variant={status === 'Active' ? 'default' : 'outline'} onClick={() => setStatus('Active')}>Active</Button>
-                <Button size="sm" variant={status === 'Inactive' ? 'default' : 'outline'} onClick={() => setStatus('Inactive')}>Inactive</Button>
-                <Button size="sm" variant={status === 'Draft' ? 'default' : 'outline'} onClick={() => setStatus('Draft')}>Draft</Button>
-
                 {/* Search */}
-                <div className="relative w-full sm:w-[200px] sm:ml-2 md:w-[220px]">
+                <div className="relative w-full sm:w-[220px] md:w-[240px]">
                   <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
-                  <Input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search name, ID, role…" className="pl-9 bg-input border-0" />
+                  <Input
+                    value={query}
+                    onChange={(e) => setQuery(e.target.value)}
+                    placeholder="Search name, ID, role…"
+                    className="pl-9 border border-border/60 bg-muted/70 focus-visible:ring-0 focus-visible:border-border"
+                  />
+                </div>
+
+                {/* Status chips */}
+                <div className="flex items-center gap-2">
+                  <Button size="sm" variant={status === 'All' ? 'default' : 'outline'} onClick={() => setStatus('All')}>All</Button>
+                  <Button size="sm" variant={status === 'Active' ? 'default' : 'outline'} onClick={() => setStatus('Active')}>Active</Button>
+                  <Button size="sm" variant={status === 'Inactive' ? 'default' : 'outline'} onClick={() => setStatus('Inactive')}>Inactive</Button>
+                  <Button size="sm" variant={status === 'Draft' ? 'default' : 'outline'} onClick={() => setStatus('Draft')}>Draft</Button>
                 </div>
               </div>
             </div>
@@ -466,45 +477,70 @@ const Agents = () => {
 
           {/* Table */}
           <div className="rounded-2xl bg-card/60 border border-border p-0 mt-3">
-            <Table>
-              <TableHeader>
+            <Table className="rounded-xl border border-border/70 bg-background/60 shadow-sm backdrop-blur [&_th]:px-3 [&_td]:px-3 [&_th:first-child]:pl-4 [&_td:first-child]:pl-4 [&_th:last-child]:pr-4 [&_td:last-child]:pr-4 [&_th]:py-3 [&_td]:py-3">
+              <TableHeader className="sticky top-0 z-10 bg-muted/70 backdrop-blur border-b border-border/80">
                 <TableRow className="hover:bg-transparent">
-                  <TableHead>Name / ID</TableHead>
-                  <TableHead>Roles</TableHead>
-                  <TableHead>Status</TableHead>
-                  <TableHead className="text-right">Conversations</TableHead>
-                  <TableHead className="text-right">CSAT</TableHead>
-                  <TableHead className="text-right">AHT</TableHead>
-                  <TableHead className="text-right">Escalations</TableHead>
-                  <TableHead>Updated</TableHead>
-                  <TableHead className="w-[40px]"></TableHead>
+                  <TableHead className="w-[240px]">Name / ID</TableHead>
+                  <TableHead className="w-[220px]">Roles</TableHead>
+                  <TableHead className="w-[120px]">Status</TableHead>
+                  <TableHead className="w-[140px] text-right">Conversations</TableHead>
+                  <TableHead className="w-[120px] text-right">CSAT</TableHead>
+                  <TableHead className="w-[120px] text-right">AHT</TableHead>
+                  <TableHead className="w-[120px] text-right">Escalations</TableHead>
+                  <TableHead className="w-[160px]">Updated</TableHead>
+                  <TableHead className="w-10"></TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
                 {pageItems.map((it) => (
-                  <TableRow key={it.id} className="cursor-pointer" onClick={() => openPanel(it)}>
+                  <TableRow
+                    key={it.id}
+                    className="group cursor-pointer bg-transparent transition-colors hover:bg-muted/60 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-offset-0 focus-visible:ring-primary"
+                    onClick={() => openPanel(it)}
+                  >
                     <TableCell>
                       <div className="flex flex-col">
-                        <div className="font-medium">{it.name}</div>
-                        <div className="text-xs text-muted-foreground">{it.id}</div>
+                        <div className="font-semibold text-foreground">{it.name}</div>
+                        <div className="text-xs text-foreground/60">{it.id}</div>
                       </div>
                     </TableCell>
                     <TableCell>
-                      <div className="flex flex-wrap gap-1">
-                        {it.roles.map(r => <Badge key={r} variant="secondary">{r}</Badge>)}
+                      <div className="flex flex-wrap gap-1.5">
+                        {it.roles.map((r) => (
+                          <Badge key={r} variant="secondary" className="text-xs">
+                            {r}
+                          </Badge>
+                        ))}
                       </div>
                     </TableCell>
                     <TableCell>
-                      <div className="inline-flex items-center gap-2">
-                        <span className={`h-2 w-2 rounded-full ${it.status === 'Active' ? 'bg-emerald-500' : it.status === 'Draft' ? 'bg-amber-500' : 'bg-muted-foreground'}`} />
-                        <span className="text-sm">{it.status}</span>
+                      <div className="inline-flex items-center gap-2 text-foreground/80">
+                        <span
+                          className={cn(
+                            "h-2 w-2 rounded-full",
+                            it.status === 'Active'
+                              ? 'bg-emerald-500'
+                              : it.status === 'Draft'
+                                ? 'bg-amber-500'
+                                : 'bg-muted-foreground'
+                          )}
+                        />
+                        <span className="text-sm font-medium">{it.status}</span>
                       </div>
                     </TableCell>
-                    <TableCell className="text-right">{it.conversations.toLocaleString()}</TableCell>
-                    <TableCell className="text-right">{it.satisfaction ? `${it.satisfaction}%` : '—'}</TableCell>
-                    <TableCell className="text-right">{secondsToText(it.aht)}</TableCell>
-                    <TableCell className="text-right">{it.escalations}</TableCell>
-                    <TableCell>{formatRelative(it.updatedAt)}</TableCell>
+                    <TableCell className="text-right text-foreground/80 tabular-nums">{it.conversations.toLocaleString()}</TableCell>
+                    <TableCell className="text-right">
+                      {it.satisfaction ? (
+                        <Badge className="bg-emerald-500/15 text-emerald-600 dark:text-emerald-300 border border-emerald-500/25">
+                          {it.satisfaction}%
+                        </Badge>
+                      ) : (
+                        <span className="text-foreground/50">—</span>
+                      )}
+                    </TableCell>
+                    <TableCell className="text-right text-foreground/80 tabular-nums">{secondsToText(it.aht)}</TableCell>
+                    <TableCell className="text-right text-foreground/80 tabular-nums">{it.escalations}</TableCell>
+                    <TableCell className="text-foreground/70">{formatRelative(it.updatedAt)}</TableCell>
                     <TableCell onClick={(e) => e.stopPropagation()}>
                       <DropdownMenu>
                         <DropdownMenuTrigger asChild>
@@ -515,10 +551,20 @@ const Agents = () => {
                         <DropdownMenuContent align="end">
                           <DropdownMenuItem onClick={() => openPanel(it)}>Open</DropdownMenuItem>
                           <DropdownMenuItem onClick={() => duplicateAgent(it)}>Duplicate</DropdownMenuItem>
-                          {it.status !== 'Active' && <DropdownMenuItem onClick={() => setStatusForIds([it.id], 'Active')}>Activate</DropdownMenuItem>}
-                          {it.status === 'Active' && <DropdownMenuItem onClick={() => setStatusForIds([it.id], 'Inactive')}>Deactivate</DropdownMenuItem>}
+                          {it.status !== 'Active' && (
+                            <DropdownMenuItem onClick={() => setStatusForIds([it.id], 'Active')}>
+                              Activate
+                            </DropdownMenuItem>
+                          )}
+                          {it.status === 'Active' && (
+                            <DropdownMenuItem onClick={() => setStatusForIds([it.id], 'Inactive')}>
+                              Deactivate
+                            </DropdownMenuItem>
+                          )}
                           <DropdownMenuSeparator />
-                          <DropdownMenuItem className="text-destructive" onClick={() => deleteIds([it.id])}>Delete</DropdownMenuItem>
+                          <DropdownMenuItem className="text-destructive" onClick={() => deleteIds([it.id])}>
+                            Delete
+                          </DropdownMenuItem>
                         </DropdownMenuContent>
                       </DropdownMenu>
                     </TableCell>
@@ -534,31 +580,13 @@ const Agents = () => {
               </TableBody>
             </Table>
 
-            {/* Footer pagination & density */}
-            <div className="flex items-center justify-between px-3 py-2 border-t border-border/60">
-              <div className="flex items-center gap-2 text-sm whitespace-nowrap">
-                <span className="text-muted-foreground">Rows per page</span>
-                <DropdownMenu>
-                  <DropdownMenuTrigger asChild>
-                    <Button variant="outline" size="sm" className="gap-2">
-                      {pageSize}
-                      <ChevronDown className="w-4 h-4" />
-                    </Button>
-                  </DropdownMenuTrigger>
-                  <DropdownMenuContent>
-                    {[10, 25, 50, 100].map(n => (
-                      <DropdownMenuItem key={n} onClick={() => { setPageSize(n); localStorage.setItem('agents.pageSize', String(n)); }}>{n}</DropdownMenuItem>
-                    ))}
-                  </DropdownMenuContent>
-                </DropdownMenu>
-                <span className="text-muted-foreground">{(page - 1) * pageSize + 1}-{Math.min(page * pageSize, total)} of {total}</span>
-              </div>
+            <div className="sticky bottom-0 z-10 border-t border-border/60 bg-background/95 backdrop-blur mt-3 py-2">
               <Pagination>
                 <PaginationContent>
                   <PaginationItem>
                     <PaginationPrevious href="#" onClick={() => setPage(p => Math.max(1, p - 1))} />
                   </PaginationItem>
-                  {Array.from({ length: pageCount }).slice(0, 5).map((_, i) => (
+                  {Array.from({ length: pageCount }).map((_, i) => (
                     <PaginationItem key={i}>
                       <PaginationLink href="#" isActive={page === i + 1} onClick={() => setPage(i + 1)}>{i + 1}</PaginationLink>
                     </PaginationItem>

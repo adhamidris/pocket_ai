@@ -19,8 +19,10 @@ const Sidebar = () => {
   const items = [
     { label: "Home", to: "/dashboard", active: true },
     { label: "Cases", to: "/dashboard/cases" },
+    { label: "Leads", to: "/dashboard/leads" },
     { label: "Customers", to: "/dashboard/customers" },
     { label: "Agents", to: "/dashboard/agents" },
+    { label: "Knowledge", to: "/dashboard/knowledge" },
   ];
   return (
     <aside className="hidden md:flex w-56 shrink-0 border-r border-border/70 bg-card/60 backdrop-blur-sm min-h-screen sticky top-0">
