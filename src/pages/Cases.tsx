@@ -90,7 +90,7 @@ const Sidebar = ({ active = "Cases" as const }) => {
     { label: "Knowledge", to: "/dashboard/knowledge" },
   ] as const;
   return (
-    <aside className="hidden md:flex w-56 shrink-0 border-r border-border/70 bg-card/60 backdrop-blur-sm min-h-screen sticky top-0">
+    <aside className="hidden md:flex w-56 shrink-0 border-r border-border/70 bg-card/60 backdrop-blur-sm h-screen sticky top-0 overflow-hidden sidebar-card-chrome">
       <div className="flex flex-col w-full p-3 gap-2">
         <div className="px-2 py-3 text-lg font-semibold">Dashboard <span className="text-xs align-top text-muted-foreground">v0.1</span></div>
         <nav className="mt-1 flex-1 space-y-1">
@@ -126,24 +126,28 @@ const Sidebar = ({ active = "Cases" as const }) => {
 };
 
 const priorityColor = (p: Priority) => {
+  // Leads-inspired chips: light = pastel bg + colored text + light border
+  // dark = transparent bg + tinted text + stronger tinted border
   switch (p) {
     case "low":
-      return "bg-muted/40 text-muted-foreground border border-muted-foreground/20";
+      return "bg-slate-100 text-slate-600 border border-slate-200 dark:bg-transparent dark:text-slate-300 dark:border-slate-600/70";
     case "medium":
-      return "bg-blue-500/15 text-blue-600 dark:text-blue-300 border border-blue-500/25";
+      return "bg-blue-100 text-blue-600 border border-blue-200 dark:bg-transparent dark:text-blue-200 dark:border-blue-500/65";
     case "high":
-      return "bg-amber-400/20 text-amber-700 dark:text-amber-200 border border-amber-400/30";
+      return "bg-amber-100 text-amber-700 border border-amber-200 dark:bg-transparent dark:text-amber-200 dark:border-amber-500/65";
     case "urgent":
-      return "bg-rose-500/20 text-rose-600 dark:text-rose-200 border border-rose-500/30";
+      return "bg-rose-100 text-rose-600 border border-rose-200 dark:bg-transparent dark:text-rose-200 dark:border-rose-500/65";
   }
 };
 
 const statusColor = (s: Status) => {
+  // Leads-inspired chips for status
+  // open = informative (blue), resolved = success (emerald)
   switch (s) {
     case "open":
-      return "bg-emerald-500/15 text-emerald-600 dark:text-emerald-300 border border-emerald-500/30";
+      return "bg-blue-100 text-blue-600 border border-blue-200 dark:bg-transparent dark:text-blue-200 dark:border-blue-500/65";
     case "resolved":
-      return "bg-muted/40 text-muted-foreground border border-muted-foreground/20";
+      return "bg-emerald-100 text-emerald-600 border border-emerald-200 dark:bg-transparent dark:text-emerald-200 dark:border-emerald-500/65";
   }
 };
 
@@ -629,7 +633,7 @@ const Cases = () => {
           <section className="flex flex-col gap-6">
             <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
               <div className="flex items-center gap-3">
-                <div className="text-xl md:text-2xl font-semibold">Cases</div>
+                <div className="text-xl md:text-2xl font-semibold text-gradient-hero">Cases</div>
                 <Badge variant="secondary" className="hidden md:inline-flex">{filtered.length} results</Badge>
               </div>
               <div className="flex items-center gap-2">
@@ -673,6 +677,8 @@ const Cases = () => {
                     className="pl-9 border border-border/60 bg-muted/70 focus-visible:ring-0 focus-visible:border-border"
                   />
                 </div>
+              </div>
+              <div className="flex items-center gap-2 flex-wrap">
                 <DropdownMenu>
                   <DropdownMenuTrigger asChild>
                     <Button variant="outline" className="gap-2 text-sm focus-visible:outline-none focus-visible:ring-0">
@@ -719,8 +725,6 @@ const Cases = () => {
                     <DropdownMenuItem onClick={() => setDateFilter("all")}>All time</DropdownMenuItem>
                   </DropdownMenuContent>
                 </DropdownMenu>
-              </div>
-              <div className="flex items-center gap-2">
                 {/* Column visibility */}
                 <DropdownMenu>
                   <DropdownMenuTrigger asChild>
@@ -774,7 +778,8 @@ const Cases = () => {
           <div className="grid grid-cols-12 gap-4">
             <div className="col-span-12 space-y-4">
               {/* Error area reserved for future API errors */}
-              <Card className="border border-border/70 bg-card/90 shadow-sm backdrop-blur">
+              <Card className="relative border border-border/70 bg-card shadow-lg shadow-black/5 backdrop-blur hover:border-primary/35 transition-colors dark:border-slate-700/50 dark:bg-slate-800/70 dark:shadow-black/25">
+                <div className="absolute inset-x-0 top-0 h-px bg-gradient-to-r from-primary/35 via-primary/20 to-transparent" />
                 {/* Table on wide screens; Card list on narrow */}
                 {!isNarrow ? (
                 <div className="relative overflow-x-auto overflow-y-auto max-h-[70vh]">

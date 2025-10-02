@@ -14,6 +14,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { useI18n } from "@/i18n/I18nProvider";
 import LanguageToggle from "@/components/LanguageToggle";
+import { useThemeMode } from "@/contexts/ThemeProvider";
 
 const Sidebar = () => {
   const items = [
@@ -73,29 +74,12 @@ const Dashboard = () => {
   const { t } = useI18n();
   const [loading, setLoading] = React.useState(true);
   const [error, setError] = React.useState<string | null>(null);
-  const [isLight, setIsLight] = React.useState(false);
+  const { isLight, toggle } = useThemeMode();
   React.useEffect(() => {
     const id = setTimeout(() => setLoading(false), 400);
     return () => clearTimeout(id);
   }, []);
-  React.useEffect(() => {
-    const saved = localStorage.getItem("theme");
-    if (saved === "light") {
-      document.documentElement.classList.add("light");
-      setIsLight(true);
-    }
-  }, []);
-  const toggleTheme = () => {
-    const next = !isLight;
-    setIsLight(next);
-    if (next) {
-      document.documentElement.classList.add("light");
-      localStorage.setItem("theme", "light");
-    } else {
-      document.documentElement.classList.remove("light");
-      localStorage.setItem("theme", "dark");
-    }
-  };
+  
   const recentActivity = [
     { id: '1', type: 'conversation', title: 'Sarah Johnson started a conversation', description: 'Billing inquiry - Urgent priority', timestamp: '5 minutes ago', status: 'urgent' },
     { id: '2', type: 'agent', title: 'Nancy AI resolved 3 conversations', description: 'Average response time: 1.1s', timestamp: '1 hour ago', status: 'success' },
@@ -185,7 +169,7 @@ const Dashboard = () => {
 
                   {/* Theme toggle */}
                   <button
-                    onClick={toggleTheme}
+                    onClick={toggle}
                     className="p-2 rounded-lg border border-border hover:bg-accent/40 transition-colors"
                     aria-label={t("nav.toggleLightMode")}
                     title={t("nav.toggleLightMode")}

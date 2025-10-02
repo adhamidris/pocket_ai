@@ -74,7 +74,7 @@ const Sidebar = () => {
     { label: "Knowledge", to: "/dashboard/knowledge" },
   ];
   return (
-    <aside className="hidden md:flex w-56 shrink-0 border-r border-border/70 bg-card/60 backdrop-blur-sm min-h-screen sticky top-0">
+    <aside className="hidden md:flex w-56 shrink-0 border-r border-border/70 bg-card/60 backdrop-blur-sm h-screen sticky top-0 overflow-hidden sidebar-card-chrome">
       <div className="flex flex-col w-full p-3 gap-2">
         <div className="px-2 py-3 text-lg font-semibold">Dashboard <span className="text-xs align-top text-muted-foreground">v0.1</span></div>
         <nav className="mt-1 flex-1 space-y-1">
@@ -695,7 +695,7 @@ const Customers = () => {
           <section className="flex flex-col gap-6">
             {/* Header */}
             <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
-              <div className="text-xl md:text-2xl font-semibold">Customers</div>
+            <div className="text-xl md:text-2xl font-semibold text-gradient-hero">Customers</div>
               <div className="flex items-center gap-2">
                 <Dialog>
                   <DialogTrigger asChild>
@@ -747,6 +747,8 @@ const Customers = () => {
                     className="pl-9 border border-border/60 bg-muted/70 focus-visible:ring-0 focus-visible:border-border"
                   />
                 </div>
+              </div>
+              <div className="flex items-center gap-2 flex-wrap md:ml-auto">
                 <DropdownMenu>
                   <DropdownMenuTrigger asChild>
                     <Button variant="outline" className="gap-2 text-sm">
@@ -804,8 +806,6 @@ const Customers = () => {
                     <DropdownMenuItem onClick={() => setJoinedRange(undefined)}>Any time</DropdownMenuItem>
                   </DropdownMenuContent>
                 </DropdownMenu>
-              </div>
-              <div className="flex items-center gap-2">
                 <DropdownMenu>
                   <DropdownMenuTrigger asChild>
                     <Button variant="outline" className="gap-2 text-sm">
@@ -827,7 +827,10 @@ const Customers = () => {
             {/* Table */}
             <div className="grid grid-cols-12 gap-4">
               <div className="col-span-12 space-y-4">
-                <Card className="border border-border/70 bg-card/90 shadow-sm backdrop-blur">
+              <Card className="relative border border-border/70 bg-card shadow-lg shadow-black/5 backdrop-blur hover:border-primary/35 transition-colors dark:border-slate-700/50 dark:bg-slate-800/70 dark:shadow-black/25">
+
+                {/* <Card className="relative border border-border/70 bg-card/90 shadow-sm backdrop-blur hover:border-primary/35 transition-colors"> */}
+                  <div className="absolute inset-x-0 top-0 h-px bg-gradient-to-r from-primary/35 via-primary/20 to-transparent" />
                   <div className="relative overflow-x-auto overflow-y-auto max-h-[70vh]">
                     <Table className="rounded-xl border border-border/70 bg-background/60 shadow-sm backdrop-blur [&_th]:px-3 [&_td]:px-3 [&_th:first-child]:pl-4 [&_td:first-child]:pl-4 [&_th:last-child]:pr-4 [&_td:last-child]:pr-4 [&_th]:py-3 [&_td]:py-3">
                       <TableHeader className="sticky top-0 z-10 bg-muted/70 backdrop-blur border-b border-border/80">
@@ -892,16 +895,33 @@ const Customers = () => {
                                 <div className="leading-tight min-w-0">
                                   <div className="text-sm font-semibold truncate text-foreground flex items-center gap-2">
                                     <span>{c.name}</span>
-                                    {c.vip && <Badge variant="secondary" className="text-xs">VIP</Badge>}
+                                    {c.vip && (
+                                      <Badge
+                                        variant="outline"
+                                        className="!px-1.5 !py-0 !text-[10px] leading-tight bg-amber-100 text-amber-700 border border-amber-200 dark:bg-transparent dark:text-amber-200 dark:border-amber-500/65"
+                                      >
+                                        VIP
+                                      </Badge>
+                                    )}
                                   </div>
                                   <div className="text-xs text-foreground/60 truncate">{c.owner}</div>
                                 </div>
                               </div>
                             </TableCell>
                             <TableCell className="text-sm text-foreground/70">{maskEmail(c.email)}</TableCell>
-                            <TableCell className="text-right text-foreground/80 tabular-nums">{c.conversations}</TableCell>
+                            <TableCell className="text-right text-foreground/70 tabular-nums">{c.conversations}</TableCell>
                             <TableCell className="text-right">
-                              <Badge className="bg-emerald-500/15 text-emerald-600 dark:text-emerald-300 border border-emerald-500/25">
+                              <Badge
+                                variant="outline"
+                                className={cn(
+                                  "text-xs tabular-nums",
+                                  c.satisfaction >= 90
+                                    ? "bg-emerald-100 text-emerald-600 border border-emerald-200 dark:bg-transparent dark:text-emerald-200 dark:border-emerald-500/65"
+                                    : c.satisfaction >= 70
+                                      ? "bg-amber-100 text-amber-700 border border-amber-200 dark:bg-transparent dark:text-amber-200 dark:border-amber-500/65"
+                                      : "bg-rose-100 text-rose-600 border border-rose-200 dark:bg-transparent dark:text-rose-200 dark:border-rose-500/65"
+                                )}
+                              >
                                 {c.satisfaction}%
                               </Badge>
                             </TableCell>

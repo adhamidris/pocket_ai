@@ -36,6 +36,7 @@ import {
   TrendingUp,
   Users,
 } from "lucide-react";
+import { useThemeMode } from "@/contexts/ThemeProvider";
 
 type HandlerType = "ai" | "human";
 
@@ -158,7 +159,7 @@ const Sidebar = () => {
   ];
 
   return (
-    <aside className="hidden md:flex w-56 shrink-0 border-r border-border/70 bg-card/60 backdrop-blur-sm min-h-screen sticky top-0">
+    <aside className="hidden md:flex w-56 shrink-0 border-r border-border/70 bg-card/60 backdrop-blur-sm min-h-screen sticky top-0 sidebar-card-chrome">
       <div className="flex flex-col w-full p-3 gap-2">
         <div className="px-2 py-3 text-lg font-semibold">
           Dashboard <span className="text-xs align-top text-muted-foreground">v0.1</span>
@@ -230,7 +231,7 @@ const dottedSeparator = "border-t border-dashed border-border/40";
 
 const Home2 = () => {
   const [loading, setLoading] = React.useState(true);
-  const [isLight, setIsLight] = React.useState(false);
+  const { isLight, toggle } = useThemeMode();
   const [tab, setTab] = React.useState<HandlerType | "all">("all");
   const urgentCount = 1;
   const [hoveredId, setHoveredId] = React.useState<string | null>(null);
@@ -240,25 +241,7 @@ const Home2 = () => {
     return () => clearTimeout(timer);
   }, []);
 
-  React.useEffect(() => {
-    const saved = localStorage.getItem("theme");
-    if (saved === "light") {
-      document.documentElement.classList.add("light");
-      setIsLight(true);
-    }
-  }, []);
-
-  const toggleTheme = () => {
-    const next = !isLight;
-    setIsLight(next);
-    if (next) {
-      document.documentElement.classList.add("light");
-      localStorage.setItem("theme", "light");
-    } else {
-      document.documentElement.classList.remove("light");
-      localStorage.setItem("theme", "dark");
-    }
-  };
+  
 
   const filteredGroups = React.useMemo(() => {
     if (tab === "all") return conversationGroups;
@@ -288,7 +271,7 @@ const Home2 = () => {
                 </Button>
                 <LanguageToggle />
                 <button
-                  onClick={toggleTheme}
+                  onClick={toggle}
                   className="h-9 w-9 inline-flex items-center justify-center rounded-full border border-border/60 hover:bg-accent/40 transition-colors"
                   aria-label="Toggle theme"
                 >

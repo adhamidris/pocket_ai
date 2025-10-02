@@ -21,6 +21,7 @@ import Cases from "./pages/Cases";
 import Agents from "./pages/Agents";
 import Knowledge from "./pages/Knowledge";
 import Leads from "./pages/Leads";
+import ChatPortal from "./pages/ChatPortal";
 import ScrollToTop from "@/components/ScrollToTop";
 
 const queryClient = new QueryClient();
@@ -49,6 +50,7 @@ const App = () => (
           <Route path="/dashboard/conversations" element={<Conversations />} />
           <Route path="/dashboard/agents" element={<Agents />} />
           <Route path="/dashboard/knowledge" element={<Knowledge />} />
+          <Route path="/chat/:agentId" element={<ChatPortal />} />
           {/* ADD ALL CUSTOM ROUTES ABOVE THE CATCH-ALL "*" ROUTE */}
           <Route path="*" element={<NotFound />} />
         </Routes>

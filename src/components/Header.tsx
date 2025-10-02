@@ -1,4 +1,5 @@
-import { useEffect, useState } from "react";
+import { useState } from "react";
+import { useThemeMode } from "@/contexts/ThemeProvider";
 import { Button } from "@/components/ui/button";
 import { Menu, Moon, Sun, X } from "lucide-react";
 import LanguageToggle from "./LanguageToggle";
@@ -8,29 +9,11 @@ import { Link } from "react-router-dom";
 
 const Header = () => {
   const [isMenuOpen, setIsMenuOpen] = useState(false);
-  const [isLight, setIsLight] = useState(false);
+  const { isLight, toggle } = useThemeMode();
   const { t } = useI18n();
   const [loginOpen, setLoginOpen] = useState(false);
 
-  useEffect(() => {
-    const saved = localStorage.getItem("theme");
-    if (saved === "light") {
-      document.documentElement.classList.add("light");
-      setIsLight(true);
-    }
-  }, []);
-
-  const toggleTheme = () => {
-    const next = !isLight;
-    setIsLight(next);
-    if (next) {
-      document.documentElement.classList.add("light");
-      localStorage.setItem("theme", "light");
-    } else {
-      document.documentElement.classList.remove("light");
-      localStorage.setItem("theme", "dark");
-    }
-  };
+  
 
   return (
     <header className="sticky top-0 z-50 bg-background/80 backdrop-blur-xl border-b border-neutral-100">
@@ -66,7 +49,7 @@ const Header = () => {
           <div className="hidden md:flex items-center gap-4">
             <LanguageToggle />
             <button
-              onClick={toggleTheme}
+              onClick={toggle}
               className="p-2 rounded-lg border border-border hover:bg-accent/40 transition-colors"
               aria-label={t("nav.toggleLightMode")}
               title={t("nav.toggleLightMode")}
@@ -112,7 +95,7 @@ const Header = () => {
               <div className="flex flex-col space-y-2 pt-4">
                 <LanguageToggle />
                 <button
-                  onClick={toggleTheme}
+                  onClick={toggle}
                   className="justify-start p-2 rounded-lg border border-border hover:bg-accent/40 transition-colors inline-flex items-center gap-2"
                   aria-label={t("nav.toggleLightMode")}
                 >

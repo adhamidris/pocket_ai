@@ -12,6 +12,7 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { Separator } from "@/components/ui/separator";
 import { Progress } from "@/components/ui/progress";
 import { Switch } from "@/components/ui/switch";
+import { Pagination, PaginationContent, PaginationItem, PaginationLink, PaginationNext, PaginationPrevious } from "@/components/ui/pagination";
 import {
   UploadCloud,
   FileText,
@@ -277,7 +278,7 @@ const Sidebar = () => {
   ];
 
   return (
-    <aside className="hidden md:flex w-56 shrink-0 border-r border-border/70 bg-card/60 backdrop-blur-sm min-h-screen sticky top-0">
+    <aside className="hidden md:flex w-56 shrink-0 border-r border-border/70 bg-card/60 backdrop-blur-sm h-screen sticky top-0 overflow-hidden sidebar-card-chrome">
       <div className="flex flex-col w-full p-3 gap-2">
         <div className="px-2 py-3 text-lg font-semibold">
           Dashboard <span className="text-xs align-top text-muted-foreground">v0.1</span>
@@ -316,7 +317,8 @@ const Sidebar = () => {
 };
 
 const StatBadge = ({ label, value, icon }: { label: string; value: string; icon: React.ReactNode }) => (
-  <Card className="flex flex-col gap-2 border border-border/60 bg-card/70 p-4">
+  <Card className="relative flex flex-col gap-2 border border-border/60 bg-card/70 p-4 transition-colors hover:border-primary/35">
+    <div className="absolute inset-x-0 top-0 h-px bg-gradient-to-r from-primary/35 via-primary/20 to-transparent" />
     <div className="flex items-center gap-3">
       <div className="h-10 w-10 rounded-full bg-primary/10 text-primary grid place-items-center">
         {icon}
@@ -358,6 +360,15 @@ const Knowledge = () => {
     );
   }, [documents, search]);
 
+  const pageSize = 25;
+  const [page, setPage] = React.useState(1);
+  React.useEffect(() => setPage(1), [search]);
+  const pageCount = React.useMemo(() => Math.max(1, Math.ceil(filteredDocs.length / pageSize)), [filteredDocs.length, pageSize]);
+  const pageItems = React.useMemo(() => filteredDocs.slice((page - 1) * pageSize, page * pageSize), [filteredDocs, page, pageSize]);
+  React.useEffect(() => {
+    setPage((prev) => Math.min(prev, pageCount));
+  }, [pageCount]);
+
   const openDocument = (doc: KnowledgeDocument) => {
     setActiveDoc(doc);
     if (isNarrow) {
@@ -370,16 +381,14 @@ const Knowledge = () => {
       <Sidebar />
       <main className="flex-1 overflow-auto">
         <div className="w-full px-4 md:px-6 lg:px-8 py-6">
-          <header className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4">
-            <div className="inline-flex items-center gap-2 rounded-full border border-primary/30 bg-primary/5 px-3 py-1 text-xs font-semibold text-primary uppercase tracking-wide">
-              Knowledge Hub
-            </div>
+          <header className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
+            <div className="text-xl md:text-2xl font-semibold text-gradient-hero">Knowledge</div>
             <div className="flex flex-wrap items-center gap-2">
-              <Button variant="outline" className="gap-2">
-                <LinkIcon className="w-4 h-4" /> Connect integration
-              </Button>
               <Button className="gap-2">
-                <UploadCloud className="w-4 h-4" /> Upload content
+                <UploadCloud className="w-4 h-4" /> Upload Doc
+              </Button>
+              <Button variant="outline" className="gap-2">
+                <LinkIcon className="w-4 h-4" /> Connect Integrations
               </Button>
             </div>
           </header>
@@ -407,16 +416,7 @@ const Knowledge = () => {
                   </TabsTrigger>
                 </TabsList>
               {tab === "documents" && (
-                <div className="flex flex-1 flex-col gap-2 sm:flex-row sm:items-center sm:justify-end">
-                  <div className="relative w-full md:w-64">
-                    <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
-                    <Input
-                      value={search}
-                      onChange={(e) => setSearch(e.target.value)}
-                      placeholder="Search documents…"
-                      className="pl-9 bg-input border-0"
-                    />
-                  </div>
+                <div className="flex flex-wrap items-center gap-2 md:ml-auto">
                   <DropdownMenu>
                     <DropdownMenuTrigger asChild>
                       <Button variant="outline" className="gap-2">
@@ -436,26 +436,43 @@ const Knowledge = () => {
                 </div>
               )}
               {tab === "integrations" && (
-                <div className="flex flex-wrap items-center gap-2">
-                  <Button variant="outline" size="sm" className="gap-2">
-                    <RefreshCw className="w-4 h-4" /> Sync all
-                  </Button>
-                  <Button variant="outline" size="sm" className="gap-1">
-                    <CheckCircle2 className="w-4 h-4" /> Show connected only
-                  </Button>
+                <div className="flex flex-col gap-2">
+                  <div className="flex items-center gap-2 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+                    <RefreshCw className="w-3.5 h-3.5" />
+                    <span>Bulk actions</span>
+                  </div>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <Button variant="outline" size="sm" className="gap-2">
+                      <RefreshCw className="w-4 h-4" /> Sync all
+                    </Button>
+                    <Button variant="outline" size="sm" className="gap-1">
+                      <CheckCircle2 className="w-4 h-4" /> Show connected only
+                    </Button>
+                  </div>
                 </div>
               )}
               {tab === "collections" && (
-                <div className="flex flex-wrap items-center gap-2">
-                  <Button size="sm">Sort by activity</Button>
-                  <Button size="sm">New collection</Button>
+                <div className="flex flex-col gap-2">
+                  <div className="flex items-center gap-2 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+                    <Layers className="w-3.5 h-3.5" />
+                    <span>Actions</span>
+                  </div>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <Button size="sm">Sort by activity</Button>
+                    <Button size="sm">New collection</Button>
+                  </div>
                 </div>
               )}
             </div>
 
             <TabsContent value="documents" className="mt-5">
               <div className="space-y-4">
-                  <Card className="border-dashed border-2 border-primary/30 bg-primary/5 p-6">
+                  <div className="space-y-2">
+                    <div className="flex items-center gap-2 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+                      <UploadCloud className="w-3.5 h-3.5" />
+                      <span>Add content</span>
+                    </div>
+                    <Card className="border-dashed border-2 border-primary/30 bg-primary/5 p-6">
                     <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
                       <div className="flex items-start gap-4">
                         <div className="rounded-full bg-primary/10 text-primary p-3">
@@ -478,9 +495,26 @@ const Knowledge = () => {
                       </div>
                     </div>
                   </Card>
+                  </div>
 
-                  <Card className="border border-border/60 bg-card/70">
-                    <ScrollArea className="max-h-[520px]">
+                  <div className="space-y-2">
+                    <div className="flex items-center gap-2 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+                      <FileText className="w-3.5 h-3.5" />
+                      <span>Document library</span>
+                    </div>
+                    <div className="relative w-full md:w-64">
+                      <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
+                      <Input
+                        value={search}
+                        onChange={(e) => setSearch(e.target.value)}
+                        placeholder="Search documents…"
+                        className="pl-9 border border-border/60 bg-muted/70 focus-visible:ring-0 focus-visible:border-border"
+                      />
+                    </div>
+                  </div>
+                  <Card className="relative border border-border/70 bg-card shadow-lg shadow-black/5 backdrop-blur hover:border-primary/35 transition-colors dark:border-slate-700/50 dark:bg-slate-800/70 dark:shadow-black/25">
+                    <div className="absolute inset-x-0 top-0 h-px bg-gradient-to-r from-primary/35 via-primary/20 to-transparent" />
+                    <ScrollArea className="max-h-[70vh]">
                       <Table className="rounded-xl border border-border/70 bg-background/60 shadow-sm backdrop-blur [&_th]:px-3 [&_td]:px-3 [&_th:first-child]:pl-4 [&_td:first-child]:pl-4 [&_th:last-child]:pr-4 [&_td:last-child]:pr-4 [&_th]:py-3 [&_td]:py-3">
                         <TableHeader className="sticky top-0 z-10 bg-muted/70 backdrop-blur border-b border-border/80">
                           <TableRow className="hover:bg-transparent">
@@ -493,7 +527,7 @@ const Knowledge = () => {
                           </TableRow>
                         </TableHeader>
                         <TableBody>
-                          {filteredDocs.map((doc) => (
+                          {pageItems.map((doc) => (
                             <TableRow
                               key={doc.id}
                               className={cn(
@@ -564,11 +598,35 @@ const Knowledge = () => {
                       </Table>
                     </ScrollArea>
                   </Card>
+                  <div className="sticky bottom-0 z-10 border-t border-border/60 bg-background/95 backdrop-blur mt-3 py-2">
+                    <Pagination>
+                      <PaginationContent>
+                        <PaginationItem>
+                          <PaginationPrevious onClick={() => setPage((p) => Math.max(1, p - 1))} href="#" />
+                        </PaginationItem>
+                        {Array.from({ length: pageCount }).map((_, i) => (
+                          <PaginationItem key={i}>
+                            <PaginationLink href="#" isActive={page === i + 1} onClick={() => setPage(i + 1)}>
+                              {i + 1}
+                            </PaginationLink>
+                          </PaginationItem>
+                        ))}
+                        <PaginationItem>
+                          <PaginationNext onClick={() => setPage((p) => Math.min(pageCount, p + 1))} href="#" />
+                        </PaginationItem>
+                      </PaginationContent>
+                    </Pagination>
+                  </div>
               </div>
             </TabsContent>
 
             <TabsContent value="integrations" className="mt-5">
-              <div className="grid gap-4 lg:grid-cols-2 xl:grid-cols-3">
+              <div className="space-y-2">
+                <div className="flex items-center gap-2 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+                  <Plug className="w-3.5 h-3.5" />
+                  <span>Connected sources</span>
+                </div>
+                <div className="grid gap-4 lg:grid-cols-2 xl:grid-cols-3">
                 {integrations.map((integration) => (
                   <Card key={integration.id} className={cn("border border-border/60 bg-card/70 p-4 flex flex-col gap-4", integration.status === "disconnected" && "border-dashed border-primary/40")}
                   >
@@ -606,13 +664,20 @@ const Knowledge = () => {
                     </div>
                   </Card>
                 ))}
+                </div>
               </div>
             </TabsContent>
 
             <TabsContent value="collections" className="mt-5">
-              <div className="grid gap-4 lg:grid-cols-2 xl:grid-cols-3">
+              <div className="space-y-2">
+                <div className="flex items-center gap-2 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+                  <Layers className="w-3.5 h-3.5" />
+                  <span>Collections</span>
+                </div>
+                <div className="grid gap-4 lg:grid-cols-2 xl:grid-cols-3">
                 {collections.map((collection) => (
-                  <Card key={collection.id} className="border border-border/60 bg-card/70 p-4 flex flex-col gap-4">
+                  <Card key={collection.id} className="relative border border-border/60 bg-card/70 p-4 flex flex-col gap-4 transition-colors hover:border-primary/35">
+                    <div className="absolute inset-x-0 top-0 h-px bg-gradient-to-r from-primary/35 via-primary/20 to-transparent" />
                     <div className="space-y-1">
                       <div className="flex items-center gap-2">
                         <div className="text-sm font-semibold">{collection.name}</div>
@@ -648,6 +713,7 @@ const Knowledge = () => {
                     </div>
                   </Card>
                 ))}
+                </div>
               </div>
             </TabsContent>
           </Tabs>

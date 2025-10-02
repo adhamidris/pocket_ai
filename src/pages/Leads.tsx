@@ -315,7 +315,7 @@ const Sidebar = () => {
   ];
 
   return (
-    <aside className="hidden md:flex w-56 shrink-0 border-r border-border/70 bg-card/60 backdrop-blur-sm min-h-screen sticky top-0">
+    <aside className="hidden md:flex w-56 shrink-0 border-r border-border/70 bg-card/60 backdrop-blur-sm h-screen sticky top-0 overflow-hidden sidebar-card-chrome">
       <div className="flex flex-col w-full p-3 gap-2">
         <div className="px-2 py-3 text-lg font-semibold">
           Dashboard <span className="text-xs align-top text-muted-foreground">v0.1</span>
@@ -521,7 +521,7 @@ const Leads = () => {
           <section className="flex flex-col gap-6">
             <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
               <div className="space-y-2">
-                <div className="text-xl md:text-2xl font-semibold tracking-tight">Leads</div>
+                <div className="text-xl md:text-2xl font-semibold tracking-tight text-gradient-hero">Leads</div>
               </div>
               <div className="flex flex-wrap items-center gap-2">
                 <Button className="gap-2">
@@ -564,6 +564,8 @@ const Leads = () => {
                     className="pl-9 border border-border/60 bg-muted/70 focus-visible:ring-0 focus-visible:border-border"
                   />
                 </div>
+              </div>
+              <div className="flex items-center gap-2 flex-wrap">
                 <DropdownMenu>
                   <DropdownMenuTrigger asChild>
                     <Button variant="outline" className="gap-2 text-sm">
@@ -598,8 +600,6 @@ const Leads = () => {
                     <DropdownMenuItem onClick={() => setRangeFilter("all")}>All time</DropdownMenuItem>
                   </DropdownMenuContent>
                 </DropdownMenu>
-              </div>
-              <div className="flex items-center gap-2">
                 {heatOptions.map((option) => (
                   <Button
                     key={option.value}
@@ -624,7 +624,8 @@ const Leads = () => {
 
             <div className="grid grid-cols-12 gap-4">
               <div className="col-span-12 space-y-4">
-                <Card className="border border-border/70 bg-card shadow-lg shadow-black/5 backdrop-blur dark:border-slate-700/50 dark:bg-slate-800/70 dark:shadow-black/25">
+                <Card className="relative border border-border/70 bg-card shadow-lg shadow-black/5 backdrop-blur hover:border-primary/35 transition-colors dark:border-slate-700/50 dark:bg-slate-800/70 dark:shadow-black/25">
+                  <div className="absolute inset-x-0 top-0 h-px bg-gradient-to-r from-primary/35 via-primary/20 to-transparent" />
                   {filteredLeads.length === 0 ? (
                     <div className="py-14 flex flex-col items-center justify-center gap-3">
                       <Users className="w-8 h-8 text-muted-foreground/60" />

@@ -12,7 +12,7 @@ import { Switch } from "@/components/ui/switch";
 import { Separator } from "@/components/ui/separator";
 import { DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator } from "@/components/ui/dropdown-menu";
 import { Pagination, PaginationContent, PaginationItem, PaginationNext, PaginationPrevious, PaginationLink } from "@/components/ui/pagination";
-import { Search, ChevronDown, EllipsisVertical, Bot, Rocket, Copy, Eye, EyeOff, Plus, X, Info } from "lucide-react";
+import { Search, ChevronDown, EllipsisVertical, Bot, Rocket, Copy, Eye, EyeOff, Plus, X, Info, Building2 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { AGENT_ROLES, AGENT_TONES, AGENT_TRAITS, ESCALATION_OPTIONS, type AgentRole, type AgentTone, type AgentTrait, type EscalationRule, type AgentStatus } from "@/lib/agentOptions";
 
@@ -72,7 +72,7 @@ const Sidebar = () => {
   ];
 
   return (
-    <aside className="hidden md:flex w-56 shrink-0 border-r border-border/70 bg-card/60 backdrop-blur-sm min-h-screen sticky top-0">
+    <aside className="hidden md:flex w-56 shrink-0 border-r border-border/70 bg-card/60 backdrop-blur-sm h-screen sticky top-0 overflow-hidden sidebar-card-chrome">
       <div className="flex flex-col w-full p-3 gap-2">
         <div className="px-2 py-3 text-lg font-semibold">
           Dashboard <span className="text-xs align-top text-muted-foreground">v0.1</span>
@@ -442,7 +442,7 @@ const Agents = () => {
         <div className="w-full px-4 md:px-6 lg:px-8 py-6">
           {/* Header */}
           <div className="mb-4 flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
-            <div className="text-xl md:text-2xl font-semibold">Agents</div>
+            <div className="text-xl md:text-2xl font-semibold text-gradient-hero">Agents</div>
             <div className="flex items-center gap-2">
               <Button className="gap-2" onClick={startWizard}><Bot className="w-4 h-4" /> Create Agent</Button>
               <Button variant="outline" className="gap-2" disabled><Rocket className="w-4 h-4" /> Templates</Button>
@@ -452,7 +452,7 @@ const Agents = () => {
           {/* Toolbar */}
           <div className="sticky top-0 z-10 bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60 border-y border-border/60">
             <div className="py-2 flex flex-col gap-2">
-              <div className="flex flex-wrap items-center gap-2">
+              <div className="flex flex-wrap items-center gap-2 justify-between">
                 {/* Search */}
                 <div className="relative w-full sm:w-[220px] md:w-[240px]">
                   <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
@@ -464,20 +464,34 @@ const Agents = () => {
                   />
                 </div>
 
-                {/* Status chips */}
-                <div className="flex items-center gap-2">
-                  <Button size="sm" variant={status === 'All' ? 'default' : 'outline'} onClick={() => setStatus('All')}>All</Button>
-                  <Button size="sm" variant={status === 'Active' ? 'default' : 'outline'} onClick={() => setStatus('Active')}>Active</Button>
-                  <Button size="sm" variant={status === 'Inactive' ? 'default' : 'outline'} onClick={() => setStatus('Inactive')}>Inactive</Button>
-                  <Button size="sm" variant={status === 'Draft' ? 'default' : 'outline'} onClick={() => setStatus('Draft')}>Draft</Button>
+                <div className="flex items-center gap-2 flex-wrap md:ml-auto">
+                  {/* Status filter (dropdown, consistent with Leads) */}
+                  <DropdownMenu>
+                    <DropdownMenuTrigger asChild>
+                      <Button variant="outline" className="gap-2 text-sm">
+                        <Building2 className="w-4 h-4" />
+                        {status === 'All' ? 'All statuses' : status}
+                        <ChevronDown className="w-4 h-4 text-muted-foreground" />
+                      </Button>
+                    </DropdownMenuTrigger>
+                    <DropdownMenuContent align="start" className="w-44">
+                      <DropdownMenuItem onClick={() => setStatus('All')}>All statuses</DropdownMenuItem>
+                      <DropdownMenuSeparator />
+                      <DropdownMenuItem onClick={() => setStatus('Active')}>Active</DropdownMenuItem>
+                      <DropdownMenuItem onClick={() => setStatus('Inactive')}>Inactive</DropdownMenuItem>
+                      <DropdownMenuItem onClick={() => setStatus('Draft')}>Draft</DropdownMenuItem>
+                    </DropdownMenuContent>
+                  </DropdownMenu>
                 </div>
               </div>
             </div>
           </div>
 
           {/* Table */}
-          <div className="rounded-2xl bg-card/60 border border-border p-0 mt-3">
-            <Table className="rounded-xl border border-border/70 bg-background/60 shadow-sm backdrop-blur [&_th]:px-3 [&_td]:px-3 [&_th:first-child]:pl-4 [&_td:first-child]:pl-4 [&_th:last-child]:pr-4 [&_td:last-child]:pr-4 [&_th]:py-3 [&_td]:py-3">
+          <Card className="relative border border-border/70 bg-card shadow-lg shadow-black/5 backdrop-blur hover:border-primary/35 transition-colors dark:border-slate-700/50 dark:bg-slate-800/70 dark:shadow-black/25 mt-3">
+            <div className="absolute inset-x-0 top-0 h-px bg-gradient-to-r from-primary/35 via-primary/20 to-transparent" />
+            <div className="relative overflow-x-auto overflow-y-auto max-h-[70vh]">
+              <Table className="rounded-xl border border-border/70 bg-background/60 shadow-sm backdrop-blur [&_th]:px-3 [&_td]:px-3 [&_th:first-child]:pl-4 [&_td:first-child]:pl-4 [&_th:last-child]:pr-4 [&_td:last-child]:pr-4 [&_th]:py-3 [&_td]:py-3">
               <TableHeader className="sticky top-0 z-10 bg-muted/70 backdrop-blur border-b border-border/80">
                 <TableRow className="hover:bg-transparent">
                   <TableHead className="w-[240px]">Name / ID</TableHead>
@@ -495,7 +509,7 @@ const Agents = () => {
                 {pageItems.map((it) => (
                   <TableRow
                     key={it.id}
-                    className="group cursor-pointer bg-transparent transition-colors hover:bg-muted/60 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-offset-0 focus-visible:ring-primary"
+                    className="group cursor-pointer bg-transparent transition-colors hover:bg-muted/60 dark:hover:bg-white/10 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-offset-0 focus-visible:ring-primary"
                     onClick={() => openPanel(it)}
                   >
                     <TableCell>
@@ -514,32 +528,42 @@ const Agents = () => {
                       </div>
                     </TableCell>
                     <TableCell>
-                      <div className="inline-flex items-center gap-2 text-foreground/80">
-                        <span
-                          className={cn(
-                            "h-2 w-2 rounded-full",
-                            it.status === 'Active'
-                              ? 'bg-emerald-500'
-                              : it.status === 'Draft'
-                                ? 'bg-amber-500'
-                                : 'bg-muted-foreground'
-                          )}
-                        />
-                        <span className="text-sm font-medium">{it.status}</span>
-                      </div>
+                      <Badge
+                        variant="outline"
+                        className={cn(
+                          "text-xs capitalize",
+                          it.status === 'Active'
+                            ? 'bg-emerald-100 text-emerald-600 border border-emerald-200 dark:bg-transparent dark:text-emerald-200 dark:border-emerald-500/65'
+                            : it.status === 'Draft'
+                              ? 'bg-amber-100 text-amber-700 border border-amber-200 dark:bg-transparent dark:text-amber-200 dark:border-amber-500/65'
+                              : 'bg-slate-100 text-slate-600 border border-slate-200 dark:bg-transparent dark:text-slate-300 dark:border-slate-600/70'
+                        )}
+                      >
+                        {it.status}
+                      </Badge>
                     </TableCell>
-                    <TableCell className="text-right text-foreground/80 tabular-nums">{it.conversations.toLocaleString()}</TableCell>
+                    <TableCell className="text-right text-foreground/70 tabular-nums">{it.conversations.toLocaleString()}</TableCell>
                     <TableCell className="text-right">
-                      {it.satisfaction ? (
-                        <Badge className="bg-emerald-500/15 text-emerald-600 dark:text-emerald-300 border border-emerald-500/25">
+                      {typeof it.satisfaction === 'number' ? (
+                        <Badge
+                          variant="outline"
+                          className={cn(
+                            "text-xs tabular-nums",
+                            it.satisfaction >= 90
+                              ? "bg-emerald-100 text-emerald-600 border border-emerald-200 dark:bg-transparent dark:text-emerald-200 dark:border-emerald-500/65"
+                              : it.satisfaction >= 70
+                                ? "bg-amber-100 text-amber-700 border border-amber-200 dark:bg-transparent dark:text-amber-200 dark:border-amber-500/65"
+                                : "bg-rose-100 text-rose-600 border border-rose-200 dark:bg-transparent dark:text-rose-200 dark:border-rose-500/65"
+                          )}
+                        >
                           {it.satisfaction}%
                         </Badge>
                       ) : (
                         <span className="text-foreground/50">—</span>
                       )}
                     </TableCell>
-                    <TableCell className="text-right text-foreground/80 tabular-nums">{secondsToText(it.aht)}</TableCell>
-                    <TableCell className="text-right text-foreground/80 tabular-nums">{it.escalations}</TableCell>
+                    <TableCell className="text-right text-foreground/70 tabular-nums">{secondsToText(it.aht)}</TableCell>
+                    <TableCell className="text-right text-foreground/70 tabular-nums">{it.escalations}</TableCell>
                     <TableCell className="text-foreground/70">{formatRelative(it.updatedAt)}</TableCell>
                     <TableCell onClick={(e) => e.stopPropagation()}>
                       <DropdownMenu>
@@ -578,25 +602,26 @@ const Agents = () => {
                   </TableRow>
                 )}
               </TableBody>
-            </Table>
-
-            <div className="sticky bottom-0 z-10 border-t border-border/60 bg-background/95 backdrop-blur mt-3 py-2">
-              <Pagination>
-                <PaginationContent>
-                  <PaginationItem>
-                    <PaginationPrevious href="#" onClick={() => setPage(p => Math.max(1, p - 1))} />
-                  </PaginationItem>
-                  {Array.from({ length: pageCount }).map((_, i) => (
-                    <PaginationItem key={i}>
-                      <PaginationLink href="#" isActive={page === i + 1} onClick={() => setPage(i + 1)}>{i + 1}</PaginationLink>
-                    </PaginationItem>
-                  ))}
-                  <PaginationItem>
-                    <PaginationNext href="#" onClick={() => setPage(p => Math.min(pageCount, p + 1))} />
-                  </PaginationItem>
-                </PaginationContent>
-              </Pagination>
+              </Table>
             </div>
+          </Card>
+
+          <div className="sticky bottom-0 z-10 border-t border-border/60 bg-background/95 backdrop-blur mt-3 py-2">
+            <Pagination>
+              <PaginationContent>
+                <PaginationItem>
+                  <PaginationPrevious href="#" onClick={() => setPage(p => Math.max(1, p - 1))} />
+                </PaginationItem>
+                {Array.from({ length: pageCount }).map((_, i) => (
+                  <PaginationItem key={i}>
+                    <PaginationLink href="#" isActive={page === i + 1} onClick={() => setPage(i + 1)}>{i + 1}</PaginationLink>
+                  </PaginationItem>
+                ))}
+                <PaginationItem>
+                  <PaginationNext href="#" onClick={() => setPage(p => Math.min(pageCount, p + 1))} />
+                </PaginationItem>
+              </PaginationContent>
+            </Pagination>
           </div>
         </div>
       </main>
@@ -659,7 +684,7 @@ const Agents = () => {
               </div>
               <div className="flex-1 min-h-0 p-4 space-y-4">
                 <TabsContent value="overview">
-                  <Card className="p-4 space-y-4">
+                  <Card className="p-4 space-y-4 border border-border/60 hover:border-primary/35 transition-colors">
                     <div>
                       <div className="text-sm font-semibold text-card-foreground">Agent basics</div>
                       <div className="text-xs text-muted-foreground mt-1">Snapshot of how this agent is configured.</div>
@@ -699,7 +724,7 @@ const Agents = () => {
                       </div>
                     </div>
                   </Card>
-                  <Card className="p-4 space-y-3">
+                  <Card className="p-4 space-y-3 border border-border/60 hover:border-primary/35 transition-colors">
                     <div className="text-xs font-semibold text-muted-foreground">Quick actions</div>
                     <div className="flex flex-wrap gap-2">
                       <Button size="sm" variant="outline" onClick={() => active && duplicateAgent(active)}>Duplicate</Button>
@@ -707,7 +732,7 @@ const Agents = () => {
                       {active?.status === 'Active' && <Button size="sm" variant="outline" onClick={() => { if (!active) return; setStatusForIds([active.id], 'Inactive') }}>Deactivate</Button>}
                     </div>
                   </Card>
-                  <Card className="p-4 space-y-4">
+                  <Card className="p-4 space-y-4 border border-border/60 hover:border-primary/35 transition-colors">
                     <div>
                       <div className="text-sm font-semibold text-card-foreground">Deployment</div>
                       <div className="text-xs text-muted-foreground mt-1">Share or embed this agent experience.</div>
@@ -772,7 +797,7 @@ const Agents = () => {
                 </TabsContent>
 
                 <TabsContent value="knowledge">
-                  <Card className="p-4 space-y-4">
+                  <Card className="p-4 space-y-4 border border-border/60 hover:border-primary/35 transition-colors">
                     <div>
                       <div className="text-sm font-semibold text-card-foreground">Knowledge</div>
                       <div className="text-xs text-muted-foreground mt-1">Choose how this agent accesses your collections.</div>
@@ -840,7 +865,7 @@ const Agents = () => {
                 </TabsContent>
 
                 <TabsContent value="kpis">
-                  <Card className="p-4 space-y-4">
+                  <Card className="p-4 space-y-4 border border-border/60 hover:border-primary/35 transition-colors">
                     <div>
                       <div className="text-sm font-semibold text-card-foreground">KPIs</div>
                       <div className="text-xs text-muted-foreground mt-1">
@@ -930,7 +955,7 @@ const Agents = () => {
                 </TabsContent>
 
                 <TabsContent value="analytics">
-                  <Card className="p-4 space-y-4">
+                  <Card className="p-4 space-y-4 border border-border/60 hover:border-primary/35 transition-colors">
                     <div>
                       <div className="text-sm font-semibold text-card-foreground">Analytics</div>
                       <div className="text-xs text-muted-foreground mt-1">Quick snapshot of performance metrics.</div>
@@ -985,7 +1010,8 @@ const Agents = () => {
             <div className="flex-1 min-h-0 p-4 overflow-auto">
 
               {wizardStep === 1 && (
-                <Card className="p-4 bg-card/80 border border-border/60 shadow-sm">
+                <Card className="relative p-4 bg-card/80 border border-border/60 hover:border-primary/35 transition-colors shadow-sm">
+                  <div className="absolute inset-x-0 top-0 h-px bg-gradient-to-r from-primary/35 via-primary/20 to-transparent" />
                   <div className="mb-4">
                     <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Step 1</div>
                     <div className="text-lg font-semibold text-card-foreground">Basics</div>
@@ -1069,7 +1095,8 @@ const Agents = () => {
               )}
 
               {wizardStep === 2 && (
-                <Card className="p-4 bg-card/80 border border-border/60 shadow-sm">
+                <Card className="relative p-4 bg-card/80 border border-border/60 hover:border-primary/35 transition-colors shadow-sm">
+                  <div className="absolute inset-x-0 top-0 h-px bg-gradient-to-r from-primary/35 via-primary/20 to-transparent" />
                   <div className="mb-4">
                     <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Step 2</div>
                     <div className="text-lg font-semibold text-card-foreground">Capabilities</div>
@@ -1095,7 +1122,8 @@ const Agents = () => {
               )}
 
               {wizardStep === 3 && (
-                <Card className="p-4 bg-card/80 border border-border/60 shadow-sm">
+                <Card className="relative p-4 bg-card/80 border border-border/60 hover:border-primary/35 transition-colors shadow-sm">
+                  <div className="absolute inset-x-0 top-0 h-px bg-gradient-to-r from-primary/35 via-primary/20 to-transparent" />
                   <div className="mb-4">
                     <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Step 3</div>
                     <div className="text-lg font-semibold text-card-foreground">Knowledge</div>
@@ -1160,7 +1188,8 @@ const Agents = () => {
               )}
 
               {wizardStep === 4 && (
-                <Card className="p-4 bg-card/80 border border-border/60 shadow-sm">
+                <Card className="relative p-4 bg-card/80 border border-border/60 hover:border-primary/35 transition-colors shadow-sm">
+                  <div className="absolute inset-x-0 top-0 h-px bg-gradient-to-r from-primary/35 via-primary/20 to-transparent" />
                   <div className="mb-4">
                     <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Step 4</div>
                     <div className="text-lg font-semibold text-card-foreground">Routing & Escalation</div>
@@ -1192,7 +1221,8 @@ const Agents = () => {
               )}
 
               {wizardStep === 5 && (
-                <Card className="p-4 bg-card/80 border border-border/60 shadow-sm">
+                <Card className="relative p-4 bg-card/80 border border-border/60 hover:border-primary/35 transition-colors shadow-sm">
+                  <div className="absolute inset-x-0 top-0 h-px bg-gradient-to-r from-primary/35 via-primary/20 to-transparent" />
                   <div className="mb-4">
                     <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Step 5</div>
                     <div className="text-lg font-semibold text-card-foreground">Review</div>
