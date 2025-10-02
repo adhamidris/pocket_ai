@@ -1292,11 +1292,11 @@ const Register = () => {
                       name={'agentTitle' as any}
                       render={({ field }) => (
                         <FormItem>
-                          <FormLabel>Desired title</FormLabel>
+                          <FormLabel>Role</FormLabel>
                           <Select onValueChange={field.onChange} value={field.value}>
                             <FormControl>
                               <SelectTrigger className="bg-input border-0 ring-0 focus:ring-0 focus-visible:ring-0 data-[state=open]:ring-0">
-                                <SelectValue placeholder="Select a title" />
+                                <SelectValue placeholder="Select a role" />
                               </SelectTrigger>
                             </FormControl>
                             <SelectContent>

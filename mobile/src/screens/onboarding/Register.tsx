@@ -41,14 +41,6 @@ export const RegisterScreen: React.FC<{ onBack: () => void, onLogin?: () => void
   
   const [focusWebsite, setFocusWebsite] = useState(false)
   const [showIndustryModal, setShowIndustryModal] = useState(false)
-  // Business type (toggle chips)
-  const businessTypeOptions = ['Physical', 'Digital', 'Services']
-  const [selectedBusinessTypes, setSelectedBusinessTypes] = useState<string[]>([])
-  const [businessTypeCustomsByLob, setBusinessTypeCustomsByLob] = useState<Record<string, string[]>>({})
-  const [businessTypeCustomInput, setBusinessTypeCustomInput] = useState('')
-  const [showBusinessTypeAdd, setShowBusinessTypeAdd] = useState(false)
-  const [lastLobSelected, setLastLobSelected] = useState<string | null>(null)
-  
   // Agent setup state
   const [agentName, setAgentName] = useState('')
   const [desiredTitle, setDesiredTitle] = useState('')
@@ -88,12 +80,7 @@ export const RegisterScreen: React.FC<{ onBack: () => void, onLogin?: () => void
   const [kbUrl, setKbUrl] = useState('')
   const [sopsUrl, setSopsUrl] = useState('')
   const [tcUrl, setTcUrl] = useState('')
-  const hasProducts = selectedBusinessTypes.some(t => {
-    const s = t.toLowerCase()
-    return s.includes('product') || s.includes('goods')
-  })
-  const hasServices = selectedBusinessTypes.some(t => t.toLowerCase().includes('service'))
-  const catalogEntity = hasProducts && hasServices ? 'Products & Services' : hasProducts ? 'Products' : hasServices ? 'Services' : 'Products/Services'
+  const catalogEntity = 'Products & Services'
   const uploadOptions = [
     { key: 'vision', label: 'Vision' },
     { key: 'mission', label: 'Mission' },
@@ -349,45 +336,10 @@ export const RegisterScreen: React.FC<{ onBack: () => void, onLogin?: () => void
   const [lobContainerH, setLobContainerH] = useState(0)
   const [lobScrollY, setLobScrollY] = useState(0)
 
-  // Track previous niches and industry to reset Business Type only on removal/change (not on addition)
-  const prevSelectedLobsRef = useRef<string[]>([])
-  const prevIndustryRef = useRef<string>('')
-
   useEffect(() => {
-    // Filter out selected LoBs not in the new industry's options
     const options = getLobOptions(industry)
     setSelectedLobs((prev) => prev.filter((x) => options.includes(x)))
-    // If industry changed and all previously selected niches become invalid (none left), reset business type selections
-    const prevIndustry = prevIndustryRef.current
-    if (prevIndustry && prevIndustry !== industry) {
-      const prev = prevSelectedLobsRef.current
-      const next = prev.filter(x => options.includes(x))
-      if (prev.length > 0 && next.length === 0) setSelectedBusinessTypes([])
-    }
-    prevIndustryRef.current = industry
   }, [industry])
-
-  // Reset custom business types and re-sync when nichees/industry change
-  useEffect(() => {
-    // Hide new-entry UI
-    setShowBusinessTypeAdd(false)
-    setBusinessTypeCustomInput('')
-    // Remove customs that belong to nichees no longer selected
-    setBusinessTypeCustomsByLob((prev) => {
-      const next: Record<string, string[]> = {}
-      for (const lob of selectedLobs) {
-        if (prev[lob] && prev[lob].length) next[lob] = prev[lob]
-      }
-      return next
-    })
-    // Determine if niches were removed (not added)
-    const prev = prevSelectedLobsRef.current
-    const current = selectedLobs
-    // Only reset if all niches were cleared (no selections remain)
-    if (prev.length > 0 && current.length === 0) setSelectedBusinessTypes([])
-    // Update prev ref after handling
-    prevSelectedLobsRef.current = current
-  }, [industry, selectedLobs, customLobs])
 
   // Country state (dropdown)
   const [country, setCountry] = useState('')
@@ -798,43 +750,6 @@ export const RegisterScreen: React.FC<{ onBack: () => void, onLogin?: () => void
     return { top, maxHeight }
   }
 
-  const getAllowedBusinessTypes = (industryLabel: string, lobs: string[], custom: string[]) => {
-    const key = mapIndustryToLobKey(industryLabel)
-    const selections = Array.from(new Set([...(lobs || []), ...(custom || [])]))
-    const allowed = new Set<string>()
-
-    const add = (t: string) => allowed.add(t)
-    const includesAny = (text: string, kws: string[]) => kws.some(k => text.includes(k))
-
-    const productKeywords = ['apparel','electronics','device','hardware','goods','product','home','kitchen','sports','groceries','automotive','printing','assembly','packaging']
-    const digitalKeywords = ['digital','software','saas','platform','tool','analytics','crm','security','billing','auth','identity','observability','data']
-    const serviceKeywords = ['consult','support','service','training','enablement','management','fulfillment','brokerage','leasing','delivery','co‑working','coworking']
-
-    // Industry-level defaults
-    if (key === 'E‑commerce' || key === 'Manufacturing') add('Physical Products')
-    if (key === 'SaaS') add('Digital Products')
-    if (['Finance','Healthcare','Education','Hospitality','Logistics','Real Estate','Telecommunications','Energy & Utilities','Nonprofit & NGOs','Professional Services','Consumer Services'].includes(key)) add('Services')
-
-    for (const raw of selections) {
-      const l = String(raw || '').toLowerCase()
-      if (includesAny(l, productKeywords)) add('Physical Products')
-      if (includesAny(l, digitalKeywords)) add('Digital Products')
-      if (includesAny(l, serviceKeywords)) add('Services')
-      if (l.includes('digital goods')) { add('Digital Products') }
-    }
-
-    // Fallbacks if nothing matched but selections exist
-    if (selections.length > 0 && allowed.size === 0) {
-      if (key === 'SaaS') add('Digital Products')
-      else if (key === 'E‑commerce' || key === 'Manufacturing') add('Physical Products')
-      else add('Services')
-    }
-
-    // Order consistently
-    const order = ['Physical Products','Digital Products','Services']
-    return order.filter(o => allowed.has(o))
-  }
-
   const UploadInputRow: React.FC<{ 
     url: string; 
     onUrlChange: (url: string) => void; 
@@ -1173,44 +1088,6 @@ export const RegisterScreen: React.FC<{ onBack: () => void, onLogin?: () => void
               </View>
               {/* Replaced free-text Other with custom LoB chips in modal */}
 
-              {/* Business Type (toggle chips) */}
-              {(() => {
-                const merged = Array.from(new Set([...(selectedLobs||[]), ...(customLobs||[])]))
-                if (merged.length === 0) return null
-                const baseOptions = businessTypeOptions
-                const allowedAll = baseOptions
-                return (
-                  <View style={{ backgroundColor: theme.color.accent, borderRadius: 12, paddingHorizontal: 12, paddingVertical: 10, borderWidth: 0, borderColor: 'transparent', shadowColor: theme.color.primary, shadowOpacity: 0, shadowRadius: 10, shadowOffset: { width: 0, height: 6 }, elevation: 0 }}>
-                    <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 8 }}>
-                      <Text style={{ color: theme.color.cardForeground, fontSize: 15, fontWeight: '700', marginRight: 6 }}>Products type</Text>
-                    </View>
-                    <View style={{ flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center' }}>
-                      {Array.from(new Set(allowedAll)).map((opt) => {
-                        const selected = selectedBusinessTypes.includes(opt)
-                        return (
-                          <TouchableOpacity
-                            key={opt}
-                            onPress={() => setSelectedBusinessTypes(prev => selected ? prev.filter(x => x !== opt) : [...prev, opt])}
-                            activeOpacity={0.85}
-                            style={{
-                              paddingHorizontal: 12,
-                              paddingVertical: 8,
-                              borderRadius: 999,
-                              marginRight: 6,
-                              marginBottom: 6,
-                              backgroundColor: selected ? theme.color.primary : (theme.dark ? theme.color.secondary : theme.color.card),
-                            }}
-                          >
-                            <Text style={{ color: selected ? '#fff' : theme.color.mutedForeground, fontSize: 13, fontWeight: '700' }}>{opt}</Text>
-                          </TouchableOpacity>
-                        )
-                      })}
-                  </View>
-                  </View>
-                )
-              })()}
-
-              
 
               {/* Country */}
               <Pressable
