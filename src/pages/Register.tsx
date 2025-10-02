@@ -109,7 +109,6 @@ const Register = () => {
     lineOfBusinessCustom: string[];
     country: string;
     website: string;
-    productsType: string[];
     // Agent setup
     agentName: string;
     agentTitle: string;
@@ -151,7 +150,6 @@ const Register = () => {
       lineOfBusinessCustom: [],
       country: "",
       website: "",
-      productsType: [],
       agentName: "",
       agentTitle: "",
       agentTone: "",
@@ -1130,48 +1128,6 @@ const Register = () => {
                             );
                           }}
                         />
-                        {/* Products type (Physical / Digital / Services) to mirror mobile */}
-                          <FormField
-                            control={form.control}
-                            name={"productsType" as any}
-                            render={({ field }) => {
-                              const value: string[] = Array.isArray(field.value) ? field.value : [];
-                              const selectedNiches: string[] = Array.isArray((form.watch as any)("lineOfBusiness")) ? (form.watch as any)("lineOfBusiness") : [];
-                              const customNiches: string[] = Array.isArray((form.watch as any)("lineOfBusinessCustom")) ? (form.watch as any)("lineOfBusinessCustom") : [];
-                              const hasAnyNiche = (selectedNiches.length + customNiches.length) > 0;
-                              if (!hasAnyNiche) return null;
-
-                              const toggle = (opt: string, checked: boolean) => {
-                                const set = new Set(value);
-                                if (checked) set.add(opt); else set.delete(opt);
-                                (form.setValue as any)("productsType", Array.from(set), { shouldDirty: true, shouldTouch: true });
-                              };
-                              const opts = ["Physical", "Digital", "Services"];
-                              return (
-                              <div className="md:col-span-2">
-                                <FormItem>
-                                  <div className="flex items-center gap-3 md:gap-4 w-full">
-                                    <FormLabel className="shrink-0 min-w-[7rem] md:min-w-[8rem]">Products Type</FormLabel>
-                                    <div className="flex-1 flex items-center justify-between gap-4 md:gap-6">
-                                    {opts.map(opt => {
-                                      const checked = value.includes(opt);
-                                      return (
-                                          <div key={opt} className="flex-1">
-                                            <label className="flex items-center justify-start gap-2 text-sm cursor-pointer select-none w-full py-1.5">
-                                              <Checkbox className="h-4 w-4 bg-input border border-border shadow-sm focus-visible:ring-2 focus-visible:ring-ring data-[state=checked]:bg-primary data-[state=checked]:border-primary" checked={checked} onCheckedChange={(ck)=>toggle(opt, Boolean(ck))} />
-                                          <span>{opt}</span>
-                                        </label>
-                                          </div>
-                                      );
-                                    })}
-                                    </div>
-                                  </div>
-                                  <FormMessage />
-                                </FormItem>
-                              </div>
-                              );
-                            }}
-                          />
                       </>
                     )}
                   </div>
@@ -1451,10 +1407,7 @@ const Register = () => {
               <Form {...form}>
                 <form className="space-y-4" noValidate dir={dir}>
                   {(() => {
-                    const pt: string[] = Array.isArray((form.watch as any)("productsType")) ? (form.watch as any)("productsType") : [];
-                    const hasProducts = pt.some((p)=> /physical|product/i.test(p));
-                    const hasServices = pt.some((p)=> /service/i.test(p));
-                    const catalogEntity = hasProducts && hasServices ? 'Products & Services' : hasProducts ? 'Products' : hasServices ? 'Services' : 'Products/Services';
+                    const catalogEntity = 'Products & Services';
                     const configs = [
                       { id: 'vision', label: 'Vision', fv: 'uploadsVision' as const, fi: 'uploadsVisionUrl' as const, placeholder: 'https://your-site.com/vision' },
                       { id: 'mission', label: 'Mission', fv: 'uploadsMission' as const, fi: 'uploadsMissionUrl' as const, placeholder: 'https://your-site.com/mission' },
