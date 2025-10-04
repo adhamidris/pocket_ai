@@ -11,9 +11,7 @@ import MobileAppPromo from "@/components/MobileAppPromo";
 import Footer from "@/components/Footer";
 import { useIsMobile } from "@/hooks/use-mobile";
 import { Badge } from "@/components/ui/badge";
-import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
-import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
-import { HelpCircle, ChevronDown, Paperclip } from "lucide-react";
+import { ChevronDown, Paperclip } from "lucide-react";
 import {
   Select,
   SelectContent,
@@ -31,9 +29,9 @@ import {
   FormLabel,
   FormMessage,
 } from "@/components/ui/form";
-import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/components/ui/accordion";
 import { Link } from "react-router-dom";
 import { toast } from "@/components/ui/sonner";
+import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import {
   DropdownMenu,
   DropdownMenuCheckboxItem,
@@ -41,12 +39,30 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import { ApiError } from "@/services/http";
+import { useIdempotency } from "@/hooks/useIdempotency";
+import {
+  attachUploadLinks,
+  completeRegistration,
+  configureAgent,
+  startRegistration,
+  upsertBusiness,
+} from "@/services/registerApi";
+import type { SessionProgress } from "@/services/registerApi";
+import { clearToken, getStoredToken, loginWithPassword, storeToken } from "@/services/auth";
+
+const CAPTCHA_FALLBACK = (import.meta.env.VITE_CAPTCHA_TOKEN as string | undefined) || undefined;
 
 const Register = () => {
   const { t, dir, lang } = useI18n();
   const isMobile = useIsMobile();
-  const [step, setStep] = useState<'form' | 'role' | 'business' | 'agent' | 'uploads'>("form");
-  const [pickedRole, setPickedRole] = useState<'business' | 'entrepreneur' | 'employee' | null>(null);
+  const [step, setStep] = useState<'form' | 'business' | 'agent' | 'uploads'>("form");
+  const idempotencyKeyFor = useIdempotency();
+  const [registrationId, setRegistrationId] = useState<string | null>(null);
+  const [businessId, setBusinessId] = useState<string | null>(null);
+  const [, setSessionProgress] = useState<SessionProgress | null>(null);
+  const [accessToken, setAccessToken] = useState<string | null>(() => getStoredToken());
+  const [submittingStep, setSubmittingStep] = useState<'form' | 'business' | 'agent' | 'uploads' | null>(null);
 
   /* Phone field temporarily disabled
   const countries = [
@@ -77,28 +93,18 @@ const Register = () => {
           email: z
             .string()
             .email(t("auth.register.errors.emailInvalid")),
-          // phoneCountry: z.string(),
-          // phone: z
-          //   .string()
-          //   .optional()
-          //   .refine((v) => !v || phoneRegex.test(v), {
-          //     message: t("auth.register.errors.phoneInvalid"),
-          //   }),
           password: z
             .string()
             .min(8, t("auth.register.errors.passwordMin")),
           confirmPassword: z
             .string()
             .min(8, t("auth.register.errors.passwordMin")),
-          role: z.enum(["business", "entrepreneur", "employee"], {
-            required_error: t("auth.register.errors.roleRequired"),
-          }),
         })
         .refine((vals) => vals.password === vals.confirmPassword, {
           path: ["confirmPassword"],
           message: t("auth.register.errors.passwordsMismatch"),
         }),
-    [t /*, phoneRegex*/]
+    [t]
   );
 
   type RegisterFormValues = z.infer<typeof schema> & {
@@ -109,13 +115,11 @@ const Register = () => {
     lineOfBusinessCustom: string[];
     country: string;
     website: string;
-    // Agent setup
     agentName: string;
     agentTitle: string;
     agentTone: string;
     agentTraits: string[];
     agentEscalation: string;
-    // Uploads step
     uploadsVision: string[];
     uploadsMission: string[];
     uploadsCatalog: string[];
@@ -123,7 +127,6 @@ const Register = () => {
     uploadsKb: string[];
     uploadsSops: string[];
     uploadsTc: string[];
-    // temp inputs
     uploadsVisionUrl: string;
     uploadsMissionUrl: string;
     uploadsCatalogUrl: string;
@@ -141,7 +144,6 @@ const Register = () => {
       // phone: "",
       password: "",
       confirmPassword: "",
-      role: "business",
       // Business step defaults
       businessName: "",
       industry: "",
@@ -171,7 +173,16 @@ const Register = () => {
       uploadsTcUrl: "",
     },
     mode: "onTouched",
+    resolver: zodResolver(schema),
   });
+
+  useEffect(() => {
+    if (accessToken) {
+      storeToken(accessToken);
+    } else {
+      clearToken();
+    }
+  }, [accessToken]);
 
   /* Phone field temporarily disabled
   // Auto-detect visitor region and preselect country code (timezone-first, then language)
@@ -220,33 +231,6 @@ const Register = () => {
   }, [fullSub]);
 
   // Role-step typing effect
-  const roleSub = t("auth.register.roleSub") as string;
-  const [typedRole, setTypedRole] = useState("");
-  const roleIntervalRef = useRef<number | null>(null);
-  const roleTimeoutRef = useRef<number | null>(null);
-
-  useEffect(() => {
-    if (step !== 'role') return () => {};
-    const start = () => {
-      let i = 0;
-      if (roleIntervalRef.current) window.clearInterval(roleIntervalRef.current);
-      if (roleTimeoutRef.current) window.clearTimeout(roleTimeoutRef.current);
-      roleIntervalRef.current = window.setInterval(() => {
-        i += 1;
-        setTypedRole(roleSub.slice(0, i));
-        if (i >= roleSub.length) {
-          if (roleIntervalRef.current) window.clearInterval(roleIntervalRef.current);
-          roleTimeoutRef.current = window.setTimeout(start, 1400);
-        }
-      }, 80);
-    };
-    start();
-    return () => {
-      if (roleIntervalRef.current) window.clearInterval(roleIntervalRef.current);
-      if (roleTimeoutRef.current) window.clearTimeout(roleTimeoutRef.current);
-    };
-  }, [step, roleSub]);
-
   // Business-step typing effect
   const businessSub = t("auth.register.businessSub") as string;
   const [typedBusiness, setTypedBusiness] = useState("");
@@ -263,7 +247,6 @@ const Register = () => {
   const [lobQuery, setLobQuery] = useState("");
   // Uploads step selection (web)
   const [selectedUploadTypes, setSelectedUploadTypes] = useState<string[]>(['vision','faqs','catalog']);
-  const [openUploadIds, setOpenUploadIds] = useState<string[]>(['vision','faqs','catalog']);
 
   useEffect(() => {
     if (step !== 'business') return () => {};
@@ -587,9 +570,244 @@ const Register = () => {
     ],
   };
 
-  const onSubmit = (values: z.infer<typeof schema>) => {
-    // Move to next step (role selection)
-    setStep('role');
+  const captchaToken = CAPTCHA_FALLBACK;
+
+  const stringifyDetails = (details: Record<string, unknown> | null | undefined) => {
+    if (!details) return "";
+    const entries = Object.entries(details);
+    if (!entries.length) return "";
+    return entries
+      .slice(0, 3)
+      .map(([key, value]) => `${key}: ${String(value)}`)
+      .join(", ");
+  };
+
+  const sanitizeList = (list: string[]) => list.map((item) => item.trim()).filter((item) => item.length > 0);
+
+  const sanitizeOptional = (value: string | null | undefined) => {
+    if (!value) return undefined;
+    const trimmed = value.trim();
+    return trimmed.length ? trimmed : undefined;
+  };
+
+  const showError = (error: unknown, fallback: string) => {
+    let description = fallback;
+    if (error instanceof ApiError) {
+      const detail = stringifyDetails(error.details);
+      description = detail ? `${error.message} (${detail})` : error.message;
+    } else if (error instanceof Error) {
+      description = error.message;
+    }
+    toast({
+      title: fallback,
+      description,
+      variant: "destructive",
+    });
+    console.error(fallback, error);
+  };
+
+  const ensureAuthToken = async (): Promise<string | null> => {
+    if (accessToken) return accessToken;
+    const email = (form.getValues("email") || "").trim();
+    const password = form.getValues("password") || "";
+    try {
+      const tokenResult = await loginWithPassword(email, password);
+      if (tokenResult) {
+        setAccessToken(tokenResult);
+        return tokenResult;
+      }
+    } catch (error) {
+      throw error;
+    }
+    return null;
+  };
+
+  const requireAuthToken = async () => {
+    try {
+      const tokenResult = await ensureAuthToken();
+      if (!tokenResult) {
+        const message = "Authentication required to continue registration";
+        showError(new Error(message), message);
+        throw new Error(message);
+      }
+      return tokenResult;
+    } catch (error) {
+      showError(error, "Authentication required to continue registration");
+      throw error;
+    }
+  };
+
+  const onSubmit = async (values: z.infer<typeof schema>) => {
+    const payload = {
+      firstName: values.firstName.trim(),
+      email: values.email.trim(),
+      password: values.password || undefined,
+    };
+    const idemKey = idempotencyKeyFor("form", payload);
+    setSubmittingStep("form");
+    try {
+      const response = await startRegistration(payload, {
+        idempotencyKey: idemKey,
+        captchaToken,
+      });
+      setRegistrationId(response.registrationId);
+      toast({
+        title: t("auth.register.success.title"),
+        description: t("auth.register.businessSub"),
+      });
+      try {
+        const tokenResult = await loginWithPassword(payload.email, values.password);
+        if (tokenResult) {
+          setAccessToken(tokenResult);
+        }
+      } catch (error) {
+        console.warn("Login after registration failed", error);
+      }
+      setStep("business");
+    } catch (error) {
+      showError(error, "Could not start registration");
+    } finally {
+      setSubmittingStep(null);
+    }
+  };
+
+  const onBusinessSubmit = async (values: RegisterFormValues) => {
+    if (!registrationId) {
+      showError(new Error("Registration session missing"), "Registration session not found");
+      return;
+    }
+    const payload = {
+      businessName: values.businessName.trim(),
+      industry: values.industry,
+      specifyIndustry: sanitizeOptional(values.specifyIndustry),
+      lineOfBusiness: sanitizeList(values.lineOfBusiness),
+      lineOfBusinessCustom: sanitizeList(values.lineOfBusinessCustom),
+      country: sanitizeOptional(values.country),
+      website: sanitizeOptional(values.website),
+    };
+    let tokenValue: string;
+    try {
+      tokenValue = await requireAuthToken();
+    } catch {
+      return;
+    }
+    const idemKey = idempotencyKeyFor("business", payload);
+    setSubmittingStep("business");
+    try {
+      const response = await upsertBusiness(registrationId, payload, {
+        idempotencyKey: idemKey,
+        token: tokenValue,
+      });
+      setBusinessId(response.business.id);
+      setSessionProgress(response.session);
+      toast({
+        title: "Business profile saved",
+        description: "Next, configure your AI agent.",
+      });
+      setStep("agent");
+    } catch (error) {
+      showError(error, "Could not save business profile");
+    } finally {
+      setSubmittingStep(null);
+    }
+  };
+
+  const onAgentSubmit = async (values: RegisterFormValues) => {
+    if (!businessId) {
+      showError(new Error("Business missing"), "Business not attached to session");
+      return;
+    }
+    const payload = {
+      agentName: sanitizeOptional(values.agentName),
+      agentTitle: sanitizeOptional(values.agentTitle),
+      agentTone: sanitizeOptional(values.agentTone),
+      agentTraits: sanitizeList(values.agentTraits),
+      agentEscalation: sanitizeOptional(values.agentEscalation),
+    };
+    let tokenValue: string;
+    try {
+      tokenValue = await requireAuthToken();
+    } catch {
+      return;
+    }
+    const idemKey = idempotencyKeyFor("agent", payload);
+    setSubmittingStep("agent");
+    try {
+      const response = await configureAgent(businessId, payload, {
+        idempotencyKey: idemKey,
+        token: tokenValue,
+      });
+      setSessionProgress(response.session);
+      toast({
+        title: "Agent configuration saved",
+        description: "Add knowledge sources to finish up.",
+      });
+      setStep("uploads");
+    } catch (error) {
+      showError(error, "Could not configure agent");
+    } finally {
+      setSubmittingStep(null);
+    }
+  };
+
+  const onUploadsSubmit = async (values: RegisterFormValues) => {
+    if (!businessId || !registrationId) {
+      showError(new Error("Registration incomplete"), "Missing session context");
+      return;
+    }
+    const linkCatalog: Record<string, string[]> = {
+      vision: sanitizeList(values.uploadsVision),
+      mission: sanitizeList(values.uploadsMission),
+      catalog: sanitizeList(values.uploadsCatalog),
+      faqs: sanitizeList(values.uploadsFaqs),
+      kb: sanitizeList(values.uploadsKb),
+      sops: sanitizeList(values.uploadsSops),
+      tc: sanitizeList(values.uploadsTc),
+    };
+    const links: Record<string, string[]> = {};
+    Object.entries(linkCatalog).forEach(([key, arr]) => {
+      if (arr.length) links[key] = Array.from(new Set(arr));
+    });
+
+    let tokenValue: string;
+    try {
+      tokenValue = await requireAuthToken();
+    } catch {
+      return;
+    }
+
+    setSubmittingStep("uploads");
+    try {
+      if (Object.keys(links).length) {
+        const payload = {
+          links,
+          language: lang && lang.length <= 16 ? lang : undefined,
+        };
+        const idemKey = idempotencyKeyFor("uploads", payload);
+        const response = await attachUploadLinks(businessId, payload, {
+          idempotencyKey: idemKey,
+          token: tokenValue,
+        });
+        setSessionProgress(response.session);
+        const createdTotal = Object.values(response.created).reduce((sum, count) => sum + count, 0);
+        const duplicates = response.duplicates;
+        toast({
+          title: "Knowledge attached",
+          description: `Added ${createdTotal} new sources${duplicates ? `, ${duplicates} duplicate(s) skipped` : ""}.`,
+        });
+      }
+
+      const completion = await completeRegistration(registrationId, { token: tokenValue });
+      setSessionProgress(completion.session);
+      toast({
+        title: "Registration complete",
+        description: "You're all set! Redirecting shortly...",
+      });
+    } catch (error) {
+      showError(error, "Could not finalize registration");
+    } finally {
+      setSubmittingStep(null);
+    }
   };
 
   // Ensure entering Register lands at the top (avoid showing lower sections first)
@@ -628,16 +846,6 @@ const Register = () => {
                 </h1>
                 <p className="mt-1 text-center text-sm md:text-base streaming-text opacity-80 font-medium tracking-wide">
                   {typed}
-                </p>
-              </>
-            ) : step === 'role' ? (
-              <>
-                <h1 className="text-2xl md:text-3xl font-bold text-secondary-foreground text-center register-header-title">
-                  {t("auth.register.tellUsMorePrefix")} {" "}
-                  <span className="text-gradient-hero">{t("auth.register.tellUsMoreHighlight")}</span>
-                </h1>
-                <p className="mt-1 text-center text-sm md:text-base streaming-text opacity-80 font-medium tracking-wide">
-                  {typedRole}
                 </p>
               </>
             ) : step === 'business' ? (
@@ -822,59 +1030,12 @@ const Register = () => {
                   )}
                 />
 
-                {/* Registering as a — temporarily disabled */}
-                {/*
-                <FormField control={form.control} name="role" render={({ field }) => (
-                  <FormItem>
-                    <div className="flex items-center gap-4 w-full">
-                      <FormLabel className="whitespace-nowrap shrink-0">{t("auth.register.registeringAs")}</FormLabel>
-                      <div className="flex-1 flex justify-center">
-                        <RadioGroup className="grid grid-cols-3 gap-4 place-items-center w-full max-w-md" value={field.value} onValueChange={field.onChange}>
-                          <label className="inline-flex items-center gap-2 cursor-pointer select-none">
-                            <RadioGroupItem value="business" />
-                            <span className="text-sm">{t("auth.register.rolesShort.business")}</span>
-                          </label>
-                          <label className="inline-flex items-center gap-2 cursor-pointer select-none">
-                            <RadioGroupItem value="entrepreneur" />
-                            <span className="text-sm">{t("auth.register.rolesShort.entrepreneur")}</span>
-                          </label>
-                          <label className="inline-flex items-center gap-2 cursor-pointer select-none">
-                            <RadioGroupItem value="employee" />
-                            <span className="text-sm">{t("auth.register.rolesShort.employee")}</span>
-                          </label>
-                        </RadioGroup>
-                      </div>
-                      <Tooltip>
-                        <TooltipTrigger asChild>
-                          <button type="button" aria-label="Role help" className="shrink-0 p-1.5 rounded-full border border-border bg-secondary/60 text-foreground hover:bg-secondary">
-                            <HelpCircle className="w-4 h-4" />
-                          </button>
-                        </TooltipTrigger>
-                        <TooltipContent side={dir === 'rtl' ? 'left' : 'right'} align="end" sideOffset={8} avoidCollisions={false} className="max-w-sm bg-black text-white border-border/50">
-                          <div className="text-xs space-y-2">
-                            <div>
-                              <div className="font-semibold">{t("auth.register.roles.business.title")}</div>
-                              <div className="text-white/80">{t("auth.register.roles.business.desc")}</div>
-                            </div>
-                            <div>
-                              <div className="font-semibold">{t("auth.register.roles.entrepreneur.title")}</div>
-                              <div className="text-white/80">{t("auth.register.roles.entrepreneur.desc")}</div>
-                            </div>
-                            <div>
-                              <div className="font-semibold">{t("auth.register.roles.employee.title")}</div>
-                              <div className="text-white/80">{t("auth.register.roles.employee.desc")}</div>
-                            </div>
-                          </div>
-                        </TooltipContent>
-                      </Tooltip>
-                    </div>
-                    <FormMessage />
-                  </FormItem>
-                )} />
-                */}
-
-                <Button type="submit" className="w-full bg-gradient-primary text-white hover:opacity-90">
-                  {t("auth.register.createAccount")}
+                <Button
+                  type="submit"
+                  className="w-full bg-gradient-primary text-white hover:opacity-90"
+                  disabled={submittingStep === 'form'}
+                >
+                  {submittingStep === 'form' ? 'Creating...' : t("auth.register.createAccount")}
                 </Button>
 
                 {/* Divider */}
@@ -888,14 +1049,14 @@ const Register = () => {
 
                 {/* Continue with Google */}
                 <div className="mt-3">
-                  <Button type="button" variant="secondary" className="w-full" onClick={() => setStep('role')}>
+                  <Button type="button" variant="secondary" className="w-full">
                     <span className="inline-flex items-center gap-2">
                       <span className="w-6 h-6 rounded-full inline-flex items-center justify-center">
                         <svg width="16" height="16" viewBox="0 0 48 48" aria-hidden>
-                          <path fill="#FFC107" d="M43.6 20.5H42V20H24v8h11.3C33.7 32.7 29.2 36 24 36 16.8 36 11 30.2 11 23S16.8 10 24 10c3.8 0 7.2 1.4 9.8 3.7l5.7-5.7C35.5 4.1 30 2 24 2 12 2 2 12 2 24s10 22 22 22 22-10 22-22c0-1.3-.1-2.5-.4-3.5z"/>
-                          <path fill="#FF3D00" d="M6.3 14.7l6.6 4.8C14.4 16.3 18.8 14 24 14c3.8 0 7.2 1.4 9.8 3.7l5.7-5.7C35.5 4.1 30 2 24 2 15.3 2 7.8 7.1 4.2 14.1l2.1.6z"/>
-                          <path fill="#4CAF50" d="M24 46c6 0 11.5-2.2 15.6-5.8l-7.2-5.9C30.7 35.7 27.6 37 24 37c-5.2 0-9.7-3.3-11.3-7.9l-6.6 5.1C9.7 40.9 16.3 46 24 46z"/>
-                          <path fill="#1976D2" d="M43.6 20.5H42V20H24v8h11.3c-1.3 3.8-4.8 6.5-9.3 6.5-5.2 0-9.7-3.3-11.3-7.9l-6.6 5.1C9.7 40.9 16.3 46 24 46c12 0 22-10 22-22 0-1.3-.1-2.5-.4-3.5z"/>
+                          <path fill="#FFC107" d="M43.6 20.5H42V20H24v8h11.3C33.7 32.7 29.2 36 24 36 16.8 36 11 30.2 11 23S16.8 10 24 10c3.8 0 7.2 1.4 9.8 3.7l5.7-5.7C35.5 4.1 30 2 24 2 12 2 2 12 2 24s10 22 22 22 22-10 22-22c0-1.3-.1-2.5-.4-3.5z" />
+                          <path fill="#FF3D00" d="M6.3 14.7l6.6 4.8C14.4 16.3 18.8 14 24 14c3.8 0 7.2 1.4 9.8 3.7l5.7-5.7C35.5 4.1 30 2 24 2 15.3 2 7.8 7.1 4.2 14.1l2.1.6z" />
+                          <path fill="#4CAF50" d="M24 46c6 0 11.5-2.2 15.6-5.8l-7.2-5.9C30.7 35.7 27.6 37 24 37c-5.2 0-9.7-3.3-11.3-7.9l-6.6 5.1C9.7 40.9 16.3 46 24 46z" />
+                          <path fill="#1976D2" d="M43.6 20.5H42V20H24v8h11.3c-1.3 3.8-4.8 6.5-9.3 6.5-5.2 0-9.7-3.3-11.3-7.9l-6.6 5.1C9.7 40.9 16.3 46 24 46c12 0 22-10 22-22 0-1.3-.1-2.5-.4-3.5z" />
                         </svg>
                       </span>
                       <span>{t("auth.register.continueGoogle")}</span>
@@ -906,47 +1067,15 @@ const Register = () => {
             </Form>
             </div>
 
-            {/* Step 2: Role selection (outside the form container) */}
-            <div className={`${step === 'role' ? 'animate-panel-in' : 'hidden'}`}>
-              <div className="text-center mb-3 md:mb-4">
-                <h2 className="text-base md:text-lg font-semibold text-foreground">
-                  {t("auth.register.registeringAsIm")}
-                </h2>
-              </div>
-              <div className="flex flex-col gap-3">
-                <button
-                  type="button"
-                  onClick={() => { setPickedRole('business'); setStep('business'); }}
-                  className={`group w-full rounded-xl px-5 py-5 bg-gradient-primary text-white shadow-md transition-all flex flex-col items-center text-center hover-scale`}
-                >
-                  <div className="font-semibold text-lg no-blur">{t("auth.register.roles.business.title")}</div>
-                  <div className="text-white/85 text-sm mt-1 no-blur">{t("auth.register.roles.business.desc")}</div>
-                </button>
-
-                <button
-                  type="button"
-                  onClick={() => setPickedRole('entrepreneur')}
-                  className={`group w-full rounded-xl px-5 py-5 bg-gradient-primary text-white shadow-md transition-all flex flex-col items-center text-center hover-scale`}
-                >
-                  <div className="font-semibold text-lg no-blur">{t("auth.register.roles.entrepreneur.title")}</div>
-                  <div className="text-white/85 text-sm mt-1 no-blur">{t("auth.register.roles.entrepreneur.desc")}</div>
-                </button>
-
-                <button
-                  type="button"
-                  onClick={() => setPickedRole('employee')}
-                  className={`group w-full rounded-xl px-5 py-5 bg-gradient-primary text-white shadow-md transition-all flex flex-col items-center text-center hover-scale`}
-                >
-                  <div className="font-semibold text-lg no-blur">{t("auth.register.roles.employee.title")}</div>
-                  <div className="text-white/85 text-sm mt-1 no-blur">{t("auth.register.roles.employee.desc")}</div>
-                </button>
-              </div>
-            </div>
-
-            {/* Step 3 (Business): Business profile setup */}
+            {/* Step 2 (Business): Business profile setup */}
             <div className={`${step === 'business' ? 'animate-panel-in' : 'hidden'}`}>
               <Form {...form}>
-                <form className="space-y-4" noValidate dir={dir}>
+                <form
+                  className="space-y-4"
+                  noValidate
+                  dir={dir}
+                  onSubmit={form.handleSubmit(onBusinessSubmit)}
+                >
                   <FormField
                     control={form.control}
                     name={"businessName" as any}
@@ -1261,8 +1390,14 @@ const Register = () => {
                   />
 
                   <div className="flex items-center justify-between gap-3 pt-2">
-                    <Button type="button" variant="ghost" onClick={() => setStep('role')}>Back</Button>
-                    <Button type="button" className="bg-gradient-primary text-white hover:opacity-90" onClick={() => setStep('agent')}>Next</Button>
+                    <Button type="button" variant="ghost" onClick={() => setStep('form')}>Back</Button>
+                    <Button
+                      type="submit"
+                      className="bg-gradient-primary text-white hover:opacity-90"
+                      disabled={submittingStep === 'business'}
+                    >
+                      {submittingStep === 'business' ? 'Saving...' : 'Next'}
+                    </Button>
                   </div>
                 </form>
               </Form>
@@ -1271,7 +1406,12 @@ const Register = () => {
             {/* Step 4 (Agent): Agent setup */}
             <div className={`${step === 'agent' ? 'animate-panel-in' : 'hidden'}`}>
               <Form {...form}>
-                <form className="space-y-4" noValidate dir={dir}>
+                <form
+                  className="space-y-4"
+                  noValidate
+                  dir={dir}
+                  onSubmit={form.handleSubmit(onAgentSubmit)}
+                >
                   <FormField
                     control={form.control}
                     name={'agentName' as any}
@@ -1396,7 +1536,13 @@ const Register = () => {
 
                   <div className="flex items-center justify-between gap-3 pt-2">
                     <Button type="button" variant="ghost" onClick={() => setStep('business')}>Back</Button>
-                    <Button type="button" className="bg-gradient-primary text-white hover:opacity-90" onClick={() => setStep('uploads')}>Next</Button>
+                    <Button
+                      type="submit"
+                      className="bg-gradient-primary text-white hover:opacity-90"
+                      disabled={submittingStep === 'agent'}
+                    >
+                      {submittingStep === 'agent' ? 'Saving...' : 'Next'}
+                    </Button>
                   </div>
                 </form>
               </Form>
@@ -1405,7 +1551,12 @@ const Register = () => {
             {/* Step 5 (Uploads): Knowledge uploads */}
             <div className={`${step === 'uploads' ? 'animate-panel-in' : 'hidden'}`}>
               <Form {...form}>
-                <form className="space-y-4" noValidate dir={dir}>
+                <form
+                  className="space-y-4"
+                  noValidate
+                  dir={dir}
+                  onSubmit={form.handleSubmit(onUploadsSubmit)}
+                >
                   {(() => {
                     const catalogEntity = 'Products & Services';
                     const configs = [
@@ -1417,107 +1568,132 @@ const Register = () => {
                       { id: 'sops', label: 'SOPs', fv: 'uploadsSops' as const, fi: 'uploadsSopsUrl' as const, placeholder: 'https://drive.google.com/...' },
                       { id: 'tc', label: 'T&C', fv: 'uploadsTc' as const, fi: 'uploadsTcUrl' as const, placeholder: 'https://your-site.com/terms' },
                     ] as const;
+                    const activeConfigs = configs.filter((c) => selectedUploadTypes.includes(c.id));
 
                     return (
                       <>
-                        <div className="flex items-center justify-between">
-                          <div className="text-sm text-muted-foreground">Select what you want to attach</div>
-                          <DropdownMenu>
-                            <DropdownMenuTrigger asChild>
-                              <Button type="button" size="sm" variant="secondary">+ Add more</Button>
-                            </DropdownMenuTrigger>
-                            <DropdownMenuContent align="end" className="min-w-[16rem]">
-                              {configs.map((c)=>{
-                                const active = selectedUploadTypes.includes(c.id);
-                                return (
-                                  <DropdownMenuCheckboxItem
-                                    key={c.id}
-                                    checked={active}
-                                    onCheckedChange={(ck)=>{
-                                      setSelectedUploadTypes(prev => {
-                                        const set = new Set(prev);
-                                        if (!ck) {
-                                          set.delete(c.id);
-                                          (form.setValue as any)(c.fv, [], { shouldDirty: true, shouldTouch: true });
-                                          (form.setValue as any)(c.fi, '', { shouldDirty: true, shouldTouch: true });
-                                          setOpenUploadIds(ids => ids.filter(id => id !== c.id));
-                                        } else {
-                                          set.add(c.id);
-                                          setOpenUploadIds(ids => Array.from(new Set([...ids, c.id])));
-                                        }
-                                        return Array.from(set);
-                                      });
-                                    }}
-                                  >{c.label}</DropdownMenuCheckboxItem>
-                                );
-                              })}
-                            </DropdownMenuContent>
-                          </DropdownMenu>
+                        <div className="rounded-lg border border-border bg-secondary/40 p-3 md:p-4">
+                          <div className="text-sm font-medium text-foreground">Which materials do you want to attach?</div>
+                          <ToggleGroup
+                            type="multiple"
+                            value={selectedUploadTypes}
+                            onValueChange={(values) => {
+                              const next = Array.isArray(values) ? values : [];
+                              const map = new Map(configs.map((c) => [c.id, c]));
+                              setSelectedUploadTypes((prev) => {
+                                const removed = prev.filter((id) => !next.includes(id));
+                                removed.forEach((id) => {
+                                  const cfg = map.get(id);
+                                  if (!cfg) return;
+                                  (form.setValue as any)(cfg.fv, [], { shouldDirty: true, shouldTouch: true });
+                                  (form.setValue as any)(cfg.fi, '', { shouldDirty: true, shouldTouch: true });
+                                });
+                                return next;
+                              });
+                            }}
+                            className="mt-3 flex flex-wrap gap-2"
+                          >
+                            {configs.map((cfg) => (
+                              <ToggleGroupItem
+                                key={cfg.id}
+                                value={cfg.id}
+                                className="h-8 rounded-md border border-border bg-input px-3 text-sm font-medium text-foreground/90 transition hover:opacity-90 data-[state=on]:border-primary data-[state=on]:bg-primary data-[state=on]:text-primary-foreground"
+                              >
+                                {cfg.label}
+                              </ToggleGroupItem>
+                            ))}
+                          </ToggleGroup>
                         </div>
 
-                        <Accordion type="multiple" value={openUploadIds} onValueChange={(v:any)=> setOpenUploadIds(Array.isArray(v)? v : [])} className="mt-2">
-                          {configs.filter(c => selectedUploadTypes.includes(c.id)).map((cfg) => (
-                            <AccordionItem key={cfg.id} value={cfg.id} className="border border-border rounded-md bg-secondary/40 mb-2">
-                              <AccordionTrigger className="px-3 py-2 hover:no-underline">
-                                <div className="flex items-center justify-between w-full">
-                                  <div className="font-medium text-sm">{cfg.label}</div>
-                                  <div className="text-xs text-muted-foreground">Added {(((form.watch as any)(cfg.fv) as string[] )|| []).length}</div>
-                                </div>
-                              </AccordionTrigger>
-                              <AccordionContent className="px-3 pb-3">
-                                <div className="flex items-center gap-2">
-                                  <Input
-                                    className="bg-input border-0 flex-1"
-                                    placeholder={cfg.placeholder}
-                                    value={(form.watch as any)(cfg.fi) || ''}
-                                    onChange={(e)=> (form.setValue as any)(cfg.fi, e.target.value, { shouldDirty: true })}
-                                    onKeyDown={(e)=>{
-                                      if (e.key === 'Enter') {
-                                        e.preventDefault();
-                                        const url = String((form.getValues as any)(cfg.fi) || '').trim();
-                                        if (!url) return;
-                                        const list: string[] = Array.isArray((form.getValues as any)(cfg.fv)) ? (form.getValues as any)(cfg.fv) : [];
-                                        if (!list.includes(url)) {
-                                          (form.setValue as any)(cfg.fv, [...list, url], { shouldDirty: true, shouldTouch: true });
-                                        }
-                                        (form.setValue as any)(cfg.fi, '', { shouldDirty: true, shouldTouch: true });
-                                      }
-                                    }}
-                                  />
-                                  <Button type="button" variant="secondary" size="icon" className="shrink-0" onClick={()=>{
-                                    const url = String((form.getValues as any)(cfg.fi) || '').trim();
-                                    if (!url) return;
-                                    const list: string[] = Array.isArray((form.getValues as any)(cfg.fv)) ? (form.getValues as any)(cfg.fv) : [];
-                                    if (!list.includes(url)) {
-                                      (form.setValue as any)(cfg.fv, [...list, url], { shouldDirty: true, shouldTouch: true });
-                                    }
-                                    (form.setValue as any)(cfg.fi, '', { shouldDirty: true, shouldTouch: true });
-                                  }}>
-                                    <Paperclip className="w-4 h-4" />
-                                  </Button>
-                                </div>
-                                <div className="mt-2 flex flex-wrap gap-2">
-                                  {((form.watch as any)(cfg.fv) as string[] || []).map((u: string)=> (
-                                    <span key={u} className="inline-flex items-center gap-2 px-2.5 h-7 rounded-md text-xs border bg-input border-border">
-                                      <span className="max-w-[16rem] truncate">{u}</span>
-                                      <button type="button" className="text-muted-foreground hover:text-foreground" onClick={()=>{
-                                        const list: string[] = Array.isArray((form.getValues as any)(cfg.fv)) ? (form.getValues as any)(cfg.fv) : [];
-                                        (form.setValue as any)(cfg.fv, list.filter((x)=> x !== u), { shouldDirty: true, shouldTouch: true });
-                                      }}>×</button>
-                                    </span>
-                                  ))}
-                                </div>
-                              </AccordionContent>
-                            </AccordionItem>
-                          ))}
-                        </Accordion>
+                        <div className="mt-3 space-y-3">
+                          {activeConfigs.length === 0 ? (
+                            <div className="rounded-lg border border-dashed border-border bg-background/40 px-6 py-8 text-center text-sm text-muted-foreground">
+                              Select at least one material above to start adding links.
+                            </div>
+                          ) : (
+                            activeConfigs.map((cfg) => {
+                                const links: string[] = Array.isArray((form.watch as any)(cfg.fv)) ? (form.watch as any)(cfg.fv) : [];
+                                const pending = String((form.watch as any)(cfg.fi) || '');
+
+                                const attach = () => {
+                                  const url = String((form.getValues as any)(cfg.fi) || '').trim();
+                                  if (!url) return;
+                                  const list: string[] = Array.isArray((form.getValues as any)(cfg.fv)) ? (form.getValues as any)(cfg.fv) : [];
+                                  if (!list.includes(url)) {
+                                    (form.setValue as any)(cfg.fv, [...list, url], { shouldDirty: true, shouldTouch: true });
+                                  }
+                                  (form.setValue as any)(cfg.fi, '', { shouldDirty: true, shouldTouch: true });
+                                };
+
+                                return (
+                                  <div key={cfg.id} className="space-y-3 rounded-lg border border-border bg-secondary/50 p-3 md:p-4">
+                                    <div className="flex items-center justify-between gap-2">
+                                      <div className="font-medium text-sm text-foreground">{cfg.label}</div>
+                                      {links.length > 0 && (
+                                        <div className="text-xs text-muted-foreground">{links.length} added</div>
+                                      )}
+                                    </div>
+                                    <div className="flex flex-col gap-2 md:flex-row">
+                                      <Input
+                                        className="bg-input border-0 md:flex-1"
+                                        placeholder={cfg.placeholder}
+                                        value={pending}
+                                        onChange={(e) => (form.setValue as any)(cfg.fi, e.target.value, { shouldDirty: true })}
+                                        onKeyDown={(e) => {
+                                          if (e.key === 'Enter') {
+                                            e.preventDefault();
+                                            attach();
+                                          }
+                                        }}
+                                      />
+                                      <Button
+                                        type="button"
+                                        variant="secondary"
+                                        size="sm"
+                                        className="flex w-full items-center justify-center gap-2 md:w-auto"
+                                        onClick={attach}
+                                      >
+                                        <Paperclip className="h-4 w-4" />
+                                        <span className="text-xs font-medium md:text-sm">Attach</span>
+                                      </Button>
+                                    </div>
+                                    {links.length > 0 && (
+                                      <div className="flex flex-wrap gap-2">
+                                        {links.map((u) => (
+                                          <span key={u} className="inline-flex items-center gap-2 rounded-md border border-border bg-input px-2.5 py-1 text-xs">
+                                            <span className="max-w-[16rem] truncate">{u}</span>
+                                            <button
+                                              type="button"
+                                              className="text-muted-foreground transition hover:text-foreground"
+                                              onClick={() => {
+                                                const list: string[] = Array.isArray((form.getValues as any)(cfg.fv)) ? (form.getValues as any)(cfg.fv) : [];
+                                                (form.setValue as any)(cfg.fv, list.filter((x) => x !== u), { shouldDirty: true, shouldTouch: true });
+                                              }}
+                                            >
+                                              ×
+                                            </button>
+                                          </span>
+                                        ))}
+                                      </div>
+                                    )}
+                                  </div>
+                                );
+                              })
+                          )}
+                        </div>
                       </>
                     );
                   })()}
 
                   <div className="flex items-center justify-between gap-3 pt-2">
                     <Button type="button" variant="ghost" onClick={() => setStep('agent')}>Back</Button>
-                    <Button type="button" className="bg-gradient-primary text-white hover:opacity-90">Finish</Button>
+                    <Button
+                      type="submit"
+                      className="bg-gradient-primary text-white hover:opacity-90"
+                      disabled={submittingStep === 'uploads'}
+                    >
+                      {submittingStep === 'uploads' ? 'Finishing...' : 'Finish'}
+                    </Button>
                   </div>
                 </form>
               </Form>
@@ -1531,11 +1707,6 @@ const Register = () => {
                   <Link to="/" className="text-primary hover:underline">
                     {t("auth.register.login")}
                   </Link>
-                </div>
-              )}
-              {step === 'role' && (
-                <div className="streaming-text">
-                  To help us tailor your setup, please choose what best fits your intended use.
                 </div>
               )}
             </div>

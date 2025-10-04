@@ -6,7 +6,6 @@ import { Input } from '../../components/ui/Input'
 import { Button } from '../../components/ui/Button'
 import { Modal } from '../../components/ui/Modal'
 import { Bot, User, Settings, BookOpen, Zap, Copy } from 'lucide-react-native'
-import { AGENT_ROLES, AGENT_TONES, AGENT_TRAITS, ESCALATION_OPTIONS } from '../../config/agentOptions'
 import Svg, { Circle, Rect, G, Path, Defs, RadialGradient, Stop, Ellipse } from 'react-native-svg'
 
 interface CreateAgentProps {
@@ -32,7 +31,7 @@ export const CreateAgent: React.FC<CreateAgentProps> = ({ visible, onClose, onSa
 
   // Smart auto-center on selection
   const scrollRef = useRef<ScrollView>(null)
-  type SectionKey = 'basic' | 'role' | 'tone' | 'traits' | 'escalation' | 'tools' | 'dataAccess'
+  type SectionKey = 'basic' | 'role' | 'tone' | 'traits' | 'escalation' | 'tools'
   const sectionRefs: Record<SectionKey, React.RefObject<View>> = {
     basic: useRef<View>(null as any),
     role: useRef<View>(null as any),
@@ -40,38 +39,18 @@ export const CreateAgent: React.FC<CreateAgentProps> = ({ visible, onClose, onSa
     traits: useRef<View>(null as any),
     escalation: useRef<View>(null as any),
     tools: useRef<View>(null as any),
-    dataAccess: useRef<View>(null as any),
   }
   const [viewportHeight, setViewportHeight] = useState(0)
-  const [contentHeight, setContentHeight] = useState(0)
   const [sectionLayouts, setSectionLayouts] = useState<Record<SectionKey, { y: number; height: number }>>({} as any)
 
   const setSectionLayout = (key: SectionKey, y: number, height: number) => {
     setSectionLayouts(prev => ({ ...prev, [key]: { y, height } }))
   }
 
-  // Slight downward bias so section hints (below options) are in view
-  const SCROLL_BIAS: Record<SectionKey, number> = {
-    basic: 0,
-    role: 56,
-    tone: 56,
-    traits: 56,
-    escalation: 56,
-    tools: 56,
-    dataAccess: 56,
-  }
-
   const scrollSectionToCenter = (key: SectionKey) => {
     const layout = sectionLayouts[key]
     if (!scrollRef.current || !layout || viewportHeight === 0) return
-    const bias = SCROLL_BIAS[key] || 0
-    let targetY = layout.y + layout.height / 2 - viewportHeight / 2 + bias
-    if (contentHeight > 0) {
-      const maxY = Math.max(0, contentHeight - viewportHeight)
-      targetY = Math.min(maxY, Math.max(0, targetY))
-    } else {
-      targetY = Math.max(0, targetY)
-    }
+    const targetY = Math.max(0, layout.y + layout.height / 2 - viewportHeight / 2)
     scrollRef.current.scrollTo({ y: targetY, animated: true })
   }
 
@@ -80,10 +59,37 @@ export const CreateAgent: React.FC<CreateAgentProps> = ({ visible, onClose, onSa
     requestAnimationFrame(() => requestAnimationFrame(() => scrollSectionToCenter(key)))
   }
 
-  const roles = AGENT_ROLES
-  const tones = AGENT_TONES
-  const traitOptions = AGENT_TRAITS
-  const escalationOptions = ESCALATION_OPTIONS
+  const roles = [
+    'Support Agent',
+    'Sales Associate',
+    'Technical Specialist',
+    'Billing Assistant'
+  ]
+
+  const tones = [
+    'Friendly',
+    'Professional',
+    'Empathetic',
+    'Concise',
+    'Playful',
+    'Formal'
+  ]
+
+  const traitOptions = [
+    'Patient',
+    'Proactive',
+    'Detail-oriented',
+    'Persuasive',
+    'Analytical',
+    'Creative'
+  ]
+
+  const escalationOptions = [
+    'Never escalate',
+    'Escalate on negative sentiment',
+    'Escalate on SLA risk',
+    'Always escalate complex'
+  ]
 
   const availableTools = [
     { key: 'email', label: 'Email Integration' },
@@ -110,11 +116,7 @@ export const CreateAgent: React.FC<CreateAgentProps> = ({ visible, onClose, onSa
       traits: formData.traits,
       escalationRule: formData.escalationRule,
       tools: formData.tools,
-      dataAccess: {
-        mode: dataAccessMode,
-        selectedCollections: dataAccessSelected,
-      },
-      status: 'active',
+      status: 'inactive',
       createdAt: new Date().toISOString(),
       conversations: 0,
       responseTime: '0s'
@@ -133,8 +135,6 @@ export const CreateAgent: React.FC<CreateAgentProps> = ({ visible, onClose, onSa
       tools: [],
       roles: []
     })
-    setDataAccessMode('all')
-    setDataAccessSelected([])
   }
 
   const toggleTool = (toolKey: string) => {
@@ -144,22 +144,6 @@ export const CreateAgent: React.FC<CreateAgentProps> = ({ visible, onClose, onSa
         ? prev.tools.filter(t => t !== toolKey)
         : [...prev.tools, toolKey]
     }))
-  }
-
-  // Data Access (quick setup)
-  type DataAccessMode = 'all' | 'select'
-  const [dataAccessMode, setDataAccessMode] = useState<DataAccessMode>('all')
-  const [dataAccessSelected, setDataAccessSelected] = useState<string[]>([])
-  const availableCollections = [
-    'Company Vision',
-    'Mission Statement',
-    'Support SOPs',
-    'Product Knowledge Base',
-    'Security Policies',
-    'HR Handbook',
-  ]
-  const toggleCollection = (c: string) => {
-    setDataAccessSelected(prev => prev.includes(c) ? prev.filter(x => x !== c) : [...prev, c])
   }
 
   // Share step animations and typed message
@@ -255,7 +239,6 @@ export const CreateAgent: React.FC<CreateAgentProps> = ({ visible, onClose, onSa
         showsVerticalScrollIndicator={false}
         contentContainerStyle={{ paddingHorizontal: 24, paddingBottom: 20 }}
         onLayout={(e) => setViewportHeight(e.nativeEvent.layout.height)}
-        onContentSizeChange={(_, h) => setContentHeight(h)}
       >
         {step === 'form' && (
         <>
@@ -468,72 +451,6 @@ export const CreateAgent: React.FC<CreateAgentProps> = ({ visible, onClose, onSa
           <Text style={{ color: theme.color.mutedForeground, fontSize: 12, marginTop: 8 }}>
             Set when to hand off to a human. You can refine this later.
           </Text>
-        </View>
-
-        <View style={{ height: 1, backgroundColor: theme.color.border, marginBottom: 16 }} />
-        {/* Data Access (quick setup) */}
-        <View
-          ref={sectionRefs.dataAccess}
-          style={{ marginBottom: 20 }}
-          onLayout={(e) => setSectionLayout('dataAccess', e.nativeEvent.layout.y, e.nativeEvent.layout.height)}
-        >
-          <Text style={{ color: theme.color.cardForeground, fontSize: 16, fontWeight: '600', marginBottom: 12 }}>
-            Data Access
-          </Text>
-          {/* Segmented control: All vs Select */}
-          <View style={{ backgroundColor: theme.color.muted, borderRadius: theme.radius.md, padding: 6, flexDirection: 'row', marginBottom: 12 }}>
-            {(['all','select'] as DataAccessMode[]).map(mode => (
-              <TouchableOpacity
-                key={mode}
-                onPress={() => { setDataAccessMode(mode); centerAfterLayout('dataAccess') }}
-                activeOpacity={0.85}
-                style={{ flex: 1, paddingVertical: 10, borderRadius: theme.radius.sm, backgroundColor: dataAccessMode === mode ? theme.color.card : 'transparent' }}
-              >
-                <Text style={{ textAlign: 'center', color: dataAccessMode === mode ? (theme.color.primary as any) : (theme.color.mutedForeground as any), fontSize: 12, fontWeight: '700' }}>
-                  {mode === 'all' ? 'Grant all access' : 'Select collections'}
-                </Text>
-              </TouchableOpacity>
-            ))}
-          </View>
-
-          {/* Collections multi-select */}
-          {dataAccessMode === 'select' && (
-            <View>
-              <View style={{ flexDirection: 'row', flexWrap: 'wrap' }}>
-                {availableCollections.map(col => {
-                  const selected = dataAccessSelected.includes(col)
-                  return (
-                    <TouchableOpacity
-                      key={col}
-                      onPress={() => { toggleCollection(col); centerAfterLayout('dataAccess') }}
-                      activeOpacity={0.85}
-                      style={{
-                        marginRight: 8,
-                        marginBottom: 8,
-                        paddingVertical: 10,
-                        paddingHorizontal: 14,
-                        borderRadius: theme.radius.md,
-                        backgroundColor: selected ? (theme.color.primary as any) : (theme.dark ? theme.color.secondary : theme.color.accent),
-                      }}
-                    >
-                      <Text style={{ color: selected ? ('#ffffff' as any) : (theme.color.mutedForeground as any), fontWeight: '700', fontSize: 13 }}>
-                        {col}
-                      </Text>
-                    </TouchableOpacity>
-                  )
-                })}
-              </View>
-              <Text style={{ color: theme.color.mutedForeground, fontSize: 12, marginTop: 4 }}>
-                Selected: {dataAccessSelected.length} {dataAccessSelected.length === 1 ? 'collection' : 'collections'}
-              </Text>
-            </View>
-          )}
-
-          {dataAccessMode === 'all' && (
-            <Text style={{ color: theme.color.mutedForeground, fontSize: 12 }}>
-              This agent will have access to all current and future files.
-            </Text>
-          )}
         </View>
 
         

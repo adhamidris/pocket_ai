@@ -1,0 +1,67 @@
+[project]
+name = "pocket-ai-backend"
+version = "0.1.0"
+description = "Minimal FastAPI backend scaffold for Pocket AI"
+readme = "README.md"
+requires-python = ">=3.11"
+license = {text = "MIT"}
+authors = [{name = "Pocket AI", email = "dev@pocket.ai"}]
+dependencies = [
+    "fastapi",
+    "uvicorn[standard]",
+    "pydantic>=2",
+    "pydantic-settings",
+    "sqlalchemy>=2",
+    "alembic",
+    "httpx",
+    "tenacity",
+    "python-dotenv",
+    "psycopg[binary]>=3",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest",
+    "pytest-asyncio",
+    "httpx",
+    "ruff",
+    "black",
+    "mypy",
+    "types-python-dotenv",
+    "types-requests",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.pytest.ini_options]
+addopts = "-ra"
+asyncio_mode = "auto"
+pythonpath = ["app"]
+
+[tool.black]
+line-length = 100
+include = ".*\\.py$"
+
+[tool.ruff]
+line-length = 100
+src = ["app", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP", "ASYNC"]
+ignore = []
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+
+[tool.mypy]
+python_version = "3.11"
+strict = true
+warn_unused_configs = true
+ignore_missing_imports = true
+plugins = []
+
+[tool.hatch.metadata]
+allow-direct-references = true
