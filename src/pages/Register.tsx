@@ -650,7 +650,14 @@ const Register = () => {
         idempotencyKey: idemKey,
         captchaToken,
       });
-      setRegistrationId(response.registrationId);
+      const startResponse =
+        (response as { registrationId?: string | null; session?: SessionProgress | null } | null) ?? null;
+      const nextRegistrationId = startResponse?.registrationId?.trim() ?? "";
+      if (!nextRegistrationId) {
+        throw new Error("Registration response missing registrationId");
+      }
+      setRegistrationId(nextRegistrationId);
+      setSessionProgress(startResponse?.session ?? null);
       toast({
         title: t("auth.register.success.title"),
         description: t("auth.register.businessSub"),
@@ -698,8 +705,17 @@ const Register = () => {
         idempotencyKey: idemKey,
         token: tokenValue,
       });
-      setBusinessId(response.business.id);
-      setSessionProgress(response.session);
+      const businessResponse =
+        (response as {
+          business?: { id?: string | null } | null;
+          session?: SessionProgress | null;
+        } | null) ?? null;
+      const nextBusinessId = businessResponse?.business?.id?.trim() ?? "";
+      if (!nextBusinessId) {
+        throw new Error("Business response missing id");
+      }
+      setBusinessId(nextBusinessId);
+      setSessionProgress(businessResponse?.session ?? null);
       toast({
         title: "Business profile saved",
         description: "Next, configure your AI agent.",
@@ -737,7 +753,12 @@ const Register = () => {
         idempotencyKey: idemKey,
         token: tokenValue,
       });
-      setSessionProgress(response.session);
+      if (!response) {
+        throw new Error("Agent configuration response missing");
+      }
+      const agentResponse =
+        (response as { session?: SessionProgress | null } | null) ?? null;
+      setSessionProgress(agentResponse?.session ?? null);
       toast({
         title: "Agent configuration saved",
         description: "Add knowledge sources to finish up.",
@@ -788,9 +809,23 @@ const Register = () => {
           idempotencyKey: idemKey,
           token: tokenValue,
         });
-        setSessionProgress(response.session);
-        const createdTotal = Object.values(response.created).reduce((sum, count) => sum + count, 0);
-        const duplicates = response.duplicates;
+        if (!response) {
+          throw new Error("Attach links response missing");
+        }
+        const uploadResponse =
+          (response as {
+            created?: Record<string, number | undefined>;
+            duplicates?: number;
+            session?: SessionProgress | null;
+          }) ?? {};
+        const createdRecord = uploadResponse.created ?? {};
+        const createdTotal = Object.values(createdRecord).reduce(
+          (sum, count) => sum + (typeof count === "number" ? count : 0),
+          0
+        );
+        const duplicates =
+          typeof uploadResponse.duplicates === "number" ? uploadResponse.duplicates : 0;
+        setSessionProgress(uploadResponse.session ?? null);
         toast({
           title: "Knowledge attached",
           description: `Added ${createdTotal} new sources${duplicates ? `, ${duplicates} duplicate(s) skipped` : ""}.`,
@@ -798,7 +833,12 @@ const Register = () => {
       }
 
       const completion = await completeRegistration(registrationId, { token: tokenValue });
-      setSessionProgress(completion.session);
+      if (!completion) {
+        throw new Error("Registration completion response missing");
+      }
+      const completionResponse =
+        (completion as { session?: SessionProgress | null } | null) ?? null;
+      setSessionProgress(completionResponse?.session ?? null);
       toast({
         title: "Registration complete",
         description: "You're all set! Redirecting shortly...",
@@ -1534,7 +1574,7 @@ const Register = () => {
                     )}
                   />
 
-                  <div className="flex items-center justify-between gap-3 pt-2">
+                  <div className="flex itemscenter justify-between gap-3 pt-2">
                     <Button type="button" variant="ghost" onClick={() => setStep('business')}>Back</Button>
                     <Button
                       type="submit"
