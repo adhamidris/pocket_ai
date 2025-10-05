@@ -74,59 +74,124 @@ export async function jsonFetch<T>(path: string, options: JsonFetchOptions = {})
   }
 
   const url = buildUrl(path);
-  const started = typeof performance !== "undefined" ? performance.now() : Date.now();
-  const response = await fetch(url, init);
-  const text = await response.text();
-  const parseJson = () => {
-    if (!text) return null;
-    try {
-      return JSON.parse(text) as Record<string, unknown>;
-    } catch {
-      return null;
-    }
-  };
-
-  const durationMs = (typeof performance !== "undefined" ? performance.now() : Date.now()) - started;
-  if (!response.ok) {
-    const payload = parseJson();
-    const code = typeof payload?.code === "string" ? payload.code : `http_${response.status}`;
-    const message = typeof payload?.message === "string" ? payload.message : response.statusText;
-    const details = (payload?.details && typeof payload.details === "object") ? (payload.details as Record<string, unknown>) : null;
-    if (IS_DEV) {
-      console.warn(
-        `[api] ${method} ${path} -> ${response.status} (${Math.round(durationMs)}ms)`,
-        { requestId: generatedId, code, message, details }
-      );
-    }
-    throw new ApiError(response.status, code, message, details);
-  }
-
-  if (!text) {
-    if (IS_DEV) {
-      console.debug(`[api] ${method} ${path} -> ${response.status} (${Math.round(durationMs)}ms)`, {
-        requestId: generatedId,
-      });
-    }
-    return undefined as T;
-  }
-
-  const json = parseJson();
-  if (json === null) {
-    if (IS_DEV) {
-      console.debug(`[api] ${method} ${path} -> ${response.status} (${Math.round(durationMs)}ms)`, {
-        requestId: generatedId,
-        raw: text,
-      });
-    }
-    return text as unknown as T;
-  }
+  
+  // ADDED: Better URL validation and debugging
   if (IS_DEV) {
-    console.debug(`[api] ${method} ${path} -> ${response.status} (${Math.round(durationMs)}ms)`, {
-      requestId: generatedId,
-      body: json,
+    console.debug(`[api] Preparing request: ${method} ${url}`, {
+      path,
+      builtUrl: url,
+      apiBaseUrl: API_BASE_URL,
+      hasBody: body !== undefined && body !== null
     });
   }
-  return json as T;
+
+  // ADDED: Validate URL before making request
+  if (!url || url === path) {
+    const errorMessage = `Invalid API URL configuration. Path: "${path}", Built URL: "${url}", API_BASE_URL: "${API_BASE_URL}"`;
+    console.error('[api] URL Configuration Error:', errorMessage);
+    throw new ApiError(0, "configuration_error", errorMessage);
+  }
+
+  const started = typeof performance !== "undefined" ? performance.now() : Date.now();
+  
+  try {
+    const response = await fetch(url, init);
+    
+    // ADDED: Handle network errors that don't get proper response
+    if (response.status === 0 || response.type === 'error') {
+      const networkError = new ApiError(0, "network_error", 
+        `Cannot connect to backend server at ${url}. Please ensure the backend is running on port 8000.`);
+      if (IS_DEV) {
+        console.error('[api] Network connection failed:', {
+          url,
+          status: response.status,
+          type: response.type,
+          statusText: response.statusText
+        });
+      }
+      throw networkError;
+    }
+    
+    const text = await response.text();
+    const parseJson = () => {
+      if (!text) return null;
+      try {
+        return JSON.parse(text) as Record<string, unknown>;
+      } catch {
+        return null;
+      }
+    };
+
+    const durationMs = (typeof performance !== "undefined" ? performance.now() : Date.now()) - started;
+    
+    if (!response.ok) {
+      const payload = parseJson();
+      const code = typeof payload?.code === "string" ? payload.code : `http_${response.status}`;
+      const message = typeof payload?.message === "string" ? payload.message : response.statusText;
+      const details = (payload?.details && typeof payload.details === "object") ? (payload.details as Record<string, unknown>) : null;
+      
+      if (IS_DEV) {
+        console.warn(
+          `[api] ${method} ${path} -> ${response.status} (${Math.round(durationMs)}ms)`,
+          { requestId: generatedId, code, message, details, url }
+        );
+      }
+      throw new ApiError(response.status, code, message, details);
+    }
+
+    if (!text) {
+      if (IS_DEV) {
+        console.debug(`[api] ${method} ${path} -> ${response.status} (${Math.round(durationMs)}ms)`, {
+          requestId: generatedId,
+        });
+      }
+      return undefined as T;
+    }
+
+    const json = parseJson();
+    if (json === null) {
+      if (IS_DEV) {
+        console.debug(`[api] ${method} ${path} -> ${response.status} (${Math.round(durationMs)}ms)`, {
+          requestId: generatedId,
+          raw: text,
+        });
+      }
+      return text as unknown as T;
+    }
+    
+    if (IS_DEV) {
+      console.debug(`[api] ${method} ${path} -> ${response.status} (${Math.round(durationMs)}ms)`, {
+        requestId: generatedId,
+        body: json,
+      });
+    }
+    return json as T;
+    
+  } catch (error) {
+    // ADDED: Catch network errors that occur before response
+    if (error instanceof TypeError) {
+      if (error.message.includes('Failed to fetch') || error.message.includes('NetworkError')) {
+        const networkError = new ApiError(0, "network_error", 
+          `Cannot connect to backend server at ${url}. Please ensure:\n1. Backend is running on port 8000\n2. No firewall is blocking the connection\n3. The server address is correct`);
+        if (IS_DEV) {
+          console.error('[api] Fetch failed completely:', {
+            url,
+            error: error.message,
+            apiBaseUrl: API_BASE_URL
+          });
+        }
+        throw networkError;
+      }
+    }
+    
+    // Re-throw if it's already an ApiError
+    if (error instanceof ApiError) {
+      throw error;
+    }
+    
+    // Wrap any other errors
+    throw new ApiError(0, "unknown_error", `Unexpected error: ${error instanceof Error ? error.message : String(error)}`);
+  }
 }
 
 export const apiBaseUrl = API_BASE_URL;
