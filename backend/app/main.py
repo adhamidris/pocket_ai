@@ -52,8 +52,6 @@ def create_app() -> FastAPI:
 
 
 def _configure_middleware(app: FastAPI, settings: Settings) -> None:
-    app.add_middleware(RequestIdMiddleware)
-    
     # Allow both the configured origins AND local development origins
     allowed_origins = list(settings.ALLOWED_ORIGINS) if settings.ALLOWED_ORIGINS else []
     development_origins = [
@@ -65,7 +63,10 @@ def _configure_middleware(app: FastAPI, settings: Settings) -> None:
     # Combine and deduplicate origins
     final_origins = list(set(allowed_origins + development_origins))
     
+    # For debugging, log the final origins
     logger.info("Configuring CORS with origins: %s", final_origins)
+    
+    # Add CORS middleware first to ensure it processes all requests
     app.add_middleware(
         CORSMiddleware,
         allow_origins=final_origins,
@@ -73,6 +74,9 @@ def _configure_middleware(app: FastAPI, settings: Settings) -> None:
         allow_methods=["*"],
         allow_headers=["*"],
     )
+    
+    # Then add other middleware
+    app.add_middleware(RequestIdMiddleware)
 
 
 def _configure_routes(app: FastAPI) -> None:

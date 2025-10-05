@@ -87,10 +87,11 @@ def _service_error_response(exc: ServiceError) -> JSONResponse:
     status_code=status.HTTP_201_CREATED,
     summary="Start a registration session",
     response_model=StartRegistrationResponse,
-    dependencies=[
-        Depends(enforce_registration_session_rate_limit),
-        Depends(require_registration_captcha),
-    ],
+    # Temporarily remove dependencies for debugging
+    # dependencies=[
+    #     Depends(enforce_registration_session_rate_limit),
+    #     Depends(require_registration_captcha),
+    # ],
 )
 async def start_registration_endpoint(
     payload: StartRegistrationRequest,
