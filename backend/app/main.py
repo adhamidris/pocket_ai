@@ -53,10 +53,22 @@ def create_app() -> FastAPI:
 
 def _configure_middleware(app: FastAPI, settings: Settings) -> None:
     app.add_middleware(RequestIdMiddleware)
-    logger.info("Configuring CORS with origins: %s", settings.ALLOWED_ORIGINS)
+    
+    # Allow both the configured origins AND local development origins
+    allowed_origins = list(settings.ALLOWED_ORIGINS) if settings.ALLOWED_ORIGINS else []
+    development_origins = [
+        "http://localhost:3000",  # Vite default
+        "http://127.0.0.1:3000",  # Localhost alternative
+        "http://localhost:5173",   # Vite alternate port
+    ]
+    
+    # Combine and deduplicate origins
+    final_origins = list(set(allowed_origins + development_origins))
+    
+    logger.info("Configuring CORS with origins: %s", final_origins)
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=settings.ALLOWED_ORIGINS,
+        allow_origins=final_origins,
         allow_credentials=True,
         allow_methods=["*"],
         allow_headers=["*"],
