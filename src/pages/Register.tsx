@@ -64,7 +64,6 @@ const Register = () => {
   const [, setSessionProgress] = useState<SessionProgress | null>(null);
   const [accessToken, setAccessToken] = useState<string | null>(() => getStoredToken());
   const [submittingStep, setSubmittingStep] = useState<'form' | 'business' | 'agent' | 'uploads' | null>(null);
-  const [backendStatus, setBackendStatus] = useState<'checking' | 'online' | 'offline'>('checking');
 
   /* Phone field temporarily disabled
   const countries = [
@@ -925,23 +924,6 @@ const Register = () => {
 
           {/* Body */}
           <div className="p-3 md:p-4">
-            {/* Backend Status Indicator */}
-            {backendStatus === 'offline' && (
-              <div className="mb-4 p-3 rounded-lg bg-destructive/10 border border-destructive/20">
-                <div className="flex items-center gap-2 text-destructive">
-                  <div className="w-2 h-2 rounded-full bg-destructive animate-pulse" />
-                  <span className="text-sm font-medium">Backend Server Offline</span>
-                </div>
-                <p className="mt-1 text-xs text-destructive/80">
-                  Cannot connect to the backend server. Please ensure:
-                </p>
-                <ul className="mt-1 text-xs text-destructive/80 list-disc list-inside">
-                  <li>Backend is running on port 8000</li>
-                  <li>No firewall is blocking the connection</li>
-                  <li>Check backend logs for errors</li>
-                </ul>
-              </div>
-            )}
 
             <div className="relative min-h-[20rem]">
             <div className={`${step === 'form' ? 'animate-panel-in' : 'hidden'}`}>
