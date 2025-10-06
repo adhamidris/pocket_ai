@@ -1,7 +1,5 @@
 # Pocket AI Backend
 
-Minimal FastAPI scaffold prepared for future feature work. The project currently exposes a single `/healthz` endpoint alongside core wiring such as structured logging, settings management, and Alembic migrations.
-
 ## Prerequisites
 - Python 3.11+
 - PostgreSQL 14+
@@ -26,8 +24,6 @@ psql -h localhost -U postgres -d postgres -c "GRANT ALL PRIVILEGES ON DATABASE p
 ```bash
 uvicorn app.main:app --reload
 ```
-Then open `http://127.0.0.1:8000/healthz` to verify the service status.
-
 ## Database Migrations
 Alembic is initialized with an empty baseline. Generate and apply migrations once models are available:
 ```bash

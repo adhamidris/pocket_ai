@@ -852,29 +852,6 @@ const Register = () => {
     }
   };
 
-  // Check backend status on component mount
-  useEffect(() => {
-    const checkBackend = async () => {
-      try {
-        await jsonFetch('/healthz', { method: 'GET' });
-        setBackendStatus('online');
-      } catch (error) {
-        console.error('Backend health check failed:', error);
-        setBackendStatus('offline');
-        
-        // Show toast notification about backend being offline
-        toast({
-          title: "Backend Server Unavailable",
-          description: "Cannot connect to the backend server. Please ensure it's running on port 8000.",
-          variant: "destructive",
-          duration: 10000,
-        });
-      }
-    };
-
-    checkBackend();
-  }, []);
-
   // Ensure entering Register lands at the top (avoid showing lower sections first)
   useEffect(() => {
     const prev = (window.history as any).scrollRestoration;
@@ -963,15 +940,6 @@ const Register = () => {
                   <li>No firewall is blocking the connection</li>
                   <li>Check backend logs for errors</li>
                 </ul>
-              </div>
-            )}
-            
-            {backendStatus === 'checking' && (
-              <div className="mb-4 p-3 rounded-lg bg-blue-500/10 border border-blue-500/20">
-                <div className="flex items-center gap-2 text-blue-500">
-                  <div className="w-2 h-2 rounded-full bg-blue-500 animate-pulse" />
-                  <span className="text-sm font-medium">Checking backend connection...</span>
-                </div>
               </div>
             )}
 
