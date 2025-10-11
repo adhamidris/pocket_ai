@@ -118,6 +118,67 @@ def verify_jwt(token: str, settings: Settings) -> AccessTokenClaims:
     )
 
 
+def generate_access_token(
+    *,
+    subject: UUID,
+    settings: Settings,
+    email: str | None = None,
+    scopes: Sequence[str] | None = None,
+    roles: Sequence[str] | None = None,
+    business_roles: Mapping[UUID, Sequence[str]] | None = None,
+    expires_in: int | None = None,
+) -> str:
+    """Create an HS256 JWT aligned with the verifier expectations."""
+
+    now = datetime.now(timezone.utc)
+    expiry_seconds = expires_in or settings.JWT_ACCESS_TTL_SECONDS
+    expires_at = now + timedelta(seconds=max(expiry_seconds, 1))
+
+    payload: dict[str, object] = {
+        "iss": settings.JWT_ISSUER,
+        "sub": str(subject),
+        "aud": settings.JWT_AUDIENCE,
+        "iat": int(now.timestamp()),
+        "nbf": int(now.timestamp()),
+        "exp": int(expires_at.timestamp()),
+    }
+
+    if email:
+        payload["email"] = email
+
+    if scopes:
+        scope_values = [scope.strip() for scope in scopes if scope.strip()]
+        if scope_values:
+            payload["scope"] = " ".join(scope_values)
+
+    if roles:
+        role_values = [role.strip() for role in roles if role.strip()]
+        if role_values:
+            payload["roles"] = role_values
+
+    if business_roles:
+        encoded_roles: dict[str, list[str]] = {}
+        for business_id, assigned_roles in business_roles.items():
+            role_list = [role.strip() for role in assigned_roles if role.strip()]
+            if role_list:
+                encoded_roles[str(business_id)] = role_list
+        if encoded_roles:
+            payload["biz_roles"] = encoded_roles
+
+    header = {"alg": "HS256", "typ": "JWT"}
+    signing_input = ".".join(
+        _base64url_encode(json.dumps(component, sort_keys=True, separators=(",", ":")).encode("utf-8"))
+        for component in (header, payload)
+    )
+    signature = hmac.new(
+        settings.JWT_SECRET.encode("utf-8"),
+        msg=signing_input.encode("utf-8"),
+        digestmod=hashlib.sha256,
+    ).digest()
+    token = f"{signing_input}.{_base64url_encode(signature)}"
+    return token
+
+
 def build_authenticated_user(token: str, claims: AccessTokenClaims) -> AuthenticatedUser:
     """Create an authenticated user wrapper from claims."""
 
@@ -154,6 +215,10 @@ def _decode_segment(segment: str) -> dict[str, object]:
 def _base64url_decode(segment: str) -> bytes:
     padding = "=" * (-len(segment) % 4)
     return base64.urlsafe_b64decode(segment + padding)
+
+
+def _base64url_encode(data: bytes) -> str:
+    return base64.urlsafe_b64encode(data).rstrip(b"=").decode("ascii")
 
 
 def _coerce_timestamp(value: object | None) -> datetime | None:
@@ -201,9 +266,9 @@ def _normalize_business_roles(value: object | None) -> Mapping[UUID, tuple[str, 
 __all__ = [
     "AccessTokenClaims",
     "AuthenticatedUser",
+    "generate_access_token",
     "TokenVerificationError",
     "build_authenticated_user",
     "validate_captcha",
     "verify_jwt",
 ]
-

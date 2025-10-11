@@ -2,20 +2,17 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 from typing import Any
 
 
-@dataclass(slots=True)
 class ServiceError(Exception):
     """Base service error aligned with API error payload."""
 
-    code: str
-    message: str
-    details: dict[str, Any] | None = None
-
-    def __post_init__(self) -> None:
-        super().__init__(self.message)
+    def __init__(self, *, code: str, message: str, details: dict[str, Any] | None = None) -> None:
+        super().__init__(message)
+        self.code = code
+        self.message = message
+        self.details = details
 
     def to_payload(self) -> dict[str, Any]:
         payload: dict[str, Any] = {"code": self.code, "message": self.message}
@@ -63,4 +60,3 @@ __all__ = [
     "ServiceTimeoutError",
     "ServiceValidationError",
 ]
-

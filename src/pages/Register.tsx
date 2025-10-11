@@ -1,5 +1,4 @@
-import { useMemo, useEffect, useRef, useState } from "react";
-import { jsonFetch } from "@/services/http";
+import { Component, type ErrorInfo, ReactNode, useCallback, useMemo, useEffect, useRef, useState } from "react";
 import { z } from "zod";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
@@ -30,7 +29,7 @@ import {
   FormLabel,
   FormMessage,
 } from "@/components/ui/form";
-import { Link } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import { toast } from "@/components/ui/sonner";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import {
@@ -51,8 +50,65 @@ import {
 } from "@/services/registerApi";
 import type { SessionProgress } from "@/services/registerApi";
 import { clearToken, getStoredToken, loginWithPassword, storeToken } from "@/services/auth";
+import LoginModal from "@/components/LoginModal";
 
-const CAPTCHA_FALLBACK = (import.meta.env.VITE_CAPTCHA_TOKEN as string | undefined) || undefined;
+const TOKEN_REFRESH_WINDOW_MS = 2 * 60 * 1000;
+const HEARTBEAT_INTERVAL_MS = 60 * 1000;
+const ACTIVITY_IDLE_THRESHOLD_MS = 5 * 60 * 1000;
+
+const decodeJwtExpiry = (token: string | null | undefined): number | null => {
+  if (!token) return null;
+  const parts = token.split(".");
+  if (parts.length < 2) return null;
+  try {
+    const base64 = parts[1].replace(/-/g, "+").replace(/_/g, "/");
+    const padded = base64 + "===".slice((base64.length + 3) % 4);
+    const decoder = typeof atob === "function" ? atob : null;
+    if (!decoder) return null;
+    const payload = JSON.parse(decoder(padded));
+    if (payload && typeof payload.exp === "number") {
+      return payload.exp * 1000;
+    }
+  } catch {
+    return null;
+  }
+  return null;
+};
+
+
+class StepErrorBoundary extends Component<{ label: string; resetKey?: unknown; onError?: (error: Error) => void; children: ReactNode }, { hasError: boolean; error: Error | null }> {
+  constructor(props: { label: string; resetKey?: unknown; onError?: (error: Error) => void; children: ReactNode }) {
+    super(props);
+    this.state = { hasError: false, error: null };
+  }
+
+  static getDerivedStateFromError(error: Error) {
+    return { hasError: true, error };
+  }
+
+  componentDidCatch(error: Error, info: ErrorInfo) {
+    console.error(`[register] ${this.props.label} step render error`, error, info);
+    this.props.onError?.(error);
+  }
+
+  componentDidUpdate(prevProps: { label: string; resetKey?: unknown }) {
+    if (prevProps.resetKey !== this.props.resetKey && this.state.hasError) {
+      this.setState({ hasError: false, error: null });
+    }
+  }
+
+  render() {
+    if (this.state.hasError) {
+      return (
+        <div className="rounded-md border border-destructive/40 bg-destructive/10 p-3 text-sm text-destructive">
+          Failed to display the {this.props.label} step. Check console for details.
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
+
 
 const Register = () => {
   const { t, dir, lang } = useI18n();
@@ -64,6 +120,13 @@ const Register = () => {
   const [, setSessionProgress] = useState<SessionProgress | null>(null);
   const [accessToken, setAccessToken] = useState<string | null>(() => getStoredToken());
   const [submittingStep, setSubmittingStep] = useState<'form' | 'business' | 'agent' | 'uploads' | null>(null);
+  const [renderError, setRenderError] = useState<Error | null>(null);
+  const [loginModalOpen, setLoginModalOpen] = useState(false);
+  const [loginModalEmail, setLoginModalEmail] = useState("");
+  const sessionExpiredRef = useRef(false);
+  const [lastActivityTs, setLastActivityTs] = useState(() => Date.now());
+  const completionRedirectRef = useRef<number | null>(null);
+  const navigate = useNavigate();
 
   /* Phone field temporarily disabled
   const countries = [
@@ -184,6 +247,166 @@ const Register = () => {
       clearToken();
     }
   }, [accessToken]);
+
+  useEffect(() => {
+    console.debug("[register] step change", step, { registrationId, businessId });
+  }, [step, registrationId, businessId]);
+
+  const stringifyDetails = (details: Record<string, unknown> | null | undefined) => {
+    if (!details) return "";
+    const entries = Object.entries(details);
+    if (!entries.length) return "";
+    return entries
+      .slice(0, 3)
+      .map(([key, value]) => `${key}: ${String(value)}`)
+      .join(", ");
+  };
+
+  const sanitizeList = (list: string[] | null | undefined) =>
+    Array.isArray(list)
+      ? list.map((item) => item.trim()).filter((item) => item.length > 0)
+      : [];
+
+  const sanitizeOptional = (value: string | null | undefined) => {
+    if (!value) return undefined;
+    const trimmed = value.trim();
+    return trimmed.length ? trimmed : undefined;
+  };
+
+  const handleSessionExpired = useCallback(() => {
+    if (sessionExpiredRef.current) return;
+    sessionExpiredRef.current = true;
+    setAccessToken(null);
+    const emailValue = (form.getValues("email") || "").trim();
+    setLoginModalEmail(emailValue);
+    setLoginModalOpen(true);
+    toast.error("Session expired", {
+      description: "Please sign in again to keep going.",
+    });
+  }, [form, setAccessToken, setLoginModalEmail, setLoginModalOpen]);
+
+  const showError = useCallback((error: unknown, fallback: string) => {
+    if (error instanceof ApiError && error.status === 401) {
+      handleSessionExpired();
+      console.warn(fallback, error);
+      return;
+    }
+    let description = fallback;
+    if (error instanceof ApiError) {
+      const detail = stringifyDetails(error.details);
+      description = detail ? `${error.message} (${detail})` : error.message;
+    } else if (error instanceof Error) {
+      description = error.message;
+    }
+    toast.error(fallback, {
+      description,
+    });
+    console.error(fallback, error);
+  }, [handleSessionExpired]);
+
+  const ensureAuthToken = useCallback(async (): Promise<string> => {
+    let token = accessToken ?? getStoredToken();
+    if (token && !accessToken) {
+      setAccessToken(token);
+    }
+
+    const now = Date.now();
+    const expiry = decodeJwtExpiry(token);
+    const needsRefresh = !token || (expiry !== null && expiry - now <= TOKEN_REFRESH_WINDOW_MS);
+
+    if (!needsRefresh && token) {
+      return token;
+    }
+
+    const emailValue = (form.getValues("email") || "").trim();
+    const passwordValue = form.getValues("password") || "";
+
+    if (!emailValue || !passwordValue) {
+      throw new ApiError(401, "unauthenticated", "Authentication required");
+    }
+
+    const refreshedToken = await loginWithPassword(emailValue, passwordValue);
+    if (!refreshedToken) {
+      throw new ApiError(401, "unauthenticated", "Authentication required");
+    }
+    setAccessToken(refreshedToken);
+    setLastActivityTs(Date.now());
+    return refreshedToken;
+  }, [accessToken, form, setAccessToken, setLastActivityTs]);
+
+  const requireAuthToken = useCallback(async () => {
+    try {
+      return await ensureAuthToken();
+    } catch (error) {
+      showError(error, "Authentication required to continue registration");
+      throw error;
+    }
+  }, [ensureAuthToken, showError]);
+
+  useEffect(() => {
+    const markActivity = () => setLastActivityTs(Date.now());
+    const visibilityHandler = () => {
+      if (!document.hidden) {
+        markActivity();
+      }
+    };
+    const events: Array<keyof WindowEventMap> = ["mousemove", "mousedown", "keydown", "touchstart"];
+    events.forEach((event) => window.addEventListener(event, markActivity, { passive: true }));
+    window.addEventListener("focus", markActivity);
+    document.addEventListener("visibilitychange", visibilityHandler);
+    return () => {
+      events.forEach((event) => window.removeEventListener(event, markActivity));
+      window.removeEventListener("focus", markActivity);
+      document.removeEventListener("visibilitychange", visibilityHandler);
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!accessToken) return;
+    const checkAndRefresh = () => {
+      const now = Date.now();
+      if (now - lastActivityTs > ACTIVITY_IDLE_THRESHOLD_MS) {
+        return;
+      }
+      const expiry = decodeJwtExpiry(accessToken);
+      if (expiry !== null && expiry - now <= TOKEN_REFRESH_WINDOW_MS) {
+        void ensureAuthToken().catch((error) => {
+          if (error instanceof ApiError && error.status === 401) {
+            handleSessionExpired();
+          }
+        });
+      }
+    };
+
+    const intervalId = window.setInterval(checkAndRefresh, HEARTBEAT_INTERVAL_MS);
+    checkAndRefresh();
+    return () => window.clearInterval(intervalId);
+  }, [accessToken, lastActivityTs, ensureAuthToken, handleSessionExpired]);
+
+  useEffect(() => {
+    if (!loginModalOpen) {
+      sessionExpiredRef.current = false;
+    }
+  }, [loginModalOpen]);
+
+  useEffect(() => {
+    return () => {
+      if (completionRedirectRef.current) {
+        window.clearTimeout(completionRedirectRef.current);
+        completionRedirectRef.current = null;
+      }
+    };
+  }, []);
+
+  useEffect(() => {
+    if (step !== 'business' && renderError) {
+      setRenderError(null);
+    }
+  }, [step, renderError]);
+
+  const handleRenderError = useCallback((error: Error) => {
+    setRenderError(error);
+  }, []);
 
   /* Phone field temporarily disabled
   // Auto-detect visitor region and preselect country code (timezone-first, then language)
@@ -571,72 +794,19 @@ const Register = () => {
     ],
   };
 
-  const captchaToken = CAPTCHA_FALLBACK;
-
-  const stringifyDetails = (details: Record<string, unknown> | null | undefined) => {
-    if (!details) return "";
-    const entries = Object.entries(details);
-    if (!entries.length) return "";
-    return entries
-      .slice(0, 3)
-      .map(([key, value]) => `${key}: ${String(value)}`)
-      .join(", ");
-  };
-
-  const sanitizeList = (list: string[]) => list.map((item) => item.trim()).filter((item) => item.length > 0);
-
-  const sanitizeOptional = (value: string | null | undefined) => {
-    if (!value) return undefined;
-    const trimmed = value.trim();
-    return trimmed.length ? trimmed : undefined;
-  };
-
-  const showError = (error: unknown, fallback: string) => {
-    let description = fallback;
-    if (error instanceof ApiError) {
-      const detail = stringifyDetails(error.details);
-      description = detail ? `${error.message} (${detail})` : error.message;
-    } else if (error instanceof Error) {
-      description = error.message;
-    }
-    toast({
-      title: fallback,
-      description,
-      variant: "destructive",
+  const handleLoginModalSuccess = useCallback(({ token, email, password }: { token: string; email: string; password: string }) => {
+    setAccessToken(token);
+    form.setValue("email", email, { shouldDirty: false, shouldTouch: false });
+    form.setValue("password", password, { shouldDirty: false, shouldTouch: false });
+    form.setValue("confirmPassword", password, { shouldDirty: false, shouldTouch: false });
+    setLoginModalEmail(email);
+    setLoginModalOpen(false);
+    toast.success("Signed back in", {
+      description: "You can continue where you left off.",
     });
-    console.error(fallback, error);
-  };
-
-  const ensureAuthToken = async (): Promise<string | null> => {
-    if (accessToken) return accessToken;
-    const email = (form.getValues("email") || "").trim();
-    const password = form.getValues("password") || "";
-    try {
-      const tokenResult = await loginWithPassword(email, password);
-      if (tokenResult) {
-        setAccessToken(tokenResult);
-        return tokenResult;
-      }
-    } catch (error) {
-      throw error;
-    }
-    return null;
-  };
-
-  const requireAuthToken = async () => {
-    try {
-      const tokenResult = await ensureAuthToken();
-      if (!tokenResult) {
-        const message = "Authentication required to continue registration";
-        showError(new Error(message), message);
-        throw new Error(message);
-      }
-      return tokenResult;
-    } catch (error) {
-      showError(error, "Authentication required to continue registration");
-      throw error;
-    }
-  };
+    setLastActivityTs(Date.now());
+    sessionExpiredRef.current = false;
+  }, [form, setAccessToken, setLoginModalEmail, setLoginModalOpen, setLastActivityTs]);
 
   const onSubmit = async (values: z.infer<typeof schema>) => {
     const payload = {
@@ -649,18 +819,20 @@ const Register = () => {
     try {
       const response = await startRegistration(payload, {
         idempotencyKey: idemKey,
-        captchaToken,
       });
       const startResponse =
-        (response as { registrationId?: string | null; session?: SessionProgress | null } | null) ?? null;
+        (response as {
+          registrationId?: string | null;
+          nextStep?: string | null;
+          session?: SessionProgress | null;
+        } | null) ?? null;
       const nextRegistrationId = startResponse?.registrationId?.trim() ?? "";
       if (!nextRegistrationId) {
         throw new Error("Registration response missing registrationId");
       }
       setRegistrationId(nextRegistrationId);
       setSessionProgress(startResponse?.session ?? null);
-      toast({
-        title: t("auth.register.success.title"),
+      toast.success(t("auth.register.success.title"), {
         description: t("auth.register.businessSub"),
       });
       try {
@@ -671,7 +843,19 @@ const Register = () => {
       } catch (error) {
         console.warn("Login after registration failed", error);
       }
-      setStep("business");
+      const nextStepKey = (startResponse?.nextStep || "business").toLowerCase();
+      switch (nextStepKey) {
+        case "business":
+        default:
+          setStep("business");
+          break;
+        case "agent":
+          setStep("agent");
+          break;
+        case "uploads":
+          setStep("uploads");
+          break;
+      }
     } catch (error) {
       showError(error, "Could not start registration");
     } finally {
@@ -679,14 +863,20 @@ const Register = () => {
     }
   };
 
-  const onBusinessSubmit = async (values: RegisterFormValues) => {
+  const onBusinessSubmit = async (_values: RegisterFormValues) => {
+    const values = form.getValues() as RegisterFormValues;
     if (!registrationId) {
       showError(new Error("Registration session missing"), "Registration session not found");
       return;
     }
+    const businessName = (values.businessName ?? "").trim();
+    if (!businessName) {
+      showError(new Error("Business name is required"), "Please provide your business name");
+      return;
+    }
     const payload = {
-      businessName: values.businessName.trim(),
-      industry: values.industry,
+      businessName,
+      industry: values.industry ?? "",
       specifyIndustry: sanitizeOptional(values.specifyIndustry),
       lineOfBusiness: sanitizeList(values.lineOfBusiness),
       lineOfBusinessCustom: sanitizeList(values.lineOfBusinessCustom),
@@ -717,8 +907,7 @@ const Register = () => {
       }
       setBusinessId(nextBusinessId);
       setSessionProgress(businessResponse?.session ?? null);
-      toast({
-        title: "Business profile saved",
+      toast.success("Business profile saved", {
         description: "Next, configure your AI agent.",
       });
       setStep("agent");
@@ -729,7 +918,8 @@ const Register = () => {
     }
   };
 
-  const onAgentSubmit = async (values: RegisterFormValues) => {
+  const onAgentSubmit = async (_values: RegisterFormValues) => {
+    const values = form.getValues() as RegisterFormValues;
     if (!businessId) {
       showError(new Error("Business missing"), "Business not attached to session");
       return;
@@ -760,8 +950,7 @@ const Register = () => {
       const agentResponse =
         (response as { session?: SessionProgress | null } | null) ?? null;
       setSessionProgress(agentResponse?.session ?? null);
-      toast({
-        title: "Agent configuration saved",
+      toast.success("Agent configuration saved", {
         description: "Add knowledge sources to finish up.",
       });
       setStep("uploads");
@@ -772,7 +961,8 @@ const Register = () => {
     }
   };
 
-  const onUploadsSubmit = async (values: RegisterFormValues) => {
+  const onUploadsSubmit = async (_values: RegisterFormValues) => {
+    const values = form.getValues() as RegisterFormValues;
     if (!businessId || !registrationId) {
       showError(new Error("Registration incomplete"), "Missing session context");
       return;
@@ -827,8 +1017,7 @@ const Register = () => {
         const duplicates =
           typeof uploadResponse.duplicates === "number" ? uploadResponse.duplicates : 0;
         setSessionProgress(uploadResponse.session ?? null);
-        toast({
-          title: "Knowledge attached",
+        toast.success("Knowledge attached", {
           description: `Added ${createdTotal} new sources${duplicates ? `, ${duplicates} duplicate(s) skipped` : ""}.`,
         });
       }
@@ -840,10 +1029,15 @@ const Register = () => {
       const completionResponse =
         (completion as { session?: SessionProgress | null } | null) ?? null;
       setSessionProgress(completionResponse?.session ?? null);
-      toast({
-        title: "Registration complete",
+      toast.success("Registration complete", {
         description: "You're all set! Redirecting shortly...",
       });
+      if (completionRedirectRef.current) {
+        window.clearTimeout(completionRedirectRef.current);
+      }
+      completionRedirectRef.current = window.setTimeout(() => {
+        navigate("/dashboard");
+      }, 1500);
     } catch (error) {
       showError(error, "Could not finalize registration");
     } finally {
@@ -878,7 +1072,10 @@ const Register = () => {
           <div className="relative z-10 w-full max-w-lg md:max-w-xl">
             <div className="rounded-xl border border-border bg-card shadow-premium overflow-hidden">
           {/* Header */}
-          <div className="bg-secondary p-3 md:p-4 rounded-t-xl register-header">
+          <div className="bg-secondary p-3 md:p-4 rounded-t-xl register-header relative">
+            <div className="absolute right-3 top-2 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
+              Step: {step}
+            </div>
             {step === 'form' ? (
               <>
                 <h1 className="text-2xl md:text-3xl font-bold text-secondary-foreground text-center register-header-title">
@@ -924,6 +1121,12 @@ const Register = () => {
 
           {/* Body */}
           <div className="p-3 md:p-4">
+
+            {step === 'business' && renderError && (
+              <div className="mb-3 rounded-md border border-destructive/40 bg-destructive/10 p-3 text-xs text-destructive">
+                Business form failed to render: {renderError.message}
+              </div>
+            )}
 
             <div className="relative min-h-[20rem]">
             <div className={`${step === 'form' ? 'animate-panel-in' : 'hidden'}`}>
@@ -1111,13 +1314,15 @@ const Register = () => {
 
             {/* Step 2 (Business): Business profile setup */}
             <div className={`${step === 'business' ? 'animate-panel-in' : 'hidden'}`}>
-              <Form {...form}>
-                <form
-                  className="space-y-4"
-                  noValidate
-                  dir={dir}
-                  onSubmit={form.handleSubmit(onBusinessSubmit)}
-                >
+              <StepErrorBoundary label="business" resetKey={registrationId} onError={handleRenderError}>
+                {step === 'business' ? (
+                  <Form {...form}>
+                    <form
+                      className="space-y-4"
+                      noValidate
+                      dir={dir}
+                      onSubmit={form.handleSubmit(onBusinessSubmit)}
+                    >
                   <FormField
                     control={form.control}
                     name={"businessName" as any}
@@ -1213,7 +1418,7 @@ const Register = () => {
                           const industry = (form.watch as any)("industry") as string | undefined;
                           const key = mapIndustryToLoBKey(industry);
                           const baseOptions = lobOptionsByIndustry[key] || lobOptionsByIndustry['Other'];
-                          const options = baseOptions;
+                          const options = Array.isArray(baseOptions) ? baseOptions : lobOptionsByIndustry['Other'];
                           const maxVisible = 2; // reserve space for +N reliably
                           const visible = allSel.slice(0, maxVisible);
                           const remaining = Math.max(0, allSel.length - visible.length);
@@ -1441,8 +1646,10 @@ const Register = () => {
                       {submittingStep === 'business' ? 'Saving...' : 'Next'}
                     </Button>
                   </div>
-                </form>
-              </Form>
+                    </form>
+                  </Form>
+                ) : null}
+              </StepErrorBoundary>
             </div>
 
             {/* Step 4 (Agent): Agent setup */}
@@ -1504,11 +1711,11 @@ const Register = () => {
                                 <SelectValue placeholder="Select tone" />
                               </SelectTrigger>
                             </FormControl>
-                            <SelectContent>
-                              {['Friendly','Professional','Empathetic','Concise','Cheerful','Calm'].map(opt => (
-                                <SelectItem key={opt} value={opt}>{opt}</SelectItem>
-                              ))}
-                            </SelectContent>
+                          <SelectContent>
+                            {['Friendly','Professional','Casual','Formal','Empathetic','Playful'].map(opt => (
+                              <SelectItem key={opt} value={opt}>{opt}</SelectItem>
+                            ))}
+                          </SelectContent>
                           </Select>
                           <FormMessage />
                         </FormItem>
@@ -1526,7 +1733,7 @@ const Register = () => {
                         if (set.has(opt)) set.delete(opt); else set.add(opt);
                         (form.setValue as any)('agentTraits', Array.from(set), { shouldDirty: true, shouldTouch: true });
                       };
-                      const traits = ['Helpful','Proactive','Patient','Detail‑oriented','Persuasive','Resourceful'];
+                      const traits = ['Concise','Detailed','Curious','Patient','Proactive','Direct','Creative'];
                       return (
                         <FormItem>
                           <FormLabel>Traits</FormLabel>
@@ -1561,12 +1768,7 @@ const Register = () => {
                             </SelectTrigger>
                           </FormControl>
                           <SelectContent>
-                            {[
-                              'Escalate if user asks for human',
-                              'Escalate after 2 failed answers',
-                              'Escalate on billing/security topics',
-                              'Never escalate automatically',
-                            ].map(opt => (
+                            {['Never','On fallback','On negative sentiment','On high value','Always'].map(opt => (
                               <SelectItem key={opt} value={opt}>{opt}</SelectItem>
                             ))}
                           </SelectContent>
@@ -1759,6 +1961,12 @@ const Register = () => {
         <MobileAppPromo compact />
       </main>
       <Footer />
+      <LoginModal
+        open={loginModalOpen}
+        onOpenChange={setLoginModalOpen}
+        initialEmail={loginModalEmail}
+        onSuccess={handleLoginModalSuccess}
+      />
     </div>
   );
 };

@@ -2,20 +2,23 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 from typing import Any
 
 
-@dataclass(slots=True)
 class RepositoryError(Exception):
     """Base error carrying API-aligned payload."""
 
-    message: str
-    code: str = "repository_error"
-    details: dict[str, Any] | None = None
-
-    def __post_init__(self) -> None:
-        super().__init__(self.message)
+    def __init__(
+        self,
+        message: str,
+        *,
+        code: str = "repository_error",
+        details: dict[str, Any] | None = None,
+    ) -> None:
+        super().__init__(message)
+        self.message = message
+        self.code = code
+        self.details = details or {}
 
     def to_payload(self) -> dict[str, Any]:
         payload: dict[str, Any] = {"code": self.code, "message": self.message}
@@ -57,4 +60,3 @@ __all__ = [
     "RepositoryError",
     "ValidationError",
 ]
-

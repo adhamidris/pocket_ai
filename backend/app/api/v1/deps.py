@@ -19,12 +19,15 @@ from app.core.security import (
     verify_jwt,
 )
 from app.core.settings import Settings, get_settings as load_settings
-from app.models.registration import AgentRole, AgentTone, AgentTrait, EscalationRule
+from app.db.session import get_session
+from app.models.registration import AgentRole, AgentTone, AgentTrait, EscalationRule, MembershipRole
 from app.services import (
     RegistrationCatalogMapper,
     RegistrationService,
     ServiceValidationError,
 )
+from app.repositories.errors import RepositoryError
+from app.repositories.registration import MembershipsRepository
 
 _SLUG_PATTERN = re.compile(r"[^a-z0-9]+")
 
@@ -35,13 +38,14 @@ def get_settings() -> Settings:
     return load_settings()
 
 
-async def get_db() -> AsyncIterator[Any]:
-    """Yield a database session placeholder.
+async def get_db() -> AsyncIterator[Session]:
+    """Yield a SQLAlchemy session for request-scoped work."""
 
-    TODO: replace with actual SQLAlchemy session management once the ORM layer is ready.
-    """
-
-    yield None
+    session = get_session()
+    try:
+        yield session
+    finally:
+        session.close()
 
 
 async def optional_current_user(
@@ -267,6 +271,7 @@ def require_owner_or_admin(business_param: str = "business_id"):
     async def _dependency(
         request: Request,
         user: AuthenticatedUser = Depends(get_current_user),
+        db_session: Session = Depends(get_db),
     ) -> AuthenticatedUser:
         raw_business = request.path_params.get(business_param)
         if raw_business is None:
@@ -281,16 +286,37 @@ def require_owner_or_admin(business_param: str = "business_id"):
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail={"code": "validation", "message": "Invalid business identifier"},
             ) from exc
-        if not user.has_business_role(business_id, ("owner", "admin")):
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail={
-                    "code": "forbidden",
-                    "message": "Insufficient role",
-                    "details": {"required_roles": ["owner", "admin"]},
-                },
+
+        if user.has_business_role(business_id, ("owner", "admin")):
+            return user
+
+        membership_repo = MembershipsRepository(db_session)
+        try:
+            roles = membership_repo.get_roles(
+                business_id=business_id,
+                user_id=user.user_id,
             )
-        return user
+        except RepositoryError as exc:  # pragma: no cover - defensive guard
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail={
+                    "code": "repository_error",
+                    "message": "Unable to validate business membership",
+                    "details": {"operation": "membership_lookup"},
+                },
+            ) from exc
+
+        if any(role in (MembershipRole.OWNER, MembershipRole.ADMIN) for role in roles):
+            return user
+
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail={
+                "code": "forbidden",
+                "message": "Insufficient role",
+                "details": {"required_roles": ["owner", "admin"]},
+            },
+        )
 
     return _dependency
 

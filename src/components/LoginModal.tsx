@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import {
   Dialog,
   DialogContent,
@@ -10,11 +10,73 @@ import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { useI18n } from "@/i18n/I18nProvider";
 import { Link } from "react-router-dom";
+import { loginWithPassword } from "@/services/auth";
+import { ApiError } from "@/services/http";
 
-export const LoginModal = ({ open, onOpenChange }: { open: boolean; onOpenChange: (v: boolean) => void }) => {
+type LoginSuccess = {
+  token: string;
+  email: string;
+  password: string;
+};
+
+type LoginModalProps = {
+  open: boolean;
+  onOpenChange: (value: boolean) => void;
+  initialEmail?: string;
+  onSuccess?: (result: LoginSuccess) => void;
+};
+
+export const LoginModal = ({ open, onOpenChange, initialEmail, onSuccess }: LoginModalProps) => {
   const { t } = useI18n();
-  const [email, setEmail] = useState("");
+  const [email, setEmail] = useState(initialEmail ?? "");
   const [password, setPassword] = useState("");
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+
+  const resolveText = useCallback(
+    (key: string, fallback: string) => {
+      const value = t(key);
+      return value && value !== key ? value : fallback;
+    },
+    [t]
+  );
+
+  useEffect(() => {
+    if (open) {
+      setEmail(initialEmail ?? "");
+      setPassword("");
+      setErrorMessage(null);
+    }
+  }, [open, initialEmail]);
+
+  const handleSubmit = async (event?: React.FormEvent) => {
+    if (event) event.preventDefault();
+    if (!email.trim() || !password) {
+      setErrorMessage(resolveText("auth.login.missingCredentials", "Email and password are required."));
+      return;
+    }
+    setIsSubmitting(true);
+    setErrorMessage(null);
+    try {
+      const token = await loginWithPassword(email.trim(), password);
+      if (!token) {
+        throw new ApiError(401, "unauthenticated", "Authentication failed");
+      }
+      onSuccess?.({ token, email: email.trim(), password });
+      onOpenChange(false);
+    } catch (error) {
+      if (error instanceof ApiError) {
+        const message = error.message && error.message !== "" ? error.message : resolveText("auth.login.invalidCredentials", "Unable to sign in.");
+        setErrorMessage(message);
+      } else if (error instanceof Error) {
+        setErrorMessage(error.message);
+      } else {
+        setErrorMessage("Unable to sign in.");
+      }
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -26,7 +88,7 @@ export const LoginModal = ({ open, onOpenChange }: { open: boolean; onOpenChange
           </DialogTitle>
           <DialogDescription className="text-center streaming-text">{t("auth.login.subtitle")}</DialogDescription>
         </DialogHeader>
-        <div className="mt-2 space-y-3">
+        <form className="mt-2 space-y-3" onSubmit={handleSubmit}>
           <div>
             <label className="block text-sm font-medium mb-2">{t("auth.login.email")}</label>
             <Input
@@ -36,6 +98,7 @@ export const LoginModal = ({ open, onOpenChange }: { open: boolean; onOpenChange
               onChange={(e) => setEmail(e.target.value)}
               className="login-input bg-input border border-input"
               autoComplete="email"
+              required
             />
           </div>
           <div>
@@ -47,9 +110,23 @@ export const LoginModal = ({ open, onOpenChange }: { open: boolean; onOpenChange
               onChange={(e) => setPassword(e.target.value)}
               className="login-input bg-input border border-input"
               autoComplete="current-password"
+              required
             />
           </div>
-          <Button className="w-full bg-gradient-primary text-white hover:opacity-90">{t("auth.login.loginBtn")}</Button>
+          {errorMessage ? (
+            <p className="text-sm text-destructive" role="alert">
+              {errorMessage}
+            </p>
+          ) : null}
+          <Button
+            type="submit"
+            className="w-full bg-gradient-primary text-white hover:opacity-90"
+            disabled={isSubmitting}
+          >
+            {isSubmitting
+              ? resolveText("auth.login.loading", "Signing in...")
+              : resolveText("auth.login.loginBtn", "Sign in")}
+          </Button>
 
           {/* Divider */}
           <div className="my-1">
@@ -61,7 +138,7 @@ export const LoginModal = ({ open, onOpenChange }: { open: boolean; onOpenChange
           </div>
 
           {/* Google */}
-          <Button type="button" variant="secondary" className="w-full">
+          <Button type="button" variant="secondary" className="w-full" disabled={isSubmitting}>
             <span className="inline-flex items-center gap-2">
               <span className="w-6 h-6 rounded-full inline-flex items-center justify-center">
                 <svg width="16" height="16" viewBox="0 0 48 48" aria-hidden>
@@ -81,7 +158,7 @@ export const LoginModal = ({ open, onOpenChange }: { open: boolean; onOpenChange
               {t("auth.login.signUp")}
             </Link>
           </div>
-        </div>
+        </form>
       </DialogContent>
     </Dialog>
   );

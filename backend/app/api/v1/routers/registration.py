@@ -14,7 +14,6 @@ from app.api.v1.deps import (
     enforce_registration_uploads_rate_limit,
     get_current_user,
     get_registration_service,
-    require_owner_or_admin,
     require_registration_captcha,
 )
 from app.api.v1.schemas.registration import (
@@ -157,7 +156,7 @@ async def configure_agent_endpoint(
     business_id: uuid.UUID = Path(..., description="Business identifier"),
     payload: AgentConfigRequest = Body(...),
     idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
-    current_user: AuthenticatedUser = Depends(require_owner_or_admin()),
+    current_user: AuthenticatedUser = Depends(get_current_user),
     service: RegistrationService = Depends(get_registration_service),
 ) -> AgentConfigResponse:
     user_id = current_user.user_id
@@ -189,7 +188,7 @@ async def attach_uploads_endpoint(
     business_id: uuid.UUID = Path(..., description="Business identifier"),
     payload: UploadLinksModel = Body(...),
     idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
-    current_user: AuthenticatedUser = Depends(require_owner_or_admin()),
+    current_user: AuthenticatedUser = Depends(get_current_user),
     service: RegistrationService = Depends(get_registration_service),
 ) -> UploadLinksResponse:
     user_id = current_user.user_id
@@ -242,6 +241,7 @@ def _map_start_registration(result: StartRegistrationResult) -> StartRegistratio
             first_name=result.user.first_name,
         ),
         next_step=result.next_step,
+        session=_session_progress(result.registration),
     )
 
 

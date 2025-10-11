@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import uuid
-from collections.abc import Iterable, Sequence
+from collections.abc import Iterable, Mapping, Sequence
 from datetime import datetime, timedelta
 from typing import Any
 
@@ -20,6 +20,8 @@ from app.models.registration import (
     EscalationRule,
     Business,
     BusinessNiche,
+    Industry,
+    IndustryNiche,
     KnowledgeItem,
     KnowledgeItemFile,
     KnowledgeItemText,
@@ -104,6 +106,64 @@ def _to_membership(model: UserBusinessMembership) -> MembershipRecord:
         role=model.role,
         joined_at=model.joined_at,
     )
+
+
+def _fallback_label_from_code(code: str, *, prefix: str, default: str) -> str:
+    if not code.lower().startswith(prefix):
+        return default
+    raw = code[len(prefix) :]
+    pieces = [segment for segment in raw.split("-") if segment]
+    if not pieces:
+        return default
+    return " ".join(piece.capitalize() for piece in pieces)
+
+
+class IndustryCatalogRepository(BaseRepository):
+    """Ensure industry and niche catalogue entries exist for registration."""
+
+    def ensure_industry(self, *, code: str, label: str) -> None:
+        label_clean = label.strip() or _fallback_label_from_code(
+            code, prefix="industry:", default="Industry"
+        )
+        with self._with_timeout():
+            model = self.session.get(Industry, code)
+            if model is None:
+                self.session.add(
+                    Industry(
+                        code=code,
+                        label=label_clean,
+                    )
+                )
+            elif label_clean and model.label != label_clean:
+                model.label = label_clean
+            self.session.flush()
+
+    def ensure_niches(self, *, industry_code: str, items: Mapping[str, str]) -> None:
+        if not items:
+            return
+        with self._with_timeout():
+            stmt = select(IndustryNiche).where(IndustryNiche.code.in_(list(items.keys())))
+            existing = {model.code: model for model in self.session.scalars(stmt).all()}
+
+            for code, label in items.items():
+                label_clean = label.strip() or _fallback_label_from_code(
+                    code, prefix="niche:", default="Niche"
+                )
+                model = existing.get(code)
+                if model is None:
+                    self.session.add(
+                        IndustryNiche(
+                            code=code,
+                            industry_code=industry_code,
+                            label=label_clean,
+                        )
+                    )
+                else:
+                    if model.industry_code != industry_code:
+                        model.industry_code = industry_code
+                    if label_clean and model.label != label_clean:
+                        model.label = label_clean
+            self.session.flush()
 
 
 def _to_agent(model: Agent) -> AgentRecord:

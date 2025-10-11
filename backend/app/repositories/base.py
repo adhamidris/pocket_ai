@@ -7,7 +7,6 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import ContextManager, Iterator
 
-from sqlalchemy import text
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
@@ -49,9 +48,10 @@ def statement_timeout(session: Session, spec: StatementTimeoutSpec | None = None
         return
 
     try:
-        session.execute(
-            text("SET LOCAL statement_timeout = :timeout"),
-            {"timeout": f"{active_spec.milliseconds}ms"},
+        # Postgres does not allow bind params in SET/SET LOCAL; use a literal.
+        # exec_driver_sql avoids SQLAlchemy parameter binding here.
+        session.connection().exec_driver_sql(
+            f"SET LOCAL statement_timeout = '{active_spec.milliseconds}ms'"
         )
     except SQLAlchemyError as exc:  # pragma: no cover - defensive guard
         raise DbTimeoutError("Failed to set statement timeout", details={"cause": str(exc)}) from exc

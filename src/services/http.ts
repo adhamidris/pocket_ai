@@ -20,7 +20,6 @@ export type JsonFetchOptions = {
   body?: unknown;
   token?: string | null;
   idempotencyKey?: string | null;
-  captchaToken?: string | null;
   headers?: Record<string, string>;
   signal?: AbortSignal;
   requestId?: string;
@@ -44,7 +43,6 @@ export async function jsonFetch<T>(path: string, options: JsonFetchOptions = {})
     body,
     token,
     idempotencyKey,
-    captchaToken,
     headers = {},
     signal,
     requestId,
@@ -61,7 +59,6 @@ export async function jsonFetch<T>(path: string, options: JsonFetchOptions = {})
   finalHeaders.set("X-Request-ID", generatedId);
   if (token) finalHeaders.set("Authorization", token.startsWith("Bearer ") ? token : `Bearer ${token}`);
   if (idempotencyKey) finalHeaders.set("Idempotency-Key", idempotencyKey);
-  if (captchaToken) finalHeaders.set("X-Captcha-Token", captchaToken);
 
   const init: RequestInit = {
     method,

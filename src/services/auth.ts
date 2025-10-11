@@ -6,6 +6,11 @@ type LoginResponse = {
   accessToken?: string;
   token?: string;
   refreshToken?: string;
+  tokenType?: string;
+  expiresIn?: number;
+  userId?: string;
+  email?: string;
+  firstName?: string;
 };
 
 export const getStoredToken = (): string | null => {

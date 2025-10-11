@@ -41,6 +41,7 @@ from app.repositories.registration import (
     AgentsRepository,
     BusinessNichesRepository,
     BusinessesRepository,
+    IndustryCatalogRepository,
     KnowledgeItemsRepository,
     MembershipsRepository,
     RegistrationSessionsRepository,
@@ -51,7 +52,6 @@ from app.services.errors import (
     ServiceError,
     ServiceExpiredError,
     ServiceNotFoundError,
-    ServicePermissionError,
     ServiceTimeoutError,
     ServiceValidationError,
 )
@@ -173,6 +173,7 @@ class _RepositoryBundle:
     users: UsersRepository
     businesses: BusinessesRepository
     business_niches: BusinessNichesRepository
+    industry_catalog: IndustryCatalogRepository
     memberships: MembershipsRepository
     agents: AgentsRepository
     knowledge_items: KnowledgeItemsRepository
@@ -209,6 +210,7 @@ class RegistrationService:
                 users=UsersRepository(self._session),
                 businesses=BusinessesRepository(self._session),
                 business_niches=BusinessNichesRepository(self._session),
+                industry_catalog=IndustryCatalogRepository(self._session),
                 memberships=MembershipsRepository(self._session),
                 agents=AgentsRepository(self._session),
                 knowledge_items=KnowledgeItemsRepository(self._session),
@@ -340,6 +342,34 @@ class RegistrationService:
                 )
             )
 
+            industry_label_source = (
+                params.specify_industry.strip()
+                if params.specify_industry
+                else params.industry_label.strip()
+            )
+            repos.industry_catalog.ensure_industry(
+                code=industry_code,
+                label=industry_label_source
+                or self._humanize_catalog_code(industry_code, prefix="industry:", default="Industry"),
+            )
+
+            if niche_codes:
+                niche_label_map = self._build_niche_label_map(params)
+                repos.industry_catalog.ensure_niches(
+                    industry_code=industry_code,
+                    items={
+                        code: niche_label_map.get(
+                            code,
+                            self._humanize_catalog_code(
+                                code,
+                                prefix="niche:",
+                                default="Niche",
+                            ),
+                        )
+                        for code in niche_codes
+                    },
+                )
+
             business_record = self._load_business(repos, session_record)
             creator_name = self._extract_first_name(session_record.state)
 
@@ -413,12 +443,7 @@ class RegistrationService:
 
         with self._transaction() as repos:
             session_record = self._get_session_for_business(repos, params.business_id, params.user_id)
-            self._require_membership(
-                repos,
-                params.business_id,
-                params.user_id,
-                required_roles=(MembershipRole.OWNER, MembershipRole.ADMIN),
-            )
+            self._ensure_membership(repos, params.business_id, params.user_id)
 
             existing_hash = self._extract_idempotency_hash(session_record.state, "agent")
             if existing_hash == payload_hash:
@@ -529,12 +554,7 @@ class RegistrationService:
 
         with self._transaction() as repos:
             session_record = self._get_session_for_business(repos, params.business_id, params.user_id)
-            self._require_membership(
-                repos,
-                params.business_id,
-                params.user_id,
-                required_roles=(MembershipRole.OWNER, MembershipRole.ADMIN),
-            )
+            self._ensure_membership(repos, params.business_id, params.user_id)
 
             existing_hash = self._extract_idempotency_hash(session_record.state, "uploads")
             if existing_hash == payload_hash:
@@ -758,33 +778,79 @@ class RegistrationService:
         except RepositoryError as exc:
             raise self._translate_repository_error(exc) from exc
 
-    def _require_membership(
+    def _build_niche_label_map(self, params: UpsertBusinessInput) -> dict[str, str]:
+        label_map: dict[str, str] = {}
+
+        for value in params.line_of_business:
+            candidate = value.strip()
+            if not candidate:
+                continue
+            code = self._resolve_single_niche_code(
+                industry_label=params.industry_label,
+                value=candidate,
+                is_custom=False,
+            )
+            if code and code not in label_map:
+                label_map[code] = candidate
+
+        for value in params.line_of_business_custom:
+            candidate = value.strip()
+            if not candidate:
+                continue
+            code = self._resolve_single_niche_code(
+                industry_label=params.industry_label,
+                value=candidate,
+                is_custom=True,
+            )
+            if code and code not in label_map:
+                label_map[code] = candidate
+
+        return label_map
+
+    def _resolve_single_niche_code(
+        self,
+        *,
+        industry_label: str,
+        value: str,
+        is_custom: bool,
+    ) -> str | None:
+        entries = [value] if not is_custom else []
+        custom_entries = [value] if is_custom else []
+        codes = self._catalog_mapper.line_of_business_to_codes(
+            industry_label=industry_label,
+            entries=entries,
+            custom_entries=custom_entries,
+        )
+        if not codes:
+            return None
+        return codes[0]
+
+    def _humanize_catalog_code(self, code: str, *, prefix: str, default: str) -> str:
+        code_lower = code.lower()
+        if not code_lower.startswith(prefix):
+            return default
+        remainder = code[len(prefix) :]
+        parts = [segment for segment in remainder.split("-") if segment]
+        if not parts:
+            return default
+        return " ".join(segment.capitalize() for segment in parts)
+
+    def _ensure_membership(
         self,
         repos: _RepositoryBundle,
         business_id: uuid.UUID,
         user_id: uuid.UUID,
-        *,
-        required_roles: Sequence[MembershipRole] | None = None,
     ) -> None:
         try:
             roles = repos.memberships.get_roles(business_id=business_id, user_id=user_id)
         except RepositoryError as exc:
             raise self._translate_repository_error(exc) from exc
-        if not roles:
-            raise ServicePermissionError(
-                "User is not a member of the business",
-                details={"businessId": str(business_id)},
-            )
-        if required_roles:
-            if not any(role in required_roles for role in roles):
-                raise ServicePermissionError(
-                    "Insufficient permissions for operation",
-                    details={
-                        "businessId": str(business_id),
-                        "requiredRoles": [role.value for role in required_roles],
-                        "roles": [role.value for role in roles],
-                    },
-                )
+        if roles:
+            return
+        try:
+            repos.memberships.add_owner(user_id=user_id, business_id=business_id)
+        except RepositoryError as exc:
+            raise self._translate_repository_error(exc) from exc
 
     def _extract_first_name(self, state: Mapping[str, Any] | None) -> str:
         if not isinstance(state, Mapping):

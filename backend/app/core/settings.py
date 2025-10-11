@@ -17,7 +17,7 @@ class Settings(BaseSettings):
     ENV: str = Field(default="development", description="Deployment environment name.")
     LOG_LEVEL: str = Field(default="INFO", description="Application log level.")
     DATABASE_URL: str = Field(
-        default="postgresql+psycopg://postgres:postgres@localhost:5432/pocket_db_1",
+        default="postgresql+psycopg://postgres:postgres@localhost:5432/pocketdb",
         description="Primary database connection string.",
     )
     ALLOWED_ORIGINS: list[str] = Field(
@@ -25,7 +25,9 @@ class Settings(BaseSettings):
             "http://localhost:3000",
             "http://localhost:8000",
             "http://localhost:5173",
+            "http://localhost:8080",
             "http://127.0.0.1:5173",
+            "http://127.0.0.1:8080",
         ],
         description="Comma-separated list of allowed CORS origins.",
     )

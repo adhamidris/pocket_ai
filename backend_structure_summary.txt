@@ -1,0 +1,1006 @@
+=== MODELS ===
+backend/app/models/base.py:22:class Base(DeclarativeBase):
+backend/app/models/base.py-23-    """Declarative base bound to the project's naming convention."""
+backend/app/models/base.py-24-
+backend/app/models/base.py-25-    metadata = MetaData(naming_convention=NAMING_CONVENTION)
+backend/app/models/base.py-26-
+backend/app/models/base.py-27-
+backend/app/models/base.py:28:class PrimaryKeyMixin:
+backend/app/models/base.py-29-    """Provides a UUID primary key column."""
+backend/app/models/base.py-30-
+backend/app/models/base.py-31-    id: Mapped[uuid.UUID] = mapped_column(
+backend/app/models/base.py-32-        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+backend/app/models/base.py-33-    )
+--
+backend/app/models/base.py:36:class CreatedAtMixin:
+backend/app/models/base.py-37-    """Adds a UTC timestamp for creation."""
+backend/app/models/base.py-38-
+backend/app/models/base.py-39-    created_at: Mapped[datetime] = mapped_column(
+backend/app/models/base.py-40-        DateTime(timezone=True),
+backend/app/models/base.py-41-        nullable=False,
+--
+backend/app/models/base.py:46:class UpdatedAtMixin:
+backend/app/models/base.py-47-    """Adds a UTC timestamp that updates on modification."""
+backend/app/models/base.py-48-
+backend/app/models/base.py-49-    updated_at: Mapped[datetime] = mapped_column(
+backend/app/models/base.py-50-        DateTime(timezone=True),
+backend/app/models/base.py-51-        nullable=False,
+--
+backend/app/models/registration.py:30:class RegistrationStep(enum.Enum):
+backend/app/models/registration.py-31-    BUSINESS_PROFILE = "business_profile"
+backend/app/models/registration.py-32-    AGENT_SETUP = "agent_setup"
+backend/app/models/registration.py-33-    KNOWLEDGE_UPLOADS = "knowledge_uploads"
+backend/app/models/registration.py-34-    COMPLETED = "completed"
+backend/app/models/registration.py-35-
+--
+backend/app/models/registration.py:37:class MembershipRole(enum.Enum):
+backend/app/models/registration.py-38-    OWNER = "owner"
+backend/app/models/registration.py-39-    ADMIN = "admin"
+backend/app/models/registration.py-40-    AGENT = "agent"
+backend/app/models/registration.py-41-
+backend/app/models/registration.py-42-
+backend/app/models/registration.py:43:class AgentRole(enum.Enum):
+backend/app/models/registration.py-44-    SALES = "sales"
+backend/app/models/registration.py-45-    SUPPORT = "support"
+backend/app/models/registration.py-46-    RESEARCH = "research"
+backend/app/models/registration.py-47-    SUCCESS = "success"
+backend/app/models/registration.py-48-    MARKETING = "marketing"
+--
+backend/app/models/registration.py:51:class AgentTone(enum.Enum):
+backend/app/models/registration.py-52-    FRIENDLY = "friendly"
+backend/app/models/registration.py-53-    PROFESSIONAL = "professional"
+backend/app/models/registration.py-54-    CASUAL = "casual"
+backend/app/models/registration.py-55-    FORMAL = "formal"
+backend/app/models/registration.py-56-    EMPATHETIC = "empathetic"
+--
+backend/app/models/registration.py:60:class AgentTrait(enum.Enum):
+backend/app/models/registration.py-61-    CONCISE = "concise"
+backend/app/models/registration.py-62-    DETAILED = "detailed"
+backend/app/models/registration.py-63-    CURIOUS = "curious"
+backend/app/models/registration.py-64-    PATIENT = "patient"
+backend/app/models/registration.py-65-    PROACTIVE = "proactive"
+--
+backend/app/models/registration.py:70:class EscalationRule(enum.Enum):
+backend/app/models/registration.py-71-    NEVER = "never"
+backend/app/models/registration.py-72-    ON_FALLBACK = "on_fallback"
+backend/app/models/registration.py-73-    ON_NEGATIVE_SENTIMENT = "on_negative_sentiment"
+backend/app/models/registration.py-74-    ON_HIGH_VALUE = "on_high_value"
+backend/app/models/registration.py-75-    ALWAYS = "always"
+--
+backend/app/models/registration.py:78:class KnowledgeSource(enum.Enum):
+backend/app/models/registration.py-79-    FILE = "file"
+backend/app/models/registration.py-80-    URL = "url"
+backend/app/models/registration.py-81-    TEXT = "text"
+backend/app/models/registration.py-82-
+backend/app/models/registration.py-83-
+backend/app/models/registration.py:84:class KnowledgeStatus(enum.Enum):
+backend/app/models/registration.py-85-    PENDING = "pending"
+backend/app/models/registration.py-86-    PROCESSING = "processing"
+backend/app/models/registration.py-87-    READY = "ready"
+backend/app/models/registration.py-88-    FAILED = "failed"
+backend/app/models/registration.py-89-
+--
+backend/app/models/registration.py:91:class User(PrimaryKeyMixin, CreatedAtMixin, Base):
+backend/app/models/registration.py-92-    __tablename__ = "users"
+backend/app/models/registration.py-93-
+backend/app/models/registration.py-94-    email: Mapped[str] = mapped_column(Text, nullable=False)
+backend/app/models/registration.py-95-    first_name: Mapped[str] = mapped_column(String(80), nullable=False)
+backend/app/models/registration.py-96-    password_hash: Mapped[str | None] = mapped_column(Text, nullable=True)
+--
+backend/app/models/registration.py:128:class Industry(CreatedAtMixin, Base):
+backend/app/models/registration.py-129-    __tablename__ = "industries"
+backend/app/models/registration.py-130-
+backend/app/models/registration.py-131-    code: Mapped[str] = mapped_column(String(64), primary_key=True)
+backend/app/models/registration.py-132-    label: Mapped[str] = mapped_column(String(120), nullable=False)
+backend/app/models/registration.py-133-    search_terms: Mapped[list[str]] = mapped_column(
+--
+backend/app/models/registration.py:154:class IndustryNiche(CreatedAtMixin, Base):
+backend/app/models/registration.py-155-    __tablename__ = "industry_niches"
+backend/app/models/registration.py-156-
+backend/app/models/registration.py-157-    code: Mapped[str] = mapped_column(String(96), primary_key=True)
+backend/app/models/registration.py-158-    industry_code: Mapped[str] = mapped_column(
+backend/app/models/registration.py-159-        ForeignKey("industries.code", ondelete="CASCADE"), nullable=False
+--
+backend/app/models/registration.py:183:class Business(PrimaryKeyMixin, CreatedAtMixin, Base):
+backend/app/models/registration.py-184-    __tablename__ = "businesses"
+backend/app/models/registration.py-185-
+backend/app/models/registration.py-186-    name: Mapped[str] = mapped_column(String(120), nullable=False)
+backend/app/models/registration.py-187-    industry_code: Mapped[str] = mapped_column(
+backend/app/models/registration.py-188-        ForeignKey("industries.code", ondelete="RESTRICT"), nullable=False
+--
+backend/app/models/registration.py:225:class BusinessNiche(Base):
+backend/app/models/registration.py-226-    __tablename__ = "business_niches"
+backend/app/models/registration.py-227-
+backend/app/models/registration.py-228-    business_id: Mapped[uuid.UUID] = mapped_column(
+backend/app/models/registration.py-229-        ForeignKey("businesses.id", ondelete="CASCADE"), primary_key=True
+backend/app/models/registration.py-230-    )
+--
+backend/app/models/registration.py:249:class RegistrationSession(PrimaryKeyMixin, CreatedAtMixin, UpdatedAtMixin, Base):
+backend/app/models/registration.py-250-    __tablename__ = "registration_sessions"
+backend/app/models/registration.py-251-
+backend/app/models/registration.py-252-    user_id: Mapped[uuid.UUID] = mapped_column(
+backend/app/models/registration.py-253-        ForeignKey("users.id", ondelete="CASCADE"), nullable=False
+backend/app/models/registration.py-254-    )
+--
+backend/app/models/registration.py:289:class UserBusinessMembership(Base):
+backend/app/models/registration.py-290-    __tablename__ = "user_business_memberships"
+backend/app/models/registration.py-291-
+backend/app/models/registration.py-292-    user_id: Mapped[uuid.UUID] = mapped_column(
+backend/app/models/registration.py-293-        ForeignKey("users.id", ondelete="CASCADE"), primary_key=True
+backend/app/models/registration.py-294-    )
+--
+backend/app/models/registration.py:310:class Agent(PrimaryKeyMixin, CreatedAtMixin, Base):
+backend/app/models/registration.py-311-    __tablename__ = "agents"
+backend/app/models/registration.py-312-
+backend/app/models/registration.py-313-    business_id: Mapped[uuid.UUID] = mapped_column(
+backend/app/models/registration.py-314-        ForeignKey("businesses.id", ondelete="CASCADE"), nullable=False
+backend/app/models/registration.py-315-    )
+--
+backend/app/models/registration.py:346:class AgentTraitLink(Base):
+backend/app/models/registration.py-347-    __tablename__ = "agent_traits"
+backend/app/models/registration.py-348-
+backend/app/models/registration.py-349-    agent_id: Mapped[uuid.UUID] = mapped_column(
+backend/app/models/registration.py-350-        ForeignKey("agents.id", ondelete="CASCADE"), primary_key=True
+backend/app/models/registration.py-351-    )
+--
+backend/app/models/registration.py:363:class KnowledgeItem(PrimaryKeyMixin, CreatedAtMixin, Base):
+backend/app/models/registration.py-364-    __tablename__ = "knowledge_items"
+backend/app/models/registration.py-365-
+backend/app/models/registration.py-366-    business_id: Mapped[uuid.UUID] = mapped_column(
+backend/app/models/registration.py-367-        ForeignKey("businesses.id", ondelete="CASCADE"), nullable=False
+backend/app/models/registration.py-368-    )
+--
+backend/app/models/registration.py:405:class KnowledgeItemFile(Base):
+backend/app/models/registration.py-406-    __tablename__ = "knowledge_item_files"
+backend/app/models/registration.py-407-
+backend/app/models/registration.py-408-    knowledge_item_id: Mapped[uuid.UUID] = mapped_column(
+backend/app/models/registration.py-409-        ForeignKey("knowledge_items.id", ondelete="CASCADE"),
+backend/app/models/registration.py-410-        primary_key=True,
+--
+backend/app/models/registration.py:432:class KnowledgeItemUrl(Base):
+backend/app/models/registration.py-433-    __tablename__ = "knowledge_item_urls"
+backend/app/models/registration.py-434-
+backend/app/models/registration.py-435-    knowledge_item_id: Mapped[uuid.UUID] = mapped_column(
+backend/app/models/registration.py-436-        ForeignKey("knowledge_items.id", ondelete="CASCADE"),
+backend/app/models/registration.py-437-        primary_key=True,
+--
+backend/app/models/registration.py:451:class KnowledgeItemText(Base):
+backend/app/models/registration.py-452-    __tablename__ = "knowledge_item_texts"
+backend/app/models/registration.py-453-
+backend/app/models/registration.py-454-    knowledge_item_id: Mapped[uuid.UUID] = mapped_column(
+backend/app/models/registration.py-455-        ForeignKey("knowledge_items.id", ondelete="CASCADE"),
+backend/app/models/registration.py-456-        primary_key=True,
+
+=== SCHEMAS ===
+backend/app/schemas/registration.py:25:class BaseSchemaModel(BaseModel):
+backend/app/schemas/registration.py-26-    """Base class that forbids unexpected properties."""
+backend/app/schemas/registration.py-27-
+backend/app/schemas/registration.py-28-    model_config = ConfigDict(extra="forbid")
+backend/app/schemas/registration.py-29-
+backend/app/schemas/registration.py-30-
+backend/app/schemas/registration.py:31:class IdempotentRequest(BaseSchemaModel):
+backend/app/schemas/registration.py-32-    """Mixin to surface an optional idempotency key."""
+backend/app/schemas/registration.py-33-
+backend/app/schemas/registration.py-34-    idempotency_key: Annotated[str | None, Field(
+backend/app/schemas/registration.py-35-        default=None, max_length=64, pattern=IDEMPOTENCY_KEY_PATTERN.pattern
+backend/app/schemas/registration.py-36-    )]
+--
+backend/app/schemas/registration.py:49:class RegistrationStep(Enum):
+backend/app/schemas/registration.py-50-    BUSINESS_PROFILE = "business_profile"
+backend/app/schemas/registration.py-51-    AGENT_SETUP = "agent_setup"
+backend/app/schemas/registration.py-52-    KNOWLEDGE_UPLOADS = "knowledge_uploads"
+backend/app/schemas/registration.py-53-
+backend/app/schemas/registration.py-54-
+backend/app/schemas/registration.py:55:class RegisterEmailRequest(IdempotentRequest):
+backend/app/schemas/registration.py-56-    first_name: Annotated[str, Field(min_length=1, max_length=80)]
+backend/app/schemas/registration.py-57-    email: EmailStr
+backend/app/schemas/registration.py-58-    password: Annotated[str, Field(min_length=8, max_length=128)]
+backend/app/schemas/registration.py-59-    password_confirmation: Annotated[str, Field(min_length=8, max_length=128)]
+backend/app/schemas/registration.py-60-    accept_terms: bool
+--
+backend/app/schemas/registration.py:69:class OAuthProvider(Enum):
+backend/app/schemas/registration.py-70-    GOOGLE = "google"
+backend/app/schemas/registration.py-71-
+backend/app/schemas/registration.py-72-
+backend/app/schemas/registration.py:73:class RegisterOAuthRequest(IdempotentRequest):
+backend/app/schemas/registration.py-74-    provider: Literal[OAuthProvider.GOOGLE.value]
+backend/app/schemas/registration.py-75-    id_token: Annotated[str, Field(min_length=10, max_length=4096)]
+backend/app/schemas/registration.py-76-    first_name: Annotated[str | None, Field(default=None, min_length=1, max_length=80)]
+backend/app/schemas/registration.py-77-
+backend/app/schemas/registration.py-78-
+backend/app/schemas/registration.py:79:class RegisterStep1Response(BaseSchemaModel):
+backend/app/schemas/registration.py-80-    registration_id: RegistrationId
+backend/app/schemas/registration.py-81-    user_id: UserId
+backend/app/schemas/registration.py-82-    requires_email_verification: bool
+backend/app/schemas/registration.py-83-    next_step: Literal[RegistrationStep.BUSINESS_PROFILE.value]
+backend/app/schemas/registration.py-84-
+--
+backend/app/schemas/registration.py:86:class BusinessProfileRequest(IdempotentRequest):
+backend/app/schemas/registration.py-87-    registration_id: RegistrationId
+backend/app/schemas/registration.py-88-    business_name: Annotated[str, Field(min_length=2, max_length=120)]
+backend/app/schemas/registration.py-89-    industry_code: str
+backend/app/schemas/registration.py-90-    niche_codes: Annotated[list[str] | None, Field(default=None, min_length=1, max_length=5)]
+backend/app/schemas/registration.py-91-
+--
+backend/app/schemas/registration.py:110:class BusinessProfileResponse(BaseSchemaModel):
+backend/app/schemas/registration.py-111-    business_id: BusinessId
+backend/app/schemas/registration.py-112-    next_step: Literal[RegistrationStep.AGENT_SETUP.value]
+backend/app/schemas/registration.py-113-
+backend/app/schemas/registration.py-114-
+backend/app/schemas/registration.py:115:class AgentRole(str, Enum):
+backend/app/schemas/registration.py-116-    SALES = "sales"
+backend/app/schemas/registration.py-117-    SUPPORT = "support"
+backend/app/schemas/registration.py-118-    RESEARCH = "research"
+backend/app/schemas/registration.py-119-    SUCCESS = "success"
+backend/app/schemas/registration.py-120-    MARKETING = "marketing"
+--
+backend/app/schemas/registration.py:123:class AgentTone(str, Enum):
+backend/app/schemas/registration.py-124-    FRIENDLY = "friendly"
+backend/app/schemas/registration.py-125-    PROFESSIONAL = "professional"
+backend/app/schemas/registration.py-126-    CASUAL = "casual"
+backend/app/schemas/registration.py-127-    FORMAL = "formal"
+backend/app/schemas/registration.py-128-    EMPATHETIC = "empathetic"
+--
+backend/app/schemas/registration.py:132:class AgentTrait(str, Enum):
+backend/app/schemas/registration.py-133-    CONCISE = "concise"
+backend/app/schemas/registration.py-134-    DETAILED = "detailed"
+backend/app/schemas/registration.py-135-    CURIOUS = "curious"
+backend/app/schemas/registration.py-136-    PATIENT = "patient"
+backend/app/schemas/registration.py-137-    PROACTIVE = "proactive"
+--
+backend/app/schemas/registration.py:142:class EscalationRule(str, Enum):
+backend/app/schemas/registration.py-143-    NEVER = "never"
+backend/app/schemas/registration.py-144-    ON_FALLBACK = "on_fallback"
+backend/app/schemas/registration.py-145-    ON_NEGATIVE_SENTIMENT = "on_negative_sentiment"
+backend/app/schemas/registration.py-146-    ON_HIGH_VALUE = "on_high_value"
+backend/app/schemas/registration.py-147-    ALWAYS = "always"
+--
+backend/app/schemas/registration.py:150:class AgentSetupRequest(IdempotentRequest):
+backend/app/schemas/registration.py-151-    registration_id: RegistrationId
+backend/app/schemas/registration.py-152-    business_id: BusinessId
+backend/app/schemas/registration.py-153-    agent_name: Annotated[str, Field(min_length=2, max_length=80)]
+backend/app/schemas/registration.py-154-    role: AgentRole
+backend/app/schemas/registration.py-155-    tone: AgentTone
+--
+backend/app/schemas/registration.py:166:class AgentSetupResponse(BaseSchemaModel):
+backend/app/schemas/registration.py-167-    agent_id: AgentId
+backend/app/schemas/registration.py-168-    next_step: Literal[RegistrationStep.KNOWLEDGE_UPLOADS.value]
+backend/app/schemas/registration.py-169-
+backend/app/schemas/registration.py-170-
+backend/app/schemas/registration.py:171:class FieldInputType(str, Enum):
+backend/app/schemas/registration.py-172-    FILE = "file"
+backend/app/schemas/registration.py-173-    STRING = "string"
+backend/app/schemas/registration.py-174-    URL = "url"
+backend/app/schemas/registration.py-175-    TEXT = "text"
+backend/app/schemas/registration.py-176-    SELECT = "select"
+--
+backend/app/schemas/registration.py:179:class FieldDescriptor(BaseSchemaModel):
+backend/app/schemas/registration.py-180-    key: Annotated[str, Field(min_length=1, max_length=64)]
+backend/app/schemas/registration.py-181-    type: FieldInputType
+backend/app/schemas/registration.py-182-    required: bool
+backend/app/schemas/registration.py-183-    constraints: dict[str, Any] | None = None
+backend/app/schemas/registration.py-184-
+--
+backend/app/schemas/registration.py:186:class KnowledgeSourceType(str, Enum):
+backend/app/schemas/registration.py-187-    FILE = "file"
+backend/app/schemas/registration.py-188-    URL = "url"
+backend/app/schemas/registration.py-189-    TEXT = "text"
+backend/app/schemas/registration.py-190-
+backend/app/schemas/registration.py-191-
+backend/app/schemas/registration.py:192:class KnowledgeSourceDefinition(BaseSchemaModel):
+backend/app/schemas/registration.py-193-    source_type: KnowledgeSourceType
+backend/app/schemas/registration.py-194-    display_name: Annotated[str, Field(min_length=1, max_length=120)]
+backend/app/schemas/registration.py-195-    accepts: Sequence[FieldDescriptor]
+backend/app/schemas/registration.py-196-
+backend/app/schemas/registration.py-197-
+backend/app/schemas/registration.py:198:class KnowledgeSourceCatalogResponse(BaseSchemaModel):
+backend/app/schemas/registration.py-199-    sources: Sequence[KnowledgeSourceDefinition]
+backend/app/schemas/registration.py-200-
+backend/app/schemas/registration.py-201-
+backend/app/schemas/registration.py:202:class KnowledgeUploadStatus(str, Enum):
+backend/app/schemas/registration.py-203-    PENDING = "pending"
+backend/app/schemas/registration.py-204-    PROCESSING = "processing"
+backend/app/schemas/registration.py-205-    READY = "ready"
+backend/app/schemas/registration.py-206-    FAILED = "failed"
+backend/app/schemas/registration.py-207-
+--
+backend/app/schemas/registration.py:209:class KnowledgeUploadBase(IdempotentRequest):
+backend/app/schemas/registration.py-210-    registration_id: RegistrationId
+backend/app/schemas/registration.py-211-    business_id: BusinessId
+backend/app/schemas/registration.py-212-    display_name: Annotated[str | None, Field(default=None, min_length=1, max_length=120)]
+backend/app/schemas/registration.py-213-    language: Annotated[str | None, Field(default=None, pattern=LANGUAGE_CODE_PATTERN.pattern)]
+backend/app/schemas/registration.py-214-
+--
+backend/app/schemas/registration.py:216:class KnowledgeUploadFileRequest(KnowledgeUploadBase):
+backend/app/schemas/registration.py-217-    filename: Annotated[str, Field(min_length=1, max_length=255)]
+backend/app/schemas/registration.py-218-    content_type: Annotated[str | None, Field(default=None, max_length=100)]
+backend/app/schemas/registration.py-219-
+backend/app/schemas/registration.py-220-
+backend/app/schemas/registration.py:221:class KnowledgeUploadFromUrlRequest(KnowledgeUploadBase):
+backend/app/schemas/registration.py-222-    url: HttpUrl
+backend/app/schemas/registration.py-223-
+backend/app/schemas/registration.py-224-    @field_validator("url")
+backend/app/schemas/registration.py-225-    @classmethod
+backend/app/schemas/registration.py-226-    def _require_https(cls, value: HttpUrl) -> HttpUrl:
+--
+backend/app/schemas/registration.py:232:class KnowledgeUploadFromTextRequest(KnowledgeUploadBase):
+backend/app/schemas/registration.py-233-    text: Annotated[str, Field(min_length=1, max_length=200_000)]
+backend/app/schemas/registration.py-234-
+backend/app/schemas/registration.py-235-
+backend/app/schemas/registration.py:236:class KnowledgeItemResponse(BaseSchemaModel):
+backend/app/schemas/registration.py-237-    knowledge_item_id: KnowledgeItemId
+backend/app/schemas/registration.py-238-    source_type: KnowledgeSourceType
+backend/app/schemas/registration.py-239-    status: KnowledgeUploadStatus
+backend/app/schemas/registration.py-240-    created_at: Annotated[str, Field(description="ISO8601 UTC timestamp")]
+backend/app/schemas/registration.py-241-
+--
+backend/app/schemas/registration.py:243:class IndustryItem(BaseSchemaModel):
+backend/app/schemas/registration.py-244-    code: str
+backend/app/schemas/registration.py-245-    label: Annotated[str, Field(min_length=1, max_length=120)]
+backend/app/schemas/registration.py-246-
+backend/app/schemas/registration.py-247-    @field_validator("code")
+backend/app/schemas/registration.py-248-    @classmethod
+--
+backend/app/schemas/registration.py:255:class ListIndustriesResponse(BaseSchemaModel):
+backend/app/schemas/registration.py-256-    items: Sequence[IndustryItem]
+backend/app/schemas/registration.py-257-
+backend/app/schemas/registration.py-258-
+backend/app/schemas/registration.py:259:class ListNichesQuery(BaseSchemaModel):
+backend/app/schemas/registration.py-260-    industry_code: str
+backend/app/schemas/registration.py-261-
+backend/app/schemas/registration.py-262-    @field_validator("industry_code")
+backend/app/schemas/registration.py-263-    @classmethod
+backend/app/schemas/registration.py-264-    def _validate_industry(cls, value: str) -> str:
+--
+backend/app/schemas/registration.py:270:class NicheItem(BaseSchemaModel):
+backend/app/schemas/registration.py-271-    code: str
+backend/app/schemas/registration.py-272-    label: Annotated[str, Field(min_length=1, max_length=120)]
+backend/app/schemas/registration.py-273-
+backend/app/schemas/registration.py-274-    @field_validator("code")
+backend/app/schemas/registration.py-275-    @classmethod
+--
+backend/app/schemas/registration.py:282:class ListNichesResponse(BaseSchemaModel):
+backend/app/schemas/registration.py-283-    items: Sequence[NicheItem]
+backend/app/schemas/registration.py-284-
+backend/app/schemas/registration.py-285-
+backend/app/schemas/registration.py:286:class ListAgentChoicesResponse(BaseSchemaModel):
+backend/app/schemas/registration.py-287-    roles: Sequence[AgentRole]
+backend/app/schemas/registration.py-288-    tones: Sequence[AgentTone]
+backend/app/schemas/registration.py-289-    traits: Sequence[AgentTrait]
+backend/app/schemas/registration.py-290-    escalation_rules: Sequence[EscalationRule]
+backend/app/schemas/registration.py-291-
+--
+backend/app/schemas/registration.py:293:class ApiErrorResponse(BaseSchemaModel):
+backend/app/schemas/registration.py-294-    code: Annotated[str, Field(min_length=1, max_length=64)]
+backend/app/schemas/registration.py-295-    message: Annotated[str, Field(min_length=1, max_length=256)]
+backend/app/schemas/registration.py-296-    details: dict[str, Any] | None = None
+backend/app/schemas/registration.py-297-
+backend/app/schemas/registration.py-298-
+
+=== ENDPOINTS ===
+backend/app/api/v1/routers/registration.py:84:@router.post(
+backend/app/api/v1/routers/registration.py:114:@router.put(
+backend/app/api/v1/routers/registration.py:148:@router.put(
+backend/app/api/v1/routers/registration.py:180:@router.post(
+backend/app/api/v1/routers/registration.py:210:@router.post(
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+git grep -nE '^class ' -- backend/app/models | grep -E 'Base|Model'
+backend/app/models/base.py:22:class Base(DeclarativeBase):
+backend/app/models/registration.py:91:class User(PrimaryKeyMixin, CreatedAtMixin, Base):
+backend/app/models/registration.py:128:class Industry(CreatedAtMixin, Base):
+backend/app/models/registration.py:154:class IndustryNiche(CreatedAtMixin, Base):
+backend/app/models/registration.py:183:class Business(PrimaryKeyMixin, CreatedAtMixin, Base):
+backend/app/models/registration.py:225:class BusinessNiche(Base):
+backend/app/models/registration.py:249:class RegistrationSession(PrimaryKeyMixin, CreatedAtMixin, UpdatedAtMixin, Base):
+backend/app/models/registration.py:289:class UserBusinessMembership(Base):
+backend/app/models/registration.py:310:class Agent(PrimaryKeyMixin, CreatedAtMixin, Base):
+backend/app/models/registration.py:346:class AgentTraitLink(Base):
+backend/app/models/registration.py:363:class KnowledgeItem(PrimaryKeyMixin, CreatedAtMixin, Base):
+backend/app/models/registration.py:405:class KnowledgeItemFile(Base):
+backend/app/models/registration.py:432:class KnowledgeItemUrl(Base):
+backend/app/models/registration.py:451:class KnowledgeItemText(Base):
+
+git grep -A10 -B2 -nE '^class ' backend/app/models/
+backend/app/models/base.py-20-
+backend/app/models/base.py-21-
+backend/app/models/base.py:22:class Base(DeclarativeBase):
+backend/app/models/base.py-23-    """Declarative base bound to the project's naming convention."""
+backend/app/models/base.py-24-
+backend/app/models/base.py-25-    metadata = MetaData(naming_convention=NAMING_CONVENTION)
+backend/app/models/base.py-26-
+backend/app/models/base.py-27-
+backend/app/models/base.py:28:class PrimaryKeyMixin:
+backend/app/models/base.py-29-    """Provides a UUID primary key column."""
+backend/app/models/base.py-30-
+backend/app/models/base.py-31-    id: Mapped[uuid.UUID] = mapped_column(
+backend/app/models/base.py-32-        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+backend/app/models/base.py-33-    )
+backend/app/models/base.py-34-
+backend/app/models/base.py-35-
+backend/app/models/base.py:36:class CreatedAtMixin:
+backend/app/models/base.py-37-    """Adds a UTC timestamp for creation."""
+backend/app/models/base.py-38-
+backend/app/models/base.py-39-    created_at: Mapped[datetime] = mapped_column(
+backend/app/models/base.py-40-        DateTime(timezone=True),
+backend/app/models/base.py-41-        nullable=False,
+backend/app/models/base.py-42-        server_default=func.now(),
+backend/app/models/base.py-43-    )
+backend/app/models/base.py-44-
+backend/app/models/base.py-45-
+backend/app/models/base.py:46:class UpdatedAtMixin:
+backend/app/models/base.py-47-    """Adds a UTC timestamp that updates on modification."""
+backend/app/models/base.py-48-
+backend/app/models/base.py-49-    updated_at: Mapped[datetime] = mapped_column(
+backend/app/models/base.py-50-        DateTime(timezone=True),
+backend/app/models/base.py-51-        nullable=False,
+backend/app/models/base.py-52-        server_default=func.now(),
+backend/app/models/base.py-53-        onupdate=func.now(),
+backend/app/models/base.py-54-    )
+backend/app/models/base.py-55-
+backend/app/models/base.py-56-
+--
+backend/app/models/registration.py-28-
+backend/app/models/registration.py-29-
+backend/app/models/registration.py:30:class RegistrationStep(enum.Enum):
+backend/app/models/registration.py-31-    BUSINESS_PROFILE = "business_profile"
+backend/app/models/registration.py-32-    AGENT_SETUP = "agent_setup"
+backend/app/models/registration.py-33-    KNOWLEDGE_UPLOADS = "knowledge_uploads"
+backend/app/models/registration.py-34-    COMPLETED = "completed"
+backend/app/models/registration.py-35-
+backend/app/models/registration.py-36-
+backend/app/models/registration.py:37:class MembershipRole(enum.Enum):
+backend/app/models/registration.py-38-    OWNER = "owner"
+backend/app/models/registration.py-39-    ADMIN = "admin"
+backend/app/models/registration.py-40-    AGENT = "agent"
+backend/app/models/registration.py-41-
+backend/app/models/registration.py-42-
+backend/app/models/registration.py:43:class AgentRole(enum.Enum):
+backend/app/models/registration.py-44-    SALES = "sales"
+backend/app/models/registration.py-45-    SUPPORT = "support"
+backend/app/models/registration.py-46-    RESEARCH = "research"
+backend/app/models/registration.py-47-    SUCCESS = "success"
+backend/app/models/registration.py-48-    MARKETING = "marketing"
+backend/app/models/registration.py-49-
+backend/app/models/registration.py-50-
+backend/app/models/registration.py:51:class AgentTone(enum.Enum):
+backend/app/models/registration.py-52-    FRIENDLY = "friendly"
+backend/app/models/registration.py-53-    PROFESSIONAL = "professional"
+backend/app/models/registration.py-54-    CASUAL = "casual"
+backend/app/models/registration.py-55-    FORMAL = "formal"
+backend/app/models/registration.py-56-    EMPATHETIC = "empathetic"
+backend/app/models/registration.py-57-    PLAYFUL = "playful"
+backend/app/models/registration.py-58-
+backend/app/models/registration.py-59-
+backend/app/models/registration.py:60:class AgentTrait(enum.Enum):
+backend/app/models/registration.py-61-    CONCISE = "concise"
+backend/app/models/registration.py-62-    DETAILED = "detailed"
+backend/app/models/registration.py-63-    CURIOUS = "curious"
+backend/app/models/registration.py-64-    PATIENT = "patient"
+backend/app/models/registration.py-65-    PROACTIVE = "proactive"
+backend/app/models/registration.py-66-    DIRECT = "direct"
+backend/app/models/registration.py-67-    CREATIVE = "creative"
+backend/app/models/registration.py-68-
+backend/app/models/registration.py-69-
+backend/app/models/registration.py:70:class EscalationRule(enum.Enum):
+backend/app/models/registration.py-71-    NEVER = "never"
+backend/app/models/registration.py-72-    ON_FALLBACK = "on_fallback"
+backend/app/models/registration.py-73-    ON_NEGATIVE_SENTIMENT = "on_negative_sentiment"
+backend/app/models/registration.py-74-    ON_HIGH_VALUE = "on_high_value"
+backend/app/models/registration.py-75-    ALWAYS = "always"
+backend/app/models/registration.py-76-
+backend/app/models/registration.py-77-
+backend/app/models/registration.py:78:class KnowledgeSource(enum.Enum):
+backend/app/models/registration.py-79-    FILE = "file"
+backend/app/models/registration.py-80-    URL = "url"
+backend/app/models/registration.py-81-    TEXT = "text"
+backend/app/models/registration.py-82-
+backend/app/models/registration.py-83-
+backend/app/models/registration.py:84:class KnowledgeStatus(enum.Enum):
+backend/app/models/registration.py-85-    PENDING = "pending"
+backend/app/models/registration.py-86-    PROCESSING = "processing"
+backend/app/models/registration.py-87-    READY = "ready"
+backend/app/models/registration.py-88-    FAILED = "failed"
+backend/app/models/registration.py-89-
+backend/app/models/registration.py-90-
+backend/app/models/registration.py:91:class User(PrimaryKeyMixin, CreatedAtMixin, Base):
+backend/app/models/registration.py-92-    __tablename__ = "users"
+backend/app/models/registration.py-93-
+backend/app/models/registration.py-94-    email: Mapped[str] = mapped_column(Text, nullable=False)
+backend/app/models/registration.py-95-    first_name: Mapped[str] = mapped_column(String(80), nullable=False)
+backend/app/models/registration.py-96-    password_hash: Mapped[str | None] = mapped_column(Text, nullable=True)
+backend/app/models/registration.py-97-    auth_provider: Mapped[str] = mapped_column(
+backend/app/models/registration.py-98-        String(32), nullable=False, server_default="password"
+backend/app/models/registration.py-99-    )
+backend/app/models/registration.py-100-    email_verified: Mapped[bool] = mapped_column(
+backend/app/models/registration.py-101-        Boolean, nullable=False, server_default=text("false")
+--
+backend/app/models/registration.py-126-
+backend/app/models/registration.py-127-
+backend/app/models/registration.py:128:class Industry(CreatedAtMixin, Base):
+backend/app/models/registration.py-129-    __tablename__ = "industries"
+backend/app/models/registration.py-130-
+backend/app/models/registration.py-131-    code: Mapped[str] = mapped_column(String(64), primary_key=True)
+backend/app/models/registration.py-132-    label: Mapped[str] = mapped_column(String(120), nullable=False)
+backend/app/models/registration.py-133-    search_terms: Mapped[list[str]] = mapped_column(
+backend/app/models/registration.py-134-        ARRAY(String(64)), nullable=False, server_default=text("ARRAY[]::text[]")
+backend/app/models/registration.py-135-    )
+backend/app/models/registration.py-136-
+backend/app/models/registration.py-137-    niches: Mapped[list["IndustryNiche"]] = relationship(
+backend/app/models/registration.py-138-        back_populates="industry", cascade="all, delete-orphan"
+--
+backend/app/models/registration.py-152-
+backend/app/models/registration.py-153-
+backend/app/models/registration.py:154:class IndustryNiche(CreatedAtMixin, Base):
+backend/app/models/registration.py-155-    __tablename__ = "industry_niches"
+backend/app/models/registration.py-156-
+backend/app/models/registration.py-157-    code: Mapped[str] = mapped_column(String(96), primary_key=True)
+backend/app/models/registration.py-158-    industry_code: Mapped[str] = mapped_column(
+backend/app/models/registration.py-159-        ForeignKey("industries.code", ondelete="CASCADE"), nullable=False
+backend/app/models/registration.py-160-    )
+backend/app/models/registration.py-161-    label: Mapped[str] = mapped_column(String(120), nullable=False)
+backend/app/models/registration.py-162-    search_terms: Mapped[list[str]] = mapped_column(
+backend/app/models/registration.py-163-        ARRAY(String(64)), nullable=False, server_default=text("ARRAY[]::text[]")
+backend/app/models/registration.py-164-    )
+--
+backend/app/models/registration.py-181-
+backend/app/models/registration.py-182-
+backend/app/models/registration.py:183:class Business(PrimaryKeyMixin, CreatedAtMixin, Base):
+backend/app/models/registration.py-184-    __tablename__ = "businesses"
+backend/app/models/registration.py-185-
+backend/app/models/registration.py-186-    name: Mapped[str] = mapped_column(String(120), nullable=False)
+backend/app/models/registration.py-187-    industry_code: Mapped[str] = mapped_column(
+backend/app/models/registration.py-188-        ForeignKey("industries.code", ondelete="RESTRICT"), nullable=False
+backend/app/models/registration.py-189-    )
+backend/app/models/registration.py-190-    created_by_user_id: Mapped[uuid.UUID] = mapped_column(
+backend/app/models/registration.py-191-        ForeignKey("users.id", ondelete="RESTRICT"), nullable=False
+backend/app/models/registration.py-192-    )
+backend/app/models/registration.py-193-    created_by_user_name: Mapped[str] = mapped_column(String(80), nullable=False)
+--
+backend/app/models/registration.py-223-
+backend/app/models/registration.py-224-
+backend/app/models/registration.py:225:class BusinessNiche(Base):
+backend/app/models/registration.py-226-    __tablename__ = "business_niches"
+backend/app/models/registration.py-227-
+backend/app/models/registration.py-228-    business_id: Mapped[uuid.UUID] = mapped_column(
+backend/app/models/registration.py-229-        ForeignKey("businesses.id", ondelete="CASCADE"), primary_key=True
+backend/app/models/registration.py-230-    )
+backend/app/models/registration.py-231-    niche_code: Mapped[str] = mapped_column(
+backend/app/models/registration.py-232-        ForeignKey("industry_niches.code", ondelete="RESTRICT"), primary_key=True
+backend/app/models/registration.py-233-    )
+backend/app/models/registration.py-234-    added_at: Mapped[datetime] = mapped_column(
+backend/app/models/registration.py-235-        DateTime(timezone=True), nullable=False, server_default=text("now()")
+--
+backend/app/models/registration.py-247-
+backend/app/models/registration.py-248-
+backend/app/models/registration.py:249:class RegistrationSession(PrimaryKeyMixin, CreatedAtMixin, UpdatedAtMixin, Base):
+backend/app/models/registration.py-250-    __tablename__ = "registration_sessions"
+backend/app/models/registration.py-251-
+backend/app/models/registration.py-252-    user_id: Mapped[uuid.UUID] = mapped_column(
+backend/app/models/registration.py-253-        ForeignKey("users.id", ondelete="CASCADE"), nullable=False
+backend/app/models/registration.py-254-    )
+backend/app/models/registration.py-255-    business_id: Mapped[uuid.UUID | None] = mapped_column(
+backend/app/models/registration.py-256-        ForeignKey("businesses.id", ondelete="SET NULL"), nullable=True
+backend/app/models/registration.py-257-    )
+backend/app/models/registration.py-258-    current_step: Mapped[RegistrationStep] = mapped_column(
+backend/app/models/registration.py-259-        Enum(RegistrationStep, name="registration_step_enum", create_type=False),
+--
+backend/app/models/registration.py-287-
+backend/app/models/registration.py-288-
+backend/app/models/registration.py:289:class UserBusinessMembership(Base):
+backend/app/models/registration.py-290-    __tablename__ = "user_business_memberships"
+backend/app/models/registration.py-291-
+backend/app/models/registration.py-292-    user_id: Mapped[uuid.UUID] = mapped_column(
+backend/app/models/registration.py-293-        ForeignKey("users.id", ondelete="CASCADE"), primary_key=True
+backend/app/models/registration.py-294-    )
+backend/app/models/registration.py-295-    business_id: Mapped[uuid.UUID] = mapped_column(
+backend/app/models/registration.py-296-        ForeignKey("businesses.id", ondelete="CASCADE"), primary_key=True
+backend/app/models/registration.py-297-    )
+backend/app/models/registration.py-298-    role: Mapped[MembershipRole] = mapped_column(
+backend/app/models/registration.py-299-        Enum(MembershipRole, name="membership_role_enum", create_type=False),
+--
+backend/app/models/registration.py-308-
+backend/app/models/registration.py-309-
+backend/app/models/registration.py:310:class Agent(PrimaryKeyMixin, CreatedAtMixin, Base):
+backend/app/models/registration.py-311-    __tablename__ = "agents"
+backend/app/models/registration.py-312-
+backend/app/models/registration.py-313-    business_id: Mapped[uuid.UUID] = mapped_column(
+backend/app/models/registration.py-314-        ForeignKey("businesses.id", ondelete="CASCADE"), nullable=False
+backend/app/models/registration.py-315-    )
+backend/app/models/registration.py-316-    name: Mapped[str] = mapped_column(String(80), nullable=False)
+backend/app/models/registration.py-317-    role: Mapped[AgentRole] = mapped_column(
+backend/app/models/registration.py-318-        Enum(AgentRole, name="agent_role_enum", create_type=False), nullable=False
+backend/app/models/registration.py-319-    )
+backend/app/models/registration.py-320-    tone: Mapped[AgentTone] = mapped_column(
+--
+backend/app/models/registration.py-344-
+backend/app/models/registration.py-345-
+backend/app/models/registration.py:346:class AgentTraitLink(Base):
+backend/app/models/registration.py-347-    __tablename__ = "agent_traits"
+backend/app/models/registration.py-348-
+backend/app/models/registration.py-349-    agent_id: Mapped[uuid.UUID] = mapped_column(
+backend/app/models/registration.py-350-        ForeignKey("agents.id", ondelete="CASCADE"), primary_key=True
+backend/app/models/registration.py-351-    )
+backend/app/models/registration.py-352-    trait_code: Mapped[AgentTrait] = mapped_column(
+backend/app/models/registration.py-353-        Enum(AgentTrait, name="agent_trait_enum", create_type=False),
+backend/app/models/registration.py-354-        primary_key=True,
+backend/app/models/registration.py-355-    )
+backend/app/models/registration.py-356-    added_at: Mapped[datetime] = mapped_column(
+--
+backend/app/models/registration.py-361-
+backend/app/models/registration.py-362-
+backend/app/models/registration.py:363:class KnowledgeItem(PrimaryKeyMixin, CreatedAtMixin, Base):
+backend/app/models/registration.py-364-    __tablename__ = "knowledge_items"
+backend/app/models/registration.py-365-
+backend/app/models/registration.py-366-    business_id: Mapped[uuid.UUID] = mapped_column(
+backend/app/models/registration.py-367-        ForeignKey("businesses.id", ondelete="CASCADE"), nullable=False
+backend/app/models/registration.py-368-    )
+backend/app/models/registration.py-369-    source_type: Mapped[KnowledgeSource] = mapped_column(
+backend/app/models/registration.py-370-        Enum(KnowledgeSource, name="knowledge_source_enum", create_type=False),
+backend/app/models/registration.py-371-        nullable=False,
+backend/app/models/registration.py-372-    )
+backend/app/models/registration.py-373-    status: Mapped[KnowledgeStatus] = mapped_column(
+--
+backend/app/models/registration.py-403-
+backend/app/models/registration.py-404-
+backend/app/models/registration.py:405:class KnowledgeItemFile(Base):
+backend/app/models/registration.py-406-    __tablename__ = "knowledge_item_files"
+backend/app/models/registration.py-407-
+backend/app/models/registration.py-408-    knowledge_item_id: Mapped[uuid.UUID] = mapped_column(
+backend/app/models/registration.py-409-        ForeignKey("knowledge_items.id", ondelete="CASCADE"),
+backend/app/models/registration.py-410-        primary_key=True,
+backend/app/models/registration.py-411-    )
+backend/app/models/registration.py-412-    filename: Mapped[str] = mapped_column(String(255), nullable=False)
+backend/app/models/registration.py-413-    content_type: Mapped[str | None] = mapped_column(String(100), nullable=True)
+backend/app/models/registration.py-414-    storage_path: Mapped[str] = mapped_column(String(512), nullable=False)
+backend/app/models/registration.py-415-    size_bytes: Mapped[int] = mapped_column(BigInteger, nullable=False)
+--
+backend/app/models/registration.py-430-
+backend/app/models/registration.py-431-
+backend/app/models/registration.py:432:class KnowledgeItemUrl(Base):
+backend/app/models/registration.py-433-    __tablename__ = "knowledge_item_urls"
+backend/app/models/registration.py-434-
+backend/app/models/registration.py-435-    knowledge_item_id: Mapped[uuid.UUID] = mapped_column(
+backend/app/models/registration.py-436-        ForeignKey("knowledge_items.id", ondelete="CASCADE"),
+backend/app/models/registration.py-437-        primary_key=True,
+backend/app/models/registration.py-438-    )
+backend/app/models/registration.py-439-    url: Mapped[str] = mapped_column(Text, nullable=False)
+backend/app/models/registration.py-440-
+backend/app/models/registration.py-441-    knowledge_item: Mapped[KnowledgeItem] = relationship(back_populates="url")
+backend/app/models/registration.py-442-
+--
+backend/app/models/registration.py-449-
+backend/app/models/registration.py-450-
+backend/app/models/registration.py:451:class KnowledgeItemText(Base):
+backend/app/models/registration.py-452-    __tablename__ = "knowledge_item_texts"
+backend/app/models/registration.py-453-
+backend/app/models/registration.py-454-    knowledge_item_id: Mapped[uuid.UUID] = mapped_column(
+backend/app/models/registration.py-455-        ForeignKey("knowledge_items.id", ondelete="CASCADE"),
+backend/app/models/registration.py-456-        primary_key=True,
+backend/app/models/registration.py-457-    )
+backend/app/models/registration.py-458-    text_content: Mapped[str] = mapped_column(Text, nullable=False)
+backend/app/models/registration.py-459-
+backend/app/models/registration.py-460-    knowledge_item: Mapped[KnowledgeItem] = relationship(back_populates="text_content")
+backend/app/models/registration.py-461-
+
+git grep -n 'declarative_base' -- backend/app/models -- NOT AVAILABLE
+
+git grep -nE '^class ' -- backend/app/schemas | grep -E 'BaseModel|Schema|Request|Response'
+backend/app/schemas/registration.py:25:class BaseSchemaModel(BaseModel):
+backend/app/schemas/registration.py:31:class IdempotentRequest(BaseSchemaModel):
+backend/app/schemas/registration.py:55:class RegisterEmailRequest(IdempotentRequest):
+backend/app/schemas/registration.py:73:class RegisterOAuthRequest(IdempotentRequest):
+backend/app/schemas/registration.py:79:class RegisterStep1Response(BaseSchemaModel):
+backend/app/schemas/registration.py:86:class BusinessProfileRequest(IdempotentRequest):
+backend/app/schemas/registration.py:110:class BusinessProfileResponse(BaseSchemaModel):
+backend/app/schemas/registration.py:150:class AgentSetupRequest(IdempotentRequest):
+backend/app/schemas/registration.py:166:class AgentSetupResponse(BaseSchemaModel):
+backend/app/schemas/registration.py:179:class FieldDescriptor(BaseSchemaModel):
+backend/app/schemas/registration.py:192:class KnowledgeSourceDefinition(BaseSchemaModel):
+backend/app/schemas/registration.py:198:class KnowledgeSourceCatalogResponse(BaseSchemaModel):
+backend/app/schemas/registration.py:209:class KnowledgeUploadBase(IdempotentRequest):
+backend/app/schemas/registration.py:216:class KnowledgeUploadFileRequest(KnowledgeUploadBase):
+backend/app/schemas/registration.py:221:class KnowledgeUploadFromUrlRequest(KnowledgeUploadBase):
+backend/app/schemas/registration.py:232:class KnowledgeUploadFromTextRequest(KnowledgeUploadBase):
+backend/app/schemas/registration.py:236:class KnowledgeItemResponse(BaseSchemaModel):
+backend/app/schemas/registration.py:243:class IndustryItem(BaseSchemaModel):
+backend/app/schemas/registration.py:255:class ListIndustriesResponse(BaseSchemaModel):
+backend/app/schemas/registration.py:259:class ListNichesQuery(BaseSchemaModel):
+backend/app/schemas/registration.py:270:class NicheItem(BaseSchemaModel):
+backend/app/schemas/registration.py:282:class ListNichesResponse(BaseSchemaModel):
+backend/app/schemas/registration.py:286:class ListAgentChoicesResponse(BaseSchemaModel):
+backend/app/schemas/registration.py:293:class ApiErrorResponse(BaseSchemaModel):
+
+git grep -A10 -B2 -nE '^class ' backend/app/schemas/
+backend/app/schemas/registration.py-23-
+backend/app/schemas/registration.py-24-
+backend/app/schemas/registration.py:25:class BaseSchemaModel(BaseModel):
+backend/app/schemas/registration.py-26-    """Base class that forbids unexpected properties."""
+backend/app/schemas/registration.py-27-
+backend/app/schemas/registration.py-28-    model_config = ConfigDict(extra="forbid")
+backend/app/schemas/registration.py-29-
+backend/app/schemas/registration.py-30-
+backend/app/schemas/registration.py:31:class IdempotentRequest(BaseSchemaModel):
+backend/app/schemas/registration.py-32-    """Mixin to surface an optional idempotency key."""
+backend/app/schemas/registration.py-33-
+backend/app/schemas/registration.py-34-    idempotency_key: Annotated[str | None, Field(
+backend/app/schemas/registration.py-35-        default=None, max_length=64, pattern=IDEMPOTENCY_KEY_PATTERN.pattern
+backend/app/schemas/registration.py-36-    )]
+backend/app/schemas/registration.py-37-
+backend/app/schemas/registration.py-38-    @field_validator("idempotency_key")
+backend/app/schemas/registration.py-39-    @classmethod
+backend/app/schemas/registration.py-40-    def _validate_idempotency_key(cls, value: str | None) -> str | None:
+backend/app/schemas/registration.py-41-        if value is None:
+--
+backend/app/schemas/registration.py-47-
+backend/app/schemas/registration.py-48-
+backend/app/schemas/registration.py:49:class RegistrationStep(Enum):
+backend/app/schemas/registration.py-50-    BUSINESS_PROFILE = "business_profile"
+backend/app/schemas/registration.py-51-    AGENT_SETUP = "agent_setup"
+backend/app/schemas/registration.py-52-    KNOWLEDGE_UPLOADS = "knowledge_uploads"
+backend/app/schemas/registration.py-53-
+backend/app/schemas/registration.py-54-
+backend/app/schemas/registration.py:55:class RegisterEmailRequest(IdempotentRequest):
+backend/app/schemas/registration.py-56-    first_name: Annotated[str, Field(min_length=1, max_length=80)]
+backend/app/schemas/registration.py-57-    email: EmailStr
+backend/app/schemas/registration.py-58-    password: Annotated[str, Field(min_length=8, max_length=128)]
+backend/app/schemas/registration.py-59-    password_confirmation: Annotated[str, Field(min_length=8, max_length=128)]
+backend/app/schemas/registration.py-60-    accept_terms: bool
+backend/app/schemas/registration.py-61-
+backend/app/schemas/registration.py-62-    @model_validator(mode="after")
+backend/app/schemas/registration.py-63-    def _passwords_match(self) -> "RegisterEmailRequest":
+backend/app/schemas/registration.py-64-        if self.password != self.password_confirmation:
+backend/app/schemas/registration.py-65-            raise ValueError("password_confirmation must match password")
+--
+backend/app/schemas/registration.py-67-
+backend/app/schemas/registration.py-68-
+backend/app/schemas/registration.py:69:class OAuthProvider(Enum):
+backend/app/schemas/registration.py-70-    GOOGLE = "google"
+backend/app/schemas/registration.py-71-
+backend/app/schemas/registration.py-72-
+backend/app/schemas/registration.py:73:class RegisterOAuthRequest(IdempotentRequest):
+backend/app/schemas/registration.py-74-    provider: Literal[OAuthProvider.GOOGLE.value]
+backend/app/schemas/registration.py-75-    id_token: Annotated[str, Field(min_length=10, max_length=4096)]
+backend/app/schemas/registration.py-76-    first_name: Annotated[str | None, Field(default=None, min_length=1, max_length=80)]
+backend/app/schemas/registration.py-77-
+backend/app/schemas/registration.py-78-
+backend/app/schemas/registration.py:79:class RegisterStep1Response(BaseSchemaModel):
+backend/app/schemas/registration.py-80-    registration_id: RegistrationId
+backend/app/schemas/registration.py-81-    user_id: UserId
+backend/app/schemas/registration.py-82-    requires_email_verification: bool
+backend/app/schemas/registration.py-83-    next_step: Literal[RegistrationStep.BUSINESS_PROFILE.value]
+backend/app/schemas/registration.py-84-
+backend/app/schemas/registration.py-85-
+backend/app/schemas/registration.py:86:class BusinessProfileRequest(IdempotentRequest):
+backend/app/schemas/registration.py-87-    registration_id: RegistrationId
+backend/app/schemas/registration.py-88-    business_name: Annotated[str, Field(min_length=2, max_length=120)]
+backend/app/schemas/registration.py-89-    industry_code: str
+backend/app/schemas/registration.py-90-    niche_codes: Annotated[list[str] | None, Field(default=None, min_length=1, max_length=5)]
+backend/app/schemas/registration.py-91-
+backend/app/schemas/registration.py-92-    @field_validator("industry_code")
+backend/app/schemas/registration.py-93-    @classmethod
+backend/app/schemas/registration.py-94-    def _validate_industry_code(cls, value: str) -> str:
+backend/app/schemas/registration.py-95-        if not INDUSTRY_CODE_PATTERN.fullmatch(value):
+backend/app/schemas/registration.py-96-            raise ValueError("industry_code must match industry:[a-z0-9-]{2,50}")
+--
+backend/app/schemas/registration.py-108-
+backend/app/schemas/registration.py-109-
+backend/app/schemas/registration.py:110:class BusinessProfileResponse(BaseSchemaModel):
+backend/app/schemas/registration.py-111-    business_id: BusinessId
+backend/app/schemas/registration.py-112-    next_step: Literal[RegistrationStep.AGENT_SETUP.value]
+backend/app/schemas/registration.py-113-
+backend/app/schemas/registration.py-114-
+backend/app/schemas/registration.py:115:class AgentRole(str, Enum):
+backend/app/schemas/registration.py-116-    SALES = "sales"
+backend/app/schemas/registration.py-117-    SUPPORT = "support"
+backend/app/schemas/registration.py-118-    RESEARCH = "research"
+backend/app/schemas/registration.py-119-    SUCCESS = "success"
+backend/app/schemas/registration.py-120-    MARKETING = "marketing"
+backend/app/schemas/registration.py-121-
+backend/app/schemas/registration.py-122-
+backend/app/schemas/registration.py:123:class AgentTone(str, Enum):
+backend/app/schemas/registration.py-124-    FRIENDLY = "friendly"
+backend/app/schemas/registration.py-125-    PROFESSIONAL = "professional"
+backend/app/schemas/registration.py-126-    CASUAL = "casual"
+backend/app/schemas/registration.py-127-    FORMAL = "formal"
+backend/app/schemas/registration.py-128-    EMPATHETIC = "empathetic"
+backend/app/schemas/registration.py-129-    PLAYFUL = "playful"
+backend/app/schemas/registration.py-130-
+backend/app/schemas/registration.py-131-
+backend/app/schemas/registration.py:132:class AgentTrait(str, Enum):
+backend/app/schemas/registration.py-133-    CONCISE = "concise"
+backend/app/schemas/registration.py-134-    DETAILED = "detailed"
+backend/app/schemas/registration.py-135-    CURIOUS = "curious"
+backend/app/schemas/registration.py-136-    PATIENT = "patient"
+backend/app/schemas/registration.py-137-    PROACTIVE = "proactive"
+backend/app/schemas/registration.py-138-    DIRECT = "direct"
+backend/app/schemas/registration.py-139-    CREATIVE = "creative"
+backend/app/schemas/registration.py-140-
+backend/app/schemas/registration.py-141-
+backend/app/schemas/registration.py:142:class EscalationRule(str, Enum):
+backend/app/schemas/registration.py-143-    NEVER = "never"
+backend/app/schemas/registration.py-144-    ON_FALLBACK = "on_fallback"
+backend/app/schemas/registration.py-145-    ON_NEGATIVE_SENTIMENT = "on_negative_sentiment"
+backend/app/schemas/registration.py-146-    ON_HIGH_VALUE = "on_high_value"
+backend/app/schemas/registration.py-147-    ALWAYS = "always"
+backend/app/schemas/registration.py-148-
+backend/app/schemas/registration.py-149-
+backend/app/schemas/registration.py:150:class AgentSetupRequest(IdempotentRequest):
+backend/app/schemas/registration.py-151-    registration_id: RegistrationId
+backend/app/schemas/registration.py-152-    business_id: BusinessId
+backend/app/schemas/registration.py-153-    agent_name: Annotated[str, Field(min_length=2, max_length=80)]
+backend/app/schemas/registration.py-154-    role: AgentRole
+backend/app/schemas/registration.py-155-    tone: AgentTone
+backend/app/schemas/registration.py-156-    traits: Annotated[list[AgentTrait], Field(default_factory=list, max_length=6)]
+backend/app/schemas/registration.py-157-    escalation_rule: EscalationRule
+backend/app/schemas/registration.py-158-
+backend/app/schemas/registration.py-159-    @model_validator(mode="after")
+backend/app/schemas/registration.py-160-    def _ensure_unique_traits(self) -> "AgentSetupRequest":
+--
+backend/app/schemas/registration.py-164-
+backend/app/schemas/registration.py-165-
+backend/app/schemas/registration.py:166:class AgentSetupResponse(BaseSchemaModel):
+backend/app/schemas/registration.py-167-    agent_id: AgentId
+backend/app/schemas/registration.py-168-    next_step: Literal[RegistrationStep.KNOWLEDGE_UPLOADS.value]
+backend/app/schemas/registration.py-169-
+backend/app/schemas/registration.py-170-
+backend/app/schemas/registration.py:171:class FieldInputType(str, Enum):
+backend/app/schemas/registration.py-172-    FILE = "file"
+backend/app/schemas/registration.py-173-    STRING = "string"
+backend/app/schemas/registration.py-174-    URL = "url"
+backend/app/schemas/registration.py-175-    TEXT = "text"
+backend/app/schemas/registration.py-176-    SELECT = "select"
+backend/app/schemas/registration.py-177-
+backend/app/schemas/registration.py-178-
+backend/app/schemas/registration.py:179:class FieldDescriptor(BaseSchemaModel):
+backend/app/schemas/registration.py-180-    key: Annotated[str, Field(min_length=1, max_length=64)]
+backend/app/schemas/registration.py-181-    type: FieldInputType
+backend/app/schemas/registration.py-182-    required: bool
+backend/app/schemas/registration.py-183-    constraints: dict[str, Any] | None = None
+backend/app/schemas/registration.py-184-
+backend/app/schemas/registration.py-185-
+backend/app/schemas/registration.py:186:class KnowledgeSourceType(str, Enum):
+backend/app/schemas/registration.py-187-    FILE = "file"
+backend/app/schemas/registration.py-188-    URL = "url"
+backend/app/schemas/registration.py-189-    TEXT = "text"
+backend/app/schemas/registration.py-190-
+backend/app/schemas/registration.py-191-
+backend/app/schemas/registration.py:192:class KnowledgeSourceDefinition(BaseSchemaModel):
+backend/app/schemas/registration.py-193-    source_type: KnowledgeSourceType
+backend/app/schemas/registration.py-194-    display_name: Annotated[str, Field(min_length=1, max_length=120)]
+backend/app/schemas/registration.py-195-    accepts: Sequence[FieldDescriptor]
+backend/app/schemas/registration.py-196-
+backend/app/schemas/registration.py-197-
+backend/app/schemas/registration.py:198:class KnowledgeSourceCatalogResponse(BaseSchemaModel):
+backend/app/schemas/registration.py-199-    sources: Sequence[KnowledgeSourceDefinition]
+backend/app/schemas/registration.py-200-
+backend/app/schemas/registration.py-201-
+backend/app/schemas/registration.py:202:class KnowledgeUploadStatus(str, Enum):
+backend/app/schemas/registration.py-203-    PENDING = "pending"
+backend/app/schemas/registration.py-204-    PROCESSING = "processing"
+backend/app/schemas/registration.py-205-    READY = "ready"
+backend/app/schemas/registration.py-206-    FAILED = "failed"
+backend/app/schemas/registration.py-207-
+backend/app/schemas/registration.py-208-
+backend/app/schemas/registration.py:209:class KnowledgeUploadBase(IdempotentRequest):
+backend/app/schemas/registration.py-210-    registration_id: RegistrationId
+backend/app/schemas/registration.py-211-    business_id: BusinessId
+backend/app/schemas/registration.py-212-    display_name: Annotated[str | None, Field(default=None, min_length=1, max_length=120)]
+backend/app/schemas/registration.py-213-    language: Annotated[str | None, Field(default=None, pattern=LANGUAGE_CODE_PATTERN.pattern)]
+backend/app/schemas/registration.py-214-
+backend/app/schemas/registration.py-215-
+backend/app/schemas/registration.py:216:class KnowledgeUploadFileRequest(KnowledgeUploadBase):
+backend/app/schemas/registration.py-217-    filename: Annotated[str, Field(min_length=1, max_length=255)]
+backend/app/schemas/registration.py-218-    content_type: Annotated[str | None, Field(default=None, max_length=100)]
+backend/app/schemas/registration.py-219-
+backend/app/schemas/registration.py-220-
+backend/app/schemas/registration.py:221:class KnowledgeUploadFromUrlRequest(KnowledgeUploadBase):
+backend/app/schemas/registration.py-222-    url: HttpUrl
+backend/app/schemas/registration.py-223-
+backend/app/schemas/registration.py-224-    @field_validator("url")
+backend/app/schemas/registration.py-225-    @classmethod
+backend/app/schemas/registration.py-226-    def _require_https(cls, value: HttpUrl) -> HttpUrl:
+backend/app/schemas/registration.py-227-        if value.scheme != "https":
+backend/app/schemas/registration.py-228-            raise ValueError("url must use https scheme")
+backend/app/schemas/registration.py-229-        return value
+backend/app/schemas/registration.py-230-
+backend/app/schemas/registration.py-231-
+backend/app/schemas/registration.py:232:class KnowledgeUploadFromTextRequest(KnowledgeUploadBase):
+backend/app/schemas/registration.py-233-    text: Annotated[str, Field(min_length=1, max_length=200_000)]
+backend/app/schemas/registration.py-234-
+backend/app/schemas/registration.py-235-
+backend/app/schemas/registration.py:236:class KnowledgeItemResponse(BaseSchemaModel):
+backend/app/schemas/registration.py-237-    knowledge_item_id: KnowledgeItemId
+backend/app/schemas/registration.py-238-    source_type: KnowledgeSourceType
+backend/app/schemas/registration.py-239-    status: KnowledgeUploadStatus
+backend/app/schemas/registration.py-240-    created_at: Annotated[str, Field(description="ISO8601 UTC timestamp")]
+backend/app/schemas/registration.py-241-
+backend/app/schemas/registration.py-242-
+backend/app/schemas/registration.py:243:class IndustryItem(BaseSchemaModel):
+backend/app/schemas/registration.py-244-    code: str
+backend/app/schemas/registration.py-245-    label: Annotated[str, Field(min_length=1, max_length=120)]
+backend/app/schemas/registration.py-246-
+backend/app/schemas/registration.py-247-    @field_validator("code")
+backend/app/schemas/registration.py-248-    @classmethod
+backend/app/schemas/registration.py-249-    def _validate_code(cls, value: str) -> str:
+backend/app/schemas/registration.py-250-        if not INDUSTRY_CODE_PATTERN.fullmatch(value):
+backend/app/schemas/registration.py-251-            raise ValueError("code must match industry:[a-z0-9-]{2,50}")
+backend/app/schemas/registration.py-252-        return value
+backend/app/schemas/registration.py-253-
+backend/app/schemas/registration.py-254-
+backend/app/schemas/registration.py:255:class ListIndustriesResponse(BaseSchemaModel):
+backend/app/schemas/registration.py-256-    items: Sequence[IndustryItem]
+backend/app/schemas/registration.py-257-
+backend/app/schemas/registration.py-258-
+backend/app/schemas/registration.py:259:class ListNichesQuery(BaseSchemaModel):
+backend/app/schemas/registration.py-260-    industry_code: str
+backend/app/schemas/registration.py-261-
+backend/app/schemas/registration.py-262-    @field_validator("industry_code")
+backend/app/schemas/registration.py-263-    @classmethod
+backend/app/schemas/registration.py-264-    def _validate_industry(cls, value: str) -> str:
+backend/app/schemas/registration.py-265-        if not INDUSTRY_CODE_PATTERN.fullmatch(value):
+backend/app/schemas/registration.py-266-            raise ValueError("industry_code must match industry:[a-z0-9-]{2,50}")
+backend/app/schemas/registration.py-267-        return value
+backend/app/schemas/registration.py-268-
+backend/app/schemas/registration.py-269-
+backend/app/schemas/registration.py:270:class NicheItem(BaseSchemaModel):
+backend/app/schemas/registration.py-271-    code: str
+backend/app/schemas/registration.py-272-    label: Annotated[str, Field(min_length=1, max_length=120)]
+backend/app/schemas/registration.py-273-
+backend/app/schemas/registration.py-274-    @field_validator("code")
+backend/app/schemas/registration.py-275-    @classmethod
+backend/app/schemas/registration.py-276-    def _validate_code(cls, value: str) -> str:
+backend/app/schemas/registration.py-277-        if not NICHE_CODE_PATTERN.fullmatch(value):
+backend/app/schemas/registration.py-278-            raise ValueError("code must match niche:[a-z0-9-]{2,50}")
+backend/app/schemas/registration.py-279-        return value
+backend/app/schemas/registration.py-280-
+backend/app/schemas/registration.py-281-
+backend/app/schemas/registration.py:282:class ListNichesResponse(BaseSchemaModel):
+backend/app/schemas/registration.py-283-    items: Sequence[NicheItem]
+backend/app/schemas/registration.py-284-
+backend/app/schemas/registration.py-285-
+backend/app/schemas/registration.py:286:class ListAgentChoicesResponse(BaseSchemaModel):
+backend/app/schemas/registration.py-287-    roles: Sequence[AgentRole]
+backend/app/schemas/registration.py-288-    tones: Sequence[AgentTone]
+backend/app/schemas/registration.py-289-    traits: Sequence[AgentTrait]
+backend/app/schemas/registration.py-290-    escalation_rules: Sequence[EscalationRule]
+backend/app/schemas/registration.py-291-
+backend/app/schemas/registration.py-292-
+backend/app/schemas/registration.py:293:class ApiErrorResponse(BaseSchemaModel):
+backend/app/schemas/registration.py-294-    code: Annotated[str, Field(min_length=1, max_length=64)]
+backend/app/schemas/registration.py-295-    message: Annotated[str, Field(min_length=1, max_length=256)]
+backend/app/schemas/registration.py-296-    details: dict[str, Any] | None = None
+backend/app/schemas/registration.py-297-
+backend/app/schemas/registration.py-298-
+backend/app/schemas/registration.py-299-__all__ = [
+backend/app/schemas/registration.py-300-    "AgentId",
+backend/app/schemas/registration.py-301-    "AgentRole",
+backend/app/schemas/registration.py-302-    "AgentSetupRequest",
+backend/app/schemas/registration.py-303-    "AgentSetupResponse",
+
+git grep -nE '@router\.(get|post|put|delete|patch)' -- backend/app/api/v1/routers
+backend/app/api/v1/routers/registration.py:84:@router.post(
+backend/app/api/v1/routers/registration.py:114:@router.put(
+backend/app/api/v1/routers/registration.py:148:@router.put(
+backend/app/api/v1/routers/registration.py:180:@router.post(
+backend/app/api/v1/routers/registration.py:210:@router.post(
+
+git grep -n 'APIRouter' -- backend/app/api/v1/routers
+backend/app/api/v1/routers/registration.py:6:from fastapi import APIRouter, Body, Depends, Header, Path, Request, status
+backend/app/api/v1/routers/registration.py:53:router = APIRouter(
+
+git grep -n 'from app.schemas' backend/app/api/v1/routers/
+backend/app/api/v1/routers/registration.py:35:from app.schemas.registration import ApiErrorResponse
+

@@ -21,6 +21,7 @@ export type StartRegistrationResponse = {
     firstName: string;
   };
   nextStep: string;
+  session?: SessionProgress | null;
 };
 
 export type BusinessProfilePayload = {
@@ -82,7 +83,6 @@ export type CompletionResponse = {
 export type RequestOptions = {
   token?: string | null;
   idempotencyKey?: string | null;
-  captchaToken?: string | null;
   signal?: AbortSignal;
 };
 
@@ -93,8 +93,7 @@ export async function startRegistration(
   return jsonFetch<StartRegistrationResponse>("/v1/registration/sessions", {
     method: "POST",
     body: payload,
-    idempotencyKey: options.idempotencyKey || null,
-    captchaToken: options.captchaToken || null,
+    idempotencyKey: options.idempotencyKey || null
   });
 }
 
@@ -107,7 +106,7 @@ export async function upsertBusiness(
     method: "PUT",
     body: payload,
     idempotencyKey: options.idempotencyKey || null,
-    token: options.token || null,
+    token: options.token || null
   });
 }
 
@@ -120,7 +119,7 @@ export async function configureAgent(
     method: "PUT",
     body: payload,
     idempotencyKey: options.idempotencyKey || null,
-    token: options.token || null,
+    token: options.token || null
   });
 }
 
@@ -133,7 +132,7 @@ export async function attachUploadLinks(
     method: "POST",
     body: payload,
     idempotencyKey: options.idempotencyKey || null,
-    token: options.token || null,
+    token: options.token || null
   });
 }
 
@@ -143,7 +142,7 @@ export async function completeRegistration(
 ): Promise<CompletionResponse> {
   return jsonFetch<CompletionResponse>(`/v1/registration/sessions/${registrationId}/complete`, {
     method: "POST",
-    token: options.token || null,
+    token: options.token || null
   });
 }
 

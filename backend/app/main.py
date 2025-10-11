@@ -13,7 +13,7 @@ from fastapi.responses import JSONResponse
 from starlette.middleware.base import BaseHTTPMiddleware, RequestResponseEndpoint
 from starlette.responses import Response
 
-from app.api.v1.routers import health_router, registration_router
+from app.api.v1.routers import auth_router, registration_router
 from app.core.logging import REQUEST_ID_CTX_VAR, configure_logging
 from app.core.settings import Settings, get_settings
 
@@ -58,6 +58,8 @@ def _configure_middleware(app: FastAPI, settings: Settings) -> None:
         "http://localhost:3000",  # Vite default
         "http://127.0.0.1:3000",  # Localhost alternative
         "http://localhost:5173",   # Vite alternate port
+        "http://localhost:8080",   # Project dev server
+        "http://127.0.0.1:8080",   # Project dev server (explicit IPv4)
     ]
     
     # Combine and deduplicate origins
@@ -80,8 +82,8 @@ def _configure_middleware(app: FastAPI, settings: Settings) -> None:
 
 
 def _configure_routes(app: FastAPI) -> None:
-    app.include_router(health_router)
     app.include_router(registration_router, prefix="/v1")
+    app.include_router(auth_router, prefix="/v1")
 
 
 def _configure_exception_handlers(app: FastAPI) -> None:

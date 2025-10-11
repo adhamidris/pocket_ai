@@ -34,6 +34,7 @@ class StartRegistrationResponse(CamelModel):
     registration_id: UUID
     user: StartRegistrationUser
     next_step: str
+    session: SessionProgress | None = None
 
 
 class BusinessProfileRequest(CamelModel):
