@@ -58,6 +58,8 @@ import {
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { useEffect } from "react";
 import { cn } from "@/lib/utils";
+import { useConversations, useConversationDetail } from "@/hooks/useConversations";
+import type { ConversationListItem, ConversationMessageAttachment } from "@/services/conversations";
 
 type Priority = "low" | "medium" | "high" | "urgent";
 type Status = "open" | "resolved";
@@ -78,7 +80,42 @@ type CaseItem = {
   category: Category;
   documents?: { id: string; name: string; size: string; type: string }[];
   history?: { id: string; at: string; actor: string; action: string }[];
+  isApi?: boolean;
+  conversationStatus?: string;
+  conversationSource?: string;
 };
+
+const CASE_COLUMN_DEFAULTS = {
+  id: true,
+  customer: true,
+  title: true,
+  description: true,
+  type: true,
+  priority: true,
+  status: true,
+  channel: false,
+  assignee: false,
+  started: true,
+  unread: false,
+  actions: true,
+} as const;
+
+type CaseColumnKey = keyof typeof CASE_COLUMN_DEFAULTS;
+
+const CASE_COLUMN_OPTIONS: Array<{ key: CaseColumnKey; label: string }> = [
+  { key: "id", label: "Case ID" },
+  { key: "priority", label: "Priority" },
+  { key: "type", label: "Type" },
+  { key: "title", label: "Case Title" },
+  { key: "description", label: "Description" },
+  { key: "status", label: "Status" },
+  { key: "customer", label: "Customer" },
+  { key: "started", label: "Started" },
+  { key: "channel", label: "Channel" },
+  { key: "assignee", label: "Assignee" },
+  { key: "unread", label: "Unread" },
+  { key: "actions", label: "Actions" },
+];
 
 const Sidebar = ({ active = "Cases" as const }) => {
   const items = [
@@ -317,6 +354,60 @@ const seedCases: CaseItem[] = [
   },
 ];
 
+const collectStrings = (value: unknown): string[] => {
+  if (!value) return [];
+  if (typeof value === "string") return [value];
+  if (Array.isArray(value)) {
+    return value.flatMap((entry) => collectStrings(entry));
+  }
+  if (typeof value === "object") {
+    return Object.values(value as Record<string, unknown>).flatMap((entry) => collectStrings(entry));
+  }
+  return [];
+};
+
+const mapConversationToCaseItem = (item: ConversationListItem): CaseItem => {
+  const title = `Conversation ${item.id.slice(0, 6).toUpperCase()}`;
+  const snippet = item.latestMessageType
+    ? `Latest message type: ${item.latestMessageType}`
+    : "Conversation has no messages yet.";
+  let priority: Priority = "medium";
+  if (item.status === "NEW") priority = "urgent";
+  if (item.status === "LIVE") priority = "high";
+  if (item.status === "RESOLVED") priority = "low";
+
+  const status: Status = item.status === "RESOLVED" ? "resolved" : "open";
+
+  const channelMap: Record<string, Channel> = {
+    WEB: "chat",
+    MOBILE: "chat",
+    API: "email",
+    EMAIL: "email",
+    INTEGRATION: "chat",
+  };
+  const channel = channelMap[item.source] ?? "chat";
+
+  const displayName = item.customerId ? `Customer ${item.customerId.slice(0, 6).toUpperCase()}` : "Anonymous visitor";
+  const emailFallback = item.customerId ? `${item.customerId.toLowerCase()}@customers.local` : "visitor@unknown.local";
+
+  return {
+    id: item.id,
+    customer: { name: displayName, email: emailFallback },
+    title,
+    snippet,
+    priority,
+    status,
+    channel,
+    assignee: item.primaryAgentId ? { name: `Agent ${item.primaryAgentId.slice(0, 6).toUpperCase()}` } : undefined,
+    startedAt: item.createdAt,
+    unread: 0,
+    category: "Inquiry",
+    isApi: true,
+    conversationStatus: item.status,
+    conversationSource: item.source,
+  };
+};
+
 const useDebouncedValue = (value: string, delay = 300) => {
   const [debounced, setDebounced] = React.useState(value);
   React.useEffect(() => {
@@ -363,19 +454,8 @@ const Cases = () => {
   const [query, setQuery] = React.useState("");
   const debouncedQuery = useDebouncedValue(query, 300);
   const [dateFilter, setDateFilter] = React.useState<"7" | "14" | "30" | "all">("7");
-  const [visible, setVisible] = React.useState({
-    id: true,
-    customer: true,
-    title: true,
-    description: true,
-    type: true,
-    priority: true,
-    status: true,
-    channel: false,
-    assignee: false,
-    started: true,
-    unread: false,
-    actions: true,
+  const [visible, setVisible] = React.useState<Record<CaseColumnKey, boolean>>({
+    ...CASE_COLUMN_DEFAULTS,
   });
   const [selected, setSelected] = React.useState<Set<string>>(new Set());
   const [selectAllFiltered, setSelectAllFiltered] = React.useState(false);
@@ -384,30 +464,48 @@ const Cases = () => {
   const [detailsOpen, setDetailsOpen] = React.useState(false);
   const [viewportWidth, setViewportWidth] = React.useState(() => (typeof window !== "undefined" ? window.innerWidth : 0));
   const [active, setActive] = React.useState<CaseItem | null>(null);
-  
+
   const [focusedIndex, setFocusedIndex] = React.useState<number>(-1);
 
-  const openCasesCount = React.useMemo(() => seedCases.filter((c) => c.status === "open").length, []);
-  const urgentCasesCount = React.useMemo(() => seedCases.filter((c) => c.priority === "urgent" && c.status === "open").length, []);
+  const conversationsQuery = useConversations({ limit: 100 }, { keepPreviousData: true });
+
+  const casesFromApi = React.useMemo<CaseItem[]>(() => {
+    const items = conversationsQuery.data?.items ?? [];
+    return items.map(mapConversationToCaseItem);
+  }, [conversationsQuery.data]);
+
+  const casesData = React.useMemo<CaseItem[]>(() => {
+    if (conversationsQuery.isError) {
+      return seedCases;
+    }
+    return casesFromApi;
+  }, [casesFromApi, conversationsQuery.isError]);
+
+  const openCasesCount = React.useMemo(() => casesData.filter((c) => c.status === "open").length, [casesData]);
+  const urgentCasesCount = React.useMemo(
+    () => casesData.filter((c) => c.priority === "urgent" && c.status === "open").length,
+    [casesData],
+  );
   const avgOpenAge = React.useMemo(() => {
-    const openCases = seedCases.filter((c) => c.status === "open");
+    const openCases = casesData.filter((c) => c.status === "open");
     if (!openCases.length) return "—";
     const now = Date.now();
     const avgMs = openCases.reduce((acc, item) => acc + (now - new Date(item.startedAt).getTime()), 0) / openCases.length;
     const hours = Math.max(1, Math.round(avgMs / (1000 * 60 * 60)));
     return `${hours}h`;
-  }, []);
+  }, [casesData]);
+
+  const casesLoading = conversationsQuery.isLoading && casesFromApi.length === 0;
 
   // Column visibility persistence
   React.useEffect(() => {
     try {
       const raw = localStorage.getItem("cases.columns");
       if (raw) {
-        const parsed = JSON.parse(raw);
+        const parsed = JSON.parse(raw) as Partial<Record<CaseColumnKey, boolean>>;
         setVisible((prev) => ({
           ...prev,
           ...parsed,
-          // enforce defaults for removed/added columns
           assignee: false,
           unread: false,
           channel: false,
@@ -415,8 +513,9 @@ const Cases = () => {
           type: true,
         }));
       }
-    } catch {}
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    } catch (error) {
+      console.warn("Unable to restore column preferences", error);
+    }
   }, []);
   React.useEffect(() => {
     localStorage.setItem("cases.columns", JSON.stringify(visible));
@@ -451,7 +550,7 @@ const Cases = () => {
   React.useEffect(() => setPage(1), [statusFilter, categoryFilter, debouncedQuery, dateFilter]);
 
   const filtered = React.useMemo(() => {
-    let arr = seedCases;
+    let arr = casesData;
     if (statusFilter !== "all") {
       arr = arr.filter((c) => c.status === statusFilter);
     }
@@ -475,7 +574,7 @@ const Cases = () => {
     }
     arr.sort((a, b) => new Date(b.startedAt).getTime() - new Date(a.startedAt).getTime());
     return arr;
-  }, [statusFilter, categoryFilter, debouncedQuery, dateFilter]);
+  }, [casesData, statusFilter, categoryFilter, debouncedQuery, dateFilter]);
 
   const sorted = React.useMemo(() => {
     const arr = [...filtered];
@@ -556,12 +655,35 @@ const Cases = () => {
     const calculated = Math.max(viewportWidth - sidebar - gutter, 560);
     return `${Math.min(Math.round(calculated), 1080)}px`;
   }, [isNarrow, viewportWidth]);
+
   const caseType = React.useMemo(() => deriveCaseType(active), [active]);
-  const diagnoses = AI_DIAGNOSES[caseType] || [];
-  const aiActions = AI_ACTIONS_TAKEN[caseType] || [];
-  const suggestedActions = SUGGESTED_ACTIONS[caseType] || [];
-  const historyItems = CASE_TIMELINE[caseType] || [];
-  const demoDocumentsByType: Record<CaseType, { name: string; size: string; type: string }[]> = {
+
+  const activeConversationId = detailsOpen && active?.isApi ? active.id : null;
+  const conversationDetailQuery = useConversationDetail(activeConversationId, {
+    enabled: Boolean(activeConversationId),
+  });
+  const conversationDetail = conversationDetailQuery.data?.conversation;
+  const summary = conversationDetail?.summary ?? null;
+
+  const diagnoses = React.useMemo(() => {
+    const fromSummary = collectStrings(summary?.keyPoints ?? null);
+    if (fromSummary.length > 0) return fromSummary;
+    return AI_DIAGNOSES[caseType] || [];
+  }, [summary, caseType]);
+
+  const aiActions = React.useMemo(() => {
+    const fromSummary = collectStrings(summary?.actionsTaken ?? null);
+    if (fromSummary.length > 0) return fromSummary;
+    return AI_ACTIONS_TAKEN[caseType] || [];
+  }, [summary, caseType]);
+
+  const suggestedActions = React.useMemo(() => {
+    const fromSummary = collectStrings(summary?.suggestedActions ?? null);
+    if (fromSummary.length > 0) return fromSummary;
+    return SUGGESTED_ACTIONS[caseType] || [];
+  }, [summary, caseType]);
+
+  const demoDocumentsByType = React.useMemo(() => ({
     billing: [
       { name: "Invoice_2024-01-13_1025.pdf", size: "184 KB", type: "PDF" },
       { name: "Chat_Transcript_2024-01-15.txt", size: "62 KB", type: "Text" },
@@ -586,7 +708,65 @@ const Cases = () => {
     feedback: [
       { name: "Feedback_Form_Response.pdf", size: "78 KB", type: "PDF" },
     ],
-  };
+  }), []);
+
+  const historyItems = React.useMemo(() => {
+    if (conversationDetail) {
+      return conversationDetail.statusLog
+        .slice()
+        .sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime())
+        .map((log) => ({
+          id: log.id,
+          date: new Date(log.createdAt).toLocaleString(),
+          channel: log.toStatus.toLowerCase(),
+          text: log.reason ? `${log.toStatus}: ${log.reason}` : `Status changed to ${log.toStatus}`,
+        }));
+    }
+    return CASE_TIMELINE[caseType] || [];
+  }, [conversationDetail, caseType]);
+
+  const documents = React.useMemo(() => {
+    if (conversationDetail) {
+      const unique = new Map<string, ConversationMessageAttachment>();
+      conversationDetail.messages.forEach((message) => {
+        message.attachments.forEach((attachment) => {
+          if (!unique.has(attachment.id)) {
+            unique.set(attachment.id, attachment);
+          }
+        });
+      });
+      if (unique.size > 0) {
+        return Array.from(unique.values()).map((attachment) => ({
+          id: attachment.id,
+          name: attachment.filename || `Attachment ${attachment.id.slice(0, 6).toUpperCase()}`,
+          size: attachment.sizeBytes ? `${Math.max(1, Math.round(attachment.sizeBytes / 1024))} KB` : "",
+          type: attachment.contentType ?? "file",
+        }));
+      }
+    }
+    return demoDocumentsByType[caseType] || [];
+  }, [conversationDetail, caseType, demoDocumentsByType]);
+
+  const chatTranscript = React.useMemo(() => {
+    if (conversationDetail) {
+      return conversationDetail.messages
+        .slice()
+        .sort((a, b) => new Date(a.sentAt).getTime() - new Date(b.sentAt).getTime())
+        .map((message) => ({
+          id: message.id,
+          sender: message.messageType === "CUSTOMER" ? "customer" : "agent",
+          body: message.body ?? "(no content)",
+          sentAt: new Date(message.sentAt).toLocaleTimeString(),
+        }));
+    }
+    return [
+      { id: "fallback-customer", sender: "customer" as const, body: "Hi, I was charged twice for last month.", sentAt: "" },
+      { id: "fallback-agent", sender: "agent" as const, body: "Sorry about that! Let me check your invoice.", sentAt: "" },
+    ];
+  }, [conversationDetail]);
+
+  const detailLoading = conversationDetailQuery.isLoading && Boolean(active?.isApi);
+  const detailError = conversationDetailQuery.isError && Boolean(active?.isApi);
 
   const SectionBlock = ({
     title,
@@ -665,6 +845,10 @@ const Cases = () => {
               <StatCard label="Avg. time open" value={avgOpenAge} delta="Goal < 12h" />
             </div>
 
+            {conversationsQuery.isSuccess && casesFromApi.length === 0 && !casesLoading && (
+              <div className="text-sm text-muted-foreground">No data to measure yet.</div>
+            )}
+
             {/* Toolbar */}
             <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
               <div className="flex flex-col gap-3 md:flex-row md:items-center md:flex-wrap">
@@ -733,20 +917,16 @@ const Cases = () => {
                     </Button>
                   </DropdownMenuTrigger>
                   <DropdownMenuContent align="end">
-                    {[
-                      ["id", "Case ID"],
-                      ["priority", "Priority"],
-                      ["type", "Type"],
-                      ["title", "Case Title"],
-                      ["description", "Description"],
-                      ["status", "Status"],
-                      ["customer", "Customer"],
-                      ["started", "Started"],
-                    ].map(([key, label]) => (
+                    {CASE_COLUMN_OPTIONS.map(({ key, label }) => (
                       <DropdownMenuCheckboxItem
                         key={key}
-                        checked={(visible as any)[key]}
-                        onCheckedChange={(v) => setVisible((prev) => ({ ...(prev as any), [key]: Boolean(v) }))}
+                        checked={visible[key]}
+                        onCheckedChange={(checked) =>
+                          setVisible((prev) => ({
+                            ...prev,
+                            [key]: Boolean(checked),
+                          }))
+                        }
                       >
                         {label}
                       </DropdownMenuCheckboxItem>
@@ -850,7 +1030,7 @@ const Cases = () => {
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                  {false ? (
+                  {casesLoading ? (
                     [...Array(6)].map((_, i) => (
                       <TableRow key={i}>
                         <TableCell className="w-8"><Skeleton className="h-4 w-4 rounded" /></TableCell>
@@ -1008,7 +1188,7 @@ const Cases = () => {
               </div>
                 ) : (
                   <div className="divide-y divide-border/60">
-                  {false ? (
+                  {casesLoading ? (
                     [...Array(6)].map((_, i) => (
                       <div key={i} className="p-3 flex items-start gap-3">
                         <Skeleton className="h-5 w-5 rounded" />
@@ -1172,7 +1352,11 @@ const Cases = () => {
                             { title: "Suggested Actions", lines: suggestedActions, empty: "No pending actions." },
                           ].map((section) => (
                             <SectionBlock key={section.title} title={section.title} cardClassName="space-y-2">
-                              {section.lines.length > 0 ? (
+                              {detailError ? (
+                                <div className="text-sm text-rose-400">Unable to load conversation insight.</div>
+                              ) : detailLoading && active?.isApi ? (
+                                <div className="text-sm text-muted-foreground">Loading conversation insight…</div>
+                              ) : section.lines.length > 0 ? (
                                 section.lines.map((line, lineIdx) => (
                                   <div key={`${section.title}-${lineIdx}`} className="text-sm leading-snug text-foreground">
                                     {line}
@@ -1194,11 +1378,15 @@ const Cases = () => {
                     {active ? (
                       <div className="flex flex-col gap-4">
                         <SectionBlock title="Documents" cardClassName="space-y-3">
-                          {(demoDocumentsByType[caseType] || []).length === 0 ? (
+                          {detailError ? (
+                            <div className="text-sm text-rose-400">Unable to load attachments.</div>
+                          ) : detailLoading && active?.isApi ? (
+                            <div className="text-sm text-muted-foreground">Loading attachments…</div>
+                          ) : documents.length === 0 ? (
                             <div className="text-sm text-muted-foreground">No documents attached.</div>
                           ) : (
-                            demoDocumentsByType[caseType].map((f, idx) => {
-                              const isLast = idx === demoDocumentsByType[caseType].length - 1;
+                            documents.map((f, idx) => {
+                              const isLast = idx === documents.length - 1;
                               return (
                                 <React.Fragment key={`${f.name}-${idx}`}>
                                   <div className="flex items-center gap-3">
@@ -1232,7 +1420,11 @@ const Cases = () => {
                     {active ? (
                       <div className="flex flex-col gap-4">
                         <SectionBlock title="Case Updates" cardClassName="space-y-3">
-                          {historyItems.length === 0 ? (
+                          {detailError ? (
+                            <div className="text-sm text-rose-400">Unable to load history.</div>
+                          ) : detailLoading && active?.isApi ? (
+                            <div className="text-sm text-muted-foreground">Loading history…</div>
+                          ) : historyItems.length === 0 ? (
                             <div className="text-sm text-muted-foreground">No history entries.</div>
                           ) : (
                             historyItems.map((item, idx) => {
@@ -1261,20 +1453,50 @@ const Cases = () => {
                     {active ? (
                       <div className="flex flex-col gap-4">
                         <SectionBlock title="Chat Transcript" cardClassName="space-y-3">
-                          <div className="space-y-3">
-                            <div className="flex items-start gap-2">
-                              <Avatar className="h-7 w-7"><AvatarFallback>CU</AvatarFallback></Avatar>
-                              <div className="rounded-lg border border-border/60 px-3 py-2 max-w-[75%]">
-                                <div className="text-sm leading-snug">Hi, I was charged twice for last month.</div>
-                              </div>
+                          {detailError ? (
+                            <div className="text-sm text-rose-400">Unable to load transcript.</div>
+                          ) : detailLoading && active?.isApi ? (
+                            <div className="text-sm text-muted-foreground">Loading transcript…</div>
+                          ) : chatTranscript.length === 0 ? (
+                            <div className="text-sm text-muted-foreground">No chat transcript available.</div>
+                          ) : (
+                            <div className="space-y-3">
+                              {chatTranscript.map((message) => {
+                                const isAgent = message.sender === "agent";
+                                return (
+                                  <div
+                                    key={message.id}
+                                    className={cn(
+                                      "flex items-start gap-2",
+                                      isAgent ? "justify-end" : undefined
+                                    )}
+                                  >
+                                    {!isAgent && (
+                                      <Avatar className="h-7 w-7"><AvatarFallback>CU</AvatarFallback></Avatar>
+                                    )}
+                                    <div
+                                      className={cn(
+                                        "rounded-lg border border-border/60 px-3 py-2 max-w-[75%]",
+                                        isAgent ? "bg-primary/10" : undefined
+                                      )}
+                                    >
+                                      {message.sentAt && (
+                                        <div className="text-[10px] text-muted-foreground mb-1 leading-tight">
+                                          {message.sentAt}
+                                        </div>
+                                      )}
+                                      <div className="text-sm leading-snug text-foreground whitespace-pre-line">
+                                        {message.body}
+                                      </div>
+                                    </div>
+                                    {isAgent && (
+                                      <Avatar className="h-7 w-7"><AvatarFallback>AG</AvatarFallback></Avatar>
+                                    )}
+                                  </div>
+                                );
+                              })}
                             </div>
-                            <div className="flex items-start gap-2 justify-end">
-                              <div className="rounded-lg border border-border/60 px-3 py-2 max-w-[75%] bg-primary/10">
-                                <div className="text-sm leading-snug">Sorry about that! Let me check your invoice.</div>
-                              </div>
-                              <Avatar className="h-7 w-7"><AvatarFallback>AG</AvatarFallback></Avatar>
-                            </div>
-                          </div>
+                          )}
                         </SectionBlock>
                       </div>
                     ) : (

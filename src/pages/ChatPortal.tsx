@@ -1,30 +1,22 @@
-import React, { useEffect, useRef, useState } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import ChatHeader from "@/components/chat/ChatHeader";
 import ChatInput from "@/components/chat/ChatInput";
 import ChatMessages from "@/components/chat/ChatMessages";
+import ChatCsatPrompt from "@/components/chat/ChatCsatPrompt";
 import { Message } from "@/components/chat/ChatMessage";
 import { useToast } from "@/hooks/use-toast";
-import { Button } from "@/components/ui/button";
-
-// Mock agent data - replace with API call
-const mockAgents: Record<string, { name: string; role: string; avatar: string }> = {
-  "nancy-ai": {
-    name: "Nancy AI",
-    role: "Customer Service Specialist",
-    avatar: "https://api.dicebear.com/7.x/avataaars/svg?seed=nancy",
-  },
-  "alex-sales": {
-    name: "Alex AI",
-    role: "Sales Representative",
-    avatar: "https://api.dicebear.com/7.x/avataaars/svg?seed=alex",
-  },
-  "sophia-billing": {
-    name: "Sophia AI",
-    role: "Billing Officer",
-    avatar: "https://api.dicebear.com/7.x/avataaars/svg?seed=sophia",
-  },
-};
+import { useChatSession } from "@/hooks/useChatSession";
+import { useChatMessages } from "@/hooks/useChatMessages";
+import { useSendChatMessage } from "@/hooks/useSendChatMessage";
+import {
+  ApiError,
+  ChatAgentPreview,
+  ChatMessage as ApiChatMessage,
+  persistSessionToken,
+  submitChatCsat,
+} from "@/services/chat";
+import { useMutation } from "@tanstack/react-query";
 
 const caseTitles = [
   "Refund request for overcharge",
@@ -63,219 +55,414 @@ const Sidebar: React.FC = () => {
   );
 };
 
+const CLOSED_STATUSES = new Set(["RESOLVED", "CLOSED_WITHOUT_RESOLUTION"]);
+
+const toDisplayMessage = (message: ApiChatMessage, agent: ChatAgentPreview | null): Message => {
+  const type = (message.messageType || "").toString().toUpperCase();
+  let sender: Message["sender"]; // default fallback
+  if (type === "CUSTOMER") {
+    sender = "user";
+  } else if (type === "AGENT" || type === "ASSISTANT" || type === "SYSTEM_ASSISTANT") {
+    sender = "agent";
+  } else {
+    sender = "system";
+  }
+
+  const timestamp = new Date(message.sentAt);
+  const safeTimestamp = Number.isNaN(timestamp.getTime()) ? new Date() : timestamp;
+
+  let content = message.body ?? "";
+  if (!content && Array.isArray(message.attachments) && message.attachments.length > 0) {
+    const names = message.attachments.map((att) => att.filename).filter(Boolean);
+    const label = names.length > 0 ? names.join(", ") : `${message.attachments.length} attachment(s)`;
+    content = `Shared attachment${message.attachments.length > 1 ? "s" : ""}: ${label}`;
+  }
+  if (!content) {
+    content = sender === "system" ? "System update" : "";
+  }
+
+  const agentName = message.author?.userDisplayName || agent?.name || "Agent";
+  const agentAvatar = agent?.avatarUrl ?? undefined;
+
+  return {
+    id: message.id,
+    content,
+    sender,
+    timestamp: safeTimestamp,
+    agentName: sender === "agent" ? agentName : undefined,
+    agentAvatar: sender === "agent" ? agentAvatar : undefined,
+  };
+};
+
 const ChatPortal: React.FC = () => {
   const { agentId } = useParams<{ agentId: string }>();
   const navigate = useNavigate();
   const { toast } = useToast();
 
-  // State
+  const agentHandle = agentId ?? null;
+
+  const sessionQuery = useChatSession(agentHandle, { landingPage: typeof window !== "undefined" ? window.location.href : undefined }, {
+    retry: false,
+    refetchOnWindowFocus: false,
+  });
+
+  const sessionData = sessionQuery.data;
+  const session = sessionData?.session ?? null;
+  const agent = sessionData?.agent ?? null;
+  const sessionToken = session?.sessionToken ?? null;
+
+  const [conversationStatus, setConversationStatus] = useState<string | null>(session?.conversationStatus ?? null);
   const [messages, setMessages] = useState<Message[]>([]);
-  const [isOnline, setIsOnline] = useState(true);
-  const [isTyping, setIsTyping] = useState(false);
-  const [isLoading, setIsLoading] = useState(false);
-  const abortRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const rawMessagesRef = useRef<Map<string, ApiChatMessage>>(new Map());
+  const [pollCursor, setPollCursor] = useState<string | null>(null);
+  const [awaitingReply, setAwaitingReply] = useState(false);
+  const [transcriptError, setTranscriptError] = useState<string | null>(null);
+  const [csatVisible, setCsatVisible] = useState(false);
+  const [csatRecordedAt, setCsatRecordedAt] = useState<string | null>(null);
 
-  // Get agent data
-  const agent = agentId ? mockAgents[agentId] : null;
-
-  // Redirect if agent not found
+  const prevSessionTokenRef = useRef<string | null>(null);
   useEffect(() => {
-    if (!agent && agentId) {
-      toast({
-        title: "Agent not found",
-        description: "The requested agent does not exist.",
-        variant: "destructive",
-      });
-      navigate("/");
-    }
-  }, [agent, agentId, navigate, toast]);
+    if (sessionToken === prevSessionTokenRef.current) return;
+    prevSessionTokenRef.current = sessionToken ?? null;
+    rawMessagesRef.current.clear();
+    setMessages([]);
+    setPollCursor(null);
+  }, [sessionToken]);
 
-  // Initialize with welcome message
+  useEffect(() => {
+    if (session?.conversationStatus) {
+      setConversationStatus(session.conversationStatus);
+    }
+  }, [session?.conversationStatus]);
+
+  useEffect(() => {
+    if (!sessionData?.messages) return;
+    const store = rawMessagesRef.current;
+    let changed = false;
+    sessionData.messages.forEach((msg) => {
+      if (!msg || !msg.id) return;
+      const existing = store.get(msg.id);
+      if (!existing || existing.sentAt !== msg.sentAt || existing.body !== msg.body) {
+        store.set(msg.id, msg);
+        changed = true;
+      }
+    });
+    if (changed) {
+      const sorted = Array.from(store.values()).sort(
+        (a, b) => new Date(a.sentAt).getTime() - new Date(b.sentAt).getTime()
+      );
+      setMessages(sorted.map((item) => toDisplayMessage(item, agent ?? null)));
+    } else if (agent) {
+      const sorted = Array.from(store.values()).sort(
+        (a, b) => new Date(a.sentAt).getTime() - new Date(b.sentAt).getTime()
+      );
+      setMessages(sorted.map((item) => toDisplayMessage(item, agent)));
+    }
+  }, [sessionData?.messages, agent]);
+
+  const updateMessagesFromStore = useCallback(
+    (agentInfo: ChatAgentPreview | null) => {
+      const sorted = Array.from(rawMessagesRef.current.values()).sort(
+        (a, b) => new Date(a.sentAt).getTime() - new Date(b.sentAt).getTime()
+      );
+      setMessages(sorted.map((item) => toDisplayMessage(item, agentInfo)));
+    },
+    []
+  );
+
+  const mergeMessages = useCallback(
+    (incoming: ApiChatMessage[] | undefined, agentInfo: ChatAgentPreview | null) => {
+      if (!incoming || incoming.length === 0) return;
+      const store = rawMessagesRef.current;
+      let changed = false;
+      incoming.forEach((msg) => {
+        if (!msg || !msg.id) return;
+        const existing = store.get(msg.id);
+        if (!existing || existing.sentAt !== msg.sentAt || existing.body !== msg.body) {
+          store.set(msg.id, msg);
+          changed = true;
+        }
+      });
+      if (changed) {
+        updateMessagesFromStore(agentInfo);
+      }
+    },
+    [updateMessagesFromStore]
+  );
+
   useEffect(() => {
     if (agent) {
-      const welcomeMessage: Message = {
-        id: "welcome",
-        content: `Hello! I'm ${agent.name}, your ${agent.role}. How can I assist you today?`,
-        sender: "agent",
-        timestamp: new Date(),
-        agentName: agent.name,
-        agentAvatar: agent.avatar,
-      };
-
-      const systemMessage: Message = {
-        id: "system-start",
-        content: "Session started",
-        sender: "system",
-        timestamp: new Date(),
-      };
-
-      setMessages([systemMessage, welcomeMessage]);
+      updateMessagesFromStore(agent);
     }
-  }, [agent]);
+  }, [agent, updateMessagesFromStore]);
 
-  // Handle sending message
-  const handleSendMessage = async (content: string) => {
-    if (!agent) return;
+  useEffect(() => {
+    if (!conversationStatus) return;
+    const normalized = conversationStatus.toUpperCase();
+    if (CLOSED_STATUSES.has(normalized) && !csatRecordedAt) {
+      setCsatVisible(true);
+    }
+  }, [conversationStatus, csatRecordedAt]);
 
-    // Add user message
-    const userMessage: Message = {
-      id: `user-${Date.now()}`,
-      content,
-      sender: "user",
-      timestamp: new Date(),
-    };
+  const messagesQuery = useChatMessages(
+    { sessionToken: sessionToken ?? null, cursor: pollCursor ?? undefined, limit: 50 },
+    {
+      enabled: Boolean(sessionToken),
+      refetchInterval: 5000,
+      refetchIntervalInBackground: true,
+      refetchOnWindowFocus: false,
+      staleTime: 0,
+      cacheTime: 0,
+      retry: false,
+    },
+  );
 
-    setMessages((prev) => [...prev, userMessage]);
+  useEffect(() => {
+    if (!messagesQuery.data) return;
+    mergeMessages(messagesQuery.data.messages, agent ?? null);
+    setTranscriptError(null);
+    const nextCursor = messagesQuery.data.nextCursor ?? null;
+    setPollCursor((prev) => (prev === nextCursor ? prev : nextCursor));
+  }, [messagesQuery.data, mergeMessages, agent]);
 
-    // Simulate typing indicator
-    setIsTyping(true);
-    setIsLoading(true);
+  useEffect(() => {
+    const error = messagesQuery.error;
+    if (!error) return;
+    if (error instanceof ApiError && error.message) {
+      setTranscriptError(error.message);
+    } else if (error instanceof Error) {
+      setTranscriptError(error.message);
+    } else {
+      setTranscriptError("Unable to load new messages.");
+    }
+  }, [messagesQuery.error]);
 
-    // Simulate AI response delay
-    abortRef.current = setTimeout(() => {
-      setIsTyping(false);
-
-      // Mock AI response
-      const aiResponse: Message = {
-        id: `agent-${Date.now()}`,
-        content: `Thank you for your message! I understand you said: "${content}". How can I help you further?`,
-        sender: "agent",
-        timestamp: new Date(),
-        agentName: agent.name,
-        agentAvatar: agent.avatar,
-      };
-
-      setMessages((prev) => [...prev, aiResponse]);
-      setIsLoading(false);
-      abortRef.current = null;
-    }, 1500 + Math.random() * 1000); // Random delay 1.5-2.5s
-  };
-
-  // Handle clear chat
-  const handleClearChat = () => {
-    if (!agent) return;
-
-    setMessages([
-      {
-        id: "system-cleared",
-        content: "Chat cleared",
-        sender: "system",
-        timestamp: new Date(),
-      },
-      {
-        id: "welcome-new",
-        content: `Hello again! I'm ${agent.name}. How can I help you?`,
-        sender: "agent",
-        timestamp: new Date(),
-        agentName: agent.name,
-        agentAvatar: agent.avatar,
-      },
-    ]);
-
+  useEffect(() => {
+    if (!sessionQuery.isError || !sessionQuery.error) return;
+    const error = sessionQuery.error;
+    let description = "Unable to start chat session.";
+    if (error instanceof ApiError) {
+      if (error.status === 404) {
+        description = "The requested agent could not be found.";
+      } else if (error.message) {
+        description = error.message;
+      }
+    } else if (error instanceof Error) {
+      description = error.message;
+    }
     toast({
-      title: "Chat cleared",
-      description: "Conversation history has been cleared.",
+      title: "Chat unavailable",
+      description,
+      variant: "destructive",
     });
-  };
+    navigate("/", { replace: true });
+  }, [sessionQuery.isError, sessionQuery.error, toast, navigate]);
 
-  // Handle download transcript
-  const handleDownloadTranscript = () => {
+  const sendMessageMutation = useSendChatMessage();
+
+  const csatMutation = useMutation({
+    mutationFn: async ({ score, comment }: { score: number; comment: string | null }) => {
+      if (!sessionToken) throw new Error("Missing session token");
+      return submitChatCsat({ sessionToken, score, comment });
+    },
+    onSuccess: (data) => {
+      setCsatRecordedAt(data.recordedAt);
+      setCsatVisible(false);
+      toast({
+        title: "Thanks for your feedback",
+        description: "Your rating has been recorded.",
+      });
+      sessionQuery.refetch();
+    },
+    onError: (error) => {
+      let description = "We couldn't submit your feedback. Please try again.";
+      if (error instanceof ApiError && error.message) {
+        description = error.message;
+      } else if (error instanceof Error) {
+        description = error.message;
+      }
+      toast({
+        title: "Submission failed",
+        description,
+        variant: "destructive",
+      });
+    },
+  });
+
+  const handleSendMessage = useCallback((content: string) => {
+    if (!sessionToken) {
+      toast({
+        title: "Session not ready",
+        description: "Please wait for the chat session to initialise.",
+        variant: "destructive",
+      });
+      return;
+    }
+    const trimmed = content.trim();
+    if (!trimmed) return;
+    setAwaitingReply(true);
+    sendMessageMutation.mutate(
+      { sessionToken, body: trimmed },
+      {
+        onSuccess: (response) => {
+          setAwaitingReply(false);
+          mergeMessages([response.message, ...(response.followUpMessages ?? [])], agent ?? null);
+          setTranscriptError(null);
+          sessionQuery.refetch();
+        },
+        onError: (error) => {
+          setAwaitingReply(false);
+          let description = "Message could not be delivered.";
+          if (error instanceof ApiError && error.message) {
+            description = error.message;
+          } else if (error instanceof Error) {
+            description = error.message;
+          }
+          toast({
+            title: "Send failed",
+            description,
+            variant: "destructive",
+          });
+        },
+      }
+    );
+  }, [agent, mergeMessages, sendMessageMutation, sessionQuery, sessionToken, toast]);
+
+  const handleAttachFile = useCallback(() => {
+    toast({
+      title: "File upload",
+      description: "File attachments will be available soon.",
+    });
+  }, [toast]);
+
+  const handleStop = useCallback(() => {
+    setAwaitingReply(false);
+    sendMessageMutation.reset();
+  }, [sendMessageMutation]);
+
+  const handleDownloadTranscript = useCallback(() => {
+    if (messages.length === 0) {
+      toast({ title: "Nothing to download", description: "Send a message to start the conversation." });
+      return;
+    }
     const transcript = messages
       .filter((m) => m.sender !== "system")
       .map((m) => {
         const time = m.timestamp.toLocaleTimeString();
-        const sender = m.sender === "agent" ? m.agentName : "You";
+        const sender = m.sender === "agent" ? m.agentName ?? "Agent" : m.sender === "user" ? "You" : "System";
         return `[${time}] ${sender}: ${m.content}`;
       })
       .join("\n\n");
 
     const blob = new Blob([transcript], { type: "text/plain" });
     const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = `chat-transcript-${agentId}-${Date.now()}.txt`;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
+    const anchor = document.createElement("a");
+    anchor.href = url;
+    anchor.download = `chat-transcript-${agentId ?? "agent"}-${Date.now()}.txt`;
+    document.body.appendChild(anchor);
+    anchor.click();
+    document.body.removeChild(anchor);
     URL.revokeObjectURL(url);
 
     toast({
       title: "Transcript downloaded",
       description: "Your conversation transcript has been saved.",
     });
-  };
+  }, [messages, toast, agentId]);
 
-  // Handle report issue
-  const handleReportIssue = () => {
+  const handleClearChat = useCallback(() => {
+    if (!agentHandle) return;
+    persistSessionToken(agentHandle, null);
+    rawMessagesRef.current.clear();
+    setMessages([]);
+    setPollCursor(null);
+    setConversationStatus(null);
+    setCsatVisible(false);
+    sessionQuery.refetch();
+    toast({ title: "Chat refreshed", description: "A new session has started." });
+  }, [agentHandle, sessionQuery, toast]);
+
+  const handleReportIssue = useCallback(() => {
     toast({
       title: "Report issue",
       description: "This feature will be available soon.",
     });
-  };
+  }, [toast]);
 
-  // Handle stop generation
-  const handleStop = () => {
-    if (abortRef.current) {
-      clearTimeout(abortRef.current);
-      abortRef.current = null;
+  const handleEndSession = useCallback(() => {
+    if (agentHandle) {
+      persistSessionToken(agentHandle, null);
     }
-    setIsTyping(false);
-    setIsLoading(false);
-  };
-
-  // Handle end session
-  const handleEndSession = () => {
     toast({
       title: "Session ended",
-      description: "Thank you for using our service.",
+      description: "Thank you for chatting with us.",
     });
+    setTimeout(() => navigate("/"), 1200);
+  }, [agentHandle, navigate, toast]);
 
-    setTimeout(() => {
-      navigate("/");
-    }, 1500);
-  };
+  const conversationClosed = conversationStatus ? CLOSED_STATUSES.has(conversationStatus.toUpperCase()) : false;
+  const isOnline = !session?.expiresAt || new Date(session.expiresAt).getTime() > Date.now();
+  const showLoading = sessionQuery.isLoading && !session;
 
-  // Handle attach file
-  const handleAttachFile = () => {
-    toast({
-      title: "File upload",
-      description: "File upload feature coming soon.",
-    });
-  };
+  const csatPrompt = csatVisible ? (
+    <ChatCsatPrompt
+      onSubmit={(score, comment) => csatMutation.mutate({ score, comment })}
+      onSkip={() => setCsatVisible(false)}
+      isSubmitting={csatMutation.isPending}
+    />
+  ) : null;
 
-  if (!agent) {
-    return null; // Will redirect in useEffect
+  if (showLoading) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-background">
+        <div className="space-y-2 text-center">
+          <div className="h-12 w-12 rounded-full border-4 border-primary/30 border-t-primary animate-spin mx-auto" />
+          <p className="text-sm text-muted-foreground">Preparing your chat session…</p>
+        </div>
+      </div>
+    );
+  }
+
+  if (!agent || !sessionToken) {
+    return null;
   }
 
   return (
     <div className="min-h-screen bg-background flex">
       <Sidebar />
       <main className="flex-1 flex flex-col">
-        {/* Header */}
         <ChatHeader
           agentName={agent.name}
           agentRole={agent.role}
-          agentAvatar={agent.avatar}
+          agentAvatar={agent.avatarUrl ?? undefined}
           isOnline={isOnline}
-          isTyping={isTyping}
+          isTyping={awaitingReply}
           onClearChat={handleClearChat}
           onDownloadTranscript={handleDownloadTranscript}
           onReportIssue={handleReportIssue}
           onEndSession={handleEndSession}
         />
 
-        {/* Messages area - with bottom padding for fixed input */}
         <div className="flex-1 overflow-hidden pb-[140px] pt-2 md:pt-4">
-          <ChatMessages messages={messages} isLoading={isLoading} />
+          <ChatMessages
+            messages={messages}
+            isLoading={awaitingReply}
+            errorMessage={transcriptError}
+          />
         </div>
 
-        {/* Input area */}
         <ChatInput
           onSendMessage={handleSendMessage}
           onAttachFile={handleAttachFile}
-          onStop={handleStop}
-          isLoading={isLoading}
-          disabled={!isOnline}
+          onStop={awaitingReply ? handleStop : undefined}
+          isLoading={awaitingReply}
+          disabled={conversationClosed || awaitingReply}
+          topAccessory={csatPrompt}
+          footerHint={
+            conversationClosed
+              ? "Conversation closed. Start a new session to chat again."
+              : undefined
+          }
           className="md:left-[14rem] md:right-0"
         />
       </main>

@@ -6,9 +6,16 @@ import { Loader2 } from "lucide-react";
 interface ChatMessagesProps {
   messages: Message[];
   isLoading?: boolean;
+  errorMessage?: string | null;
+  afterMessages?: React.ReactNode;
 }
 
-const ChatMessages: React.FC<ChatMessagesProps> = ({ messages, isLoading = false }) => {
+const ChatMessages: React.FC<ChatMessagesProps> = ({
+  messages,
+  isLoading = false,
+  errorMessage = null,
+  afterMessages,
+}) => {
   const scrollRef = useRef<HTMLDivElement>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
   const viewportRef = useRef<HTMLDivElement>(null);
@@ -109,6 +116,16 @@ const ChatMessages: React.FC<ChatMessagesProps> = ({ messages, isLoading = false
             );
           })}
 
+          {errorMessage && (
+            <div className="flex justify-center">
+              <div className="mt-4 px-4 py-3 text-sm rounded-lg border border-border/60 bg-destructive/10 text-destructive max-w-sm text-center">
+                {errorMessage}
+              </div>
+            </div>
+          )}
+
+          {afterMessages}
+
           {/* Loading indicator */}
           {isLoading && (
             <div className="flex gap-3 animate-fade-in">
@@ -147,4 +164,3 @@ const ChatMessages: React.FC<ChatMessagesProps> = ({ messages, isLoading = false
 };
 
 export default ChatMessages;
-

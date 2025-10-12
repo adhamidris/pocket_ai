@@ -121,6 +121,13 @@ class ChatVisitor(PrimaryKeyMixin, CreatedAtMixin, UpdatedAtMixin, Base):
         DateTime(timezone=True), nullable=False
     )
     last_seen_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    current_session_started_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    current_session_expires_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    welcome_template_key: Mapped[str | None] = mapped_column(String(64), nullable=True)
 
     business: Mapped["Business"] = relationship(back_populates="chat_visitors")
     customer: Mapped[Optional["Customer"]] = relationship(back_populates="chat_visitors")

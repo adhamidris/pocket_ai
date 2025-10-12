@@ -47,6 +47,22 @@ class Settings(BaseSettings):
     RATE_LIMIT_REGISTRATION_AGENT: str = Field(default="10/min", description="Rate limit for agent configuration requests.")
     RATE_LIMIT_REGISTRATION_UPLOADS: str = Field(default="5/min", description="Rate limit for uploads attachment requests.")
     RATE_LIMIT_REGISTRATION_COMPLETE: str = Field(default="10/min", description="Rate limit for completion requests.")
+    CHAT_SESSION_TOKEN_BYTES: int = Field(
+        default=32,
+        description="Number of random bytes used when generating chat session tokens.",
+    )
+    CHAT_SESSION_TOKEN_MAX_LENGTH: int = Field(
+        default=120,
+        description="Maximum persisted length for chat session tokens.",
+    )
+    CHAT_SESSION_TTL_SECONDS: int = Field(
+        default=86400,
+        description="Default chat session time-to-live in seconds.",
+    )
+    CHAT_DEFAULT_WELCOME_TEMPLATE_KEY: str | None = Field(
+        default=None,
+        description="Fallback welcome template key applied when the portal does not specify one.",
+    )
 
     @field_validator("ALLOWED_ORIGINS", mode="before")
     @classmethod

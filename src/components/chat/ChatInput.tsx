@@ -11,6 +11,9 @@ interface ChatInputProps {
   isLoading?: boolean;
   disabled?: boolean;
   placeholder?: string;
+  topAccessory?: React.ReactNode;
+  footerHint?: React.ReactNode;
+  className?: string;
 }
 
 const ChatInput: React.FC<ChatInputProps> = ({
@@ -20,6 +23,9 @@ const ChatInput: React.FC<ChatInputProps> = ({
   isLoading = false,
   disabled = false,
   placeholder = "Type your message...",
+  topAccessory,
+  footerHint,
+  className,
 }) => {
   const [message, setMessage] = useState("");
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -58,8 +64,14 @@ const ChatInput: React.FC<ChatInputProps> = ({
   const isEmpty = !message.trim();
 
   return (
-    <footer className="fixed bottom-0 left-0 right-0 bg-muted/70 supports-[backdrop-filter]:bg-muted/70 backdrop-blur border-t border-border/60 shadow-lg relative">
+    <footer
+      className={cn(
+        "fixed bottom-0 left-0 right-0 bg-muted/70 supports-[backdrop-filter]:bg-muted/70 backdrop-blur border-t border-border/60 shadow-lg relative",
+        className
+      )}
+    >
       <div className="max-w-screen-lg mx-auto px-4 md:px-6 py-4 pb-[calc(env(safe-area-inset-bottom)+16px)]">
+        {topAccessory && <div className="mb-3">{topAccessory}</div>}
         <form onSubmit={handleSubmit} className="flex items-end gap-2">
           {/* Attachment button */}
           <Tooltip>
@@ -144,7 +156,7 @@ const ChatInput: React.FC<ChatInputProps> = ({
 
         {/* Helpful hint */}
         <p className="text-[10px] text-muted-foreground mt-2 text-center">
-          Press Enter to send • Shift + Enter for new line
+          {footerHint ?? "Press Enter to send • Shift + Enter for new line"}
         </p>
       </div>
     </footer>
@@ -152,4 +164,3 @@ const ChatInput: React.FC<ChatInputProps> = ({
 };
 
 export default ChatInput;
-

@@ -9,9 +9,9 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { Separator } from "@/components/ui/separator";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Skeleton } from "@/components/ui/skeleton";
-import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import LanguageToggle from "@/components/LanguageToggle";
 import { cn } from "@/lib/utils";
+import { useConversations } from "@/hooks/useConversations";
 import {
   AlertTriangle,
   Bell,
@@ -55,7 +55,7 @@ type ConversationGroup = {
   items: ConversationItem[];
 };
 
-const conversationGroups: ConversationGroup[] = [
+const fallbackConversationGroups: ConversationGroup[] = [
   {
     label: "Today",
     items: [
@@ -117,7 +117,7 @@ const CHANNEL_BADGES: Record<ConversationItem["channel"], { label: string; color
 
 const slaTrendHours = [1.4, 1.2, 1.6, 1.1, 1.0, 1.3, 0.9];
 
-const aiPulseMetrics = [
+const fallbackAiPulseMetrics = [
   { label: "Total cases", value: "312", delta: "↑ 6% vs last week", tone: "neutral" },
   { label: "Resolved cases", value: "287", delta: "92% resolution rate", tone: "positive" },
   { label: "Escalations", value: "12", delta: "↓ 18% escalations", tone: "positive" },
@@ -197,6 +197,16 @@ const Sidebar = () => {
   );
 };
 
+const formatRelativeTime = (date: Date) => {
+  const diff = Date.now() - date.getTime();
+  const minutes = Math.max(0, Math.round(diff / 60000));
+  if (minutes < 60) return `${minutes}m ago`;
+  const hours = Math.round(minutes / 60);
+  if (hours < 24) return `${hours}h ago`;
+  const days = Math.round(hours / 24);
+  return `${days}d ago`;
+};
+
 const StatCard = React.memo(
   ({
     label,
@@ -208,7 +218,7 @@ const StatCard = React.memo(
     delta: string;
   }) => {
     const tone = React.useMemo(() => {
-      if (/\-|↓/.test(delta)) return "text-rose-500";
+      if (/-|↓/.test(delta)) return "text-rose-500";
       if (/risk|over|miss/.test(delta.toLowerCase())) return "text-amber-500";
       return "text-primary";
     }, [delta]);
@@ -233,8 +243,107 @@ const Home2 = () => {
   const [loading, setLoading] = React.useState(true);
   const { isLight, toggle } = useThemeMode();
   const [tab, setTab] = React.useState<HandlerType | "all">("all");
-  const urgentCount = 1;
   const [hoveredId, setHoveredId] = React.useState<string | null>(null);
+
+  const conversationsQuery = useConversations({ limit: 50 }, { keepPreviousData: true });
+  const conversationItems = React.useMemo(
+    () => conversationsQuery.data?.items ?? [],
+    [conversationsQuery.data],
+  );
+
+  const urgentCount = React.useMemo(
+    () => conversationItems.filter((item) => item.status === "NEW").length,
+    [conversationItems],
+  );
+
+  const metrics = React.useMemo(() => {
+    if (!conversationItems.length) return [] as { label: string; value: string; delta: string }[];
+    const total = conversationItems.length;
+    const resolved = conversationItems.filter((item) => item.status === "RESOLVED").length;
+    const live = conversationItems.filter((item) => item.status === "LIVE").length;
+    const open = total - resolved;
+    return [
+      {
+        label: "Conversations",
+        value: `${total}`,
+        delta: resolved ? `${resolved} resolved this period` : "No resolved conversations yet",
+      },
+      {
+        label: "Resolved",
+        value: `${resolved}`,
+        delta: total ? `${Math.round((resolved / total) * 100)}% resolved` : "—",
+      },
+      {
+        label: "Active",
+        value: `${open}`,
+        delta: live ? `${live} live now` : "No live chats",
+      },
+    ];
+  }, [conversationItems]);
+
+  const metricsToDisplay = metrics.length > 0 ? metrics : fallbackAiPulseMetrics;
+
+  const conversationGroupsDynamic = React.useMemo<ConversationGroup[]>(() => {
+    if (!conversationItems.length) return [];
+    const groups = new Map<string, ConversationItem[]>();
+    const orderTracking = new Map<string, number>();
+    const now = new Date();
+    const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+    const startOfYesterday = startOfToday - 24 * 60 * 60 * 1000;
+
+    conversationItems.forEach((item) => {
+      const timestampRaw = item.updatedAt || item.createdAt;
+      const timestamp = new Date(timestampRaw);
+      const timeValue = timestamp.getTime();
+      let label = timestamp.toLocaleDateString(undefined, { month: "short", day: "numeric" });
+      if (timeValue >= startOfToday) label = "Today";
+      else if (timeValue >= startOfYesterday) label = "Yesterday";
+
+      if (!groups.has(label)) {
+        groups.set(label, []);
+        const precedence = label === "Today" ? -2 : label === "Yesterday" ? -1 : -timeValue;
+        orderTracking.set(label, precedence);
+      }
+
+      const handledBy: HandlerType = item.status === "RESOLVED" ? "human" : "ai";
+      const channel: ConversationItem["channel"] = item.source === "EMAIL" ? "email" : "chat";
+      const summary = item.latestMessageType
+        ? `Last message: ${item.latestMessageType}`
+        : `Status: ${item.status}`;
+      const groupItems = groups.get(label)!;
+      groupItems.push({
+        id: item.id,
+        title: `Conversation ${item.id.slice(0, 6).toUpperCase()}`,
+        summary,
+        timestamp: formatRelativeTime(timestamp),
+        handledBy,
+        channel,
+        priority: handledBy === "ai" ? "normal" : "urgent",
+      });
+    });
+
+    return Array.from(groups.entries())
+      .sort((a, b) => (orderTracking.get(a[0]) ?? 0) - (orderTracking.get(b[0]) ?? 0))
+      .map(([label, items]) => ({
+        label,
+        items,
+      }));
+  }, [conversationItems]);
+
+  const conversationGroupsDisplay = React.useMemo(() => {
+    if (conversationsQuery.isError) {
+      return fallbackConversationGroups;
+    }
+    if (conversationGroupsDynamic.length > 0) {
+      return conversationGroupsDynamic;
+    }
+    if (conversationsQuery.isSuccess) {
+      return [] as ConversationGroup[];
+    }
+    return fallbackConversationGroups;
+  }, [conversationGroupsDynamic, conversationsQuery.isError, conversationsQuery.isSuccess]);
+
+  const showNoData = conversationsQuery.isSuccess && conversationItems.length === 0;
 
   React.useEffect(() => {
     const timer = setTimeout(() => setLoading(false), 450);
@@ -244,12 +353,14 @@ const Home2 = () => {
   
 
   const filteredGroups = React.useMemo(() => {
-    if (tab === "all") return conversationGroups;
-    return conversationGroups.map((group) => ({
-      ...group,
-      items: group.items.filter((item) => item.handledBy === tab),
-    })).filter((group) => group.items.length);
-  }, [tab]);
+    if (tab === "all") return conversationGroupsDisplay;
+    return conversationGroupsDisplay
+      .map((group) => ({
+        ...group,
+        items: group.items.filter((item) => item.handledBy === tab),
+      }))
+      .filter((group) => group.items.length);
+  }, [tab, conversationGroupsDisplay]);
 
   const maxSla = Math.max(...slaTrendHours);
 
@@ -305,7 +416,7 @@ const Home2 = () => {
             </div>
 
             <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-              {loading ? (
+              {loading || conversationsQuery.isLoading ? (
                 Array.from({ length: 3 }).map((_, idx) => (
                   <Card key={`stat-skel-${idx}`} className="border border-border/40 bg-card/55 backdrop-blur-sm p-5">
                     <div className="space-y-4">
@@ -322,46 +433,15 @@ const Home2 = () => {
                   </Card>
                 ))
               ) : (
-                <>
-                  <Tooltip>
-                    <TooltipTrigger asChild>
-                      <div>
-                        <StatCard
-                          label="Live conversations"
-                          value="58"
-                          delta="↑ 9% vs last week"
-                        />
-                      </div>
-                    </TooltipTrigger>
-                    <TooltipContent align="center">Includes AI-led + human-assisted sessions.</TooltipContent>
-                  </Tooltip>
-                  <Tooltip>
-                    <TooltipTrigger asChild>
-                      <div>
-                        <StatCard
-                          label="Avg. resolution time"
-                          value="1.2h"
-                          delta="SLA 98% met"
-                        />
-                      </div>
-                    </TooltipTrigger>
-                    <TooltipContent align="center">Weighted by lead and customer segments.</TooltipContent>
-                  </Tooltip>
-                  <Tooltip>
-                    <TooltipTrigger asChild>
-                      <div>
-                        <StatCard
-                          label="Customer satisfaction"
-                          value="94%"
-                          delta="+3 pts this month"
-                        />
-                      </div>
-                    </TooltipTrigger>
-                    <TooltipContent align="center">Post-resolution surveys + proactive feedback.</TooltipContent>
-                  </Tooltip>
-                </>
+                metricsToDisplay.map((metric, idx) => (
+                  <StatCard key={`metric-${idx}`} label={metric.label} value={metric.value} delta={metric.delta} />
+                ))
               )}
             </div>
+
+            {showNoData && (
+              <div className="text-sm text-muted-foreground">No data to measure yet.</div>
+            )}
 
             <div className="grid grid-cols-12 gap-4">
               <div className="col-span-12 lg:col-span-8 space-y-4">
@@ -381,7 +461,7 @@ const Home2 = () => {
                         <Tabs value={tab} onValueChange={(value) => setTab(value as typeof tab)} className="self-end">
                           <TabsList className="bg-muted/30">
                             {(["all", "ai", "human"] as const).map((value) => {
-                              const count = conversationGroups
+                              const count = conversationGroupsDisplay
                                 .flatMap((group) => group.items)
                                 .filter((item) => (value === "all" ? true : item.handledBy === value)).length;
                               return (
@@ -398,7 +478,7 @@ const Home2 = () => {
                       </div>
                     </div>
                     <Separator className="bg-border/40" />
-                    {loading ? (
+                    {loading || conversationsQuery.isLoading ? (
                       <div className="space-y-3">
                         {Array.from({ length: 4 }).map((_, idx) => (
                           <div key={`conv-skel-${idx}`} className="flex items-start gap-3">
@@ -503,7 +583,7 @@ const Home2 = () => {
                   <div className="p-5 space-y-4">
                     <div className="text-base font-semibold">AI pulse</div>
                     <div className="space-y-3">
-                      {aiPulseMetrics.map((item, idx) => (
+                      {metricsToDisplay.map((item, idx) => (
                         <div key={item.label} className="flex items-center gap-3">
                           <div className="w-5 flex justify-center">
                             {idx === 0 ? (
@@ -565,4 +645,3 @@ const SearchIcon = ({ className }: { className?: string }) => <svg className={cn
 const ShieldIcon = ({ className }: { className?: string }) => <svg className={cn("text-current", className)} fill="none" height="16" width="16" viewBox="0 0 16 16" xmlns="http://www.w3.org/2000/svg"><path d="M3.333 3.333 8 1.333l4.667 2v4.534c0 1.7-.777 3.29-2.1 4.342L8 14.667l-2.567-2.458c-1.323-1.052-2.1-2.642-2.1-4.342V3.333Z" stroke="currentColor" strokeLinejoin="round" strokeWidth="1.333" /></svg>;
 
 export default Home2;
-
