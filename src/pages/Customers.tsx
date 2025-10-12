@@ -589,16 +589,18 @@ React.useEffect(() => {
           </section>
 
           <section className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
-            <div className="flex flex-col gap-2 md:flex-row md:items-center md:flex-wrap">
+            <div className="flex flex-col gap-2 md:flex-row md:items-center md:flex-wrap w-full lg:w-auto">
               <div className="relative w-full md:w-64">
                 <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
                 <Input
                   placeholder="Search name, email, text…"
-                  className="pl-9"
+                  className="pl-9 border border-border/60 bg-muted/70 focus-visible:ring-0 focus-visible:border-border"
                   value={search}
                   onChange={(event) => setSearch(event.target.value)}
                 />
               </div>
+            </div>
+            <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-end md:flex-wrap w-full lg:w-auto">
               <DropdownMenu>
                 <DropdownMenuTrigger asChild>
                   <Button variant="outline" className="gap-2 text-sm">
@@ -607,7 +609,7 @@ React.useEffect(() => {
                     <ChevronDown className="h-4 w-4 text-muted-foreground" />
                   </Button>
                 </DropdownMenuTrigger>
-                <DropdownMenuContent align="start" className="w-44">
+                <DropdownMenuContent align="end" className="w-44">
                   {lifecycleOptions.map((option) => (
                     <DropdownMenuItem key={option.label} onClick={() => setLifecycle(option.value)}>
                       {option.label}
@@ -623,7 +625,7 @@ React.useEffect(() => {
                     <ChevronDown className="h-4 w-4 text-muted-foreground" />
                   </Button>
                 </DropdownMenuTrigger>
-                <DropdownMenuContent align="start" className="w-40">
+                <DropdownMenuContent align="end" className="w-40">
                   {dateOptions.map((option) => (
                     <DropdownMenuItem key={option.value} onClick={() => setDateFilter(option.value)}>
                       {option.label}
@@ -631,22 +633,22 @@ React.useEffect(() => {
                   ))}
                 </DropdownMenuContent>
               </DropdownMenu>
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button variant="outline" className="gap-2 text-sm">
+                    {`Page size: ${limit}`}
+                    <ChevronDown className="h-4 w-4 text-muted-foreground" />
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end" className="w-32">
+                  {limitOptions.map((value) => (
+                    <DropdownMenuItem key={value} onClick={() => setLimit(value)}>
+                      {value}
+                    </DropdownMenuItem>
+                  ))}
+                </DropdownMenuContent>
+              </DropdownMenu>
             </div>
-            <DropdownMenu>
-              <DropdownMenuTrigger asChild>
-                <Button variant="outline" className="gap-2 text-sm">
-                  {`Page size: ${limit}`}
-                  <ChevronDown className="h-4 w-4 text-muted-foreground" />
-                </Button>
-              </DropdownMenuTrigger>
-              <DropdownMenuContent align="end" className="w-32">
-                {limitOptions.map((value) => (
-                  <DropdownMenuItem key={value} onClick={() => setLimit(value)}>
-                    {value}
-                  </DropdownMenuItem>
-                ))}
-              </DropdownMenuContent>
-            </DropdownMenu>
           </section>
 
           <section className="space-y-4">
@@ -664,19 +666,19 @@ React.useEffect(() => {
                   </TableHeader>
                   <TableBody>
                     {showBackendNotice ? (
-                      <TableRow>
+                      <TableRow hoverable={false}>
                         <TableCell colSpan={5} className="py-12 text-center text-sm text-muted-foreground">
                           Configure the API base URL to sync customer data.
                         </TableCell>
                       </TableRow>
                     ) : showAuthNotice ? (
-                      <TableRow>
+                      <TableRow hoverable={false}>
                         <TableCell colSpan={5} className="py-12 text-center text-sm text-muted-foreground">
                           You have been signed out. Please sign in to view customers.
                         </TableCell>
                       </TableRow>
                     ) : isInitialLoading ? (
-                      <TableRow>
+                      <TableRow hoverable={false}>
                         <TableCell colSpan={5} className="py-12 text-center text-sm text-muted-foreground">
                           <div className="flex items-center justify-center gap-2">
                             <Loader2 className="h-4 w-4 animate-spin" />
@@ -685,19 +687,19 @@ React.useEffect(() => {
                         </TableCell>
                       </TableRow>
                     ) : authError ? (
-                      <TableRow>
+                      <TableRow hoverable={false}>
                         <TableCell colSpan={5} className="py-12 text-center text-sm text-muted-foreground">
                           Session expired. Refresh and sign in again to continue.
                         </TableCell>
                       </TableRow>
                     ) : showErrorState ? (
-                      <TableRow>
+                      <TableRow hoverable={false}>
                         <TableCell colSpan={5} className="py-12 text-center text-sm text-muted-foreground">
                           Unable to load customers. Please check your connection and try again.
                         </TableCell>
                       </TableRow>
                     ) : showEmptyState ? (
-                      <TableRow>
+                      <TableRow hoverable={false}>
                         <TableCell colSpan={5} className="py-12 text-center text-sm text-muted-foreground">
                           {emptyStateMessage}
                         </TableCell>
