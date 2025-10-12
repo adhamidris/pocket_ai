@@ -591,10 +591,10 @@ React.useEffect(() => {
           <section className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
             <div className="flex flex-col gap-2 md:flex-row md:items-center md:flex-wrap">
               <div className="relative w-full md:w-64">
-                <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
+                <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
                 <Input
-                  placeholder="Search name, email, text…"
                   className="pl-9"
+                  placeholder="Search name, email, text…"
                   value={search}
                   onChange={(event) => setSearch(event.target.value)}
                 />
@@ -664,19 +664,19 @@ React.useEffect(() => {
                   </TableHeader>
                   <TableBody>
                     {showBackendNotice ? (
-                      <TableRow>
+                      <TableRow hoverable={false}>
                         <TableCell colSpan={5} className="py-12 text-center text-sm text-muted-foreground">
                           Configure the API base URL to sync customer data.
                         </TableCell>
                       </TableRow>
                     ) : showAuthNotice ? (
-                      <TableRow>
+                      <TableRow hoverable={false}>
                         <TableCell colSpan={5} className="py-12 text-center text-sm text-muted-foreground">
                           You have been signed out. Please sign in to view customers.
                         </TableCell>
                       </TableRow>
                     ) : isInitialLoading ? (
-                      <TableRow>
+                      <TableRow hoverable={false}>
                         <TableCell colSpan={5} className="py-12 text-center text-sm text-muted-foreground">
                           <div className="flex items-center justify-center gap-2">
                             <Loader2 className="h-4 w-4 animate-spin" />
@@ -685,19 +685,19 @@ React.useEffect(() => {
                         </TableCell>
                       </TableRow>
                     ) : authError ? (
-                      <TableRow>
+                      <TableRow hoverable={false}>
                         <TableCell colSpan={5} className="py-12 text-center text-sm text-muted-foreground">
                           Session expired. Refresh and sign in again to continue.
                         </TableCell>
                       </TableRow>
                     ) : showErrorState ? (
-                      <TableRow>
+                      <TableRow hoverable={false}>
                         <TableCell colSpan={5} className="py-12 text-center text-sm text-muted-foreground">
                           Unable to load customers. Please check your connection and try again.
                         </TableCell>
                       </TableRow>
                     ) : showEmptyState ? (
-                      <TableRow>
+                      <TableRow hoverable={false}>
                         <TableCell colSpan={5} className="py-12 text-center text-sm text-muted-foreground">
                           {emptyStateMessage}
                         </TableCell>
