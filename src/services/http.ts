@@ -1,5 +1,6 @@
 const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL || "").replace(/\/$/, "");
 const IS_DEV = Boolean(import.meta.env?.DEV);
+const DEV_BID = (import.meta.env.VITE_DEV_BUSINESS_ID || "").trim();
 
 export class ApiError extends Error {
   status: number;
@@ -31,6 +32,56 @@ const fallbackRequestId = () => {
   return `${time}-${rnd}`;
 };
 
+
+
+export const setStoredBusinessId = (id: string | null) => {
+  try {
+    if (typeof window === "undefined") return;
+    if (id && id !== "null" && id !== "undefined") {
+      window.localStorage.setItem("pocket_ai_business_id", id);
+      // Also keep a richer object for potential future reads
+      window.localStorage.setItem("pocket_ai_business", JSON.stringify({ id }));
+    } else {
+      window.localStorage.removeItem("pocket_ai_business_id");
+      window.localStorage.removeItem("pocket_ai_business");
+    }
+  } catch {
+    /* ignore storage errors (private mode, etc.) */
+  }
+};
+
+const getStoredBusinessId = (): string | null => {
+  try {
+    if (typeof window === "undefined") return null;
+    const direct = localStorage.getItem("pocket_ai_business_id");
+    if (direct && direct !== "null" && direct !== "undefined") return direct;
+    const raw = localStorage.getItem("pocket_ai_business");
+    if (raw) {
+      try {
+        const obj = JSON.parse(raw) as Record<string, unknown>;
+        const id = (obj as any)?.id || (obj as any)?.businessId || (obj as any)?.business_id;
+        if (typeof id === "string") return id;
+      } catch {}
+    }
+    const token = localStorage.getItem("pocket_ai_access_token");
+    if (token && token.includes(".")) {
+      const [, payloadB64] = token.split(".");
+      try {
+        const json = JSON.parse(atob(payloadB64.replace(/-/g, "+").replace(/_/g, "/")));
+        // Prefer extracting from biz_roles (JWT may carry memberships as a map of business_id -> roles[])
+        const roles = (json as any)?.biz_roles || (json as any)?.business_roles;
+        if (roles && typeof roles === "object") {
+          const keys = Object.keys(roles);
+          if (keys.length > 0 && typeof keys[0] === "string") return keys[0];
+        }
+        const id = (json as any)?.businessId || (json as any)?.business_id || (json as any)?.biz || (json as any)?.bid || (json as any)?.["x-business-id"];
+        if (typeof id === "string") return id;
+      } catch {}
+    }
+  } catch {}
+  return null;
+};
+
 const buildUrl = (path: string) => {
   if (path.startsWith("http://") || path.startsWith("https://")) return path;
   if (!API_BASE_URL) return path;
@@ -57,7 +108,23 @@ export async function jsonFetch<T>(path: string, options: JsonFetchOptions = {})
     ? crypto.randomUUID()
     : fallbackRequestId());
   finalHeaders.set("X-Request-ID", generatedId);
-  if (token) finalHeaders.set("Authorization", token.startsWith("Bearer ") ? token : `Bearer ${token}`);
+if (!finalHeaders.has("X-Business-Id")) {
+  const bid = getStoredBusinessId();
+  if (bid) {
+    finalHeaders.set("X-Business-Id", bid);
+  } else if (IS_DEV && DEV_BID) {
+    console.warn("[api] Using VITE_DEV_BUSINESS_ID fallback:", DEV_BID);
+    finalHeaders.set("X-Business-Id", DEV_BID);
+  } else if (IS_DEV) {
+    try {
+      const lsId = localStorage.getItem("pocket_ai_business_id");
+      const rawBiz = localStorage.getItem("pocket_ai_business");
+      console.warn("[api] No X-Business-Id header set. Storage snapshot:", { lsId, rawBiz });
+    } catch {}
+  }
+}
+
+if (token) finalHeaders.set("Authorization", token.startsWith("Bearer ") ? token : `Bearer ${token}`);
   if (idempotencyKey) finalHeaders.set("Idempotency-Key", idempotencyKey);
 
   const init: RequestInit = {

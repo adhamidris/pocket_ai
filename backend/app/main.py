@@ -12,8 +12,9 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from starlette.middleware.base import BaseHTTPMiddleware, RequestResponseEndpoint
 from starlette.responses import Response
+from app.repositories.errors import RepositoryError
 
-from app.api.v1.routers import auth_router, registration_router
+from app.api.v1.routers import auth_router, customers_router, registration_router
 from app.core.logging import REQUEST_ID_CTX_VAR, configure_logging
 from app.core.settings import Settings, get_settings
 
@@ -84,12 +85,23 @@ def _configure_middleware(app: FastAPI, settings: Settings) -> None:
 def _configure_routes(app: FastAPI) -> None:
     app.include_router(registration_router, prefix="/v1")
     app.include_router(auth_router, prefix="/v1")
+    app.include_router(customers_router, prefix="/v1")
 
 
 def _configure_exception_handlers(app: FastAPI) -> None:
     @app.exception_handler(HTTPException)
     async def custom_http_exception_handler(request: Request, exc: HTTPException) -> Response:
         return await http_exception_handler(request, exc)
+
+    @app.exception_handler(RepositoryError)
+    async def repository_error_handler(request: Request, exc: RepositoryError) -> JSONResponse:
+        # Map known repo errors to appropriate HTTP codes (db_timeout -> 503)
+        status = 503 if getattr(exc, "code", "") == "db_timeout" else 500
+        payload = exc.to_payload() if hasattr(exc, "to_payload") else {"code": "repository_error", "message": str(exc)}
+        request_id = getattr(request.state, "request_id", None)
+        if request_id:
+            payload["request_id"] = request_id
+        return JSONResponse(status_code=status, content=payload)
 
     @app.exception_handler(Exception)
     async def generic_exception_handler(request: Request, exc: Exception) -> JSONResponse:

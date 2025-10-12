@@ -19,12 +19,81 @@ from sqlalchemy import (
     String,
     Text,
     text,
+    UniqueConstraint,
 )
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from sqlalchemy.sql import func
 
+from typing import TYPE_CHECKING, Optional
+
 from app.models.base import Base, CreatedAtMixin, PrimaryKeyMixin, UpdatedAtMixin
+
+if TYPE_CHECKING:
+    from .agents_runtime import (
+        AgentHourlyStatus,
+        AgentKnowledgeAccess,
+        AgentKpi,
+        AgentMetricDaily,
+        AgentPublicLinkToken,
+        AgentRuntimeProfile,
+        AgentSession,
+        AgentStatusLog,
+    )
+    from .analytics import (
+        CaseFact,
+        ConversationFact,
+        CustomerMetricDaily as BusinessCustomerMetricDaily,
+        MetricRefreshJob,
+    )
+    from .automation import AutomationRule, AutomationRun
+    from .business_config import (
+        BusinessIntegration,
+        BusinessIntegrationKey,
+        BusinessSettings,
+        TeamInvite,
+        TeamRolePermission,
+    )
+    from .cases import (
+        Case,
+        CaseAssignment,
+        CaseDocument,
+        CaseFollowUp,
+        CaseHistoryEvent,
+        CaseMetricDaily,
+        CaseNote,
+        CaseSuggestedAction,
+        CaseSlaTracker,
+        Escalation,
+        SlaBreach,
+    )
+    from .conversations import ChatVisitor, Conversation, ConversationMetricDaily
+    from .customers import (
+        Customer,
+        CustomerActivityEvent,
+        CustomerConversationStats,
+        CustomerHealthScore,
+        CustomerMetricSnapshot,
+        CustomerNote,
+        CustomerTag,
+    )
+    from .knowledge_extras import (
+        KnowledgeAuditEvent,
+        KnowledgeChunk,
+        KnowledgeCollection,
+        KnowledgeCollectionLink,
+        KnowledgeEmbedding,
+        KnowledgeIngestionJob,
+        KnowledgeParseResult,
+        KnowledgePermission,
+    )
+    from .security import (
+        AuditLog,
+        DataRetentionJob,
+        DataSubjectRequest,
+        EventBusOutbox,
+    )
+    from .storage import StorageAsset
 
 
 class RegistrationStep(enum.Enum):
@@ -65,6 +134,12 @@ class AgentTrait(enum.Enum):
     PROACTIVE = "proactive"
     DIRECT = "direct"
     CREATIVE = "creative"
+
+
+class AgentStatus(enum.Enum):
+    DRAFT = "draft"
+    ACTIVE = "active"
+    INACTIVE = "inactive"
 
 
 class EscalationRule(enum.Enum):
@@ -137,7 +212,7 @@ class Industry(CreatedAtMixin, Base):
     niches: Mapped[list["IndustryNiche"]] = relationship(
         back_populates="industry", cascade="all, delete-orphan"
     )
-    businesses: Mapped[list["Business"]] = relationship(back_populates="industry")
+    businesses: Mapped[list["Business"]] = relationship("Business", back_populates="industry")
 
     __table_args__ = (
         CheckConstraint(
@@ -192,7 +267,7 @@ class Business(PrimaryKeyMixin, CreatedAtMixin, Base):
     )
     created_by_user_name: Mapped[str] = mapped_column(String(80), nullable=False)
 
-    industry: Mapped[Industry] = relationship(back_populates="businesses")
+    industry: Mapped["Industry"] = relationship("Industry", back_populates="businesses")
     creator: Mapped[User] = relationship(back_populates="businesses")
     niches: Mapped[list["BusinessNiche"]] = relationship(
         back_populates="business", cascade="all, delete-orphan"
@@ -200,14 +275,91 @@ class Business(PrimaryKeyMixin, CreatedAtMixin, Base):
     memberships: Mapped[list["UserBusinessMembership"]] = relationship(
         back_populates="business", cascade="all, delete-orphan"
     )
-    agents: Mapped[list["Agent"]] = relationship(
-        back_populates="business", cascade="all, delete-orphan"
-    )
-    knowledge_items: Mapped[list["KnowledgeItem"]] = relationship(
-        back_populates="business", cascade="all, delete-orphan"
-    )
+    agents: Mapped[list["Agent"]] = relationship(back_populates="business", cascade="all, delete-orphan")
+    knowledge_items: Mapped[list["KnowledgeItem"]] = relationship(back_populates="business", cascade="all, delete-orphan")
     registration_sessions: Mapped[list["RegistrationSession"]] = relationship(
         back_populates="business"
+    )
+    settings: Mapped[Optional["BusinessSettings"]] = relationship(
+        back_populates="business", uselist=False, cascade="all, delete-orphan"
+    )
+    integrations: Mapped[list["BusinessIntegration"]] = relationship(
+        back_populates="business", cascade="all, delete-orphan"
+    )
+    invites: Mapped[list["TeamInvite"]] = relationship(
+        back_populates="business", cascade="all, delete-orphan"
+    )
+    role_permissions: Mapped[list["TeamRolePermission"]] = relationship(
+        back_populates="business", cascade="all, delete-orphan"
+    )
+    customers: Mapped[list["Customer"]] = relationship(
+        back_populates="business", cascade="all, delete-orphan"
+    )
+    customer_tags: Mapped[list["CustomerTag"]] = relationship(
+        back_populates="business", cascade="all, delete-orphan"
+    )
+    customer_activity_events: Mapped[list["CustomerActivityEvent"]] = relationship(
+        back_populates="business", cascade="all, delete-orphan"
+    )
+    customer_health_scores: Mapped[list["CustomerHealthScore"]] = relationship(
+        back_populates="business", cascade="all, delete-orphan"
+    )
+    customer_metrics: Mapped[list["BusinessCustomerMetricDaily"]] = relationship(
+        back_populates="business", cascade="all, delete-orphan"
+    )
+    chat_visitors: Mapped[list["ChatVisitor"]] = relationship(
+        back_populates="business", cascade="all, delete-orphan"
+    )
+    conversations: Mapped[list["Conversation"]] = relationship(
+        back_populates="business", cascade="all, delete-orphan"
+    )
+    conversation_metrics: Mapped[list["ConversationMetricDaily"]] = relationship(
+        back_populates="business", cascade="all, delete-orphan"
+    )
+    cases: Mapped[list["Case"]] = relationship(
+        back_populates="business", cascade="all, delete-orphan"
+    )
+    case_metrics: Mapped[list["CaseMetricDaily"]] = relationship(
+        back_populates="business", cascade="all, delete-orphan"
+    )
+    agent_metrics: Mapped[list["AgentMetricDaily"]] = relationship(
+        back_populates="business", cascade="all, delete-orphan"
+    )
+    storage_assets: Mapped[list["StorageAsset"]] = relationship(
+        back_populates="business", cascade="all, delete-orphan"
+    )
+    knowledge_collections: Mapped[list["KnowledgeCollection"]] = relationship(
+        back_populates="business", cascade="all, delete-orphan"
+    )
+    knowledge_audit_events: Mapped[list["KnowledgeAuditEvent"]] = relationship(
+        back_populates="business", cascade="all, delete-orphan"
+    )
+    automation_rules: Mapped[list["AutomationRule"]] = relationship(
+        back_populates="business", cascade="all, delete-orphan"
+    )
+    automation_runs: Mapped[list["AutomationRun"]] = relationship(
+        back_populates="business", cascade="all, delete-orphan"
+    )
+    metric_refresh_jobs: Mapped[list["MetricRefreshJob"]] = relationship(
+        back_populates="business", cascade="all, delete-orphan"
+    )
+    conversation_facts: Mapped[list["ConversationFact"]] = relationship(
+        back_populates="business", cascade="all, delete-orphan"
+    )
+    case_facts: Mapped[list["CaseFact"]] = relationship(
+        back_populates="business", cascade="all, delete-orphan"
+    )
+    audit_logs: Mapped[list["AuditLog"]] = relationship(
+        back_populates="business", cascade="all, delete-orphan"
+    )
+    data_subject_requests: Mapped[list["DataSubjectRequest"]] = relationship(
+        back_populates="business", cascade="all, delete-orphan"
+    )
+    data_retention_jobs: Mapped[list["DataRetentionJob"]] = relationship(
+        back_populates="business", cascade="all, delete-orphan"
+    )
+    event_bus_outbox_entries: Mapped[list["EventBusOutbox"]] = relationship(
+        back_populates="business", cascade="all, delete-orphan"
     )
 
     __table_args__ = (
@@ -324,6 +476,18 @@ class Agent(PrimaryKeyMixin, CreatedAtMixin, Base):
         Enum(EscalationRule, name="escalation_rule_enum", create_type=False),
         nullable=False,
     )
+    status: Mapped[AgentStatus] = mapped_column(
+        Enum(AgentStatus, name="agent_status_enum", create_type=False),
+        nullable=False,
+        server_default=AgentStatus.DRAFT.value,
+    )
+    public_slug: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    default_language: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    welcome_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+    avatar_url: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    public_link_enabled: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, server_default=text("false")
+    )
     created_by_user_id: Mapped[uuid.UUID] = mapped_column(
         ForeignKey("users.id", ondelete="RESTRICT"), nullable=False
     )
@@ -334,11 +498,48 @@ class Agent(PrimaryKeyMixin, CreatedAtMixin, Base):
     traits: Mapped[list["AgentTraitLink"]] = relationship(
         back_populates="agent", cascade="all, delete-orphan"
     )
+    kpis: Mapped[list["AgentKpi"]] = relationship(
+        back_populates="agent", cascade="all, delete-orphan"
+    )
+    knowledge_access: Mapped[list["AgentKnowledgeAccess"]] = relationship(
+        back_populates="agent", cascade="all, delete-orphan"
+    )
+    status_logs: Mapped[list["AgentStatusLog"]] = relationship(
+        back_populates="agent",
+        cascade="all, delete-orphan",
+        foreign_keys="AgentStatusLog.agent_id",
+    )
+    hourly_statuses: Mapped[list["AgentHourlyStatus"]] = relationship(
+        back_populates="agent", cascade="all, delete-orphan"
+    )
+    public_link_tokens: Mapped[list["AgentPublicLinkToken"]] = relationship(
+        back_populates="agent", cascade="all, delete-orphan"
+    )
+    runtime_profiles: Mapped[list["AgentRuntimeProfile"]] = relationship(
+        back_populates="agent", cascade="all, delete-orphan"
+    )
+    sessions: Mapped[list["AgentSession"]] = relationship(
+        back_populates="agent", cascade="all, delete-orphan"
+    )
+    metric_snapshots: Mapped[list["AgentMetricDaily"]] = relationship(
+        back_populates="agent", cascade="all, delete-orphan"
+    )
 
     __table_args__ = (
         CheckConstraint(
             "char_length(name) BETWEEN 2 AND 80",
             name="ck_agents_name_length",
+        ),
+        CheckConstraint(
+            "public_slug IS NULL OR char_length(public_slug) BETWEEN 3 AND 120",
+            name="ck_agents_public_slug_length",
+        ),
+        CheckConstraint(
+            "default_language IS NULL OR char_length(default_language) BETWEEN 2 AND 16",
+            name="ck_agents_default_language_length",
+        ),
+        UniqueConstraint(
+            "business_id", "public_slug", name="uq_agents_business_public_slug"
         ),
     )
 
@@ -377,6 +578,11 @@ class KnowledgeItem(PrimaryKeyMixin, CreatedAtMixin, Base):
     )
     display_name: Mapped[str | None] = mapped_column(String(120), nullable=True)
     language: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    category: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    source_uid: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    last_ingested_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
     created_by_user_id: Mapped[uuid.UUID] = mapped_column(
         ForeignKey("users.id", ondelete="RESTRICT"), nullable=False
     )
@@ -393,11 +599,39 @@ class KnowledgeItem(PrimaryKeyMixin, CreatedAtMixin, Base):
     text_content: Mapped[KnowledgeItemText | None] = relationship(
         back_populates="knowledge_item", uselist=False, cascade="all, delete-orphan"
     )
+    ingestion_jobs: Mapped[list["KnowledgeIngestionJob"]] = relationship(
+        back_populates="knowledge_item", cascade="all, delete-orphan"
+    )
+    parse_result: Mapped[Optional["KnowledgeParseResult"]] = relationship(
+        back_populates="knowledge_item", uselist=False, cascade="all, delete-orphan"
+    )
+    chunks: Mapped[list["KnowledgeChunk"]] = relationship(
+        back_populates="knowledge_item", cascade="all, delete-orphan"
+    )
+    permissions: Mapped[list["KnowledgePermission"]] = relationship(
+        back_populates="knowledge_item", cascade="all, delete-orphan"
+    )
+    audit_events: Mapped[list["KnowledgeAuditEvent"]] = relationship(
+        back_populates="knowledge_item", cascade="all, delete-orphan"
+    )
+    collection_links: Mapped[list["KnowledgeCollectionLink"]] = relationship(
+        back_populates="knowledge_item", cascade="all, delete-orphan"
+    )
+    agent_access: Mapped[list["AgentKnowledgeAccess"]] = relationship(
+        back_populates="knowledge_item", cascade="all, delete-orphan"
+    )
 
     __table_args__ = (
         CheckConstraint(
             "display_name IS NULL OR char_length(display_name) <= 120",
             name="ck_knowledge_items_display_name_length",
+        ),
+        CheckConstraint(
+            "language IS NULL OR char_length(language) BETWEEN 2 AND 32",
+            name="ck_knowledge_items_language_length",
+        ),
+        UniqueConstraint(
+            "business_id", "source_uid", name="uq_knowledge_items_source_uid"
         ),
     )
 
@@ -478,6 +712,7 @@ Index("ix_knowledge_items_business_status", KnowledgeItem.business_id, Knowledge
 
 __all__ = [
     "Agent",
+    "AgentStatus",
     "AgentRole",
     "AgentTone",
     "AgentTrait",

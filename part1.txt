@@ -1,0 +1,1694 @@
+=== src/pages/Cases.tsx ===
+import React from "react";
+import { Link } from "react-router-dom";
+import {
+  Building2,
+  CalendarDays,
+  ChevronDown,
+  ChevronRight,
+  Clock,
+  EllipsisVertical,
+  Filter,
+  Inbox,
+  ListFilter,
+  Mail,
+  MessageCircle,
+  Search,
+  User,
+  Users,
+  Plus,
+  Upload,
+  CheckCircle2,
+  AlertTriangle,
+  Phone,
+  FileText,
+  ArrowUpDown,
+  ArrowUp,
+  ArrowDown,
+} from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import {
+  DropdownMenu,
+  DropdownMenuCheckboxItem,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import { Checkbox } from "@/components/ui/checkbox";
+import { Badge } from "@/components/ui/badge";
+import { Card } from "@/components/ui/card";
+import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
+import { Separator } from "@/components/ui/separator";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { Calendar } from "@/components/ui/calendar";
+import { Table, TableBody, TableCaption, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { ScrollArea } from "@/components/ui/scroll-area";
+import { Skeleton } from "@/components/ui/skeleton";
+import {
+  Pagination,
+  PaginationContent,
+  PaginationItem,
+  PaginationLink,
+  PaginationNext,
+  PaginationPrevious,
+} from "@/components/ui/pagination";
+import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
+import { useEffect } from "react";
+import { cn } from "@/lib/utils";
+
+type Priority = "low" | "medium" | "high" | "urgent";
+type Status = "open" | "resolved";
+type Channel = "email" | "chat" | "whatsapp" | "phone";
+type Category = "Inquiry" | "Request" | "Complaint";
+type CaseType = "billing" | "bug" | "request" | "inquiry" | "complaint" | "feedback";
+type CaseItem = {
+  id: string;
+  customer: { name: string; email: string; avatar?: string };
+  title: string;
+  snippet: string;
+  priority: Priority;
+  status: Status;
+  channel: Channel;
+  assignee?: { name: string; avatar?: string };
+  startedAt: string; // ISO
+  unread: number;
+  category: Category;
+  documents?: { id: string; name: string; size: string; type: string }[];
+  history?: { id: string; at: string; actor: string; action: string }[];
+};
+
+const Sidebar = ({ active = "Cases" as const }) => {
+  const items = [
+    { label: "Home", to: "/dashboard" },
+    { label: "Cases", to: "/dashboard/cases" },
+    { label: "Leads", to: "/dashboard/leads" },
+    { label: "Customers", to: "/dashboard/customers" },
+    { label: "Agents", to: "/dashboard/agents" },
+    { label: "Knowledge", to: "/dashboard/knowledge" },
+  ] as const;
+  return (
+    <aside className="hidden md:flex w-56 shrink-0 border-r border-border/70 bg-card/60 backdrop-blur-sm h-screen sticky top-0 overflow-hidden sidebar-card-chrome">
+      <div className="flex flex-col w-full p-3 gap-2">
+        <div className="px-2 py-3 text-lg font-semibold">Dashboard <span className="text-xs align-top text-muted-foreground">v0.1</span></div>
+        <nav className="mt-1 flex-1 space-y-1">
+          {items.map((it) => (
+            <Link
+              key={it.label}
+              to={it.to}
+              className={`w-full block text-left px-3 py-2 rounded-md text-sm flex items-center justify-between ${
+                it.label === active ? "bg-primary/10 text-primary" : "hover:bg-muted/60"
+              }`}
+            >
+              <span>{it.label}</span>
+            </Link>
+          ))}
+        </nav>
+        <div className="mt-auto rounded-xl p-3 bg-gradient-to-br from-primary/20 via-primary/10 to-primary/5">
+          <div className="text-sm font-semibold">Upgrade to PRO</div>
+          <div className="text-xs text-muted-foreground mb-2">Get access to all features</div>
+          <Button size="sm" className="w-full bg-gradient-primary text-white hover:opacity-90">
+            Get Pro Now!
+          </Button>
+        </div>
+        <div className="flex items-center gap-2 px-2 py-3">
+          <div className="h-8 w-8 rounded-full bg-muted" />
+          <div>
+            <div className="text-sm font-medium">Evano</div>
+            <div className="text-xs text-muted-foreground">Project Manager</div>
+          </div>
+        </div>
+      </div>
+    </aside>
+  );
+};
+
+const priorityColor = (p: Priority) => {
+  // Leads-inspired chips: light = pastel bg + colored text + light border
+  // dark = transparent bg + tinted text + stronger tinted border
+  switch (p) {
+    case "low":
+      return "bg-slate-100 text-slate-600 border border-slate-200 dark:bg-transparent dark:text-slate-300 dark:border-slate-600/70";
+    case "medium":
+      return "bg-blue-100 text-blue-600 border border-blue-200 dark:bg-transparent dark:text-blue-200 dark:border-blue-500/65";
+    case "high":
+      return "bg-amber-100 text-amber-700 border border-amber-200 dark:bg-transparent dark:text-amber-200 dark:border-amber-500/65";
+    case "urgent":
+      return "bg-rose-100 text-rose-600 border border-rose-200 dark:bg-transparent dark:text-rose-200 dark:border-rose-500/65";
+  }
+};
+
+const statusColor = (s: Status) => {
+  // Leads-inspired chips for status
+  // open = informative (blue), resolved = success (emerald)
+  switch (s) {
+    case "open":
+      return "bg-blue-100 text-blue-600 border border-blue-200 dark:bg-transparent dark:text-blue-200 dark:border-blue-500/65";
+    case "resolved":
+      return "bg-emerald-100 text-emerald-600 border border-emerald-200 dark:bg-transparent dark:text-emerald-200 dark:border-emerald-500/65";
+  }
+};
+
+
+const channelIcon = (ch: Channel) => {
+  switch (ch) {
+    case "email":
+      return Mail;
+    case "chat":
+      return MessageCircle;
+    case "whatsapp":
+      return Inbox;
+    case "phone":
+      return Phone;
+  }
+};
+
+const formatRelative = (iso: string) => {
+  const d = new Date(iso);
+  const diff = Date.now() - d.getTime();
+  const mins = Math.round(diff / 60000);
+  if (mins < 60) return `${mins}m ago`;
+  const hrs = Math.round(mins / 60);
+  if (hrs < 24) return `${hrs}h ago`;
+  const days = Math.round(hrs / 24);
+  return `${days}d ago`;
+};
+
+const deriveCaseType = (item: CaseItem | null): CaseType => {
+  if (!item) return "inquiry";
+  const text = `${item.title} ${item.snippet}`.toLowerCase();
+  if (text.includes("charge") || text.includes("billing")) return "billing";
+  if (item.category === "Complaint") return "complaint";
+  if (item.category === "Request" || text.includes("request")) return "request";
+  if (text.includes("bug") || text.includes("issue") || text.includes("error") || text.includes("trouble") || text.includes("fault")) return "bug";
+  if (text.includes("feedback") || text.includes("review")) return "feedback";
+  return "inquiry";
+};
+
+const AI_DIAGNOSES: Record<CaseType, string[]> = {
+  billing: ["Duplicate transaction on the latest invoice.", "Statement total reflects the unintended repeat charge."],
+  request: ["CSV export for analytics requested.", "Needed to share reports with stakeholders."],
+  bug: ["Integration webhook experienced timeouts.", "Event delivery intermittently failed in the affected window."],
+  complaint: ["Service outcome did not meet expectations.", "Dissatisfaction reported with the recent experience."],
+  inquiry: ["Clarification requested on a product capability.", "Information needed before proceeding."],
+  feedback: ["Constructive feedback shared on product/support.", "Captured for future improvement planning."],
+};
+
+const AI_ACTIONS_TAKEN: Record<CaseType, string[]> = {
+  billing: ["Collected invoice IDs from user", "Summarized billing history to the customer"],
+  request: ["Captured user use-case and frequency"],
+  bug: ["Guided user through workaround", "Checked rate limits and recent errors"],
+  complaint: ["Analyzed queue wait times"],
+  inquiry: ["Provided feature overview and examples"],
+  feedback: ["Tagged product team with summary"],
+};
+
+const SUGGESTED_ACTIONS: Record<CaseType, string[]> = {
+  billing: ["Verify last two invoices", "Issue refund for duplicate charge"],
+  request: ["Create product ticket and tag as feature"],
+  bug: ["Escalate to the engineering team", "Verify recent errors and logs"],
+  complaint: ["Apologize and share SLA timeline"],
+  inquiry: ["Share documentation and clarify usage"],
+  feedback: [],
+};
+
+const CASE_TIMELINE: Record<CaseType, { id: string; date: string; channel: string; text: string }[]> = {
+  billing: [
+    { id: "u1", date: "Jan 15, 10:32 AM", channel: "whatsapp", text: "Customer requested status on duplicate charge and expressed dissatisfaction; escalation requested." },
+    { id: "u2", date: "Jan 15, 11:05 AM", channel: "email", text: "Refund timeline communicated (3–5 business days); case escalated to billing for expedited review." },
+    { id: "u3", date: "Jan 16, 09:02 AM", channel: "web", text: "Customer requested daily status updates pending refund confirmation." },
+    { id: "u4", date: "Jan 17, 08:45 AM", channel: "email", text: "Refund initiated; transaction reference provided; advised to verify statement within 24–48 hours." },
+  ],
+  request: [
+    { id: "u1", date: "Jan 12, 09:20 AM", channel: "email", text: "Feature request captured and added to product backlog with initial sizing." },
+    { id: "u2", date: "Jan 12, 10:10 AM", channel: "chat", text: "Shared diagrams outlining current API constraints and suggested workaround." },
+    { id: "u3", date: "Jan 13, 02:35 PM", channel: "web", text: "Customer uploaded sample workflow document for review." },
+    { id: "u4", date: "Jan 14, 11:00 AM", channel: "email", text: "Product manager acknowledged request; timeline under evaluation." },
+  ],
+  bug: [
+    { id: "u1", date: "Jan 18, 08:15 AM", channel: "email", text: "Error logs collected and attached to engineering ticket." },
+    { id: "u2", date: "Jan 18, 09:05 AM", channel: "web", text: "Customer confirmed reproduction steps for webhook timeout." },
+    { id: "u3", date: "Jan 18, 12:20 PM", channel: "chat", text: "Engineering triaged issue; patch under development." },
+    { id: "u4", date: "Jan 19, 08:45 AM", channel: "email", text: "Fix deployed to sandbox; customer notified for validation." },
+  ],
+  complaint: [
+    { id: "u1", date: "Jan 10, 09:45 AM", channel: "phone", text: "Complaint escalated after extended wait times were reported." },
+    { id: "u2", date: "Jan 10, 10:05 AM", channel: "email", text: "Issued formal apology and shared revised SLA timeline." },
+    { id: "u3", date: "Jan 11, 03:12 PM", channel: "web", text: "Customer acknowledged update but requested weekly progress reports." },
+    { id: "u4", date: "Jan 12, 09:00 AM", channel: "email", text: "Account manager scheduled follow-up call to confirm satisfaction." },
+  ],
+  inquiry: [
+    { id: "u1", date: "Jan 08, 11:30 AM", channel: "email", text: "Sent overview deck covering requested functionality." },
+    { id: "u2", date: "Jan 08, 01:05 PM", channel: "chat", text: "Clarified pricing tiers and usage examples during live chat." },
+    { id: "u3", date: "Jan 09, 09:40 AM", channel: "web", text: "Published curated FAQ links for quick reference." },
+    { id: "u4", date: "Jan 09, 04:20 PM", channel: "email", text: "Customer confirmed understanding; awaiting internal approval." },
+  ],
+  feedback: [
+    { id: "u1", date: "Jan 05, 10:10 AM", channel: "email", text: "Feedback form submitted highlighting onboarding friction points." },
+    { id: "u2", date: "Jan 05, 12:30 PM", channel: "web", text: "Product ops tagged feedback for upcoming sprint review." },
+    { id: "u3", date: "Jan 06, 09:50 AM", channel: "email", text: "Thanked customer and shared planned improvements." },
+    { id: "u4", date: "Jan 07, 02:15 PM", channel: "chat", text: "Customer volunteered for future beta testing." },
+  ],
+};
+
+// Local seeded cases (no API)
+const seedCases: CaseItem[] = [
+  {
+    id: "C-1042",
+    customer: { name: "Sarah Johnson", email: "sarah.johnson@gmail.com", avatar: "https://api.dicebear.com/7.x/avataaars/svg?seed=Sarah" },
+
+=== src/pages/Agents.tsx ===
+import React, { useEffect } from "react";
+import { Link } from "react-router-dom";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Badge } from "@/components/ui/badge";
+import { Card } from "@/components/ui/card";
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
+import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Switch } from "@/components/ui/switch";
+import { Separator } from "@/components/ui/separator";
+import { DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator } from "@/components/ui/dropdown-menu";
+import { Pagination, PaginationContent, PaginationItem, PaginationNext, PaginationPrevious, PaginationLink } from "@/components/ui/pagination";
+import { Search, ChevronDown, EllipsisVertical, Bot, Rocket, Copy, Eye, EyeOff, Plus, X, Info, Building2 } from "lucide-react";
+import { cn } from "@/lib/utils";
+import { AGENT_ROLES, AGENT_TONES, AGENT_TRAITS, ESCALATION_OPTIONS, type AgentRole, type AgentTone, type AgentTrait, type EscalationRule, type AgentStatus } from "@/lib/agentOptions";
+
+type Agent = {
+  id: string;
+  name: string;
+  roles: AgentRole[];
+  status: AgentStatus;
+  conversations: number;
+  satisfaction: number; // 0-100
+  aht: number; // seconds
+  escalations: number;
+  updatedAt: string; // ISO
+  tone?: AgentTone;
+  traits?: AgentTrait[];
+  escalationRule?: EscalationRule;
+  knowledge?: { mode: 'all' | 'select'; collections: string[] };
+  tools?: { crm: boolean; knowledge: boolean; calendar: boolean; email: boolean };
+  crmActions?: { createCase: boolean; updateFields: boolean; addNote: boolean };
+  knowledgeSettings?: { topK: number; recencyBias: number; piiRedaction: boolean };
+  routing?: { sentimentThreshold?: number; slaRiskMinutes?: number; workingHours?: string; fallbackAssignee?: string };
+  kpis?: string[];
+  resolvedCases?: number;
+  openCases?: number;
+  responseTimeSec?: number;
+};
+
+const COMMON_KPIS = [
+  'Customer Satisfaction',
+  'First Contact Resolution',
+  'Response Time',
+  'Resolution Rate',
+  'Escalation Rate',
+  'Sales Conversion',
+  'Deflection Rate',
+  'Average Handling Time',
+]
+
+const DEFAULT_KPI_SELECTION = ['Customer Satisfaction', 'First Contact Resolution']
+
+const KNOWLEDGE_COLLECTIONS = [
+  'Product KB',
+  'Support SOPs',
+  'Security Policies',
+  'Pricing Guide',
+  'Onboarding Handbook',
+]
+
+const Sidebar = () => {
+  const items = [
+    { label: "Home", to: "/dashboard" },
+    { label: "Cases", to: "/dashboard/cases" },
+    { label: "Leads", to: "/dashboard/leads" },
+    { label: "Customers", to: "/dashboard/customers" },
+    { label: "Agents", to: "/dashboard/agents", active: true },
+    { label: "Knowledge", to: "/dashboard/knowledge" },
+  ];
+
+  return (
+    <aside className="hidden md:flex w-56 shrink-0 border-r border-border/70 bg-card/60 backdrop-blur-sm h-screen sticky top-0 overflow-hidden sidebar-card-chrome">
+      <div className="flex flex-col w-full p-3 gap-2">
+        <div className="px-2 py-3 text-lg font-semibold">
+          Dashboard <span className="text-xs align-top text-muted-foreground">v0.1</span>
+        </div>
+        <nav className="mt-1 flex-1 space-y-1">
+          {items.map((item) => (
+            <Link
+              key={item.label}
+              to={item.to}
+              className={`w-full block text-left px-3 py-2 rounded-md text-sm flex items-center justify-between ${
+                item.active ? "bg-primary/10 text-primary" : "hover:bg-muted/60"
+              }`}
+            >
+              <span>{item.label}</span>
+            </Link>
+          ))}
+        </nav>
+        <div className="mt-auto rounded-xl p-3 bg-gradient-to-br from-primary/20 via-primary/10 to-primary/5">
+          <div className="text-sm font-semibold">Upgrade to PRO</div>
+          <div className="text-xs text-muted-foreground mb-2">Get access to all features</div>
+          <Button size="sm" className="w-full bg-gradient-primary text-white hover:opacity-90">
+            Get Pro Now!
+          </Button>
+        </div>
+        <div className="flex items-center gap-2 px-2 py-3">
+          <div className="h-8 w-8 rounded-full bg-muted" />
+          <div>
+            <div className="text-sm font-medium">Evano</div>
+            <div className="text-xs text-muted-foreground">Project Manager</div>
+          </div>
+        </div>
+      </div>
+    </aside>
+  );
+};
+
+const seed: Agent[] = [
+  {
+    id: "AG-1201",
+    name: "Nancy",
+    roles: ["Support Agent"],
+    status: "Active",
+    conversations: 184,
+    satisfaction: 92,
+    aht: 68,
+    escalations: 3,
+    updatedAt: new Date(Date.now() - 1000 * 60 * 45).toISOString(),
+    tone: "Professional",
+    traits: ["Patient", "Detail-oriented"],
+    escalationRule: "Negative sentiment",
+    knowledge: { mode: 'select', collections: ['Product KB', 'Support SOPs'] },
+    tools: { crm: true, knowledge: true, calendar: false, email: false },
+    crmActions: { createCase: true, updateFields: true, addNote: true },
+    knowledgeSettings: { topK: 4, recencyBias: 30, piiRedaction: true },
+    routing: { sentimentThreshold: 30, slaRiskMinutes: 15, workingHours: 'Mon–Fri 9:00–17:00', fallbackAssignee: 'Tier 2' },
+    resolvedCases: 168,
+    openCases: 6,
+    responseTimeSec: 72,
+    kpis: [...DEFAULT_KPI_SELECTION, 'Escalation Rate'],
+  },
+  {
+    id: "AG-1202",
+    name: "Jack",
+    roles: ["Billing Assistant"],
+    status: "Inactive",
+    conversations: 44,
+    satisfaction: 88,
+    aht: 75,
+    escalations: 5,
+    updatedAt: new Date(Date.now() - 1000 * 60 * 120).toISOString(),
+    tone: "Concise",
+    traits: ["Analytical"],
+    escalationRule: "Always escalate complex",
+    knowledge: { mode: 'all', collections: [] },
+    tools: { crm: true, knowledge: true, calendar: false, email: true },
+    crmActions: { createCase: true, updateFields: false, addNote: true },
+    knowledgeSettings: { topK: 3, recencyBias: 0, piiRedaction: false },
+    routing: { sentimentThreshold: 20, slaRiskMinutes: 20, workingHours: 'Mon–Sat 10:00–18:00', fallbackAssignee: 'Finance Lead' },
+    resolvedCases: 36,
+    openCases: 8,
+    responseTimeSec: 95,
+    kpis: ['Customer Satisfaction', 'Average Handling Time'],
+  },
+  {
+    id: "AG-1203",
+    name: "Suzan",
+    roles: ["Sales Associate", "Support Agent"],
+    status: "Draft",
+    conversations: 0,
+    satisfaction: 0,
+    aht: 0,
+    escalations: 0,
+    updatedAt: new Date(Date.now() - 1000 * 60 * 60 * 24).toISOString(),
+    tone: "Friendly",
+    traits: ["Persuasive", "Proactive"],
+    escalationRule: "Never escalate",
+    knowledge: { mode: 'select', collections: ['Pricing Guide'] },
+    tools: { crm: true, knowledge: true, calendar: true, email: false },
+    crmActions: { createCase: false, updateFields: false, addNote: true },
+    knowledgeSettings: { topK: 5, recencyBias: 20, piiRedaction: false },
+    routing: { workingHours: 'Mon–Fri 8:00–16:00' },
+    resolvedCases: 0,
+    openCases: 0,
+    responseTimeSec: 0,
+    kpis: ['Sales Conversion'],
+  },
+]
+
+const formatRelative = (iso: string) => {
+  const d = new Date(iso);
+  const diff = Date.now() - d.getTime();
+  const mins = Math.round(diff / 60000);
+  if (mins < 60) return `${mins}m ago`;
+  const hrs = Math.round(mins / 60);
+  if (hrs < 24) return `${hrs}h ago`;
+  const days = Math.round(hrs / 24);
+  return `${days}d ago`;
+};
+
+const secondsToText = (sec: number) => {
+  if (!sec) return '—'
+  if (sec < 90) return `${sec}s`
+  const m = Math.floor(sec / 60)
+  const s = sec % 60
+  return `${m}m ${s}s`
+}
+
+const useDebounced = (val: string, delay = 300) => {
+  const [d, setD] = React.useState(val);
+  React.useEffect(() => { const id = setTimeout(() => setD(val), delay); return () => clearTimeout(id); }, [val, delay]);
+  return d;
+};
+
+const Agents = () => {
+  const [items, setItems] = React.useState<Agent[]>(seed);
+  const [panelOpen, setPanelOpen] = React.useState(false);
+  const [active, setActive] = React.useState<Agent | null>(null);
+  const [tab, setTab] = React.useState<string>('overview');
+  const [wizardOpen, setWizardOpen] = React.useState(false);
+  const [wizardStep, setWizardStep] = React.useState<1|2|3|4|5>(1);
+  const [wizard, setWizard] = React.useState<{ 
+    name: string;
+    roles: AgentRole[];
+    tone?: AgentTone;
+    traits: AgentTrait[];
+    tools: { crm: boolean; knowledge: boolean; calendar: boolean; email: boolean };
+    knowledge: { mode: 'all' | 'select'; collections: string[] };
+    escalationRule?: EscalationRule;
+  }>({
+    name: '', roles: [], tone: undefined, traits: [], tools: { crm: true, knowledge: true, calendar: false, email: false }, knowledge: { mode: 'select', collections: [] }, escalationRule: undefined
+  })
+  const [query, setQuery] = React.useState("");
+  const q = useDebounced(query, 300);
+  const [status, setStatus] = React.useState<AgentStatus | "All">("All");
+  const [pageSize, setPageSize] = React.useState<number>(() => Number(localStorage.getItem("agents.pageSize") || 25));
+  const [page, setPage] = React.useState(1);
+  const [isNarrow, setIsNarrow] = React.useState(false);
+  const [viewportWidth, setViewportWidth] = React.useState(() => (typeof window !== 'undefined' ? window.innerWidth : 0));
+  const [showEmbedCode, setShowEmbedCode] = React.useState(false);
+  const [customKpiInput, setCustomKpiInput] = React.useState('');
+  const panelWidth = React.useMemo(() => {
+    if (isNarrow || !viewportWidth) return undefined;
+    const sidebar = 264;
+    const gutter = 24;
+    const calculated = Math.max(viewportWidth - sidebar - gutter, 560);
+    return `${Math.min(Math.round(calculated), 1080)}px`;
+  }, [isNarrow, viewportWidth]);
+  const embedScript = React.useMemo(() => `<script src="https://cdn.pocket.ai/widget.js" data-agent="${active?.id || 'AGENT_ID'}" async></script>`, [active?.id]);
+  const selectedKpis = React.useMemo(() => active?.kpis ?? [], [active?.kpis]);
+  const customKpis = React.useMemo(() => selectedKpis.filter(label => !COMMON_KPIS.includes(label)), [selectedKpis]);
+  const knowledgeMode = React.useMemo(() => active?.knowledge?.mode ?? 'all', [active?.knowledge?.mode]);
+  const knowledgeCollections = React.useMemo(() => active?.knowledge?.collections ?? [], [active?.knowledge?.collections]);
+  const detailTabs: Array<{ value: 'overview' | 'kpis' | 'knowledge' | 'analytics'; label: string }> = React.useMemo(() => ([
+    { value: 'overview', label: 'Overview' },
+    { value: 'kpis', label: 'KPIs' },
+    { value: 'knowledge', label: 'Knowledge' },
+    { value: 'analytics', label: 'Analytics' },
+  ]), []);
+
+  const chipClasses = (active: boolean) =>
+    cn(
+      "h-8 px-3 text-xs sm:text-sm rounded-md transition-none focus-visible:ring-1 focus-visible:ring-primary/50",
+      active
+        ? "border border-primary/70 bg-primary text-primary-foreground shadow-sm"
+        : "bg-input text-foreground/80 border-0 hover:bg-input"
+
+=== src/pages/Leads.tsx ===
+import React from "react";
+import { Link } from "react-router-dom";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Badge } from "@/components/ui/badge";
+import { Card } from "@/components/ui/card";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { Separator } from "@/components/ui/separator";
+import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "@/components/ui/sheet";
+import {
+  Pagination,
+  PaginationContent,
+  PaginationItem,
+  PaginationLink,
+  PaginationNext,
+  PaginationPrevious,
+} from "@/components/ui/pagination";
+import { cn } from "@/lib/utils";
+import {
+  Building2,
+  CalendarDays,
+  ChevronDown,
+  Flame,
+  Mail,
+  MessageCircle,
+  Phone,
+  Plus,
+  Search,
+  Target,
+  Upload,
+  Users,
+} from "lucide-react";
+
+type LeadStage = "New" | "Qualified" | "Engaged" | "Negotiation" | "Closed Won";
+type LeadChannel = "email" | "call" | "chat";
+type LeadHeat = "all" | "hot" | "warm" | "cold";
+
+type LeadTimelineItem = {
+  id: string;
+  at: string;
+  actor: string;
+  summary: string;
+  channel: LeadChannel;
+  notes?: string;
+};
+
+type Lead = {
+  id: string;
+  name: string;
+  company: string;
+  stage: LeadStage;
+  owner: string;
+  ownerAvatar?: string;
+  source: string;
+  lastTouch: string;
+  score: number;
+  email: string;
+  phone?: string;
+  tags: string[];
+  value: number;
+  notes: string;
+  timeline: LeadTimelineItem[];
+  location?: string;
+  slaHours: number;
+};
+
+const leadsSeed: Lead[] = [
+  {
+    id: "LD-401",
+    name: "Amelia Stone",
+    company: "Northwind Labs",
+    stage: "Qualified",
+    owner: "Alex Rivera",
+    ownerAvatar: "https://api.dicebear.com/7.x/avataaars/svg?seed=Alex",
+    source: "Website",
+    lastTouch: new Date(Date.now() - 1000 * 60 * 60 * 5).toISOString(),
+    score: 86,
+    email: "amelia@northwindlabs.com",
+    phone: "+1 (415) 555-2234",
+    tags: ["AI Automation", "Enterprise"],
+    value: 48000,
+    notes: "Interested in AI agent rollout for tier-1 support. Needs security review next week.",
+    slaHours: 2.3,
+    timeline: [
+      {
+        id: "LD-401-t3",
+        at: new Date(Date.now() - 1000 * 60 * 45).toISOString(),
+        actor: "Nancy AI",
+        summary: "Sent tailored demo workspace recap and implementation plan.",
+        channel: "email",
+      },
+      {
+        id: "LD-401-t2",
+        at: new Date(Date.now() - 1000 * 60 * 60 * 5).toISOString(),
+        actor: "Alex Rivera",
+        summary: "Logged discovery call—focus on 24/7 onboarding coverage.",
+        channel: "call",
+      },
+      {
+        id: "LD-401-t1",
+        at: new Date(Date.now() - 1000 * 60 * 60 * 26).toISOString(),
+        actor: "Website Form",
+        summary: "Lead captured via automation playbook download.",
+        channel: "chat",
+      },
+    ],
+    location: "San Francisco, USA",
+  },
+  {
+    id: "LD-402",
+    name: "Marcus Lee",
+    company: "Helios Ventures",
+    stage: "Engaged",
+    owner: "Leena Patel",
+    ownerAvatar: "https://api.dicebear.com/7.x/avataaars/svg?seed=Leena",
+    source: "Partner referral",
+    lastTouch: new Date(Date.now() - 1000 * 60 * 90).toISOString(),
+    score: 79,
+    email: "marcus@helios.vc",
+    phone: "+1 (212) 555-8911",
+    tags: ["VC Portfolio", "Growth"],
+    value: 32000,
+    notes: "Needs ROI case study ahead of board sync. Interested in co-pilot for portfolio companies.",
+    slaHours: 1.8,
+    timeline: [
+      {
+        id: "LD-402-t2",
+        at: new Date(Date.now() - 1000 * 60 * 90).toISOString(),
+        actor: "Leena Patel",
+        summary: "Shared customer story deck tailored to venture funds.",
+        channel: "email",
+      },
+      {
+        id: "LD-402-t1",
+        at: new Date(Date.now() - 1000 * 60 * 60 * 30).toISOString(),
+        actor: "Referral",
+        summary: "Introduced by Horizon CX partners—warm lead.",
+        channel: "chat",
+      },
+    ],
+    location: "New York, USA",
+  },
+  {
+    id: "LD-403",
+    name: "Priya Nambiar",
+    company: "Skyline Retail",
+    stage: "Negotiation",
+    owner: "Alex Rivera",
+    ownerAvatar: "https://api.dicebear.com/7.x/avataaars/svg?seed=Alexandra",
+    source: "Outbound",
+    lastTouch: new Date(Date.now() - 1000 * 60 * 60 * 2).toISOString(),
+    score: 91,
+    email: "priya.nambiar@skyline.com",
+    phone: "+44 20 7946 1280",
+    tags: ["Retail", "Global"],
+    value: 78000,
+    notes: "Legal review in progress. Wants managed support handoff in EMEA.",
+    slaHours: 2.1,
+    timeline: [
+      {
+        id: "LD-403-t3",
+        at: new Date(Date.now() - 1000 * 60 * 30).toISOString(),
+        actor: "Nancy AI",
+        summary: "Provided GDPR compliance summary via automation follow-up.",
+        channel: "email",
+      },
+      {
+        id: "LD-403-t2",
+        at: new Date(Date.now() - 1000 * 60 * 60 * 2).toISOString(),
+        actor: "Alex Rivera",
+        summary: "Negotiation call—discussed 6-month pilot scope.",
+        channel: "call",
+      },
+      {
+        id: "LD-403-t1",
+        at: new Date(Date.now() - 1000 * 60 * 60 * 50).toISOString(),
+        actor: "Outbound",
+        summary: "Prospecting sequence initiated with tailored retail automation use cases.",
+        channel: "email",
+      },
+    ],
+    location: "London, UK",
+  },
+  {
+    id: "LD-404",
+    name: "Jonah Patel",
+    company: "Atlas Hardware",
+    stage: "New",
+    owner: "Maya Chen",
+    ownerAvatar: "https://api.dicebear.com/7.x/avataaars/svg?seed=Maya",
+    source: "Event: CX Summit",
+    lastTouch: new Date(Date.now() - 1000 * 60 * 60 * 60).toISOString(),
+    score: 54,
+    email: "jonah.patel@atlashw.com",
+    tags: ["Manufacturing"],
+    value: 18000,
+    notes: "Requested pricing sheet—waiting on internal approval to proceed to discovery call.",
+    slaHours: 3.4,
+    timeline: [
+      {
+        id: "LD-404-t1",
+        at: new Date(Date.now() - 1000 * 60 * 60 * 60).toISOString(),
+        actor: "Event Capture",
+        summary: "Met at CX Summit booth—scanned badge for follow-up.",
+        channel: "chat",
+      },
+    ],
+    location: "Austin, USA",
+  },
+  {
+    id: "LD-405",
+    name: "Sofia García",
+    company: "Globo Logistics",
+    stage: "Closed Won",
+    owner: "Leena Patel",
+    ownerAvatar: "https://api.dicebear.com/7.x/avataaars/svg?seed=Sofia",
+    source: "Customer referral",
+    lastTouch: new Date(Date.now() - 1000 * 60 * 60 * 4).toISOString(),
+    score: 95,
+    email: "sofia.garcia@globologistics.com",
+    phone: "+52 55 1234 9087",
+    tags: ["Logistics", "Premium"],
+    value: 92000,
+    notes: "Signed annual agreement. Implementation kickoff set for next Monday.",
+    slaHours: 1.2,
+    timeline: [
+      {
+        id: "LD-405-t3",
+        at: new Date(Date.now() - 1000 * 60 * 25).toISOString(),
+        actor: "Leena Patel",
+        summary: "Submitted onboarding checklist and assigned success manager.",
+        channel: "email",
+      },
+      {
+        id: "LD-405-t2",
+        at: new Date(Date.now() - 1000 * 60 * 60 * 4).toISOString(),
+        actor: "Sofia García",
+        summary: "Signed contract via e-sign link.",
+        channel: "chat",
+      },
+      {
+        id: "LD-405-t1",
+        at: new Date(Date.now() - 1000 * 60 * 60 * 72).toISOString(),
+        actor: "Customer Referral",
+        summary: "Referred by Globex Ops—requested automation audit.",
+        channel: "email",
+      },
+    ],
+    location: "Mexico City, MX",
+  },
+  {
+    id: "LD-406",
+
+=== src/pages/Knowledge.tsx ===
+import React from "react";
+import { Link } from "react-router-dom";
+import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
+import { Card } from "@/components/ui/card";
+import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem } from "@/components/ui/dropdown-menu";
+import { Input } from "@/components/ui/input";
+import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
+import { ScrollArea } from "@/components/ui/scroll-area";
+import { Separator } from "@/components/ui/separator";
+import { Progress } from "@/components/ui/progress";
+import { Switch } from "@/components/ui/switch";
+import { Pagination, PaginationContent, PaginationItem, PaginationLink, PaginationNext, PaginationPrevious } from "@/components/ui/pagination";
+import {
+  UploadCloud,
+  FileText,
+  FileSpreadsheet,
+  FileBarChart,
+  Database,
+  CheckCircle2,
+  AlertTriangle,
+  MoreHorizontal,
+  RefreshCw,
+  Link as LinkIcon,
+  Plug,
+  ShieldCheck,
+  Layers,
+  Clock,
+  Star,
+  HelpCircle,
+  Search,
+} from "lucide-react";
+import { cn } from "@/lib/utils";
+
+type DocumentStatus = "ready" | "processing" | "error";
+
+type KnowledgeDocument = {
+  id: string;
+  name: string;
+  type: "pdf" | "doc" | "text" | "xlsx" | "csv" | "url";
+  size: string;
+  tags: string[];
+  status: DocumentStatus;
+  progress?: number;
+  updatedAt: string;
+  source: string;
+  classification: string;
+  owner: string;
+  collections: string[];
+  summary: string;
+};
+
+type KnowledgeIntegration = {
+  id: string;
+  name: string;
+  description: string;
+  status: "connected" | "disconnected" | "beta";
+  icon: React.ReactNode;
+  lastSync?: string;
+  scope?: string;
+};
+
+type KnowledgeCollection = {
+  id: string;
+  name: string;
+  description: string;
+  documents: number;
+  lastUpdated: string;
+  visibility: "private" | "shared" | "public";
+  focus?: string;
+  owner: string;
+};
+
+const documentSeeds: KnowledgeDocument[] = [
+  {
+    id: "DOC-301",
+    name: "Support SOP Handbook",
+    type: "pdf",
+    size: "3.2 MB",
+    tags: ["SOP", "Support", "Internal"],
+    status: "ready",
+    updatedAt: "2 hours ago",
+    source: "Manual upload",
+    classification: "SOP",
+    owner: "Adham",
+    collections: ["Support SOPs", "All Access"],
+    summary:
+      "Step-by-step workflows for level 1 & level 2 support teams, including escalation policies and customer voice guidelines.",
+  },
+  {
+    id: "DOC-287",
+    name: "Product Pricing Catalog",
+    type: "xlsx",
+    size: "940 KB",
+    tags: ["Pricing", "Catalog", "Sales"],
+    status: "processing",
+    progress: 68,
+    updatedAt: "Just now",
+    source: "Google Drive",
+    classification: "Product Catalog",
+    owner: "Leena",
+    collections: ["Sales Enablement"],
+    summary:
+      "Tiered pricing matrix with regional adjustments, promotional bundles, and wholesale discounts for Q4 2024.",
+  },
+  {
+    id: "DOC-275",
+    name: "Mission & Vision Statement",
+    type: "text",
+    size: "12 KB",
+    tags: ["Culture", "Strategy"],
+    status: "ready",
+    updatedAt: "Yesterday",
+    source: "Text paste",
+    classification: "Mission & Vision",
+    owner: "CX Ops",
+    collections: ["Brand Voice", "All Access"],
+    summary:
+      "Narrative overview of company mission pillars, brand values, tone, and customer promise language for AI training.",
+  },
+  {
+    id: "DOC-268",
+    name: "Warranty & Returns Policy",
+    type: "doc",
+    size: "1.1 MB",
+    tags: ["Policy", "Legal"],
+    status: "error",
+    updatedAt: "3 days ago",
+    source: "SharePoint",
+    classification: "Warranty Policy",
+    owner: "Legal Team",
+    collections: ["Policies"],
+    summary:
+      "Warranty coverage definitions, return windows, restocking fees, and exception handling for premium customers.",
+  },
+];
+
+const integrationSeeds: KnowledgeIntegration[] = [
+  {
+    id: "int-1",
+    name: "Google Drive",
+    description: "Sync folders containing policies, playbooks, and spreadsheets.",
+    status: "connected",
+    icon: <Layers className="w-5 h-5 text-primary" />, 
+    lastSync: "14 minutes ago",
+    scope: "Customer Success › SOPs",
+  },
+  {
+    id: "int-2",
+    name: "Notion",
+    description: "Import knowledge bases, wiki pages, and product docs.",
+    status: "beta",
+    icon: <FileText className="w-5 h-5 text-primary" />, 
+    lastSync: "Awaiting first sync",
+    scope: "Team workspace › Support KB",
+  },
+  {
+    id: "int-3",
+    name: "SharePoint",
+    description: "Centralize compliance and legal templates.",
+    status: "disconnected",
+    icon: <ShieldCheck className="w-5 h-5 text-primary" />, 
+    lastSync: "Never",
+  },
+  {
+    id: "int-4",
+    name: "Custom API",
+    description: "Bring proprietary knowledge sources via JSON schema.",
+    status: "connected",
+    icon: <Plug className="w-5 h-5 text-primary" />, 
+    lastSync: "51 minutes ago",
+    scope: "Knowledge Hub API v2",
+  },
+  {
+    id: "int-5",
+    name: "Excel / CSV",
+    description: "Automate ingestion of live operational spreadsheets.",
+    status: "connected",
+    icon: <FileSpreadsheet className="w-5 h-5 text-primary" />, 
+    lastSync: "3 hours ago",
+    scope: "Orders + Returns ledger",
+  },
+  {
+    id: "int-6",
+    name: "S3 Bucket",
+    description: "Ingest archived PDF manuals and product catalogs.",
+    status: "disconnected",
+    icon: <Database className="w-5 h-5 text-primary" />, 
+    lastSync: "Never",
+  },
+];
+
+const collectionSeeds: KnowledgeCollection[] = [
+  {
+    id: "col-1",
+    name: "Support SOPs",
+    description: "Step-by-step playbooks for tiered support + escalation rules.",
+    documents: 24,
+    lastUpdated: "Updated 1 hour ago",
+    visibility: "shared",
+    owner: "Nancy AI",
+    focus: "Support & CX",
+  },
+  {
+    id: "col-2",
+    name: "Policies",
+    description: "Legal & compliance documents for all customer touch points.",
+    documents: 18,
+    lastUpdated: "Updated yesterday",
+    visibility: "private",
+    owner: "Legal Team",
+    focus: "Compliance",
+  },
+  {
+    id: "col-3",
+    name: "Sales Enablement",
+    description: "Pricing tables, objection handling, and positioning briefs.",
+    documents: 32,
+    lastUpdated: "Updated 22 minutes ago",
+    visibility: "shared",
+    owner: "Revenue Ops",
+    focus: "Growth",
+  },
+  {
+    id: "col-4",
+    name: "All Access",
+    description: "Default pool of knowledge available to all agents.",
+    documents: 56,
+    lastUpdated: "Synced 6 minutes ago",
+    visibility: "public",
+    owner: "Pocket AI",
+    focus: "Global",
+  },
+];
+
+const documentTypeLabel = (type: KnowledgeDocument["type"]) => {
+  switch (type) {
+    case "pdf":
+      return "PDF";
+    case "doc":
+      return "Doc";
+    case "text":
+      return "Text";
+    case "xlsx":
+      return "Excel";
+    case "csv":
+      return "CSV";
+    case "url":
+      return "Link";
+    default:
+      return type;
+  }
+};
+
+const statusBadgeClasses = (status: DocumentStatus) => {
+  switch (status) {
+    case "ready":
+      return "bg-emerald-500/15 text-emerald-400 border border-emerald-500/30";
+
+=== src/pages/Conversations.tsx ===
+import { Link } from "react-router-dom";
+import { Button } from "@/components/ui/button";
+
+const Sidebar = () => {
+  const items = [
+    { label: "Home", to: "/dashboard" },
+    { label: "Conversations", to: "/dashboard/conversations", active: true },
+    { label: "Leads", to: "/dashboard/leads" },
+    { label: "Customers", to: "/dashboard/customers" },
+  ];
+  return (
+    <aside className="hidden md:flex w-56 shrink-0 border-r border-border/70 bg-card/60 backdrop-blur-sm min-h-screen sticky top-0">
+      <div className="flex flex-col w-full p-3 gap-2">
+        <div className="px-2 py-3 text-lg font-semibold">Dashboard <span className="text-xs align-top text-muted-foreground">v0.1</span></div>
+        <nav className="mt-1 flex-1 space-y-1">
+          {items.map(it => (
+            <Link key={it.label} to={it.to} className={`w-full block text-left px-3 py-2 rounded-md text-sm flex items-center justify-between ${it.active ? 'bg-primary/10 text-primary' : 'hover:bg-muted/60'}`}>
+              <span>{it.label}</span>
+            </Link>
+          ))}
+        </nav>
+        <div className="mt-auto rounded-xl p-3 bg-gradient-to-br from-primary/20 via-primary/10 to-primary/5">
+          <div className="text-sm font-semibold">Upgrade to PRO</div>
+          <div className="text-xs text-muted-foreground mb-2">Get access to all features</div>
+          <Button size="sm" className="w-full bg-gradient-primary text-white hover:opacity-90">Get Pro Now!</Button>
+        </div>
+        <div className="flex items-center gap-2 px-2 py-3">
+          <div className="h-8 w-8 rounded-full bg-muted" />
+          <div>
+            <div className="text-sm font-medium">Evano</div>
+            <div className="text-xs text-muted-foreground">Project Manager</div>
+          </div>
+        </div>
+      </div>
+    </aside>
+  );
+};
+
+const Conversations = () => {
+  return (
+    <div className="min-h-screen bg-background flex">
+      <Sidebar />
+      <main className="flex-1 overflow-auto">
+        <div className="w-full px-4 md:px-6 lg:px-8 py-6">
+          <section>
+            <div className="mb-2">
+              <div className="text-xl md:text-2xl font-semibold">Conversations</div>
+            </div>
+            <p className="text-sm text-muted-foreground">This is a placeholder page for conversations.</p>
+          </section>
+        </div>
+      </main>
+    </div>
+  );
+};
+
+export default Conversations;
+
+
+
+=== src/pages/Customers.tsx ===
+import React, { useEffect } from "react";
+import type { DateRange } from "react-day-picker";
+import { Link } from "react-router-dom";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Badge } from "@/components/ui/badge";
+import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
+import { Checkbox } from "@/components/ui/checkbox";
+import { Card } from "@/components/ui/card";
+import { Separator } from "@/components/ui/separator";
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
+import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
+import { DropdownMenu, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuContent, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
+import { Pagination, PaginationContent, PaginationItem, PaginationNext, PaginationPrevious, PaginationLink } from "@/components/ui/pagination";
+import {
+  Search,
+  ChevronDown,
+  EllipsisVertical,
+  Mail,
+  MessageCircle,
+  Phone,
+  UserPlus,
+  Edit,
+  User,
+  MapPin,
+  Activity,
+  Tag,
+  AlertTriangle,
+  Bot,
+  CheckCircle2,
+  Clock,
+  Timer,
+  Flame,
+  Smile,
+  FileText,
+  Download,
+  ClipboardList,
+  Plus,
+  CalendarDays,
+  Users,
+} from "lucide-react";
+import { cn } from "@/lib/utils";
+
+type Channel = "email" | "chat" | "whatsapp" | "phone";
+type Status = "Active" | "Inactive";
+type Customer = {
+  id: string;
+  name: string;
+  email: string;
+  avatar?: string;
+  channel: Channel;
+  status: Status;
+  phone?: string;
+  address?: string;
+  conversations: number;
+  satisfaction: number; // 0-100
+  lastContact: string; // ISO
+  totalValue: number; // USD
+  owner: string;
+  vip?: boolean;
+  tags: string[];
+  joinedAt: string; // ISO
+};
+
+const Sidebar = () => {
+  const items = [
+    { label: "Home", to: "/dashboard" },
+    { label: "Cases", to: "/dashboard/cases" },
+    { label: "Leads", to: "/dashboard/leads" },
+    { label: "Customers", to: "/dashboard/customers", active: true },
+    { label: "Agents", to: "/dashboard/agents" },
+    { label: "Knowledge", to: "/dashboard/knowledge" },
+  ];
+  return (
+    <aside className="hidden md:flex w-56 shrink-0 border-r border-border/70 bg-card/60 backdrop-blur-sm h-screen sticky top-0 overflow-hidden sidebar-card-chrome">
+      <div className="flex flex-col w-full p-3 gap-2">
+        <div className="px-2 py-3 text-lg font-semibold">Dashboard <span className="text-xs align-top text-muted-foreground">v0.1</span></div>
+        <nav className="mt-1 flex-1 space-y-1">
+          {items.map(it => (
+            <Link key={it.label} to={it.to} className={`w-full block text-left px-3 py-2 rounded-md text-sm flex items-center justify-between ${it.active ? 'bg-primary/10 text-primary' : 'hover:bg-muted/60'}`}>
+              <span>{it.label}</span>
+            </Link>
+          ))}
+        </nav>
+        <div className="mt-auto rounded-xl p-3 bg-gradient-to-br from-primary/20 via-primary/10 to-primary/5">
+          <div className="text-sm font-semibold">Upgrade to PRO</div>
+          <div className="text-xs text-muted-foreground mb-2">Get access to all features</div>
+          <Button size="sm" className="w-full bg-gradient-primary text-white hover:opacity-90">Get Pro Now!</Button>
+        </div>
+        <div className="flex items-center gap-2 px-2 py-3">
+          <div className="h-8 w-8 rounded-full bg-muted" />
+          <div>
+            <div className="text-sm font-medium">Evano</div>
+            <div className="text-xs text-muted-foreground">Project Manager</div>
+          </div>
+        </div>
+      </div>
+    </aside>
+  );
+};
+
+const seed: Customer[] = [
+  {
+    id: "CU-201",
+    name: "Sarah Johnson",
+    email: "sarah.johnson@gmail.com",
+    avatar: "https://api.dicebear.com/7.x/avataaars/svg?seed=Sarah",
+    channel: "email",
+    status: "Active",
+    phone: "+1 (415) 555-2109",
+    address: "341 Market St, San Francisco, CA",
+    conversations: 8,
+    satisfaction: 92,
+    lastContact: new Date(Date.now() - 1000 * 60 * 45).toISOString(),
+    totalValue: 12400,
+    owner: "Nancy AI",
+    vip: true,
+    tags: ["VIP", "Enterprise"],
+    joinedAt: new Date(Date.now() - 1000 * 60 * 60 * 24 * 120).toISOString(),
+  },
+  {
+    id: "CU-198",
+    name: "Michael Chen",
+    email: "michael.chen@acme.com",
+    channel: "chat",
+    status: "Active",
+    phone: "+1 (312) 555-8891",
+    address: "88 Orchard Ave, Chicago, IL",
+    conversations: 5,
+    satisfaction: 88,
+    lastContact: new Date(Date.now() - 1000 * 60 * 110).toISOString(),
+    totalValue: 9400,
+    owner: "Alex Rivera",
+    tags: ["Trial"],
+    joinedAt: new Date(Date.now() - 1000 * 60 * 60 * 24 * 45).toISOString(),
+  },
+  {
+    id: "CU-190",
+    name: "Emma Rodriguez",
+    email: "emma.rodriguez@outlook.com",
+    channel: "phone",
+    status: "Inactive",
+    phone: "+44 20 7946 1200",
+    conversations: 2,
+    satisfaction: 74,
+    lastContact: new Date(Date.now() - 1000 * 60 * 60 * 26).toISOString(),
+    totalValue: 1200,
+    owner: "—",
+    tags: ["Churn-risk"],
+    joinedAt: new Date(Date.now() - 1000 * 60 * 60 * 24 * 260).toISOString(),
+  },
+  {
+    id: "CU-176",
+    name: "David Kim",
+    email: "d.kim@globex.com",
+    channel: "email",
+    status: "Active",
+    phone: "+1 (646) 555-3012",
+    address: "117 Madison Ave, New York, NY",
+    conversations: 11,
+    satisfaction: 95,
+    lastContact: new Date(Date.now() - 1000 * 60 * 60 * 2).toISOString(),
+    totalValue: 18800,
+    owner: "Nancy AI",
+    vip: true,
+    tags: ["VIP"],
+    joinedAt: new Date(Date.now() - 1000 * 60 * 60 * 24 * 365).toISOString(),
+  },
+];
+
+const formatRelative = (iso: string) => {
+  const d = new Date(iso);
+  const diff = Date.now() - d.getTime();
+  const mins = Math.round(diff / 60000);
+  if (mins < 60) return `${mins}m ago`;
+  const hrs = Math.round(mins / 60);
+  if (hrs < 24) return `${hrs}h ago`;
+  const days = Math.round(hrs / 24);
+  return `${days}d ago`;
+};
+
+const maskEmail = (email: string) => email;
+
+const useDebounced = (val: string, delay = 300) => {
+  const [d, setD] = React.useState(val);
+  React.useEffect(() => { const id = setTimeout(() => setD(val), delay); return () => clearTimeout(id); }, [val, delay]);
+  return d;
+};
+
+const StatCard = React.memo(
+  ({
+    label,
+    value,
+    delta,
+  }: {
+    label: string;
+    value: string;
+    delta?: string;
+  }) => {
+    return (
+      <Card className="border border-border/70 bg-muted/70 backdrop-blur">
+        <div className="p-5 space-y-2">
+          <span className="text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground/70">{label}</span>
+          <div className="flex items-baseline justify-between gap-2">
+            <span className="text-3xl font-semibold tracking-tight text-foreground">{value}</span>
+            {delta && <span className="text-xs font-medium text-muted-foreground">{delta}</span>}
+          </div>
+        </div>
+      </Card>
+    );
+  }
+);
+
+type CaseType = 'billing' | 'request' | 'bug' | 'inquiry' | 'complaint' | 'feedback' | 'lead';
+type CasePriority = 'low' | 'medium' | 'high';
+type CaseStatusFilter = 'needs' | 'resolved';
+type CaseTone = 'positive' | 'neutral' | 'negative' | 'frustrated';
+
+
+=== src/pages/ChatPortal.tsx ===
+import React, { useEffect, useRef, useState } from "react";
+import { Link, useNavigate, useParams } from "react-router-dom";
+import ChatHeader from "@/components/chat/ChatHeader";
+import ChatInput from "@/components/chat/ChatInput";
+import ChatMessages from "@/components/chat/ChatMessages";
+import { Message } from "@/components/chat/ChatMessage";
+import { useToast } from "@/hooks/use-toast";
+import { Button } from "@/components/ui/button";
+
+// Mock agent data - replace with API call
+const mockAgents: Record<string, { name: string; role: string; avatar: string }> = {
+  "nancy-ai": {
+    name: "Nancy AI",
+    role: "Customer Service Specialist",
+    avatar: "https://api.dicebear.com/7.x/avataaars/svg?seed=nancy",
+  },
+  "alex-sales": {
+    name: "Alex AI",
+    role: "Sales Representative",
+    avatar: "https://api.dicebear.com/7.x/avataaars/svg?seed=alex",
+  },
+  "sophia-billing": {
+    name: "Sophia AI",
+    role: "Billing Officer",
+    avatar: "https://api.dicebear.com/7.x/avataaars/svg?seed=sophia",
+  },
+};
+
+const caseTitles = [
+  "Refund request for overcharge",
+  "Integration API token expired",
+  "Cannot reset password",
+  "VIP onboarding escalation",
+  "SLA breach follow up",
+  "Bug report: analytics dashboard",
+];
+
+const Sidebar: React.FC = () => {
+  return (
+    <aside className="hidden md:flex w-56 shrink-0 border-r border-border/70 bg-card/60 backdrop-blur-sm min-h-screen sticky top-0 sidebar-card-chrome">
+      <div className="flex flex-col w-full p-3 gap-2">
+        <div className="px-2 py-3 text-lg font-semibold">Cases</div>
+        <nav className="mt-1 flex-1 space-y-1">
+          {caseTitles.map((title) => (
+            <Link
+              key={title}
+              to="#"
+              className="w-full block text-left px-3 py-2 rounded-md text-sm text-foreground hover:bg-muted/60"
+            >
+              <span className="line-clamp-1">{title}</span>
+            </Link>
+          ))}
+        </nav>
+        <div className="mt-auto flex items-center gap-2 px-2 py-3">
+          <div className="h-8 w-8 rounded-full bg-muted" />
+          <div>
+            <div className="text-sm font-medium">Evano</div>
+            <div className="text-xs text-muted-foreground">Project Manager</div>
+          </div>
+        </div>
+      </div>
+    </aside>
+  );
+};
+
+const ChatPortal: React.FC = () => {
+  const { agentId } = useParams<{ agentId: string }>();
+  const navigate = useNavigate();
+  const { toast } = useToast();
+
+  // State
+  const [messages, setMessages] = useState<Message[]>([]);
+  const [isOnline, setIsOnline] = useState(true);
+  const [isTyping, setIsTyping] = useState(false);
+  const [isLoading, setIsLoading] = useState(false);
+  const abortRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // Get agent data
+  const agent = agentId ? mockAgents[agentId] : null;
+
+  // Redirect if agent not found
+  useEffect(() => {
+    if (!agent && agentId) {
+      toast({
+        title: "Agent not found",
+        description: "The requested agent does not exist.",
+        variant: "destructive",
+      });
+      navigate("/");
+    }
+  }, [agent, agentId, navigate, toast]);
+
+  // Initialize with welcome message
+  useEffect(() => {
+    if (agent) {
+      const welcomeMessage: Message = {
+        id: "welcome",
+        content: `Hello! I'm ${agent.name}, your ${agent.role}. How can I assist you today?`,
+        sender: "agent",
+        timestamp: new Date(),
+        agentName: agent.name,
+        agentAvatar: agent.avatar,
+      };
+
+      const systemMessage: Message = {
+        id: "system-start",
+        content: "Session started",
+        sender: "system",
+        timestamp: new Date(),
+      };
+
+      setMessages([systemMessage, welcomeMessage]);
+    }
+  }, [agent]);
+
+  // Handle sending message
+  const handleSendMessage = async (content: string) => {
+    if (!agent) return;
+
+    // Add user message
+    const userMessage: Message = {
+      id: `user-${Date.now()}`,
+      content,
+      sender: "user",
+      timestamp: new Date(),
+    };
+
+    setMessages((prev) => [...prev, userMessage]);
+
+    // Simulate typing indicator
+    setIsTyping(true);
+    setIsLoading(true);
+
+    // Simulate AI response delay
+    abortRef.current = setTimeout(() => {
+      setIsTyping(false);
+
+      // Mock AI response
+      const aiResponse: Message = {
+        id: `agent-${Date.now()}`,
+        content: `Thank you for your message! I understand you said: "${content}". How can I help you further?`,
+        sender: "agent",
+        timestamp: new Date(),
+        agentName: agent.name,
+        agentAvatar: agent.avatar,
+      };
+
+      setMessages((prev) => [...prev, aiResponse]);
+      setIsLoading(false);
+      abortRef.current = null;
+    }, 1500 + Math.random() * 1000); // Random delay 1.5-2.5s
+  };
+
+  // Handle clear chat
+  const handleClearChat = () => {
+    if (!agent) return;
+
+    setMessages([
+      {
+        id: "system-cleared",
+        content: "Chat cleared",
+        sender: "system",
+        timestamp: new Date(),
+      },
+      {
+        id: "welcome-new",
+        content: `Hello again! I'm ${agent.name}. How can I help you?`,
+        sender: "agent",
+        timestamp: new Date(),
+        agentName: agent.name,
+        agentAvatar: agent.avatar,
+      },
+    ]);
+
+    toast({
+      title: "Chat cleared",
+      description: "Conversation history has been cleared.",
+    });
+  };
+
+  // Handle download transcript
+  const handleDownloadTranscript = () => {
+    const transcript = messages
+      .filter((m) => m.sender !== "system")
+      .map((m) => {
+        const time = m.timestamp.toLocaleTimeString();
+        const sender = m.sender === "agent" ? m.agentName : "You";
+        return `[${time}] ${sender}: ${m.content}`;
+      })
+      .join("\n\n");
+
+    const blob = new Blob([transcript], { type: "text/plain" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `chat-transcript-${agentId}-${Date.now()}.txt`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+
+=== src/pages/Dashboard.tsx ===
+import React from "react";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Badge } from "@/components/ui/badge";
+import { CalendarDays, ChevronDown, Search, Building2, AlertTriangle, ChevronRight, TrendingUp, Clock, Star, MessageCircle, Bot, Users, Sun, Moon } from "lucide-react";
+import { DropdownMenu, DropdownMenuCheckboxItem, DropdownMenuContent, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
+import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
+import { Card } from "@/components/ui/card";
+import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
+import { ScrollArea } from "@/components/ui/scroll-area";
+import { Separator } from "@/components/ui/separator";
+import { Link } from "react-router-dom";
+import { Skeleton } from "@/components/ui/skeleton";
+import { Alert, AlertDescription } from "@/components/ui/alert";
+import { useI18n } from "@/i18n/I18nProvider";
+import LanguageToggle from "@/components/LanguageToggle";
+import { useThemeMode } from "@/contexts/ThemeProvider";
+
+const Sidebar = () => {
+  const items = [
+    { label: "Home", to: "/dashboard", active: true },
+    { label: "Cases", to: "/dashboard/cases" },
+    { label: "Leads", to: "/dashboard/leads" },
+    { label: "Customers", to: "/dashboard/customers" },
+    { label: "Agents", to: "/dashboard/agents" },
+    { label: "Knowledge", to: "/dashboard/knowledge" },
+  ];
+  return (
+    <aside className="hidden md:flex w-56 shrink-0 border-r border-border/70 bg-card/60 backdrop-blur-sm min-h-screen sticky top-0">
+      <div className="flex flex-col w-full p-3 gap-2">
+        <div className="px-2 py-3 text-lg font-semibold">Dashboard <span className="text-xs align-top text-muted-foreground">v0.1</span></div>
+        <nav className="mt-1 flex-1 space-y-1">
+          {items.map(it => (
+            <a key={it.label} href={it.to} className={`w-full block text-left px-3 py-2 rounded-md text-sm flex items-center justify-between ${it.active ? 'bg-primary/10 text-primary' : 'hover:bg-muted/60'}`}>
+              <span>{it.label}</span>
+            </a>
+          ))}
+        </nav>
+        <div className="mt-auto rounded-xl p-3 bg-gradient-to-br from-primary/20 via-primary/10 to-primary/5">
+          <div className="text-sm font-semibold">Upgrade to PRO</div>
+          <div className="text-xs text-muted-foreground mb-2">Get access to all features</div>
+          <Button size="sm" className="w-full bg-gradient-primary text-white hover:opacity-90">Get Pro Now!</Button>
+        </div>
+        <div className="flex items-center gap-2 px-2 py-3">
+          <div className="h-8 w-8 rounded-full bg-muted" />
+          <div>
+            <div className="text-sm font-medium">Evano</div>
+            <div className="text-xs text-muted-foreground">Project Manager</div>
+          </div>
+        </div>
+      </div>
+    </aside>
+  );
+};
+
+const StatCard = ({ icon, title, value, delta, good }: { icon: React.ReactNode; title: string; value: string; delta?: string; good?: boolean; }) => (
+  <div className="flex-1 min-w-[180px] rounded-xl border border-border bg-card shadow-sm p-4">
+    <div className="flex items-center gap-3">
+      <div className="h-10 w-10 rounded-full bg-primary/10 text-primary grid place-items-center">
+        {icon}
+      </div>
+      <div>
+        <div className="text-xs text-muted-foreground">{title}</div>
+        <div className="text-xl font-semibold mt-0.5">{value}</div>
+        {delta && (
+          <div className={`text-xs mt-0.5 ${good ? 'text-emerald-600' : 'text-rose-600'}`}>{delta}</div>
+        )}
+      </div>
+    </div>
+  </div>
+);
+
+const Dashboard = () => {
+  const { t } = useI18n();
+  const [loading, setLoading] = React.useState(true);
+  const [error, setError] = React.useState<string | null>(null);
+  const { isLight, toggle } = useThemeMode();
+  React.useEffect(() => {
+    const id = setTimeout(() => setLoading(false), 400);
+    return () => clearTimeout(id);
+  }, []);
+  
+  const recentActivity = [
+    { id: '1', type: 'conversation', title: 'Sarah Johnson started a conversation', description: 'Billing inquiry - Urgent priority', timestamp: '5 minutes ago', status: 'urgent' },
+    { id: '2', type: 'agent', title: 'Nancy AI resolved 3 conversations', description: 'Average response time: 1.1s', timestamp: '1 hour ago', status: 'success' },
+    { id: '3', type: 'customer', title: 'New customer: Michael Chen', description: 'Technical integration support', timestamp: '2 hours ago', status: 'info' },
+    { id: '4', type: 'satisfaction', title: 'Emma Rodriguez rated 5 stars', description: 'Resolution: Dashboard access issue', timestamp: '3 hours ago', status: 'success' },
+  ] as const
+
+  const getActivityIcon = (type: string) => {
+    switch (type) {
+      case 'conversation':
+        return MessageCircle
+      case 'agent':
+        return Bot
+      case 'customer':
+        return Users
+      case 'satisfaction':
+        return Star
+      default:
+        return MessageCircle
+    }
+  }
+
+  const getStatusColor = (status: string) => {
+    switch (status) {
+      case 'urgent':
+        return 'bg-amber-500 text-amber-600 dark:text-amber-300'
+      case 'success':
+        return 'bg-emerald-500 text-emerald-600 dark:text-emerald-300'
+      case 'info':
+        return 'bg-primary text-primary'
+      default:
+        return 'bg-muted-foreground text-muted-foreground'
+    }
+  }
+
+  return (
+    <div className="min-h-screen bg-background flex">
+      <Sidebar />
+      <main className="flex-1 overflow-auto">
+        <div className="w-full px-4 md:px-6 lg:px-8 py-6">
+          <section>
+            <div className="mb-4">
+              <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+                <div className="text-xl md:text-2xl font-semibold">Hello Evano <span className="align-middle">👋🏻</span></div>
+                <div className="flex flex-col md:flex-row md:items-center gap-2 md:gap-3 w-full md:w-auto">
+                  {/* Org selector */}
+                  <DropdownMenu>
+                    <DropdownMenuTrigger asChild>
+                      <Button variant="secondary" className="inline-flex items-center gap-2">
+                        <Building2 className="w-4 h-4" />
+                        <span className="font-medium">Pocket AI</span>
+                        <ChevronDown className="w-4 h-4" />
+                      </Button>
+                    </DropdownMenuTrigger>
+                    <DropdownMenuContent align="start">
+                      <DropdownMenuCheckboxItem checked>Pocket AI</DropdownMenuCheckboxItem>
+                      <DropdownMenuCheckboxItem>Acme Inc</DropdownMenuCheckboxItem>
+                      <DropdownMenuCheckboxItem>Globex</DropdownMenuCheckboxItem>
+                    </DropdownMenuContent>
+                  </DropdownMenu>
+
+                  {/* Date range */}
+                  <DropdownMenu>
+                    <DropdownMenuTrigger asChild>
+                      <Button variant="secondary" className="inline-flex items-center gap-2">
+                        <CalendarDays className="w-4 h-4" />
+                        <span className="font-medium">Last 7 days</span>
+                        <ChevronDown className="w-4 h-4" />
+                      </Button>
+                    </DropdownMenuTrigger>
+                    <DropdownMenuContent align="start">
+                      <DropdownMenuCheckboxItem checked>Last 7 days</DropdownMenuCheckboxItem>
+                      <DropdownMenuCheckboxItem>Last 30 days</DropdownMenuCheckboxItem>
+                      <DropdownMenuCheckboxItem>Last 90 days</DropdownMenuCheckboxItem>
+                      <DropdownMenuCheckboxItem>Custom…</DropdownMenuCheckboxItem>
+                    </DropdownMenuContent>
+                  </DropdownMenu>
+

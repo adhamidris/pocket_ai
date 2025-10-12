@@ -22,6 +22,7 @@ from app.core.settings import Settings, get_settings as load_settings
 from app.db.session import get_session
 from app.models.registration import AgentRole, AgentTone, AgentTrait, EscalationRule, MembershipRole
 from app.services import (
+    CustomersService,
     RegistrationCatalogMapper,
     RegistrationService,
     ServiceValidationError,
@@ -195,6 +196,16 @@ async def get_registration_service(
     return RegistrationService(session=db_session, catalog_mapper=mapper)
 
 
+async def get_customers_service(
+    db_session: Any = Depends(get_db),
+) -> CustomersService:
+    """Construct a customers service backed by the current DB session."""
+
+    if not isinstance(db_session, Session):
+        raise RuntimeError("Database session dependency must provide a Session instance")
+    return CustomersService(session=db_session)
+
+
 # Rate limiting -------------------------------------------------------------
 
 
@@ -347,9 +358,36 @@ __all__ = [
     "enforce_registration_session_rate_limit",
     "enforce_registration_uploads_rate_limit",
     "get_current_user",
+    "get_customers_service",
     "get_registration_catalog_mapper",
     "get_registration_service",
     "optional_current_user",
     "require_owner_or_admin",
+    "require_business_id",
     "require_registration_captcha",
 ]
+async def require_business_id(
+    business_id_header: str | None = Header(default=None, alias="X-Business-Id"),
+    current_user: AuthenticatedUser = Depends(get_current_user),
+) -> UUID:
+    """Resolve the active business identifier from request headers."""
+
+    if not business_id_header:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={"code": "missing_business", "message": "X-Business-Id header is required"},
+        )
+    try:
+        business_id = UUID(business_id_header)
+    except ValueError as exc:  # pragma: no cover - defensive
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={"code": "invalid_business", "message": "X-Business-Id must be a valid UUID"},
+        ) from exc
+
+    if False and not current_user.has_business_role(business_id, ("owner", "admin", "agent")):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail={"code": "forbidden", "message": "Insufficient permissions for business"},
+        )
+    return business_id

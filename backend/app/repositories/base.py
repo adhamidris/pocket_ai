@@ -8,11 +8,16 @@ from datetime import datetime, timezone
 from typing import ContextManager, Iterator
 
 from sqlalchemy.exc import SQLAlchemyError
+from sqlalchemy import text
+import logging
 from sqlalchemy.orm import Session
 
 from app.repositories.errors import DbTimeoutError, RepositoryError
+from app.core.settings import get_settings
 
-STATEMENT_TIMEOUT_MS = 2000
+logger = logging.getLogger(__name__)
+
+STATEMENT_TIMEOUT_MS = get_settings().DB_STATEMENT_TIMEOUT_MS
 
 
 def utc_now() -> datetime:
@@ -50,10 +55,11 @@ def statement_timeout(session: Session, spec: StatementTimeoutSpec | None = None
     try:
         # Postgres does not allow bind params in SET/SET LOCAL; use a literal.
         # exec_driver_sql avoids SQLAlchemy parameter binding here.
-        session.connection().exec_driver_sql(
+        session.execute(text(
             f"SET LOCAL statement_timeout = '{active_spec.milliseconds}ms'"
-        )
+        ))
     except SQLAlchemyError as exc:  # pragma: no cover - defensive guard
+        logger.exception("statement-timeout: failed to apply SET LOCAL", extra={"ms": active_spec.milliseconds})
         raise DbTimeoutError("Failed to set statement timeout", details={"cause": str(exc)}) from exc
 
     try:
@@ -61,6 +67,9 @@ def statement_timeout(session: Session, spec: StatementTimeoutSpec | None = None
     except RepositoryError:
         raise
     except SQLAlchemyError as exc:  # pragma: no cover - defensive guard
+        logger.exception("repository-sqlalchemy-error", extra={"exc": str(exc), "type": type(exc).__name__})
+        if "statement timeout" in str(exc).lower():
+            raise DbTimeoutError("Query canceled by statement timeout", details={"milliseconds": active_spec.milliseconds, "cause": str(exc)}) from exc
         raise RepositoryError("Database error during repository call", details={"cause": str(exc)}) from exc
 
 

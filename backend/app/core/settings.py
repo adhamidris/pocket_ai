@@ -20,6 +20,10 @@ class Settings(BaseSettings):
         default="postgresql+psycopg://postgres:postgres@localhost:5432/pocketdb",
         description="Primary database connection string.",
     )
+    DB_STATEMENT_TIMEOUT_MS: int = Field(
+        default=8000,
+        description="Per-transaction statement timeout (milliseconds) applied in repository calls.",
+    )
     ALLOWED_ORIGINS: list[str] = Field(
         default_factory=lambda: [
             "http://localhost:3000",

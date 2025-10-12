@@ -39,7 +39,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { ApiError } from "@/services/http";
+import { ApiError, setStoredBusinessId } from "@/services/http";
 import { useIdempotency } from "@/hooks/useIdempotency";
 import {
   attachUploadLinks,
@@ -906,6 +906,12 @@ const Register = () => {
         throw new Error("Business response missing id");
       }
       setBusinessId(nextBusinessId);
+      // Persist the active business id so future API requests include X-Business-Id
+      try {
+        setStoredBusinessId(nextBusinessId);
+      } catch {
+        /* non-fatal */
+      }
       setSessionProgress(businessResponse?.session ?? null);
       toast.success("Business profile saved", {
         description: "Next, configure your AI agent.",

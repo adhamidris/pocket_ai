@@ -1,0 +1,839 @@
+=== Service calls + types from Cases.tsx ===
+
+=== Table columns + fields from Cases.tsx ===
+69:  customer: { name: string; email: string; avatar?: string };
+70:  title: string;
+71:  snippet: string;
+72:  priority: Priority;
+73:  status: Status;
+74:  channel: Channel;
+75:  assignee?: { name: string; avatar?: string };
+76:  startedAt: string; // ISO
+78:  category: Category;
+79:  documents?: { id: string; name: string; size: string; type: string }[];
+80:  history?: { id: string; at: string; actor: string; action: string }[];
+88:    { label: "Customers", to: "/dashboard/customers" },
+128:const priorityColor = (p: Priority) => {
+143:const statusColor = (s: Status) => {
+144:  // Leads-inspired chips for status
+155:const channelIcon = (ch: Channel) => {
+181:  const text = `${item.title} ${item.snippet}`.toLowerCase();
+183:  if (item.category === "Complaint") return "complaint";
+184:  if (item.category === "Request" || text.includes("request")) return "request";
+200:  billing: ["Collected invoice IDs from user", "Summarized billing history to the customer"],
+217:const CASE_TIMELINE: Record<CaseType, { id: string; date: string; channel: string; text: string }[]> = {
+219:    { id: "u1", date: "Jan 15, 10:32 AM", channel: "whatsapp", text: "Customer requested status on duplicate charge and expressed dissatisfaction; escalation requested." },
+220:    { id: "u2", date: "Jan 15, 11:05 AM", channel: "email", text: "Refund timeline communicated (3–5 business days); case escalated to billing for expedited review." },
+221:    { id: "u3", date: "Jan 16, 09:02 AM", channel: "web", text: "Customer requested daily status updates pending refund confirmation." },
+222:    { id: "u4", date: "Jan 17, 08:45 AM", channel: "email", text: "Refund initiated; transaction reference provided; advised to verify statement within 24–48 hours." },
+225:    { id: "u1", date: "Jan 12, 09:20 AM", channel: "email", text: "Feature request captured and added to product backlog with initial sizing." },
+226:    { id: "u2", date: "Jan 12, 10:10 AM", channel: "chat", text: "Shared diagrams outlining current API constraints and suggested workaround." },
+227:    { id: "u3", date: "Jan 13, 02:35 PM", channel: "web", text: "Customer uploaded sample workflow document for review." },
+228:    { id: "u4", date: "Jan 14, 11:00 AM", channel: "email", text: "Product manager acknowledged request; timeline under evaluation." },
+231:    { id: "u1", date: "Jan 18, 08:15 AM", channel: "email", text: "Error logs collected and attached to engineering ticket." },
+232:    { id: "u2", date: "Jan 18, 09:05 AM", channel: "web", text: "Customer confirmed reproduction steps for webhook timeout." },
+233:    { id: "u3", date: "Jan 18, 12:20 PM", channel: "chat", text: "Engineering triaged issue; patch under development." },
+234:    { id: "u4", date: "Jan 19, 08:45 AM", channel: "email", text: "Fix deployed to sandbox; customer notified for validation." },
+237:    { id: "u1", date: "Jan 10, 09:45 AM", channel: "phone", text: "Complaint escalated after extended wait times were reported." },
+238:    { id: "u2", date: "Jan 10, 10:05 AM", channel: "email", text: "Issued formal apology and shared revised SLA timeline." },
+239:    { id: "u3", date: "Jan 11, 03:12 PM", channel: "web", text: "Customer acknowledged update but requested weekly progress reports." },
+240:    { id: "u4", date: "Jan 12, 09:00 AM", channel: "email", text: "Account manager scheduled follow-up call to confirm satisfaction." },
+243:    { id: "u1", date: "Jan 08, 11:30 AM", channel: "email", text: "Sent overview deck covering requested functionality." },
+244:    { id: "u2", date: "Jan 08, 01:05 PM", channel: "chat", text: "Clarified pricing tiers and usage examples during live chat." },
+245:    { id: "u3", date: "Jan 09, 09:40 AM", channel: "web", text: "Published curated FAQ links for quick reference." },
+246:    { id: "u4", date: "Jan 09, 04:20 PM", channel: "email", text: "Customer confirmed understanding; awaiting internal approval." },
+249:    { id: "u1", date: "Jan 05, 10:10 AM", channel: "email", text: "Feedback form submitted highlighting onboarding friction points." },
+250:    { id: "u2", date: "Jan 05, 12:30 PM", channel: "web", text: "Product ops tagged feedback for upcoming sprint review." },
+251:    { id: "u3", date: "Jan 06, 09:50 AM", channel: "email", text: "Thanked customer and shared planned improvements." },
+252:    { id: "u4", date: "Jan 07, 02:15 PM", channel: "chat", text: "Customer volunteered for future beta testing." },
+260:    customer: { name: "Sarah Johnson", email: "sarah.johnson@gmail.com", avatar: "https://api.dicebear.com/7.x/avataaars/svg?seed=Sarah" },
+261:    title: "Billing inquiry",
+262:    snippet: "I was charged twice for last month...",
+263:    priority: "urgent",
+264:    status: "open",
+265:    channel: "email",
+266:    assignee: { name: "Nancy AI", avatar: "https://api.dicebear.com/7.x/bottts/svg?seed=Nancy" },
+267:    startedAt: new Date(Date.now() - 1000 * 60 * 35).toISOString(),
+269:    category: "Inquiry",
+270:    documents: [
+274:    history: [
+281:    customer: { name: "Michael Chen", email: "michael.chen@acme.com", avatar: "https://api.dicebear.com/7.x/avataaars/svg?seed=Michael" },
+282:    title: "Integration help",
+283:    snippet: "Having trouble with OAuth callback...",
+284:    priority: "high",
+285:    status: "open",
+286:    channel: "chat",
+287:    assignee: { name: "Alex Rivera" },
+288:    startedAt: new Date(Date.now() - 1000 * 60 * 90).toISOString(),
+290:    category: "Request",
+294:    customer: { name: "Emma Rodriguez", email: "emma.rodriguez@outlook.com" },
+295:    title: "Access issue",
+296:    snippet: "Can't access dashboard from mobile...",
+297:    priority: "medium",
+298:    status: "resolved",
+299:    channel: "phone",
+300:    assignee: { name: "Nancy AI" },
+301:    startedAt: new Date(Date.now() - 1000 * 60 * 60 * 26).toISOString(),
+303:    category: "Complaint",
+307:    customer: { name: "David Kim", email: "d.kim@globex.com" },
+308:    title: "Feature request",
+309:    snippet: "Can we get export CSV?",
+310:    priority: "low",
+311:    status: "open",
+312:    channel: "email",
+313:    assignee: { name: "—" },
+314:    startedAt: new Date(Date.now() - 1000 * 60 * 60 * 72).toISOString(),
+316:    category: "Request",
+361:  const [statusFilter, setStatusFilter] = React.useState<"all" | Status>("all");
+362:  const [categoryFilter, setCategoryFilter] = React.useState<"all" | Category>("all");
+368:    customer: true,
+369:    title: true,
+372:    priority: true,
+373:    status: true,
+374:    channel: false,
+375:    assignee: false,
+390:  const openCasesCount = React.useMemo(() => seedCases.filter((c) => c.status === "open").length, []);
+391:  const urgentCasesCount = React.useMemo(() => seedCases.filter((c) => c.priority === "urgent" && c.status === "open").length, []);
+393:    const openCases = seedCases.filter((c) => c.status === "open");
+396:    const avgMs = openCases.reduce((acc, item) => acc + (now - new Date(item.startedAt).getTime()), 0) / openCases.length;
+404:      const raw = localStorage.getItem("cases.columns");
+410:          // enforce defaults for removed/added columns
+411:          assignee: false,
+413:          channel: false,
+422:    localStorage.setItem("cases.columns", JSON.stringify(visible));
+425:  const categoryOptions: { value: "all" | Category; label: string }[] = React.useMemo(
+442:  type SortKey = 'priority' | 'status' | 'started' | null;
+451:  React.useEffect(() => setPage(1), [statusFilter, categoryFilter, debouncedQuery, dateFilter]);
+455:    if (statusFilter !== "all") {
+456:      arr = arr.filter((c) => c.status === statusFilter);
+458:    if (categoryFilter !== "all") {
+459:      arr = arr.filter((c) => c.category === categoryFilter);
+465:          c.title.toLowerCase().includes(q) ||
+466:          c.snippet.toLowerCase().includes(q) ||
+467:          c.customer.name.toLowerCase().includes(q) ||
+468:          c.customer.email.toLowerCase().includes(q)
+474:      arr = arr.filter((c) => new Date(c.startedAt).getTime() >= cutoff);
+476:    arr.sort((a, b) => new Date(b.startedAt).getTime() - new Date(a.startedAt).getTime());
+478:  }, [statusFilter, categoryFilter, debouncedQuery, dateFilter]);
+485:      return arr.sort((a, b) => (new Date(a.startedAt).getTime() - new Date(b.startedAt).getTime()) * dir);
+487:    if (sortKey === 'priority') {
+489:      return arr.sort((a, b) => (rank[a.priority] - rank[b.priority]) * dir);
+491:    if (sortKey === 'status') {
+493:      return arr.sort((a, b) => (rank[a.status] - rank[b.status]) * dir);
+528:  const ActiveIcon = ({ channel }: { channel: Channel }) => {
+529:    const Icon = channelIcon(channel);
+563:  const historyItems = CASE_TIMELINE[caseType] || [];
+592:    title,
+597:    title: string;
+604:        {title}
+686:                      {statusFilter === "all" ? "All Cases" : statusFilter === "open" ? "Open" : "Resolved"}
+700:                      {categoryOptions.find((option) => option.value === categoryFilter)?.label ?? "All types"}
+705:                    {categoryOptions.map((option) => (
+738:                      ["priority", "Priority"],
+740:                      ["title", "Case Title"],
+742:                      ["status", "Status"],
+743:                      ["customer", "Customer"],
+793:                      {visible.priority && (
+798:                            onClick={() => toggleSort('priority')}
+799:                            aria-label="Sort by priority"
+802:                            {sortKey === 'priority' ? (
+811:                      {visible.title && <TableHead className="w-[220px]">Case Title</TableHead>}
+813:                      {visible.status && (
+818:                            onClick={() => toggleSort('status')}
+819:                            aria-label="Sort by status"
+822:                            {sortKey === 'status' ? (
+830:                      {visible.customer && <TableHead className="min-w-[200px]">Customer</TableHead>}
+831:                      {visible.channel && <TableHead className="w-[120px]">Channel</TableHead>}
+858:                        {visible.priority && <TableCell><Skeleton className="h-5 w-16 rounded-full" /></TableCell>}
+860:                        {visible.title && <TableCell><Skeleton className="h-3 w-48" /></TableCell>}
+862:                        {visible.status && <TableCell><Skeleton className="h-3 w-14" /></TableCell>}
+863:                        {visible.customer && (
+874:                        {visible.channel && <TableCell><Skeleton className="h-4 w-4 rounded" /></TableCell>}
+884:                        (visible.customer ? 1 : 0) +
+885:                        (visible.title ? 1 : 0) +
+888:                        (visible.priority ? 1 : 0) +
+889:                        (visible.status ? 1 : 0) +
+890:                        (visible.channel ? 1 : 0) +
+896:                          {(categoryFilter !== "all" || debouncedQuery || dateFilter !== "all") && (
+933:                        {visible.priority && (
+935:                            <Badge className={cn("capitalize", priorityColor(item.priority))}>
+936:                              {item.priority}
+942:                            <span className="text-foreground/80 capitalize font-medium">{item.category}</span>
+945:                        {visible.title && (
+947:                            <div className="truncate font-semibold text-foreground">{item.title}</div>
+952:                            <div className="truncate text-foreground/70">{item.snippet}</div>
+955:                        {visible.status && (
+957:                            <Badge className={cn("capitalize", statusColor(item.status))}>{item.status}</Badge>
+960:                        {visible.customer && (
+964:                                {item.customer.avatar && <AvatarImage src={item.customer.avatar} />}
+965:                                <AvatarFallback>{item.customer.name.slice(0, 2).toUpperCase()}</AvatarFallback>
+968:                                <div className="text-sm font-semibold truncate text-foreground">{item.customer.name}</div>
+969:                                <div className="text-xs text-foreground/60 truncate" title={'Email hidden'}>{maskEmail(item.customer.email)}</div>
+974:                        {visible.channel && (
+978:                                <ActiveIcon channel={item.channel} />
+980:                              <span className="hidden xl:inline capitalize font-medium">{item.channel}</span>
+984:                        {visible.started && <TableCell className="text-right tabular-nums whitespace-nowrap text-foreground/70">{formatRelative(item.startedAt)}</TableCell>}
+1042:                            <Badge className={`${priorityColor(item.priority)} capitalize`}>{item.priority}</Badge>
+1043:                            <div className="text-sm font-semibold truncate">{item.title}</div>
+1045:                          <div className="text-xs text-muted-foreground truncate">{item.snippet}</div>
+1047:                            <Avatar className="h-5 w-5"><AvatarFallback>{item.customer.name.slice(0,2).toUpperCase()}</AvatarFallback></Avatar>
+1048:                            <span className="truncate">{item.customer.name}</span>
+1050:                            <span>{formatRelative(item.startedAt)}</span>
+1054:                          <div className="inline-flex items-center gap-1 text-muted-foreground"><ActiveIcon channel={item.channel} /></div>
+1101:                <SheetTitle className="sr-only">{active?.title || "Case details"}</SheetTitle>
+1106:                  <span className="font-semibold text-base sm:text-lg">{active?.title}</span>
+1107:                  <Badge className={`${active ? priorityColor(active.priority) : ''} capitalize`}>{active?.priority}</Badge>
+1108:                  {active && <Badge className={`${statusColor(active.status)} capitalize`}>{active.status}</Badge>}
+1110:                    {active && `Started ${formatRelative(active.startedAt)}`}
+1126:                    value="documents"
+1132:                    value="history"
+1150:                        <SectionBlock title="Customer" cardClassName="p-0">
+1152:                            to="/dashboard/customers"
+1154:                            aria-label="Open customer profile"
+1157:                              {active.customer.avatar && <AvatarImage src={active.customer.avatar} />}
+1158:                              <AvatarFallback>{active.customer.name.slice(0, 2).toUpperCase()}</AvatarFallback>
+1161:                              <div className="text-sm font-semibold">{active.customer.name}</div>
+1162:                              <div className="text-xs text-muted-foreground">{maskEmail(active.customer.email)}</div>
+1170:                            { title: "AI Diagnoses", lines: diagnoses, empty: "No diagnoses available." },
+1171:                            { title: "AI Actions Taken", lines: aiActions, empty: "No AI actions recorded." },
+1172:                            { title: "Suggested Actions", lines: suggestedActions, empty: "No pending actions." },
+1174:                            <SectionBlock key={section.title} title={section.title} cardClassName="space-y-2">
+1177:                                  <div key={`${section.title}-${lineIdx}`} className="text-sm leading-snug text-foreground">
+1192:                <TabsContent value="documents" className="flex flex-1 min-h-0">
+1196:                        <SectionBlock title="Documents" cardClassName="space-y-3">
+1198:                            <div className="text-sm text-muted-foreground">No documents attached.</div>
+1225:                      <div className="flex h-full items-center justify-center text-sm text-muted-foreground">Select a case to view documents.</div>
+1230:                <TabsContent value="history" className="flex flex-1 min-h-0">
+1234:                        <SectionBlock title="Case Updates" cardClassName="space-y-3">
+1235:                          {historyItems.length === 0 ? (
+1236:                            <div className="text-sm text-muted-foreground">No history entries.</div>
+1238:                            historyItems.map((item, idx) => {
+1239:                              const isLast = idx === historyItems.length - 1;
+1254:                      <div className="flex h-full items-center justify-center text-sm text-muted-foreground">Select a case to view history.</div>
+1263:                        <SectionBlock title="Chat Transcript" cardClassName="space-y-3">
+
+=== Service calls + types from Agents.tsx ===
+17:import { AGENT_ROLES, AGENT_TONES, AGENT_TRAITS, ESCALATION_OPTIONS, type AgentRole, type AgentTone, type AgentTrait, type EscalationRule, type AgentStatus } from "@/lib/agentOptions";
+19:type Agent = {
+22:  roles: AgentRole[];
+23:  status: AgentStatus;
+27:  escalations: number;
+29:  tone?: AgentTone;
+30:  traits?: AgentTrait[];
+31:  escalationRule?: EscalationRule;
+70:    { label: "Agents", to: "/dashboard/agents", active: true },
+112:const seed: Agent[] = [
+116:    roles: ["Support Agent"],
+121:    escalations: 3,
+123:    tone: "Professional",
+124:    traits: ["Patient", "Detail-oriented"],
+125:    escalationRule: "Negative sentiment",
+139:    roles: ["Billing Assistant"],
+144:    escalations: 5,
+146:    tone: "Concise",
+147:    traits: ["Analytical"],
+148:    escalationRule: "Always escalate complex",
+162:    roles: ["Sales Associate", "Support Agent"],
+167:    escalations: 0,
+169:    tone: "Friendly",
+170:    traits: ["Persuasive", "Proactive"],
+171:    escalationRule: "Never escalate",
+209:const Agents = () => {
+210:  const [items, setItems] = React.useState<Agent[]>(seed);
+212:  const [active, setActive] = React.useState<Agent | null>(null);
+218:    roles: AgentRole[];
+219:    tone?: AgentTone;
+220:    traits: AgentTrait[];
+223:    escalationRule?: EscalationRule;
+225:    name: '', roles: [], tone: undefined, traits: [], tools: { crm: true, knowledge: true, calendar: false, email: false }, knowledge: { mode: 'select', collections: [] }, escalationRule: undefined
+229:  const [status, setStatus] = React.useState<AgentStatus | "All">("All");
+297:        i.roles.join(" ").toLowerCase().includes(needle)
+310:  const openPanel = (it: Agent) => { setActive(it); setPanelOpen(true); };
+311:  const setStatusForIds = (ids: string[], s: AgentStatus) => setItems(prev => prev.map(i => ids.includes(i.id) ? { ...i, status: s, updatedAt: new Date().toISOString() } : i))
+313:  const updateActive = (patch: Partial<Agent>) => {
+319:  const duplicateAgent = (it: Agent) => {
+321:    const copy: Agent = { ...it, id, name: `${it.name} Copy`, status: 'Draft', conversations: 0, satisfaction: 0, aht: 0, escalations: 0, updatedAt: new Date().toISOString() }
+372:      : Math.max(0, (active.conversations ?? 0) - (active.openCases ?? active.escalations ?? 0))
+377:      : active.escalations ?? 0
+410:  const startWizard = () => { setWizardOpen(true); setWizardStep(1); setWizard({ name: '', roles: [], tone: undefined, traits: [], tools: { crm: true, knowledge: true, calendar: false, email: false }, knowledge: { mode: 'select', collections: [] }, escalationRule: undefined }) }
+414:    const newAgent: Agent = {
+416:      name: wizard.name.trim() || 'New Agent',
+417:      roles: wizard.roles.length ? wizard.roles : ['Support Agent'],
+422:      escalations: 0,
+424:      tone: wizard.tone,
+425:      traits: wizard.traits,
+426:      escalationRule: wizard.escalationRule,
+433:    setItems(prev => [newAgent, ...prev])
+435:    setActive(newAgent); setPanelOpen(true)
+445:            <div className="text-xl md:text-2xl font-semibold text-gradient-hero">Agents</div>
+447:              <Button className="gap-2" onClick={startWizard}><Bot className="w-4 h-4" /> Create Agent</Button>
+462:                    placeholder="Search name, ID, role…"
+523:                        {it.roles.map((r) => (
+566:                    <TableCell className="text-right text-foreground/70 tabular-nums">{it.escalations}</TableCell>
+577:                          <DropdownMenuItem onClick={() => duplicateAgent(it)}>Duplicate</DropdownMenuItem>
+629:      {/* Right Side Panel: Agent Detail */}
+689:                      <div className="text-sm font-semibold text-card-foreground">Agent basics</div>
+695:                        <div className="flex flex-wrap gap-2">{active?.roles.map(r => <Badge key={r} variant="secondary">{r}</Badge>)}</div>
+701:                            {active?.tone ? (
+702:                              <Badge variant="secondary">{active.tone}</Badge>
+711:                            {active?.traits?.length ? active.traits.map(t => <Badge key={t} variant="secondary">{t}</Badge>) : <div className="text-sm">Not configured.</div>}
+718:                          {active?.escalationRule ? (
+719:                            <Badge variant="secondary">{active.escalationRule}</Badge>
+730:                      <Button size="sm" variant="outline" onClick={() => active && duplicateAgent(active)}>Duplicate</Button>
+1000:      {/* Create Agent Wizard */}
+1006:                <DialogTitle>Create Agent</DialogTitle>
+1021:                      <div className="mb-2 text-xs text-muted-foreground">Agent Name</div>
+1034:                          const active = wizard.tone === tn;
+1041:                              onClick={() => setWizard(w => ({ ...w, tone: tn }))}
+1054:                      const selected = wizard.roles.includes(r);
+1061:                          onClick={() => setWizard(w => ({ ...w, roles: selected ? w.roles.filter(x => x !== r) : [...w.roles, r] }))}
+1072:                      const selected = wizard.traits.includes(tr);
+1079:                          onClick={() => setWizard(w => ({ ...w, traits: selected ? w.traits.filter(x => x !== tr) : [...w.traits, tr] }))}
+1200:                      const active = wizard.escalationRule === opt;
+1207:                          onClick={() => setWizard(w => ({ ...w, escalationRule: opt }))}
+1237:                      <div>{wizard.roles.length ? wizard.roles.join(' • ') : '—'}</div>
+1241:                      <div>{wizard.tone || '—'}</div>
+1245:                      <div>{wizard.traits.length ? wizard.traits.join(', ') : '—'}</div>
+1270:                      <div>{wizard.escalationRule || '—'}</div>
+1285:                  <Button onClick={() => setWizardStep((wizardStep+1) as any)} disabled={(wizardStep === 1 && (!wizard.name.trim() || wizard.roles.length === 0))}>Next</Button>
+1302:export default Agents;
+
+=== Table columns + fields from Agents.tsx ===
+21:  name: string;
+22:  roles: AgentRole[];
+23:  status: AgentStatus;
+29:  tone?: AgentTone;
+30:  traits?: AgentTrait[];
+36:  routing?: { sentimentThreshold?: number; slaRiskMinutes?: number; workingHours?: string; fallbackAssignee?: string };
+115:    name: "Nancy",
+116:    roles: ["Support Agent"],
+117:    status: "Active",
+123:    tone: "Professional",
+124:    traits: ["Patient", "Detail-oriented"],
+130:    routing: { sentimentThreshold: 30, slaRiskMinutes: 15, workingHours: 'Mon–Fri 9:00–17:00', fallbackAssignee: 'Tier 2' },
+138:    name: "Jack",
+139:    roles: ["Billing Assistant"],
+140:    status: "Inactive",
+146:    tone: "Concise",
+147:    traits: ["Analytical"],
+153:    routing: { sentimentThreshold: 20, slaRiskMinutes: 20, workingHours: 'Mon–Sat 10:00–18:00', fallbackAssignee: 'Finance Lead' },
+161:    name: "Suzan",
+162:    roles: ["Sales Associate", "Support Agent"],
+163:    status: "Draft",
+169:    tone: "Friendly",
+170:    traits: ["Persuasive", "Proactive"],
+217:    name: string;
+218:    roles: AgentRole[];
+219:    tone?: AgentTone;
+220:    traits: AgentTrait[];
+225:    name: '', roles: [], tone: undefined, traits: [], tools: { crm: true, knowledge: true, calendar: false, email: false }, knowledge: { mode: 'select', collections: [] }, escalationRule: undefined
+229:  const [status, setStatus] = React.useState<AgentStatus | "All">("All");
+291:    if (status !== "All") arr = arr.filter((i) => i.status === status);
+295:        i.name.toLowerCase().includes(needle) ||
+297:        i.roles.join(" ").toLowerCase().includes(needle)
+303:  }, [items, status, q]);
+305:  React.useEffect(() => setPage(1), [status, q, pageSize]);
+311:  const setStatusForIds = (ids: string[], s: AgentStatus) => setItems(prev => prev.map(i => ids.includes(i.id) ? { ...i, status: s, updatedAt: new Date().toISOString() } : i))
+321:    const copy: Agent = { ...it, id, name: `${it.name} Copy`, status: 'Draft', conversations: 0, satisfaction: 0, aht: 0, escalations: 0, updatedAt: new Date().toISOString() }
+410:  const startWizard = () => { setWizardOpen(true); setWizardStep(1); setWizard({ name: '', roles: [], tone: undefined, traits: [], tools: { crm: true, knowledge: true, calendar: false, email: false }, knowledge: { mode: 'select', collections: [] }, escalationRule: undefined }) }
+416:      name: wizard.name.trim() || 'New Agent',
+417:      roles: wizard.roles.length ? wizard.roles : ['Support Agent'],
+418:      status: publish ? 'Active' : 'Draft',
+424:      tone: wizard.tone,
+425:      traits: wizard.traits,
+458:                  <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
+462:                    placeholder="Search name, ID, role…"
+473:                        {status === 'All' ? 'All statuses' : status}
+478:                      <DropdownMenuItem onClick={() => setStatus('All')}>All statuses</DropdownMenuItem>
+491:          <Card className="relative border border-border/70 bg-card shadow-lg shadow-black/5 backdrop-blur hover:border-primary/35 transition-colors dark:border-slate-700/50 dark:bg-slate-800/70 dark:shadow-black/25 mt-3">
+517:                        <div className="font-semibold text-foreground">{it.name}</div>
+523:                        {it.roles.map((r) => (
+535:                          it.status === 'Active'
+537:                            : it.status === 'Draft'
+539:                              : 'bg-slate-100 text-slate-600 border border-slate-200 dark:bg-transparent dark:text-slate-300 dark:border-slate-600/70'
+542:                        {it.status}
+578:                          {it.status !== 'Active' && (
+583:                          {it.status === 'Active' && (
+644:                      <span className="text-lg font-semibold leading-none">{active?.name}</span>
+645:                      {active?.status && (
+647:                          active.status === 'Active'
+649:                            : active.status === 'Draft'
+655:                              active.status === 'Active'
+657:                                : active.status === 'Draft'
+662:                          {active.status}
+695:                        <div className="flex flex-wrap gap-2">{active?.roles.map(r => <Badge key={r} variant="secondary">{r}</Badge>)}</div>
+701:                            {active?.tone ? (
+702:                              <Badge variant="secondary">{active.tone}</Badge>
+711:                            {active?.traits?.length ? active.traits.map(t => <Badge key={t} variant="secondary">{t}</Badge>) : <div className="text-sm">Not configured.</div>}
+731:                      {active?.status !== 'Active' && <Button size="sm" onClick={() => { if (!active) return; setStatusForIds([active.id], 'Active') }}>Activate</Button>}
+732:                      {active?.status === 'Active' && <Button size="sm" variant="outline" onClick={() => { if (!active) return; setStatusForIds([active.id], 'Inactive') }}>Deactivate</Button>}
+744:                          <Input readOnly value={`https://pocket.ai/yourbusiness/${(active?.name || '').toLowerCase().replace(/[^a-z0-9\s-]/g,'').trim().replace(/\s+/g,'-') || 'agent'}`} />
+749:                            onClick={() => navigator.clipboard?.writeText(`https://pocket.ai/yourbusiness/${(active?.name || '').toLowerCase().replace(/[^a-z0-9\s-]/g,'').trim().replace(/\s+/g,'-') || 'agent'}`)}
+1023:                        value={wizard.name}
+1024:                        onChange={(e) => setWizard(w => ({ ...w, name: e.target.value }))}
+1034:                          const active = wizard.tone === tn;
+1041:                              onClick={() => setWizard(w => ({ ...w, tone: tn }))}
+1054:                      const selected = wizard.roles.includes(r);
+1061:                          onClick={() => setWizard(w => ({ ...w, roles: selected ? w.roles.filter(x => x !== r) : [...w.roles, r] }))}
+1072:                      const selected = wizard.traits.includes(tr);
+1079:                          onClick={() => setWizard(w => ({ ...w, traits: selected ? w.traits.filter(x => x !== tr) : [...w.traits, tr] }))}
+1233:                      <div className="font-semibold">{wizard.name || '—'}</div>
+1237:                      <div>{wizard.roles.length ? wizard.roles.join(' • ') : '—'}</div>
+1241:                      <div>{wizard.tone || '—'}</div>
+1245:                      <div>{wizard.traits.length ? wizard.traits.join(', ') : '—'}</div>
+1285:                  <Button onClick={() => setWizardStep((wizardStep+1) as any)} disabled={(wizardStep === 1 && (!wizard.name.trim() || wizard.roles.length === 0))}>Next</Button>
+
+=== Service calls + types from Leads.tsx ===
+42:type LeadStage = "New" | "Qualified" | "Engaged" | "Negotiation" | "Closed Won";
+43:type LeadChannel = "email" | "call" | "chat";
+44:type LeadHeat = "all" | "hot" | "warm" | "cold";
+46:type LeadTimelineItem = {
+51:  channel: LeadChannel;
+55:type Lead = {
+59:  stage: LeadStage;
+70:  timeline: LeadTimelineItem[];
+75:const leadsSeed: Lead[] = [
+111:        summary: "Lead captured via automation playbook download.",
+295:const stageStyles: Record<LeadStage, string> = {
+311:    { label: "Leads", to: "/dashboard/leads", active: true },
+380:const heatOptions: { label: string; value: LeadHeat; icon?: React.ReactNode }[] = [
+400:const getChannelIcon = (channel: LeadChannel) => {
+422:const Leads = () => {
+423:  const [leads] = React.useState<Lead[]>(leadsSeed);
+425:  const [stageFilter, setStageFilter] = React.useState<LeadStage | "all">("all");
+428:  const [heat, setHeat] = React.useState<LeadHeat>("all");
+429:  const [selectedLead, setSelectedLead] = React.useState<Lead | null>(null);
+438:  const filteredLeads = React.useMemo(() => {
+468:  const pageCount = React.useMemo(() => Math.max(1, Math.ceil(filteredLeads.length / pageSize)), [filteredLeads.length, pageSize]);
+469:  const pageItems = React.useMemo(() => filteredLeads.slice((page - 1) * pageSize, page * pageSize), [filteredLeads, page, pageSize]);
+479:  const openLeads = React.useMemo(() => leads.filter((lead) => lead.stage !== "Closed Won"), [leads]);
+482:    if (!openLeads.length) return "—";
+484:      openLeads.reduce((acc, lead) => acc + lead.slaHours, 0) / openLeads.length;
+486:  }, [openLeads]);
+491:    const totals: Record<LeadStage, number> = {
+502:    return (Object.keys(totals) as LeadStage[]).map((stage) => ({
+511:  const handleOpenLead = (lead: Lead) => {
+512:    setSelectedLead(lead);
+524:                <div className="text-xl md:text-2xl font-semibold tracking-tight text-gradient-hero">Leads</div>
+529:                  New Lead
+551:              <StatCard label="Open leads" value={`${openLeads.length}`} delta="Up 18% vs last week" />
+629:                  {filteredLeads.length === 0 ? (
+653:                                <TableHead className="w-[180px]">Lead</TableHead>
+666:                                  onClick={() => handleOpenLead(lead)}
+735:                              <Button size="sm" variant="outline" className="w-full" onClick={() => handleOpenLead(lead)}>
+774:          {selectedLead ? (
+778:                  <span>{selectedLead.name}</span>
+779:                  <span className="text-sm text-muted-foreground">{selectedLead.company}</span>
+782:                  {selectedLead.tags.join(" • ")} · {selectedLead.email}
+787:                <Badge variant="outline" className={cn("text-xs", stageStyles[selectedLead.stage])}>{selectedLead.stage}</Badge>
+789:                  Score {selectedLead.score}
+792:                  {formatRelative(selectedLead.lastTouch)}
+801:                      {selectedLead.ownerAvatar ? (
+803:                          <AvatarImage src={selectedLead.ownerAvatar} alt={selectedLead.owner} />
+804:                          <AvatarFallback>{selectedLead.owner.slice(0, 2)}</AvatarFallback>
+807:                      <span className="font-medium text-foreground">{selectedLead.owner}</span>
+812:                    <span className="font-medium">{formatCurrency(selectedLead.value)}</span>
+814:                  {selectedLead.location ? (
+817:                      <span className="font-medium">{selectedLead.location}</span>
+846:                    {selectedLead.notes}
+855:                    {selectedLead.timeline.map((entry, index) => {
+874:                          {index < selectedLead.timeline.length - 1 && <Separator />}
+893:export default Leads;
+
+=== Table columns + fields from Leads.tsx ===
+43:type LeadChannel = "email" | "call" | "chat";
+59:  stage: LeadStage;
+62:  source: string;
+64:  score: number;
+65:  email: string;
+66:  phone?: string;
+80:    stage: "Qualified",
+83:    source: "Website",
+85:    score: 86,
+86:    email: "amelia@northwindlabs.com",
+87:    phone: "+1 (415) 555-2234",
+98:        channel: "email",
+121:    stage: "Engaged",
+124:    source: "Partner referral",
+126:    score: 79,
+127:    email: "marcus@helios.vc",
+128:    phone: "+1 (212) 555-8911",
+138:        summary: "Shared customer story deck tailored to venture funds.",
+139:        channel: "email",
+155:    stage: "Negotiation",
+158:    source: "Outbound",
+160:    score: 91,
+161:    email: "priya.nambiar@skyline.com",
+162:    phone: "+44 20 7946 1280",
+173:        channel: "email",
+187:        channel: "email",
+196:    stage: "New",
+199:    source: "Event: CX Summit",
+201:    score: 54,
+202:    email: "jonah.patel@atlashw.com",
+222:    stage: "Closed Won",
+225:    source: "Customer referral",
+227:    score: 95,
+228:    email: "sofia.garcia@globologistics.com",
+229:    phone: "+52 55 1234 9087",
+240:        channel: "email",
+254:        channel: "email",
+263:    stage: "Engaged",
+266:    source: "Outbound",
+268:    score: 68,
+269:    email: "noah.becker@crescenthealth.org",
+270:    phone: "+1 (646) 555-9034",
+281:        channel: "email",
+295:const stageStyles: Record<LeadStage, string> = {
+312:    { label: "Customers", to: "/dashboard/customers" },
+402:    case "email":
+413:const scoreTone = (score: number) => {
+414:  if (score >= 80) return "text-primary";
+415:  if (score >= 60) return "text-amber-600 dark:text-amber-300";
+425:  const [stageFilter, setStageFilter] = React.useState<LeadStage | "all">("all");
+433:  const stages = React.useMemo(() => Array.from(new Set(leads.map((lead) => lead.stage))), [leads]);
+444:        if (stageFilter !== "all" && lead.stage !== stageFilter) return false;
+456:            return lead.score >= 80;
+458:            return lead.score >= 60 && lead.score < 80;
+460:            return lead.score < 60;
+465:      .sort((a, b) => b.score - a.score);
+466:  }, [heat, leads, ownerFilter, rangeFilter, search, stageFilter]);
+473:  }, [search, stageFilter, ownerFilter, rangeFilter, heat]);
+479:  const openLeads = React.useMemo(() => leads.filter((lead) => lead.stage !== "Closed Won"), [leads]);
+480:  const hotCount = React.useMemo(() => leads.filter((lead) => lead.score >= 80 && lead.stage !== "Closed Won").length, [leads]);
+499:      totals[lead.stage] += 1;
+502:    return (Object.keys(totals) as LeadStage[]).map((stage) => ({
+503:      stage,
+504:      value: totals[stage],
+505:      percentage: Math.round((totals[stage] / total) * 100),
+573:                      {stageFilter === "all" ? "All stages" : stageFilter}
+578:                    <DropdownMenuItem onClick={() => setStageFilter("all")}>All stages</DropdownMenuItem>
+580:                    {stages.map((stage) => (
+581:                      <DropdownMenuItem key={stage} onClick={() => setStageFilter(stage)}>
+582:                        {stage}
+634:                        Adjust filters or sync more sources to discover opportunities ready for nurture.
+672:                                      <span className="text-xs text-muted-foreground">{lead.email}</span>
+677:                                    <Badge variant="outline" className={cn("text-xs", stageStyles[lead.stage])}>{lead.stage}</Badge>
+690:                                  <TableCell className="text-sm text-muted-foreground">{lead.source}</TableCell>
+693:                                    <span className={cn("text-sm font-semibold", scoreTone(lead.score))}>{lead.score}</span>
+707:                              lead.score >= 80 && "border-primary/40"
+716:                                <Badge variant="outline" className={cn("text-[10px]", stageStyles[lead.stage])}>{lead.stage}</Badge>
+721:                                <span>{lead.source}</span>
+733:                                <div className={cn("text-sm font-semibold", scoreTone(lead.score))}>{lead.score}</div>
+782:                  {selectedLead.tags.join(" • ")} · {selectedLead.email}
+787:                <Badge variant="outline" className={cn("text-xs", stageStyles[selectedLead.stage])}>{selectedLead.stage}</Badge>
+789:                  Score {selectedLead.score}
+826:                  Send email
+
+=== Service calls + types from Knowledge.tsx ===
+39:type KnowledgeDocument = {
+55:type KnowledgeIntegration = {
+65:type KnowledgeCollection = {
+76:const documentSeeds: KnowledgeDocument[] = [
+85:    source: "Manual upload",
+140:const integrationSeeds: KnowledgeIntegration[] = [
+174:    scope: "Knowledge Hub API v2",
+195:const collectionSeeds: KnowledgeCollection[] = [
+238:const documentTypeLabel = (type: KnowledgeDocument["type"]) => {
+277:    { label: "Knowledge", to: "/dashboard/knowledge", active: true },
+334:const Knowledge = () => {
+336:  const [documents] = React.useState<KnowledgeDocument[]>(documentSeeds);
+337:  const [integrations] = React.useState<KnowledgeIntegration[]>(integrationSeeds);
+338:  const [collections] = React.useState<KnowledgeCollection[]>(collectionSeeds);
+340:  const [activeDoc, setActiveDoc] = React.useState<KnowledgeDocument | null>(documentSeeds[0] || null);
+372:  const openDocument = (doc: KnowledgeDocument) => {
+385:            <div className="text-xl md:text-2xl font-semibold text-gradient-hero">Knowledge</div>
+798:export default Knowledge;
+
+=== Table columns + fields from Knowledge.tsx ===
+43:  size: string;
+45:  status: DocumentStatus;
+59:  status: "connected" | "disconnected" | "beta";
+81:    size: "3.2 MB",
+83:    status: "ready",
+96:    size: "940 KB",
+98:    status: "processing",
+112:    size: "12 KB",
+114:    status: "ready",
+121:      "Narrative overview of company mission pillars, brand values, tone, and customer promise language for AI training.",
+127:    size: "1.1 MB",
+129:    status: "error",
+145:    status: "connected",
+154:    status: "beta",
+163:    status: "disconnected",
+171:    status: "connected",
+180:    status: "connected",
+189:    status: "disconnected",
+257:const statusBadgeClasses = (status: DocumentStatus) => {
+258:  switch (status) {
+303:          <Button size="sm" className="w-full bg-gradient-primary text-white hover:opacity-90">
+445:                    <Button variant="outline" size="sm" className="gap-2">
+448:                    <Button variant="outline" size="sm" className="gap-1">
+461:                    <Button size="sm">Sort by activity</Button>
+462:                    <Button size="sm">New collection</Button>
+487:                            <Button size="sm" variant="secondary" className="gap-2">
+490:                            <Button size="sm" variant="secondary" className="gap-2">
+556:                                  <span className={cn("inline-flex w-fit items-center gap-1 rounded-full px-2 py-0.5 text-xs font-semibold", statusBadgeClasses(doc.status))}>
+557:                                    {doc.status === "ready" && <CheckCircle2 className="w-3 h-3" />}
+558:                                    {doc.status === "processing" && <RefreshCw className="w-3 h-3 animate-spin" />}
+559:                                    {doc.status === "error" && <AlertTriangle className="w-3 h-3" />}
+560:                                    <span className="capitalize">{doc.status}</span>
+562:                                  {doc.status === "error" && (
+569:                                <div className="text-xs text-muted-foreground">{doc.size}</div>
+631:                  <Card key={integration.id} className={cn("border border-border/60 bg-card/70 p-4 flex flex-col gap-4", integration.status === "disconnected" && "border-dashed border-primary/40")}
+641:                            {integration.status}
+657:                      <Button size="sm" variant="outline" className="gap-2">
+658:                        {integration.status === "connected" ? <RefreshCw className="w-4 h-4" /> : <Plug className="w-4 h-4" />}
+659:                        {integration.status === "connected" ? "Sync now" : "Connect"}
+661:                      <Button size="sm" variant="ghost" className="text-xs">
+709:                      <Button size="sm" className="gap-2">
+712:                      <Button size="sm" variant="outline">Add documents</Button>
+739:                  <Badge variant="outline">{activeDoc.size}</Badge>
+770:                    <span className={cn("inline-flex items-center gap-1 rounded-full px-2 py-1 font-medium", statusBadgeClasses(activeDoc.status))}>
+771:                      {activeDoc.status === "ready" && <CheckCircle2 className="w-3 h-3" />}
+772:                      {activeDoc.status === "processing" && <RefreshCw className="w-3 h-3 animate-spin" />}
+773:                      {activeDoc.status === "error" && <AlertTriangle className="w-3 h-3" />}
+774:                      <span className="capitalize">{activeDoc.status}</span>
+
+=== Service calls + types from Customers.tsx ===
+48:type Customer = {
+72:    { label: "Customers", to: "/dashboard/customers", active: true },
+104:const seed: Customer[] = [
+264:    description: 'Customer reports being charged twice on the same invoice and requests a refund.',
+312:    description: 'Customer evaluates plan tiers and needs guidance on the best fit for usage.',
+324:    description: 'Customer asks for early access to the Slack integration to streamline alerts.',
+378:    description: 'Customer dissatisfaction due to perceived delays in support response times.',
+390:  { id: 'u1', date: 'Jan 15, 10:32 AM', channel: 'whatsapp', text: 'Customer requested status on duplicate charge and expressed dissatisfaction; escalation requested.' },
+392:  { id: 'u3', date: 'Jan 16, 09:02 AM', channel: 'web', text: 'Customer requested daily status updates pending refund confirmation.' },
+412:    description: 'Customer initiated support chat about billing inquiry',
+419:    description: 'Customer prefers email communication over phone calls',
+472:const formatCustomerId = (id: string) => {
+566:type CustomerTab = 'overview' | 'cases' | 'activity' | 'notes';
+568:const Customers = () => {
+569:  const [items, setItems] = React.useState<Customer[]>(seed);
+571:  const [active, setActive] = React.useState<Customer | null>(null);
+572:  const [tab, setTab] = React.useState<CustomerTab>('overview');
+668:  const formattedCustomerId = React.useMemo(() => (active ? formatCustomerId(active.id) : '—'), [active]);
+689:  const openPanel = (it: Customer) => { setActive(it); setPanelOpen(true); };
+698:            <div className="text-xl md:text-2xl font-semibold text-gradient-hero">Customers</div>
+702:                    <Button className="gap-2"><UserPlus className="w-4 h-4" /> New Customer</Button>
+706:                      <DialogTitle>New Customer</DialogTitle>
+726:                  Import Customers
+841:                        <TableHead className="w-[240px]">Customer</TableHead>
+994:                      <span className="text-[10px] font-medium text-muted-foreground uppercase tracking-wide">{formattedCustomerId}</span>
+995:                      <span className="text-lg font-semibold leading-none">{active?.name ?? 'Customer'}</span>
+1002:            <Tabs value={tab} onValueChange={(value) => setTab(value as CustomerTab)} className="flex-1 flex flex-col overflow-hidden">
+1058:                      title="Customer Stats"
+1413:export default Customers;
+
+=== Table columns + fields from Customers.tsx ===
+46:type Channel = "email" | "chat" | "whatsapp" | "phone";
+50:  name: string;
+51:  email: string;
+55:  phone?: string;
+57:  conversations: number;
+70:    { label: "Cases", to: "/dashboard/cases" },
+107:    name: "Sarah Johnson",
+108:    email: "sarah.johnson@gmail.com",
+110:    channel: "email",
+112:    phone: "+1 (415) 555-2109",
+114:    conversations: 8,
+125:    name: "Michael Chen",
+126:    email: "michael.chen@acme.com",
+129:    phone: "+1 (312) 555-8891",
+131:    conversations: 5,
+141:    name: "Emma Rodriguez",
+142:    email: "emma.rodriguez@outlook.com",
+143:    channel: "phone",
+145:    phone: "+44 20 7946 1200",
+146:    conversations: 2,
+156:    name: "David Kim",
+157:    email: "d.kim@globex.com",
+158:    channel: "email",
+160:    phone: "+1 (646) 555-3012",
+162:    conversations: 11,
+184:const maskEmail = (email: string) => email;
+238:  channel: 'email' | 'whatsapp' | 'web';
+242:type CaseDocument = { name: string };
+294:    description: 'Reset emails are not reaching the account owner, blocking access to the product.',
+301:      'Verify reset email delivery & logs',
+391:  { id: 'u2', date: 'Jan 15, 11:05 AM', channel: 'email', text: 'Refund timeline communicated (3–5 business days); case escalated to billing for expedited review.' },
+393:  { id: 'u4', date: 'Jan 17, 08:45 AM', channel: 'email', text: 'Refund initiated; transaction reference provided; advised to verify statement within 24–48 hours.' },
+397:  { name: 'Invoice_2024-01-13_1025.pdf' },
+398:  { name: 'Chat_Transcript_2024-01-15.txt' },
+399:  { name: 'Screenshot_Account_Settings.png' },
+419:    description: 'Customer prefers email communication over phone calls',
+553:    case 'email':
+566:type CustomerTab = 'overview' | 'cases' | 'activity' | 'notes';
+618:    if (tab !== 'cases' && selectedCase) {
+631:      arr = arr.filter((i) => i.name.toLowerCase().includes(needle) || i.email.toLowerCase().includes(needle) || i.tags.join(" ").toLowerCase().includes(needle));
+673:      { key: 'email', Icon: Mail, value: active.email },
+675:    if (active.phone) rows.push({ key: 'phone', Icon: Phone, value: active.phone });
+710:                        <Input placeholder="Name" id="nc-name" />
+711:                        <Input placeholder="Email" id="nc-email" />
+714:                        const name = (document.getElementById('nc-name') as HTMLInputElement)?.value?.trim();
+715:                        const email = (document.getElementById('nc-email') as HTMLInputElement)?.value?.trim();
+716:                        if (!name || !email) return;
+718:                        setItems((prev) => [{ id: `CU-${Math.floor(Math.random()*900)+100}`, name, email, channel: 'email', status: 'Active', conversations: 0, satisfaction: 0, lastContact: now, totalValue: 0, owner: '—', tags: [], joinedAt: now }, ...prev]);
+746:                    placeholder="Search name, email, tags…"
+893:                                  <AvatarFallback>{c.name.slice(0,2).toUpperCase()}</AvatarFallback>
+897:                                    <span>{c.name}</span>
+911:                            <TableCell className="text-sm text-foreground/70">{maskEmail(c.email)}</TableCell>
+912:                            <TableCell className="text-right text-foreground/70 tabular-nums">{c.conversations}</TableCell>
+937:                                  <DropdownMenuItem onClick={() => window.open(`mailto:${c.email}`)}><Mail className="w-4 h-4 mr-2" /> Email</DropdownMenuItem>
+991:                      <AvatarFallback>{active?.name ? active.name.slice(0, 2).toUpperCase() : 'CU'}</AvatarFallback>
+995:                      <span className="text-lg font-semibold leading-none">{active?.name ?? 'Customer'}</span>
+1013:                      value="cases"
+1063:                        <div className="text-xl font-semibold text-card-foreground">{active?.conversations ?? '—'}</div>
+1097:                <TabsContent value="cases" className="flex h-full min-h-0 flex-col">
+1156:                            No cases in this bucket.
+1254:                                <React.Fragment key={doc.name}>
+1260:                                      <div className="text-sm font-semibold leading-snug text-card-foreground">{doc.name}</div>
+1381:                  <span>Send email</span>
+1394:              {tab === 'cases' && selectedCase ? (
+1402:                  Back to cases
+
+=== Dashboard routing patterns ===
+12:import { Link } from "react-router-dom";
+21:    { label: "Home", to: "/dashboard", active: true },
+22:    { label: "Cases", to: "/dashboard/cases" },
+23:    { label: "Leads", to: "/dashboard/leads" },
+24:    { label: "Customers", to: "/dashboard/customers" },
+25:    { label: "Agents", to: "/dashboard/agents" },
+26:    { label: "Knowledge", to: "/dashboard/knowledge" },
+250:                  <Link to="/dashboard/cases" className="group">
+263:                  </Link>
+264:                  <Link to="/dashboard/agents" className="group">
+277:                  </Link>
+278:                  <Link to="/dashboard/customers" className="group">
+291:                  </Link>
+299:                <Link to="/dashboard/cases" className="text-sm text-primary">{t<string>('dashboard.viewAll')}</Link>
+
+=== All exported functions and types from services ===
+src/services/auth.ts:42:export async function loginWithPassword(email: string, password: string): Promise<string | null> {
+src/services/cases.ts:1:export type Priority = "low" | "medium" | "high" | "urgent";
+src/services/cases.ts:2:export type Status = "open" | "resolved";
+src/services/cases.ts:3:export type Channel = "email" | "chat" | "whatsapp" | "phone";
+src/services/cases.ts:4:export type Category = "Inquiry" | "Request" | "Complaint";
+src/services/cases.ts:6:export type CaseRecord = {
+src/services/cases.ts:22:export type ListParams = {
+src/services/cases.ts:33:export type ListResponse = {
+src/services/cases.ts:133:export async function listCases(params: ListParams): Promise<ListResponse> {
+src/services/http.ts:18:export type JsonFetchOptions = {
+src/services/http.ts:40:export async function jsonFetch<T>(path: string, options: JsonFetchOptions = {}): Promise<T> {
+src/services/registerApi.ts:3:export type SessionProgress = {
+src/services/registerApi.ts:10:export type StartRegistrationPayload = {
+src/services/registerApi.ts:16:export type StartRegistrationResponse = {
+src/services/registerApi.ts:27:export type BusinessProfilePayload = {
+src/services/registerApi.ts:37:export type BusinessProfileResponse = {
+src/services/registerApi.ts:47:export type AgentConfigPayload = {
+src/services/registerApi.ts:55:export type AgentConfigResponse = {
+src/services/registerApi.ts:67:export type UploadLinksPayload = {
+src/services/registerApi.ts:72:export type UploadLinksResponse = {
+src/services/registerApi.ts:78:export type CompletionResponse = {
+src/services/registerApi.ts:83:export type RequestOptions = {
+src/services/registerApi.ts:89:export async function startRegistration(
+src/services/registerApi.ts:100:export async function upsertBusiness(
+src/services/registerApi.ts:113:export async function configureAgent(
+src/services/registerApi.ts:126:export async function attachUploadLinks(
+src/services/registerApi.ts:139:export async function completeRegistration(
+src/services/registerApi.ts:149:export type { ApiError };
+
+=== HTTP client patterns ===
+1:const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL || "").replace(/\/$/, "");
+23:  headers?: Record<string, string>;
+25:  requestId?: string;
+36:  if (!API_BASE_URL) return path;
+37:  return `${API_BASE_URL}${path.startsWith("/") ? "" : "/"}${path}`;
+40:export async function jsonFetch<T>(path: string, options: JsonFetchOptions = {}): Promise<T> {
+46:    headers = {},
+48:    requestId,
+51:  const finalHeaders = new Headers(headers);
+52:  finalHeaders.set("Accept", "application/json");
+54:    finalHeaders.set("Content-Type", "application/json");
+56:  const generatedId = requestId || (typeof crypto !== "undefined" && "randomUUID" in crypto
+60:  if (token) finalHeaders.set("Authorization", token.startsWith("Bearer ") ? token : `Bearer ${token}`);
+65:    headers: finalHeaders,
+77:    console.debug(`[api] Preparing request: ${method} ${url}`, {
+80:      apiBaseUrl: API_BASE_URL,
+85:  // ADDED: Validate URL before making request
+87:    const errorMessage = `Invalid API URL configuration. Path: "${path}", Built URL: "${url}", API_BASE_URL: "${API_BASE_URL}"`;
+95:    const response = await fetch(url, init);
+133:          { requestId: generatedId, code, message, details, url }
+142:          requestId: generatedId,
+148:    const json = parseJson();
+149:    if (json === null) {
+152:          requestId: generatedId,
+161:        requestId: generatedId,
+162:        body: json,
+165:    return json as T;
+170:      if (error.message.includes('Failed to fetch') || error.message.includes('NetworkError')) {
+177:            apiBaseUrl: API_BASE_URL
+194:export const apiBaseUrl = API_BASE_URL;
+
+=== API endpoint patterns ===
+93:  return jsonFetch<StartRegistrationResponse>("/v1/registration/sessions", {
+105:  return jsonFetch<BusinessProfileResponse>(`/v1/registration/sessions/${registrationId}/business`, {
+118:  return jsonFetch<AgentConfigResponse>(`/v1/registration/businesses/${businessId}/agent`, {
+131:  return jsonFetch<UploadLinksResponse>(`/v1/registration/businesses/${businessId}/uploads`, {
+143:  return jsonFetch<CompletionResponse>(`/v1/registration/sessions/${registrationId}/complete`, {
+
+=== Agent options/enums ===
+
+=== Migration patterns (table creation, enums, FKs) ===
+24:    op.create_table('industries',
+27:    sa.Column('search_terms', sa.ARRAY(sa.String(length=64)), server_default=sa.text('ARRAY[]::text[]'), nullable=False),
+28:    sa.Column('created_at', sa.DateTime(timezone=True), server_default=sa.text('now()'), nullable=False),
+33:    op.create_table('users',
+37:    sa.Column('auth_provider', sa.String(length=32), server_default='password', nullable=False),
+38:    sa.Column('email_verified', sa.Boolean(), server_default=sa.text('false'), nullable=False),
+40:    sa.Column('created_at', sa.DateTime(timezone=True), server_default=sa.text('now()'), nullable=False),
+46:    op.create_table('businesses',
+52:    sa.Column('created_at', sa.DateTime(timezone=True), server_default=sa.text('now()'), nullable=False),
+55:    sa.ForeignKeyConstraint(['created_by_user_id'], ['users.id'], name=op.f('fk_businesses_created_by_user_id_users'), ondelete='RESTRICT'),
+56:    sa.ForeignKeyConstraint(['industry_code'], ['industries.code'], name=op.f('fk_businesses_industry_code_industries'), ondelete='RESTRICT'),
+60:    op.create_table('industry_niches',
+64:    sa.Column('search_terms', sa.ARRAY(sa.String(length=64)), server_default=sa.text('ARRAY[]::text[]'), nullable=False),
+65:    sa.Column('created_at', sa.DateTime(timezone=True), server_default=sa.text('now()'), nullable=False),
+68:    sa.ForeignKeyConstraint(['industry_code'], ['industries.code'], name=op.f('fk_industry_niches_industry_code_industries'), ondelete='CASCADE'),
+72:    op.create_table('agents',
+75:    sa.Column('role', sa.Enum('SALES', 'SUPPORT', 'RESEARCH', 'SUCCESS', 'MARKETING', name='agent_role_enum'), nullable=False),
+76:    sa.Column('tone', sa.Enum('FRIENDLY', 'PROFESSIONAL', 'CASUAL', 'FORMAL', 'EMPATHETIC', 'PLAYFUL', name='agent_tone_enum'), nullable=False),
+77:    sa.Column('escalation_rule', sa.Enum('NEVER', 'ON_FALLBACK', 'ON_NEGATIVE_SENTIMENT', 'ON_HIGH_VALUE', 'ALWAYS', name='escalation_rule_enum'), nullable=False),
+81:    sa.Column('created_at', sa.DateTime(timezone=True), server_default=sa.text('now()'), nullable=False),
+83:    sa.ForeignKeyConstraint(['business_id'], ['businesses.id'], name=op.f('fk_agents_business_id_businesses'), ondelete='CASCADE'),
+84:    sa.ForeignKeyConstraint(['created_by_user_id'], ['users.id'], name=op.f('fk_agents_created_by_user_id_users'), ondelete='RESTRICT'),
+88:    op.create_table('business_niches',
+91:    sa.Column('added_at', sa.DateTime(timezone=True), server_default=sa.text('now()'), nullable=False),
+93:    sa.ForeignKeyConstraint(['business_id'], ['businesses.id'], name=op.f('fk_business_niches_business_id_businesses'), ondelete='CASCADE'),
+94:    sa.ForeignKeyConstraint(['niche_code'], ['industry_niches.code'], name=op.f('fk_business_niches_niche_code_industry_niches'), ondelete='RESTRICT'),
+98:    op.create_table('knowledge_items',
+100:    sa.Column('source_type', sa.Enum('FILE', 'URL', 'TEXT', name='knowledge_source_enum'), nullable=False),
+101:    sa.Column('status', sa.Enum('pending', 'processing', 'ready', 'failed', name='knowledge_status_enum'), server_default='pending', nullable=False),
+107:    sa.Column('created_at', sa.DateTime(timezone=True), server_default=sa.text('now()'), nullable=False),
+109:    sa.ForeignKeyConstraint(['business_id'], ['businesses.id'], name=op.f('fk_knowledge_items_business_id_businesses'), ondelete='CASCADE'),
+110:    sa.ForeignKeyConstraint(['created_by_user_id'], ['users.id'], name=op.f('fk_knowledge_items_created_by_user_id_users'), ondelete='RESTRICT'),
+114:    op.create_table('registration_sessions',
+117:    sa.Column('current_step', sa.Enum('BUSINESS_PROFILE', 'AGENT_SETUP', 'KNOWLEDGE_UPLOADS', 'COMPLETED', name='registration_step_enum'), nullable=False),
+119:    sa.Column('expires_at', sa.DateTime(timezone=True), server_default=sa.text("now() + interval '7 days'"), nullable=False),
+120:    sa.Column('steps_completed', sa.SmallInteger(), server_default=sa.text('0'), nullable=False),
+121:    sa.Column('total_steps', sa.SmallInteger(), server_default=sa.text('4'), nullable=False),
+123:    sa.Column('created_at', sa.DateTime(timezone=True), server_default=sa.text('now()'), nullable=False),
+124:    sa.Column('updated_at', sa.DateTime(timezone=True), server_default=sa.text('now()'), nullable=False),
+127:    sa.ForeignKeyConstraint(['business_id'], ['businesses.id'], name=op.f('fk_registration_sessions_business_id_businesses'), ondelete='SET NULL'),
+128:    sa.ForeignKeyConstraint(['user_id'], ['users.id'], name=op.f('fk_registration_sessions_user_id_users'), ondelete='CASCADE'),
+132:    op.create_table('user_business_memberships',
+135:    sa.Column('role', sa.Enum('OWNER', 'ADMIN', 'AGENT', name='membership_role_enum'), nullable=False),
+136:    sa.Column('joined_at', sa.DateTime(timezone=True), server_default=sa.text('now()'), nullable=False),
+137:    sa.ForeignKeyConstraint(['business_id'], ['businesses.id'], name=op.f('fk_user_business_memberships_business_id_businesses'), ondelete='CASCADE'),
+138:    sa.ForeignKeyConstraint(['user_id'], ['users.id'], name=op.f('fk_user_business_memberships_user_id_users'), ondelete='CASCADE'),
+142:    op.create_table('agent_traits',
+144:    sa.Column('trait_code', sa.Enum('CONCISE', 'DETAILED', 'CURIOUS', 'PATIENT', 'PROACTIVE', 'DIRECT', 'CREATIVE', name='agent_trait_enum'), nullable=False),
+145:    sa.Column('added_at', sa.DateTime(timezone=True), server_default=sa.text('now()'), nullable=False),
+146:    sa.ForeignKeyConstraint(['agent_id'], ['agents.id'], name=op.f('fk_agent_traits_agent_id_agents'), ondelete='CASCADE'),
+149:    op.create_table('knowledge_item_files',
+158:    sa.ForeignKeyConstraint(['knowledge_item_id'], ['knowledge_items.id'], name=op.f('fk_knowledge_item_files_knowledge_item_id_knowledge_items'), ondelete='CASCADE'),
+161:    op.create_table('knowledge_item_texts',
+165:    sa.ForeignKeyConstraint(['knowledge_item_id'], ['knowledge_items.id'], name=op.f('fk_knowledge_item_texts_knowledge_item_id_knowledge_items'), ondelete='CASCADE'),
+168:    op.create_table('knowledge_item_urls',
+172:    sa.ForeignKeyConstraint(['knowledge_item_id'], ['knowledge_items.id'], name=op.f('fk_knowledge_item_urls_knowledge_item_id_knowledge_items'), ondelete='CASCADE'),
