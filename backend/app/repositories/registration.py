@@ -708,6 +708,28 @@ class AgentsRepository(BaseRepository):
         created_by_user_name: str,
     ) -> AgentRecord:
         with self._with_timeout():
+            # --- Generate canonical slug from name; ensure per-business uniqueness ---
+            import re
+            def _slugify(value: str) -> str:
+                slug = re.sub(r"[^a-z0-9]+", "-", value.strip().lower()).strip("-")
+                slug = re.sub(r"-+", "-", slug)[:120]
+                return slug
+            base = _slugify(name) or "agent"
+            candidate = base
+            suffix = 2
+            while True:
+                exists = self.session.execute(
+                    select(Agent.id).where(
+                        Agent.business_id == business_id,
+                        func.lower(Agent.public_slug) == candidate.lower(),
+                    ).limit(1)
+                ).first()
+                if not exists:
+                    break
+                candidate = f"{base}-{suffix}"
+                suffix += 1
+                if len(candidate) > 120:
+                    candidate = candidate[:120]
             agent = Agent(
                 business_id=business_id,
                 name=name,
@@ -716,6 +738,7 @@ class AgentsRepository(BaseRepository):
                 escalation_rule=escalation_rule,
                 created_by_user_id=created_by_user_id,
                 created_by_user_name=created_by_user_name,
+                public_slug=candidate,
             )
             self.session.add(agent)
             self.session.flush()
@@ -807,7 +830,6 @@ class AgentsRepository(BaseRepository):
     ) -> AgentRecord:
         with self._with_timeout():
             model = self._load_agent(business_id=business_id, agent_id=agent_id)
-
             model_updated_at = getattr(model, "updated_at", None)
             if expected_updated_at is not None and model_updated_at is not None:
                 if model_updated_at != expected_updated_at:
@@ -820,11 +842,8 @@ class AgentsRepository(BaseRepository):
                         },
                     )
             elif expected_updated_at is not None and model_updated_at is None:
-                raise ConflictError(
-                    "Agent does not support optimistic locking",
-                    details={"agent_id": str(agent_id)},
-                )
-
+                raise ConflictError("Agent does not support optimistic locking", details={"agent_id": str(agent_id)})
+            # --- Apply non-handle fields first (name changes DO NOT change public_slug) ---
             if "name" in patch:
                 model.name = patch["name"]
             if "role" in patch:
@@ -833,7 +852,33 @@ class AgentsRepository(BaseRepository):
                 model.tone = patch["tone"]
             if "escalation_rule" in patch:
                 model.escalation_rule = patch["escalation_rule"]
-
+            # --- Explicit public_slug updates (slugify + enforce per-business uniqueness) ---
+            if "public_slug" in patch and patch["public_slug"] is not None:
+                import re
+                def _slugify(value: str) -> str:
+                    slug = re.sub(r"[^a-z0-9]+", "-", str(value).strip().lower()).strip("-")
+                    slug = re.sub(r"-+", "-", slug)[:120]
+                    return slug
+                base = _slugify(patch["public_slug"])
+                if not base or len(base) < 3:
+                    raise ValidationError("public_slug must be at least 3 characters after slugify", details={"public_slug": patch["public_slug"]})
+                candidate = base
+                suffix = 2
+                while True:
+                    exists = self.session.execute(
+                        select(Agent.id).where(
+                            Agent.business_id == business_id,
+                            func.lower(Agent.public_slug) == candidate.lower(),
+                            Agent.id != agent_id,
+                        ).limit(1)
+                    ).first()
+                    if not exists:
+                        break
+                    candidate = f"{base}-{suffix}"
+                    suffix += 1
+                    if len(candidate) > 120:
+                        candidate = candidate[:120]
+                model.public_slug = candidate
             self.session.flush()
             return _to_agent(model)
 

@@ -481,7 +481,7 @@ class Agent(PrimaryKeyMixin, CreatedAtMixin, Base):
         nullable=False,
         server_default=AgentStatus.DRAFT.value,
     )
-    public_slug: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    public_slug: Mapped[str] = mapped_column(String(120), nullable=False)
     default_language: Mapped[str | None] = mapped_column(String(16), nullable=True)
     welcome_message: Mapped[str | None] = mapped_column(Text, nullable=True)
     avatar_url: Mapped[str | None] = mapped_column(String(255), nullable=True)
@@ -531,7 +531,7 @@ class Agent(PrimaryKeyMixin, CreatedAtMixin, Base):
             name="ck_agents_name_length",
         ),
         CheckConstraint(
-            "public_slug IS NULL OR char_length(public_slug) BETWEEN 3 AND 120",
+            "char_length(public_slug) BETWEEN 3 AND 120",
             name="ck_agents_public_slug_length",
         ),
         CheckConstraint(

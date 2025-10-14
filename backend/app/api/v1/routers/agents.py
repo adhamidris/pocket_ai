@@ -36,7 +36,7 @@ class AgentListItem(BaseModel):
     role: AgentRole
     tone: AgentTone
     status: AgentStatus
-    public_slug: str | None = None
+    public_slug: str
     avatar_url: HttpUrl | None = None
     created_at: datetime
 

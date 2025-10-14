@@ -9,7 +9,7 @@ from sqlalchemy.orm import Session
 
 from app.api.v1.deps import get_db
 from app.models.registration import Agent, Business
-from app.api.v1.deps import require_business_id_public as require_business_id
+from app.api.v1.deps import require_business_id_public
 
 from app.schemas.chat_portal import (
 
@@ -121,8 +121,7 @@ async def resolve_portal_handle(
             detail={"code": "not_found", "message": "Business not found"},
         )
 
-    # 2) For each candidate business, try by agent public_slug (case-insensitive),
-    #    then fallback to slugified Agent.name. Pick the first match.
+    # 2) For each candidate business, match by agent public_slug (case-insensitive).
     business = None
     agent = None
 
@@ -137,19 +136,6 @@ async def resolve_portal_handle(
             .limit(1)
         )
         agent = db.execute(agent_stmt).scalars().first()
-
-        if agent is None:
-            agent_fallback_stmt = (
-                select(Agent)
-                .where(
-                    Agent.business_id == b.id,
-                    _slug_expr(Agent.name) == agent_slug.lower(),
-                )
-                .order_by(Agent.created_at.asc(), Agent.id.asc())
-                .limit(1)
-            )
-            agent = db.execute(agent_fallback_stmt).scalars().first()
-
         if agent is not None:
             business = b
             break
@@ -162,7 +148,7 @@ async def resolve_portal_handle(
 
     return {
         "business_id": str(business.id),
-        "agent_handle": agent.public_slug or agent_slug,
+        "agent_handle": agent.public_slug,
         "agent": {
             "id": str(agent.id),
             "name": agent.name,
@@ -174,7 +160,7 @@ async def resolve_portal_handle(
 
 def _get_agent_by_handle(db: Session, *, business_id, agent_handle: str) -> Agent | None:
     """
-    Resolve an agent by public_slug (case-insensitive), then fallback to exact name (lower).
+    Resolve an agent by public_slug (case-insensitive).
     Mirrors the logic used in /portal/resolve for public_slug preference.
     """
     stmt = (
@@ -190,17 +176,7 @@ def _get_agent_by_handle(db: Session, *, business_id, agent_handle: str) -> Agen
     if agent is not None:
         return agent
 
-    # Fallback: exact lowercase name match (simple approximation)
-    stmt2 = (
-        select(Agent)
-        .where(
-            Agent.business_id == business_id,
-            func.lower(Agent.name) == agent_handle.lower(),
-        )
-        .order_by(Agent.created_at.asc(), Agent.id.asc())
-        .limit(1)
-    )
-    return db.execute(stmt2).scalars().first()
+    return None
 
 
 def _get_active_conversation_for_session(
@@ -263,7 +239,7 @@ def _map_agent_preview(agent: Agent, business_name: str | None) -> ChatAgentPrev
 )
 def create_or_refresh_session_endpoint(
     payload: ChatSessionCreateRequest,
-    business_id=Depends(require_business_id),
+    business_id=Depends(require_business_id_public),
     db: Session = Depends(get_db),
 ) -> ChatSessionCreateResponse:
     if not payload.agent_handle:
@@ -370,7 +346,7 @@ def list_messages_endpoint(
     session_token: str,
     cursor: str | None = None,
     limit: int = 50,
-    business_id=Depends(require_business_id),
+    business_id=Depends(require_business_id_public),
     db: Session = Depends(get_db),
 ) -> ChatMessagesListResponse:
     conversation = _get_active_conversation_for_session(
@@ -405,7 +381,7 @@ def list_messages_endpoint(
 )
 def send_message_endpoint(
     payload: ChatMessageSendRequest,
-    business_id=Depends(require_business_id),
+    business_id=Depends(require_business_id_public),
     db: Session = Depends(get_db),
 ) -> ChatMessageSendResponse:
     conversation = _get_active_conversation_for_session(
@@ -446,7 +422,7 @@ def send_message_endpoint(
 )
 def submit_csat_endpoint(
     payload: ChatCsatSubmissionRequest,
-    business_id=Depends(require_business_id),
+    business_id=Depends(require_business_id_public),
     db: Session = Depends(get_db),
 ):
     conversation = _get_active_conversation_for_session(

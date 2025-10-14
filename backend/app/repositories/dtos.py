@@ -78,7 +78,7 @@ class AgentRecord:
     role: AgentRole
     tone: AgentTone
     status: AgentStatus
-    public_slug: str | None
+    public_slug: str
     avatar_url: str | None
     escalation_rule: EscalationRule
     created_by_user_id: uuid.UUID
