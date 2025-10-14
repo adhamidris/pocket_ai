@@ -169,13 +169,13 @@ def upgrade() -> None:
         ),
         sa.Column(
             "visitor_type",
-            sa.Enum(name="chat_visitor_type_enum", create_type=False),
+            postgresql.ENUM(name="chat_visitor_type_enum", create_type=False),
             nullable=False,
         ),
         sa.Column("session_token", sa.String(length=120), nullable=False),
         sa.Column(
             "channel",
-            sa.Enum(name="chat_channel_enum", create_type=False),
+            postgresql.ENUM(name="chat_channel_enum", create_type=False),
             nullable=False,
         ),
         sa.Column("locale", sa.String(length=16), nullable=True),
@@ -268,7 +268,7 @@ def upgrade() -> None:
         sa.Column("pinged_at", sa.DateTime(timezone=True), nullable=False),
         sa.Column(
             "status",
-            sa.Enum(name="chat_presence_status_enum", create_type=False),
+            postgresql.ENUM(name="chat_presence_status_enum", create_type=False),
             nullable=False,
         ),
         sa.Column(
@@ -297,7 +297,7 @@ def upgrade() -> None:
         ),
         sa.Column(
             "participant_type",
-            sa.Enum(name="conversation_participant_type_enum", create_type=False),
+            postgresql.ENUM(name="conversation_participant_type_enum", create_type=False),
             nullable=False,
         ),
         sa.Column("participant_id", postgresql.UUID(as_uuid=True), nullable=True),
@@ -347,17 +347,17 @@ def upgrade() -> None:
         ),
         sa.Column(
             "message_type",
-            sa.Enum(name="conversation_message_type_enum", create_type=False),
+            postgresql.ENUM(name="conversation_message_type_enum", create_type=False),
             nullable=False,
         ),
         sa.Column(
             "visibility",
-            sa.Enum(name="conversation_message_visibility_enum", create_type=False),
+            postgresql.ENUM(name="conversation_message_visibility_enum", create_type=False),
             nullable=False,
         ),
         sa.Column(
             "channel",
-            sa.Enum(name="conversation_message_channel_enum", create_type=False),
+            postgresql.ENUM(name="conversation_message_channel_enum", create_type=False),
             nullable=False,
         ),
         sa.Column("body", sa.Text(), nullable=True),
@@ -483,12 +483,12 @@ def upgrade() -> None:
         ),
         sa.Column(
             "from_status",
-            sa.Enum(name="conversation_status_enum", create_type=False),
+            postgresql.ENUM(name="conversation_status_enum", create_type=False),
             nullable=True,
         ),
         sa.Column(
             "to_status",
-            sa.Enum(name="conversation_status_enum", create_type=False),
+            postgresql.ENUM(name="conversation_status_enum", create_type=False),
             nullable=False,
         ),
         sa.Column(

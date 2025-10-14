@@ -467,17 +467,17 @@ class Agent(PrimaryKeyMixin, CreatedAtMixin, Base):
     )
     name: Mapped[str] = mapped_column(String(80), nullable=False)
     role: Mapped[AgentRole] = mapped_column(
-        Enum(AgentRole, name="agent_role_enum", create_type=False), nullable=False
+        Enum(AgentRole, name="agent_role_enum", create_type=False, values_callable=lambda x: [e.value for e in x]), nullable=False
     )
     tone: Mapped[AgentTone] = mapped_column(
-        Enum(AgentTone, name="agent_tone_enum", create_type=False), nullable=False
+        Enum(AgentTone, name="agent_tone_enum", create_type=False, values_callable=lambda x: [e.value for e in x]), nullable=False
     )
     escalation_rule: Mapped[EscalationRule] = mapped_column(
-        Enum(EscalationRule, name="escalation_rule_enum", create_type=False),
+        Enum(EscalationRule, name="escalation_rule_enum", create_type=False, values_callable=lambda x: [e.value for e in x]),
         nullable=False,
     )
     status: Mapped[AgentStatus] = mapped_column(
-        Enum(AgentStatus, name="agent_status_enum", create_type=False),
+        Enum(AgentStatus, name="agent_status_enum", create_type=False, values_callable=lambda x: [e.value for e in x]),
         nullable=False,
         server_default=AgentStatus.DRAFT.value,
     )
@@ -572,7 +572,7 @@ class KnowledgeItem(PrimaryKeyMixin, CreatedAtMixin, Base):
         nullable=False,
     )
     status: Mapped[KnowledgeStatus] = mapped_column(
-        Enum(KnowledgeStatus, name="knowledge_status_enum", create_type=False),
+        Enum(KnowledgeStatus, name="knowledge_status_enum", create_type=False, values_callable=lambda x: [e.value for e in x]),
         nullable=False,
         server_default=KnowledgeStatus.PENDING.value,
     )

@@ -148,8 +148,8 @@ const Hero = () => {
                   <svg width="30" height="30" viewBox="0 0 512 512" aria-hidden="true">
                     <path fill="currentColor" d="M325.3 234.3 90.7 28.6C79 19 64 24.7 64 39.3v433.4c0 14.7 15 20.3 26.7 10.7l234.6-205.7c9.3-8.1 9.3-23.1 0-30.4z"/>
                     <linearGradient id="g2" x1="0" y1="0" x2="1" y2="1">
-                      <stop offset="0%" stop-color="#34a853"/>
-                      <stop offset="100%" stop-color="#4285f4"/>
+                      <stop offset="0%" stopColor="#34a853"/>
+                      <stop offset="100%" stopColor="#4285f4"/>
                     </linearGradient>
                     <path fill="url(#g2)" d="M421.9 213.8 360.4 178 325.3 234.3c9.3 8.1 9.3 23.1 0 30.4l35.1 56.3 61.5-35.8c18.5-10.8 18.5-38.5 0-49.4z"/>
                   </svg>

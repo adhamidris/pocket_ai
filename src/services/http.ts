@@ -190,10 +190,16 @@ if (token) finalHeaders.set("Authorization", token.startsWith("Bearer ") ? token
     
     if (!response.ok) {
       const payload = parseJson();
-      const code = typeof payload?.code === "string" ? payload.code : `http_${response.status}`;
-      const message = typeof payload?.message === "string" ? payload.message : response.statusText;
-      const details = (payload?.details && typeof payload.details === "object") ? (payload.details as Record<string, unknown>) : null;
-      
+      const detailObj = (payload && typeof (payload as any).detail === "object") ? (payload as any).detail : null;
+      const code = typeof (payload as any)?.code === "string"
+        ? (payload as any).code
+        : (detailObj && typeof (detailObj as any).code === "string" ? (detailObj as any).code : `http_${response.status}`);
+      const message = typeof (payload as any)?.message === "string"
+        ? (payload as any).message
+        : (detailObj && typeof (detailObj as any).message === "string" ? (detailObj as any).message : response.statusText);
+      const details = (payload && typeof (payload as any).details === "object")
+        ? ((payload as any).details as Record<string, unknown>)
+        : (detailObj && typeof (detailObj as any).details === "object" ? (detailObj as any).details : null);
       if (IS_DEV) {
         console.warn(
           `[api] ${method} ${path} -> ${response.status} (${Math.round(durationMs)}ms)`,

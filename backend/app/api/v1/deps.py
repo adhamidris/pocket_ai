@@ -39,14 +39,53 @@ def get_settings() -> Settings:
     return load_settings()
 
 
-async def get_db() -> AsyncIterator[Session]:
-    """Yield a SQLAlchemy session for request-scoped work."""
+async def get_db(request: Request) -> AsyncIterator[Session]:
 
-    session = get_session()
+    """Yield the request-scoped SQLAlchemy session from middleware; create if absent."""
+
+    session = getattr(request.state, "db_session", None)
+
+    created_here = False
+
+    if session is None:
+
+        session = get_session()
+
+        created_here = True
+
     try:
+
         yield session
+
+        if created_here:
+
+            session.commit()
+
+    except Exception:
+
+        if created_here:
+
+            try:
+
+                session.rollback()
+
+            except Exception:
+
+                pass
+
+        raise
+
     finally:
-        session.close()
+
+        if created_here:
+
+            try:
+
+                session.close()
+
+            except Exception:
+
+                pass
 
 
 async def optional_current_user(
@@ -364,6 +403,7 @@ __all__ = [
     "optional_current_user",
     "require_owner_or_admin",
     "require_business_id",
+    "require_business_id_public",
     "require_registration_captcha",
 ]
 async def require_business_id(
@@ -391,3 +431,20 @@ async def require_business_id(
             detail={"code": "forbidden", "message": "Insufficient permissions for business"},
         )
     return business_id
+
+async def require_business_id_public(
+    business_id_header: str | None = Header(default=None, alias="X-Business-Id"),
+) -> UUID:
+    """Public variant: parses X-Business-Id without requiring authentication."""
+    if not business_id_header:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={"code": "missing_business", "message": "X-Business-Id header is required"},
+        )
+    try:
+        return UUID(business_id_header)
+    except ValueError as exc:  # pragma: no cover - defensive
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={"code": "invalid_business", "message": "X-Business-Id must be a valid UUID"},
+        ) from exc

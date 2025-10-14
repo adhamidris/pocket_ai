@@ -142,6 +142,30 @@ export type ChatCsatSubmissionResponse = {
   recordedAt: string;
 };
 
+
+export type PortalResolveResponse = {
+
+  business_id: string;
+
+  agent_handle: string;
+
+  agent: {
+
+    id: string; name: string; role: string; avatar_url?: string|null; business_name?: string|null;
+
+  };
+
+};
+
+
+
+export async function resolvePortalHandle(businessSlug: string, agentSlug: string): Promise<PortalResolveResponse> {
+
+  return jsonFetch<PortalResolveResponse>(`/v1/portal/resolve/${businessSlug}/${agentSlug}`, { method: "GET" });
+
+}
+
+
 export type ChatSessionCreateRequest = {
   agentHandle: string;
   channel?: string;
@@ -297,7 +321,7 @@ export async function createChatSession(
     existing_session_token: request.existingSessionToken ?? null,
   };
 
-  const response = await jsonFetch<ApiChatSessionCreateResponse>("/v1/chat-portal/sessions", {
+  const response = await jsonFetch<ApiChatSessionCreateResponse>("/v1/portal/sessions", {
     method: "POST",
     body,
   });
@@ -316,7 +340,7 @@ export async function fetchChatMessages(
   if (request.cursor) params.set("cursor", request.cursor);
   if (typeof request.limit === "number") params.set("limit", String(request.limit));
   const suffix = params.toString() ? `?${params.toString()}` : "";
-  const response = await jsonFetch<ApiChatMessagesListResponse>(`/v1/chat-portal/messages${suffix}`, {
+  const response = await jsonFetch<ApiChatMessagesListResponse>(`/v1/portal/messages${suffix}`, {
     method: "GET",
   });
 
@@ -341,7 +365,7 @@ export async function sendChatMessage(
     })),
   };
 
-  const response = await jsonFetch<ApiChatMessageSendResponse>("/v1/chat-portal/messages", {
+  const response = await jsonFetch<ApiChatMessageSendResponse>("/v1/portal/messages", {
     method: "POST",
     body,
   });
@@ -363,7 +387,7 @@ export async function submitChatCsat(
     comment: request.comment ?? null,
   };
 
-  const response = await jsonFetch<ApiChatCsatSubmissionResponse>("/v1/chat-portal/csat", {
+  const response = await jsonFetch<ApiChatCsatSubmissionResponse>("/v1/portal/csat", {
     method: "POST",
     body,
   });
@@ -374,4 +398,4 @@ export async function submitChatCsat(
   };
 }
 
-export type { ApiError };
+export { ApiError };

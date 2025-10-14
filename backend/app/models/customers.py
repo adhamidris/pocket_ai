@@ -28,11 +28,11 @@ from .base import Base, CreatedAtMixin, PrimaryKeyMixin, UpdatedAtMixin
 
 
 class CustomerLifecycleStage(enum.Enum):
-    LEAD = "lead"
-    PROSPECT = "prospect"
-    ACTIVE = "active"
-    CHURN_RISK = "churn_risk"
-    FORMER = "former"
+    LEAD = "LEAD"
+    PROSPECT = "PROSPECT"
+    ACTIVE = "ACTIVE"
+    CHURN_RISK = "CHURN_RISK"
+    FORMER = "FORMER"
 
 
 class CustomerContactMethodType(enum.Enum):
@@ -74,6 +74,7 @@ class Customer(PrimaryKeyMixin, CreatedAtMixin, UpdatedAtMixin, Base):
         Enum(
             CustomerLifecycleStage,
             name="customer_lifecycle_stage_enum",
+            values_callable=lambda e: [m.name for m in e],
             create_type=False,
         ),
         nullable=False,
@@ -151,6 +152,7 @@ class CustomerContactMethod(CreatedAtMixin, Base):
         Enum(
             CustomerContactMethodType,
             name="customer_contact_method_type_enum",
+            values_callable=lambda e: [m.value for m in e],
             create_type=False,
         ),
         primary_key=True,
@@ -210,7 +212,12 @@ class CustomerNote(PrimaryKeyMixin, CreatedAtMixin, UpdatedAtMixin, Base):
         UUID(as_uuid=True), ForeignKey("agents.id", ondelete="SET NULL"), nullable=True
     )
     visibility: Mapped[CustomerNoteVisibility] = mapped_column(
-        Enum(CustomerNoteVisibility, name="customer_note_visibility_enum", create_type=False),
+        Enum(
+            CustomerNoteVisibility,
+            name="customer_note_visibility_enum",
+            values_callable=lambda e: [m.value for m in e],
+            create_type=False,
+        ),
         nullable=False,
     )
     body: Mapped[str] = mapped_column(Text, nullable=False)
@@ -234,6 +241,7 @@ class CustomerActivityEvent(PrimaryKeyMixin, CreatedAtMixin, Base):
         Enum(
             CustomerActivityEventType,
             name="customer_activity_event_type_enum",
+            values_callable=lambda e: [m.value for m in e],
             create_type=False,
         ),
         nullable=False,

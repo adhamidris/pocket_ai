@@ -106,13 +106,13 @@ class ChatVisitor(PrimaryKeyMixin, CreatedAtMixin, UpdatedAtMixin, Base):
         UUID(as_uuid=True), ForeignKey("customers.id", ondelete="SET NULL"), nullable=True
     )
     visitor_type: Mapped[ChatVisitorType] = mapped_column(
-        Enum(ChatVisitorType, name="chat_visitor_type_enum", create_type=False),
+        Enum(ChatVisitorType, name="chat_visitor_type_enum", values_callable=lambda e: [m.value for m in e], create_type=False),
         nullable=False,
         default=ChatVisitorType.ANONYMOUS,
     )
     session_token: Mapped[str] = mapped_column(String(120), nullable=False)
     channel: Mapped[ChatChannel] = mapped_column(
-        Enum(ChatChannel, name="chat_channel_enum", create_type=False), nullable=False
+        Enum(ChatChannel, name="chat_channel_enum", values_callable=lambda e: [m.value for m in e], create_type=False), nullable=False
     )
     locale: Mapped[str | None] = mapped_column(String(16), nullable=True)
     landing_page: Mapped[str | None] = mapped_column(String(255), nullable=True)
@@ -169,7 +169,7 @@ class ChatPresencePing(PrimaryKeyMixin, CreatedAtMixin, Base):
     )
     pinged_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     status: Mapped[ChatPresenceStatus] = mapped_column(
-        Enum(ChatPresenceStatus, name="chat_presence_status_enum", create_type=False),
+        Enum(ChatPresenceStatus, name="chat_presence_status_enum", values_callable=lambda e: [m.value for m in e], create_type=False),
         nullable=False,
     )
 
@@ -202,15 +202,15 @@ class Conversation(PrimaryKeyMixin, CreatedAtMixin, UpdatedAtMixin, Base):
         UUID(as_uuid=True), ForeignKey("agents.id", ondelete="SET NULL"), nullable=True
     )
     source: Mapped[ConversationSource] = mapped_column(
-        Enum(ConversationSource, name="conversation_source_enum", create_type=False),
+        Enum(ConversationSource, name="conversation_source_enum", values_callable=lambda e: [m.value for m in e], create_type=False),
         nullable=False,
     )
     status: Mapped[ConversationStatus] = mapped_column(
-        Enum(ConversationStatus, name="conversation_status_enum", create_type=False),
+        Enum(ConversationStatus, name="conversation_status_enum", values_callable=lambda e: [m.value for m in e], create_type=False),
         nullable=False,
     )
     end_reason: Mapped[ConversationEndReason | None] = mapped_column(
-        Enum(ConversationEndReason, name="conversation_end_reason_enum", create_type=False),
+        Enum(ConversationEndReason, name="conversation_end_reason_enum", values_callable=lambda e: [m.value for m in e], create_type=False),
         nullable=True,
     )
     first_response_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
@@ -318,21 +318,23 @@ class ConversationMessage(PrimaryKeyMixin, CreatedAtMixin, Base):
         UUID(as_uuid=True), ForeignKey("customers.id", ondelete="SET NULL"), nullable=True
     )
     message_type: Mapped[ConversationMessageType] = mapped_column(
-        Enum(ConversationMessageType, name="conversation_message_type_enum", create_type=False),
+        Enum(ConversationMessageType, name="conversation_message_type_enum", values_callable=lambda e: [m.value for m in e], create_type=False),
         nullable=False,
     )
     visibility: Mapped[ConversationMessageVisibility] = mapped_column(
-        Enum(
+                Enum(
             ConversationMessageVisibility,
             name="conversation_message_visibility_enum",
+            values_callable=lambda e: [m.value for m in e],
             create_type=False,
         ),
         nullable=False,
     )
     channel: Mapped[ConversationMessageChannel] = mapped_column(
-        Enum(
+                Enum(
             ConversationMessageChannel,
             name="conversation_message_channel_enum",
+            values_callable=lambda e: [m.value for m in e],
             create_type=False,
         ),
         nullable=False,
@@ -420,11 +422,11 @@ class ConversationStatusLog(PrimaryKeyMixin, CreatedAtMixin, Base):
         UUID(as_uuid=True), ForeignKey("conversations.id", ondelete="CASCADE"), nullable=False
     )
     from_status: Mapped[ConversationStatus | None] = mapped_column(
-        Enum(ConversationStatus, name="conversation_status_enum", create_type=False),
+        Enum(ConversationStatus, name="conversation_status_enum", values_callable=lambda e: [m.value for m in e], create_type=False),
         nullable=True,
     )
     to_status: Mapped[ConversationStatus] = mapped_column(
-        Enum(ConversationStatus, name="conversation_status_enum", create_type=False),
+        Enum(ConversationStatus, name="conversation_status_enum", values_callable=lambda e: [m.value for m in e], create_type=False),
         nullable=False,
     )
     actor_user_id: Mapped[uuid.UUID | None] = mapped_column(

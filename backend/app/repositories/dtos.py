@@ -10,6 +10,7 @@ from typing import Any
 from app.models.registration import (
     AgentRole,
     AgentTone,
+    AgentStatus,
     AgentTrait,
     EscalationRule,
     KnowledgeSource,
@@ -76,6 +77,9 @@ class AgentRecord:
     name: str
     role: AgentRole
     tone: AgentTone
+    status: AgentStatus
+    public_slug: str | None
+    avatar_url: str | None
     escalation_rule: EscalationRule
     created_by_user_id: uuid.UUID
     created_by_user_name: str

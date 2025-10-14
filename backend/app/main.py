@@ -3,6 +3,7 @@ from __future__ import annotations
 """FastAPI application factory."""
 
 import logging
+from time import perf_counter
 from uuid import uuid4
 
 from fastapi import FastAPI, Request
@@ -14,9 +15,10 @@ from starlette.middleware.base import BaseHTTPMiddleware, RequestResponseEndpoin
 from starlette.responses import Response
 from app.repositories.errors import RepositoryError
 
-from app.api.v1.routers import auth_router, customers_router, registration_router
+from app.api.v1.routers import auth_router, customers_router, registration_router, portal_router, agents_router
 from app.core.logging import REQUEST_ID_CTX_VAR, configure_logging
 from app.core.settings import Settings, get_settings
+from app.db.session import get_session
 
 logger = logging.getLogger(__name__)
 
@@ -25,17 +27,68 @@ class RequestIdMiddleware(BaseHTTPMiddleware):
     """Ensure every request has an `X-Request-ID` header."""
 
     async def dispatch(self, request: Request, call_next: RequestResponseEndpoint) -> Response:
-        request_id = request.headers.get("X-Request-ID") or str(uuid4())
+        # Get or create a request id
+        incoming = request.headers.get("X-Request-ID")
+        request_id = incoming or uuid4().hex
+        # Bind to context var for log correlation
         token = REQUEST_ID_CTX_VAR.set(request_id)
-        request.state.request_id = request_id
+        try:
+            # Expose on request.state for handlers
+            request.state.request_id = request_id
+            response = await call_next(request)
+            # Mirror request id on the response header
+            response.headers["X-Request-ID"] = request_id
+            return response
+        finally:
+            # Restore context var
+            REQUEST_ID_CTX_VAR.reset(token)
+
+class RequestLoggingMiddleware(BaseHTTPMiddleware):
+    """Log basic request lifecycle information."""
+
+    async def dispatch(self, request: Request, call_next: RequestResponseEndpoint) -> Response:
+        start = perf_counter()
+        path = request.url.path
+        method = request.method
+        logger.info("request start", extra={"path": path, "method": method})
         try:
             response = await call_next(request)
+            duration_ms = int((perf_counter() - start) * 1000)
+            logger.info(
+                "request finish",
+                extra={"path": path, "method": method, "status_code": response.status_code, "duration_ms": duration_ms},
+            )
+            return response
+        except Exception:
+            duration_ms = int((perf_counter() - start) * 1000)
+            logger.exception("request error", extra={"path": path, "method": method, "duration_ms": duration_ms})
+            raise
+
+class DBTransactionMiddleware(BaseHTTPMiddleware):
+    """Manage a DB session per request with commit/rollback semantics."""
+
+    async def dispatch(self, request: Request, call_next: RequestResponseEndpoint) -> Response:
+        session = get_session()
+        request.state.db_session = session
+        try:
+            response = await call_next(request)
+            try:
+                session.commit()
+            except Exception:
+                session.rollback()
+                raise
+            return response
+        except Exception:
+            try:
+                session.rollback()
+            except Exception:
+                pass
+            raise
         finally:
-            REQUEST_ID_CTX_VAR.reset(token)
-        response.headers["X-Request-ID"] = request_id
-        return response
-
-
+            try:
+                session.close()
+            except Exception:
+                pass
 def create_app() -> FastAPI:
     """Application factory."""
 
@@ -77,15 +130,19 @@ def _configure_middleware(app: FastAPI, settings: Settings) -> None:
         allow_methods=["*"],
         allow_headers=["*"],
     )
-    
+
     # Then add other middleware
     app.add_middleware(RequestIdMiddleware)
+    app.add_middleware(RequestLoggingMiddleware)
+    app.add_middleware(DBTransactionMiddleware)
 
 
 def _configure_routes(app: FastAPI) -> None:
     app.include_router(registration_router, prefix="/v1")
     app.include_router(auth_router, prefix="/v1")
     app.include_router(customers_router, prefix="/v1")
+    app.include_router(agents_router, prefix="/v1")
+    app.include_router(portal_router, prefix="/v1")
 
 
 def _configure_exception_handlers(app: FastAPI) -> None:
@@ -107,13 +164,14 @@ def _configure_exception_handlers(app: FastAPI) -> None:
     async def generic_exception_handler(request: Request, exc: Exception) -> JSONResponse:
         logger.exception("Unhandled application error", extra={"path": request.url.path})
         request_id = getattr(request.state, "request_id", None)
-        response = JSONResponse(
-            status_code=500,
-            content={"detail": "Internal Server Error", "request_id": request_id},
-        )
+        settings = get_settings()
+        payload = {"detail": "Internal Server Error", "request_id": request_id}
+        if not settings.is_production:
+            payload["error_type"] = exc.__class__.__name__
+            payload["error_message"] = str(exc)
+        response = JSONResponse(status_code=500, content=payload)
         if request_id:
             response.headers["X-Request-ID"] = request_id
         return response
-
 
 app = create_app()

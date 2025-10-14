@@ -14,8 +14,9 @@ import {
   ChatAgentPreview,
   ChatMessage as ApiChatMessage,
   persistSessionToken,
-  submitChatCsat,
+  submitChatCsat, resolvePortalHandle,
 } from "@/services/chat";
+import { setStoredBusinessId } from "@/services/http";
 import { useMutation } from "@tanstack/react-query";
 
 const caseTitles = [
@@ -95,11 +96,29 @@ const toDisplayMessage = (message: ApiChatMessage, agent: ChatAgentPreview | nul
 };
 
 const ChatPortal: React.FC = () => {
-  const { agentId } = useParams<{ agentId: string }>();
+  const { businessSlug, agentSlug } = useParams<{ businessSlug: string; agentSlug: string }>();
   const navigate = useNavigate();
   const { toast } = useToast();
 
-  const agentHandle = agentId ?? null;
+
+  const [agentHandle, setAgentHandle] = useState<string | null>(null);
+  useEffect(() => {
+    let mounted = true;
+    (async () => {
+      try {
+        if (!businessSlug || !agentSlug) return;
+        const res = await resolvePortalHandle(businessSlug, agentSlug);
+        if (!mounted) return;
+        setStoredBusinessId(res.business_id);
+        setAgentHandle(res.agent_handle || agentSlug);
+      } catch (err) {
+        const message = err instanceof Error ? err.message : "Unable to resolve portal address.";
+        toast({ title: "Invalid portal URL", description: message, variant: "destructive" });
+        navigate("/", { replace: true });
+      }
+    })();
+    return () => { mounted = false };
+  }, [businessSlug, agentSlug, navigate, toast]);
 
   const sessionQuery = useChatSession(agentHandle, { landingPage: typeof window !== "undefined" ? window.location.href : undefined }, {
     retry: false,
@@ -358,7 +377,7 @@ const ChatPortal: React.FC = () => {
     const url = URL.createObjectURL(blob);
     const anchor = document.createElement("a");
     anchor.href = url;
-    anchor.download = `chat-transcript-${agentId ?? "agent"}-${Date.now()}.txt`;
+    anchor.download = `chat-transcript-${(agent?.id ?? agentHandle ?? "agent")}-${Date.now()}.txt`;
     document.body.appendChild(anchor);
     anchor.click();
     document.body.removeChild(anchor);
@@ -368,7 +387,7 @@ const ChatPortal: React.FC = () => {
       title: "Transcript downloaded",
       description: "Your conversation transcript has been saved.",
     });
-  }, [messages, toast, agentId]);
+  }, [messages, toast, agent?.id, agentHandle]);
 
   const handleClearChat = useCallback(() => {
     if (!agentHandle) return;

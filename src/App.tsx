@@ -50,7 +50,7 @@ const App = () => (
           <Route path="/dashboard/conversations" element={<Conversations />} />
           <Route path="/dashboard/agents" element={<Agents />} />
           <Route path="/dashboard/knowledge" element={<Knowledge />} />
-          <Route path="/chat/:agentId" element={<ChatPortal />} />
+          <Route path="/:businessSlug/:agentSlug" element={<ChatPortal />} />
           {/* ADD ALL CUSTOM ROUTES ABOVE THE CATCH-ALL "*" ROUTE */}
           <Route path="*" element={<NotFound />} />
         </Routes>

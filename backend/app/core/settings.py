@@ -3,7 +3,7 @@ from __future__ import annotations
 """Application settings management using Pydantic Settings."""
 
 from functools import lru_cache
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -16,6 +16,14 @@ class Settings(BaseSettings):
 
     ENV: str = Field(default="development", description="Deployment environment name.")
     LOG_LEVEL: str = Field(default="INFO", description="Application log level.")
+    LOG_FORMAT: Literal["auto", "json", "console"] = Field(
+        default="auto",
+        description="Select logging style: 'json', 'console', or auto-switch based on environment.",
+    )
+    LOG_ERROR_FILE: str | None = Field(
+        default="logs/backend-errors.log",
+        description="Optional path where detailed error logs are persisted.",
+    )
     DATABASE_URL: str = Field(
         default="postgresql+psycopg://postgres:postgres@localhost:5432/pocketdb",
         description="Primary database connection string.",
@@ -75,9 +83,28 @@ class Settings(BaseSettings):
             return [str(origin).strip() for origin in value if str(origin).strip()]
         raise TypeError("ALLOWED_ORIGINS must be a list or comma-separated string")
 
+    @field_validator("LOG_FORMAT", mode="before")
+    @classmethod
+    def normalize_log_format(cls, value: Any) -> str:
+        if value is None:
+            return "auto"
+        if isinstance(value, str):
+            normalized = value.strip().lower()
+        else:
+            raise TypeError("LOG_FORMAT must be a string value")
+        if normalized not in {"auto", "json", "console"}:
+            raise ValueError("LOG_FORMAT must be one of: auto, json, console")
+        return normalized
+
     @property
     def is_production(self) -> bool:
         return self.ENV.lower() == "production"
+
+    @property
+    def log_format(self) -> str:
+        if self.LOG_FORMAT == "auto":
+            return "json" if self.is_production else "console"
+        return self.LOG_FORMAT
 
 
 @lru_cache

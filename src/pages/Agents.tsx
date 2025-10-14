@@ -1,4 +1,6 @@
 import React, { useEffect } from "react";
+import { useAgents } from "@/hooks/useAgents";
+import type { AgentListItem } from "@/services/agents";
 import { Link } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -90,6 +92,7 @@ const Sidebar = () => {
             </Link>
           ))}
         </nav>
+
         <div className="mt-auto rounded-xl p-3 bg-gradient-to-br from-primary/20 via-primary/10 to-primary/5">
           <div className="text-sm font-semibold">Upgrade to PRO</div>
           <div className="text-xs text-muted-foreground mb-2">Get access to all features</div>
@@ -200,6 +203,45 @@ const secondsToText = (sec: number) => {
   return `${m}m ${s}s`
 }
 
+const mapRoleEnumToLabel = (role: string): AgentRole => {
+  const key = role?.toLowerCase?.() || "";
+  if (key === "support" || key === "success") return "Support Agent";
+  if (key === "sales" || key === "marketing") return "Sales Associate";
+  if (key === "research") return "Technical Specialist";
+  return "Support Agent";
+};
+
+const mapToneEnumToLabel = (tone: string | null | undefined): AgentTone | undefined => {
+  const key = tone?.toLowerCase?.() || "";
+  if (key === "friendly" || key === "casual") return "Friendly";
+  if (key === "professional") return "Professional";
+  if (key === "empathetic") return "Empathetic";
+  if (key === "playful") return "Playful";
+  if (key === "formal") return "Formal";
+  return undefined;
+};
+
+const mapStatusEnumToLabel = (status: string): AgentStatus => {
+  const key = status?.toLowerCase?.() || "";
+  if (key === "active") return "Active";
+  if (key === "inactive") return "Inactive";
+  return "Draft";
+};
+const mapApiAgentToUi = (it: AgentListItem): Agent => ({
+  id: it.id,
+  name: it.name,
+  roles: [mapRoleEnumToLabel(it.role)],
+  status: mapStatusEnumToLabel(it.status),
+  conversations: 0,
+  satisfaction: 0,
+  aht: 0,
+  escalations: 0,
+  updatedAt: it.createdAt,
+  tone: mapToneEnumToLabel(it.tone),
+  traits: [],
+  kpis: [...DEFAULT_KPI_SELECTION],
+});
+
 const useDebounced = (val: string, delay = 300) => {
   const [d, setD] = React.useState(val);
   React.useEffect(() => { const id = setTimeout(() => setD(val), delay); return () => clearTimeout(id); }, [val, delay]);
@@ -207,7 +249,7 @@ const useDebounced = (val: string, delay = 300) => {
 };
 
 const Agents = () => {
-  const [items, setItems] = React.useState<Agent[]>(seed);
+  const [items, setItems] = React.useState<Agent[]>([]);
   const [panelOpen, setPanelOpen] = React.useState(false);
   const [active, setActive] = React.useState<Agent | null>(null);
   const [tab, setTab] = React.useState<string>('overview');
@@ -251,6 +293,22 @@ const Agents = () => {
     { value: 'knowledge', label: 'Knowledge' },
     { value: 'analytics', label: 'Analytics' },
   ]), []);
+  const agentsQuery = useAgents(
+    {
+      qName: q || undefined,
+      limit: pageSize,
+      offset: (page - 1) * pageSize,
+      sortBy: "created_at",
+      order: "desc",
+    },
+    { retry: false }
+  );
+
+  React.useEffect(() => {
+    if (!agentsQuery.data) return;
+    const mapped = (agentsQuery.data.items || []).map(mapApiAgentToUi);
+    setItems(mapped);
+  }, [agentsQuery.data]);
 
   const chipClasses = (active: boolean) =>
     cn(
@@ -287,25 +345,15 @@ const Agents = () => {
   }, [active?.id]);
 
   const filtered = React.useMemo(() => {
-    let arr = [...items];
+    let arr = items;
     if (status !== "All") arr = arr.filter((i) => i.status === status);
-    if (q) {
-      const needle = q.toLowerCase();
-      arr = arr.filter((i) =>
-        i.name.toLowerCase().includes(needle) ||
-        i.id.toLowerCase().includes(needle) ||
-        i.roles.join(" ").toLowerCase().includes(needle)
-      );
-    }
-    // Default sort by updated desc
-    arr.sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime());
     return arr;
-  }, [items, status, q]);
+  }, [items, status]);
 
   React.useEffect(() => setPage(1), [status, q, pageSize]);
-  const total = filtered.length;
+  const total = agentsQuery.data?.total ?? filtered.length;
   const pageCount = Math.max(1, Math.ceil(total / pageSize));
-  const pageItems = filtered.slice((page - 1) * pageSize, page * pageSize);
+  const pageItems = filtered;
 
   const openPanel = (it: Agent) => { setActive(it); setPanelOpen(true); };
   const setStatusForIds = (ids: string[], s: AgentStatus) => setItems(prev => prev.map(i => ids.includes(i.id) ? { ...i, status: s, updatedAt: new Date().toISOString() } : i))
@@ -317,10 +365,10 @@ const Agents = () => {
     setActive(a => a ? { ...a, ...patch, updatedAt: new Date().toISOString() } : a)
   }
   const duplicateAgent = (it: Agent) => {
-    const id = `AG-${Math.floor(Math.random()*9000)+1000}`
-    const copy: Agent = { ...it, id, name: `${it.name} Copy`, status: 'Draft', conversations: 0, satisfaction: 0, aht: 0, escalations: 0, updatedAt: new Date().toISOString() }
-    setItems(prev => [copy, ...prev])
-    setActive(copy); setPanelOpen(true)
+    const id = `AG-${Math.floor(Math.random()*9000)+1000}`;
+    const copy: Agent = { ...it, id, name: `${it.name} Copy`, status: 'Draft', conversations: 0, satisfaction: 0, aht: 0, escalations: 0, updatedAt: new Date().toISOString() };
+    setItems(prev => [copy, ...prev]);
+    setActive(copy); setPanelOpen(true);
   }
 
   const toggleKpiSelection = (label: string) => {
@@ -505,103 +553,109 @@ const Agents = () => {
                   <TableHead className="w-10"></TableHead>
                 </TableRow>
               </TableHeader>
-              <TableBody>
-                {pageItems.map((it) => (
-                  <TableRow
-                    key={it.id}
-                    className="group cursor-pointer bg-transparent transition-colors hover:bg-muted/60 dark:hover:bg-white/10 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-offset-0 focus-visible:ring-primary"
-                    onClick={() => openPanel(it)}
-                  >
-                    <TableCell>
-                      <div className="flex flex-col">
-                        <div className="font-semibold text-foreground">{it.name}</div>
-                        <div className="text-xs text-foreground/60">{it.id}</div>
-                      </div>
-                    </TableCell>
-                    <TableCell>
-                      <div className="flex flex-wrap gap-1.5">
-                        {it.roles.map((r) => (
-                          <Badge key={r} variant="secondary" className="text-xs">
-                            {r}
-                          </Badge>
-                        ))}
-                      </div>
-                    </TableCell>
-                    <TableCell>
-                      <Badge
-                        variant="outline"
-                        className={cn(
-                          "text-xs capitalize",
-                          it.status === 'Active'
-                            ? 'bg-emerald-100 text-emerald-600 border border-emerald-200 dark:bg-transparent dark:text-emerald-200 dark:border-emerald-500/65'
-                            : it.status === 'Draft'
-                              ? 'bg-amber-100 text-amber-700 border border-amber-200 dark:bg-transparent dark:text-amber-200 dark:border-amber-500/65'
-                              : 'bg-slate-100 text-slate-600 border border-slate-200 dark:bg-transparent dark:text-slate-300 dark:border-slate-600/70'
-                        )}
-                      >
-                        {it.status}
-                      </Badge>
-                    </TableCell>
-                    <TableCell className="text-right text-foreground/70 tabular-nums">{it.conversations.toLocaleString()}</TableCell>
-                    <TableCell className="text-right">
-                      {typeof it.satisfaction === 'number' ? (
+                <TableBody>
+                  {agentsQuery.isLoading && (
+                    <TableRow><TableCell colSpan={9}>Loading agents…</TableCell></TableRow>
+                  )}
+                  {!agentsQuery.isLoading && agentsQuery.isError && (
+                    <TableRow><TableCell colSpan={9}>Failed to load agents.</TableCell></TableRow>
+                  )}
+                  {!agentsQuery.isLoading && !agentsQuery.isError && pageItems.map((it) => (
+                    <TableRow
+                      key={it.id}
+                      className="group cursor-pointer bg-transparent transition-colors hover:bg-muted/60 dark:hover:bg-white/10 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-offset-0 focus-visible:ring-primary"
+                      onClick={() => openPanel(it)}
+                    >
+                      <TableCell>
+                        <div className="flex flex-col">
+                          <div className="font-semibold text-foreground">{it.name}</div>
+                          <div className="text-xs text-foreground/60">{it.id}</div>
+                        </div>
+                      </TableCell>
+                      <TableCell>
+                        <div className="flex flex-wrap gap-1.5">
+                          {it.roles.map((r) => (
+                            <Badge key={r} variant="secondary" className="text-xs">
+                              {r}
+                            </Badge>
+                          ))}
+                        </div>
+                      </TableCell>
+                      <TableCell>
                         <Badge
                           variant="outline"
                           className={cn(
-                            "text-xs tabular-nums",
-                            it.satisfaction >= 90
+                            "text-xs capitalize",
+                            it.status === "Active"
                               ? "bg-emerald-100 text-emerald-600 border border-emerald-200 dark:bg-transparent dark:text-emerald-200 dark:border-emerald-500/65"
-                              : it.satisfaction >= 70
+                              : it.status === "Draft"
                                 ? "bg-amber-100 text-amber-700 border border-amber-200 dark:bg-transparent dark:text-amber-200 dark:border-amber-500/65"
-                                : "bg-rose-100 text-rose-600 border border-rose-200 dark:bg-transparent dark:text-rose-200 dark:border-rose-500/65"
+                                : "bg-slate-100 text-slate-600 border border-slate-200 dark:bg-transparent dark:text-slate-300 dark:border-slate-600/70"
                           )}
                         >
-                          {it.satisfaction}%
+                          {it.status}
                         </Badge>
-                      ) : (
-                        <span className="text-foreground/50">—</span>
-                      )}
-                    </TableCell>
-                    <TableCell className="text-right text-foreground/70 tabular-nums">{secondsToText(it.aht)}</TableCell>
-                    <TableCell className="text-right text-foreground/70 tabular-nums">{it.escalations}</TableCell>
-                    <TableCell className="text-foreground/70">{formatRelative(it.updatedAt)}</TableCell>
-                    <TableCell onClick={(e) => e.stopPropagation()}>
-                      <DropdownMenu>
-                        <DropdownMenuTrigger asChild>
-                          <button className="p-1 rounded-md hover:bg-muted" aria-label="Row actions">
-                            <EllipsisVertical className="w-4 h-4" />
-                          </button>
-                        </DropdownMenuTrigger>
-                        <DropdownMenuContent align="end">
-                          <DropdownMenuItem onClick={() => openPanel(it)}>Open</DropdownMenuItem>
-                          <DropdownMenuItem onClick={() => duplicateAgent(it)}>Duplicate</DropdownMenuItem>
-                          {it.status !== 'Active' && (
-                            <DropdownMenuItem onClick={() => setStatusForIds([it.id], 'Active')}>
-                              Activate
+                      </TableCell>
+                      <TableCell className="text-right text-foreground/70 tabular-nums">{it.conversations.toLocaleString()}</TableCell>
+                      <TableCell className="text-right">
+                        {typeof it.satisfaction === "number" ? (
+                          <Badge
+                            variant="outline"
+                            className={cn(
+                              "text-xs tabular-nums",
+                              it.satisfaction >= 90
+                                ? "bg-emerald-100 text-emerald-600 border border-emerald-200 dark:bg-transparent dark:text-emerald-200 dark:border-emerald-500/65"
+                                : it.satisfaction >= 70
+                                  ? "bg-amber-100 text-amber-700 border border-amber-200 dark:bg-transparent dark:text-amber-200 dark:border-amber-500/65"
+                                  : "bg-rose-100 text-rose-600 border border-rose-200 dark:bg-transparent dark:text-rose-200 dark:border-rose-500/65"
+                            )}
+                          >
+                            {it.satisfaction}%
+                          </Badge>
+                        ) : (
+                          <span className="text-foreground/50">—</span>
+                        )}
+                      </TableCell>
+                      <TableCell className="text-right text-foreground/70 tabular-nums">{secondsToText(it.aht)}</TableCell>
+                      <TableCell className="text-right text-foreground/70 tabular-nums">{it.escalations}</TableCell>
+                      <TableCell className="text-foreground/70">{formatRelative(it.updatedAt)}</TableCell>
+                      <TableCell onClick={(e) => e.stopPropagation()}>
+                        <DropdownMenu>
+                          <DropdownMenuTrigger asChild>
+                            <button className="p-1 rounded-md hover:bg-muted" aria-label="Row actions">
+                              <EllipsisVertical className="w-4 h-4" />
+                            </button>
+                          </DropdownMenuTrigger>
+                          <DropdownMenuContent align="end">
+                            <DropdownMenuItem onClick={() => openPanel(it)}>Open</DropdownMenuItem>
+                            <DropdownMenuItem onClick={() => duplicateAgent(it)}>Duplicate</DropdownMenuItem>
+                            {it.status !== "Active" && (
+                              <DropdownMenuItem onClick={() => setStatusForIds([it.id], "Active")}>
+                                Activate
+                              </DropdownMenuItem>
+                            )}
+                            {it.status === "Active" && (
+                              <DropdownMenuItem onClick={() => setStatusForIds([it.id], "Inactive")}>
+                                Deactivate
+                              </DropdownMenuItem>
+                            )}
+                            <DropdownMenuSeparator />
+                            <DropdownMenuItem className="text-destructive" onClick={() => deleteIds([it.id])}>
+                              Delete
                             </DropdownMenuItem>
-                          )}
-                          {it.status === 'Active' && (
-                            <DropdownMenuItem onClick={() => setStatusForIds([it.id], 'Inactive')}>
-                              Deactivate
-                            </DropdownMenuItem>
-                          )}
-                          <DropdownMenuSeparator />
-                          <DropdownMenuItem className="text-destructive" onClick={() => deleteIds([it.id])}>
-                            Delete
-                          </DropdownMenuItem>
-                        </DropdownMenuContent>
-                      </DropdownMenu>
-                    </TableCell>
-                  </TableRow>
-                ))}
-                {pageItems.length === 0 && (
-                  <TableRow>
-                    <TableCell colSpan={9}>
-                      <div className="py-10 text-center text-sm text-muted-foreground">No agents match your filters.</div>
-                    </TableCell>
-                  </TableRow>
-                )}
-              </TableBody>
+                          </DropdownMenuContent>
+                        </DropdownMenu>
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                  {!agentsQuery.isLoading && !agentsQuery.isError && pageItems.length === 0 && (
+                    <TableRow>
+                      <TableCell colSpan={9}>
+                        <div className="py-10 text-center text-sm text-muted-foreground">No agents match your filters.</div>
+                      </TableCell>
+                    </TableRow>
+                  )}
+                </TableBody>
               </Table>
             </div>
           </Card>
