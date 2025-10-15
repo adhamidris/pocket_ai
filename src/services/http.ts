@@ -87,6 +87,7 @@ const buildUrl = (path: string) => {
   if (!API_BASE_URL) return path;
   return `${API_BASE_URL}${path.startsWith("/") ? "" : "/"}${path}`;
 };
+export { buildUrl as buildApiUrl };
 
 export async function jsonFetch<T>(path: string, options: JsonFetchOptions = {}): Promise<T> {
   const {

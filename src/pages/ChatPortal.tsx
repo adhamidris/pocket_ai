@@ -16,6 +16,7 @@ import {
   persistSessionToken,
   submitChatCsat, resolvePortalHandle,
 } from "@/services/chat";
+import { openChatEventStream, cancelAssistantResponse } from "@/services/chat";
 import { setStoredBusinessId } from "@/services/http";
 import { useMutation } from "@tanstack/react-query";
 
@@ -122,7 +123,7 @@ const ChatPortal: React.FC = () => {
 
   const sessionQuery = useChatSession(agentHandle, { landingPage: typeof window !== "undefined" ? window.location.href : undefined }, {
     retry: false,
-    refetchOnWindowFocus: false,
+    refetchOnWindowFocus: true,
   });
 
   const sessionData = sessionQuery.data;
@@ -138,6 +139,8 @@ const ChatPortal: React.FC = () => {
   const [transcriptError, setTranscriptError] = useState<string | null>(null);
   const [csatVisible, setCsatVisible] = useState(false);
   const [csatRecordedAt, setCsatRecordedAt] = useState<string | null>(null);
+  const eventSourceRef = useRef<EventSource | null>(null);
+  const streamActiveRef = useRef<boolean>(false);
 
   const prevSessionTokenRef = useRef<string | null>(null);
   useEffect(() => {
@@ -227,9 +230,9 @@ const ChatPortal: React.FC = () => {
     { sessionToken: sessionToken ?? null, cursor: pollCursor ?? undefined, limit: 50 },
     {
       enabled: Boolean(sessionToken),
-      refetchInterval: 5000,
-      refetchIntervalInBackground: true,
-      refetchOnWindowFocus: false,
+      refetchInterval: () => streamActiveRef.current ? false : 5000,
+      refetchIntervalInBackground: false,
+      refetchOnWindowFocus: true,
       staleTime: 0,
       cacheTime: 0,
       retry: false,
@@ -243,6 +246,35 @@ const ChatPortal: React.FC = () => {
     const nextCursor = messagesQuery.data.nextCursor ?? null;
     setPollCursor((prev) => (prev === nextCursor ? prev : nextCursor));
   }, [messagesQuery.data, mergeMessages, agent]);
+    /* SSE chat stream effect */
+    useEffect(() => {
+      if (!sessionToken) { if (eventSourceRef.current) { try { eventSourceRef.current.close(); } catch {} eventSourceRef.current = null; } streamActiveRef.current = false; return; }
+      const closed = session?.conversationStatus ? CLOSED_STATUSES.has(session.conversationStatus.toUpperCase()) : false; if (closed) { if (eventSourceRef.current) { try { eventSourceRef.current.close(); } catch {} eventSourceRef.current = null; } streamActiveRef.current = false; return; }
+      if (eventSourceRef.current) { try { eventSourceRef.current.close(); } catch {} eventSourceRef.current = null; }
+      let cancelled = false;
+      const handlers = {
+        open: () => { streamActiveRef.current = true; },
+        error: () => { streamActiveRef.current = false; setAwaitingReply(false); },
+        created: (ev:any) => { setAwaitingReply(true); const m = ev?.message ?? ev; if (!m?.id) return; const s = rawMessagesRef.current; s.set(m.id, m); updateMessagesFromStore(agent ?? null); },
+        delta: (ev:any) => { setAwaitingReply(true); const id = ev?.id, d = ev?.delta; if (!id || typeof d !== "string") return; const s = rawMessagesRef.current; const ex:any = s.get(id); if (ex) { ex.body = (ex.body || "") + d; s.set(id, ex); } else { s.set(id, { id, conversationId: session?.conversationId ?? null, messageType: "ASSISTANT", visibility: "PUBLIC", channel: "text", body: d, payload: null, sentAt: new Date().toISOString(), author: { agentId: agent?.id ?? null, customerId: null, userDisplayName: agent?.name ?? null }, attachments: [] } as any); } updateMessagesFromStore(agent ?? null); },
+        completed: () => { streamActiveRef.current = false; setAwaitingReply(false); if (!cancelled) { messagesQuery.refetch(); } if (eventSourceRef.current) { try { eventSourceRef.current.close(); } catch {} eventSourceRef.current = null; } },
+        statusChanged: (ev:any) => { const st = ev?.status ?? ev?.conversation_status; if (typeof st === "string") setConversationStatus(st); },
+        heartbeat: () => {}
+      } as const;
+      const es = openChatEventStream(sessionToken, handlers as any); eventSourceRef.current = es;
+      return () => { cancelled = true; if (eventSourceRef.current) { try { eventSourceRef.current.close(); } catch {} eventSourceRef.current = null; } streamActiveRef.current = false; };
+    }, [sessionToken, session?.conversationStatus, agent, updateMessagesFromStore, messagesQuery]);
+    /* Visibility refetch when not streaming */
+    useEffect(() => {
+      const onVisible = () => {
+        if (!document.hidden && !streamActiveRef.current) {
+          try { messagesQuery.refetch(); } catch {}
+          try { sessionQuery.refetch(); } catch {}
+        }
+      };
+      document.addEventListener("visibilitychange", onVisible);
+      return () => { document.removeEventListener("visibilitychange", onVisible); };
+    }, [messagesQuery, sessionQuery]);
 
   useEffect(() => {
     const error = messagesQuery.error;
@@ -357,7 +389,10 @@ const ChatPortal: React.FC = () => {
   const handleStop = useCallback(() => {
     setAwaitingReply(false);
     sendMessageMutation.reset();
-  }, [sendMessageMutation]);
+    try { if (sessionToken) { cancelAssistantResponse(sessionToken).catch(() => {}); } } catch {}
+    if (eventSourceRef.current) { try { eventSourceRef.current.close(); } catch {} eventSourceRef.current = null; }
+    streamActiveRef.current = false;
+  }, [sendMessageMutation, sessionToken]);
 
   const handleDownloadTranscript = useCallback(() => {
     if (messages.length === 0) {

@@ -2,13 +2,18 @@ from __future__ import annotations
 
 import re
 from typing import Any
+import json
+from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Path, status
+from fastapi.responses import StreamingResponse
+import asyncio
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.api.v1.deps import get_db
 from app.models.registration import Agent, Business
+from app.core.settings import get_settings
 from app.api.v1.deps import require_business_id_public
 
 from app.schemas.chat_portal import (
@@ -51,6 +56,8 @@ from app.models.conversations import (
 
 )
 
+from app.services.ai_runtime_facade import AgentTurnRuntimeService
+from app.services.providers.openai_orchestrator import OpenAIOrchestrator
 from app.services.chat_sessions import ChatSessionsService, CreateChatSessionInput
 
 from app.services.messages import MessagesService, AddMessageInput, MessageAttachmentInput, ListMessagesInput
@@ -445,3 +452,163 @@ def submit_csat_endpoint(
         raise HTTPException(status_code=http, detail={"code": code, "message": str(exc)}) from exc
 
     return {"conversation_id": str(result.conversation_id), "recorded_at": result.recorded_at}
+
+@router.get(
+    "/events",
+    summary="SSE stream for chat events",
+)
+async def portal_events(
+    session_token: str,
+    business_id=Depends(require_business_id_public),
+    db: Session = Depends(get_db),
+):
+    _ = _get_active_conversation_for_session(db, business_id=business_id, session_token=session_token)
+    async def event_gen():
+        # initial heartbeat to prove the stream is alive
+        yield "event: heartbeat\n"
+        yield "data: {}\n\n"
+        while True:
+            await asyncio.sleep(15)
+            yield "event: heartbeat\n"
+            yield "data: {}\n\n"
+    return StreamingResponse(event_gen(), media_type="text/event-stream", headers={"Cache-Control": "no-cache", "Connection": "keep-alive", "X-Accel-Buffering": "no"})
+
+@router.post(
+
+    "/stream/cancel",
+
+    summary="Cancel any ongoing assistant generation for this session",
+
+)
+
+@router.post(
+    "/stream/cancel",
+    summary="Cancel any ongoing assistant generation for this session",
+)
+def stream_cancel_endpoint(
+    session_token: str,
+    business_id=Depends(require_business_id_public),
+    db: Session = Depends(get_db),
+):
+    """
+    Best-effort cancel hook. For now, no server-side job tracking is implemented.
+    This endpoint validates the session context and returns 200 OK regardless.
+    """
+    _ = _get_active_conversation_for_session(db, business_id=business_id, session_token=session_token)
+    return {"ok": True}
+
+@router.post(
+    "/stream/send",
+    summary="Send a visitor message and stream the agent response (SSE)",
+)
+def stream_send_endpoint(
+    payload: ChatMessageSendRequest,
+    business_id=Depends(require_business_id_public),
+    db: Session = Depends(get_db),
+):
+    """
+    Persists the CUSTOMER message, prepares agent runtime, and streams the agent's response.
+    SSE events:
+      - event: delta   data: <text piece>
+      - event: final   data: {"text": "...","payload": {...}}
+      - event: error   data: "<message>"
+    """
+    # 1) Resolve active conversation for the session
+    conversation = _get_active_conversation_for_session(
+        db, business_id=business_id, session_token=payload.session_token
+    )
+
+    # 2) Persist the CUSTOMER message (mirrors /portal/messages)
+    svc = MessagesService(db)
+    try:
+        _ = svc.add_message(
+            AddMessageInput(
+                business_id=business_id,
+                conversation_id=conversation.id,
+                message_type=ConversationMessageType.CUSTOMER,
+                visibility=ConversationMessageVisibility.PUBLIC,
+                channel=payload.channel or ConversationMessageChannel.TEXT,
+                body=payload.body,
+                payload=payload.payload,
+                author_customer_id=conversation.customer_id,
+                attachments=tuple(
+                    MessageAttachmentInput(storage_asset_id=att.storage_asset_id, caption=att.caption)
+                    for att in (payload.attachments or ())
+                ),
+            )
+        )
+    except (ServiceValidationError, ServiceNotFoundError) as exc:
+        code = "not_found" if isinstance(exc, ServiceNotFoundError) else "validation_error"
+        http = status.HTTP_404_NOT_FOUND if isinstance(exc, ServiceNotFoundError) else status.HTTP_400_BAD_REQUEST
+        raise HTTPException(status_code=http, detail={"code": code, "message": str(exc)}) from exc
+
+    # 3) Prepare AI runtime for the agent turn
+    agent_id = getattr(conversation, "agent_id", None)
+    if agent_id is None:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail={"code": "server_error", "message": "Conversation is missing agent assignment"},
+        )
+
+    runtime_service = AgentTurnRuntimeService(db)
+    prepared = runtime_service.prepare(
+        business_id=business_id, agent_id=agent_id, conversation_id=conversation.id
+    )
+
+    # 4) Initialize provider orchestrator
+    settings = get_settings()
+    model_name = getattr(settings, "OPENAI_MODEL", "gpt-4o-mini")
+    try:
+        orch = OpenAIOrchestrator(db, model=model_name)
+    except Exception as exc:
+        # Missing API key or SDK, surface a clear error to client
+        def err_gen():
+            yield "event: error\n"
+            yield f"data: {json.dumps(str(exc))}\n\n"
+        return StreamingResponse(
+            err_gen(),
+            media_type="text/event-stream",
+            headers={"Cache-Control": "no-cache", "Connection": "keep-alive", "X-Accel-Buffering": "no"},
+        )
+
+    # 5) Decorate StartTurnContext with provider details and timing
+    ctx = prepared.start_ctx
+    ctx.model_name = orch.model
+    ctx.temperature = float(prepared.runtime.model_config_json.get("temperature", 0.3) or 0.3)
+    ctx.prompt_excerpt = (prepared.runtime.prompt_template or "")[:1000]
+    ctx.request_started_at = datetime.now(timezone.utc)
+
+    # 6) Streaming generator translating provider events into SSE
+    def sse_gen():
+        try:
+            for evt in orch.start_turn_with_runtime(
+                ctx, prepared.runtime, user_text=(payload.body or "").strip(), stream=True
+            ):
+                et = evt.get("type")
+                data = evt.get("data")
+                if et == "delta":
+                    yield "event: delta\n"
+                    # data is a plain string piece
+                    yield f"data: {json.dumps(data)}\n\n"
+                elif et == "final":
+                    yield "event: final\n"
+                    yield f"data: {json.dumps(data)}\n\n"
+                elif et == "tool":
+                    yield "event: tool\n"
+                    yield f"data: {json.dumps(data)}\n\n"
+                elif et == "error":
+                    yield "event: error\n"
+                    yield f"data: {json.dumps(str(data))}\n\n"
+                else:
+                    # Unknown event type safeguard
+                    yield "event: error\n"
+                    yield f"data: {json.dumps('Unknown event type')}\n\n"
+        except Exception as exc:
+            yield "event: error\n"
+            yield f"data: {json.dumps(str(exc))}\n\n"
+
+    return StreamingResponse(
+        sse_gen(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "Connection": "keep-alive", "X-Accel-Buffering": "no"},
+    )

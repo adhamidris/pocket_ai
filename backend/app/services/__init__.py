@@ -84,6 +84,21 @@ from app.services.registration import (
     UpsertBusinessResult,
 )
 
+
+# AI runtime prep & orchestration exports
+from app.services.ai_prompt_service import (
+    AiPromptService,
+    PreparedAgentRuntime,
+    KnowledgePlan,
+    RuntimeSignals,
+)
+from app.services.llm_orchestrator import (
+    LlmOrchestrator,
+    StartTurnContext,
+    StreamEvent,
+)
+from app.services.ai_runtime_facade import PreparedTurn, AgentTurnRuntimeService
+from app.services.providers.openai_orchestrator import OpenAIOrchestrator
 __all__ = [
     "AddMessageInput",
     "AddMessageResult",
@@ -156,4 +171,16 @@ __all__ = [
     "UpdateCustomerTagsResult",
     "UpsertBusinessInput",
     "UpsertBusinessResult",
+    # AI runtime prep & orchestration
+    "AiPromptService",
+    "PreparedAgentRuntime",
+    "KnowledgePlan",
+    "RuntimeSignals",
+    "LlmOrchestrator",
+    "StartTurnContext",
+    "StreamEvent",
+    "OpenAIOrchestrator",
+    "PreparedTurn",
+    "AgentTurnRuntimeService",
+
 ]

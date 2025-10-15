@@ -434,17 +434,19 @@ async def require_business_id(
 
 async def require_business_id_public(
     business_id_header: str | None = Header(default=None, alias="X-Business-Id"),
+    request: Request = None,
 ) -> UUID:
-    """Public variant: parses X-Business-Id without requiring authentication."""
-    if not business_id_header:
+    """Public variant: resolves business ID from header or `business_id` query param (for SSE)."""
+    candidate = business_id_header or (request.query_params.get("business_id") if request else None)
+    if not candidate:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail={"code": "missing_business", "message": "X-Business-Id header is required"},
+            detail={"code": "missing_business", "message": "X-Business-Id header or ?business_id query param is required"},
         )
     try:
-        return UUID(business_id_header)
+        return UUID(candidate)
     except ValueError as exc:  # pragma: no cover - defensive
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail={"code": "invalid_business", "message": "X-Business-Id must be a valid UUID"},
+            detail={"code": "invalid_business", "message": "Business ID must be a valid UUID"},
         ) from exc

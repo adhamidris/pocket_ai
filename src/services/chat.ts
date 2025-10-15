@@ -1,4 +1,4 @@
-import { ApiError, jsonFetch } from "./http";
+import { ApiError, jsonFetch, buildApiUrl } from "./http";
 
 export type UUID = string;
 
@@ -396,6 +396,76 @@ export async function submitChatCsat(
     conversationId: response.conversation_id ?? null,
     recordedAt: response.recorded_at,
   };
+}
+
+// --- SSE chat streaming helpers ---
+export type ChatEventHandlers = {
+  created?: (payload: any) => void;
+  delta?: (payload: any) => void;
+  completed?: (payload: any) => void;
+  statusChanged?: (payload: any) => void;
+  heartbeat?: (payload: any) => void;
+  error?: (ev: Event) => void;
+  open?: (ev: Event) => void;
+};
+
+const parseSseData = (raw: string): any => {
+  try { return JSON.parse(raw); } catch { return raw; }
+};
+
+export function openChatEventStream(sessionToken: string, handlers: ChatEventHandlers = {}): EventSource {
+  const bid = getActiveBusinessId();
+  let url = buildApiUrl("/v1/portal/events");
+  url += url.includes("?") ? "" : "?";
+  url += (url.endsWith("?") ? "" : "&") + "session_token=" + encodeURIComponent(sessionToken);
+  if (bid) {
+    url += "&business_id=" + encodeURIComponent(bid);
+  }
+  const es = new EventSource(url);
+
+  if (handlers.open) {
+    es.addEventListener("open", (ev) => handlers.open && handlers.open(ev));
+  }
+  es.addEventListener("error", (ev) => {
+    if (handlers.error) handlers.error(ev);
+  });
+
+  const bind = (eventName: string, cb?: (payload: any) => void) => {
+    if (!cb) return;
+    es.addEventListener(eventName, (e: MessageEvent) => {
+      const payload = parseSseData(e.data);
+      cb(payload);
+    });
+  };
+
+  bind("message.created", handlers.created);
+  bind("message.delta", handlers.delta);
+  bind("message.completed", handlers.completed);
+  bind("conversation.status_changed", handlers.statusChanged);
+  bind("heartbeat", handlers.heartbeat);
+
+  es.onmessage = (e: MessageEvent) => {
+    const payload = parseSseData(e.data);
+    const t = (payload && (payload as any).type) as string | undefined;
+    if (t === "message.created") handlers.created && handlers.created(payload);
+    else if (t === "message.delta") handlers.delta && handlers.delta(payload);
+    else if (t === "message.completed") handlers.completed && handlers.completed(payload);
+    else if (t === "conversation.status_changed") handlers.statusChanged && handlers.statusChanged(payload);
+    else if (t === "heartbeat") handlers.heartbeat && handlers.heartbeat(payload);
+  };
+
+  return es;
+}
+
+export async function cancelAssistantResponse(sessionToken: string, messageId?: string | null): Promise<{ cancelled: boolean }> {
+  const body: Record<string, unknown> = { session_token: sessionToken };
+  if (messageId) body.message_id = messageId;
+  const response = await jsonFetch<{ cancelled?: boolean }>(
+    "/v1/portal/stream/cancel",
+    { method: "POST", body }
+  );
+  const cancelled = Boolean((response as any)?.cancelled ?? true);
+  return { cancelled };
 }
 
 export { ApiError };
