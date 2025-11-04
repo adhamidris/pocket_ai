@@ -8,7 +8,6 @@ import { Message } from "@/components/chat/ChatMessage";
 import { useToast } from "@/hooks/use-toast";
 import { useChatSession } from "@/hooks/useChatSession";
 import { useChatMessages } from "@/hooks/useChatMessages";
-import { useSendChatMessage } from "@/hooks/useSendChatMessage";
 import {
   ApiError,
   ChatAgentPreview,
@@ -16,7 +15,7 @@ import {
   persistSessionToken,
   submitChatCsat, resolvePortalHandle,
 } from "@/services/chat";
-import { openChatEventStream, cancelAssistantResponse } from "@/services/chat";
+import { openChatEventStream, cancelAssistantResponse, streamAssistantResponse } from "@/services/chat";
 import { setStoredBusinessId } from "@/services/http";
 import { useMutation } from "@tanstack/react-query";
 
@@ -141,6 +140,7 @@ const ChatPortal: React.FC = () => {
   const [csatRecordedAt, setCsatRecordedAt] = useState<string | null>(null);
   const eventSourceRef = useRef<EventSource | null>(null);
   const streamActiveRef = useRef<boolean>(false);
+  const streamCancelRef = useRef<null | (() => void)>(null);
 
   const prevSessionTokenRef = useRef<string | null>(null);
   useEffect(() => {
@@ -253,11 +253,9 @@ const ChatPortal: React.FC = () => {
       if (eventSourceRef.current) { try { eventSourceRef.current.close(); } catch {} eventSourceRef.current = null; }
       let cancelled = false;
       const handlers = {
-        open: () => { streamActiveRef.current = true; },
-        error: () => { streamActiveRef.current = false; setAwaitingReply(false); },
-        created: (ev:any) => { setAwaitingReply(true); const m = ev?.message ?? ev; if (!m?.id) return; const s = rawMessagesRef.current; s.set(m.id, m); updateMessagesFromStore(agent ?? null); },
-        delta: (ev:any) => { setAwaitingReply(true); const id = ev?.id, d = ev?.delta; if (!id || typeof d !== "string") return; const s = rawMessagesRef.current; const ex:any = s.get(id); if (ex) { ex.body = (ex.body || "") + d; s.set(id, ex); } else { s.set(id, { id, conversationId: session?.conversationId ?? null, messageType: "ASSISTANT", visibility: "PUBLIC", channel: "text", body: d, payload: null, sentAt: new Date().toISOString(), author: { agentId: agent?.id ?? null, customerId: null, userDisplayName: agent?.name ?? null }, attachments: [] } as any); } updateMessagesFromStore(agent ?? null); },
-        completed: () => { streamActiveRef.current = false; setAwaitingReply(false); if (!cancelled) { messagesQuery.refetch(); } if (eventSourceRef.current) { try { eventSourceRef.current.close(); } catch {} eventSourceRef.current = null; } },
+        // Keep a lightweight event stream: do not toggle streaming state here
+        open: () => {},
+        error: () => {},
         statusChanged: (ev:any) => { const st = ev?.status ?? ev?.conversation_status; if (typeof st === "string") setConversationStatus(st); },
         heartbeat: () => {}
       } as const;
@@ -309,7 +307,7 @@ const ChatPortal: React.FC = () => {
     navigate("/", { replace: true });
   }, [sessionQuery.isError, sessionQuery.error, toast, navigate]);
 
-  const sendMessageMutation = useSendChatMessage();
+  // Streaming replaces non-stream send mutation for portal chat
 
   const csatMutation = useMutation({
     mutationFn: async ({ score, comment }: { score: number; comment: string | null }) => {
@@ -352,32 +350,49 @@ const ChatPortal: React.FC = () => {
     const trimmed = content.trim();
     if (!trimmed) return;
     setAwaitingReply(true);
-    sendMessageMutation.mutate(
+    streamActiveRef.current = true;
+    // Kick off streaming POST
+    const cancelable = streamAssistantResponse(
       { sessionToken, body: trimmed },
       {
-        onSuccess: (response) => {
-          setAwaitingReply(false);
-          mergeMessages([response.message, ...(response.followUpMessages ?? [])], agent ?? null);
-          setTranscriptError(null);
-          sessionQuery.refetch();
-        },
-        onError: (error) => {
-          setAwaitingReply(false);
-          let description = "Message could not be delivered.";
-          if (error instanceof ApiError && error.message) {
-            description = error.message;
-          } else if (error instanceof Error) {
-            description = error.message;
-          }
-          toast({
-            title: "Send failed",
-            description,
-            variant: "destructive",
+        open: () => { /* no-op */ },
+        created: (m: any) => {
+          setAwaitingReply(true);
+          const s = rawMessagesRef.current; s.set(m.id, {
+            ...m,
+            conversationId: session?.conversationId ?? null,
+            author: { agentId: agent?.id ?? null, customerId: null, userDisplayName: agent?.name ?? null },
           });
+          updateMessagesFromStore(agent ?? null);
         },
+        delta: (ev: { id: string; delta: string }) => {
+          setAwaitingReply(true);
+          const { id, delta } = ev;
+          if (!id || typeof delta !== 'string') return;
+          const s = rawMessagesRef.current; const ex: any = s.get(id);
+          if (ex) { ex.body = (ex.body || "") + delta; s.set(id, ex); }
+          else {
+            s.set(id, { id, conversationId: session?.conversationId ?? null, messageType: "ASSISTANT", visibility: "PUBLIC", channel: "text", body: delta, payload: null, sentAt: new Date().toISOString(), author: { agentId: agent?.id ?? null, customerId: null, userDisplayName: agent?.name ?? null }, attachments: [] } as any);
+          }
+          updateMessagesFromStore(agent ?? null);
+        },
+        completed: () => {
+          streamActiveRef.current = false; setAwaitingReply(false);
+          try { messagesQuery.refetch(); } catch {}
+          try { sessionQuery.refetch(); } catch {}
+        },
+        error: (error: Error) => {
+          streamActiveRef.current = false; setAwaitingReply(false);
+          let description = error?.message || "Message could not be delivered.";
+          toast({ title: "Send failed", description, variant: "destructive" });
+        },
+        end: () => {
+          streamActiveRef.current = false; setAwaitingReply(false);
+        }
       }
     );
-  }, [agent, mergeMessages, sendMessageMutation, sessionQuery, sessionToken, toast]);
+    streamCancelRef.current = cancelable.cancel;
+  }, [agent, mergeMessages, sessionQuery, sessionToken, toast]);
 
   const handleAttachFile = useCallback(() => {
     toast({
@@ -388,11 +403,11 @@ const ChatPortal: React.FC = () => {
 
   const handleStop = useCallback(() => {
     setAwaitingReply(false);
-    sendMessageMutation.reset();
+    try { if (streamCancelRef.current) { streamCancelRef.current(); } } catch {}
     try { if (sessionToken) { cancelAssistantResponse(sessionToken).catch(() => {}); } } catch {}
     if (eventSourceRef.current) { try { eventSourceRef.current.close(); } catch {} eventSourceRef.current = null; }
     streamActiveRef.current = false;
-  }, [sendMessageMutation, sessionToken]);
+  }, [sessionToken]);
 
   const handleDownloadTranscript = useCallback(() => {
     if (messages.length === 0) {
@@ -525,4 +540,3 @@ const ChatPortal: React.FC = () => {
 };
 
 export default ChatPortal;
-

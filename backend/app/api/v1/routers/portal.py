@@ -5,7 +5,7 @@ from typing import Any
 import json
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, Depends, HTTPException, Path, status
+from fastapi import APIRouter, Depends, HTTPException, Path, status, BackgroundTasks
 from fastapi.responses import StreamingResponse
 import asyncio
 from sqlalchemy import func, select
@@ -474,14 +474,6 @@ async def portal_events(
     return StreamingResponse(event_gen(), media_type="text/event-stream", headers={"Cache-Control": "no-cache", "Connection": "keep-alive", "X-Accel-Buffering": "no"})
 
 @router.post(
-
-    "/stream/cancel",
-
-    summary="Cancel any ongoing assistant generation for this session",
-
-)
-
-@router.post(
     "/stream/cancel",
     summary="Cancel any ongoing assistant generation for this session",
 )
@@ -505,6 +497,7 @@ def stream_send_endpoint(
     payload: ChatMessageSendRequest,
     business_id=Depends(require_business_id_public),
     db: Session = Depends(get_db),
+    background_tasks: BackgroundTasks = None,
 ):
     """
     Persists the CUSTOMER message, prepares agent runtime, and streams the agent's response.
@@ -559,7 +552,7 @@ def stream_send_endpoint(
     settings = get_settings()
     model_name = getattr(settings, "OPENAI_MODEL", "gpt-4o-mini")
     try:
-        orch = OpenAIOrchestrator(db, model=model_name)
+        orch = OpenAIOrchestrator(db, model=model_name, background_tasks=background_tasks)
     except Exception as exc:
         # Missing API key or SDK, surface a clear error to client
         def err_gen():

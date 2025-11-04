@@ -34,11 +34,11 @@ import json
 import os
 from dataclasses import dataclass
 from typing import Any, Dict, Iterable, Iterator, Literal, TypedDict
+from fastapi import BackgroundTasks
 
 from sqlalchemy.orm import Session
 from sqlalchemy import select
 from app.models.conversations import ConversationMessage
-from app.services.ai_payload_consumer import AiPayloadConsumer
 
 from app.schemas.ai_runtime import AiMessagePayload
 from app.services.llm_orchestrator import (
@@ -62,12 +62,14 @@ class OpenAIOrchestrator(LlmOrchestrator):
         api_key: str | None = None,
         base_url: str | None = None,
         request_timeout: float | None = 60.0,
+        background_tasks: BackgroundTasks | None = None,
     ) -> None:
         super().__init__(session)
         self.model = model
         self.api_key = api_key or os.getenv("OPENAI_API_KEY") or ""
         self.base_url = base_url or os.getenv("OPENAI_BASE_URL") or None
         self.request_timeout = request_timeout
+        self._background_tasks = background_tasks
         if not self.api_key:
             raise RuntimeError(
                 "OpenAIOrchestrator requires an API key. "
@@ -129,14 +131,14 @@ class OpenAIOrchestrator(LlmOrchestrator):
         try:
             if self._mode == "new":
                 if stream:
-                    yield from self._stream_new_sdk(messages, temperature, top_p, response_format)
+                    yield from self._stream_new_sdk(ctx, messages, temperature, top_p, response_format)
                 else:
                     delta_text, json_payload = self._nonstream_new_sdk(messages, temperature, top_p, response_format)
                     yield {"type": "final", "data": {"text": delta_text, "payload": json_payload}}
                     self._finalize(ctx, delta_text, json_payload)
             else:
                 if stream:
-                    yield from self._stream_legacy_sdk(messages, temperature, top_p, response_format)
+                    yield from self._stream_legacy_sdk(ctx, messages, temperature, top_p, response_format)
                 else:
                     delta_text, json_payload = self._nonstream_legacy_sdk(messages, temperature, top_p, response_format)
                     yield {"type": "final", "data": {"text": delta_text, "payload": json_payload}}
@@ -146,7 +148,7 @@ class OpenAIOrchestrator(LlmOrchestrator):
 
     # ---------- SDK helpers ----------
 
-    def _stream_new_sdk(self, messages, temperature, top_p, response_format) -> Iterator[dict]:
+    def _stream_new_sdk(self, ctx: StartTurnContext, messages, temperature, top_p, response_format) -> Iterator[dict]:
         """Streaming using OpenAI SDK v1+ (chat.completions)."""
         stream = self._client.chat.completions.create(
             model=self.model,
@@ -171,7 +173,7 @@ class OpenAIOrchestrator(LlmOrchestrator):
         final_text = "".join(assembled).strip()
         json_payload = _safe_extract_json(final_text)
         yield {"type": "final", "data": {"text": final_text, "payload": json_payload}}
-        self._finalize(StartTurnContext, final_text, json_payload)  # will be replaced by caller in outer method
+        self._finalize(ctx, final_text, json_payload)  # will be replaced by caller in outer method
 
     def _nonstream_new_sdk(self, messages, temperature, top_p, response_format) -> tuple[str, dict]:
         resp = self._client.chat.completions.create(
@@ -185,7 +187,7 @@ class OpenAIOrchestrator(LlmOrchestrator):
         content = resp.choices[0].message.content or ""
         return content, _safe_extract_json(content)
 
-    def _stream_legacy_sdk(self, messages, temperature, top_p, response_format) -> Iterator[dict]:
+    def _stream_legacy_sdk(self, ctx: StartTurnContext, messages, temperature, top_p, response_format) -> Iterator[dict]:
         """Streaming using legacy OpenAI SDK."""
         stream = self._client.ChatCompletion.create(
             model=self.model,
@@ -206,7 +208,7 @@ class OpenAIOrchestrator(LlmOrchestrator):
         final_text = "".join(assembled).strip()
         json_payload = _safe_extract_json(final_text)
         yield {"type": "final", "data": {"text": final_text, "payload": json_payload}}
-        self._finalize(StartTurnContext, final_text, json_payload)  # replaced by caller in outer method
+        self._finalize(ctx, final_text, json_payload)  # replaced by caller in outer method
 
     def _nonstream_legacy_sdk(self, messages, temperature, top_p, response_format) -> tuple[str, dict]:
         resp = self._client.ChatCompletion.create(
@@ -245,17 +247,16 @@ class OpenAIOrchestrator(LlmOrchestrator):
             ).scalar_one_or_none()
         except Exception:
             msg_id = None
-        try:
-            AiPayloadConsumer(self.session).apply(
-                business_id=ctx.business_id,
-                conversation_id=ctx.conversation_id,
-                message_id=(msg_id or ctx.conversation_id),  # fallback placeholder; not required for logic
-                payload=payload_model,
-                agent_id=ctx.agent_id,
-            )
-        except Exception:
-            # Defensive: never block chat flow on side-effect failures.
-            pass
+        # Use background task for non-blocking payload processing
+        from app.services.background_tasks import BackgroundTaskRunner
+        runner = BackgroundTaskRunner(background_tasks=self._background_tasks)
+        runner.dispatch_payload_processing(
+            business_id=ctx.business_id,
+            conversation_id=ctx.conversation_id,
+            message_id=(msg_id or ctx.conversation_id),
+            payload=payload_model,
+            agent_id=ctx.agent_id,
+        )
 
 
 # ---------- utilities ----------

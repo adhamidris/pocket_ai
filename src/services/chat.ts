@@ -469,3 +469,121 @@ export async function cancelAssistantResponse(sessionToken: string, messageId?: 
 }
 
 export { ApiError };
+
+// --- Streaming via POST /v1/portal/stream/send (SSE over fetch) ---
+export type ChatStreamHandlers = {
+  created?: (message: any) => void;
+  delta?: (ev: { id: string; delta: string }) => void;
+  completed?: (payload: any) => void;
+  error?: (error: Error) => void;
+  open?: () => void;
+  end?: () => void;
+};
+
+const synthId = () => {
+  try { return crypto.randomUUID(); } catch { return `stream-${Date.now()}-${Math.random().toString(16).slice(2)}`; }
+};
+
+export function streamAssistantResponse(
+  request: ChatMessageSendRequest,
+  handlers: ChatStreamHandlers = {}
+): { cancel: () => void } {
+  const businessId = getActiveBusinessId();
+  let url = buildApiUrl("/v1/portal/stream/send");
+  url += url.includes("?") ? "" : "?";
+  if (businessId) url += (url.endsWith("?") ? "" : "&") + "business_id=" + encodeURIComponent(businessId);
+
+  const controller = new AbortController();
+  const headers = new Headers();
+  headers.set("Accept", "text/event-stream");
+  headers.set("Content-Type", "application/json");
+
+  const body = {
+    session_token: request.sessionToken,
+    body: request.body ?? null,
+    payload: request.payload ?? null,
+    channel: request.channel ?? "text",
+    attachments: (request.attachments ?? []).map((item) => ({
+      storage_asset_id: item.storageAssetId,
+      caption: item.caption ?? null,
+    })),
+  };
+
+  const messageId = synthId();
+  const start = async () => {
+    try {
+      const resp = await fetch(url, { method: "POST", headers, body: JSON.stringify(body), signal: controller.signal });
+      if (!resp.ok || !resp.body) {
+        throw new Error(`Streaming request failed: ${resp.status} ${resp.statusText}`);
+      }
+      handlers.open && handlers.open();
+      // Emit synthetic created event so UI can attach deltas
+      handlers.created && handlers.created({
+        id: messageId,
+        conversationId: null,
+        messageType: "ASSISTANT",
+        visibility: "PUBLIC",
+        channel: request.channel ?? "text",
+        body: "",
+        payload: null,
+        sentAt: new Date().toISOString(),
+        author: { agentId: null, customerId: null, userDisplayName: null },
+        attachments: [],
+      });
+
+      const reader = resp.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = "";
+      const pump = async (): Promise<void> => {
+        const { done, value } = await reader.read();
+        if (done) {
+          handlers.end && handlers.end();
+          return;
+        }
+        buffer += decoder.decode(value, { stream: true });
+        // Process complete SSE events separated by double newlines
+        let idx: number;
+        while ((idx = buffer.indexOf("\n\n")) !== -1) {
+          const rawEvent = buffer.slice(0, idx);
+          buffer = buffer.slice(idx + 2);
+          let eventName = "message";
+          const dataLines: string[] = [];
+          for (const line of rawEvent.split(/\n/)) {
+            if (line.startsWith("event:")) {
+              eventName = line.slice(6).trim();
+            } else if (line.startsWith("data:")) {
+              dataLines.push(line.slice(5).trim());
+            }
+          }
+          const dataRaw = dataLines.join("\n");
+          let data: any = dataRaw;
+          try { data = JSON.parse(dataRaw); } catch {}
+          if (eventName === "delta") {
+            const text = typeof data === "string" ? data : (data?.text || data?.delta || "");
+            if (text) handlers.delta && handlers.delta({ id: messageId, delta: text });
+          } else if (eventName === "final") {
+            handlers.completed && handlers.completed(data);
+          } else if (eventName === "error") {
+            const err = new Error(typeof data === "string" ? data : (data?.message || "Stream error"));
+            handlers.error && handlers.error(err);
+          } else if (eventName === "heartbeat") {
+            // ignore in stream send
+          }
+        }
+        await pump();
+      };
+      await pump();
+    } catch (err) {
+      if ((err as any)?.name === 'AbortError') {
+        handlers.end && handlers.end();
+        return;
+      }
+      handlers.error && handlers.error(err instanceof Error ? err : new Error(String(err)));
+    }
+  };
+
+  // Fire and forget
+  void start();
+
+  return { cancel: () => controller.abort() };
+}
