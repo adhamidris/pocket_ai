@@ -60,12 +60,22 @@
               {{ link.label }}
             </a>
           {% else %}
-            <a
-              href="{{ link.href }}"
-              class="inline-flex items-center rounded-lg px-3 py-2 text-sm font-medium text-neutral-600 transition-colors hover:text-primary"
-            >
-              {{ link.label }}
-            </a>
+            {% if link.href == "/login" %}
+              <a
+                href="{{ link.href }}"
+                class="inline-flex items-center rounded-lg px-3 py-2 text-sm font-medium text-neutral-600 transition-colors hover:text-primary"
+                data-login-open
+              >
+                {{ link.label }}
+              </a>
+            {% else %}
+              <a
+                href="{{ link.href }}"
+                class="inline-flex items-center rounded-lg px-3 py-2 text-sm font-medium text-neutral-600 transition-colors hover:text-primary"
+              >
+                {{ link.label }}
+              </a>
+            {% endif %}
           {% endif %}
         {% endfor %}
       </div>
@@ -140,12 +150,22 @@
                 {{ link.label }}
               </a>
             {% else %}
-              <a
-                href="{{ link.href }}"
-                class="inline-flex items-center justify-start rounded-lg px-3 py-2 text-sm font-medium text-neutral-600 transition-colors hover:text-primary"
-              >
-                {{ link.label }}
-              </a>
+              {% if link.href == "/login" %}
+                <a
+                  href="{{ link.href }}"
+                  class="inline-flex items-center justify-start rounded-lg px-3 py-2 text-sm font-medium text-neutral-600 transition-colors hover:text-primary"
+                  data-login-open
+                >
+                  {{ link.label }}
+                </a>
+              {% else %}
+                <a
+                  href="{{ link.href }}"
+                  class="inline-flex items-center justify-start rounded-lg px-3 py-2 text-sm font-medium text-neutral-600 transition-colors hover:text-primary"
+                >
+                  {{ link.label }}
+                </a>
+              {% endif %}
             {% endif %}
           {% endfor %}
         </div>

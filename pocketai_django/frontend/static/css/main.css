@@ -5,3 +5,19 @@
 .store-banner {
     border: none !important;
 }
+
+.footer-section {
+    border-top: none !important;
+}
+
+.footer-bottom {
+    border: none !important;
+}
+
+.simulation-card {
+    border: none !important;
+}
+
+.register-form {
+    border:  none !important;
+}

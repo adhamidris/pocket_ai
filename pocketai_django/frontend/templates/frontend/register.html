@@ -1,0 +1,1512 @@
+{% extends "frontend/base.html" %}
+
+{% block title %}{{ page.title_prefix }} {{ page.title_highlight }} | Pocket AI{% endblock %}
+
+{% block content %}
+<section class="relative min-h-[60vh] flex items-center justify-center px-4 pt-4 pb-6 md:px-6 md:pt-6 md:pb-12 overflow-hidden">
+  <div class="pointer-events-none absolute inset-0 opacity-30 register-orbs" aria-hidden="true">
+    <div class="absolute top-10 left-8 w-[420px] h-[420px] bg-gradient-hero rounded-full blur-3xl animate-none md:animate-pulse"></div>
+    <div class="absolute bottom-12 right-8 w-[520px] h-[520px] bg-gradient-primary rounded-full blur-3xl animate-none md:animate-pulse" style="animation-delay:1.2s"></div>
+  </div>
+  <div class="relative z-10 w-full max-w-lg md:max-w-xl">
+    <div class="register-form rounded-xl border border-border bg-card shadow-premium overflow-hidden" data-register-card>
+      <div class="bg-secondary p-3 md:p-4 rounded-t-xl register-header relative">
+        <div class="absolute right-3 top-2 text-[10px] font-medium uppercase tracking-wide text-muted-foreground" data-register-step-indicator>
+          Step: {{ page.step_indicator }}
+        </div>
+        <h1 class="text-2xl md:text-3xl font-bold text-secondary-foreground text-center register-header-title">
+          <span
+            data-register-header-prefix
+            data-text-form="{{ page.title_prefix }}"
+            data-text-business="{{ page.business.title_prefix }}"
+            data-text-agent="{{ page.agent.title_prefix }}"
+            data-text-uploads="{{ page.uploads.title_prefix }}"
+          >
+            {{ page.title_prefix }}
+          </span>&nbsp;
+          <span
+            class="text-gradient-hero"
+            data-register-header-highlight
+            data-text-form="{{ page.title_highlight }}"
+            data-text-business="{{ page.business.title_highlight }}"
+            data-text-agent="{{ page.agent.title_highlight }}"
+            data-text-uploads="{{ page.uploads.title_highlight }}"
+          >
+            {{ page.title_highlight }}
+          </span>
+        </h1>
+        <p
+          class="mt-1 text-center text-sm md:text-base streaming-text opacity-80 font-medium tracking-wide"
+          data-register-typed
+          data-text-form="{{ page.typed_subtitle }}"
+          data-text-business="{{ page.business.subtitle }}"
+          data-text-agent="{{ page.agent.subtitle }}"
+          data-text-uploads="{{ page.uploads.subtitle }}"
+        >
+          {{ page.typed_subtitle }}
+        </p>
+      </div>
+      <div class="p-3 md:p-4">
+        <div class="relative min-h-[20rem]" data-register-steps>
+          <div data-register-step="form" class="animate-panel-in">
+            <form
+              class="space-y-4"
+              novalidate
+              data-register-form
+            >
+              <div>
+                <label for="register-first-name" class="mb-2 block text-sm font-medium text-foreground">
+                  {{ page.fields.first_name.label }}
+                </label>
+                <input
+                  id="register-first-name"
+                  name="firstName"
+                  type="text"
+                  autocomplete="given-name"
+                  placeholder="{{ page.fields.first_name.placeholder }}"
+                  class="flex h-10 w-full rounded-md border-0 bg-input px-3 py-2 text-base text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-0 focus-visible:outline-none focus-visible:ring-0 focus-visible:ring-offset-0 disabled:cursor-not-allowed disabled:opacity-50 md:text-sm"
+                  data-register-input="firstName"
+                  required
+                  minlength="2"
+                >
+                <p class="mt-1 hidden text-xs text-destructive" data-register-error="firstName">
+                  {{ page.fields.first_name.error_required }}
+                </p>
+              </div>
+              <div>
+                <label for="register-email" class="mb-2 block text-sm font-medium text-foreground">
+                  {{ page.fields.email.label }}
+                </label>
+                <input
+                  id="register-email"
+                  name="email"
+                  type="email"
+                  autocomplete="email"
+                  placeholder="{{ page.fields.email.placeholder }}"
+                  class="flex h-10 w-full rounded-md border-0 bg-input px-3 py-2 text-base text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-0 focus-visible:outline-none focus-visible:ring-0 focus-visible:ring-offset-0 disabled:cursor-not-allowed disabled:opacity-50 md:text-sm"
+                  data-register-input="email"
+                  required
+                >
+                <p class="mt-1 hidden text-xs text-destructive" data-register-error="email">
+                  {{ page.fields.email.error_invalid }}
+                </p>
+              </div>
+              <div>
+                <label for="register-password" class="mb-2 block text-sm font-medium text-foreground">
+                  {{ page.fields.password.label }}
+                </label>
+                <input
+                  id="register-password"
+                  name="password"
+                  type="password"
+                  autocomplete="new-password"
+                  placeholder="{{ page.fields.password.placeholder }}"
+                  class="flex h-10 w-full rounded-md border-0 bg-input px-3 py-2 text-base text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-0 focus-visible:outline-none focus-visible:ring-0 focus-visible:ring-offset-0 disabled:cursor-not-allowed disabled:opacity-50 md:text-sm"
+                  data-register-input="password"
+                  required
+                  minlength="8"
+                >
+                <p class="mt-1 hidden text-xs text-destructive" data-register-error="password">
+                  {{ page.fields.password.error_min }}
+                </p>
+              </div>
+              <div>
+                <label for="register-confirm-password" class="mb-2 block text-sm font-medium text-foreground">
+                  {{ page.fields.confirm_password.label }}
+                </label>
+                <input
+                  id="register-confirm-password"
+                  name="confirmPassword"
+                  type="password"
+                  autocomplete="new-password"
+                  placeholder="{{ page.fields.confirm_password.placeholder }}"
+                  class="flex h-10 w-full rounded-md border-0 bg-input px-3 py-2 text-base text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-0 focus-visible:outline-none focus-visible:ring-0 focus-visible:ring-offset-0 disabled:cursor-not-allowed disabled:opacity-50 md:text-sm"
+                  data-register-input="confirmPassword"
+                  required
+                  minlength="8"
+                >
+                <p class="mt-1 hidden text-xs text-destructive" data-register-error="confirmPassword">
+                  {{ page.fields.confirm_password.error_match }}
+                </p>
+              </div>
+              <button
+                type="submit"
+                class="w-full rounded-md bg-gradient-primary px-4 py-2 text-sm font-medium text-white shadow-premium transition-opacity hover:opacity-90 disabled:pointer-events-none disabled:opacity-70"
+                data-register-submit
+                data-default-label="{{ page.cta_label }}"
+                data-loading-label="{{ page.cta_loading }}"
+              >
+                <span data-register-submit-text>{{ page.cta_label }}</span>
+              </button>
+              <div class="my-3">
+                <div class="flex items-center gap-3">
+                  <div class="h-px flex-1 bg-border"></div>
+                  <span class="text-xs text-muted-foreground">{{ page.divider_label }}</span>
+                  <div class="h-px flex-1 bg-border"></div>
+                </div>
+              </div>
+              <button
+                type="button"
+                class="inline-flex w-full items-center justify-center gap-2 rounded-lg bg-secondary px-4 py-2 text-sm font-medium text-secondary-foreground shadow-sm transition-all duration-300 hover:bg-secondary/80 disabled:pointer-events-none disabled:opacity-70"
+                data-register-google
+              >
+                <span class="inline-flex items-center gap-2">
+                  <span class="inline-flex h-6 w-6 items-center justify-center rounded-full">
+                    {{ page.google_icon|safe }}
+                  </span>
+                  <span>{{ page.google_label }}</span>
+                </span>
+              </button>
+            </form>
+          </div>
+          <div data-register-step="business" class="hidden animate-panel-in">
+            <form
+              class="space-y-4"
+              novalidate
+              data-register-business-form
+            >
+              <div>
+                <label class="mb-2 block text-sm font-medium text-foreground" for="register-business-name">
+                  {{ page.business.fields.business_name.label }}
+                </label>
+                <input
+                  id="register-business-name"
+                  name="businessName"
+                  type="text"
+                  placeholder="{{ page.business.fields.business_name.placeholder }}"
+                  autocomplete="organization"
+                  class="flex h-10 w-full rounded-md border-0 bg-input px-3 py-2 text-base text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-0 focus-visible:outline-none focus-visible:ring-0 focus-visible:ring-offset-0 disabled:cursor-not-allowed disabled:opacity-50 md:text-sm"
+                  data-business-input="businessName"
+                  data-error-message="{{ page.business.fields.business_name.error_required }}"
+                  required
+                >
+                <p class="mt-1 hidden text-xs text-destructive" data-business-error="businessName">
+                  {{ page.business.fields.business_name.error_required }}
+                </p>
+              </div>
+
+              <div class="grid grid-cols-1 gap-4 md:grid-cols-2">
+                <div>
+                  <label class="mb-2 block text-sm font-medium text-foreground">
+                    {{ page.business.fields.industry.label }}
+                  </label>
+                  <div class="relative">
+                    <button
+                      type="button"
+                      class="flex h-10 w-full items-center justify-between rounded-md bg-input px-3 text-left text-sm font-medium text-foreground/90 transition focus:outline-none focus:ring-0 data-[open=true]:ring-0"
+                      data-business-industry-trigger
+                    >
+                      <span class="flex-1 overflow-hidden text-ellipsis whitespace-nowrap" data-business-industry-label data-placeholder="{{ page.business.fields.industry.empty }}">
+                        {{ page.business.fields.industry.empty }}
+                      </span>
+                      <span class="shrink-0 text-muted-foreground">
+                        <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                          <path d="M6 9l6 6 6-6" stroke-linecap="round" stroke-linejoin="round"></path>
+                        </svg>
+                      </span>
+                    </button>
+                    <div
+                      class="absolute left-0 top-full z-50 mt-2 w-full overflow-hidden rounded-md border border-border bg-popover text-popover-foreground shadow-lg transition data-[hidden=true]:opacity-0"
+                      data-business-industry-popover
+                      hidden
+                    >
+                      <div class="border-b border-border bg-card px-2 py-1.5">
+                        <input
+                          type="text"
+                          class="h-8 w-full rounded-md border-0 bg-input px-2 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-0"
+                          placeholder="{{ page.business.fields.industry.search_placeholder }}"
+                          data-business-industry-search
+                        >
+                      </div>
+                      <div class="max-h-60 overflow-y-auto py-1" data-business-industry-options></div>
+                      <div class="hidden px-3 py-2 text-sm text-muted-foreground" data-business-industry-empty>
+                        {{ page.business.fields.industry.no_results }}
+                      </div>
+                    </div>
+                  </div>
+                  <input type="hidden" data-business-input="industry">
+                  <p class="mt-1 hidden text-xs text-destructive" data-business-error="industry"></p>
+                </div>
+
+                <div>
+                  <label class="mb-2 block text-sm font-medium text-foreground">
+                    {{ page.business.fields.line_of_business.label }}
+                  </label>
+                  <div class="relative">
+                    <button
+                      type="button"
+                      class="flex min-h-10 w-full items-center justify-between rounded-md bg-input px-2 py-1.5 text-left text-sm text-foreground/90 transition focus:outline-none focus:ring-0 disabled:cursor-not-allowed disabled:opacity-60"
+                      data-business-lob-trigger
+                      disabled
+                    >
+                      <span class="flex flex-1 items-center gap-1.5 overflow-hidden">
+                        <span class="flex items-center gap-1.5 overflow-hidden" data-business-lob-badges></span>
+                        <span
+                          class="flex-1 overflow-hidden text-ellipsis whitespace-nowrap text-muted-foreground"
+                          data-business-lob-placeholder
+                          data-empty-text="{{ page.business.fields.line_of_business.empty }}"
+                          data-default-text="{{ page.business.fields.line_of_business.placeholder }}"
+                        >
+                          {{ page.business.fields.line_of_business.empty }}
+                        </span>
+                      </span>
+                      <span class="inline-flex items-center gap-1.5">
+                        <span class="hidden inline-flex items-center rounded-full border px-2.5 py-0.5 text-xs font-semibold text-foreground" data-business-lob-count></span>
+                        <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 text-muted-foreground" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                          <path d="M6 9l6 6 6-6" stroke-linecap="round" stroke-linejoin="round"></path>
+                        </svg>
+                      </span>
+                    </button>
+                    <div
+                      class="absolute left-0 top-full z-50 mt-2 w-full overflow-hidden rounded-md border border-border bg-popover text-popover-foreground shadow-lg transition data-[hidden=true]:opacity-0"
+                      data-business-lob-popover
+                      hidden
+                    >
+                      <div class="border-b border-border bg-card px-2 py-1.5">
+                        <input
+                          type="text"
+                          class="h-8 w-full rounded-md border-0 bg-input px-2 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-0"
+                          placeholder="{{ page.business.fields.line_of_business.search_placeholder }}"
+                          data-business-lob-search
+                        >
+                      </div>
+                      <div class="max-h-60 overflow-y-auto py-1" data-business-lob-options></div>
+                      <div class="hidden px-3 py-2 text-sm text-muted-foreground" data-business-lob-empty>
+                        {{ page.business.fields.line_of_business.no_results }}
+                      </div>
+                      <div class="border-t border-border bg-card px-2 py-1.5">
+                        <div class="flex items-center gap-2">
+                          <input
+                            type="text"
+                            class="h-8 flex-1 rounded-md border-0 bg-input px-2 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-0"
+                            placeholder="{{ page.business.fields.line_of_business.custom_placeholder }}"
+                            data-business-lob-custom-input
+                          >
+                          <button
+                            type="button"
+                            class="inline-flex h-8 items-center justify-center rounded-md bg-primary px-3 text-xs font-semibold text-primary-foreground transition hover:bg-primary/90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2"
+                            data-business-lob-custom-add
+                          >
+                            {{ page.business.buttons.add }}
+                          </button>
+                        </div>
+                      </div>
+                      <div class="border-t border-border bg-card px-2 py-1.5">
+                        <button
+                          type="button"
+                          class="inline-flex h-9 w-full items-center justify-center rounded-md border border-border bg-secondary text-sm font-medium text-secondary-foreground transition hover:bg-secondary/80 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2"
+                          data-business-lob-done
+                        >
+                          {{ page.business.buttons.done }}
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                  <input type="hidden" data-business-input="lineOfBusiness">
+                  <input type="hidden" data-business-input="lineOfBusinessCustom">
+                  <p class="mt-1 hidden text-xs text-destructive" data-business-error="lineOfBusiness"></p>
+                </div>
+              </div>
+
+              <div>
+                <label class="mb-2 block text-sm font-medium text-foreground">
+                  {{ page.business.fields.country.label }}
+                </label>
+                <div class="relative">
+                  <button
+                    type="button"
+                    class="flex h-10 w-full items-center justify-between rounded-md bg-input px-3 text-left text-sm font-medium text-foreground/90 transition focus:outline-none focus:ring-0 data-[open=true]:ring-0"
+                    data-business-country-trigger
+                  >
+                    <span class="flex items-center gap-2" data-business-country-label data-placeholder="{{ page.business.fields.country.placeholder }}">
+                      {{ page.business.fields.country.placeholder }}
+                    </span>
+                    <span class="shrink-0 text-muted-foreground">
+                      <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M6 9l6 6 6-6" stroke-linecap="round" stroke-linejoin="round"></path>
+                      </svg>
+                    </span>
+                  </button>
+                  <div
+                    class="absolute left-0 top-full z-50 mt-2 w-full overflow-hidden rounded-md border border-border bg-popover text-popover-foreground shadow-lg transition data-[hidden=true]:opacity-0"
+                    data-business-country-popover
+                    hidden
+                  >
+                    <div class="max-h-60 overflow-y-auto py-1" data-business-country-options></div>
+                  </div>
+                </div>
+                <input type="hidden" data-business-input="country">
+                <p class="mt-1 hidden text-xs text-destructive" data-business-error="country"></p>
+              </div>
+
+              <div>
+                <label class="mb-2 block text-sm font-medium text-foreground" for="register-business-website">
+                  {{ page.business.fields.website.label }}
+                  <span class="text-muted-foreground">{{ page.business.fields.website.optional }}</span>
+                </label>
+                <input
+                  id="register-business-website"
+                  name="website"
+                  type="url"
+                  placeholder="{{ page.business.fields.website.placeholder }}"
+                  class="flex h-10 w-full rounded-md border-0 bg-input px-3 py-2 text-base text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-0 focus-visible:outline-none focus-visible:ring-0 focus-visible:ring-offset-0 disabled:cursor-not-allowed disabled:opacity-50 md:text-sm"
+                  data-business-input="website"
+                >
+                <p class="mt-1 hidden text-xs text-destructive" data-business-error="website"></p>
+              </div>
+
+              <div class="flex items-center justify-between gap-3 pt-2">
+                <button
+                  type="button"
+                  class="inline-flex h-10 items-center justify-center rounded-md border border-input bg-transparent px-4 text-sm font-medium text-foreground transition hover:bg-muted/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2"
+                  data-business-back
+                >
+                  {{ page.business.buttons.back }}
+                </button>
+                <button
+                  type="submit"
+                  class="inline-flex h-10 items-center justify-center rounded-md bg-gradient-primary px-4 text-sm font-medium text-white shadow-premium transition hover:opacity-90 disabled:pointer-events-none disabled:opacity-70"
+                  data-business-submit
+                  data-default-label="{{ page.business.buttons.next }}"
+                  data-loading-label="{{ page.business.buttons.loading }}"
+                >
+                  <span data-business-submit-text>{{ page.business.buttons.next }}</span>
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+        <div class="mt-6 text-center text-sm">
+          <span class="text-foreground/80">
+            {{ page.have_account_label }}
+            <a
+              href="/login"
+              class="text-primary hover:underline"
+              data-login-open
+              data-login-trigger-from-register
+            >
+              {{ page.login_label }}
+            </a>
+          </span>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+{% include "frontend/components/sections/mobile_app.html" with section=mobile_app %}
+{% endblock %}
+
+{% block extra_js %}
+{{ business_data|json_script:"register-business-data" }}
+<script>
+  document.addEventListener("DOMContentLoaded", function () {
+    var root = document.querySelector("[data-register-card]");
+    if (!root) {
+      return;
+    }
+
+    var businessDataScript = document.getElementById("register-business-data");
+    var businessData = null;
+    if (businessDataScript) {
+      try {
+        businessData = JSON.parse(businessDataScript.textContent || "{}");
+      } catch (error) {
+        businessData = null;
+      }
+    }
+
+    var typingCleanups = [];
+    function createTypingCycle(element, initialText) {
+      if (!element) {
+        return null;
+      }
+      var text = (initialText || "").trim();
+      var intervalId = null;
+      var timeoutId = null;
+      var typingInterval = 80;
+      var pauseDuration = 1400;
+
+      function stop() {
+        if (intervalId) {
+          window.clearInterval(intervalId);
+          intervalId = null;
+        }
+        if (timeoutId) {
+          window.clearTimeout(timeoutId);
+          timeoutId = null;
+        }
+      }
+
+      function start(resetContent) {
+        if (!element) {
+          return;
+        }
+        stop();
+        if (resetContent) {
+          element.textContent = "";
+        }
+        if (!text.length) {
+          return;
+        }
+        var i = 0;
+        intervalId = window.setInterval(function () {
+          i += 1;
+          element.textContent = text.slice(0, i);
+          if (i >= text.length) {
+            stop();
+            timeoutId = window.setTimeout(function () {
+              start(false);
+            }, pauseDuration);
+          }
+        }, typingInterval);
+      }
+
+      typingCleanups.push(stop);
+      return {
+        start: start,
+        stop: stop,
+        setText: function (nextText, restart) {
+          text = (nextText || "").trim();
+          if (typeof restart === "boolean" && restart) {
+            start(true);
+          }
+        },
+        getText: function () {
+          return text;
+        },
+      };
+    }
+
+    window.addEventListener("beforeunload", function () {
+      typingCleanups.forEach(function (cleanup) {
+        try {
+          cleanup();
+        } catch (error) {
+          // ignore cleanup errors
+        }
+      });
+    });
+
+    var headerPrefixEl = root.querySelector("[data-register-header-prefix]");
+    var headerHighlightEl = root.querySelector("[data-register-header-highlight]");
+    var typedEl = root.querySelector("[data-register-typed]");
+    var heroTyping = createTypingCycle(typedEl, "");
+
+    function getHeaderText(element, stepKey) {
+      if (!element) {
+        return "";
+      }
+      var attr = element.getAttribute("data-text-" + stepKey);
+      if (attr && attr.length) {
+        return attr;
+      }
+      var fallback = element.getAttribute("data-text-form");
+      return fallback ? fallback : "";
+    }
+
+    function applyHeader(stepKey, restartTyping) {
+      var prefix = getHeaderText(headerPrefixEl, stepKey);
+      var highlight = getHeaderText(headerHighlightEl, stepKey);
+      var typedValue = getHeaderText(typedEl, stepKey);
+      if (headerPrefixEl) {
+        headerPrefixEl.textContent = prefix;
+      }
+      if (headerHighlightEl) {
+        headerHighlightEl.textContent = highlight;
+      }
+      if (heroTyping) {
+        heroTyping.setText(typedValue, restartTyping);
+      } else if (typedEl) {
+        typedEl.textContent = typedValue;
+      }
+    }
+
+    var form = root.querySelector("[data-register-form]");
+    if (!form) {
+      return;
+    }
+
+    var inputFirst = form.querySelector("[data-register-input=\"firstName\"]");
+    var inputEmail = form.querySelector("[data-register-input=\"email\"]");
+    var inputPassword = form.querySelector("[data-register-input=\"password\"]");
+    var inputConfirm = form.querySelector("[data-register-input=\"confirmPassword\"]");
+    var errors = form.querySelectorAll("[data-register-error]");
+    var submitBtn = form.querySelector("[data-register-submit]");
+    var submitText = submitBtn ? submitBtn.querySelector("[data-register-submit-text]") : null;
+    var defaultSubmitLabel = submitBtn ? submitBtn.getAttribute("data-default-label") || "" : "";
+    var loadingSubmitLabel = submitBtn ? submitBtn.getAttribute("data-loading-label") || "" : "";
+    var loginLink = root.querySelector("[data-login-trigger-from-register]");
+    var stepIndicator = root.querySelector("[data-register-step-indicator]");
+    var stepsWrapper = root.querySelector("[data-register-steps]");
+    var stepPanels = stepsWrapper ? stepsWrapper.querySelectorAll("[data-register-step]") : [];
+    var orderedSteps = Array.prototype.slice.call(stepPanels).map(function (panel) {
+      return panel.getAttribute("data-register-step");
+    });
+    var currentStep = orderedSteps.length ? orderedSteps[0] : "form";
+    var isSubmitting = false;
+
+    var businessPanel = root.querySelector("[data-register-step=\"business\"]");
+    var businessForm = businessPanel ? businessPanel.querySelector("[data-register-business-form]") : null;
+    var hasBusinessStep = Boolean(businessForm && businessData);
+    var businessErrors = hasBusinessStep ? Array.prototype.slice.call(businessForm.querySelectorAll("[data-business-error]")) : [];
+    var businessSubmitBtn = hasBusinessStep ? businessForm.querySelector("[data-business-submit]") : null;
+    var businessSubmitText = businessSubmitBtn ? businessSubmitBtn.querySelector("[data-business-submit-text]") : null;
+    var businessDefaultSubmitLabel = businessSubmitBtn ? businessSubmitBtn.getAttribute("data-default-label") || "" : "";
+    var businessLoadingSubmitLabel = businessSubmitBtn ? businessSubmitBtn.getAttribute("data-loading-label") || "" : "";
+    var businessBackButton = hasBusinessStep ? businessForm.querySelector("[data-business-back]") : null;
+    var businessNameInput = hasBusinessStep ? businessForm.querySelector('[data-business-input="businessName"]') : null;
+    var industryTrigger = hasBusinessStep ? businessForm.querySelector("[data-business-industry-trigger]") : null;
+    var industryLabel = hasBusinessStep ? businessForm.querySelector("[data-business-industry-label]") : null;
+    var industryPlaceholderText = industryLabel ? (industryLabel.getAttribute("data-placeholder") || industryLabel.textContent || "").trim() : "";
+    var industryPopover = hasBusinessStep ? businessForm.querySelector("[data-business-industry-popover]") : null;
+    var industrySearchInput = hasBusinessStep ? businessForm.querySelector("[data-business-industry-search]") : null;
+    var industryOptionsContainer = hasBusinessStep ? businessForm.querySelector("[data-business-industry-options]") : null;
+    var industryEmptyState = hasBusinessStep ? businessForm.querySelector("[data-business-industry-empty]") : null;
+    var industryHiddenInput = hasBusinessStep ? businessForm.querySelector('[data-business-input="industry"]') : null;
+    var lobTrigger = hasBusinessStep ? businessForm.querySelector("[data-business-lob-trigger]") : null;
+    var lobPlaceholder = hasBusinessStep ? businessForm.querySelector("[data-business-lob-placeholder]") : null;
+    var lobEmptyText = lobPlaceholder ? (lobPlaceholder.getAttribute("data-empty-text") || "").trim() : "";
+    var lobDefaultText = lobPlaceholder ? (lobPlaceholder.getAttribute("data-default-text") || "").trim() : "";
+    var lobBadges = hasBusinessStep ? businessForm.querySelector("[data-business-lob-badges]") : null;
+    var lobCount = hasBusinessStep ? businessForm.querySelector("[data-business-lob-count]") : null;
+    var lobPopover = hasBusinessStep ? businessForm.querySelector("[data-business-lob-popover]") : null;
+    var lobSearchInput = hasBusinessStep ? businessForm.querySelector("[data-business-lob-search]") : null;
+    var lobOptionsContainer = hasBusinessStep ? businessForm.querySelector("[data-business-lob-options]") : null;
+    var lobEmptyState = hasBusinessStep ? businessForm.querySelector("[data-business-lob-empty]") : null;
+    var lobCustomInput = hasBusinessStep ? businessForm.querySelector("[data-business-lob-custom-input]") : null;
+    var lobCustomAdd = hasBusinessStep ? businessForm.querySelector("[data-business-lob-custom-add]") : null;
+    var lobDoneButton = hasBusinessStep ? businessForm.querySelector("[data-business-lob-done]") : null;
+    var lobHiddenInput = hasBusinessStep ? businessForm.querySelector('[data-business-input="lineOfBusiness"]') : null;
+    var lobCustomHiddenInput = hasBusinessStep ? businessForm.querySelector('[data-business-input="lineOfBusinessCustom"]') : null;
+    var countryTrigger = hasBusinessStep ? businessForm.querySelector("[data-business-country-trigger]") : null;
+    var countryLabel = hasBusinessStep ? businessForm.querySelector("[data-business-country-label]") : null;
+    var countryPlaceholderText = countryLabel ? (countryLabel.getAttribute("data-placeholder") || countryLabel.textContent || "").trim() : "";
+    var countryPopover = hasBusinessStep ? businessForm.querySelector("[data-business-country-popover]") : null;
+    var countryOptionsContainer = hasBusinessStep ? businessForm.querySelector("[data-business-country-options]") : null;
+    var countryHiddenInput = hasBusinessStep ? businessForm.querySelector('[data-business-input="country"]') : null;
+    var websiteInput = hasBusinessStep ? businessForm.querySelector('[data-business-input="website"]') : null;
+    var businessSubmitting = false;
+    var businessState = {
+      industry: "",
+      lineOfBusiness: [],
+      lineOfBusinessCustom: [],
+      country: ""
+    };
+    var industryMap = hasBusinessStep && businessData ? businessData.industry_map || {} : {};
+    var lineOfBusinessMap = hasBusinessStep && businessData ? businessData.line_of_business_map || {} : {};
+    var businessCountries = hasBusinessStep && businessData ? businessData.countries || [] : [];
+    var maxBadges = hasBusinessStep && businessData && typeof businessData.max_badges === "number" ? businessData.max_badges : 2;
+    var industryOptionItems = [];
+    var lobOptionItems = [];
+    var industryOpen = false;
+    var lobOpen = false;
+    var countryOpen = false;
+    var countryAutoDetected = false;
+
+    function setBusinessError(fieldKey, message) {
+      if (!hasBusinessStep) {
+        return;
+      }
+      businessErrors.forEach(function (errorEl) {
+        var key = errorEl.getAttribute("data-business-error");
+        if (key === fieldKey) {
+          if (message) {
+            errorEl.textContent = message;
+            errorEl.classList.remove("hidden");
+          } else {
+            errorEl.textContent = "";
+            errorEl.classList.add("hidden");
+          }
+        }
+      });
+    }
+
+    function clearBusinessErrors() {
+      if (!hasBusinessStep) {
+        return;
+      }
+      businessErrors.forEach(function (errorEl) {
+        errorEl.textContent = "";
+        errorEl.classList.add("hidden");
+      });
+    }
+
+    function setBusinessSubmitting(state) {
+      if (!hasBusinessStep) {
+        return;
+      }
+      businessSubmitting = state;
+      if (businessSubmitBtn) {
+        businessSubmitBtn.disabled = state;
+      }
+      if (businessSubmitText) {
+        businessSubmitText.textContent = state
+          ? (businessLoadingSubmitLabel || businessDefaultSubmitLabel)
+          : (businessDefaultSubmitLabel || businessLoadingSubmitLabel);
+      }
+    }
+
+    function mapIndustryToKey(value) {
+      if (!value) {
+        return "Other";
+      }
+      if (industryMap[value]) {
+        return industryMap[value];
+      }
+      var s = value.toLowerCase();
+      if (s.indexOf("e-commerce") !== -1 || s.indexOf("ecommerce") !== -1 || s.indexOf("retail") !== -1) return "E-commerce";
+      if (s.indexOf("saas") !== -1 || s.indexOf("software") !== -1) return "SaaS";
+      if (s.indexOf("financial") !== -1 || s.indexOf("finance") !== -1 || s.indexOf("bank") !== -1) return "Finance";
+      if (s.indexOf("health") !== -1 || s.indexOf("medical") !== -1) return "Healthcare";
+      if (s.indexOf("education") !== -1 || s.indexOf("school") !== -1) return "Education";
+      if (s.indexOf("hospitality") !== -1 || s.indexOf("travel") !== -1) return "Hospitality";
+      if (s.indexOf("manufact") !== -1) return "Manufacturing";
+      if (s.indexOf("logistics") !== -1 || s.indexOf("transport") !== -1) return "Logistics";
+      if (s.indexOf("real estate") !== -1) return "Real Estate";
+      if (s.indexOf("media") !== -1 || s.indexOf("entertainment") !== -1) return "Media & Entertainment";
+      if (s.indexOf("telecom") !== -1) return "Telecommunications";
+      if (s.indexOf("energy") !== -1 || s.indexOf("utilit") !== -1) return "Energy & Utilities";
+      if (s.indexOf("nonprofit") !== -1 || s.indexOf("ngo") !== -1) return "Nonprofit & NGOs";
+      if (s.indexOf("professional") !== -1 || s.indexOf("consulting") !== -1) return "Professional Services";
+      if (s.indexOf("consumer") !== -1) return "Consumer Services";
+      return "Other";
+    }
+
+    function updateIndustryDisplay() {
+      if (!hasBusinessStep || !industryLabel) {
+        return;
+      }
+      industryLabel.textContent = businessState.industry ? businessState.industry : industryPlaceholderText;
+    }
+
+    function updateLobHiddenInputs() {
+      if (!hasBusinessStep) {
+        return;
+      }
+      if (lobHiddenInput) {
+        lobHiddenInput.value = JSON.stringify(businessState.lineOfBusiness);
+      }
+      if (lobCustomHiddenInput) {
+        lobCustomHiddenInput.value = JSON.stringify(businessState.lineOfBusinessCustom);
+      }
+    }
+
+    function updateLobDisplay() {
+      if (!hasBusinessStep || !lobTrigger || !lobPlaceholder) {
+        return;
+      }
+      var hasIndustry = Boolean(businessState.industry);
+      lobTrigger.disabled = !hasIndustry;
+      if (hasIndustry) {
+        lobTrigger.classList.remove("cursor-not-allowed", "opacity-60");
+      } else {
+        lobTrigger.classList.add("cursor-not-allowed", "opacity-60");
+      }
+      if (!hasIndustry) {
+        if (lobBadges) {
+          lobBadges.innerHTML = "";
+        }
+        lobPlaceholder.textContent = lobEmptyText || "";
+        lobPlaceholder.classList.add("text-muted-foreground");
+        if (lobCount) {
+          lobCount.classList.add("hidden");
+          lobCount.textContent = "";
+        }
+        return;
+      }
+      var combined = Array.from(new Set(businessState.lineOfBusiness.concat(businessState.lineOfBusinessCustom)));
+      if (!combined.length) {
+        if (lobBadges) {
+          lobBadges.innerHTML = "";
+        }
+        lobPlaceholder.textContent = lobDefaultText || "";
+        lobPlaceholder.classList.add("text-muted-foreground");
+        if (lobCount) {
+          lobCount.classList.add("hidden");
+          lobCount.textContent = "";
+        }
+        return;
+      }
+      lobPlaceholder.textContent = "";
+      lobPlaceholder.classList.remove("text-muted-foreground");
+      if (lobBadges) {
+        lobBadges.innerHTML = "";
+        combined.slice(0, maxBadges).forEach(function (value) {
+          var badge = document.createElement("span");
+          badge.className = "inline-flex items-center rounded-full border border-transparent bg-secondary px-2.5 py-0.5 text-xs font-semibold text-secondary-foreground";
+          badge.textContent = value;
+          lobBadges.appendChild(badge);
+        });
+      }
+      var remaining = combined.length - Math.min(combined.length, maxBadges);
+      if (lobCount) {
+        if (remaining > 0) {
+          lobCount.textContent = "+" + remaining;
+          lobCount.classList.remove("hidden");
+        } else {
+          lobCount.classList.add("hidden");
+          lobCount.textContent = "";
+        }
+      }
+    }
+
+    function updateLobOptionIndicators() {
+      if (!hasBusinessStep) {
+        return;
+      }
+      lobOptionItems.forEach(function (item) {
+        var selected = businessState.lineOfBusiness.indexOf(item.value) !== -1;
+        item.element.setAttribute("data-state", selected ? "on" : "off");
+        item.indicator.classList.toggle("opacity-100", selected);
+        item.indicator.classList.toggle("opacity-0", !selected);
+        item.indicator.innerHTML = selected
+          ? '<svg xmlns="http://www.w3.org/2000/svg" class="h-3 w-3" viewBox="0 0 12 10" fill="none"><path d="M1 5.5 4.5 9 11 1" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"></path></svg>'
+          : "";
+      });
+    }
+
+    function filterLobOptions(query) {
+      if (!hasBusinessStep) {
+        return;
+      }
+      var normalized = (query || "").toLowerCase();
+      var visibleCount = 0;
+      lobOptionItems.forEach(function (item) {
+        var match = !normalized || item.value.toLowerCase().indexOf(normalized) !== -1;
+        item.element.classList.toggle("hidden", !match);
+        if (match) {
+          visibleCount += 1;
+        }
+      });
+      if (lobEmptyState) {
+        lobEmptyState.classList.toggle("hidden", visibleCount > 0);
+      }
+    }
+
+    function rebuildLobOptions() {
+      if (!hasBusinessStep || !lobOptionsContainer) {
+        return;
+      }
+      lobOptionsContainer.innerHTML = "";
+      lobOptionItems = [];
+      var key = mapIndustryToKey(businessState.industry);
+      var options = lineOfBusinessMap[key] || lineOfBusinessMap["Other"] || [];
+      options.forEach(function (option) {
+        var item = document.createElement("button");
+        item.type = "button";
+        item.className = "flex w-full items-center justify-between gap-3 rounded-sm px-3 py-1.5 text-left text-sm text-foreground transition hover:bg-muted focus:bg-muted";
+        item.setAttribute("data-option-value", option.toLowerCase());
+        var left = document.createElement("span");
+        left.className = "flex items-center gap-2";
+        var indicator = document.createElement("span");
+        indicator.className = "flex h-4 w-4 items-center justify-center text-primary opacity-0 transition-opacity duration-150";
+        var labelText = document.createElement("span");
+        labelText.className = "text-sm";
+        labelText.textContent = option;
+        left.appendChild(indicator);
+        left.appendChild(labelText);
+        item.appendChild(left);
+        item.addEventListener("click", function (event) {
+          event.preventDefault();
+          toggleLob(option);
+        });
+        lobOptionsContainer.appendChild(item);
+        lobOptionItems.push({
+          value: option,
+          element: item,
+          indicator: indicator,
+          label: labelText,
+        });
+      });
+      filterLobOptions(lobSearchInput ? lobSearchInput.value : "");
+      updateLobOptionIndicators();
+    }
+
+    function toggleLob(option) {
+      if (!hasBusinessStep) {
+        return;
+      }
+      var next = businessState.lineOfBusiness.slice();
+      var index = next.indexOf(option);
+      if (index === -1) {
+        next.push(option);
+      } else {
+        next.splice(index, 1);
+      }
+      businessState.lineOfBusiness = next;
+      updateLobHiddenInputs();
+      updateLobOptionIndicators();
+      updateLobDisplay();
+    }
+
+    function addCustomLob(value) {
+      if (!hasBusinessStep) {
+        return;
+      }
+      var trimmed = value.trim();
+      if (!trimmed) {
+        return;
+      }
+      if (businessState.lineOfBusiness.indexOf(trimmed) !== -1 || businessState.lineOfBusinessCustom.indexOf(trimmed) !== -1) {
+        return;
+      }
+      businessState.lineOfBusinessCustom = businessState.lineOfBusinessCustom.concat([trimmed]);
+      updateLobHiddenInputs();
+      updateLobDisplay();
+    }
+
+    function closeIndustryPopover() {
+      if (!hasBusinessStep || !industryPopover) {
+        return;
+      }
+      industryPopover.hidden = true;
+      industryOpen = false;
+      if (industryTrigger) {
+        industryTrigger.removeAttribute("data-open");
+      }
+    }
+
+    function openIndustryPopover() {
+      if (!hasBusinessStep || !industryPopover) {
+        return;
+      }
+      industryPopover.hidden = false;
+      industryOpen = true;
+      if (industryTrigger) {
+        industryTrigger.setAttribute("data-open", "true");
+      }
+      if (industrySearchInput) {
+        industrySearchInput.value = "";
+        filterIndustryOptions("");
+        window.setTimeout(function () {
+          industrySearchInput.focus();
+        }, 0);
+      }
+    }
+
+    function closeLobPopover() {
+      if (!hasBusinessStep || !lobPopover) {
+        return;
+      }
+      lobPopover.hidden = true;
+      lobOpen = false;
+      if (lobTrigger) {
+        lobTrigger.removeAttribute("data-open");
+      }
+    }
+
+    function openLobPopover() {
+      if (!hasBusinessStep || !lobPopover) {
+        return;
+      }
+      lobPopover.hidden = false;
+      lobOpen = true;
+      if (lobTrigger) {
+        lobTrigger.setAttribute("data-open", "true");
+      }
+      if (lobSearchInput) {
+        lobSearchInput.value = "";
+        filterLobOptions("");
+        window.setTimeout(function () {
+          lobSearchInput.focus();
+        }, 0);
+      }
+    }
+
+    function closeCountryPopover() {
+      if (!hasBusinessStep || !countryPopover) {
+        return;
+      }
+      countryPopover.hidden = true;
+      countryOpen = false;
+      if (countryTrigger) {
+        countryTrigger.removeAttribute("data-open");
+      }
+    }
+
+    function openCountryPopover() {
+      if (!hasBusinessStep || !countryPopover) {
+        return;
+      }
+      renderCountryOptions();
+      countryPopover.hidden = false;
+      countryOpen = true;
+      if (countryTrigger) {
+        countryTrigger.setAttribute("data-open", "true");
+      }
+    }
+
+    function filterIndustryOptions(query) {
+      if (!hasBusinessStep) {
+        return;
+      }
+      var normalized = (query || "").toLowerCase();
+      var visibleCount = 0;
+      industryOptionItems.forEach(function (item) {
+        var match = !normalized || item.value.toLowerCase().indexOf(normalized) !== -1;
+        item.element.classList.toggle("hidden", !match);
+        if (match) {
+          visibleCount += 1;
+        }
+      });
+      if (industryEmptyState) {
+        industryEmptyState.classList.toggle("hidden", visibleCount > 0);
+      }
+    }
+
+    function renderIndustryOptions() {
+      if (!hasBusinessStep || !industryOptionsContainer) {
+        return;
+      }
+      industryOptionsContainer.innerHTML = "";
+      industryOptionItems = [];
+      if (!businessData || !Array.isArray(businessData.industries)) {
+        if (industryEmptyState) {
+          industryEmptyState.classList.remove("hidden");
+        }
+        return;
+      }
+      businessData.industries.forEach(function (option) {
+        var button = document.createElement("button");
+        button.type = "button";
+        button.className = "flex w-full cursor-pointer select-none items-center rounded-sm px-3 py-1.5 text-left text-sm text-foreground hover:bg-muted focus:bg-muted";
+        button.textContent = option;
+        button.addEventListener("click", function () {
+          setIndustry(option);
+          closeIndustryPopover();
+        });
+        industryOptionsContainer.appendChild(button);
+        industryOptionItems.push({
+          value: option,
+          element: button,
+        });
+      });
+      filterIndustryOptions("");
+    }
+
+    function setIndustry(value) {
+      if (!hasBusinessStep) {
+        return;
+      }
+      businessState.industry = value || "";
+      if (industryHiddenInput) {
+        industryHiddenInput.value = businessState.industry;
+      }
+      businessState.lineOfBusiness = [];
+      businessState.lineOfBusinessCustom = [];
+      if (lobSearchInput) {
+        lobSearchInput.value = "";
+      }
+      updateIndustryDisplay();
+      updateLobHiddenInputs();
+      rebuildLobOptions();
+      updateLobDisplay();
+    }
+
+    function setCountry(value) {
+      if (!hasBusinessStep) {
+        return;
+      }
+      businessState.country = value || "";
+      if (countryHiddenInput) {
+        countryHiddenInput.value = businessState.country;
+      }
+      updateCountryDisplay();
+    }
+
+    function updateCountryDisplay() {
+      if (!hasBusinessStep || !countryLabel) {
+        return;
+      }
+      while (countryLabel.firstChild) {
+        countryLabel.removeChild(countryLabel.firstChild);
+      }
+      if (!businessState.country) {
+        countryLabel.textContent = countryPlaceholderText;
+        return;
+      }
+      var selected = null;
+      for (var i = 0; i < businessCountries.length; i += 1) {
+        if (businessCountries[i] && businessCountries[i].value === businessState.country) {
+          selected = businessCountries[i];
+          break;
+        }
+      }
+      if (selected && selected.flag) {
+        var flagSpan = document.createElement("span");
+        flagSpan.className = "text-base leading-none";
+        flagSpan.textContent = selected.flag;
+        countryLabel.appendChild(flagSpan);
+      }
+      var textSpan = document.createElement("span");
+      textSpan.textContent = businessState.country;
+      countryLabel.appendChild(textSpan);
+    }
+
+    function renderCountryOptions() {
+      if (!hasBusinessStep || !countryOptionsContainer) {
+        return;
+      }
+      if (countryOptionsContainer.childElementCount) {
+        return;
+      }
+      businessCountries.forEach(function (item) {
+        if (!item || !item.value) {
+          return;
+        }
+        var optionBtn = document.createElement("button");
+        optionBtn.type = "button";
+        optionBtn.className = "flex w-full items-center gap-2 px-3 py-1.5 text-left text-sm text-foreground hover:bg-muted focus:bg-muted";
+        var flagSpan = document.createElement("span");
+        flagSpan.className = "text-base leading-none";
+        flagSpan.textContent = item.flag || "";
+        var textSpan = document.createElement("span");
+        textSpan.textContent = item.value;
+        optionBtn.appendChild(flagSpan);
+        optionBtn.appendChild(textSpan);
+        optionBtn.addEventListener("click", function () {
+          setCountry(item.value);
+          closeCountryPopover();
+        });
+        countryOptionsContainer.appendChild(optionBtn);
+      });
+    }
+
+    function autoDetectCountry() {
+      if (!hasBusinessStep || countryAutoDetected || businessState.country) {
+        return;
+      }
+      var regionToCountry = {
+        US: "United States",
+        GB: "United Kingdom",
+        AE: "United Arab Emirates",
+        SA: "Saudi Arabia",
+        EG: "Egypt",
+        FR: "France",
+        DE: "Germany",
+        ES: "Spain",
+        IT: "Italy",
+      };
+      var tzToRegion = {
+        "Europe/London": "GB",
+        "Europe/Paris": "FR",
+        "Europe/Berlin": "DE",
+        "Europe/Madrid": "ES",
+        "Europe/Rome": "IT",
+        "America/New_York": "US",
+        "America/Chicago": "US",
+        "America/Denver": "US",
+        "America/Los_Angeles": "US",
+        "Asia/Riyadh": "SA",
+        "Asia/Dubai": "AE",
+        "Africa/Cairo": "EG",
+      };
+      var region = null;
+      try {
+        var tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
+        if (tz && tzToRegion[tz]) {
+          region = tzToRegion[tz];
+        }
+      } catch (error) {
+        // ignore
+      }
+      if (!region) {
+        try {
+          var langs = Array.isArray(navigator.languages) && navigator.languages.length ? navigator.languages : (navigator.language ? [navigator.language] : []);
+          for (var i = 0; i < langs.length; i += 1) {
+            var lang = langs[i];
+            if (!lang) continue;
+            try {
+              if (typeof Intl !== "undefined" && typeof Intl.Locale === "function") {
+                var locale = new Intl.Locale(lang);
+                if (locale && locale.region) {
+                  region = String(locale.region).toUpperCase();
+                  break;
+                }
+              }
+            } catch (error) {
+              var match = lang.match(/[-_](\w{2})/);
+              if (match && match[1]) {
+                region = match[1].toUpperCase();
+                break;
+              }
+            }
+            if (!region && /^ar/i.test(lang)) {
+              region = "EG";
+              break;
+            }
+          }
+        } catch (error) {
+          // ignore
+        }
+      }
+      var countryName = region ? regionToCountry[region] : null;
+      if (countryName) {
+        setCountry(countryName);
+        countryAutoDetected = true;
+      }
+    }
+
+    if (hasBusinessStep) {
+      renderIndustryOptions();
+      updateIndustryDisplay();
+      updateLobHiddenInputs();
+      updateLobDisplay();
+      renderCountryOptions();
+      updateCountryDisplay();
+      if (industryTrigger) {
+        industryTrigger.addEventListener("click", function () {
+          if (industryOpen) {
+            closeIndustryPopover();
+          } else {
+            closeLobPopover();
+            closeCountryPopover();
+            openIndustryPopover();
+          }
+        });
+      }
+      if (industrySearchInput) {
+        industrySearchInput.addEventListener("input", function (event) {
+          filterIndustryOptions(event.target.value || "");
+        });
+      }
+      if (lobTrigger) {
+        lobTrigger.addEventListener("click", function () {
+          if (lobTrigger.disabled) {
+            return;
+          }
+          if (lobOpen) {
+            closeLobPopover();
+          } else {
+            closeIndustryPopover();
+            closeCountryPopover();
+            openLobPopover();
+          }
+        });
+      }
+      if (lobSearchInput) {
+        lobSearchInput.addEventListener("input", function (event) {
+          filterLobOptions(event.target.value || "");
+        });
+      }
+      if (lobCustomAdd) {
+        lobCustomAdd.addEventListener("click", function (event) {
+          event.preventDefault();
+          if (!lobCustomInput) {
+            return;
+          }
+          addCustomLob(lobCustomInput.value || "");
+          lobCustomInput.value = "";
+          lobCustomInput.focus();
+        });
+      }
+      if (lobCustomInput) {
+        lobCustomInput.addEventListener("keydown", function (event) {
+          if (event.key === "Enter") {
+            event.preventDefault();
+            addCustomLob(lobCustomInput.value || "");
+            lobCustomInput.value = "";
+          }
+        });
+      }
+      if (lobDoneButton) {
+        lobDoneButton.addEventListener("click", function () {
+          closeLobPopover();
+        });
+      }
+      if (countryTrigger) {
+        countryTrigger.addEventListener("click", function () {
+          if (countryOpen) {
+            closeCountryPopover();
+          } else {
+            closeIndustryPopover();
+            closeLobPopover();
+            openCountryPopover();
+          }
+        });
+      }
+      if (businessBackButton) {
+        businessBackButton.addEventListener("click", function () {
+          advanceToStep("form");
+        });
+      }
+      document.addEventListener("click", function (event) {
+        var target = event.target;
+        if (industryOpen && industryPopover && !industryPopover.contains(target) && (!industryTrigger || !industryTrigger.contains(target))) {
+          closeIndustryPopover();
+        }
+        if (lobOpen && lobPopover && !lobPopover.contains(target) && (!lobTrigger || !lobTrigger.contains(target))) {
+          closeLobPopover();
+        }
+        if (countryOpen && countryPopover && !countryPopover.contains(target) && (!countryTrigger || !countryTrigger.contains(target))) {
+          closeCountryPopover();
+        }
+      });
+      document.addEventListener("keydown", function (event) {
+        if (event.key === "Escape") {
+          closeIndustryPopover();
+          closeLobPopover();
+          closeCountryPopover();
+        }
+      });
+    }
+
+    function setStep(stepKey) {
+      if (!stepPanels.length) {
+        return;
+      }
+      currentStep = stepKey;
+      stepPanels.forEach(function (panel) {
+        var key = panel.getAttribute("data-register-step");
+        panel.classList.toggle("hidden", key !== stepKey);
+      });
+      if (stepIndicator) {
+        stepIndicator.textContent = "Step: " + stepKey;
+      }
+      applyHeader(stepKey, true);
+      if (stepKey === "business") {
+        autoDetectCountry();
+      } else {
+        closeIndustryPopover();
+        closeLobPopover();
+        closeCountryPopover();
+      }
+    }
+
+    function advanceToStep(stepKey) {
+      if (!stepKey) return;
+      if (orderedSteps.indexOf(stepKey) === -1) return;
+      setStep(stepKey);
+    }
+
+    setStep(currentStep);
+    window.advanceToStep = advanceToStep;
+
+    function setError(fieldKey, message) {
+      errors.forEach(function (errorEl) {
+        var key = errorEl.getAttribute("data-register-error");
+        if (key === fieldKey) {
+          if (message) {
+            errorEl.textContent = message;
+            errorEl.classList.remove("hidden");
+          } else {
+            errorEl.textContent = "";
+            errorEl.classList.add("hidden");
+          }
+        }
+      });
+    }
+
+    function clearErrors() {
+      errors.forEach(function (errorEl) {
+        errorEl.textContent = "";
+        errorEl.classList.add("hidden");
+      });
+    }
+
+    function setSubmitting(state) {
+      isSubmitting = state;
+      if (submitBtn) {
+        submitBtn.disabled = state;
+      }
+      if (submitText) {
+        submitText.textContent = state ? (loadingSubmitLabel || defaultSubmitLabel) : (defaultSubmitLabel || loadingSubmitLabel);
+      }
+    }
+
+    function validate() {
+      clearErrors();
+      var result = {
+        valid: true,
+        errors: {},
+        firstInvalid: null,
+      };
+      if (inputFirst) {
+        var firstValue = (inputFirst.value || "").trim();
+        if (firstValue.length < 2) {
+          var msgFirst = inputFirst.getAttribute("data-error-message") || "{{ page.fields.first_name.error_required }}";
+          result.valid = false;
+          result.errors.firstName = msgFirst;
+          result.firstInvalid = result.firstInvalid || inputFirst;
+          setError("firstName", msgFirst);
+        }
+      }
+      if (inputEmail) {
+        var emailValue = (inputEmail.value || "").trim();
+        var emailPattern = /^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$/;
+        if (!emailPattern.test(emailValue)) {
+          var msgEmail = inputEmail.getAttribute("data-error-message") || "{{ page.fields.email.error_invalid }}";
+          result.valid = false;
+          result.errors.email = msgEmail;
+          result.firstInvalid = result.firstInvalid || inputEmail;
+          setError("email", msgEmail);
+        }
+      }
+      if (inputPassword) {
+        var passValue = inputPassword.value || "";
+        if (passValue.length < 8) {
+          var msgPassword = inputPassword.getAttribute("data-error-message") || "{{ page.fields.password.error_min }}";
+          result.valid = false;
+          result.errors.password = msgPassword;
+          result.firstInvalid = result.firstInvalid || inputPassword;
+          setError("password", msgPassword);
+        }
+      }
+      if (inputConfirm) {
+        var confirmValue = inputConfirm.value || "";
+        var passValue2 = inputPassword ? inputPassword.value || "" : "";
+        if (confirmValue.length < 8 || confirmValue !== passValue2) {
+          var msgConfirm = inputConfirm.getAttribute("data-error-message") || "{{ page.fields.confirm_password.error_match }}";
+          result.valid = false;
+          result.errors.confirmPassword = msgConfirm;
+          result.firstInvalid = result.firstInvalid || inputConfirm;
+          setError("confirmPassword", msgConfirm);
+        }
+      }
+      return result;
+    }
+
+    function validateBusinessForm() {
+      clearBusinessErrors();
+      var result = {
+        valid: true,
+        errors: {},
+        firstInvalid: null,
+      };
+      if (!hasBusinessStep) {
+        return result;
+      }
+      if (businessNameInput) {
+        var nameValue = (businessNameInput.value || "").trim();
+        if (!nameValue.length) {
+          var msgBusiness = businessNameInput.getAttribute("data-error-message") || "{{ page.business.fields.business_name.error_required|escapejs }}";
+          result.valid = false;
+          result.errors.businessName = msgBusiness;
+          result.firstInvalid = result.firstInvalid || businessNameInput;
+          setBusinessError("businessName", msgBusiness);
+        }
+      }
+      return result;
+    }
+
+    if (loginLink && inputEmail) {
+      loginLink.addEventListener("click", function () {
+        var email = (inputEmail.value || "").trim();
+        if (email) {
+          loginLink.setAttribute("data-login-email", email);
+        }
+      });
+    }
+
+    form.addEventListener("submit", function (event) {
+      event.preventDefault();
+      if (isSubmitting) {
+        return;
+      }
+
+      var validation = validate();
+      if (!validation.valid && validation.firstInvalid && typeof validation.firstInvalid.focus === "function") {
+        validation.firstInvalid.focus();
+      }
+
+      setSubmitting(true);
+
+      var payload = {
+        firstName: inputFirst ? inputFirst.value.trim() : "",
+        email: inputEmail ? inputEmail.value.trim() : "",
+        password: inputPassword ? inputPassword.value : "",
+        confirmPassword: inputConfirm ? inputConfirm.value : "",
+        step: currentStep,
+        valid: validation.valid,
+        errors: validation.errors,
+        advanceToStep: advanceToStep,
+        resolve: function (options) {
+          if (options && options.step) {
+            advanceToStep(options.step);
+          } else {
+            advanceToStep("business");
+          }
+          setSubmitting(false);
+        },
+        reject: function (fieldKey, message) {
+          if (fieldKey && message) {
+            setError(fieldKey, message);
+          }
+          setSubmitting(false);
+        },
+      };
+
+      var submitEvent = new CustomEvent("registerstep1:submit", {
+        detail: payload,
+        cancelable: true,
+      });
+
+      var prevented = !form.dispatchEvent(submitEvent);
+
+      if (!prevented) {
+        window.setTimeout(function () {
+          payload.resolve();
+        }, 400);
+      }
+    });
+
+    if (hasBusinessStep && businessForm) {
+      businessForm.addEventListener("submit", function (event) {
+        event.preventDefault();
+        if (businessSubmitting) {
+          return;
+        }
+
+        var validation = validateBusinessForm();
+        if (!validation.valid && validation.firstInvalid && typeof validation.firstInvalid.focus === "function") {
+          validation.firstInvalid.focus();
+        }
+
+        setBusinessSubmitting(true);
+
+        var payload = {
+          businessName: businessNameInput ? businessNameInput.value.trim() : "",
+          industry: businessState.industry,
+          specifyIndustry: "",
+          lineOfBusiness: businessState.lineOfBusiness.slice(),
+          lineOfBusinessCustom: businessState.lineOfBusinessCustom.slice(),
+          country: businessState.country,
+          website: websiteInput ? (websiteInput.value || "").trim() : "",
+          step: "business",
+          valid: validation.valid,
+          errors: validation.errors,
+          advanceToStep: advanceToStep,
+          resolve: function (options) {
+            if (options && options.step) {
+              advanceToStep(options.step);
+            } else {
+              advanceToStep("agent");
+            }
+            setBusinessSubmitting(false);
+          },
+          reject: function (fieldKey, message) {
+            if (fieldKey && message) {
+              setBusinessError(fieldKey, message);
+            }
+            setBusinessSubmitting(false);
+          },
+        };
+
+        var businessSubmitEvent = new CustomEvent("registerstep2:submit", {
+          detail: payload,
+          cancelable: true,
+        });
+
+        var businessPrevented = !businessForm.dispatchEvent(businessSubmitEvent);
+
+        if (!businessPrevented) {
+          window.setTimeout(function () {
+            payload.resolve();
+          }, 400);
+        }
+      });
+    }
+  });
+</script>
+{% endblock %}

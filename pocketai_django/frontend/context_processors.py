@@ -31,48 +31,56 @@ def site_globals(_request) -> Dict[str, Any]:
         {"label": "Get Started", "href": "/get-started", "style": "primary"},
     ]
 
-    footer_columns = [
-        {
-            "title": "Product",
-            "links": [
-                {"label": "Features", "href": "#features"},
-                {"label": "Integrations", "href": "/integrations"},
-                {"label": "Roadmap", "href": "/roadmap"},
-            ],
-        },
-        {
-            "title": "Company",
-            "links": [
-                {"label": "About", "href": "#about"},
-                {"label": "Customers", "href": "/customers"},
-                {"label": "Careers", "href": "/careers"},
-            ],
-        },
-        {
-            "title": "Resources",
-            "links": [
-                {"label": "Documentation", "href": "/docs"},
-                {"label": "Support", "href": "/support"},
-                {"label": "Status", "href": "/status"},
-            ],
-        },
-    ]
-
-    legal_links = [
-        {"label": "Privacy Policy", "href": "/privacy"},
-        {"label": "Terms of Service", "href": "/terms"},
-        {"label": "Cookies", "href": "/cookies"},
-    ]
-
     return {
         "site": {
             "brand": {"name": "Pocket", "tagline": "AI Customer Service Platform", "href": "/"},
             "nav_links": nav_links,
             "auth_links": auth_links,
             "footer": {
-                "columns": footer_columns,
-                "legal": legal_links,
-                "copyright": "© Pocket AI Customer Service Platform",
+                "brand": "AI Support",
+                "blurb": "Transforming customer service with intelligent AI solutions. Deliver exceptional support experiences that delight your customers and grow your business.",
+                "categories": {
+                    "Product": [
+                        {"label": "Features", "href": "#features"},
+                        {"label": "Pricing", "href": "#pricing"},
+                        {"label": "API Documentation", "href": "/api-docs"},
+                        {"label": "Integrations", "href": "/integrations"},
+                        {"label": "Security", "href": "/security"},
+                    ],
+                    "Company": [
+                        {"label": "About Us", "href": "/about"},
+                        {"label": "Careers", "href": "/careers"},
+                        {"label": "Press", "href": "/press"},
+                        {"label": "Blog", "href": "/blog"},
+                        {"label": "Contact", "href": "/contact"},
+                    ],
+                    "Resources": [
+                        {"label": "Help Center", "href": "/help"},
+                        {"label": "Community", "href": "/community"},
+                        {"label": "Guides", "href": "/guides"},
+                        {"label": "Status", "href": "/status"},
+                        {"label": "Changelog", "href": "/changelog"},
+                    ],
+                    "Legal": [
+                        {"label": "Privacy Policy", "href": "/privacy"},
+                        {"label": "Terms of Service", "href": "/terms"},
+                        {"label": "GDPR", "href": "/gdpr"},
+                        {"label": "Compliance", "href": "/compliance"},
+                        {"label": "Cookies", "href": "/cookies"},
+                    ],
+                },
+                "social": [
+                    {"label": "Twitter", "href": "#", "icon": "twitter"},
+                    {"label": "LinkedIn", "href": "#", "icon": "linkedin"},
+                    {"label": "GitHub", "href": "#", "icon": "github"},
+                    {"label": "Email", "href": "#", "icon": "mail"},
+                ],
+                "bottom": {
+                    "copyright": "© 2024 AI Support. All rights reserved.",
+                    "privacy": {"label": "Privacy Policy", "href": "/privacy"},
+                    "terms": {"label": "Terms of Service", "href": "/terms"},
+                    "cookie": {"label": "Cookie Policy", "href": "/cookies"},
+                },
             },
             "language_toggle": {
                 "label": "Language",

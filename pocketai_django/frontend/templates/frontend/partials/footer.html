@@ -1,28 +1,63 @@
-<footer class="mt-auto border-t border-border/60 bg-card/60 backdrop-blur">
-  <div class="container mx-auto px-6 py-12">
-    <div class="grid gap-8 md:grid-cols-3">
-      {% for column in site.footer.columns %}
-        <div>
-          <h3 class="text-sm font-semibold text-foreground uppercase tracking-wide mb-4">{{ column.title }}</h3>
-          <ul class="space-y-3 text-sm text-muted-foreground">
-            {% for link in column.links %}
+{% load lucide %}
+<footer class="footer-section bg-background border-t border-border">
+  <div class="container mx-auto px-6 py-16">
+    <div class="grid lg:grid-cols-6 gap-8">
+      <div class="lg:col-span-2 md:text-left text-center">
+        <div class="flex items-center gap-2 mb-6 justify-center md:justify-start">
+          <div class="w-10 h-10 bg-gradient-primary rounded-xl flex items-center justify-center">
+            <span class="text-white font-bold text-xl">A</span>
+          </div>
+          <span class="text-2xl font-bold text-foreground">{{ site.footer.brand }}</span>
+        </div>
+        <p class="text-muted-foreground mb-6 leading-relaxed md:text-left text-center">
+          {{ site.footer.blurb }}
+        </p>
+        <div class="flex gap-4 justify-center md:justify-start">
+          {% for social in site.footer.social %}
+            <a
+              href="{{ social.href }}"
+              class="w-10 h-10 bg-muted rounded-lg flex items-center justify-center hover:bg-accent transition-colors group"
+              aria-label="{{ social.label }}"
+            >
+              {% lucide social.icon "w-5 h-5 text-muted-foreground group-hover:text-foreground transition-colors" %}
+            </a>
+          {% endfor %}
+        </div>
+      </div>
+
+      {% for category, links in site.footer.categories.items %}
+        <div class="md:text-left text-center">
+          <h4 class="font-semibold text-foreground mb-4">{{ category }}</h4>
+          <ul class="space-y-3">
+            {% for link in links %}
               <li>
-                <a href="{{ link.href }}" class="hover:text-foreground transition-colors">{{ link.label }}</a>
+                <a href="{{ link.href }}" class="text-muted-foreground hover:text-foreground transition-colors">{{ link.label }}</a>
               </li>
             {% endfor %}
           </ul>
         </div>
       {% endfor %}
     </div>
-    <div class="mt-10 flex flex-col md:flex-row md:items-center md:justify-between gap-4 text-xs text-muted-foreground">
-      <p>{{ site.footer.copyright }}</p>
-      <ul class="flex flex-wrap items-center gap-4">
-        {% for link in site.footer.legal %}
-          <li>
-            <a href="{{ link.href }}" class="hover:text-foreground transition-colors">{{ link.label }}</a>
-          </li>
-        {% endfor %}
-      </ul>
+
+    <div class="footer-bottom mt-16 pt-8 border-t border-border flex justify-center items-center">
+      <div class="text-muted-foreground text-sm text-center flex flex-col items-center gap-2">
+        <div class="text-sm text-muted-foreground">
+          {{ site.footer.bottom.copyright }}
+        </div>
+        <div class="flex items-center gap-3">
+          <a href="{{ site.footer.bottom.privacy.href }}" class="text-muted-foreground hover:text-foreground transition-colors">
+            {{ site.footer.bottom.privacy.label }}
+          </a>
+          <span class="opacity-40">•</span>
+          <a href="{{ site.footer.bottom.terms.href }}" class="text-muted-foreground hover:text-foreground transition-colors">
+            {{ site.footer.bottom.terms.label }}
+          </a>
+          <span class="opacity-40">•</span>
+          <a href="{{ site.footer.bottom.cookie.href }}" class="text-muted-foreground hover:text-foreground transition-colors">
+            {{ site.footer.bottom.cookie.label }}
+          </a>
+        </div>
+      </div>
     </div>
   </div>
 </footer>
