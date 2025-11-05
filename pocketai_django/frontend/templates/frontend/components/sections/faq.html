@@ -1,0 +1,73 @@
+{% load lucide %}
+<section id="faq" class="bg-background pt-16 md:pt-20 pb-20 md:pb-24">
+  <div class="container mx-auto px-6">
+    <div class="text-center mb-12 md:mb-16 animate-fade-in">
+      <h2 class="text-4xl md:text-5xl font-semibold text-foreground">
+        {{ section.title_prefix }} <span class="text-gradient-hero">{{ section.title_highlight }}</span>
+      </h2>
+    </div>
+
+    <div class="mx-auto max-w-4xl bg-card rounded-2xl p-5 md:p-7 shadow-premium animate-panel-in" data-faq-root>
+      {% for item in section.items %}
+        <div class="last:pb-0" data-faq-item>
+          <button
+            type="button"
+            class="w-full flex items-center justify-between py-4 text-start text-card-foreground text-lg md:text-xl gap-4 transition-colors"
+            data-faq-trigger
+            aria-expanded="false"
+          >
+            <span>{{ item.question }}</span>
+            <span class="shrink-0 inline-flex items-center justify-center rounded-full bg-white text-foreground shadow-sm w-9 h-9 transition-transform duration-200" data-faq-icon>
+              {% lucide "chevron-down" "w-4 h-4" %}
+            </span>
+          </button>
+          <div class="pb-4 text-muted-foreground text-base leading-relaxed hidden" data-faq-content>
+            {{ item.answer }}
+          </div>
+        </div>
+      {% endfor %}
+    </div>
+  </div>
+</section>
+
+<script>
+  document.addEventListener("DOMContentLoaded", function () {
+    var root = document.querySelector("[data-faq-root]");
+    if (!root) return;
+
+    var items = Array.prototype.slice.call(root.querySelectorAll("[data-faq-item]"));
+
+    items.forEach(function (item) {
+      var trigger = item.querySelector("[data-faq-trigger]");
+      var content = item.querySelector("[data-faq-content]");
+      var icon = item.querySelector("[data-faq-icon]");
+      if (!trigger || !content) return;
+
+      trigger.addEventListener("click", function () {
+        var expanded = trigger.getAttribute("aria-expanded") === "true";
+
+        items.forEach(function (other) {
+          var otherTrigger = other.querySelector("[data-faq-trigger]");
+          var otherContent = other.querySelector("[data-faq-content]");
+          var otherIcon = other.querySelector("[data-faq-icon]");
+          if (!otherTrigger || !otherContent) return;
+          otherTrigger.setAttribute("aria-expanded", "false");
+          otherContent.classList.add("hidden");
+          otherContent.classList.remove("animate-fade-in");
+          if (otherIcon) {
+            otherIcon.classList.remove("rotate-180");
+          }
+        });
+
+        if (!expanded) {
+          trigger.setAttribute("aria-expanded", "true");
+          content.classList.remove("hidden");
+          content.classList.add("animate-fade-in");
+          if (icon) {
+            icon.classList.add("rotate-180");
+          }
+        }
+      });
+    });
+  });
+</script>
