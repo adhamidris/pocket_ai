@@ -375,6 +375,224 @@
               </div>
             </form>
           </div>
+          <div data-register-step="agent" class="hidden animate-panel-in">
+            <form
+              class="space-y-4"
+              novalidate
+              data-agent-form
+            >
+              <div>
+                <label class="mb-2 block text-sm font-medium text-foreground" for="register-agent-name">
+                  {{ page.agent.fields.name.label }}
+                </label>
+                <input
+                  id="register-agent-name"
+                  name="agentName"
+                  type="text"
+                  placeholder="{{ page.agent.fields.name.placeholder }}"
+                  class="flex h-10 w-full rounded-md border-0 bg-input px-3 py-2 text-base text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-0 focus-visible:outline-none focus-visible:ring-0 focus-visible:ring-offset-0 disabled:cursor-not-allowed disabled:opacity-50 md:text-sm"
+                  data-agent-input="name"
+                >
+                <p class="mt-1 hidden text-xs text-destructive" data-agent-error="name">
+                  {{ page.agent.fields.name.error_required }}
+                </p>
+              </div>
+
+              <div class="grid grid-cols-1 gap-4 md:grid-cols-2">
+                <div>
+                  <label class="mb-2 block text-sm font-medium text-foreground">
+                    {{ page.agent.fields.role.label }}
+                  </label>
+                  <div class="relative">
+                    <button
+                      type="button"
+                      class="flex h-10 w-full items-center justify-between rounded-md bg-input px-3 text-left text-sm font-medium text-foreground/90 transition focus:outline-none focus:ring-0 data-[open=true]:ring-0"
+                      data-agent-role-trigger
+                    >
+                      <span class="flex-1 overflow-hidden text-ellipsis whitespace-nowrap" data-agent-role-label data-placeholder="{{ page.agent.fields.role.placeholder }}">
+                        {{ page.agent.fields.role.placeholder }}
+                      </span>
+                      <span class="shrink-0 text-muted-foreground">
+                        <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                          <path d="M6 9l6 6 6-6" stroke-linecap="round" stroke-linejoin="round"></path>
+                        </svg>
+                      </span>
+                    </button>
+                    <div
+                      class="absolute left-0 top-full z-50 mt-2 w-full overflow-hidden rounded-md border border-border bg-popover text-popover-foreground shadow-lg transition data-[hidden=true]:opacity-0"
+                      data-agent-role-popover
+                      hidden
+                    >
+                      <div class="max-h-60 overflow-y-auto py-1">
+                        {% for option in page.agent.fields.role.options %}
+                          <button
+                            type="button"
+                            class="flex w-full items-center justify-between gap-2 px-3 py-2 text-left text-sm text-foreground/90 transition hover:bg-muted"
+                            data-agent-role-option="{{ option }}"
+                          >
+                            <span class="flex-1 text-sm">{{ option }}</span>
+                            <span class="hidden text-primary" data-agent-role-check>
+                              <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <path d="M5 13l4 4L19 7" stroke-linecap="round" stroke-linejoin="round"></path>
+                              </svg>
+                            </span>
+                          </button>
+                        {% endfor %}
+                      </div>
+                    </div>
+                  </div>
+                  <input type="hidden" data-agent-input="role">
+                  <p class="mt-1 hidden text-xs text-destructive" data-agent-error="role">
+                    {{ page.agent.fields.role.error_required }}
+                  </p>
+                </div>
+
+                <div>
+                  <label class="mb-2 block text-sm font-medium text-foreground">
+                    {{ page.agent.fields.tone.label }}
+                  </label>
+                  <div class="relative">
+                    <button
+                      type="button"
+                      class="flex h-10 w-full items-center justify-between rounded-md bg-input px-3 text-left text-sm font-medium text-foreground/90 transition focus:outline-none focus:ring-0 data-[open=true]:ring-0"
+                      data-agent-tone-trigger
+                    >
+                      <span class="flex-1 overflow-hidden text-ellipsis whitespace-nowrap" data-agent-tone-label data-placeholder="{{ page.agent.fields.tone.placeholder }}">
+                        {{ page.agent.fields.tone.placeholder }}
+                      </span>
+                      <span class="shrink-0 text-muted-foreground">
+                        <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                          <path d="M6 9l6 6 6-6" stroke-linecap="round" stroke-linejoin="round"></path>
+                        </svg>
+                      </span>
+                    </button>
+                    <div
+                      class="absolute left-0 top-full z-50 mt-2 w-full overflow-hidden rounded-md border border-border bg-popover text-popover-foreground shadow-lg transition data-[hidden=true]:opacity-0"
+                      data-agent-tone-popover
+                      hidden
+                    >
+                      <div class="max-h-60 overflow-y-auto py-1">
+                        {% for option in page.agent.fields.tone.options %}
+                          <button
+                            type="button"
+                            class="flex w-full items-center justify-between gap-2 px-3 py-2 text-left text-sm text-foreground/90 transition hover:bg-muted"
+                            data-agent-tone-option="{{ option }}"
+                          >
+                            <span class="flex-1 text-sm">{{ option }}</span>
+                            <span class="hidden text-primary" data-agent-tone-check>
+                              <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <path d="M5 13l4 4L19 7" stroke-linecap="round" stroke-linejoin="round"></path>
+                              </svg>
+                            </span>
+                          </button>
+                        {% endfor %}
+                      </div>
+                    </div>
+                  </div>
+                  <input type="hidden" data-agent-input="tone">
+                  <p class="mt-1 hidden text-xs text-destructive" data-agent-error="tone">
+                    {{ page.agent.fields.tone.error_required }}
+                  </p>
+                </div>
+              </div>
+
+              <div>
+                <div class="mb-2 flex items-center justify-between gap-2">
+                  <label class="block text-sm font-medium text-foreground">
+                    {{ page.agent.fields.traits.label }}
+                  </label>
+                  <span class="text-xs text-muted-foreground">
+                    {{ page.agent.fields.traits.hint }}
+                  </span>
+                </div>
+                <div class="grid place-items-center w-full">
+                  <div class="inline-flex w-full flex-wrap gap-2">
+                    {% for option in page.agent.fields.traits.options %}
+                      <button
+                        type="button"
+                        class="inline-flex h-8 items-center justify-center rounded-md border px-3 text-sm font-medium transition hover:opacity-90 bg-input text-foreground/90 border-border"
+                        data-agent-trait="{{ option }}"
+                        data-active-class="bg-primary text-primary-foreground border-primary"
+                        data-inactive-class="bg-input text-foreground/90 border-border"
+                        data-active="false"
+                      >
+                        {{ option }}
+                      </button>
+                    {% endfor %}
+                  </div>
+                </div>
+                <input type="hidden" data-agent-input="traits">
+                <p class="mt-1 hidden text-xs text-destructive" data-agent-error="traits"></p>
+              </div>
+
+              <div>
+                <label class="mb-2 block text-sm font-medium text-foreground">
+                  {{ page.agent.fields.escalation.label }}
+                </label>
+                <div class="relative">
+                  <button
+                    type="button"
+                    class="flex h-10 w-full items-center justify-between rounded-md bg-input px-3 text-left text-sm font-medium text-foreground/90 transition focus:outline-none focus:ring-0 data-[open=true]:ring-0"
+                    data-agent-escalation-trigger
+                  >
+                    <span class="flex-1 overflow-hidden text-ellipsis whitespace-nowrap" data-agent-escalation-label data-placeholder="{{ page.agent.fields.escalation.placeholder }}">
+                      {{ page.agent.fields.escalation.placeholder }}
+                    </span>
+                    <span class="shrink-0 text-muted-foreground">
+                      <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M6 9l6 6 6-6" stroke-linecap="round" stroke-linejoin="round"></path>
+                      </svg>
+                    </span>
+                  </button>
+                  <div
+                    class="absolute left-0 top-full z-50 mt-2 w-full overflow-hidden rounded-md border border-border bg-popover text-popover-foreground shadow-lg transition data-[hidden=true]:opacity-0"
+                    data-agent-escalation-popover
+                    hidden
+                  >
+                    <div class="max-h-60 overflow-y-auto py-1">
+                      {% for option in page.agent.fields.escalation.options %}
+                        <button
+                          type="button"
+                          class="flex w-full items-center justify-between gap-2 px-3 py-2 text-left text-sm text-foreground/90 transition hover:bg-muted"
+                          data-agent-escalation-option="{{ option }}"
+                        >
+                          <span class="flex-1 text-sm">{{ option }}</span>
+                          <span class="hidden text-primary" data-agent-escalation-check>
+                            <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                              <path d="M5 13l4 4L19 7" stroke-linecap="round" stroke-linejoin="round"></path>
+                            </svg>
+                          </span>
+                        </button>
+                      {% endfor %}
+                    </div>
+                  </div>
+                </div>
+                <input type="hidden" data-agent-input="escalation">
+                <p class="mt-1 hidden text-xs text-destructive" data-agent-error="escalation">
+                  {{ page.agent.fields.escalation.error_required }}
+                </p>
+              </div>
+
+              <div class="flex items-center justify-between gap-3 pt-2">
+                <button
+                  type="button"
+                  class="inline-flex h-10 items-center justify-center rounded-md border border-input bg-transparent px-4 text-sm font-medium text-foreground transition hover:bg-muted/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2"
+                  data-agent-back
+                >
+                  {{ page.agent.buttons.back }}
+                </button>
+                <button
+                  type="submit"
+                  class="inline-flex h-10 items-center justify-center rounded-md bg-gradient-primary px-4 text-sm font-medium text-white shadow-premium transition hover:opacity-90 disabled:pointer-events-none disabled:opacity-70"
+                  data-agent-submit
+                  data-default-label="{{ page.agent.buttons.next }}"
+                  data-loading-label="{{ page.agent.buttons.loading }}"
+                >
+                  <span data-agent-submit-text>{{ page.agent.buttons.next }}</span>
+                </button>
+              </div>
+            </form>
+          </div>
         </div>
         <div class="mt-6 text-center text-sm">
           <span class="text-foreground/80">
@@ -603,6 +821,52 @@
     var lobOpen = false;
     var countryOpen = false;
     var countryAutoDetected = false;
+
+    var agentPanel = root.querySelector("[data-register-step=\"agent\"]");
+    var agentForm = agentPanel ? agentPanel.querySelector("[data-agent-form]") : null;
+    var hasAgentStep = Boolean(agentForm);
+    var agentErrors = hasAgentStep ? Array.prototype.slice.call(agentForm.querySelectorAll("[data-agent-error]")) : [];
+    var agentSubmitBtn = hasAgentStep ? agentForm.querySelector("[data-agent-submit]") : null;
+    var agentSubmitText = agentSubmitBtn ? agentSubmitBtn.querySelector("[data-agent-submit-text]") : null;
+    var agentDefaultSubmitLabel = agentSubmitBtn ? agentSubmitBtn.getAttribute("data-default-label") || "" : "";
+    var agentLoadingSubmitLabel = agentSubmitBtn ? agentSubmitBtn.getAttribute("data-loading-label") || "" : "";
+    var agentBackButton = hasAgentStep ? agentForm.querySelector("[data-agent-back]") : null;
+    var agentNameInput = hasAgentStep ? agentForm.querySelector('[data-agent-input="name"]') : null;
+    var agentRoleTrigger = hasAgentStep ? agentForm.querySelector("[data-agent-role-trigger]") : null;
+    var agentRoleLabel = hasAgentStep ? agentForm.querySelector("[data-agent-role-label]") : null;
+    var agentRolePopover = hasAgentStep ? agentForm.querySelector("[data-agent-role-popover]") : null;
+    var agentRoleOptions = hasAgentStep && agentRolePopover ? Array.prototype.slice.call(agentRolePopover.querySelectorAll("[data-agent-role-option]")) : [];
+    var agentRoleHiddenInput = hasAgentStep ? agentForm.querySelector('input[data-agent-input="role"]') : null;
+    var agentRolePlaceholder = agentRoleLabel ? (agentRoleLabel.getAttribute("data-placeholder") || agentRoleLabel.textContent || "").trim() : "";
+    var agentToneTrigger = hasAgentStep ? agentForm.querySelector("[data-agent-tone-trigger]") : null;
+    var agentToneLabel = hasAgentStep ? agentForm.querySelector("[data-agent-tone-label]") : null;
+    var agentTonePopover = hasAgentStep ? agentForm.querySelector("[data-agent-tone-popover]") : null;
+    var agentToneOptions = hasAgentStep && agentTonePopover ? Array.prototype.slice.call(agentTonePopover.querySelectorAll("[data-agent-tone-option]")) : [];
+    var agentToneHiddenInput = hasAgentStep ? agentForm.querySelector('input[data-agent-input="tone"]') : null;
+    var agentTonePlaceholder = agentToneLabel ? (agentToneLabel.getAttribute("data-placeholder") || agentToneLabel.textContent || "").trim() : "";
+    var agentTraitsButtons = hasAgentStep ? Array.prototype.slice.call(agentForm.querySelectorAll("[data-agent-trait]")) : [];
+    var agentTraitsHiddenInput = hasAgentStep ? agentForm.querySelector('input[data-agent-input="traits"]') : null;
+    var agentEscalationTrigger = hasAgentStep ? agentForm.querySelector("[data-agent-escalation-trigger]") : null;
+    var agentEscalationLabel = hasAgentStep ? agentForm.querySelector("[data-agent-escalation-label]") : null;
+    var agentEscalationPopover = hasAgentStep ? agentForm.querySelector("[data-agent-escalation-popover]") : null;
+    var agentEscalationOptions = hasAgentStep && agentEscalationPopover ? Array.prototype.slice.call(agentEscalationPopover.querySelectorAll("[data-agent-escalation-option]")) : [];
+    var agentEscalationHiddenInput = hasAgentStep ? agentForm.querySelector('input[data-agent-input="escalation"]') : null;
+    var agentEscalationPlaceholder = agentEscalationLabel ? (agentEscalationLabel.getAttribute("data-placeholder") || agentEscalationLabel.textContent || "").trim() : "";
+    var agentSubmitting = false;
+    var agentRoleOpen = false;
+    var agentToneOpen = false;
+    var agentEscalationOpen = false;
+    var initialTraits = agentTraitsHiddenInput && agentTraitsHiddenInput.value ? agentTraitsHiddenInput.value.split(",") : [];
+    var agentState = {
+      role: agentRoleHiddenInput ? agentRoleHiddenInput.value || "" : "",
+      tone: agentToneHiddenInput ? agentToneHiddenInput.value || "" : "",
+      traits: Array.isArray(initialTraits) ? initialTraits.filter(function (item) {
+        return typeof item === "string" && item.trim().length;
+      }).map(function (item) {
+        return item.trim();
+      }) : [],
+      escalation: agentEscalationHiddenInput ? agentEscalationHiddenInput.value || "" : "",
+    };
 
     function setBusinessError(fieldKey, message) {
       if (!hasBusinessStep) {
@@ -1148,6 +1412,285 @@
       }
     }
 
+    function setAgentError(fieldKey, message) {
+      if (!hasAgentStep) {
+        return;
+      }
+      agentErrors.forEach(function (errorEl) {
+        var key = errorEl.getAttribute("data-agent-error");
+        if (key === fieldKey) {
+          if (message) {
+            errorEl.textContent = message;
+            errorEl.classList.remove("hidden");
+          } else {
+            errorEl.textContent = "";
+            errorEl.classList.add("hidden");
+          }
+        }
+      });
+    }
+
+    function clearAgentErrors() {
+      if (!hasAgentStep) {
+        return;
+      }
+      agentErrors.forEach(function (errorEl) {
+        errorEl.textContent = "";
+        errorEl.classList.add("hidden");
+      });
+    }
+
+    function setAgentSubmitting(state) {
+      if (!hasAgentStep) {
+        return;
+      }
+      agentSubmitting = state;
+      if (agentSubmitBtn) {
+        agentSubmitBtn.disabled = state;
+      }
+      if (agentSubmitText) {
+        agentSubmitText.textContent = state
+          ? (agentLoadingSubmitLabel || agentDefaultSubmitLabel)
+          : (agentDefaultSubmitLabel || agentLoadingSubmitLabel);
+      }
+    }
+
+    function updateAgentHiddenInputs() {
+      if (!hasAgentStep) {
+        return;
+      }
+      if (agentRoleHiddenInput) {
+        agentRoleHiddenInput.value = agentState.role || "";
+      }
+      if (agentToneHiddenInput) {
+        agentToneHiddenInput.value = agentState.tone || "";
+      }
+      if (agentEscalationHiddenInput) {
+        agentEscalationHiddenInput.value = agentState.escalation || "";
+      }
+      if (agentTraitsHiddenInput) {
+        agentTraitsHiddenInput.value = agentState.traits.join(",");
+      }
+    }
+
+    function updateAgentRoleDisplay() {
+      if (!hasAgentStep) {
+        return;
+      }
+      var value = agentState.role || "";
+      if (agentRoleLabel) {
+        agentRoleLabel.textContent = value || agentRolePlaceholder || "";
+        if (value) {
+          agentRoleLabel.classList.remove("text-muted-foreground");
+        } else {
+          agentRoleLabel.classList.add("text-muted-foreground");
+        }
+      }
+      agentRoleOptions.forEach(function (optionEl) {
+        var optionValue = optionEl.getAttribute("data-agent-role-option") || "";
+        var isActive = optionValue === value && value.length;
+        optionEl.classList.toggle("bg-muted", isActive);
+        optionEl.classList.toggle("text-primary", isActive);
+        var indicator = optionEl.querySelector("[data-agent-role-check]");
+        if (indicator) {
+          if (isActive) {
+            indicator.classList.remove("hidden");
+          } else {
+            indicator.classList.add("hidden");
+          }
+        }
+      });
+    }
+
+    function updateAgentToneDisplay() {
+      if (!hasAgentStep) {
+        return;
+      }
+      var value = agentState.tone || "";
+      if (agentToneLabel) {
+        agentToneLabel.textContent = value || agentTonePlaceholder || "";
+        if (value) {
+          agentToneLabel.classList.remove("text-muted-foreground");
+        } else {
+          agentToneLabel.classList.add("text-muted-foreground");
+        }
+      }
+      agentToneOptions.forEach(function (optionEl) {
+        var optionValue = optionEl.getAttribute("data-agent-tone-option") || "";
+        var isActive = optionValue === value && value.length;
+        optionEl.classList.toggle("bg-muted", isActive);
+        optionEl.classList.toggle("text-primary", isActive);
+        var indicator = optionEl.querySelector("[data-agent-tone-check]");
+        if (indicator) {
+          if (isActive) {
+            indicator.classList.remove("hidden");
+          } else {
+            indicator.classList.add("hidden");
+          }
+        }
+      });
+    }
+
+    function updateAgentEscalationDisplay() {
+      if (!hasAgentStep) {
+        return;
+      }
+      var value = agentState.escalation || "";
+      if (agentEscalationLabel) {
+        agentEscalationLabel.textContent = value || agentEscalationPlaceholder || "";
+        if (value) {
+          agentEscalationLabel.classList.remove("text-muted-foreground");
+        } else {
+          agentEscalationLabel.classList.add("text-muted-foreground");
+        }
+      }
+      agentEscalationOptions.forEach(function (optionEl) {
+        var optionValue = optionEl.getAttribute("data-agent-escalation-option") || "";
+        var isActive = optionValue === value && value.length;
+        optionEl.classList.toggle("bg-muted", isActive);
+        optionEl.classList.toggle("text-primary", isActive);
+        var indicator = optionEl.querySelector("[data-agent-escalation-check]");
+        if (indicator) {
+          if (isActive) {
+            indicator.classList.remove("hidden");
+          } else {
+            indicator.classList.add("hidden");
+          }
+        }
+      });
+    }
+
+    function updateAgentTraitsDisplay() {
+      if (!hasAgentStep) {
+        return;
+      }
+      agentTraitsButtons.forEach(function (button) {
+        var value = button.getAttribute("data-agent-trait") || "";
+        var active = value && agentState.traits.indexOf(value) !== -1;
+        var activeClasses = (button.getAttribute("data-active-class") || "").split(/\s+/).filter(Boolean);
+        var inactiveClasses = (button.getAttribute("data-inactive-class") || "").split(/\s+/).filter(Boolean);
+        var allClasses = activeClasses.concat(inactiveClasses);
+        allClasses.forEach(function (cls) {
+          if (cls) {
+            button.classList.remove(cls);
+          }
+        });
+        var targetClasses = active ? activeClasses : inactiveClasses;
+        targetClasses.forEach(function (cls) {
+          if (cls) {
+            button.classList.add(cls);
+          }
+        });
+        button.setAttribute("data-active", active ? "true" : "false");
+      });
+    }
+
+    function closeAgentRolePopover() {
+      if (!hasAgentStep || !agentRolePopover) {
+        return;
+      }
+      agentRolePopover.hidden = true;
+      agentRoleOpen = false;
+      if (agentRoleTrigger) {
+        agentRoleTrigger.removeAttribute("data-open");
+      }
+    }
+
+    function openAgentRolePopover() {
+      if (!hasAgentStep || !agentRolePopover) {
+        return;
+      }
+      closeAgentTonePopover();
+      closeAgentEscalationPopover();
+      agentRolePopover.hidden = false;
+      agentRoleOpen = true;
+      if (agentRoleTrigger) {
+        agentRoleTrigger.setAttribute("data-open", "true");
+      }
+    }
+
+    function closeAgentTonePopover() {
+      if (!hasAgentStep || !agentTonePopover) {
+        return;
+      }
+      agentTonePopover.hidden = true;
+      agentToneOpen = false;
+      if (agentToneTrigger) {
+        agentToneTrigger.removeAttribute("data-open");
+      }
+    }
+
+    function openAgentTonePopover() {
+      if (!hasAgentStep || !agentTonePopover) {
+        return;
+      }
+      closeAgentRolePopover();
+      closeAgentEscalationPopover();
+      agentTonePopover.hidden = false;
+      agentToneOpen = true;
+      if (agentToneTrigger) {
+        agentToneTrigger.setAttribute("data-open", "true");
+      }
+    }
+
+    function closeAgentEscalationPopover() {
+      if (!hasAgentStep || !agentEscalationPopover) {
+        return;
+      }
+      agentEscalationPopover.hidden = true;
+      agentEscalationOpen = false;
+      if (agentEscalationTrigger) {
+        agentEscalationTrigger.removeAttribute("data-open");
+      }
+    }
+
+    function openAgentEscalationPopover() {
+      if (!hasAgentStep || !agentEscalationPopover) {
+        return;
+      }
+      closeAgentRolePopover();
+      closeAgentTonePopover();
+      agentEscalationPopover.hidden = false;
+      agentEscalationOpen = true;
+      if (agentEscalationTrigger) {
+        agentEscalationTrigger.setAttribute("data-open", "true");
+      }
+    }
+
+    function closeAllAgentPopovers() {
+      closeAgentRolePopover();
+      closeAgentTonePopover();
+      closeAgentEscalationPopover();
+    }
+
+    function toggleAgentTrait(value) {
+      if (!hasAgentStep || !value) {
+        return;
+      }
+      var trimmed = value.trim();
+      if (!trimmed.length) {
+        return;
+      }
+      var index = agentState.traits.indexOf(trimmed);
+      if (index === -1) {
+        agentState.traits = agentState.traits.concat([trimmed]);
+      } else {
+        var next = agentState.traits.slice();
+        next.splice(index, 1);
+        agentState.traits = next;
+      }
+      updateAgentHiddenInputs();
+      updateAgentTraitsDisplay();
+    }
+
+    function validateAgentForm() {
+      if (!hasAgentStep) {
+        return { valid: true, errors: {}, firstInvalid: null };
+      }
+      clearAgentErrors();
+      return { valid: true, errors: {}, firstInvalid: null };
+    }
+
     if (hasBusinessStep) {
       renderIndustryOptions();
       updateIndustryDisplay();
@@ -1252,6 +1795,166 @@
       });
     }
 
+    if (hasAgentStep && agentForm) {
+      if (agentState.traits.length) {
+        agentState.traits = agentState.traits.filter(function (value, index, arr) {
+          return value && arr.indexOf(value) === index;
+        });
+      }
+      updateAgentHiddenInputs();
+      updateAgentRoleDisplay();
+      updateAgentToneDisplay();
+      updateAgentTraitsDisplay();
+      updateAgentEscalationDisplay();
+
+      if (agentRoleTrigger) {
+        agentRoleTrigger.addEventListener("click", function () {
+          if (agentRoleOpen) {
+            closeAgentRolePopover();
+          } else {
+            openAgentRolePopover();
+          }
+        });
+      }
+      agentRoleOptions.forEach(function (optionEl) {
+        optionEl.addEventListener("click", function (event) {
+          event.preventDefault();
+          var value = optionEl.getAttribute("data-agent-role-option") || "";
+          agentState.role = value;
+          updateAgentHiddenInputs();
+          updateAgentRoleDisplay();
+          closeAgentRolePopover();
+        });
+      });
+
+      if (agentToneTrigger) {
+        agentToneTrigger.addEventListener("click", function () {
+          if (agentToneOpen) {
+            closeAgentTonePopover();
+          } else {
+            openAgentTonePopover();
+          }
+        });
+      }
+      agentToneOptions.forEach(function (optionEl) {
+        optionEl.addEventListener("click", function (event) {
+          event.preventDefault();
+          var value = optionEl.getAttribute("data-agent-tone-option") || "";
+          agentState.tone = value;
+          updateAgentHiddenInputs();
+          updateAgentToneDisplay();
+          closeAgentTonePopover();
+        });
+      });
+
+      if (agentEscalationTrigger) {
+        agentEscalationTrigger.addEventListener("click", function () {
+          if (agentEscalationOpen) {
+            closeAgentEscalationPopover();
+          } else {
+            openAgentEscalationPopover();
+          }
+        });
+      }
+      agentEscalationOptions.forEach(function (optionEl) {
+        optionEl.addEventListener("click", function (event) {
+          event.preventDefault();
+          var value = optionEl.getAttribute("data-agent-escalation-option") || "";
+          agentState.escalation = value;
+          updateAgentHiddenInputs();
+          updateAgentEscalationDisplay();
+          closeAgentEscalationPopover();
+        });
+      });
+
+      agentTraitsButtons.forEach(function (button) {
+        button.addEventListener("click", function (event) {
+          event.preventDefault();
+          var value = button.getAttribute("data-agent-trait") || "";
+          toggleAgentTrait(value);
+        });
+      });
+
+      if (agentBackButton) {
+        agentBackButton.addEventListener("click", function () {
+          advanceToStep("business");
+        });
+      }
+
+      document.addEventListener("click", function (event) {
+        var target = event.target;
+        if (agentRoleOpen && agentRolePopover && !agentRolePopover.contains(target) && (!agentRoleTrigger || !agentRoleTrigger.contains(target))) {
+          closeAgentRolePopover();
+        }
+        if (agentToneOpen && agentTonePopover && !agentTonePopover.contains(target) && (!agentToneTrigger || !agentToneTrigger.contains(target))) {
+          closeAgentTonePopover();
+        }
+        if (agentEscalationOpen && agentEscalationPopover && !agentEscalationPopover.contains(target) && (!agentEscalationTrigger || !agentEscalationTrigger.contains(target))) {
+          closeAgentEscalationPopover();
+        }
+      });
+
+      document.addEventListener("keydown", function (event) {
+        if (event.key === "Escape") {
+          closeAllAgentPopovers();
+        }
+      });
+
+      agentForm.addEventListener("submit", function (event) {
+        event.preventDefault();
+        if (agentSubmitting) {
+          return;
+        }
+
+        var validation = validateAgentForm();
+        if (!validation.valid && validation.firstInvalid && typeof validation.firstInvalid.focus === "function") {
+          validation.firstInvalid.focus();
+        }
+
+        setAgentSubmitting(true);
+
+        var payload = {
+          agentName: agentNameInput ? agentNameInput.value.trim() : "",
+          agentTitle: agentState.role,
+          agentTone: agentState.tone,
+          agentTraits: agentState.traits.slice(),
+          agentEscalation: agentState.escalation,
+          step: "agent",
+          valid: validation.valid,
+          errors: validation.errors,
+          advanceToStep: advanceToStep,
+          resolve: function (options) {
+            if (options && options.step) {
+              advanceToStep(options.step);
+            } else {
+              advanceToStep("uploads");
+            }
+            clearAgentErrors();
+            setAgentSubmitting(false);
+          },
+          reject: function (fieldKey, message) {
+            if (fieldKey && message) {
+              setAgentError(fieldKey, message);
+            }
+            setAgentSubmitting(false);
+          },
+        };
+
+        var agentSubmitEvent = new CustomEvent("registerstep3:submit", {
+          detail: payload,
+          cancelable: true,
+        });
+
+        var prevented = !agentForm.dispatchEvent(agentSubmitEvent);
+
+        if (!prevented) {
+          window.setTimeout(function () {
+            payload.resolve();
+          }, 400);
+        }
+      });
+    }
+
     function setStep(stepKey) {
       if (!stepPanels.length) {
         return;
@@ -1271,6 +1974,13 @@
         closeIndustryPopover();
         closeLobPopover();
         closeCountryPopover();
+      }
+      closeAllAgentPopovers();
+      if (stepKey === "agent") {
+        updateAgentRoleDisplay();
+        updateAgentToneDisplay();
+        updateAgentTraitsDisplay();
+        updateAgentEscalationDisplay();
       }
     }
 

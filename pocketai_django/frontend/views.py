@@ -688,6 +688,43 @@ def register(request: HttpRequest) -> HttpResponse:
         {"value": "Other", "flag": "🌐"},
     ]
 
+    agent_roles = [
+        "Customer Support Agent",
+        "Support Specialist",
+        "Customer Success Representative",
+        "Sales Support Agent",
+        "Front Desk Representative",
+        "Account Manager",
+        "Helpdesk Agent",
+    ]
+
+    agent_tones = [
+        "Friendly",
+        "Professional",
+        "Casual",
+        "Formal",
+        "Empathetic",
+        "Playful",
+    ]
+
+    agent_traits = [
+        "Concise",
+        "Detailed",
+        "Curious",
+        "Patient",
+        "Proactive",
+        "Direct",
+        "Creative",
+    ]
+
+    agent_escalations = [
+        "Never",
+        "On fallback",
+        "On negative sentiment",
+        "On high value",
+        "Always",
+    ]
+
     context = {
         "page": {
             "title_prefix": "Create your",
@@ -771,6 +808,41 @@ def register(request: HttpRequest) -> HttpResponse:
                 "title_prefix": "Agent",
                 "title_highlight": "Setup",
                 "subtitle": "Set up your agent basics",
+                "fields": {
+                    "name": {
+                        "label": "Agent name",
+                        "placeholder": "e.g., Nancy",
+                        "error_required": "Please enter an agent name",
+                    },
+                    "role": {
+                        "label": "Role",
+                        "placeholder": "Select a role",
+                        "error_required": "Please select a role",
+                        "options": agent_roles,
+                    },
+                    "tone": {
+                        "label": "Tone",
+                        "placeholder": "Select tone",
+                        "error_required": "Please choose a tone",
+                        "options": agent_tones,
+                    },
+                    "traits": {
+                        "label": "Traits",
+                        "hint": "Pick as many as you like",
+                        "options": agent_traits,
+                    },
+                    "escalation": {
+                        "label": "Escalation rule",
+                        "placeholder": "Choose escalation rule",
+                        "error_required": "Please choose when to escalate",
+                        "options": agent_escalations,
+                    },
+                },
+                "buttons": {
+                    "back": "Back",
+                    "next": "Next",
+                    "loading": "Saving...",
+                },
             },
             "uploads": {
                 "title_prefix": "Knowledge",
