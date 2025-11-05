@@ -847,7 +847,29 @@ def register(request: HttpRequest) -> HttpResponse:
             "uploads": {
                 "title_prefix": "Knowledge",
                 "title_highlight": "Uploads",
-                "subtitle": "Add links to your key docs so your agent gets smart fast",
+                "subtitle": "Add links to your key docs so your agent gets smart fast. You can skip this and do it later.",
+                "fields": {
+                    "docs": {
+                        "label": "Documents",
+                        "optional": "(optional)",
+                        "hint": "PDF, DOCX, TXT, CSV, XLS(X), PPT(X), HTML. Up to 20 files.",
+                        "error_too_many": "Too many files selected",
+                    },
+                    "links": {
+                        "label": "Links",
+                        "optional": "(optional)",
+                        "placeholder": "Paste links separated by new lines or spaces (e.g., help center, docs, blog)",
+                        "hint": "We’ll fetch these and keep them fresh.",
+                        "error_invalid": "One or more links are invalid",
+                    },
+                },
+                "buttons": {
+                    "back": "Back",
+                    "finish": "Finish",
+                    "loading": "Finishing…",
+                },
+                # where to go after uploads resolves (default in JS if no custom handler prevents)
+                "redirect_after": "/app",
             },
         },
         "business_data": {

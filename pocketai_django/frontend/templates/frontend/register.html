@@ -593,6 +593,61 @@
               </div>
             </form>
           </div>
+          <!-- Uploads step -->
+          <div data-register-step="uploads" class="hidden animate-panel-in">
+            <form class="space-y-4" novalidate data-uploads-form>
+              <div>
+                <label class="mb-2 block text-sm font-medium text-foreground">
+                  {{ page.uploads.fields.docs.label }}
+                  <span class="text-muted-foreground">{{ page.uploads.fields.docs.optional }}</span>
+                </label>
+                <input
+                  type="file"
+                  multiple
+                  accept=".pdf,.doc,.docx,.txt,.md,.csv,.xls,.xlsx,.ppt,.pptx,.html"
+                  class="block w-full text-sm text-foreground file:mr-4 file:rounded-md file:border-0 file:bg-secondary file:px-3 file:py-2 file:text-sm file:font-medium file:text-secondary-foreground hover:file:bg-secondary/80"
+                  data-uploads-input="files"
+                >
+                <p class="mt-1 hidden text-xs text-muted-foreground">{{ page.uploads.fields.docs.hint }}</p>
+                <p class="mt-1 hidden text-xs text-destructive" data-uploads-error="files"></p>
+              </div>
+
+              <div>
+                <label class="mb-2 block text-sm font-medium text-foreground">
+                  {{ page.uploads.fields.links.label }}
+                  <span class="text-muted-foreground">{{ page.uploads.fields.links.optional }}</span>
+                </label>
+                <textarea
+                  rows="3"
+                  placeholder="{{ page.uploads.fields.links.placeholder }}"
+                  class="flex w-full rounded-md border-0 bg-input px-3 py-2 text-base text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-0 md:text-sm"
+                  data-uploads-input="links"
+                ></textarea>
+                <p class="mt-1 hidden text-xs text-muted-foreground">{{ page.uploads.fields.links.hint }}</p>
+                <p class="mt-1 hidden text-xs text-destructive" data-uploads-error="links"></p>
+              </div>
+
+              <div class="flex items-center justify-between gap-3 pt-2">
+                <button
+                  type="button"
+                  class="inline-flex h-10 items-center justify-center rounded-md border border-input bg-transparent px-4 text-sm font-medium text-foreground transition hover:bg-muted/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2"
+                  data-uploads-back
+                >
+                  {{ page.uploads.buttons.back }}
+                </button>
+                <button
+                  type="submit"
+                  class="inline-flex h-10 items-center justify-center rounded-md bg-gradient-primary px-4 text-sm font-medium text-white shadow-premium transition hover:opacity-90 disabled:pointer-events-none disabled:opacity-70"
+                  data-uploads-submit
+                  data-default-label="{{ page.uploads.buttons.finish }}"
+                  data-loading-label="{{ page.uploads.buttons.loading }}"
+                >
+                  <span data-uploads-submit-text>{{ page.uploads.buttons.finish }}</span>
+                </button>
+              </div>
+            </form>
+          </div>
+
         </div>
         <div class="mt-6 text-center text-sm">
           <span class="text-foreground/80">
@@ -867,6 +922,99 @@
       }) : [],
       escalation: agentEscalationHiddenInput ? agentEscalationHiddenInput.value || "" : "",
     };
+    var uploadsPanel = root.querySelector('[data-register-step="uploads"]');
+    var uploadsForm = uploadsPanel ? uploadsPanel.querySelector('[data-uploads-form]') : null;
+    var hasUploadsStep = Boolean(uploadsForm);
+    var uploadsErrors = hasUploadsStep ? Array.prototype.slice.call(uploadsForm.querySelectorAll('[data-uploads-error]')) : [];
+    var uploadsSubmitBtn = hasUploadsStep ? uploadsForm.querySelector('[data-uploads-submit]') : null;
+    var uploadsSubmitText = uploadsSubmitBtn ? uploadsSubmitBtn.querySelector('[data-uploads-submit-text]') : null;
+    var uploadsDefaultSubmitLabel = uploadsSubmitBtn ? uploadsSubmitBtn.getAttribute('data-default-label') || '' : '';
+    var uploadsLoadingSubmitLabel = uploadsSubmitBtn ? uploadsSubmitBtn.getAttribute('data-loading-label') || '' : '';
+    var uploadsBackButton = hasUploadsStep ? uploadsForm.querySelector('[data-uploads-back]') : null;
+    var uploadsFilesInput = hasUploadsStep ? uploadsForm.querySelector('[data-uploads-input="files"]') : null;
+    var uploadsLinksInput = hasUploadsStep ? uploadsForm.querySelector('[data-uploads-input="links"]') : null;
+    var uploadsSubmitting = false;
+
+
+
+    function setUploadsError(fieldKey, message) {
+      if (!hasUploadsStep) return;
+      uploadsErrors.forEach(function (el) {
+        var key = el.getAttribute('data-uploads-error');
+        if (key === fieldKey) {
+          if (message) {
+            el.textContent = message;
+            el.classList.remove('hidden');
+          } else {
+            el.textContent = '';
+            el.classList.add('hidden');
+          }
+        }
+      });
+    }
+
+    function clearUploadsErrors() {
+      if (!hasUploadsStep) return;
+      uploadsErrors.forEach(function (el) {
+        el.textContent = '';
+        el.classList.add('hidden');
+      });
+    }
+
+    function setUploadsSubmitting(state) {
+      if (!hasUploadsStep) return;
+      uploadsSubmitting = state;
+      if (uploadsSubmitBtn) uploadsSubmitBtn.disabled = state;
+      if (uploadsSubmitText) {
+        uploadsSubmitText.textContent = state
+          ? (uploadsLoadingSubmitLabel || uploadsDefaultSubmitLabel)
+          : (uploadsDefaultSubmitLabel || uploadsLoadingSubmitLabel);
+      }
+    }
+
+    function parseLinksTextarea(value) {
+      return (value || '')
+        .split(/\r?\n|,|\s+/)
+        .map(function (v) { return v.trim(); })
+        .filter(Boolean);
+    }
+
+    function isValidUrl(u) {
+      try { new URL(u); return true; } catch (_e) { return false; }
+    }
+
+    function validateUploadsForm() {
+      if (!hasUploadsStep) return { valid: true, errors: {}, firstInvalid: null };
+      clearUploadsErrors();
+
+      var result = { valid: true, errors: {}, firstInvalid: null };
+
+      var filesCount = (uploadsFilesInput && uploadsFilesInput.files) ? uploadsFilesInput.files.length : 0;
+      var links = parseLinksTextarea(uploadsLinksInput ? uploadsLinksInput.value : '');
+      var badLink = links.find(function (l) { return !isValidUrl(l); });
+
+      // soft rules: allow empty; only flag if provided but invalid
+      if (links.length && badLink) {
+        var msg = "{{ page.uploads.fields.links.error_invalid|default:'One or more links are invalid'|escapejs }}";
+        result.valid = false;
+        result.errors.links = msg;
+        setUploadsError('links', msg);
+        result.firstInvalid = result.firstInvalid || uploadsLinksInput;
+      }
+
+      // optional: max files
+      var MAX_FILES = 20;
+      if (filesCount > MAX_FILES) {
+        var msgF = "{{ page.uploads.fields.docs.error_too_many|default:'Too many files selected'|escapejs }}";
+        result.valid = false;
+        result.errors.files = msgF;
+        setUploadsError('files', msgF + " (" + filesCount + "/" + MAX_FILES + ")");
+        result.firstInvalid = result.firstInvalid || uploadsFilesInput;
+      }
+
+      return result;
+    }
+
 
     function setBusinessError(fieldKey, message) {
       if (!hasBusinessStep) {
@@ -1688,7 +1836,100 @@
         return { valid: true, errors: {}, firstInvalid: null };
       }
       clearAgentErrors();
-      return { valid: true, errors: {}, firstInvalid: null };
+      var result = {
+        valid: true,
+        errors: {},
+        firstInvalid: null,
+      };
+
+      function getAgentErrorText(fieldKey) {
+        var msg = "";
+        for (var i = 0; i < agentErrors.length; i += 1) {
+          var el = agentErrors[i];
+          var key = el.getAttribute("data-agent-error");
+          if (key === fieldKey) {
+            msg = (el.textContent || "").trim();
+            break;
+          }
+        }
+        if (!msg) {
+          // Fallback messages when the template didn't prefill text (e.g., traits)
+          if (fieldKey === "name") msg = "Please enter a name";
+          else if (fieldKey === "role") msg = "Please select a role";
+          else if (fieldKey === "tone") msg = "Please select a tone";
+          else if (fieldKey === "traits") msg = "Please select at least one trait";
+          else if (fieldKey === "escalation") msg = "Please select an escalation";
+          else msg = "This field is required";
+        }
+        return msg;
+      }
+
+      // Validate name (require non-empty, minimal length check for quality)
+      if (agentNameInput) {
+        var nameValue = (agentNameInput.value || "").trim();
+        if (nameValue.length < 2) {
+          var msgName = getAgentErrorText("name");
+          result.valid = false;
+          result.errors.name = msgName;
+          result.firstInvalid = result.firstInvalid || agentNameInput;
+          setAgentError("name", msgName);
+        }
+      }
+
+      // Collect allowed options for membership validation
+      var allowedRoles = agentRoleOptions.map(function (el) {
+        return el.getAttribute("data-agent-role-option") || "";
+      });
+      var allowedTones = agentToneOptions.map(function (el) {
+        return el.getAttribute("data-agent-tone-option") || "";
+      });
+      var allowedEscalations = agentEscalationOptions.map(function (el) {
+        return el.getAttribute("data-agent-escalation-option") || "";
+      });
+
+      // Validate role selection
+      var roleValue = agentState.role || "";
+      if (!roleValue || allowedRoles.indexOf(roleValue) === -1) {
+        var msgRole = getAgentErrorText("role");
+        result.valid = false;
+        result.errors.role = msgRole;
+        result.firstInvalid = result.firstInvalid || agentRoleTrigger;
+        setAgentError("role", msgRole);
+      }
+
+      // Validate tone selection
+      var toneValue = agentState.tone || "";
+      if (!toneValue || allowedTones.indexOf(toneValue) === -1) {
+        var msgTone = getAgentErrorText("tone");
+        result.valid = false;
+        result.errors.tone = msgTone;
+        result.firstInvalid = result.firstInvalid || agentToneTrigger;
+        setAgentError("tone", msgTone);
+      }
+
+      // Validate traits (at least one selected)
+      var traitsCount = Array.isArray(agentState.traits) ? agentState.traits.filter(function (t) {
+        return typeof t === "string" && t.trim().length;
+      }).length : 0;
+      if (traitsCount < 1) {
+        var msgTraits = getAgentErrorText("traits");
+        result.valid = false;
+        result.errors.traits = msgTraits;
+        result.firstInvalid = result.firstInvalid || (agentTraitsButtons.length ? agentTraitsButtons[0] : agentNameInput);
+        setAgentError("traits", msgTraits);
+      }
+
+      // Validate escalation selection
+      var escalationValue = agentState.escalation || "";
+      if (!escalationValue || allowedEscalations.indexOf(escalationValue) === -1) {
+        var msgEsc = getAgentErrorText("escalation");
+        result.valid = false;
+        result.errors.escalation = msgEsc;
+        result.firstInvalid = result.firstInvalid || agentEscalationTrigger;
+        setAgentError("escalation", msgEsc);
+      }
+
+      return result;
     }
 
     if (hasBusinessStep) {
@@ -1794,6 +2035,81 @@
         }
       });
     }
+
+    if (hasUploadsStep && uploadsForm) {
+      if (uploadsBackButton) {
+        uploadsBackButton.addEventListener('click', function () {
+          advanceToStep('agent');
+        });
+      }
+
+      uploadsForm.addEventListener('submit', function (event) {
+        event.preventDefault();
+        if (uploadsSubmitting) return;
+
+        var validation = validateUploadsForm();
+        if (!validation.valid && validation.firstInvalid && typeof validation.firstInvalid.focus === 'function') {
+          validation.firstInvalid.focus();
+        }
+
+        setUploadsSubmitting(true);
+
+        // collect links now; collect files names for payload (binary handling left to host app)
+        var links = parseLinksTextarea(uploadsLinksInput ? uploadsLinksInput.value : '');
+        var filesList = [];
+        if (uploadsFilesInput && uploadsFilesInput.files && uploadsFilesInput.files.length) {
+          for (var i = 0; i < uploadsFilesInput.files.length; i += 1) {
+            filesList.push(uploadsFilesInput.files[i].name);
+          }
+        }
+
+        var payload = {
+          files: filesList,
+          // NOTE: real upload of File objects (FormData) should be done by the handler catching this event.
+          links: links,
+          step: 'uploads',
+          valid: validation.valid,
+          errors: validation.errors,
+          advanceToStep: advanceToStep,
+          resolve: function (options) {
+            // by default, finish → redirect or show success
+            var next = options && options.step ? options.step : null;
+            if (next) {
+              advanceToStep(next);
+            } else {
+              // default: go to a success state or redirect; here we fallback to the business step to ensure UX continuity,
+              // but ideally this would navigate to a dashboard.
+              window.location.href = "{{ page.uploads.redirect_after|default:'/app' }}";
+            }
+            setUploadsSubmitting(false);
+          },
+          reject: function (fieldKey, message) {
+            if (fieldKey && message) {
+              setUploadsError(fieldKey, message);
+            }
+            setUploadsSubmitting(false);
+          },
+        };
+
+        var uploadsSubmitEvent = new CustomEvent('registerstep4:submit', {
+          detail: payload,
+          cancelable: true,
+        });
+
+        var prevented = !uploadsForm.dispatchEvent(uploadsSubmitEvent);
+
+        if (!prevented) {
+          // default happy path (no external handler): just resolve after a short delay
+          window.setTimeout(function () {
+            payload.resolve();
+          }, 400);
+        } else {
+          // If prevented, let the external handler call resolve/reject
+          setUploadsSubmitting(false);
+        }
+      });
+    }
+
 
     if (hasAgentStep && agentForm) {
       if (agentState.traits.length) {
