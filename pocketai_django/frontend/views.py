@@ -9,7 +9,7 @@ from django.shortcuts import render
 
 def _mobile_app_section() -> Dict[str, object]:
     return {
-        "title": "Support customers on the go with Pocket mobile",
+        "title": "Try the mobile app",
         "stores": [
             {
                 "label": "Google Play",
