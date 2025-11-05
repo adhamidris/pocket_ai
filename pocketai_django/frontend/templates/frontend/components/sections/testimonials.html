@@ -1,0 +1,50 @@
+{% load lucide %}
+<section id="testimonials" class="pt-10 md:pt-20 pb-24 md:pb-28 bg-background">
+  <div class="container mx-auto px-6">
+    <div class="text-center mb-12 md:mb-20 animate-fade-in">
+      <h2 class="text-4xl lg:text-5xl font-bold tracking-tight leading-tight text-foreground">
+        {{ section.title_prefix }} <span class="text-gradient-hero">{{ section.title_highlight }}</span>
+      </h2>
+      <p class="text-muted-foreground mt-5 max-w-2xl mx-auto text-lg">
+        {{ section.subtitle }}
+      </p>
+    </div>
+
+    <div class="relative">
+      <div class="marquee overflow-hidden">
+        <div class="marquee-track will-change-transform">
+          {% for testimonial in section.items %}
+            {% include "frontend/components/sections/testimonials_card.html" with testimonial=testimonial %}
+          {% endfor %}
+          {% for testimonial in section.items %}
+            {% include "frontend/components/sections/testimonials_card.html" with testimonial=testimonial duplicate=True %}
+          {% endfor %}
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <style>
+    .marquee {
+      mask-image: linear-gradient(to right, transparent, black 10%, black 90%, transparent);
+      -webkit-mask-image: linear-gradient(to right, transparent, black 10%, black 90%, transparent);
+    }
+    .marquee-track {
+      display: flex;
+      gap: 1.5rem;
+      width: max-content;
+      animation: marqueeScroll 35s linear infinite;
+    }
+    @keyframes marqueeScroll {
+      from { transform: translateX(0); }
+      to { transform: translateX(-50%); }
+    }
+    html[dir='rtl'] .marquee-track {
+      animation-name: marqueeScrollRtl;
+    }
+    @keyframes marqueeScrollRtl {
+      from { transform: translateX(0); }
+      to { transform: translateX(50%); }
+    }
+  </style>
+</section>

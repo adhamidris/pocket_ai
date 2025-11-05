@@ -1,0 +1,13 @@
+# Django
+__pycache__/
+*.py[cod]
+.env
+venv/
+.env.*
+db.sqlite3
+var/
+staticfiles/
+*.log
+
+# Tailwind build artifacts
+frontend/static/css/main.css.map

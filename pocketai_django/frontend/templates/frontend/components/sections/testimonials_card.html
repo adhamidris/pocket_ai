@@ -1,0 +1,24 @@
+{% load lucide %}
+<div class="bg-card rounded-2xl shadow-premium p-8 min-w-[320px] md:min-w-[380px]">
+  <div class="flex items-center gap-4 mb-6">
+    <img
+      src="https://i.pravatar.cc/100?u={{ testimonial.author|urlencode }}"
+      alt="{{ testimonial.author }}"
+      class="w-12 h-12 rounded-full object-cover"
+      loading="lazy"
+      decoding="async"
+    >
+    <div>
+      <div class="font-semibold text-card-foreground">{{ testimonial.author }}</div>
+      <div class="text-sm text-muted-foreground">{{ testimonial.role }}</div>
+    </div>
+  </div>
+  <div class="text-muted-foreground leading-relaxed">
+    “{{ testimonial.quote }}”
+  </div>
+  <div class="mt-6 flex items-center gap-1 text-primary">
+    {% for _ in "12345"|make_list %}
+      {% lucide "star" "w-4 h-4 fill-current" %}
+    {% endfor %}
+  </div>
+</div>

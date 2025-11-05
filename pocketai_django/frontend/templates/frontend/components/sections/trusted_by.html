@@ -1,0 +1,24 @@
+<section id="trusted-by" class="bg-background py-10 md:py-14">
+  <div class="container mx-auto px-6">
+    <div class="text-center text-3xl md:text-4xl font-semibold mb-10 md:mb-16 tracking-tight">
+      <span class="text-gradient-hero">{{ section.title }}</span>
+    </div>
+    <div class="relative">
+      <div class="marquee overflow-hidden">
+        <div class="marquee-track will-change-transform">
+          {% for brand in section.brands %}
+            <div class="mx-12 h-14 flex items-center">
+              <img
+                src="https://cdn.simpleicons.org/{{ brand.slug }}/9CA3AF"
+                alt="{{ brand.name }} logo"
+                class="h-9 md:h-12 w-auto opacity-90"
+                loading="lazy"
+                decoding="async"
+              />
+            </div>
+          {% endfor %}
+        </div>
+      </div>
+    </div>
+  </div>
+</section>

@@ -1,0 +1,225 @@
+{% with brand=site.brand nav_links=site.nav_links auth_links=site.auth_links %}
+<header class="sticky top-0 z-50 border-b border-neutral-100 bg-background/80 backdrop-blur-xl">
+  <div class="container mx-auto px-6 py-4">
+    <div class="flex items-center justify-between gap-4">
+      <a href="{{ brand.href }}" class="flex items-center gap-3 text-foreground">
+        <span class="inline-flex h-8 w-8 items-center justify-center rounded-lg bg-gradient-primary text-sm font-semibold text-white shadow-sm">
+          {{ brand.name|slice:":1"|default:"P" }}
+        </span>
+        <span class="text-xl font-semibold">{{ brand.name }}</span>
+      </a>
+      <nav class="hidden md:flex items-center gap-8 text-sm">
+        {% for link in nav_links %}
+          <a
+            href="{{ link.href }}"
+            {% if link.external %}rel="noreferrer" target="_blank"{% endif %}
+            class="text-neutral-600 transition-colors hover:text-primary"
+          >
+            {{ link.label }}
+          </a>
+        {% endfor %}
+      </nav>
+      <div class="hidden md:flex items-center gap-4">
+        {% with options=site.language_toggle.options %}
+          {% if options|length > 1 %}
+            <button
+              type="button"
+              class="inline-flex items-center rounded-lg px-2.5 py-1.5 text-sm transition-colors hover:bg-accent/40"
+              aria-label="{{ site.language_toggle.label }}"
+            >
+              <span class="font-medium">{{ options.0.label|default:"EN" }}</span>
+              <span class="mx-1 text-neutral-400">/</span>
+              <span class="text-neutral-500">{{ options.1.label|default:"AR" }}</span>
+            </button>
+          {% endif %}
+        {% endwith %}
+        <button
+          type="button"
+          class="inline-flex items-center rounded-lg p-2 text-neutral-600 transition-colors hover:bg-accent/40"
+          aria-label="{{ site.theme_toggle.light_label }}"
+          title="{{ site.theme_toggle.light_label }}"
+          data-theme-toggle
+          data-theme-state="light"
+          data-light-label="{{ site.theme_toggle.light_label }}"
+          data-dark-label="{{ site.theme_toggle.dark_label }}"
+        >
+          <svg class="h-5 w-5" data-theme-icon="moon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"></path>
+          </svg>
+          <svg class="hidden h-5 w-5" data-theme-icon="sun" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+            <circle cx="12" cy="12" r="4"></circle>
+            <path d="M12 2v2m0 16v2m10-10h-2M6 12H4m15.07 6.07-1.41-1.41M6.34 6.34 4.93 4.93m12.73 0-1.41 1.41M6.34 17.66l-1.41 1.41"></path>
+          </svg>
+        </button>
+        {% for link in auth_links %}
+          {% if link.style == "primary" %}
+            <a
+              href="{{ link.href }}"
+              class="inline-flex items-center rounded-lg bg-gradient-primary px-4 py-2 text-sm font-medium text-white shadow-premium transition-opacity hover:opacity-90"
+            >
+              {{ link.label }}
+            </a>
+          {% else %}
+            <a
+              href="{{ link.href }}"
+              class="inline-flex items-center rounded-lg px-3 py-2 text-sm font-medium text-neutral-600 transition-colors hover:text-primary"
+            >
+              {{ link.label }}
+            </a>
+          {% endif %}
+        {% endfor %}
+      </div>
+      <button
+        type="button"
+        class="md:hidden inline-flex items-center rounded-lg p-2 text-neutral-600 transition-colors hover:bg-neutral-100"
+        aria-expanded="false"
+        aria-controls="mobile-nav"
+        data-nav-toggle
+      >
+        <svg class="h-6 w-6" data-icon="menu" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor">
+          <path stroke-linecap="round" stroke-linejoin="round" d="M4 6h16M4 12h16M4 18h16" />
+        </svg>
+        <svg class="hidden h-6 w-6" data-icon="close" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor">
+          <path stroke-linecap="round" stroke-linejoin="round" d="M6 18 18 6M6 6l12 12" />
+        </svg>
+      </button>
+    </div>
+    <div
+      id="mobile-nav"
+      class="hidden md:hidden animate-fade-in border-t border-neutral-100 pt-4"
+      data-nav-mobile
+    >
+      <nav class="flex flex-col space-y-4 pb-4">
+        {% for link in nav_links %}
+          <a
+            href="{{ link.href }}"
+            {% if link.external %}rel="noreferrer" target="_blank"{% endif %}
+            class="py-2 text-neutral-600 transition-colors hover:text-primary"
+          >
+            {{ link.label }}
+          </a>
+        {% endfor %}
+        <div class="flex flex-col space-y-2 pt-2">
+          {% with options=site.language_toggle.options %}
+            {% if options|length > 1 %}
+              <button
+                type="button"
+                class="inline-flex items-center justify-start rounded-lg px-3 py-2 text-sm transition-colors hover:bg-accent/40"
+              >
+                <span class="font-medium">{{ options.0.label|default:"EN" }}</span>
+                <span class="mx-1 text-neutral-400">/</span>
+                <span class="text-neutral-500">{{ options.1.label|default:"AR" }}</span>
+              </button>
+            {% endif %}
+          {% endwith %}
+          <button
+            type="button"
+            class="inline-flex items-center justify-start gap-2 rounded-lg px-3 py-2 text-sm transition-colors hover:bg-accent/40"
+            data-theme-toggle
+            data-theme-state="light"
+            data-light-label="{{ site.theme_toggle.light_label }}"
+            data-dark-label="{{ site.theme_toggle.dark_label }}"
+            aria-label="{{ site.theme_toggle.light_label }}"
+            title="{{ site.theme_toggle.light_label }}"
+          >
+            <svg class="h-5 w-5" data-theme-icon="moon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"></path>
+            </svg>
+            <svg class="hidden h-5 w-5" data-theme-icon="sun" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+              <circle cx="12" cy="12" r="4"></circle>
+              <path d="M12 2v2m0 16v2m10-10h-2M6 12H4m15.07 6.07-1.41-1.41M6.34 6.34 4.93 4.93m12.73 0-1.41 1.41M6.34 17.66l-1.41 1.41"></path>
+            </svg>
+            <span data-theme-label>{{ site.theme_toggle.light_label }}</span>
+          </button>
+          {% for link in auth_links %}
+            {% if link.style == "primary" %}
+              <a
+                href="{{ link.href }}"
+                class="inline-flex items-center justify-start rounded-lg bg-gradient-primary px-4 py-2 text-sm font-medium text-white shadow-premium transition-opacity hover:opacity-90"
+              >
+                {{ link.label }}
+              </a>
+            {% else %}
+              <a
+                href="{{ link.href }}"
+                class="inline-flex items-center justify-start rounded-lg px-3 py-2 text-sm font-medium text-neutral-600 transition-colors hover:text-primary"
+              >
+                {{ link.label }}
+              </a>
+            {% endif %}
+          {% endfor %}
+        </div>
+      </nav>
+    </div>
+  </div>
+</header>
+<script>
+  document.addEventListener("DOMContentLoaded", function () {
+    var toggle = document.querySelector("[data-nav-toggle]");
+    var mobile = document.querySelector("[data-nav-mobile]");
+    if (!toggle || !mobile) {
+      return;
+    }
+    var menuIcon = toggle.querySelector('[data-icon="menu"]');
+    var closeIcon = toggle.querySelector('[data-icon="close"]');
+
+    toggle.addEventListener("click", function () {
+      var isOpening = mobile.classList.contains("hidden");
+      if (isOpening) {
+        mobile.classList.remove("hidden");
+      } else {
+        mobile.classList.add("hidden");
+      }
+      var expanded = isOpening;
+      toggle.setAttribute("aria-expanded", String(expanded));
+      if (menuIcon) {
+        menuIcon.classList.toggle("hidden", expanded);
+      }
+      if (closeIcon) {
+        closeIcon.classList.toggle("hidden", !expanded);
+      }
+    });
+  });
+
+  document.addEventListener("DOMContentLoaded", function () {
+    var themeButtons = document.querySelectorAll("[data-theme-toggle]");
+    if (!themeButtons.length) {
+      return;
+    }
+
+    themeButtons.forEach(function (button) {
+      var moon = button.querySelector('[data-theme-icon="moon"]');
+      var sun = button.querySelector('[data-theme-icon="sun"]');
+      var label = button.querySelector("[data-theme-label]");
+      var lightLabel = button.getAttribute("data-light-label") || "";
+      var darkLabel = button.getAttribute("data-dark-label") || "";
+
+      function applyState(state) {
+        button.setAttribute("data-theme-state", state);
+        if (moon) {
+          moon.classList.toggle("hidden", state !== "light");
+        }
+        if (sun) {
+          sun.classList.toggle("hidden", state !== "dark");
+        }
+        var labelText = state === "light" ? lightLabel : darkLabel;
+        if (label && labelText) {
+          label.textContent = labelText;
+        }
+        if (labelText) {
+          button.setAttribute("aria-label", labelText);
+          button.setAttribute("title", labelText);
+        }
+      }
+
+      applyState(button.getAttribute("data-theme-state") || "light");
+
+      button.addEventListener("click", function () {
+        var current = button.getAttribute("data-theme-state") || "light";
+        var next = current === "light" ? "dark" : "light";
+        applyState(next);
+      });
+    });
+  });
+</script>
+{% endwith %}

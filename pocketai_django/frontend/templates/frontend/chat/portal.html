@@ -1,0 +1,107 @@
+{% extends "frontend/base.html" %}
+{% load ui_components %}
+
+{% block title %}Pocket AI Chat | {{ portal.agent.name }}{% endblock %}
+
+{% block extra_head %}
+  <meta http-equiv="Cache-Control" content="no-store">
+{% endblock %}
+
+{% block content %}
+<section class="min-h-screen bg-background">
+  <div class="container mx-auto px-4 md:px-8 py-10 md:py-16" data-chat-portal
+       data-session-token="{{ portal.session_token }}"
+       data-endpoint-messages="{{ portal.endpoints.messages }}"
+       data-endpoint-stream-send="{{ portal.endpoints.stream_send }}"
+       data-endpoint-events="{{ portal.endpoints.events }}"
+       data-endpoint-csat="{{ portal.endpoints.csat }}">
+    <div class="grid lg:grid-cols-[360px_1fr] gap-8">
+      <aside class="hidden lg:block border border-border/60 rounded-2xl bg-card/70 p-6 shadow-soft">
+        <div class="flex items-center gap-4">
+          <div class="h-12 w-12 rounded-full bg-primary/15 text-primary flex items-center justify-center font-semibold">
+            {{ portal.agent.initials }}
+          </div>
+          <div>
+            <h2 class="text-lg font-semibold text-foreground">{{ portal.agent.name }}</h2>
+            <p class="text-sm text-muted-foreground">{{ portal.agent.role }}</p>
+          </div>
+        </div>
+        <div class="mt-6 space-y-3 text-sm text-muted-foreground">
+          <p>{{ portal.agent.bio }}</p>
+          <div>
+            <span class="font-semibold text-foreground">Business</span>
+            <p>{{ portal.business.name }}</p>
+          </div>
+        </div>
+      </aside>
+
+      <div class="flex flex-col border border-border/60 rounded-2xl bg-card/70 shadow-premium">
+        <header class="border-b border-border/60 px-4 md:px-6 py-4 flex items-center justify-between gap-3">
+          <div>
+            <h1 class="text-lg font-semibold text-foreground">Chat with {{ portal.agent.name }}</h1>
+            <p class="text-xs text-muted-foreground">{{ portal.business.name }}</p>
+          </div>
+          <span class="inline-flex items-center rounded-full border border-border px-2.5 py-1 text-xs text-muted-foreground" data-chat-status>
+            {{ portal.conversation_status }}
+          </span>
+        </header>
+
+        <div class="flex-1 overflow-hidden flex flex-col">
+          <div class="flex-1 overflow-y-auto px-4 md:px-6 py-6 space-y-4" data-chat-messages>
+            {% for message in portal.messages %}
+              {% chat_message message %}
+            {% empty %}
+              <div class="text-sm text-muted-foreground text-center">No messages yet. Say hello to start the conversation.</div>
+            {% endfor %}
+          </div>
+
+          <div class="px-4 md:px-6 pb-4">
+            <div class="text-xs text-muted-foreground mb-2 hidden" data-chat-typing>Assistant is composing…</div>
+            <form class="space-y-3" data-chat-send-form>
+              <textarea
+                name="message"
+                rows="3"
+                class="w-full rounded-xl border border-border bg-background/60 px-4 py-3 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-primary"
+                placeholder="Write your message…"
+              ></textarea>
+              <div class="flex items-center justify-between gap-3">
+                <button type="submit" class="inline-flex items-center gap-2 rounded-lg bg-gradient-primary px-4 py-2 text-sm font-semibold text-white shadow-soft hover:opacity-90 transition">
+                  Send message
+                </button>
+                <button type="button" class="text-xs text-muted-foreground hover:text-foreground transition disabled:opacity-50" data-chat-stop disabled>
+                  Stop response
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+
+        <div class="border-t border-border/60 px-4 md:px-6 py-4" data-chat-csat>
+          <form class="flex flex-col gap-2 md:flex-row md:items-center md:justify-between" data-chat-csat-form>
+            <div>
+              <p class="text-sm font-semibold text-foreground">How was your experience?</p>
+              <p class="text-xs text-muted-foreground">Rate this conversation</p>
+            </div>
+            <div class="flex items-center gap-2">
+              {% for score,label in portal.csat_scores %}
+                <label class="inline-flex flex-col items-center gap-1 text-xs text-muted-foreground">
+                  <input type="radio" name="score" value="{{ score }}" class="hidden" {% if forloop.first %}checked{% endif %}>
+                  <span class="h-9 w-9 rounded-full border border-border flex items-center justify-center">{{ label }}</span>
+                </label>
+              {% endfor %}
+              <input type="hidden" name="score" value="5">
+              <button type="submit" class="inline-flex items-center gap-2 rounded-lg border border-border px-3 py-1.5 text-xs font-semibold text-foreground hover:border-primary hover:text-primary transition">
+                Submit
+              </button>
+            </div>
+          </form>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+{% endblock %}
+
+{% block extra_js %}
+  <script src="{% static 'js/chat-portal.js' %}" type="module"></script>
+{% endblock %}

@@ -1,0 +1,5 @@
+{% load static %}
+<a href="{{ href }}" class="inline-flex items-center justify-center gap-2 rounded-xl bg-gradient-primary px-6 py-3.5 font-semibold text-white shadow-premium hover:opacity-90 transition-transform hover:-translate-y-0.5">
+  {% if icon %}<span aria-hidden="true">{{ icon }}</span>{% endif %}
+  <span>{{ label }}</span>
+</a>

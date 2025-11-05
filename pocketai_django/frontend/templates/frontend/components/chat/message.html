@@ -1,0 +1,9 @@
+<div class="flex gap-3 items-start">
+  <div class="h-9 w-9 rounded-full bg-primary/15 text-primary flex items-center justify-center font-semibold">
+    {{ message.initials }}
+  </div>
+  <div class="flex-1 rounded-2xl bg-muted/60 px-4 py-3 text-sm text-foreground shadow-soft">
+    <p class="font-medium text-sm text-muted-foreground mb-1">{{ message.author }}</p>
+    <p>{{ message.body }}</p>
+  </div>
+</div>

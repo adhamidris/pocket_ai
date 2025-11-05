@@ -1,0 +1,320 @@
+{% load lucide %}
+<section id="pricing" class="bg-background pt-16 md:pt-20 pb-24 md:pb-28">
+  <div class="container mx-auto px-6">
+    <div class="text-center mb-12 md:mb-16">
+      <div class="text-xs uppercase tracking-widest text-muted-foreground mb-3">{{ section.flexible }}</div>
+      <h2 class="text-4xl lg:text-5xl font-bold text-foreground">
+        {{ section.choose }}<span class="text-gradient-hero">{{ section.motion }}</span>
+      </h2>
+    </div>
+
+    <div data-pricing-root data-active-schema="packages" data-billing-cycle="monthly">
+      <div class="flex justify-center">
+        <div class="inline-flex gap-2 bg-card rounded-2xl p-1">
+          {% for tab in section.tabs %}
+            <button
+              type="button"
+              data-pricing-tab="{{ tab.key }}"
+              class="px-4 py-2 rounded-xl text-sm transition-all {% if tab.key == 'packages' %}bg-primary/15 text-primary shadow-soft{% else %}text-muted-foreground hover:text-foreground{% endif %}"
+              aria-pressed="{% if tab.key == 'packages' %}true{% else %}false{% endif %}"
+            >
+              {{ tab.label }}
+            </button>
+          {% endfor %}
+        </div>
+      </div>
+
+      <div class="text-center text-muted-foreground mt-6 mb-10 max-w-3xl mx-auto">
+        {% for key, text in section.subheader.items %}
+          <p data-pricing-subheader="{{ key }}" class="{% if key != 'packages' %}hidden{% endif %}">{{ text }}</p>
+        {% endfor %}
+      </div>
+
+      <div data-pricing-panel="packages">
+        <div class="flex justify-center mb-8">
+          <div class="inline-flex items-center bg-card rounded-xl p-1">
+            <button
+              type="button"
+              data-billing-toggle="monthly"
+              class="px-4 py-2 rounded-lg text-sm transition-all bg-primary/15 text-primary"
+              aria-pressed="true"
+            >
+              {{ section.billing_cycle.monthly }}
+            </button>
+            <button
+              type="button"
+              data-billing-toggle="yearly"
+              class="px-4 py-2 rounded-lg text-sm transition-all text-muted-foreground hover:text-foreground"
+              aria-pressed="false"
+            >
+              {{ section.billing_cycle.yearly }}
+            </button>
+          </div>
+        </div>
+
+        <div class="grid md:grid-cols-3 gap-6 animate-fade-in">
+          {% for plan in section.packages %}
+            <div
+              class="relative overflow-visible rounded-2xl shadow-premium p-6 lg:p-8 flex flex-col transition-all duration-300 hover:-translate-y-1 hover:shadow-soft bg-primary/10 text-center md:text-left {% if plan.tier == 'Pro' %}ring-1 ring-primary/25 hover:ring-primary/40{% endif %}"
+            >
+              {% if plan.badge and plan.tier == "Pro" %}
+                <div class="absolute -top-3 left-1/2 -translate-x-1/2">
+                  <span class="inline-flex items-center gap-2 text-xs px-3 py-1.5 rounded-full bg-primary text-white shadow-md">
+                    {{ plan.badge }}
+                  </span>
+                </div>
+              {% endif %}
+              <div class="flex flex-col md:flex-row items-center justify-center md:justify-between gap-2 mb-3">
+                <div class="text-lg font-semibold text-card-foreground">{{ plan.tier }}</div>
+                {% if plan.badge and plan.tier != "Pro" %}
+                  <span class="text-xs px-2 py-1 rounded-md bg-primary/15 text-primary">{{ plan.badge }}</span>
+                {% endif %}
+              </div>
+              <div class="mb-2 text-muted-foreground">{{ plan.description }}</div>
+              <div class="mt-3 mb-4">
+                <span
+                  class="text-4xl lg:text-5xl font-bold text-foreground"
+                  data-price
+                  data-price-monthly="{{ plan.monthly }}"
+                  data-price-yearly="{{ plan.yearly }}"
+                >
+                  ${{ plan.monthly }}
+                </span>
+                <span
+                  class="ms-2 text-sm text-muted-foreground"
+                  data-price-suffix
+                  data-suffix-monthly="{{ section.billing_cycle.suffix_monthly }}"
+                  data-suffix-yearly="{{ section.billing_cycle.suffix_yearly }}"
+                >
+                  {{ section.billing_cycle.suffix_monthly }}
+                </span>
+              </div>
+              <div class="mb-4">
+                <span class="inline-flex items-center gap-2 text-xs px-2.5 py-1.5 rounded-lg bg-primary/10 text-primary">
+                  {{ section.billing_cycle.trial }}
+                </span>
+              </div>
+              <ul class="space-y-3 mb-6 text-sm text-muted-foreground">
+                {% for feature in plan.features %}
+                  <li class="flex items-start gap-2">
+                    {% lucide "check-circle-2" "w-4 h-4 text-primary mt-0.5" %}
+                    <span>{{ feature }}</span>
+                  </li>
+                {% endfor %}
+              </ul>
+              <button
+                type="button"
+                class="mt-auto inline-flex items-center justify-center rounded-xl bg-primary text-primary-foreground hover:opacity-90 transition-all px-4 py-2.5 hover:-translate-y-0.5"
+              >
+                {{ section.billing_cycle.get_started }}
+              </button>
+            </div>
+          {% endfor %}
+        </div>
+      </div>
+
+      <div data-pricing-panel="wage" class="hidden">
+        <div class="grid md:grid-cols-3 gap-6 animate-fade-in">
+          {% for plan in section.wage_plans %}
+            <div class="relative overflow-visible rounded-2xl shadow-premium p-6 lg:p-8 flex flex-col transition-all duration-300 hover:-translate-y-1 hover:shadow-soft bg-primary/10 text-center md:text-left">
+              <div class="flex items-center justify-between mb-3">
+                <div class="text-lg font-semibold text-card-foreground">{{ plan.label }}</div>
+                <span class="text-xs px-2 py-1 rounded-md bg-primary/15 text-primary">
+                  {{ section.billing_cycle.flexible }}
+                </span>
+              </div>
+              <div class="flex flex-col md:flex-row items-center gap-3 mb-2 text-card-foreground justify-center md:justify-start">
+                {% lucide "wallet" "w-5 h-5" %}
+                <div class="font-semibold">{{ section.billing_cycle.min_credit }}</div>
+              </div>
+              <div class="text-4xl font-bold text-foreground mb-4">${{ plan.min_credit }}</div>
+              <div class="text-muted-foreground mb-3">{{ section.billing_cycle.activates }}</div>
+              <div class="mb-5">
+                <span class="inline-flex items-center gap-2 text-xs px-2.5 py-1.5 rounded-lg bg-primary/10 text-primary">
+                  {{ section.billing_cycle.trial }}
+                </span>
+              </div>
+              <ul class="space-y-3 mb-6 text-sm text-muted-foreground">
+                {% for bullet in plan.bullets %}
+                  <li class="flex items-start gap-2">
+                    {% lucide "check-circle-2" "w-4 h-4 text-primary mt-0.5" %}
+                    <span>{{ bullet }}</span>
+                  </li>
+                {% endfor %}
+              </ul>
+              <div class="mt-auto flex flex-wrap gap-3 mb-6 justify-center md:justify-start">
+                <span class="inline-flex items-center gap-2 text-xs px-3 py-1.5 rounded-lg bg-primary/10 text-primary">
+                  {% lucide "users" "w-3.5 h-3.5" %} Agents
+                </span>
+                <span class="inline-flex items-center gap-2 text-xs px-3 py-1.5 rounded-lg bg-primary/10 text-primary">
+                  {% lucide "layers" "w-3.5 h-3.5" %} CRM
+                </span>
+                <span class="inline-flex items-center gap-2 text-xs px-3 py-1.5 rounded-lg bg-primary/10 text-primary">
+                  {% lucide "shield" "w-3.5 h-3.5" %} Security
+                </span>
+                <span class="inline-flex items-center gap-2 text-xs px-3 py-1.5 rounded-lg bg-primary/10 text-primary">
+                  {% lucide "zap" "w-3.5 h-3.5" %} Workflows
+                </span>
+              </div>
+              <button
+                type="button"
+                class="inline-flex items-center justify-center rounded-xl bg-primary text-primary-foreground hover:opacity-90 transition-all px-4 py-2.5"
+              >
+                {{ section.billing_cycle.add_credit }}
+              </button>
+            </div>
+          {% endfor %}
+        </div>
+      </div>
+
+      <div data-pricing-panel="self" class="hidden">
+        <div class="flex justify-center mb-8">
+          <div class="inline-flex gap-2 bg-card rounded-2xl p-1">
+            <button type="button" class="px-4 py-2 rounded-xl text-sm bg-primary/15 text-primary">
+              Custom
+            </button>
+          </div>
+        </div>
+        <div class="max-w-3xl mx-auto rounded-2xl shadow-premium p-6 lg:p-8 transition-all duration-300 bg-primary/10">
+          <div class="flex items-center gap-3 mb-2 text-card-foreground">
+            {% lucide "building-2" "w-5 h-5" %}
+            <div class="font-semibold">{{ section.self.title }}</div>
+          </div>
+          <div class="text-muted-foreground mb-5">{{ section.subheader.self }}</div>
+          <ul class="space-y-3 text-sm text-muted-foreground mb-6">
+            {% for bullet in section.self.bullets %}
+              <li class="flex items-start gap-2">
+                {% lucide "check-circle-2" "w-4 h-4 text-primary mt-0.5" %}
+                <span>{{ bullet }}</span>
+              </li>
+            {% endfor %}
+          </ul>
+          <div class="flex flex-wrap items-center gap-3">
+            <button
+              type="button"
+              class="inline-flex items-center justify-center rounded-xl bg-primary text-primary-foreground hover:opacity-90 transition-all px-4 py-2.5 hover:-translate-y-0.5"
+            >
+              {{ section.self.cta_quote }}
+            </button>
+            <button
+              type="button"
+              class="inline-flex items-center justify-center rounded-xl bg-primary/10 text-primary hover:bg-primary/15 transition-all px-4 py-2.5 hover:-translate-y-0.5"
+            >
+              {{ section.self.cta_sales }}
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<script>
+  document.addEventListener("DOMContentLoaded", function () {
+    var root = document.querySelector("[data-pricing-root]");
+    if (!root) {
+      return;
+    }
+
+    var schemaButtons = Array.prototype.slice.call(root.querySelectorAll("[data-pricing-tab]"));
+    var subheaders = Array.prototype.slice.call(root.querySelectorAll("[data-pricing-subheader]"));
+    var panels = Array.prototype.slice.call(root.querySelectorAll("[data-pricing-panel]"));
+
+    function updateSchemaButtons() {
+      var activeSchema = root.getAttribute("data-active-schema");
+      schemaButtons.forEach(function (button) {
+        var isActive = button.dataset.pricingTab === activeSchema;
+        button.setAttribute("aria-pressed", String(isActive));
+        if (isActive) {
+          button.classList.add("bg-primary/15", "text-primary", "shadow-soft");
+          button.classList.remove("text-muted-foreground", "hover:text-foreground");
+        } else {
+          button.classList.remove("bg-primary/15", "text-primary", "shadow-soft");
+          button.classList.add("text-muted-foreground", "hover:text-foreground");
+        }
+      });
+    }
+
+    function updateSubheaders() {
+      var activeSchema = root.getAttribute("data-active-schema");
+      subheaders.forEach(function (paragraph) {
+        var matches = paragraph.dataset.pricingSubheader === activeSchema;
+        paragraph.classList.toggle("hidden", !matches);
+      });
+    }
+
+    function updatePanels() {
+      var activeSchema = root.getAttribute("data-active-schema");
+      panels.forEach(function (panel) {
+        var matches = panel.dataset.pricingPanel === activeSchema;
+        panel.classList.toggle("hidden", !matches);
+      });
+    }
+
+    function updateBillingButtons() {
+      var billingCycle = root.getAttribute("data-billing-cycle");
+      var buttons = Array.prototype.slice.call(root.querySelectorAll("[data-billing-toggle]"));
+      buttons.forEach(function (button) {
+        var matches = button.dataset.billingToggle === billingCycle;
+        button.setAttribute("aria-pressed", String(matches));
+        if (matches) {
+          button.classList.add("bg-primary/15", "text-primary");
+          button.classList.remove("text-muted-foreground", "hover:text-foreground");
+        } else {
+          button.classList.remove("bg-primary/15", "text-primary");
+          button.classList.add("text-muted-foreground", "hover:text-foreground");
+        }
+      });
+    }
+
+    function updatePrices() {
+      var billingCycle = root.getAttribute("data-billing-cycle") || "monthly";
+      var priceNodes = Array.prototype.slice.call(root.querySelectorAll("[data-price]"));
+      var suffixNodes = Array.prototype.slice.call(root.querySelectorAll("[data-price-suffix]"));
+
+      priceNodes.forEach(function (node) {
+        var monthly = node.getAttribute("data-price-monthly");
+        var yearly = node.getAttribute("data-price-yearly");
+        var value = billingCycle === "yearly" ? yearly : monthly;
+        if (value) {
+          node.textContent = "$" + value;
+        }
+      });
+
+      suffixNodes.forEach(function (node) {
+        var monthly = node.getAttribute("data-suffix-monthly") || "";
+        var yearly = node.getAttribute("data-suffix-yearly") || "";
+        node.textContent = billingCycle === "yearly" ? yearly : monthly;
+      });
+    }
+
+    schemaButtons.forEach(function (button) {
+      button.addEventListener("click", function () {
+        var next = button.dataset.pricingTab;
+        if (!next) return;
+        root.setAttribute("data-active-schema", next);
+        updateSchemaButtons();
+        updateSubheaders();
+        updatePanels();
+        updateBillingButtons();
+        updatePrices();
+      });
+    });
+
+    root.querySelectorAll("[data-billing-toggle]").forEach(function (button) {
+      button.addEventListener("click", function () {
+        var next = button.dataset.billingToggle;
+        if (!next) return;
+        root.setAttribute("data-billing-cycle", next);
+        updateBillingButtons();
+        updatePrices();
+      });
+    });
+
+    updateSchemaButtons();
+    updateSubheaders();
+    updatePanels();
+    updateBillingButtons();
+    updatePrices();
+  });
+</script>

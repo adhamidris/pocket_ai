@@ -1,0 +1,62 @@
+{% extends "frontend/base.html" %}
+
+{% block title %}{{ page.title }} | Pocket AI{% endblock %}
+
+{% block content %}
+<section class="bg-background">
+  <div class="container mx-auto px-6 pt-20 md:pt-24 pb-10 md:pb-12">
+    <div class="max-w-3xl">
+      <h1 class="text-4xl md:text-6xl font-bold leading-tight text-foreground mb-4">
+        <span class="text-gradient-hero">{{ page.title }}</span>
+      </h1>
+      {% if page.last_updated %}
+        <p class="text-muted-foreground text-lg">Last updated: {{ page.last_updated }}</p>
+      {% endif %}
+    </div>
+  </div>
+</section>
+
+<section class="container mx-auto px-6 pb-12 md:pb-16">
+  <div class="grid lg:grid-cols-12 gap-8">
+    <div class="lg:col-span-8 space-y-6 md:space-y-8">
+      {% for section in page.sections %}
+        <section id="{{ section.id }}" class="policy-section bg-card border border-border rounded-2xl shadow-premium p-6 md:p-8 animate-fade-in scroll-mt-28 md:scroll-mt-32">
+          <h2 class="text-2xl md:text-3xl font-semibold text-card-foreground mb-4">{{ section.title }}</h2>
+          <div class="text-muted-foreground leading-relaxed space-y-4">
+            {% for block in section.body %}
+              {% if block.type == "paragraph" %}
+                <p>{{ block.text }}</p>
+              {% elif block.type == "list" %}
+                <ul class="list-disc ps-5 space-y-2">
+                  {% for item in block.items %}
+                    <li>{{ item }}</li>
+                  {% endfor %}
+                </ul>
+              {% endif %}
+            {% endfor %}
+          </div>
+        </section>
+      {% endfor %}
+    </div>
+    <aside class="hidden lg:block lg:col-span-4">
+      <div class="sticky top-28 space-y-4">
+        <div class="bg-card border border-border rounded-2xl shadow-premium p-5">
+          <div class="text-sm uppercase tracking-wider text-muted-foreground mb-3">On this page</div>
+          <ul class="space-y-2 text-sm">
+            {% for section in page.sections %}
+              <li>
+                <a class="text-muted-foreground hover:text-foreground transition-colors" href="#{{ section.id }}">{{ section.title }}</a>
+              </li>
+            {% endfor %}
+          </ul>
+        </div>
+      </div>
+    </aside>
+  </div>
+</section>
+
+{% if page.include_mobile_promo %}
+  {% include "frontend/components/sections/mobile_app.html" with section=page.sections_mobile %}
+{% endif %}
+{% endblock %}
+*** End Patch

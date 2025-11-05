@@ -142,27 +142,26 @@ export type ChatCsatSubmissionResponse = {
   recordedAt: string;
 };
 
-
 export type PortalResolveResponse = {
-
   business_id: string;
-
   agent_handle: string;
-
   agent: {
-
-    id: string; name: string; role: string; avatar_url?: string|null; business_name?: string|null;
-
+    id: string;
+    name: string;
+    role: string;
+    avatar_url?: string | null;
+    business_name?: string | null;
   };
-
 };
 
-
-
-export async function resolvePortalHandle(businessSlug: string, agentSlug: string): Promise<PortalResolveResponse> {
-
-  return jsonFetch<PortalResolveResponse>(`/v1/portal/resolve/${businessSlug}/${agentSlug}`, { method: "GET" });
-
+export async function resolvePortalHandle(
+  businessSlug: string,
+  agentSlug: string
+): Promise<PortalResolveResponse> {
+  return jsonFetch<PortalResolveResponse>(
+    `/v1/portal/resolve/${businessSlug}/${agentSlug}`,
+    { method: "GET" }
+  );
 }
 
 
@@ -321,7 +320,7 @@ export async function createChatSession(
     existing_session_token: request.existingSessionToken ?? null,
   };
 
-  const response = await jsonFetch<ApiChatSessionCreateResponse>("/v1/portal/sessions", {
+  const response = await jsonFetch<ApiChatSessionCreateResponse>("/v1/chat-portal/sessions", {
     method: "POST",
     body,
   });
@@ -340,7 +339,7 @@ export async function fetchChatMessages(
   if (request.cursor) params.set("cursor", request.cursor);
   if (typeof request.limit === "number") params.set("limit", String(request.limit));
   const suffix = params.toString() ? `?${params.toString()}` : "";
-  const response = await jsonFetch<ApiChatMessagesListResponse>(`/v1/portal/messages${suffix}`, {
+  const response = await jsonFetch<ApiChatMessagesListResponse>(`/v1/chat-portal/messages${suffix}`, {
     method: "GET",
   });
 
@@ -365,7 +364,7 @@ export async function sendChatMessage(
     })),
   };
 
-  const response = await jsonFetch<ApiChatMessageSendResponse>("/v1/portal/messages", {
+  const response = await jsonFetch<ApiChatMessageSendResponse>("/v1/chat-portal/messages", {
     method: "POST",
     body,
   });
@@ -387,7 +386,7 @@ export async function submitChatCsat(
     comment: request.comment ?? null,
   };
 
-  const response = await jsonFetch<ApiChatCsatSubmissionResponse>("/v1/portal/csat", {
+  const response = await jsonFetch<ApiChatCsatSubmissionResponse>("/v1/chat-portal/csat", {
     method: "POST",
     body,
   });
@@ -398,192 +397,142 @@ export async function submitChatCsat(
   };
 }
 
-// --- SSE chat streaming helpers ---
+// Lightweight SSE helpers used by ChatPortal
 export type ChatEventHandlers = {
-  created?: (payload: any) => void;
-  delta?: (payload: any) => void;
-  completed?: (payload: any) => void;
-  statusChanged?: (payload: any) => void;
-  heartbeat?: (payload: any) => void;
-  error?: (ev: Event) => void;
-  open?: (ev: Event) => void;
+  open?: () => void;
+  error?: (error: any) => void;
+  statusChanged?: (data: any) => void;
+  heartbeat?: () => void;
 };
 
-const parseSseData = (raw: string): any => {
-  try { return JSON.parse(raw); } catch { return raw; }
-};
-
-export function openChatEventStream(sessionToken: string, handlers: ChatEventHandlers = {}): EventSource {
+export function openChatEventStream(
+  sessionToken: string,
+  handlers: ChatEventHandlers = {}
+): EventSource {
+  const params = new URLSearchParams({ session_token: sessionToken });
   const bid = getActiveBusinessId();
-  let url = buildApiUrl("/v1/portal/events");
-  url += url.includes("?") ? "" : "?";
-  url += (url.endsWith("?") ? "" : "&") + "session_token=" + encodeURIComponent(sessionToken);
-  if (bid) {
-    url += "&business_id=" + encodeURIComponent(bid);
-  }
+  if (bid) params.set("business_id", bid);
+  const url = `${buildApiUrl(`/v1/portal/events`)}?${params.toString()}`;
   const es = new EventSource(url);
-
-  if (handlers.open) {
-    es.addEventListener("open", (ev) => handlers.open && handlers.open(ev));
-  }
-  es.addEventListener("error", (ev) => {
-    if (handlers.error) handlers.error(ev);
-  });
-
-  const bind = (eventName: string, cb?: (payload: any) => void) => {
-    if (!cb) return;
-    es.addEventListener(eventName, (e: MessageEvent) => {
-      const payload = parseSseData(e.data);
-      cb(payload);
+  if (handlers.open) es.addEventListener("open", () => handlers.open?.());
+  if (handlers.error) es.addEventListener("error", (e) => handlers.error?.(e));
+  if (handlers.heartbeat) es.addEventListener("heartbeat", () => handlers.heartbeat?.());
+  // Support either "statusChanged" or snake_case
+  if (handlers.statusChanged) {
+    es.addEventListener("statusChanged", (e: MessageEvent) => {
+      try { handlers.statusChanged?.(JSON.parse(String(e.data))); } catch { handlers.statusChanged?.(e.data); }
     });
-  };
-
-  bind("message.created", handlers.created);
-  bind("message.delta", handlers.delta);
-  bind("message.completed", handlers.completed);
-  bind("conversation.status_changed", handlers.statusChanged);
-  bind("heartbeat", handlers.heartbeat);
-
-  es.onmessage = (e: MessageEvent) => {
-    const payload = parseSseData(e.data);
-    const t = (payload && (payload as any).type) as string | undefined;
-    if (t === "message.created") handlers.created && handlers.created(payload);
-    else if (t === "message.delta") handlers.delta && handlers.delta(payload);
-    else if (t === "message.completed") handlers.completed && handlers.completed(payload);
-    else if (t === "conversation.status_changed") handlers.statusChanged && handlers.statusChanged(payload);
-    else if (t === "heartbeat") handlers.heartbeat && handlers.heartbeat(payload);
-  };
-
+    es.addEventListener("status_changed", (e: MessageEvent) => {
+      try { handlers.statusChanged?.(JSON.parse(String(e.data))); } catch { handlers.statusChanged?.(e.data); }
+    });
+  }
   return es;
 }
 
-export async function cancelAssistantResponse(sessionToken: string, messageId?: string | null): Promise<{ cancelled: boolean }> {
-  const body: Record<string, unknown> = { session_token: sessionToken };
-  if (messageId) body.message_id = messageId;
-  const response = await jsonFetch<{ cancelled?: boolean }>(
-    "/v1/portal/stream/cancel",
-    { method: "POST", body }
-  );
-  const cancelled = Boolean((response as any)?.cancelled ?? true);
-  return { cancelled };
+export async function cancelAssistantResponse(sessionToken: string): Promise<{ ok: boolean } | void> {
+  const params = new URLSearchParams({ session_token: sessionToken });
+  const path = `/v1/portal/stream/cancel?${params.toString()}`;
+  try {
+    return await jsonFetch<{ ok: boolean }>(path, { method: "POST" });
+  } catch {
+    // Non-fatal; this endpoint is best-effort
+    return { ok: false };
+  }
+}
+
+export type StreamAssistantHandlers = {
+  open?: () => void;
+  created?: (message: Partial<ApiChatMessage> & { id: string }) => void;
+  delta?: (event: { id: string; delta: string }) => void;
+  completed?: () => void;
+  error?: (error: Error) => void;
+  end?: () => void;
+  tool?: (payload: any) => void;
+};
+
+export function streamAssistantResponse(
+  request: { sessionToken: string; body: string; payload?: Record<string, unknown> | null; channel?: string },
+  handlers: StreamAssistantHandlers = {}
+): { cancel: () => void } {
+  const controller = new AbortController();
+  const signal = controller.signal;
+  const id = (typeof crypto !== "undefined" && "randomUUID" in crypto) ? crypto.randomUUID() : `${Date.now().toString(16)}-${Math.random().toString(16).slice(2)}`;
+
+  // Emit a client-side created event to bind deltas to a temp message id
+  handlers.created?.({ id, message_type: "ASSISTANT", visibility: "PUBLIC", channel: "text", body: "", payload: null, sent_at: new Date().toISOString(), attachments: [] } as any);
+
+  const bid = getActiveBusinessId();
+  const url = buildApiUrl(`/v1/portal/stream/send`);
+  const headers: Record<string, string> = {
+    Accept: "text/event-stream",
+    "Content-Type": "application/json",
+  };
+  if (bid) headers["X-Business-Id"] = bid;
+
+  fetch(url, {
+    method: "POST",
+    headers,
+    body: JSON.stringify({
+      session_token: request.sessionToken,
+      body: request.body,
+      payload: request.payload ?? null,
+      channel: request.channel ?? "text",
+    }),
+    signal,
+  })
+    .then(async (res) => {
+      if (!res.ok || !res.body) {
+        const msg = `Stream failed (${res.status})`;
+        throw new Error(msg);
+      }
+      handlers.open?.();
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = "";
+      const pump = async (): Promise<void> => {
+        try {
+          const { value, done } = await reader.read();
+          if (done) { handlers.end?.(); handlers.completed?.(); return; }
+          buffer += decoder.decode(value, { stream: true });
+          let idx: number;
+          while ((idx = buffer.indexOf("\n\n")) !== -1) {
+            const chunk = buffer.slice(0, idx);
+            buffer = buffer.slice(idx + 2);
+            const lines = chunk.split(/\r?\n/);
+            let evType = "message";
+            let data: string | null = null;
+            for (const line of lines) {
+              if (line.startsWith("event:")) evType = line.slice(6).trim();
+              else if (line.startsWith("data:")) data = line.slice(5).trim();
+            }
+            if (evType === "delta" && data != null) {
+              try { handlers.delta?.({ id, delta: JSON.parse(data) }); } catch { handlers.delta?.({ id, delta: data }); }
+            } else if (evType === "final" && data != null) {
+              handlers.completed?.();
+            } else if (evType === "tool" && data != null) {
+              try { handlers.tool?.(JSON.parse(data)); } catch { handlers.tool?.(data); }
+            } else if (evType === "error" && data != null) {
+              try { const parsed = JSON.parse(data); handlers.error?.(new Error(typeof parsed === "string" ? parsed : String(parsed?.message || parsed))); }
+              catch { handlers.error?.(new Error(String(data))); }
+            }
+          }
+          await pump();
+        } catch (err) {
+          if ((err as any)?.name === "AbortError") { handlers.end?.(); return; }
+          handlers.error?.(err as Error);
+          handlers.end?.();
+        }
+      };
+      await pump();
+    })
+    .catch((err) => {
+      if (err?.name === "AbortError") { handlers.end?.(); return; }
+      handlers.error?.(err);
+      handlers.end?.();
+    });
+
+  return { cancel: () => controller.abort() };
 }
 
 export { ApiError };
 
-// --- Streaming via POST /v1/portal/stream/send (SSE over fetch) ---
-export type ChatStreamHandlers = {
-  created?: (message: any) => void;
-  delta?: (ev: { id: string; delta: string }) => void;
-  completed?: (payload: any) => void;
-  error?: (error: Error) => void;
-  open?: () => void;
-  end?: () => void;
-};
-
-const synthId = () => {
-  try { return crypto.randomUUID(); } catch { return `stream-${Date.now()}-${Math.random().toString(16).slice(2)}`; }
-};
-
-export function streamAssistantResponse(
-  request: ChatMessageSendRequest,
-  handlers: ChatStreamHandlers = {}
-): { cancel: () => void } {
-  const businessId = getActiveBusinessId();
-  let url = buildApiUrl("/v1/portal/stream/send");
-  url += url.includes("?") ? "" : "?";
-  if (businessId) url += (url.endsWith("?") ? "" : "&") + "business_id=" + encodeURIComponent(businessId);
-
-  const controller = new AbortController();
-  const headers = new Headers();
-  headers.set("Accept", "text/event-stream");
-  headers.set("Content-Type", "application/json");
-
-  const body = {
-    session_token: request.sessionToken,
-    body: request.body ?? null,
-    payload: request.payload ?? null,
-    channel: request.channel ?? "text",
-    attachments: (request.attachments ?? []).map((item) => ({
-      storage_asset_id: item.storageAssetId,
-      caption: item.caption ?? null,
-    })),
-  };
-
-  const messageId = synthId();
-  const start = async () => {
-    try {
-      const resp = await fetch(url, { method: "POST", headers, body: JSON.stringify(body), signal: controller.signal });
-      if (!resp.ok || !resp.body) {
-        throw new Error(`Streaming request failed: ${resp.status} ${resp.statusText}`);
-      }
-      handlers.open && handlers.open();
-      // Emit synthetic created event so UI can attach deltas
-      handlers.created && handlers.created({
-        id: messageId,
-        conversationId: null,
-        messageType: "ASSISTANT",
-        visibility: "PUBLIC",
-        channel: request.channel ?? "text",
-        body: "",
-        payload: null,
-        sentAt: new Date().toISOString(),
-        author: { agentId: null, customerId: null, userDisplayName: null },
-        attachments: [],
-      });
-
-      const reader = resp.body.getReader();
-      const decoder = new TextDecoder();
-      let buffer = "";
-      const pump = async (): Promise<void> => {
-        const { done, value } = await reader.read();
-        if (done) {
-          handlers.end && handlers.end();
-          return;
-        }
-        buffer += decoder.decode(value, { stream: true });
-        // Process complete SSE events separated by double newlines
-        let idx: number;
-        while ((idx = buffer.indexOf("\n\n")) !== -1) {
-          const rawEvent = buffer.slice(0, idx);
-          buffer = buffer.slice(idx + 2);
-          let eventName = "message";
-          const dataLines: string[] = [];
-          for (const line of rawEvent.split(/\n/)) {
-            if (line.startsWith("event:")) {
-              eventName = line.slice(6).trim();
-            } else if (line.startsWith("data:")) {
-              dataLines.push(line.slice(5).trim());
-            }
-          }
-          const dataRaw = dataLines.join("\n");
-          let data: any = dataRaw;
-          try { data = JSON.parse(dataRaw); } catch {}
-          if (eventName === "delta") {
-            const text = typeof data === "string" ? data : (data?.text || data?.delta || "");
-            if (text) handlers.delta && handlers.delta({ id: messageId, delta: text });
-          } else if (eventName === "final") {
-            handlers.completed && handlers.completed(data);
-          } else if (eventName === "error") {
-            const err = new Error(typeof data === "string" ? data : (data?.message || "Stream error"));
-            handlers.error && handlers.error(err);
-          } else if (eventName === "heartbeat") {
-            // ignore in stream send
-          }
-        }
-        await pump();
-      };
-      await pump();
-    } catch (err) {
-      if ((err as any)?.name === 'AbortError') {
-        handlers.end && handlers.end();
-        return;
-      }
-      handlers.error && handlers.error(err instanceof Error ? err : new Error(String(err)));
-    }
-  };
-
-  // Fire and forget
-  void start();
-
-  return { cancel: () => controller.abort() };
-}

@@ -7,6 +7,8 @@ export default {
 		"./components/**/*.{ts,tsx}",
 		"./app/**/*.{ts,tsx}",
 		"./src/**/*.{ts,tsx}",
+		"./pocketai_django/frontend/templates/**/*.{html,htm}",
+		"./pocketai_django/frontend/static/js/**/*.{js,ts}",
 	],
 	prefix: "",
 	theme: {

@@ -1,4 +1,10 @@
 import { ApiError, jsonFetch } from "./http";
+import { 
+  AgentRole, 
+  AgentTone, 
+  mapRoleFromBackend, 
+  mapToneFromBackend 
+} from "../lib/agentOptions";
 import { getStoredToken } from "./auth";
 
 type UUID = string;
@@ -15,8 +21,8 @@ export type AgentsListParams = {
 export type AgentListItem = {
   id: UUID;
   name: string;
-  role: string;
-  tone: string;
+  role: AgentRole;
+  tone: AgentTone;
   status: "active" | "inactive" | "draft";
   publicSlug: string | null;
   avatarUrl: string | null;
@@ -58,8 +64,8 @@ export async function listAgents(
     const items: AgentListItem[] = (raw.items ?? []).map((it) => ({
       id: it.id,
       name: it.name,
-      role: it.role,
-      tone: it.tone,
+      role: mapRoleFromBackend(it.role),
+      tone: mapToneFromBackend(it.tone),
       status: it.status,
       publicSlug: it.public_slug ?? null,
       avatarUrl: it.avatar_url ?? null,

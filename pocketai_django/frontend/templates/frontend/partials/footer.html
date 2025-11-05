@@ -1,0 +1,28 @@
+<footer class="mt-auto border-t border-border/60 bg-card/60 backdrop-blur">
+  <div class="container mx-auto px-6 py-12">
+    <div class="grid gap-8 md:grid-cols-3">
+      {% for column in site.footer.columns %}
+        <div>
+          <h3 class="text-sm font-semibold text-foreground uppercase tracking-wide mb-4">{{ column.title }}</h3>
+          <ul class="space-y-3 text-sm text-muted-foreground">
+            {% for link in column.links %}
+              <li>
+                <a href="{{ link.href }}" class="hover:text-foreground transition-colors">{{ link.label }}</a>
+              </li>
+            {% endfor %}
+          </ul>
+        </div>
+      {% endfor %}
+    </div>
+    <div class="mt-10 flex flex-col md:flex-row md:items-center md:justify-between gap-4 text-xs text-muted-foreground">
+      <p>{{ site.footer.copyright }}</p>
+      <ul class="flex flex-wrap items-center gap-4">
+        {% for link in site.footer.legal %}
+          <li>
+            <a href="{{ link.href }}" class="hover:text-foreground transition-colors">{{ link.label }}</a>
+          </li>
+        {% endfor %}
+      </ul>
+    </div>
+  </div>
+</footer>
