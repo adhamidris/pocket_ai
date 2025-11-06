@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from django.contrib import admin
 
+from .forms import CustomerAdminForm
 from .models import (
     Customer,
     CustomerActivity,
@@ -28,6 +29,7 @@ class CustomerNoteInline(admin.TabularInline):
 
 @admin.register(Customer)
 class CustomerAdmin(admin.ModelAdmin):
+    form = CustomerAdminForm
     list_display = (
         "display_name",
         "business_profile",
