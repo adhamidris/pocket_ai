@@ -119,6 +119,49 @@ class Customer(models.Model):
 
     objects = CustomerManager()
 
+    @staticmethod
+    def normalize_primary_address(value: Any) -> dict[str, Any]:
+        """
+        Accept JSON objects, lists, or freeform strings and convert them into
+        the structured dictionary we persist.
+        """
+
+        if value in (None, "", {}, []):
+            return {}
+        if isinstance(value, dict):
+            return value
+        if isinstance(value, str):
+            text = value.strip()
+            if not text:
+                return {}
+            try:
+                parsed = json.loads(text)
+            except json.JSONDecodeError:
+                return {"raw": text}
+            if isinstance(parsed, dict):
+                return parsed
+            if isinstance(parsed, list):
+                lines = [str(item).strip() for item in parsed if str(item).strip()]
+                return {"lines": lines} if lines else {}
+            return {"raw": text}
+        if isinstance(value, (list, tuple, set)):
+            lines = [str(item).strip() for item in value if str(item).strip()]
+            return {"lines": lines} if lines else {}
+        fallback = str(value).strip()
+        return {"raw": fallback} if fallback else {}
+
+    @staticmethod
+    def format_primary_address(value: dict[str, Any]) -> str:
+        """Pretty-print the stored JSON for admin editing."""
+
+        if not value:
+            return ""
+        return json.dumps(value, indent=2, sort_keys=True)
+
+    def save(self, *args, **kwargs):
+        self.primary_address = self.normalize_primary_address(self.primary_address)
+        super().save(*args, **kwargs)
+
     class Meta:
         db_table = "customers_customer"
         ordering = ("-created_at",)
