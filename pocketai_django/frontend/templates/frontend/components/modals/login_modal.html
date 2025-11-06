@@ -2,6 +2,8 @@
   class="hidden"
   data-login-modal
   data-login-state="closed"
+  data-login-endpoint="{% url 'accounts:login' %}"
+  data-login-redirect-default="{% url 'frontend:dashboard' %}"
   aria-hidden="true"
 >
   <div
@@ -135,11 +137,26 @@
     var closeButtons = modal.querySelectorAll("[data-login-close]");
     var registerLink = modal.querySelector("[data-login-register]");
     var triggers = document.querySelectorAll("[data-login-open]");
+    var loginEndpoint = modal.getAttribute("data-login-endpoint") || "/login/";
+    var defaultRedirect = modal.getAttribute("data-login-redirect-default") || "/dashboard/";
+    var pendingRedirect = "";
     var defaultSubmitText = submitButton ? submitButton.getAttribute("data-default-label") || "" : "";
     var loadingSubmitText = submitButton ? submitButton.getAttribute("data-loading-label") || "" : "";
     var lastActiveElement = null;
     var isOpen = false;
     var isSubmitting = false;
+
+    function getCookie(name) {
+      var cookies = document.cookie ? document.cookie.split(";") : [];
+      var prefix = name + "=";
+      for (var i = 0; i < cookies.length; i++) {
+        var cookie = cookies[i].trim();
+        if (cookie.substring(0, prefix.length) === prefix) {
+          return decodeURIComponent(cookie.substring(prefix.length) || "");
+        }
+      }
+      return null;
+    }
 
     function setError(message) {
       if (!errorMessage) {
@@ -185,7 +202,10 @@
       setSubmitting(false);
     }
 
-    function openModal(prefillEmail) {
+    function openModal(prefillEmail, redirectTarget) {
+      if (typeof redirectTarget === "string") {
+        pendingRedirect = redirectTarget;
+      }
       if (isOpen) {
         resetForm(prefillEmail);
         if (emailInput) {
@@ -218,6 +238,7 @@
       modal.setAttribute("aria-hidden", "true");
       document.body.classList.remove("overflow-hidden");
       isOpen = false;
+      pendingRedirect = "";
       setTimeout(function () {
         if (lastActiveElement) {
           lastActiveElement.focus();
@@ -255,7 +276,8 @@
       trigger.addEventListener("click", function (event) {
         event.preventDefault();
         var email = trigger.getAttribute("data-login-email");
-        openModal(email || "");
+        var nextTarget = trigger.getAttribute("data-login-next");
+        openModal(email || "", nextTarget || "");
       });
     });
 
@@ -279,41 +301,65 @@
         setError(null);
         setSubmitting(true);
 
-        var submitDetail = {
+        var payload = {
           email: email,
           password: password,
-          close: closeModal,
-          setError: function (message) {
-            setError(message);
-            setSubmitting(false);
-          },
-          resolve: function () {
-            setSubmitting(false);
-            closeModal();
+        };
+        if (pendingRedirect) {
+          payload.next = pendingRedirect;
+        }
+
+        var csrfToken = getCookie("csrftoken");
+        var headers = {
+          "Content-Type": "application/json",
+          Accept: "application/json",
+        };
+        if (csrfToken) {
+          headers["X-CSRFToken"] = csrfToken;
+        }
+
+        fetch(loginEndpoint, {
+          method: "POST",
+          headers: headers,
+          body: JSON.stringify(payload),
+          credentials: "same-origin",
+        })
+          .then(function (response) {
+            if (response.ok) {
+              return response.json().catch(function () {
+                return {};
+              });
+            }
+            return response
+              .json()
+              .catch(function () {
+                return {};
+              })
+              .then(function (data) {
+                var message =
+                  (data && (data.message || data.detail)) ||
+                  (data && typeof data.error === "string" ? data.error : null) ||
+                  "Unable to sign in. Please try again.";
+                throw new Error(message);
+              });
+          })
+          .then(function (data) {
+            var redirectUrl =
+              (data && typeof data.redirect === "string" && data.redirect) || defaultRedirect || "/";
             modal.dispatchEvent(
               new CustomEvent("loginmodal:success", {
-                detail: { email: email, password: password },
+                detail: { email: email, redirect: redirectUrl },
               })
             );
-          },
-          reject: function (message) {
+            setSubmitting(false);
+            closeModal();
+            window.location.href = redirectUrl;
+          })
+          .catch(function (error) {
+            var message = (error && error.message) || "Unable to sign in. Please try again.";
             setError(message);
             setSubmitting(false);
-          },
-        };
-
-        var submitEvent = new CustomEvent("loginmodal:submit", {
-          detail: submitDetail,
-          cancelable: true,
-        });
-
-        var prevented = !modal.dispatchEvent(submitEvent);
-
-        if (!prevented) {
-          window.setTimeout(function () {
-            submitDetail.resolve();
-          }, 300);
-        }
+          });
       });
     }
   });

@@ -1,0 +1,382 @@
+{% extends "frontend/base_app.html" %}
+
+{% block title %}Knowledge | Pocket AI{% endblock %}
+
+{% block content %}
+<div class="min-h-screen bg-background flex">
+  {% include "frontend/components/dashboard/sidebar.html" with active="knowledge" user_name=user_name %}
+  <main class="flex-1 overflow-auto">
+    <div class="w-full px-4 md:px-6 lg:px-8 py-6 space-y-6">
+      <header class="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
+        <div class="text-xl md:text-2xl font-semibold text-gradient-hero">Knowledge</div>
+        <div class="flex flex-wrap items-center gap-2">
+          <button type="button" class="inline-flex items-center gap-2 rounded-lg bg-primary text-primary-foreground px-4 py-2 text-sm font-medium shadow-sm transition-all duration-300 hover:bg-primary/90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2">
+            <svg class="h-4 w-4" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" aria-hidden="true">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M4 16v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2" />
+              <path stroke-linecap="round" stroke-linejoin="round" d="M12 16V4m0 0-4 4m4-4 4 4" />
+            </svg>
+            Upload Doc
+          </button>
+          <button type="button" class="inline-flex items-center gap-2 rounded-lg border border-input bg-background px-4 py-2 text-sm font-medium transition-all duration-300 hover:bg-accent hover:text-accent-foreground hover:border-primary/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2">
+            <svg class="h-4 w-4" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" aria-hidden="true">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M6.75 3v2.25M3 6.75h2.25M17.25 3v2.25M21 6.75h-2.25M6.75 18.75V21M3 17.25h2.25m12-14.25L12 8.25m0 0L8.25 5.25M12 8.25v7.5m0 0L8.25 12.75M12 15.75l3.75-3" />
+            </svg>
+            Connect Integrations
+          </button>
+        </div>
+      </header>
+
+      <section class="space-y-6" data-knowledge-tabs>
+        <div class="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+          <div class="inline-flex rounded-lg border border-border/40 bg-muted/70 p-1" data-tabs-list>
+            <button type="button" class="rounded-md px-3 py-1.5 text-xs font-semibold tracking-wide uppercase bg-primary text-primary-foreground shadow-sm transition-colors" data-tab-button="documents">
+              Documents
+            </button>
+            <button type="button" class="rounded-md px-3 py-1.5 text-xs font-semibold uppercase tracking-wide text-muted-foreground transition-colors hover:text-primary" data-tab-button="integrations">
+              Integrations
+            </button>
+            <button type="button" class="rounded-md px-3 py-1.5 text-xs font-semibold uppercase tracking-wide text-muted-foreground transition-colors hover:text-primary" data-tab-button="collections">
+              Collections
+            </button>
+          </div>
+          <div class="flex flex-wrap items-center gap-2 md:ml-auto" data-tab-toolbar="documents">
+            <button type="button" class="inline-flex items-center gap-2 rounded-lg border border-input bg-background px-3 py-2 text-sm font-medium transition-all hover:bg-accent hover:text-accent-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2">
+              <svg class="h-4 w-4 text-muted-foreground" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" aria-hidden="true">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M3 7.5A2.25 2.25 0 0 1 5.25 5h13.5A2.25 2.25 0 0 1 21 7.5v9A2.25 2.25 0 0 1 18.75 18.75H5.25A2.25 2.25 0 0 1 3 16.5v-9Z" />
+                <path stroke-linecap="round" stroke-linejoin="round" d="M3 9h18" />
+              </svg>
+              Collections
+              <svg class="h-4 w-4 text-muted-foreground" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 20 20" aria-hidden="true">
+                <path stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="m6 8 4 4 4-4" />
+              </svg>
+            </button>
+          </div>
+          <div class="hidden flex-col gap-2" data-tab-toolbar="integrations">
+            <div class="flex items-center gap-2 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+              <svg class="h-3.5 w-3.5" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" aria-hidden="true">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M21 12a9 9 0 1 1-9-9" />
+                <path stroke-linecap="round" stroke-linejoin="round" d="M21 3v7h-7" />
+              </svg>
+              Bulk actions
+            </div>
+            <div class="flex flex-wrap items-center gap-2">
+              <button type="button" class="inline-flex items-center gap-2 rounded-md border border-input bg-background px-3 py-2 text-xs font-medium hover:bg-accent hover:text-accent-foreground">
+                <svg class="h-4 w-4" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor">
+                  <path stroke-linecap="round" stroke-linejoin="round" d="M4 4v5h.582a2 2 0 0 1 1.789 1.106l.472.944a2 2 0 0 0 1.79 1.106H14m0 0V4m0 8h3.5A2.5 2.5 0 0 1 20 14.5V20" />
+                  <path stroke-linecap="round" stroke-linejoin="round" d="M4 20h16" />
+                </svg>
+                Sync all
+              </button>
+              <button type="button" class="inline-flex items-center gap-2 rounded-md border border-input bg-background px-3 py-2 text-xs font-medium hover:bg-accent hover:text-accent-foreground">
+                <svg class="h-4 w-4" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor">
+                  <path stroke-linecap="round" stroke-linejoin="round" d="m9 12 2 2 4-4" />
+                  <path stroke-linecap="round" stroke-linejoin="round" d="M3 12a9 9 0 1 0 9-9" />
+                </svg>
+                Show connected only
+              </button>
+            </div>
+          </div>
+          <div class="hidden flex-col gap-2" data-tab-toolbar="collections">
+            <div class="flex items-center gap-2 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+              <svg class="h-3.5 w-3.5" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" aria-hidden="true">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M3 7.5 12 12l9-4.5M3 12l9 4.5 9-4.5M3 16.5 12 21l9-4.5" />
+              </svg>
+              Actions
+            </div>
+            <div class="flex flex-wrap items-center gap-2">
+              <button type="button" class="inline-flex items-center gap-2 rounded-md border border-input bg-background px-3 py-2 text-xs font-medium hover:bg-accent hover:text-accent-foreground">
+                Sort by activity
+              </button>
+              <button type="button" class="inline-flex items-center gap-2 rounded-md bg-primary/10 text-primary px-3 py-2 text-xs font-medium hover:bg-primary/15">
+                New collection
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <div class="space-y-5" data-tab-panel="documents">
+          <div class="space-y-3">
+            <div class="flex items-center gap-2 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+              <svg class="h-3.5 w-3.5" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" aria-hidden="true">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M12 4v16m8-8H4" />
+              </svg>
+              Add content
+            </div>
+            <div class="rounded-2xl border-2 border-dashed border-primary/30 bg-primary/5 px-6 py-5">
+              <div class="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
+                <div class="flex items-start gap-4">
+                  <div class="rounded-full bg-primary/10 p-3 text-primary">
+                    <svg class="h-5 w-5" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor">
+                      <path stroke-linecap="round" stroke-linejoin="round" d="M4 16v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2" />
+                      <path stroke-linecap="round" stroke-linejoin="round" d="M12 16V4m0 0-4 4m4-4 4 4" />
+                    </svg>
+                  </div>
+                  <div class="space-y-2">
+                    <div class="text-sm font-semibold text-foreground">Drag &amp; drop files or paste text</div>
+                    <p class="text-xs text-muted-foreground">Upload PDFs, docs, spreadsheets, or paste raw text and we will index it automatically.</p>
+                    <div class="flex flex-wrap gap-2 pt-1">
+                      <button type="button" class="inline-flex items-center gap-2 rounded-md bg-background px-3 py-1.5 text-xs font-medium text-muted-foreground shadow-sm">
+                        <svg class="h-4 w-4" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor">
+                          <path stroke-linecap="round" stroke-linejoin="round" d="M5 5h14M5 9h14M5 13h14M5 17h10" />
+                        </svg>
+                        Add text note
+                      </button>
+                      <button type="button" class="inline-flex items-center gap-2 rounded-md bg-background px-3 py-1.5 text-xs font-medium text-muted-foreground shadow-sm">
+                        <svg class="h-4 w-4" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor">
+                          <path stroke-linecap="round" stroke-linejoin="round" d="M3 3h7v7H3zM14 3h7v7h-7zM14 14h7v7h-7zM3 14h7v7H3z" />
+                        </svg>
+                        Import table
+                      </button>
+                    </div>
+                  </div>
+                </div>
+                <button type="button" class="inline-flex items-center gap-2 rounded-md border border-primary/40 bg-primary/10 px-4 py-2 text-xs font-medium text-primary hover:bg-primary/15">
+                  <svg class="h-4 w-4" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor">
+                    <path stroke-linecap="round" stroke-linejoin="round" d="M8 7h11M8 12h8m-8 5h6M3 5v14a2 2 0 0 0 2 2h14" />
+                  </svg>
+                  Browse files
+                </button>
+              </div>
+            </div>
+          </div>
+
+          <div class="space-y-3">
+            <div class="flex items-center gap-2 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+              <svg class="h-3.5 w-3.5" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" aria-hidden="true">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M4 4h16v4H4zM4 12h16v8H4z" />
+              </svg>
+              Document library
+            </div>
+            <div class="relative w-full md:w-64">
+              <svg class="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor">
+                <path stroke-linecap="round" stroke-linejoin="round" d="m21 21-4.35-4.35m0 0A7.5 7.5 0 1 0 6.5 6.5a7.5 7.5 0 0 0 10.15 10.15Z" />
+              </svg>
+              <input type="search" class="h-10 w-full rounded-md border border-border/60 bg-muted/70 pl-9 pr-3 text-sm focus-visible:border-border focus-visible:outline-none focus-visible:ring-0" placeholder="{{ knowledge_filters.search_placeholder|default:'Search documents…' }}" autocomplete="off">
+            </div>
+          </div>
+
+          <div class="relative border border-border/70 bg-card shadow-lg shadow-black/5 backdrop-blur transition-colors hover:border-primary/35 dark:border-slate-700/50 dark:bg-slate-800/70 dark:shadow-black/25 rounded-xl">
+            <div class="absolute inset-x-0 top-0 h-px bg-gradient-to-r from-primary/35 via-primary/20 to-transparent"></div>
+            <div class="relative max-h-[65vh] overflow-auto">
+              <table class="w-full caption-bottom text-sm rounded-xl border border-border/70 bg-background/60 shadow-sm backdrop-blur [&_th]:px-3 [&_td]:px-3 [&_th:first-child]:pl-4 [&_td:first-child]:pl-4 [&_th:last-child]:pr-4 [&_td:last-child]:pr-4 [&_th]:py-3 [&_td]:py-3">
+                <thead class="sticky top-0 z-10 bg-muted/70 backdrop-blur border-b border-border/80">
+                  <tr class="border-b transition-colors hover:bg-transparent">
+                    <th scope="col" class="h-12 text-left font-medium text-muted-foreground w-[220px]">Name</th>
+                    <th scope="col" class="h-12 text-left font-medium text-muted-foreground">Classification</th>
+                    <th scope="col" class="h-12 text-left font-medium text-muted-foreground">Type</th>
+                    <th scope="col" class="h-12 text-left font-medium text-muted-foreground">Status</th>
+                    <th scope="col" class="h-12 text-right font-medium text-muted-foreground">Updated</th>
+                    <th scope="col" class="h-12 w-10 text-left font-medium text-muted-foreground"></th>
+                  </tr>
+                </thead>
+                <tbody class="[&_tr:last-child]:border-0">
+                  {% if knowledge_backend_notice %}
+                    <tr>
+                      <td colspan="6" class="py-12 text-center text-sm text-muted-foreground">{{ knowledge_backend_notice }}</td>
+                    </tr>
+                  {% elif knowledge_auth_notice %}
+                    <tr>
+                      <td colspan="6" class="py-12 text-center text-sm text-muted-foreground">{{ knowledge_auth_notice }}</td>
+                    </tr>
+                  {% elif knowledge_loading %}
+                    {% for _ in skeleton_rows %}
+                      <tr class="border-b transition-colors hover:bg-muted/60">
+                        <td class="py-4">
+                          <div class="flex flex-col gap-2">
+                            <span class="h-3 w-40 rounded bg-muted/60 animate-pulse" aria-hidden="true"></span>
+                            <span class="h-3 w-24 rounded bg-muted/40 animate-pulse" aria-hidden="true"></span>
+                          </div>
+                        </td>
+                        <td class="py-4">
+                          <span class="block h-3 w-32 rounded bg-muted/50 animate-pulse" aria-hidden="true"></span>
+                        </td>
+                        <td class="py-4">
+                          <span class="inline-flex h-5 w-14 items-center justify-center rounded-full bg-muted/60 text-[10px] font-semibold uppercase text-muted-foreground animate-pulse" aria-hidden="true"></span>
+                        </td>
+                        <td class="py-4">
+                          <span class="inline-flex h-5 w-20 items-center justify-center rounded-full bg-muted/60 text-[10px] font-semibold uppercase text-muted-foreground animate-pulse" aria-hidden="true"></span>
+                        </td>
+                        <td class="py-4 text-right">
+                          <div class="flex flex-col items-end gap-2">
+                            <span class="h-3 w-16 rounded bg-muted/60 animate-pulse" aria-hidden="true"></span>
+                            <span class="h-3 w-12 rounded bg-muted/40 animate-pulse" aria-hidden="true"></span>
+                          </div>
+                        </td>
+                        <td class="py-4">
+                          <span class="inline-flex h-8 w-8 items-center justify-center rounded-md bg-muted/50 animate-pulse" aria-hidden="true"></span>
+                        </td>
+                      </tr>
+                    {% endfor %}
+                  {% elif knowledge_documents %}
+                    {% for doc in knowledge_documents %}
+                      <tr class="border-b transition-colors hover:bg-muted/60">
+                        <td class="py-4">
+                          <div class="flex flex-col">
+                            <span class="font-medium leading-tight text-foreground">{{ doc.name }}</span>
+                            <span class="text-xs text-muted-foreground">{{ doc.identifier }}</span>
+                          </div>
+                        </td>
+                        <td class="py-4">
+                          <div class="text-sm text-muted-foreground">{{ doc.classification }}</div>
+                        </td>
+                        <td class="py-4">
+                          <span class="inline-flex items-center rounded-full bg-muted/60 px-2 py-0.5 text-[11px] font-medium text-muted-foreground">{{ doc.type_badge }}</span>
+                        </td>
+                        <td class="py-4">
+                          <span class="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-semibold {{ doc.status_badge_class }}">{{ doc.status_label }}</span>
+                        </td>
+                        <td class="py-4 text-right">
+                          <div class="text-sm font-medium text-foreground">{{ doc.updated_at }}</div>
+                          <div class="text-xs text-muted-foreground">{{ doc.size }}</div>
+                        </td>
+                        <td class="py-4">
+                          <button type="button" class="p-1.5 rounded-md hover:bg-muted transition-colors" aria-label="Document actions">
+                            <svg class="h-4 w-4 text-muted-foreground" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor">
+                              <path stroke-linecap="round" stroke-linejoin="round" d="M12 5v.008M12 12v.008m0 6.984v.008" />
+                            </svg>
+                          </button>
+                        </td>
+                      </tr>
+                    {% endfor %}
+                  {% else %}
+                    <tr>
+                      <td colspan="6" class="py-12 text-center text-sm text-muted-foreground">{{ knowledge_documents_empty_message }}</td>
+                    </tr>
+                  {% endif %}
+                </tbody>
+              </table>
+            </div>
+            <div class="border-t border-border/60 bg-background/95 backdrop-blur px-4 py-3 text-xs text-muted-foreground flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+              <div>Showing {{ knowledge_documents_showing|default:0 }} of {{ knowledge_documents_total|default:0 }} documents</div>
+              <div class="flex items-center gap-2">
+                <button type="button" class="inline-flex items-center gap-2 rounded-md border border-input bg-background px-3 py-1 text-xs font-medium hover:bg-accent hover:text-accent-foreground {% if not knowledge_documents_has_prev %}opacity-40 cursor-not-allowed{% endif %}" {% if not knowledge_documents_has_prev %}disabled{% endif %}>
+                  Previous
+                </button>
+                <button type="button" class="inline-flex items-center gap-2 rounded-md border border-input bg-background px-3 py-1 text-xs font-medium hover:bg-accent hover:text-accent-foreground {% if not knowledge_documents_has_next %}opacity-40 cursor-not-allowed{% endif %}" {% if not knowledge_documents_has_next %}disabled{% endif %}>
+                  Next
+                </button>
+                {% if knowledge_loading %}
+                  <svg class="h-3.5 w-3.5 animate-spin text-muted-foreground" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                    <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                    <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 0 1 8-8v4a4 4 0 0 0-4 4H4Z"></path>
+                  </svg>
+                {% endif %}
+              </div>
+            </div>
+          </div>
+
+          <div class="grid gap-4 lg:grid-cols-2 xl:grid-cols-3 hidden" data-empty-panel="documents">
+            <!-- placeholder for JS-enhanced cards -->
+          </div>
+
+          <div class="hidden xl:flex xl:gap-4" data-knowledge-detail>
+            <div class="flex-1 rounded-xl border border-dashed border-border/70 bg-muted/30 p-6 text-center">
+              <div class="mx-auto flex h-12 w-12 items-center justify-center rounded-full bg-muted">
+                <svg class="h-6 w-6 text-muted-foreground" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor">
+                  <path stroke-linecap="round" stroke-linejoin="round" d="M3 7.5 12 12l9-4.5M3 12l9 4.5 9-4.5M3 16.5 12 21l9-4.5" />
+                </svg>
+              </div>
+              <div class="mt-3 text-sm font-semibold text-foreground">{{ knowledge_panel_empty_title|default:"Select a document" }}</div>
+              <p class="mt-1 text-xs text-muted-foreground">{{ knowledge_panel_empty_message|default:"Choose a document to preview summary, classification, and sync details here." }}</p>
+            </div>
+            <div class="w-64 rounded-xl border border-border/70 bg-card/60 p-5 space-y-3">
+              <div class="text-xs font-semibold uppercase tracking-wide text-muted-foreground/80">Processing queue</div>
+              <div class="space-y-3">
+                {% for _ in "123" %}
+                  <div class="space-y-1">
+                    <span class="block h-3 w-32 rounded bg-muted/50 animate-pulse" aria-hidden="true"></span>
+                    <span class="block h-2 w-full rounded bg-muted/40 animate-pulse" aria-hidden="true"></span>
+                  </div>
+                {% endfor %}
+              </div>
+              <div class="rounded-lg border border-dashed border-border/60 bg-muted/30 px-3 py-2 text-[11px] text-muted-foreground">
+                Upload progress and sync status will surface here after backend integration.
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="hidden space-y-4" data-tab-panel="integrations">
+          <div class="flex items-center gap-2 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+            <svg class="h-3.5 w-3.5" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" aria-hidden="true">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M4.5 9.75a7.5 7.5 0 0 1 14.495-1.5m.005 1.5V6m0 3.75h-3.75" />
+              <path stroke-linecap="round" stroke-linejoin="round" d="M19.5 14.25a7.5 7.5 0 0 1-14.495 1.5m-.005-1.5V18m0-3.75h3.75" />
+            </svg>
+            Connected sources
+          </div>
+          {% if knowledge_integrations %}
+            <div class="grid gap-4 lg:grid-cols-2 xl:grid-cols-3">
+              {% for integration in knowledge_integrations %}
+                <div class="rounded-lg border border-border/60 bg-card/70 p-4 space-y-3">
+                  <div class="flex items-start gap-3">
+                    <div class="h-10 w-10 rounded-full bg-primary/10"></div>
+                    <div class="space-y-1">
+                      <div class="text-sm font-semibold text-foreground">{{ integration.name }}</div>
+                      <p class="text-xs text-muted-foreground leading-relaxed">{{ integration.description }}</p>
+                    </div>
+                  </div>
+                  <div class="flex items-center justify-between text-xs text-muted-foreground">
+                    <span>Last sync</span>
+                    <span class="font-medium text-foreground">{{ integration.last_sync|default:"—" }}</span>
+                  </div>
+                </div>
+              {% endfor %}
+            </div>
+          {% else %}
+            <div class="rounded-xl border border-dashed border-border/60 bg-muted/30 p-6 text-sm text-muted-foreground">
+              {{ knowledge_integrations_empty_message }}
+            </div>
+          {% endif %}
+        </div>
+
+        <div class="hidden space-y-4" data-tab-panel="collections">
+          <div class="flex items-center gap-2 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+            <svg class="h-3.5 w-3.5" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" aria-hidden="true">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M3 7.5 12 12l9-4.5M3 12l9 4.5 9-4.5M3 16.5 12 21l9-4.5" />
+            </svg>
+            Collections
+          </div>
+          {% if knowledge_collections %}
+            <div class="grid gap-4 lg:grid-cols-2 xl:grid-cols-3">
+              {% for collection in knowledge_collections %}
+                <div class="relative rounded-lg border border-border/60 bg-card/70 p-4 transition-colors hover:border-primary/35">
+                  <div class="absolute inset-x-0 top-0 h-px bg-gradient-to-r from-primary/35 via-primary/20 to-transparent"></div>
+                  <div class="space-y-1">
+                    <div class="flex items-center gap-2">
+                      <div class="text-sm font-semibold text-foreground">{{ collection.name }}</div>
+                      <span class="inline-flex items-center rounded-full border border-border/60 bg-muted/50 px-2 py-0.5 text-[11px] font-medium text-muted-foreground">{{ collection.visibility_label|default:"Private" }}</span>
+                    </div>
+                    <p class="text-xs text-muted-foreground leading-relaxed">{{ collection.description }}</p>
+                  </div>
+                  <div class="mt-3 grid grid-cols-2 gap-2 text-xs text-muted-foreground">
+                    <div class="rounded-md border border-border/60 bg-muted/40 px-3 py-2">
+                      <div class="text-sm font-medium text-foreground">{{ collection.documents|default:0 }}</div>
+                      <div>Documents</div>
+                    </div>
+                    <div class="rounded-md border border-border/60 bg-muted/40 px-3 py-2">
+                      <div class="text-sm font-medium text-foreground">{{ collection.owner|default:"—" }}</div>
+                      <div>Owner</div>
+                    </div>
+                    <div class="rounded-md border border-border/60 bg-muted/40 px-3 py-2">
+                      <div class="text-sm font-medium text-foreground">{{ collection.focus|default:"—" }}</div>
+                      <div>Focus</div>
+                    </div>
+                    <div class="rounded-md border border-border/60 bg-muted/40 px-3 py-2">
+                      <div class="text-sm font-medium text-foreground">{{ collection.updated_at|default:"—" }}</div>
+                      <div>Last update</div>
+                    </div>
+                  </div>
+                </div>
+              {% endfor %}
+            </div>
+          {% else %}
+            <div class="rounded-xl border border-dashed border-border/60 bg-muted/30 p-6 text-sm text-muted-foreground">
+              {{ knowledge_collections_empty_message }}
+            </div>
+          {% endif %}
+        </div>
+      </section>
+    </div>
+  </main>
+</div>
+{% endblock %}

@@ -60,18 +60,25 @@
               {{ link.label }}
             </a>
           {% else %}
-            {% if link.href == "/login" %}
-              <a
-                href="{{ link.href }}"
-                class="inline-flex items-center rounded-lg px-3 py-2 text-sm font-medium text-neutral-600 transition-colors hover:text-primary"
-                data-login-open
-              >
-                {{ link.label }}
-              </a>
+            {% if link.method == "post" %}
+              <form method="post" action="{{ link.href }}" class="inline">
+                {% csrf_token %}
+                {% if link.next %}
+                  <input type="hidden" name="next" value="{{ link.next }}">
+                {% endif %}
+                <button
+                  type="submit"
+                  class="inline-flex items-center rounded-lg px-3 py-2 text-sm font-medium text-neutral-600 transition-colors hover:text-primary"
+                >
+                  {{ link.label }}
+                </button>
+              </form>
             {% else %}
               <a
                 href="{{ link.href }}"
                 class="inline-flex items-center rounded-lg px-3 py-2 text-sm font-medium text-neutral-600 transition-colors hover:text-primary"
+                {% if link.opens_modal %}data-login-open{% endif %}
+                {% if link.next %}data-login-next="{{ link.next }}"{% endif %}
               >
                 {{ link.label }}
               </a>
@@ -150,18 +157,25 @@
                 {{ link.label }}
               </a>
             {% else %}
-              {% if link.href == "/login" %}
-                <a
-                  href="{{ link.href }}"
-                  class="inline-flex items-center justify-start rounded-lg px-3 py-2 text-sm font-medium text-neutral-600 transition-colors hover:text-primary"
-                  data-login-open
-                >
-                  {{ link.label }}
-                </a>
+              {% if link.method == "post" %}
+                <form method="post" action="{{ link.href }}">
+                  {% csrf_token %}
+                  {% if link.next %}
+                    <input type="hidden" name="next" value="{{ link.next }}">
+                  {% endif %}
+                  <button
+                    type="submit"
+                    class="inline-flex w-full items-center justify-start rounded-lg px-3 py-2 text-sm font-medium text-neutral-600 transition-colors hover:text-primary text-left"
+                  >
+                    {{ link.label }}
+                  </button>
+                </form>
               {% else %}
                 <a
                   href="{{ link.href }}"
                   class="inline-flex items-center justify-start rounded-lg px-3 py-2 text-sm font-medium text-neutral-600 transition-colors hover:text-primary"
+                  {% if link.opens_modal %}data-login-open{% endif %}
+                  {% if link.next %}data-login-next="{{ link.next }}"{% endif %}
                 >
                   {{ link.label }}
                 </a>

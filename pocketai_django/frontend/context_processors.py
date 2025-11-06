@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from typing import Any, Dict, List, TypedDict
 
+from django.urls import reverse
+
 
 class NavLink(TypedDict):
     label: str
@@ -13,9 +15,29 @@ class CTALink(TypedDict, total=False):
     label: str
     href: str
     style: str
+    method: str
+    opens_modal: bool
+    next: str
+    display_name: str
 
 
-def site_globals(_request) -> Dict[str, Any]:
+def _user_display_name(request) -> str:
+    user = getattr(request, "user", None)
+    if not user or not getattr(user, "is_authenticated", False):
+        return ""
+    first = (getattr(user, "first_name", "") or "").strip()
+    if first:
+        return first
+    if hasattr(user, "get_short_name"):
+        short = (user.get_short_name() or "").strip()
+        if short:
+            return short
+    if hasattr(user, "get_username"):
+        return user.get_username()
+    return str(user)
+
+
+def site_globals(request) -> Dict[str, Any]:
     """Expose global navigation, footer, and CTA copy."""
 
     nav_links: List[NavLink] = [
@@ -25,11 +47,34 @@ def site_globals(_request) -> Dict[str, Any]:
         {"label": "Contact", "href": "#contact", "external": False},
     ]
 
-    auth_links: List[CTALink] = [
-        {"label": "Sign In", "href": "/login", "style": "ghost"},
-        {"label": "Register", "href": "/register", "style": "ghost"},
-        {"label": "Get Started", "href": "/get-started", "style": "primary"},
-    ]
+    user_display_name = _user_display_name(request)
+    is_authenticated = bool(user_display_name)
+
+    if is_authenticated:
+        nav_links = [
+            {"label": "Dashboard", "href": reverse("frontend:dashboard"), "external": False},
+            *nav_links,
+        ]
+        auth_links: List[CTALink] = [
+            {"label": f"Hi, {user_display_name}", "href": reverse("frontend:dashboard"), "style": "ghost"},
+            {
+                "label": "Log out",
+                "href": reverse("accounts:logout"),
+                "method": "post",
+                "style": "ghost",
+            },
+        ]
+    else:
+        auth_links = [
+            {
+                "label": "Sign In",
+                "href": reverse("accounts:login"),
+                "style": "ghost",
+                "opens_modal": True,
+            },
+            {"label": "Register", "href": reverse("frontend:register"), "style": "ghost"},
+            {"label": "Get Started", "href": reverse("frontend:register"), "style": "primary"},
+        ]
 
     return {
         "site": {

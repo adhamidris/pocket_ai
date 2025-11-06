@@ -595,36 +595,80 @@
           </div>
           <!-- Uploads step -->
           <div data-register-step="uploads" class="hidden animate-panel-in">
-            <form class="space-y-4" novalidate data-uploads-form>
-              <div>
-                <label class="mb-2 block text-sm font-medium text-foreground">
-                  {{ page.uploads.fields.docs.label }}
-                  <span class="text-muted-foreground">{{ page.uploads.fields.docs.optional }}</span>
-                </label>
-                <input
-                  type="file"
-                  multiple
-                  accept=".pdf,.doc,.docx,.txt,.md,.csv,.xls,.xlsx,.ppt,.pptx,.html"
-                  class="block w-full text-sm text-foreground file:mr-4 file:rounded-md file:border-0 file:bg-secondary file:px-3 file:py-2 file:text-sm file:font-medium file:text-secondary-foreground hover:file:bg-secondary/80"
-                  data-uploads-input="files"
-                >
-                <p class="mt-1 hidden text-xs text-muted-foreground">{{ page.uploads.fields.docs.hint }}</p>
-                <p class="mt-1 hidden text-xs text-destructive" data-uploads-error="files"></p>
+            <form
+              class="space-y-4"
+              novalidate
+              data-uploads-form
+              data-count-suffix="{{ page.uploads.count_suffix }}"
+            >
+              <input type="hidden" name="uploadTypes" data-uploads-input="selected-types">
+
+              <div class="rounded-lg border border-border bg-secondary/40 p-3 md:p-4">
+                <div class="text-sm font-medium text-foreground">
+                  {{ page.uploads.materials_card.title }}
+                </div>
+                {% if page.uploads.materials_card.description %}
+                  <p class="mt-1 text-xs text-muted-foreground md:text-sm">
+                    {{ page.uploads.materials_card.description }}
+                  </p>
+                {% endif %}
+                <div class="mt-3 flex flex-wrap gap-2" data-uploads-toggle-group>
+                  {% for material in page.uploads.materials %}
+                    <button
+                      type="button"
+                      class="inline-flex h-8 items-center justify-center rounded-md border px-3 text-sm font-medium transition hover:opacity-90"
+                      data-uploads-material-toggle="{{ material.id }}"
+                      data-uploads-field="{{ material.field }}"
+                      data-uploads-pending-field="{{ material.pending_field }}"
+                      data-active-class="border-primary bg-primary text-primary-foreground"
+                      data-inactive-class="border-border bg-input text-foreground/90"
+                      data-active="false"
+                    >
+                      {{ material.label }}
+                    </button>
+                  {% endfor %}
+                </div>
+                <p class="mt-2 hidden text-xs text-destructive" data-uploads-error="materials">
+                  {{ page.uploads.errors.materials }}
+                </p>
               </div>
 
-              <div>
-                <label class="mb-2 block text-sm font-medium text-foreground">
-                  {{ page.uploads.fields.links.label }}
-                  <span class="text-muted-foreground">{{ page.uploads.fields.links.optional }}</span>
-                </label>
-                <textarea
-                  rows="3"
-                  placeholder="{{ page.uploads.fields.links.placeholder }}"
-                  class="flex w-full rounded-md border-0 bg-input px-3 py-2 text-base text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-0 md:text-sm"
-                  data-uploads-input="links"
-                ></textarea>
-                <p class="mt-1 hidden text-xs text-muted-foreground">{{ page.uploads.fields.links.hint }}</p>
-                <p class="mt-1 hidden text-xs text-destructive" data-uploads-error="links"></p>
+              <div class="space-y-3" data-uploads-materials-container>
+                <div class="rounded-lg border border-dashed border-border bg-background/40 px-6 py-8 text-center text-sm text-muted-foreground" data-uploads-empty>
+                  {{ page.uploads.empty_state }}
+                </div>
+
+                {% for material in page.uploads.materials %}
+                  <div class="hidden space-y-3 rounded-lg border border-border bg-secondary/50 p-3 md:p-4" data-uploads-material-panel="{{ material.id }}">
+                    <div class="flex items-center justify-between gap-2">
+                      <div class="text-sm font-medium text-foreground">{{ material.label }}</div>
+                      <div class="hidden text-xs text-muted-foreground" data-uploads-material-count="{{ material.id }}"></div>
+                    </div>
+                    <div class="flex flex-col gap-2 md:flex-row">
+                      <input
+                        type="url"
+                        class="flex h-10 w-full rounded-md border-0 bg-input px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-0 md:flex-1"
+                        placeholder="{{ material.placeholder }}"
+                        name="{{ material.pending_field }}"
+                        autocomplete="off"
+                        data-uploads-material-input="{{ material.id }}"
+                      >
+                      <button
+                        type="button"
+                        class="flex w-full items-center justify-center gap-2 rounded-md bg-secondary px-3 py-2 text-sm font-medium text-secondary-foreground transition hover:bg-secondary/80 md:w-auto"
+                        data-uploads-material-attach="{{ material.id }}"
+                      >
+                        <span class="inline-flex h-4 w-4 items-center justify-center text-secondary-foreground">
+                          {{ page.uploads.attach_icon|safe }}
+                        </span>
+                        <span>{{ page.uploads.attach_label }}</span>
+                      </button>
+                    </div>
+                    <p class="mt-1 hidden text-xs text-destructive" data-uploads-error="{{ material.id }}"></p>
+                    <div class="flex flex-wrap gap-2" data-uploads-material-list="{{ material.id }}"></div>
+                    <div class="hidden" data-uploads-hidden-inputs="{{ material.id }}"></div>
+                  </div>
+                {% endfor %}
               </div>
 
               <div class="flex items-center justify-between gap-3 pt-2">
@@ -634,6 +678,13 @@
                   data-uploads-back
                 >
                   {{ page.uploads.buttons.back }}
+                </button>
+                <button
+                  type="button"
+                  class="inline-flex h-10 items-center justify-center rounded-md border border-transparent px-4 text-sm font-medium text-muted-foreground transition hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2"
+                  data-uploads-skip
+                >
+                  {{ page.uploads.buttons.skip }}
                 </button>
                 <button
                   type="submit"
@@ -649,19 +700,26 @@
           </div>
 
         </div>
-        <div class="mt-6 text-center text-sm">
-          <span class="text-foreground/80">
-            {{ page.have_account_label }}
-            <a
-              href="/login"
-              class="text-primary hover:underline"
-              data-login-open
-              data-login-trigger-from-register
-            >
-              {{ page.login_label }}
-            </a>
-          </span>
-        </div>
+        {% if request.user.is_authenticated %}
+          <div class="mt-6 text-center text-sm text-foreground/80">
+            You're already signed in.
+            <a href="{% url 'frontend:dashboard' %}" class="text-primary hover:underline">Go to your dashboard</a>
+          </div>
+        {% else %}
+          <div class="mt-6 text-center text-sm">
+            <span class="text-foreground/80">
+              {{ page.have_account_label }}
+              <a
+                href="{% url 'accounts:login' %}"
+                class="text-primary hover:underline"
+                data-login-open
+                data-login-trigger-from-register
+              >
+                {{ page.login_label }}
+              </a>
+            </span>
+          </div>
+        {% endif %}
       </div>
     </div>
   </div>
@@ -677,6 +735,62 @@
     var root = document.querySelector("[data-register-card]");
     if (!root) {
       return;
+    }
+
+    var registrationState = {
+      sessionId: null,
+      userPublicId: null,
+      email: null,
+      businessId: null,
+      agentId: null,
+    };
+
+    function setRegistrationState(nextState) {
+      registrationState = Object.assign(registrationState, nextState || {});
+      if (registrationState.sessionId) {
+        root.setAttribute("data-registration-id", registrationState.sessionId);
+      }
+      if (registrationState.userPublicId) {
+        root.setAttribute("data-user-id", registrationState.userPublicId);
+      }
+      if (registrationState.businessId) {
+        root.setAttribute("data-business-id", registrationState.businessId);
+      }
+      if (registrationState.agentId) {
+        root.setAttribute("data-agent-id", registrationState.agentId);
+      }
+    }
+
+    (function hydrateRegistrationState() {
+      var existingSession = root.getAttribute("data-registration-id");
+      var existingUser = root.getAttribute("data-user-id");
+      var existingBusiness = root.getAttribute("data-business-id");
+      var existingAgent = root.getAttribute("data-agent-id");
+      if (existingSession) {
+        registrationState.sessionId = existingSession;
+      }
+      if (existingUser) {
+        registrationState.userPublicId = existingUser;
+      }
+      if (existingBusiness) {
+        registrationState.businessId = existingBusiness;
+      }
+      if (existingAgent) {
+        registrationState.agentId = existingAgent;
+      }
+    })();
+
+    function getCsrfToken() {
+      var csrfToken = null;
+      var cookies = document.cookie ? document.cookie.split(";") : [];
+      for (var i = 0; i < cookies.length; i += 1) {
+        var cookie = cookies[i].trim();
+        if (cookie.substring(0, 10) === "csrftoken=") {
+          csrfToken = decodeURIComponent(cookie.substring(10));
+          break;
+        }
+      }
+      return csrfToken;
     }
 
     var businessDataScript = document.getElementById("register-business-data");
@@ -931,9 +1045,21 @@
     var uploadsDefaultSubmitLabel = uploadsSubmitBtn ? uploadsSubmitBtn.getAttribute('data-default-label') || '' : '';
     var uploadsLoadingSubmitLabel = uploadsSubmitBtn ? uploadsSubmitBtn.getAttribute('data-loading-label') || '' : '';
     var uploadsBackButton = hasUploadsStep ? uploadsForm.querySelector('[data-uploads-back]') : null;
-    var uploadsFilesInput = hasUploadsStep ? uploadsForm.querySelector('[data-uploads-input="files"]') : null;
-    var uploadsLinksInput = hasUploadsStep ? uploadsForm.querySelector('[data-uploads-input="links"]') : null;
+    var uploadsSkipButton = hasUploadsStep ? uploadsForm.querySelector('[data-uploads-skip]') : null;
+    var uploadsSelectedInput = hasUploadsStep ? uploadsForm.querySelector('[data-uploads-input="selected-types"]') : null;
+    var uploadsToggleButtons = hasUploadsStep ? Array.prototype.slice.call(uploadsForm.querySelectorAll('[data-uploads-material-toggle]')) : [];
+    var uploadsMaterialPanels = hasUploadsStep ? Array.prototype.slice.call(uploadsForm.querySelectorAll('[data-uploads-material-panel]')) : [];
+    var uploadsEmptyState = hasUploadsStep ? uploadsForm.querySelector('[data-uploads-empty]') : null;
+    var uploadsCountSuffix = uploadsForm ? uploadsForm.getAttribute('data-count-suffix') || '' : '';
     var uploadsSubmitting = false;
+    var uploadsInvalidUrlMessage = "{{ page.uploads.errors.invalid_url|default:'Enter a valid URL (https://example.com)'|escapejs }}";
+    var uploadsDuplicateUrlMessage = "{{ page.uploads.errors.duplicate_url|default:'This link is already attached'|escapejs }}";
+    var uploadsMaterialsRequiredMessage = "{{ page.uploads.errors.materials|default:'Select at least one material to continue'|escapejs }}";
+    var uploadsLinksRequiredMessage = "{{ page.uploads.errors.links|default:'Add at least one link for each selected source'|escapejs }}";
+    var uploadsGeneralErrorMessage = "{{ page.uploads.errors.general|default:'We couldn&#39;t save your uploads. Try again.'|escapejs }}";
+    var uploadsDependenciesMessage = "{{ page.uploads.errors.dependencies|default:'Complete the earlier steps before finishing registration.'|escapejs }}";
+    var uploadsMaterialsConfig = {};
+    var uploadsState = { selected: [], values: {} };
 
 
 
@@ -971,12 +1097,234 @@
           : (uploadsDefaultSubmitLabel || uploadsLoadingSubmitLabel);
       }
     }
+    function applyToggleButtonState(button, active) {
+      if (!button) {
+        return;
+      }
+      var activeClasses = (button.getAttribute("data-active-class") || "").split(/\s+/).filter(Boolean);
+      var inactiveClasses = (button.getAttribute("data-inactive-class") || "").split(/\s+/).filter(Boolean);
+      var allClasses = activeClasses.concat(inactiveClasses);
+      allClasses.forEach(function (cls) {
+        if (cls) {
+          button.classList.remove(cls);
+        }
+      });
+      var target = active ? activeClasses : inactiveClasses;
+      target.forEach(function (cls) {
+        if (cls) {
+          button.classList.add(cls);
+        }
+      });
+      button.setAttribute("data-active", active ? "true" : "false");
+    }
 
-    function parseLinksTextarea(value) {
-      return (value || '')
-        .split(/\r?\n|,|\s+/)
-        .map(function (v) { return v.trim(); })
-        .filter(Boolean);
+    function ensureUploadsStateArray(id) {
+      if (!uploadsState.values[id]) {
+        uploadsState.values[id] = [];
+      }
+      return uploadsState.values[id];
+    }
+
+    function updateUploadsSelectedInput() {
+      if (!uploadsSelectedInput) {
+        return;
+      }
+      if (uploadsState.selected.length) {
+        uploadsSelectedInput.value = JSON.stringify(uploadsState.selected);
+      } else {
+        uploadsSelectedInput.value = "";
+      }
+    }
+
+    function updateUploadsSelection() {
+      if (!hasUploadsStep) {
+        return;
+      }
+      var activeMap = {};
+      uploadsState.selected.forEach(function (id) {
+        if (id) {
+          activeMap[id] = true;
+        }
+      });
+      uploadsToggleButtons.forEach(function (button) {
+        var id = button.getAttribute("data-uploads-material-toggle") || "";
+        var isActive = Boolean(activeMap[id]);
+        applyToggleButtonState(button, isActive);
+      });
+      uploadsMaterialPanels.forEach(function (panel) {
+        var id = panel.getAttribute("data-uploads-material-panel") || "";
+        if (activeMap[id]) {
+          panel.classList.remove("hidden");
+        } else {
+          panel.classList.add("hidden");
+        }
+      });
+      if (uploadsEmptyState) {
+        if (uploadsState.selected.length === 0) {
+          uploadsEmptyState.classList.remove("hidden");
+        } else {
+          uploadsEmptyState.classList.add("hidden");
+        }
+      }
+      updateUploadsSelectedInput();
+    }
+
+    function syncUploadsMaterial(id) {
+      if (!hasUploadsStep) {
+        return;
+      }
+      var cfg = uploadsMaterialsConfig[id];
+      if (!cfg) {
+        return;
+      }
+      var list = ensureUploadsStateArray(id);
+      if (cfg.list) {
+        cfg.list.innerHTML = "";
+        list.forEach(function (url) {
+          var badge = document.createElement("span");
+          badge.className = "inline-flex items-center gap-2 rounded-md border border-border bg-input px-2.5 py-1 text-xs";
+          var text = document.createElement("span");
+          text.className = "max-w-[16rem] truncate";
+          text.textContent = url;
+          badge.appendChild(text);
+          var remove = document.createElement("button");
+          remove.type = "button";
+          remove.className = "text-muted-foreground transition hover:text-foreground";
+          remove.setAttribute("data-uploads-remove", id);
+          remove.setAttribute("data-value", url);
+          remove.textContent = "×";
+          badge.appendChild(remove);
+          cfg.list.appendChild(badge);
+        });
+      }
+      if (cfg.hidden) {
+        cfg.hidden.innerHTML = "";
+        if (cfg.fieldName) {
+          list.forEach(function (url) {
+            var hidden = document.createElement("input");
+            hidden.type = "hidden";
+            hidden.name = cfg.fieldName + "[]";
+            hidden.value = url;
+            hidden.setAttribute("data-uploads-hidden-value", url);
+            cfg.hidden.appendChild(hidden);
+          });
+        }
+      }
+      if (cfg.count) {
+        if (list.length) {
+          var suffix = uploadsCountSuffix || "added";
+          cfg.count.textContent = list.length + " " + suffix;
+          cfg.count.classList.remove("hidden");
+        } else {
+          cfg.count.textContent = "";
+          cfg.count.classList.add("hidden");
+        }
+      }
+    }
+
+    function addUploadsLink(id, rawValue) {
+      var trimmedId = (id || "").trim();
+      if (!trimmedId) {
+        return false;
+      }
+      var value = (rawValue || "").trim();
+      if (!value) {
+        return false;
+      }
+      if (!isValidUrl(value)) {
+        setUploadsError(trimmedId, uploadsInvalidUrlMessage);
+        return false;
+      }
+      var list = ensureUploadsStateArray(trimmedId);
+      if (list.indexOf(value) !== -1) {
+        setUploadsError(trimmedId, uploadsDuplicateUrlMessage);
+        return false;
+      }
+      list.push(value);
+      setUploadsError(trimmedId, "");
+      syncUploadsMaterial(trimmedId);
+      return true;
+    }
+
+    function removeUploadsLink(id, rawValue) {
+      var trimmedId = (id || "").trim();
+      if (!trimmedId) {
+        return;
+      }
+      var value = (rawValue || "").trim();
+      if (!value) {
+        return;
+      }
+      var list = ensureUploadsStateArray(trimmedId);
+      var next = list.filter(function (item) {
+        return item !== value;
+      });
+      if (next.length !== list.length) {
+        uploadsState.values[trimmedId] = next;
+        syncUploadsMaterial(trimmedId);
+      }
+    }
+
+    function toggleUploadsMaterial(id) {
+      var trimmedId = (id || "").trim();
+      if (!trimmedId) {
+        return;
+      }
+      var selected = uploadsState.selected.slice();
+      var index = selected.indexOf(trimmedId);
+      if (index === -1) {
+        selected.push(trimmedId);
+        uploadsState.selected = selected;
+        setUploadsError("materials", "");
+      } else {
+        selected.splice(index, 1);
+        uploadsState.selected = selected;
+        uploadsState.values[trimmedId] = [];
+        syncUploadsMaterial(trimmedId);
+        setUploadsError(trimmedId, "");
+      }
+      updateUploadsSelection();
+    }
+
+    function buildUploadsLinks() {
+      var output = {};
+      Object.keys(uploadsState.values).forEach(function (key) {
+        var list = uploadsState.values[key];
+        if (Array.isArray(list) && list.length) {
+          output[key] = list.slice();
+        }
+      });
+      return output;
+    }
+
+    function createUploadsPayload(overrides) {
+      var options = overrides || {};
+      return {
+        files: [],
+        links: options.links !== undefined ? options.links : buildUploadsLinks(),
+        selected: options.selected !== undefined ? options.selected : uploadsState.selected.slice(),
+        skip: Boolean(options.skip),
+        step: "uploads",
+        valid: options.valid !== undefined ? options.valid : true,
+        errors: options.errors || {},
+        advanceToStep: advanceToStep,
+        resolve: function (nextOptions) {
+          var next = nextOptions && nextOptions.step ? nextOptions.step : null;
+          var redirectTarget = (nextOptions && nextOptions.redirectUrl) || "{{ page.uploads.redirect_after|default:'/dashboard/' }}";
+          if (next) {
+            advanceToStep(next);
+          } else if (redirectTarget) {
+            window.location.href = redirectTarget;
+          }
+          setUploadsSubmitting(false);
+        },
+        reject: function (fieldKey, message) {
+          if (fieldKey && message) {
+            setUploadsError(fieldKey, message);
+          }
+          setUploadsSubmitting(false);
+        },
+      };
     }
 
     function isValidUrl(u) {
@@ -984,33 +1332,47 @@
     }
 
     function validateUploadsForm() {
-      if (!hasUploadsStep) return { valid: true, errors: {}, firstInvalid: null };
+      var result = {
+        valid: true,
+        errors: {},
+        firstInvalid: null,
+      };
+      if (!hasUploadsStep) {
+        return result;
+      }
+
       clearUploadsErrors();
 
-      var result = { valid: true, errors: {}, firstInvalid: null };
-
-      var filesCount = (uploadsFilesInput && uploadsFilesInput.files) ? uploadsFilesInput.files.length : 0;
-      var links = parseLinksTextarea(uploadsLinksInput ? uploadsLinksInput.value : '');
-      var badLink = links.find(function (l) { return !isValidUrl(l); });
-
-      // soft rules: allow empty; only flag if provided but invalid
-      if (links.length && badLink) {
-        var msg = "{{ page.uploads.fields.links.error_invalid|default:'One or more links are invalid'|escapejs }}";
+      if (!uploadsState.selected.length) {
+        var materialsMessage = uploadsMaterialsRequiredMessage || "Select at least one material to continue";
         result.valid = false;
-        result.errors.links = msg;
-        setUploadsError('links', msg);
-        result.firstInvalid = result.firstInvalid || uploadsLinksInput;
+        result.errors.materials = materialsMessage;
+        setUploadsError("materials", materialsMessage);
+        if (uploadsToggleButtons.length) {
+          result.firstInvalid = uploadsToggleButtons[0];
+        } else {
+          result.firstInvalid = uploadsSubmitBtn || uploadsForm;
+        }
+        return result;
       }
 
-      // optional: max files
-      var MAX_FILES = 20;
-      if (filesCount > MAX_FILES) {
-        var msgF = "{{ page.uploads.fields.docs.error_too_many|default:'Too many files selected'|escapejs }}";
-        result.valid = false;
-        result.errors.files = msgF;
-        setUploadsError('files', msgF + " (" + filesCount + "/" + MAX_FILES + ")");
-        result.firstInvalid = result.firstInvalid || uploadsFilesInput;
-      }
+      uploadsState.selected.forEach(function (id) {
+        var values = ensureUploadsStateArray(id);
+        if (!Array.isArray(values) || !values.length) {
+          var linkMessage = uploadsLinksRequiredMessage || "Add at least one link for each selected source";
+          result.valid = false;
+          result.errors[id] = linkMessage;
+          setUploadsError(id, linkMessage);
+          if (!result.firstInvalid) {
+            var cfg = uploadsMaterialsConfig[id];
+            if (cfg && cfg.input) {
+              result.firstInvalid = cfg.input;
+            } else if (cfg && cfg.button) {
+              result.firstInvalid = cfg.button;
+            }
+          }
+        }
+      });
 
       return result;
     }
@@ -2037,61 +2399,167 @@
     }
 
     if (hasUploadsStep && uploadsForm) {
+      uploadsToggleButtons.forEach(function (button) {
+        var id = button.getAttribute("data-uploads-material-toggle") || "";
+        if (!id) {
+          return;
+        }
+        var cfg = uploadsMaterialsConfig[id] || (uploadsMaterialsConfig[id] = { id: id });
+        cfg.button = button;
+        cfg.fieldName = button.getAttribute("data-uploads-field") || "";
+        cfg.pendingFieldName = button.getAttribute("data-uploads-pending-field") || "";
+        ensureUploadsStateArray(id);
+      });
+
+      uploadsMaterialPanels.forEach(function (panel) {
+        var id = panel.getAttribute("data-uploads-material-panel") || "";
+        if (!id) {
+          return;
+        }
+        var cfg = uploadsMaterialsConfig[id] || (uploadsMaterialsConfig[id] = { id: id });
+        cfg.panel = panel;
+        cfg.input = panel.querySelector('[data-uploads-material-input="' + id + '"]');
+        cfg.attachButton = panel.querySelector('[data-uploads-material-attach="' + id + '"]');
+        cfg.list = panel.querySelector('[data-uploads-material-list="' + id + '"]');
+        cfg.hidden = panel.querySelector('[data-uploads-hidden-inputs="' + id + '"]');
+        cfg.count = panel.querySelector('[data-uploads-material-count="' + id + '"]');
+        ensureUploadsStateArray(id);
+        if (cfg.hidden) {
+          var existingHidden = Array.prototype.slice.call(cfg.hidden.querySelectorAll('input[type="hidden"]'));
+          if (existingHidden.length) {
+            var values = [];
+            existingHidden.forEach(function (input) {
+              var value = (input.value || "").trim();
+              if (value && values.indexOf(value) === -1) {
+                values.push(value);
+              }
+            });
+            if (values.length) {
+              uploadsState.values[id] = values;
+              if (uploadsState.selected.indexOf(id) === -1) {
+                uploadsState.selected.push(id);
+              }
+            }
+          }
+        }
+      });
+
+      if (uploadsSelectedInput && uploadsSelectedInput.value) {
+        try {
+          var parsedSelected = JSON.parse(uploadsSelectedInput.value);
+          if (Array.isArray(parsedSelected)) {
+            parsedSelected.forEach(function (item) {
+              if (typeof item === "string") {
+                var trimmed = item.trim();
+                if (trimmed.length && uploadsState.selected.indexOf(trimmed) === -1) {
+                  uploadsState.selected.push(trimmed);
+                }
+              }
+            });
+          }
+        } catch (_err) {
+          // ignore malformed persisted selection
+        }
+      }
+
+      var uniqueSelected = [];
+      uploadsState.selected.forEach(function (item) {
+        if (typeof item !== "string") {
+          return;
+        }
+        var trimmed = item.trim();
+        if (!trimmed.length) {
+          return;
+        }
+        if (uniqueSelected.indexOf(trimmed) === -1) {
+          uniqueSelected.push(trimmed);
+        }
+      });
+      uploadsState.selected = uniqueSelected;
+
+      updateUploadsSelection();
+      Object.keys(uploadsMaterialsConfig).forEach(function (id) {
+        syncUploadsMaterial(id);
+        var cfg = uploadsMaterialsConfig[id];
+        if (!cfg) {
+          return;
+        }
+        if (cfg.attachButton) {
+          cfg.attachButton.addEventListener("click", function (event) {
+            event.preventDefault();
+            if (!cfg.input) {
+              return;
+            }
+            var added = addUploadsLink(id, cfg.input.value);
+            if (added) {
+              cfg.input.value = "";
+            }
+            cfg.input.focus();
+          });
+        }
+        if (cfg.input) {
+          cfg.input.addEventListener("keydown", function (event) {
+            if (event.key === "Enter") {
+              event.preventDefault();
+              var added = addUploadsLink(id, cfg.input.value);
+              if (added) {
+                cfg.input.value = "";
+              }
+            }
+          });
+          cfg.input.addEventListener("input", function () {
+            setUploadsError(id, "");
+          });
+        }
+        if (cfg.list) {
+          cfg.list.addEventListener("click", function (event) {
+            var target = event.target;
+            if (!target) {
+              return;
+            }
+            if (target.getAttribute("data-uploads-remove") === id) {
+              event.preventDefault();
+              var value = target.getAttribute("data-value") || "";
+              removeUploadsLink(id, value);
+            }
+          });
+        }
+      });
+
+      uploadsToggleButtons.forEach(function (button) {
+        button.addEventListener("click", function (event) {
+          event.preventDefault();
+          var id = button.getAttribute("data-uploads-material-toggle") || "";
+          toggleUploadsMaterial(id);
+        });
+      });
+
       if (uploadsBackButton) {
-        uploadsBackButton.addEventListener('click', function () {
-          advanceToStep('agent');
+        uploadsBackButton.addEventListener("click", function () {
+          advanceToStep("agent");
         });
       }
 
-      uploadsForm.addEventListener('submit', function (event) {
+      uploadsForm.addEventListener("submit", function (event) {
         event.preventDefault();
         if (uploadsSubmitting) return;
 
         var validation = validateUploadsForm();
-        if (!validation.valid && validation.firstInvalid && typeof validation.firstInvalid.focus === 'function') {
+        if (!validation.valid && validation.firstInvalid && typeof validation.firstInvalid.focus === "function") {
           validation.firstInvalid.focus();
         }
 
         setUploadsSubmitting(true);
 
-        // collect links now; collect files names for payload (binary handling left to host app)
-        var links = parseLinksTextarea(uploadsLinksInput ? uploadsLinksInput.value : '');
-        var filesList = [];
-        if (uploadsFilesInput && uploadsFilesInput.files && uploadsFilesInput.files.length) {
-          for (var i = 0; i < uploadsFilesInput.files.length; i += 1) {
-            filesList.push(uploadsFilesInput.files[i].name);
-          }
-        }
-
-        var payload = {
-          files: filesList,
-          // NOTE: real upload of File objects (FormData) should be done by the handler catching this event.
-          links: links,
-          step: 'uploads',
+        var linksMap = buildUploadsLinks();
+        var payload = createUploadsPayload({
+          links: linksMap,
+          selected: uploadsState.selected.slice(),
           valid: validation.valid,
           errors: validation.errors,
-          advanceToStep: advanceToStep,
-          resolve: function (options) {
-            // by default, finish → redirect or show success
-            var next = options && options.step ? options.step : null;
-            if (next) {
-              advanceToStep(next);
-            } else {
-              // default: go to a success state or redirect; here we fallback to the business step to ensure UX continuity,
-              // but ideally this would navigate to a dashboard.
-              window.location.href = "{{ page.uploads.redirect_after|default:'/app' }}";
-            }
-            setUploadsSubmitting(false);
-          },
-          reject: function (fieldKey, message) {
-            if (fieldKey && message) {
-              setUploadsError(fieldKey, message);
-            }
-            setUploadsSubmitting(false);
-          },
-        };
+        });
 
-        var uploadsSubmitEvent = new CustomEvent('registerstep4:submit', {
+        var uploadsSubmitEvent = new CustomEvent("registerstep4:submit", {
           detail: payload,
           cancelable: true,
         });
@@ -2099,14 +2567,125 @@
         var prevented = !uploadsForm.dispatchEvent(uploadsSubmitEvent);
 
         if (!prevented) {
-          // default happy path (no external handler): just resolve after a short delay
           window.setTimeout(function () {
             payload.resolve();
           }, 400);
         } else {
-          // If prevented, let the external handler call resolve/reject
           setUploadsSubmitting(false);
         }
+      });
+
+      if (uploadsSkipButton) {
+        uploadsSkipButton.addEventListener("click", function (event) {
+          event.preventDefault();
+          if (uploadsSubmitting) return;
+
+          clearUploadsErrors();
+          setUploadsSubmitting(true);
+
+          var payload = createUploadsPayload({
+            skip: true,
+            links: {},
+            selected: [],
+            valid: true,
+            errors: {},
+          });
+
+          var skipEvent = new CustomEvent("registerstep4:submit", {
+            detail: payload,
+            cancelable: true,
+          });
+
+          var prevented = !uploadsForm.dispatchEvent(skipEvent);
+
+          if (!prevented) {
+            window.setTimeout(function () {
+              payload.resolve();
+            }, 400);
+          } else {
+            setUploadsSubmitting(false);
+          }
+        });
+      }
+
+      uploadsForm.addEventListener("registerstep4:submit", function (event) {
+        var detail = event.detail;
+        if (!detail) {
+          return;
+        }
+        event.preventDefault();
+
+        var isSkip = detail.skip === true;
+
+        if (!detail.valid && !isSkip) {
+          if (typeof detail.reject === "function") {
+            detail.reject("materials", uploadsMaterialsRequiredMessage || "Fix the highlighted fields before continuing.");
+          }
+          return;
+        }
+
+        if (!registrationState.businessId) {
+          if (typeof detail.reject === "function") {
+            detail.reject("materials", uploadsDependenciesMessage || "Complete the earlier steps before finishing registration.");
+          }
+          return;
+        }
+
+        var headers = { "Content-Type": "application/json" };
+        var csrfToken = getCsrfToken();
+        if (csrfToken) {
+          headers["X-CSRFToken"] = csrfToken;
+        }
+
+        var requestBody = {
+          selected: Array.isArray(detail.selected) ? detail.selected : [],
+          links: detail.links && typeof detail.links === "object" ? detail.links : {},
+          skip: isSkip,
+        };
+
+        fetch("/api/register/businesses/" + registrationState.businessId + "/uploads/", {
+          method: "PUT",
+          headers: headers,
+          body: JSON.stringify(requestBody),
+          credentials: "same-origin",
+        })
+          .then(function (response) {
+            if (response.ok) {
+              return response.json();
+            }
+            return response
+              .json()
+              .catch(function () {
+                return null;
+              })
+              .then(function (data) {
+                var message = (data && data.message) || uploadsGeneralErrorMessage || "We couldn't save your uploads. Try again.";
+                var fieldKey = data && data.field ? data.field : "materials";
+                detail.reject(fieldKey, message);
+                throw new Error("uploads_failed");
+              });
+          })
+          .then(function (data) {
+            if (!data) {
+              return;
+            }
+            var nextState = { uploadsCompleted: true };
+            if (data.session && data.session.id) {
+              nextState.sessionId = data.session.id;
+            }
+            if (data.business && data.business.id) {
+              nextState.businessId = data.business.id;
+            }
+            setRegistrationState(nextState);
+            var redirectTarget = data.redirectUrl || "{{ page.uploads.redirect_after|default:'/dashboard/' }}";
+            detail.resolve({ redirectUrl: redirectTarget });
+          })
+          .catch(function (error) {
+            if (error && error.message === "uploads_failed") {
+              return;
+            }
+            detail.reject("materials", uploadsGeneralErrorMessage || "We couldn't save your uploads. Try again.");
+          });
       });
     }
 
@@ -2223,8 +2802,12 @@
         }
 
         var validation = validateAgentForm();
-        if (!validation.valid && validation.firstInvalid && typeof validation.firstInvalid.focus === "function") {
-          validation.firstInvalid.focus();
+        if (!validation.valid) {
+          if (validation.firstInvalid && typeof validation.firstInvalid.focus === "function") {
+            validation.firstInvalid.focus();
+          }
+          setAgentSubmitting(false);
+          return;
         }
 
         setAgentSubmitting(true);
@@ -2268,6 +2851,81 @@
             payload.resolve();
           }, 400);
         }
+      });
+
+      agentForm.addEventListener("registerstep3:submit", function (event) {
+        var detail = event.detail;
+        if (!detail) {
+          return;
+        }
+        event.preventDefault();
+
+        if (!detail.valid) {
+          if (typeof detail.reject === "function") {
+            detail.reject("agentName", "Fix the errors before continuing.");
+          }
+          return;
+        }
+
+        if (!registrationState.businessId) {
+          detail.reject("agentName", "Complete your business details first.");
+          return;
+        }
+
+        var headers = { "Content-Type": "application/json" };
+        var csrfToken = getCsrfToken();
+        if (csrfToken) {
+          headers["X-CSRFToken"] = csrfToken;
+        }
+
+        var requestBody = {
+          agentName: detail.agentName || "",
+          agentTitle: detail.agentTitle || "",
+          agentTone: detail.agentTone || "",
+          agentTraits: Array.isArray(detail.agentTraits) ? detail.agentTraits : [],
+          agentEscalation: detail.agentEscalation || "",
+        };
+
+        fetch("/api/register/businesses/" + registrationState.businessId + "/agent/", {
+          method: "PUT",
+          headers: headers,
+          body: JSON.stringify(requestBody),
+          credentials: "same-origin",
+        })
+          .then(function (response) {
+            if (response.ok) {
+              return response.json();
+            }
+            return response
+              .json()
+              .catch(function () {
+                return null;
+              })
+              .then(function (data) {
+                var message = (data && data.message) || "We couldn't save your agent configuration. Try again.";
+                var fieldKey = data && data.field ? data.field : "agentName";
+                detail.reject(fieldKey, message);
+                throw new Error("agent_profile_failed");
+              });
+          })
+          .then(function (data) {
+            if (!data) {
+              return;
+            }
+            if (data.agent && data.agent.id) {
+              setRegistrationState({ agentId: data.agent.id });
+            }
+            detail.resolve({ step: data.nextStep || "uploads" });
+          })
+          .catch(function (error) {
+            if (error && error.message === "agent_profile_failed") {
+              return;
+            }
+            detail.reject(
+              "agentName",
+              "Unable to connect. Please check your internet connection and try again."
+            );
+          });
       });
     }
 
@@ -2360,13 +3018,29 @@
       }
       if (inputEmail) {
         var emailValue = (inputEmail.value || "").trim();
-        var emailPattern = /^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$/;
-        if (!emailPattern.test(emailValue)) {
+        inputEmail.value = emailValue;
+        if (typeof inputEmail.setCustomValidity === "function") {
+          inputEmail.setCustomValidity("");
+        }
+        var emailIsValid = true;
+        if (!emailValue.length) {
+          emailIsValid = false;
+        } else if (typeof inputEmail.checkValidity === "function") {
+          emailIsValid = inputEmail.checkValidity();
+        } else {
+          emailIsValid = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(emailValue);
+        }
+        if (!emailIsValid) {
           var msgEmail = inputEmail.getAttribute("data-error-message") || "{{ page.fields.email.error_invalid }}";
           result.valid = false;
           result.errors.email = msgEmail;
           result.firstInvalid = result.firstInvalid || inputEmail;
           setError("email", msgEmail);
+          if (typeof inputEmail.setCustomValidity === "function") {
+            inputEmail.setCustomValidity(msgEmail);
+          }
+        } else if (typeof inputEmail.setCustomValidity === "function") {
+          inputEmail.setCustomValidity("");
         }
       }
       if (inputPassword) {
@@ -2435,6 +3109,10 @@
       if (!validation.valid && validation.firstInvalid && typeof validation.firstInvalid.focus === "function") {
         validation.firstInvalid.focus();
       }
+      if (!validation.valid) {
+        setSubmitting(false);
+        return;
+      }
 
       setSubmitting(true);
 
@@ -2477,6 +3155,81 @@
       }
     });
 
+    form.addEventListener("registerstep1:submit", function (event) {
+      var detail = event.detail;
+      if (!detail || !detail.valid) {
+        return;
+      }
+      event.preventDefault();
+
+      var headers = { "Content-Type": "application/json" };
+      var csrfToken = getCsrfToken();
+      if (csrfToken) {
+        headers["X-CSRFToken"] = csrfToken;
+      }
+
+      var requestBody = {
+        firstName: detail.firstName || "",
+        email: detail.email || "",
+        password: detail.password || "",
+        confirmPassword: detail.confirmPassword || "",
+      };
+
+      fetch("/api/register/sessions/", {
+        method: "POST",
+        headers: headers,
+        body: JSON.stringify(requestBody),
+        credentials: "same-origin",
+      })
+        .then(function (response) {
+          if (response.ok) {
+            return response.json();
+          }
+          return response
+            .json()
+            .catch(function () {
+              return null;
+            })
+            .then(function (data) {
+              var errorField = data && data.field ? data.field : null;
+              var message = null;
+              if (data) {
+                if (data.message) {
+                  message = data.message;
+                } else if (data.errors) {
+                  var keys = Object.keys(data.errors);
+                  if (keys.length) {
+                    errorField = errorField || keys[0];
+                    message = data.errors[keys[0]];
+                  }
+                }
+              }
+              if (!message) {
+                message = "We couldn't create your account. Try again in a moment.";
+              }
+              detail.reject(errorField || "email", message);
+              throw new Error("registration_failed");
+            });
+        })
+        .then(function (data) {
+          if (!data) {
+            return;
+          }
+          setRegistrationState({
+            sessionId: data.registrationId || null,
+            userPublicId: data.user && data.user.id ? data.user.id : null,
+            email: data.user && data.user.email ? data.user.email : requestBody.email,
+          });
+          detail.resolve({ step: data.nextStep || "business" });
+        })
+        .catch(function (error) {
+          if (error && error.message === "registration_failed") {
+            return;
+          }
+          detail.reject("email", "Unable to connect. Please check your internet connection and try again.");
+        });
+    });
+
     if (hasBusinessStep && businessForm) {
       businessForm.addEventListener("submit", function (event) {
         event.preventDefault();
@@ -2485,8 +3238,12 @@
         }
 
         var validation = validateBusinessForm();
-        if (!validation.valid && validation.firstInvalid && typeof validation.firstInvalid.focus === "function") {
-          validation.firstInvalid.focus();
+        if (!validation.valid) {
+          if (validation.firstInvalid && typeof validation.firstInvalid.focus === "function") {
+            validation.firstInvalid.focus();
+          }
+          setBusinessSubmitting(false);
+          return;
         }
 
         setBusinessSubmitting(true);
@@ -2532,7 +3289,84 @@
           }, 400);
         }
       });
+
+      businessForm.addEventListener("registerstep2:submit", function (event) {
+        var detail = event.detail;
+        if (!detail || !detail.valid) {
+          return;
+        }
+        event.preventDefault();
+
+        if (!registrationState.sessionId) {
+          detail.reject("businessName", "Please complete the first step before continuing.");
+          return;
+        }
+
+        var headers = { "Content-Type": "application/json" };
+        var csrfToken = getCsrfToken();
+        if (csrfToken) {
+          headers["X-CSRFToken"] = csrfToken;
+        }
+
+        var industryKey = typeof mapIndustryToKey === "function" ? mapIndustryToKey(detail.industry || "") : "";
+        var requestBody = {
+          businessName: detail.businessName || "",
+          industry: detail.industry || "",
+          industryKey: industryKey,
+          lineOfBusiness: Array.isArray(detail.lineOfBusiness) ? detail.lineOfBusiness : [],
+          lineOfBusinessCustom: Array.isArray(detail.lineOfBusinessCustom) ? detail.lineOfBusinessCustom : [],
+          country: detail.country || "",
+          website: detail.website || "",
+        };
+
+        fetch("/api/register/sessions/" + registrationState.sessionId + "/business/", {
+          method: "PUT",
+          headers: headers,
+          body: JSON.stringify(requestBody),
+          credentials: "same-origin",
+        })
+          .then(function (response) {
+            if (response.ok) {
+              return response.json();
+            }
+            return response
+              .json()
+              .catch(function () {
+                return null;
+              })
+              .then(function (data) {
+                var message = (data && data.message) || "We couldn't save your business profile. Try again.";
+                var fieldKey = data && data.field ? data.field : "businessName";
+                detail.reject(fieldKey, message);
+                throw new Error("business_profile_failed");
+              });
+          })
+          .then(function (data) {
+            if (!data) {
+              return;
+            }
+            if (data.business && data.business.id) {
+              setRegistrationState({ businessId: data.business.id, agentId: null });
+            }
+            if (data.business && data.business.lineOfBusiness) {
+              businessState.lineOfBusiness = Array.isArray(data.business.lineOfBusiness) ? data.business.lineOfBusiness.slice() : [];
+            }
+            if (data.business && data.business.country !== undefined) {
+              businessState.country = data.business.country || "";
+            }
+            detail.resolve({ step: data.nextStep || "agent" });
+          })
+          .catch(function (error) {
+            if (error && error.message === "business_profile_failed") {
+              return;
+            }
+            detail.reject(
+              "businessName",
+              "Unable to connect. Please check your internet connection and try again."
+            );
+          });
+      });
     }
   });
-</script>
-{% endblock %}
+  </script>
+  {% endblock %}

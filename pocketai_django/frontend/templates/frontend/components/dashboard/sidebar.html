@@ -1,0 +1,219 @@
+{% load static %}
+<aside class="hidden md:flex w-56 shrink-0 border-r border-border/70 bg-card/60 backdrop-blur-sm min-h-screen sticky top-0 sidebar-card-chrome">
+  <div class="flex flex-col w-full p-3 gap-2">
+    <div class="px-2 py-3 text-lg font-semibold">
+      Dashboard <span class="text-xs align-top text-muted-foreground">v0.1</span>
+    </div>
+    <nav class="mt-1 flex-1 space-y-1">
+      <a
+        href="{% url 'frontend:dashboard' %}"
+        class="w-full block text-left px-3 py-2 rounded-md text-sm flex items-center justify-between {% if active == 'home' %}bg-primary/10 text-primary{% else %}hover:bg-muted/60{% endif %}"
+      >
+        <span>Home</span>
+      </a>
+      <a
+        href="{% url 'frontend:dashboard-cases' %}"
+        class="w-full block text-left px-3 py-2 rounded-md text-sm flex items-center justify-between {% if active == 'cases' %}bg-primary/10 text-primary{% else %}hover:bg-muted/60{% endif %}"
+      >
+        <span>Cases</span>
+      </a>
+      <a
+        href="{% url 'frontend:dashboard-leads' %}"
+        class="w-full block text-left px-3 py-2 rounded-md text-sm flex items-center justify-between {% if active == 'leads' %}bg-primary/10 text-primary{% else %}hover:bg-muted/60{% endif %}"
+      >
+        <span>Leads</span>
+      </a>
+      <a
+        href="{% url 'frontend:dashboard-customers' %}"
+        class="w-full block text-left px-3 py-2 rounded-md text-sm flex items-center justify-between {% if active == 'customers' %}bg-primary/10 text-primary{% else %}hover:bg-muted/60{% endif %}"
+      >
+        <span>Customers</span>
+      </a>
+      <a
+        href="{% url 'frontend:dashboard-agents' %}"
+        class="w-full block text-left px-3 py-2 rounded-md text-sm flex items-center justify-between {% if active == 'agents' %}bg-primary/10 text-primary{% else %}hover:bg-muted/60{% endif %}"
+      >
+        <span>Agents</span>
+      </a>
+      <a
+        href="{% url 'frontend:dashboard-knowledge' %}"
+        class="w-full block text-left px-3 py-2 rounded-md text-sm flex items-center justify-between {% if active == 'knowledge' %}bg-primary/10 text-primary{% else %}hover:bg-muted/60{% endif %}"
+      >
+        <span>Knowledge</span>
+      </a>
+    </nav>
+    <div class="mt-auto rounded-xl p-3 bg-gradient-to-br from-primary/20 via-primary/10 to-primary/5">
+      <div class="text-sm font-semibold">Upgrade to PRO</div>
+      <div class="text-xs text-muted-foreground mb-2">Get access to all features</div>
+      <button type="button" class="inline-flex items-center justify-center rounded-full bg-gradient-primary text-white text-xs font-medium px-3 py-2 hover:opacity-90 transition-opacity">
+        Get Pro Now!
+      </button>
+    </div>
+    <button
+      type="button"
+      class="group flex items-center gap-2 px-2 py-3 mt-1 rounded-md transition-colors hover:bg-muted/70 focus:outline-none focus:ring-2 focus:ring-primary/40 focus:ring-offset-2 focus:ring-offset-card"
+      data-dashboard-account-trigger
+      aria-haspopup="dialog"
+      aria-expanded="false"
+    >
+      <div class="h-8 w-8 rounded-full bg-gradient-to-br from-primary/40 to-primary/20 flex items-center justify-center text-xs font-semibold text-primary-foreground uppercase">
+        {% if user_name %}
+          {{ user_name|slice:":2" }}
+        {% else %}
+          <span class="inline-flex h-4 w-4 rounded bg-muted/70 animate-pulse" aria-hidden="true"></span>
+        {% endif %}
+      </div>
+      <div class="flex-1 text-left">
+        <div class="text-sm font-medium">
+          {% if user_name %}
+            {{ user_name }}
+          {% else %}
+            <span class="inline-flex h-4 w-20 rounded bg-muted/70 animate-pulse" aria-hidden="true"></span>
+          {% endif %}
+        </div>
+        <div class="text-xs text-muted-foreground">
+          Manage account
+        </div>
+      </div>
+      <svg class="h-4 w-4 text-muted-foreground transition-transform group-data-[open=true]:rotate-180" data-dashboard-account-caret xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 20 20" stroke-width="1.5" stroke="currentColor">
+        <path stroke-linecap="round" stroke-linejoin="round" d="m6 8 4 4 4-4" />
+      </svg>
+    </button>
+  </div>
+</aside>
+<div
+  class="hidden"
+  data-dashboard-account-modal
+  data-state="closed"
+  aria-hidden="true"
+>
+  <div
+    class="fixed inset-0 z-40 bg-black/60 backdrop-blur-sm transition-opacity"
+    data-dashboard-account-overlay
+  ></div>
+  <div
+    class="fixed inset-x-4 bottom-6 z-50 mx-auto max-w-xs rounded-xl border border-border/60 bg-card p-4 shadow-lg sm:inset-auto sm:right-6 sm:top-auto sm:bottom-6 sm:w-64"
+    role="dialog"
+    aria-modal="true"
+    aria-labelledby="dashboard-account-modal-title"
+    data-dashboard-account-content
+    tabindex="-1"
+  >
+    <div class="flex items-center justify-between gap-3">
+      <div>
+        <h2 id="dashboard-account-modal-title" class="text-sm font-semibold text-foreground">Account</h2>
+        <p class="text-xs text-muted-foreground">Manage your Pocket AI workspace</p>
+      </div>
+      <button
+        type="button"
+        class="rounded-md p-1 text-muted-foreground transition hover:text-foreground focus:outline-none focus:ring-2 focus:ring-primary/40"
+        data-dashboard-account-dismiss
+        aria-label="Close account menu"
+      >
+        <svg class="h-4 w-4" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor">
+          <path stroke-linecap="round" stroke-linejoin="round" d="M6 18 18 6M6 6l12 12" />
+        </svg>
+      </button>
+    </div>
+    <div class="mt-4 space-y-1">
+      <button
+        type="button"
+        class="w-full rounded-lg px-3 py-2 text-left text-sm font-medium text-foreground transition-colors hover:bg-muted"
+        disabled
+      >
+        Workspace settings <span class="ml-2 rounded-full bg-muted px-2 py-0.5 text-[10px] uppercase tracking-wide text-muted-foreground">Soon</span>
+      </button>
+      <form method="post" action="{% url 'accounts:logout' %}">
+        {% csrf_token %}
+        <input type="hidden" name="next" value="{{ request.get_full_path }}">
+        <button
+          type="submit"
+          class="flex w-full items-center justify-between rounded-lg px-3 py-2 text-left text-sm font-medium text-destructive transition-colors hover:bg-destructive/10 focus:outline-none focus:ring-2 focus:ring-destructive/30"
+          data-dashboard-logout
+        >
+          <span>Log out</span>
+          <svg class="h-4 w-4" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M15.75 9V5.25A2.25 2.25 0 0 0 13.5 3h-6A2.25 2.25 0 0 0 5.25 5.25v13.5A2.25 2.25 0 0 0 7.5 21h6a2.25 2.25 0 0 0 2.25-2.25V15M18 12H9m0 0 3-3m-3 3 3 3" />
+          </svg>
+        </button>
+      </form>
+    </div>
+  </div>
+</div>
+<script>
+  (function () {
+    var trigger = document.querySelector("[data-dashboard-account-trigger]");
+    var modal = document.querySelector("[data-dashboard-account-modal]");
+    if (!trigger || !modal) {
+      return;
+    }
+
+    var overlay = modal.querySelector("[data-dashboard-account-overlay]");
+    var content = modal.querySelector("[data-dashboard-account-content]");
+    var dismiss = modal.querySelector("[data-dashboard-account-dismiss]");
+    var caret = trigger.querySelector("[data-dashboard-account-caret]");
+    var previouslyFocused = null;
+    var isOpen = false;
+
+    function setState(open) {
+      isOpen = open;
+      modal.classList.toggle("hidden", !open);
+      modal.setAttribute("data-state", open ? "open" : "closed");
+      modal.setAttribute("aria-hidden", open ? "false" : "true");
+      trigger.dataset.open = open ? "true" : "false";
+      trigger.setAttribute("aria-expanded", open ? "true" : "false");
+      if (caret) {
+        caret.setAttribute("data-rotated", open ? "true" : "false");
+        caret.classList.toggle("rotate-180", open);
+      }
+      if (open) {
+        previouslyFocused = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+        window.setTimeout(function () {
+          if (content) {
+            content.focus();
+          }
+        }, 30);
+      } else if (previouslyFocused) {
+        previouslyFocused.focus();
+        previouslyFocused = null;
+      }
+    }
+
+    function openModal() {
+      if (!isOpen) {
+        setState(true);
+      }
+    }
+
+    function closeModal() {
+      if (isOpen) {
+        setState(false);
+      }
+    }
+
+    trigger.addEventListener("click", function (event) {
+      event.preventDefault();
+      if (isOpen) {
+        closeModal();
+      } else {
+        openModal();
+      }
+    });
+
+    if (overlay) {
+      overlay.addEventListener("click", closeModal);
+    }
+    if (dismiss) {
+      dismiss.addEventListener("click", function (event) {
+        event.preventDefault();
+        closeModal();
+      });
+    }
+
+    document.addEventListener("keydown", function (event) {
+      if (event.key === "Escape") {
+        closeModal();
+      }
+    });
+  })();
+</script>

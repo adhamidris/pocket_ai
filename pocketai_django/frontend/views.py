@@ -3,9 +3,12 @@ from __future__ import annotations
 from datetime import date
 from typing import Dict, List
 
+from django.contrib.auth.decorators import login_required
 from django.http import HttpRequest, HttpResponse
+from django.middleware.csrf import get_token
 from django.shortcuts import render
 
+from apps.services.cases import list_cases
 
 def _mobile_app_section() -> Dict[str, object]:
     return {
@@ -37,6 +40,22 @@ def _legal_section(
     if bullets:
         body.append({"type": "list", "items": bullets})
     return {"id": section_id, "title": title, "body": body}
+
+
+def _current_user_name(request: HttpRequest) -> str:
+    if not request.user.is_authenticated:
+        return ""
+    user = request.user
+    first = getattr(user, "first_name", "")
+    if isinstance(first, str) and first.strip():
+        return first.strip()
+    if hasattr(user, "get_short_name"):
+        short = (user.get_short_name() or "").strip()
+        if short:
+            return short
+    if hasattr(user, "get_username"):
+        return user.get_username()
+    return str(user)
 
 
 def landing(request: HttpRequest) -> HttpResponse:
@@ -441,6 +460,8 @@ def landing(request: HttpRequest) -> HttpResponse:
         ],
     }
 
+    get_token(request)
+
     context = {
         "page": {
             "hero": hero,
@@ -725,6 +746,61 @@ def register(request: HttpRequest) -> HttpResponse:
         "Always",
     ]
 
+    catalog_entity = "Products & Services"
+    uploads_materials = [
+        {
+            "id": "vision",
+            "label": "Vision",
+            "field": "uploadsVision",
+            "pending_field": "uploadsVisionUrl",
+            "placeholder": "https://your-site.com/vision",
+        },
+        {
+            "id": "mission",
+            "label": "Mission",
+            "field": "uploadsMission",
+            "pending_field": "uploadsMissionUrl",
+            "placeholder": "https://your-site.com/mission",
+        },
+        {
+            "id": "catalog",
+            "label": f"{catalog_entity} Catalog",
+            "field": "uploadsCatalog",
+            "pending_field": "uploadsCatalogUrl",
+            "placeholder": "https://your-site.com/catalog",
+        },
+        {
+            "id": "faqs",
+            "label": "FAQs",
+            "field": "uploadsFaqs",
+            "pending_field": "uploadsFaqsUrl",
+            "placeholder": "https://your-site.com/faqs",
+        },
+        {
+            "id": "kb",
+            "label": "Knowledge Base",
+            "field": "uploadsKb",
+            "pending_field": "uploadsKbUrl",
+            "placeholder": "https://help.your-site.com",
+        },
+        {
+            "id": "sops",
+            "label": "SOPs",
+            "field": "uploadsSops",
+            "pending_field": "uploadsSopsUrl",
+            "placeholder": "https://drive.google.com/...",
+        },
+        {
+            "id": "tc",
+            "label": "T&C",
+            "field": "uploadsTc",
+            "pending_field": "uploadsTcUrl",
+            "placeholder": "https://your-site.com/terms",
+        },
+    ]
+
+    paperclip_icon = """<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21.44 11.05 12.12 20.37a5 5 0 1 1-7.07-7.07L14.37 4.93a3.5 3.5 0 1 1 4.95 4.95L10.12 19.08"/></svg>"""
+
     context = {
         "page": {
             "title_prefix": "Create your",
@@ -848,28 +924,31 @@ def register(request: HttpRequest) -> HttpResponse:
                 "title_prefix": "Knowledge",
                 "title_highlight": "Uploads",
                 "subtitle": "Add links to your key docs so your agent gets smart fast. You can skip this and do it later.",
-                "fields": {
-                    "docs": {
-                        "label": "Documents",
-                        "optional": "(optional)",
-                        "hint": "PDF, DOCX, TXT, CSV, XLS(X), PPT(X), HTML. Up to 20 files.",
-                        "error_too_many": "Too many files selected",
-                    },
-                    "links": {
-                        "label": "Links",
-                        "optional": "(optional)",
-                        "placeholder": "Paste links separated by new lines or spaces (e.g., help center, docs, blog)",
-                        "hint": "We’ll fetch these and keep them fresh.",
-                        "error_invalid": "One or more links are invalid",
-                    },
+                "materials_card": {
+                    "title": "Which materials do you want to attach?",
+                    "description": "Select the knowledge sources you want to add now. You can always come back later.",
+                },
+                "materials": uploads_materials,
+                "empty_state": "Select at least one material above to start adding links.",
+                "attach_label": "Attach",
+                "attach_icon": paperclip_icon,
+                "count_suffix": "added",
+                "errors": {
+                    "invalid_url": "Enter a valid URL (https://example.com)",
+                    "duplicate_url": "This link is already attached",
+                    "materials": "Select at least one material to continue",
+                    "links": "Add at least one link for each selected source",
+                    "general": "We couldn't save your uploads. Try again.",
+                    "dependencies": "Complete the earlier steps before finishing registration.",
                 },
                 "buttons": {
                     "back": "Back",
+                    "skip": "Upload later",
                     "finish": "Finish",
                     "loading": "Finishing…",
                 },
                 # where to go after uploads resolves (default in JS if no custom handler prevents)
-                "redirect_after": "/app",
+                "redirect_after": "/dashboard/",
             },
         },
         "business_data": {
@@ -1149,6 +1228,307 @@ def terms_of_service(request: HttpRequest) -> HttpResponse:
         },
     }
     return render(request, "frontend/legal/page.html", context)
+
+
+@login_required
+def dashboard(request: HttpRequest) -> HttpResponse:
+    user_name = _current_user_name(request)
+    dashboard_metrics: List[Dict[str, object]] = []
+    conversation_groups: List[Dict[str, object]] = []
+    ai_pulse_items: List[Dict[str, object]] = []
+    agent_snapshot_items: List[Dict[str, object]] = []
+    total_all = sum(len(group.get("entries", [])) for group in conversation_groups)
+    total_ai = sum(
+        1
+        for group in conversation_groups
+        for item in group.get("entries", [])
+        if item.get("handled_by") == "ai"
+    )
+    total_human = sum(
+        1
+        for group in conversation_groups
+        for item in group.get("entries", [])
+        if item.get("handled_by") == "human"
+    )
+    context = {
+        "user_name": user_name,
+        "dashboard_loading": False,
+        "dashboard_metrics": dashboard_metrics,
+        "dashboard_metrics_empty_message": "Metrics will appear once you start receiving conversations.",
+        "dashboard_alert_message": "No escalations yet — monitoring continuously.",
+        "dashboard_conversation_groups": conversation_groups,
+        "dashboard_conversation_counts": {
+            "all": total_all,
+            "ai": total_ai,
+            "human": total_human,
+        },
+        "dashboard_conversations_empty_message": "Connect your support channels to start streaming conversations here.",
+        "dashboard_ai_pulse": ai_pulse_items,
+        "dashboard_ai_pulse_empty_message": "Metrics will appear once cases begin flowing in.",
+        "dashboard_agent_snapshot": agent_snapshot_items,
+        "dashboard_agent_snapshot_empty_message": "Invite your team to see performance insights here.",
+    }
+    return render(request, "frontend/dashboard.html", context)
+
+
+@login_required
+def dashboard_customers(request: HttpRequest) -> HttpResponse:
+    user_name = _current_user_name(request)
+    stats = [
+        {"label": "New customers", "value": None, "helper": "No data to measure yet"},
+        {"label": "Satisfied customers", "value": None, "helper": "No data to measure yet"},
+        {"label": "Expansion opportunities", "value": None, "helper": "No data to measure yet"},
+    ]
+    context = {
+        "user_name": user_name,
+        "customers_stats": stats,
+        "customers_filters": {
+            "search_placeholder": "Search name, email, text…",
+            "lifecycle_label": "All lifecycle stages",
+            "date_label": "Any time",
+            "limit": 25,
+        },
+        "customers_backend_notice": None,
+        "customers_auth_notice": None,
+        "customers_loading": False,
+        "skeleton_rows": range(6),
+        "customers": [],
+        "customers_empty_message": "No customers added yet. Import customers or add one.",
+        "customers_showing_count": 0,
+        "customers_total": 0,
+        "customers_has_prev": False,
+        "customers_has_next": False,
+        "customers_detail_empty_title": "No customer selected",
+        "customers_detail_empty_message": "Choose a customer from the table to inspect profiles, activity, and notes.",
+    }
+    return render(request, "frontend/customers.html", context)
+
+
+@login_required
+def dashboard_agents(request: HttpRequest) -> HttpResponse:
+    user_name = _current_user_name(request)
+    stats = [
+        {"label": "Active agents", "value": None, "helper": "No agents deployed yet"},
+        {"label": "Avg. satisfaction", "value": None, "helper": "Scores will populate once conversations start"},
+        {"label": "Automation coverage", "value": None, "helper": "Connect channels to calculate coverage"},
+    ]
+    context = {
+        "user_name": user_name,
+        "agents_stats": stats,
+        "agents_filters": {
+            "search_placeholder": "Search name, ID, role…",
+            "status_label": "All statuses",
+            "limit": 25,
+        },
+        "agents_backend_notice": None,
+        "agents_auth_notice": None,
+        "agents_loading": False,
+        "agents_error_message": None,
+        "skeleton_rows": range(6),
+        "agents": [],
+        "agents_empty_message": "No agents created yet. Launch your first AI teammate to get started.",
+        "agents_showing_count": 0,
+        "agents_total": 0,
+        "agents_has_prev": False,
+        "agents_has_next": False,
+        "agents_panel_empty_title": "No agent selected",
+        "agents_panel_empty_message": "Choose an agent from the table to preview configuration and analytics.",
+        "agents_modal_roles": [
+            "Support Agent",
+            "Sales Associate",
+            "Technical Specialist",
+            "Customer Success",
+        ],
+    }
+    return render(request, "frontend/agents.html", context)
+
+
+@login_required
+def dashboard_leads(request: HttpRequest) -> HttpResponse:
+    user_name = _current_user_name(request)
+    stats = [
+        {"label": "Open leads", "value": None, "delta": "Up 0% vs last week"},
+        {"label": "Hot leads", "value": None, "delta": "Ready for outreach"},
+        {"label": "Avg. response SLA", "value": None, "delta": "< 3h target"},
+    ]
+    heat_options = [
+        {"label": "All", "value": "all"},
+        {"label": "Hot", "value": "hot"},
+        {"label": "Warm", "value": "warm"},
+        {"label": "Cold", "value": "cold"},
+    ]
+    pipeline_breakdown = [
+        {"label": "New", "helper": "0 leads"},
+        {"label": "Qualified", "helper": "0 leads"},
+        {"label": "Engaged", "helper": "0 leads"},
+        {"label": "Negotiation", "helper": "0 leads"},
+        {"label": "Closed Won", "helper": "0 leads"},
+    ]
+    context = {
+        "user_name": user_name,
+        "leads_stats": stats,
+        "leads_filters": {
+            "search_placeholder": "Search lead, company, or tag",
+            "stage_label": "All stages",
+            "owner_label": "All owners",
+            "range_label": "Last 14 days",
+        },
+        "leads_heat_options": heat_options,
+        "leads_heat_active": "all",
+        "leads_backend_notice": None,
+        "leads_auth_notice": None,
+        "leads_loading": False,
+        "leads_error_message": None,
+        "skeleton_rows": range(6),
+        "leads": [],
+        "leads_empty_message": "No leads match this view yet.",
+        "leads_showing_count": 0,
+        "leads_total": 0,
+        "leads_has_prev": False,
+        "leads_has_next": False,
+        "leads_detail_empty_title": "Select a lead",
+        "leads_detail_empty_message": "Choose a lead to review stage, owner activity, and history.",
+        "leads_pipeline_breakdown": pipeline_breakdown,
+    }
+    return render(request, "frontend/leads.html", context)
+
+
+@login_required
+def dashboard_knowledge(request: HttpRequest) -> HttpResponse:
+    user_name = _current_user_name(request)
+    stats = [
+        {
+            "label": "Documents indexed",
+            "value": None,
+            "helper": "Upload your first files to populate the knowledge base.",
+            "icon_svg": '<svg class="h-4 w-4" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M9 12h3.75M9 15h3.75M9 18h3.75m3-.75c0 .414.336.75.75.75h.75A2.25 2.25 0 0 0 19.5 15V6A2.25 2.25 0 0 0 17.25 3H6.75A2.25 2.25 0 0 0 4.5 5.25V18A2.25 2.25 0 0 0 6.75 20.25H18"/></svg>',
+        },
+        {
+            "label": "Integrations",
+            "value": None,
+            "helper": "Connect Google Drive, Zendesk, or custom APIs.",
+            "icon_svg": '<svg class="h-4 w-4" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M4.5 12a2.25 2.25 0 0 1 2.25-2.25h10.5A2.25 2.25 0 0 1 19.5 12m-15 0a2.25 2.25 0 0 0 2.25 2.25h10.5A2.25 2.25 0 0 0 19.5 12m-15 0V7.5m15 4.5V16.5m0-9A2.25 2.25 0 0 0 17.25 5.25H6.75A2.25 2.25 0 0 0 4.5 7.5M19.5 16.5a2.25 2.25 0 0 1-2.25 2.25H6.75A2.25 2.25 0 0 1 4.5 16.5"/></svg>',
+        },
+        {
+            "label": "Coverage",
+            "value": None,
+            "helper": "Coverage metrics appear once agents use knowledge.",
+            "icon_svg": '<svg class="h-4 w-4" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M12 3v3m0 12v3m9-9h-3M6 12H3m15.364-6.364-2.121 2.121M8.757 15.243l-2.121 2.121m0-12.727 2.121 2.121m6.486 6.486 2.121 2.121"/></svg>',
+        },
+        {
+            "label": "Sync health",
+            "value": None,
+            "helper": "Status updates will display after first sync.",
+            "icon_svg": '<svg class="h-4 w-4" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M4.5 12a7.5 7.5 0 0 1 13.35-4.35L21 8.25M19.5 3v5.25M19.5 12a7.5 7.5 0 0 1-13.35 4.35L3 15.75M4.5 21v-5.25"/></svg>',
+        },
+    ]
+    context = {
+        "user_name": user_name,
+        "knowledge_stats": stats,
+        "knowledge_filters": {
+            "search_placeholder": "Search documents, tags, sources…",
+            "collection_label": "All collections",
+        },
+        "knowledge_backend_notice": None,
+        "knowledge_auth_notice": None,
+        "knowledge_loading": False,
+        "knowledge_error_message": None,
+        "skeleton_rows": range(5),
+        "knowledge_documents": [],
+        "knowledge_documents_empty_message": "No knowledge documents yet. Upload files or connect an integration to populate content.",
+        "knowledge_documents_showing": 0,
+        "knowledge_documents_total": 0,
+        "knowledge_documents_has_prev": False,
+        "knowledge_documents_has_next": False,
+        "knowledge_integrations": [],
+        "knowledge_integrations_empty_message": "Connect a source to sync articles, FAQs, or product specs automatically.",
+        "knowledge_collections": [],
+        "knowledge_collections_empty_message": "Group documents into collections to control agent access.",
+        "knowledge_panel_empty_title": "Select a document",
+        "knowledge_panel_empty_message": "Choose a document to preview summary, classification, and sync details here.",
+    }
+    return render(request, "frontend/knowledge.html", context)
+
+
+@login_required
+def dashboard_cases(request: HttpRequest) -> HttpResponse:
+    user_name = _current_user_name(request)
+    cases: List[Dict[str, object]] = []
+    metrics = {"open": None, "urgent": None, "urgent_delta": None, "avg_open": None}
+    metrics_message = "Connect your customer channels to start measuring performance."
+    total = 0
+
+    def _priority_class(priority: str) -> str:
+        mapping = {
+            "critical": "border-transparent bg-red-500/10 text-red-600",
+            "high": "border-transparent bg-orange-500/10 text-orange-600",
+            "medium": "border-transparent bg-amber-500/10 text-amber-600",
+            "low": "border-transparent bg-emerald-500/10 text-emerald-600",
+        }
+        return mapping.get(priority.lower(), "border-transparent bg-muted/60 text-muted-foreground")
+
+    def _status_class(status: str) -> str:
+        mapping = {
+            "open": "border-transparent bg-emerald-500/10 text-emerald-600",
+            "closed": "border-transparent bg-muted/60 text-muted-foreground",
+        }
+        return mapping.get(status.lower(), "border-transparent bg-muted/60 text-muted-foreground")
+
+    business = None
+    if request.user.is_authenticated:
+        business = request.user.business_profiles.order_by("-created_at").first()
+
+    if business:
+        try:
+            result = list_cases(business_profile=business, limit=25)
+            total = result.total_count
+            metrics = {
+                "open": result.metrics.open_total,
+                "urgent": result.metrics.urgent_open,
+                "urgent_delta": result.metrics.urgent_delta_hint,
+                "avg_open": result.metrics.average_open_hours,
+            }
+            metrics_message = (
+                f"You have {result.metrics.open_total} open cases."
+                if result.metrics.open_total
+                else "All cases resolved. Great job!"
+            )
+            for item in result.items:
+                cases.append(
+                    {
+                        "id": item.case_number,
+                        "uuid": str(item.id),
+                        "priority": item.priority,
+                        "priority_class": _priority_class(item.priority),
+                        "type": "inquiry",
+                        "title": item.title,
+                        "description": item.description,
+                        "status": item.status,
+                        "status_class": _status_class(item.status),
+                        "customer": {
+                            "name": item.customer_name,
+                            "email": item.customer_email or "—",
+                            "initials": item.customer_initials,
+                        },
+                        "channel": (item.channel or "chat").replace("_", " ").title(),
+                        "started": item.started_at.strftime("%b %d, %Y %H:%M"),
+                        "started_iso": item.started_at.isoformat(),
+                    }
+                )
+        except Exception:
+            metrics_message = "Unable to load cases right now. Please try again shortly."
+
+    context = {
+        "user_name": user_name,
+        "cases_total": total if total else len(cases),
+        "cases_metrics": metrics,
+        "cases_metrics_message": metrics_message,
+        "skeleton_rows": range(6),
+        "cases_loading": False,
+        "cases": cases,
+        "cases_empty_message": "No cases yet. Connect Pocket AI to your support channels to see live traffic.",
+    }
+    return render(request, "frontend/cases.html", context)
 
 
 def chat_portal(request: HttpRequest, business_slug: str, agent_slug: str) -> HttpResponse:

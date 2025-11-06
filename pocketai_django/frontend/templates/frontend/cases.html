@@ -1,0 +1,1020 @@
+{% extends "frontend/base_app.html" %}
+
+{% block title %}Cases | Pocket AI{% endblock %}
+
+{% block content %}
+<div class="min-h-screen bg-background flex">
+  {% include "frontend/components/dashboard/sidebar.html" with active="cases" user_name=user_name %}
+  <main class="flex-1 overflow-auto">
+    <div class="w-full px-4 md:px-6 lg:px-8 py-6">
+      <section class="flex flex-col gap-6">
+        <div class="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
+          <div class="flex items-center gap-3">
+            <div class="text-xl md:text-2xl font-semibold text-gradient-hero">Cases</div>
+            <span class="hidden md:inline-flex items-center rounded-full border border-border/60 bg-muted/50 px-3 py-1 text-xs font-medium text-muted-foreground">
+              {{ cases_total|default:0 }} results
+            </span>
+          </div>
+          <div class="flex items-center gap-2">
+            <button type="button" class="inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-lg text-sm font-medium ring-offset-background transition-all duration-300 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50 [&_svg]:pointer-events-none [&_svg]:size-4 [&_svg]:shrink-0 bg-primary text-primary-foreground hover:bg-primary/90 shadow-sm hover:shadow-md h-10 px-4 py-2">
+              <svg class="h-4 w-4" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" aria-hidden="true">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M12 6v12m6-6H6" />
+              </svg>
+              New Case
+            </button>
+            <button type="button" class="inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-lg text-sm font-medium ring-offset-background transition-all duration-300 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50 [&_svg]:pointer-events-none [&_svg]:size-4 [&_svg]:shrink-0 border border-input bg-background hover:bg-accent hover:text-accent-foreground hover:border-primary/50 h-10 px-4 py-2">
+              <svg class="h-4 w-4 text-muted-foreground" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true">
+                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" stroke-linecap="round" stroke-linejoin="round" />
+                <polyline points="17 8 12 3 7 8" stroke-linecap="round" stroke-linejoin="round" />
+                <line x1="12" y1="3" x2="12" y2="15" stroke-linecap="round" stroke-linejoin="round" />
+              </svg>
+              Import Cases
+              <svg class="h-4 w-4 text-muted-foreground" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 20 20" aria-hidden="true">
+                <path stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="m6 8 4 4 4-4" />
+              </svg>
+            </button>
+          </div>
+        </div>
+
+        <div class="grid grid-cols-1 sm:grid-cols-3 gap-4">
+          <div class="rounded-lg border bg-card text-card-foreground shadow-sm border border-border/70 bg-card/70 backdrop-blur transition-all duration-300 hover:border-primary/35">
+            <div class="p-5 space-y-2">
+              <span class="text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground/70">Open cases</span>
+              <div class="text-3xl font-semibold tracking-tight text-foreground">{{ cases_metrics.open|default:"—" }}</div>
+              <div class="text-xs font-medium text-muted-foreground">Target &lt; 15</div>
+            </div>
+          </div>
+          <div class="rounded-lg border bg-card text-card-foreground shadow-sm border border-border/70 bg-card/70 backdrop-blur transition-all duration-300 hover:border-primary/35">
+            <div class="p-5 space-y-2">
+              <span class="text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground/70">Urgent cases</span>
+              <div class="text-3xl font-semibold tracking-tight text-foreground">{{ cases_metrics.urgent|default:"—" }}</div>
+              <div class="text-xs font-medium text-muted-foreground">{{ cases_metrics.urgent_delta|default:"All clear" }}</div>
+            </div>
+          </div>
+          <div class="rounded-lg border bg-card text-card-foreground shadow-sm border border-border/70 bg-card/70 backdrop-blur transition-all duration-300 hover:border-primary/35">
+            <div class="p-5 space-y-2">
+              <span class="text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground/70">Avg. time open</span>
+              <div class="text-3xl font-semibold tracking-tight text-foreground">{{ cases_metrics.avg_open|default:"—" }}</div>
+              <div class="text-xs font-medium text-muted-foreground">Goal &lt; 12h</div>
+            </div>
+          </div>
+        </div>
+
+        <div class="text-sm text-muted-foreground">{{ cases_metrics_message|default:"Connect your data sources to populate metrics." }}</div>
+
+        <div class="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+          <div class="flex flex-col gap-3 md:flex-row md:items-center md:flex-wrap">
+            <div class="relative w-full md:w-64">
+              <svg class="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.2" aria-hidden="true">
+                <circle cx="7" cy="7" r="5"></circle>
+                <path d="m11.5 11.5 3 3" stroke-linecap="round"></path>
+              </svg>
+              <input
+                type="search"
+                placeholder="Search name, email, text…"
+                class="h-10 w-full rounded-lg border border-border/60 bg-muted/70 pl-9 pr-3 text-sm text-foreground placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-0 focus-visible:border-border transition"
+                aria-label="Search cases"
+              >
+            </div>
+          </div>
+          <div class="flex items-center gap-2 flex-wrap">
+            <button type="button" class="inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-lg text-sm font-medium ring-offset-background transition-all duration-300 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50 [&_svg]:pointer-events-none [&_svg]:size-4 [&_svg]:shrink-0 border border-input bg-background hover:bg-accent hover:text-accent-foreground hover:border-primary/50 h-10 px-4 py-2">
+              <svg class="h-4 w-4" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true">
+                <path d="M6 22V4a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2v18Z" stroke-linecap="round" stroke-linejoin="round" />
+                <path d="M6 12H4a2 2 0 0 0-2 2v6a2 2 0 0 0 2 2h2" stroke-linecap="round" stroke-linejoin="round" />
+                <path d="M18 9h2a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2h-2" stroke-linecap="round" stroke-linejoin="round" />
+                <path d="M10 6h4" stroke-linecap="round" stroke-linejoin="round" />
+                <path d="M10 10h4" stroke-linecap="round" stroke-linejoin="round" />
+                <path d="M10 14h4" stroke-linecap="round" stroke-linejoin="round" />
+                <path d="M10 18h4" stroke-linecap="round" stroke-linejoin="round" />
+              </svg>
+              All Cases
+              <svg class="h-4 w-4 text-muted-foreground" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 20 20" aria-hidden="true">
+                <path stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="m6 8 4 4 4-4" />
+              </svg>
+            </button>
+            <button type="button" class="inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-lg text-sm font-medium ring-offset-background transition-all duration-300 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50 [&_svg]:pointer-events-none [&_svg]:size-4 [&_svg]:shrink-0 border border-input bg-background hover:bg-accent hover:text-accent-foreground hover:border-primary/50 h-10 px-4 py-2">
+              <svg class="h-4 w-4" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true">
+                <polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3" stroke-linecap="round" stroke-linejoin="round" />
+              </svg>
+              All types
+              <svg class="h-4 w-4 text-muted-foreground" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 20 20" aria-hidden="true">
+                <path stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="m6 8 4 4 4-4" />
+              </svg>
+            </button>
+            <button type="button" class="inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-lg text-sm font-medium ring-offset-background transition-all duration-300 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50 [&_svg]:pointer-events-none [&_svg]:size-4 [&_svg]:shrink-0 border border-input bg-background hover:bg-accent hover:text-accent-foreground hover:border-primary/50 h-10 px-4 py-2">
+              <svg class="h-4 w-4" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true">
+                <path d="M8 2v4" stroke-linecap="round" stroke-linejoin="round" />
+                <path d="M16 2v4" stroke-linecap="round" stroke-linejoin="round" />
+                <rect width="18" height="18" x="3" y="4" rx="2" ry="2" />
+                <path d="M3 10h18" stroke-linecap="round" stroke-linejoin="round" />
+                <path d="M8 14h.01" stroke-linecap="round" stroke-linejoin="round" />
+                <path d="M12 14h.01" stroke-linecap="round" stroke-linejoin="round" />
+                <path d="M16 14h.01" stroke-linecap="round" stroke-linejoin="round" />
+                <path d="M8 18h.01" stroke-linecap="round" stroke-linejoin="round" />
+                <path d="M12 18h.01" stroke-linecap="round" stroke-linejoin="round" />
+                <path d="M16 18h.01" stroke-linecap="round" stroke-linejoin="round" />
+              </svg>
+              All time
+              <svg class="h-4 w-4 text-muted-foreground" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 20 20" aria-hidden="true">
+                <path stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="m6 8 4 4 4-4" />
+              </svg>
+            </button>
+            <button type="button" class="inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-lg text-sm font-medium ring-offset-background transition-all duration-300 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50 [&_svg]:pointer-events-none [&_svg]:size-4 [&_svg]:shrink-0 border border-input bg-background hover:bg-accent hover:text-accent-foreground hover:border-primary/50 h-10 px-4 py-2">
+              <svg class="h-4 w-4" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true">
+                <path d="M3 6h18" stroke-linecap="round" stroke-linejoin="round" />
+                <path d="M7 12h10" stroke-linecap="round" stroke-linejoin="round" />
+                <path d="M10 18h4" stroke-linecap="round" stroke-linejoin="round" />
+              </svg>
+              Columns
+            </button>
+          </div>
+        </div>
+
+        <div class="flex flex-col gap-4 lg:flex-row">
+          <div class="flex-1 min-w-0">
+            <div class="space-y-4">
+              <div class="relative border border-border/70 bg-card text-card-foreground shadow-lg shadow-black/5 backdrop-blur hover:border-primary/35 transition-colors dark:border-slate-700/50 dark:bg-slate-800/70 dark:shadow-black/25 rounded-xl overflow-hidden">
+              <div class="absolute inset-x-0 top-0 h-px bg-gradient-to-r from-primary/35 via-primary/20 to-transparent"></div>
+              <div class="relative overflow-x-auto overflow-y-auto max-h-[70vh]">
+                <table class="w-full caption-bottom text-sm rounded-xl border border-border/70 bg-background/60 shadow-sm backdrop-blur [&_th]:px-3 [&_td]:px-3 [&_th:first-child]:pl-4 [&_td:first-child]:pl-4 [&_th:last-child]:pr-4 [&_td:last-child]:pr-4 [&_th]:py-3 [&_td]:py-3">
+                  <thead class="sticky top-0 z-10 bg-muted/70 backdrop-blur border-b border-border/80">
+                    <tr class="border-b transition-colors hover:bg-transparent">
+                      <th class="h-12 px-4 text-left align-middle font-medium text-muted-foreground w-8">
+                        <span class="peer h-3.5 w-3.5 shrink-0 rounded-full border border-secondary bg-secondary ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 data-[state=checked]:bg-primary data-[state=checked]:text-primary-foreground data-[state=checked]:border-primary block"></span>
+                      </th>
+                      <th class="h-12 px-4 text-left align-middle font-medium text-muted-foreground">Case ID</th>
+                      <th class="h-12 px-4 text-left align-middle font-medium text-muted-foreground">Priority</th>
+                      <th class="h-12 px-4 text-left align-middle font-medium text-muted-foreground">Type</th>
+                      <th class="h-12 px-4 text-left align-middle font-medium text-muted-foreground">Case Title</th>
+                      <th class="h-12 px-4 text-left align-middle font-medium text-muted-foreground">Description</th>
+                      <th class="h-12 px-4 text-left align-middle font-medium text-muted-foreground">Status</th>
+                      <th class="h-12 px-4 text-left align-middle font-medium text-muted-foreground">Customer</th>
+                      <th class="h-12 px-4 text-left align-middle font-medium text-muted-foreground">Channel</th>
+                      <th class="h-12 px-4 text-right align-middle font-medium text-muted-foreground">Started</th>
+                      <th class="h-12 px-4 text-left align-middle font-medium text-muted-foreground w-8"></th>
+                    </tr>
+                  </thead>
+                  <tbody class="[&_tr:last-child]:border-0" data-cases-table>
+                    {% if cases_loading %}
+                      {% for _ in skeleton_rows %}
+                        <tr class="border-b transition-colors hover:bg-muted/50">
+                          <td class="p-4 align-middle [&:has([role=checkbox])]:pr-0 w-8">
+                            <span class="block h-3.5 w-3.5 rounded-full bg-muted/60 animate-pulse"></span>
+                          </td>
+                          <td class="p-4 align-middle"><span class="block h-3 w-16 rounded bg-muted/60 animate-pulse"></span></td>
+                          <td class="p-4 align-middle"><span class="inline-flex h-5 w-16 items-center justify-center rounded-full bg-muted/60 animate-pulse"></span></td>
+                          <td class="p-4 align-middle"><span class="block h-3 w-16 rounded bg-muted/60 animate-pulse"></span></td>
+                          <td class="p-4 align-middle"><span class="block h-3 w-48 rounded bg-muted/60 animate-pulse"></span></td>
+                          <td class="p-4 align-middle"><span class="block h-3 w-64 rounded bg-muted/60 animate-pulse"></span></td>
+                          <td class="p-4 align-middle"><span class="inline-flex h-5 w-16 items-center justify-center rounded-full bg-muted/60 animate-pulse"></span></td>
+                          <td class="p-4 align-middle">
+                            <div class="flex items-center gap-3">
+                              <span class="block h-9 w-9 rounded-full bg-muted/60 animate-pulse"></span>
+                              <div class="space-y-1">
+                                <span class="block h-3 w-32 rounded bg-muted/60 animate-pulse"></span>
+                                <span class="block h-3 w-24 rounded bg-muted/40 animate-pulse"></span>
+                              </div>
+                            </div>
+                          </td>
+                          <td class="p-4 align-middle"><span class="block h-3 w-12 rounded bg-muted/60 animate-pulse"></span></td>
+                          <td class="p-4 align-middle text-right"><span class="inline-block h-3 w-20 rounded bg-muted/60 animate-pulse"></span></td>
+                          <td class="p-4 align-middle w-8">
+                            <span class="inline-flex h-8 w-8 items-center justify-center rounded-full bg-muted/40 animate-pulse"></span>
+                          </td>
+                        </tr>
+                      {% endfor %}
+                    {% elif cases %}
+                      {% for case in cases %}
+                        <tr
+                          class="case-list-row border-b transition-colors hover:bg-muted/50 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-primary/60 focus-visible:ring-offset-0 cursor-pointer"
+                          data-case-row
+                          data-case-uuid="{{ case.uuid }}"
+                          data-case-number="{{ case.id }}"
+                          data-case-title="{{ case.title|default:'Untitled case'|escape }}"
+                          data-case-priority="{{ case.priority|default:'unknown'|lower }}"
+                          data-case-status="{{ case.status|default:'unknown'|lower }}"
+                          data-case-started="{{ case.started_iso|default:'' }}"
+                          data-case-channel="{{ case.channel|default:'Chat'|escape }}"
+                          data-case-customer="{{ case.customer.name|default:'Customer name'|escape }}"
+                          data-case-email="{{ case.customer.email|default:'—'|escape }}"
+                          data-selected="false"
+                          role="button"
+                          aria-haspopup="dialog"
+                          aria-expanded="false"
+                          tabindex="0"
+                        >
+                          <td class="p-4 align-middle [&:has([role=checkbox])]:pr-0 w-8">
+                            <span class="peer h-3.5 w-3.5 shrink-0 rounded-full border border-secondary bg-secondary ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 data-[state=checked]:bg-primary data-[state=checked]:text-primary-foreground data-[state=checked]:border-primary block" aria-hidden="true"></span>
+                          </td>
+                          <td class="p-4 align-middle font-mono text-xs text-foreground/70">{{ case.id|default:"—" }}</td>
+                          <td class="p-4 align-middle">
+                            <span class="inline-flex items-center rounded-full border px-2.5 py-0.5 text-xs font-semibold capitalize {{ case.priority_class|default:'border-transparent bg-muted/60 text-muted-foreground' }}">
+                              {{ case.priority|default:"—" }}
+                            </span>
+                          </td>
+                          <td class="p-4 align-middle">
+                            <span class="text-foreground/80 font-medium capitalize">{{ case.type|default:"—" }}</span>
+                          </td>
+                          <td class="p-4 align-middle">
+                            <div class="truncate font-semibold text-foreground">{{ case.title|default:"Untitled case" }}</div>
+                          </td>
+                          <td class="p-4 align-middle">
+                            <div class="truncate text-foreground/70">{{ case.description|default:"No summary available." }}</div>
+                          </td>
+                          <td class="p-4 align-middle">
+                            <span class="inline-flex items-center rounded-full border px-2.5 py-0.5 text-xs font-semibold capitalize {{ case.status_class|default:'border-transparent bg-muted/60 text-muted-foreground' }}">
+                              {{ case.status|default:"Unassigned" }}
+                            </span>
+                          </td>
+                          <td class="p-4 align-middle">
+                            <div class="flex items-center gap-3 min-w-0">
+                              <span class="h-9 w-9 flex items-center justify-center rounded-full bg-muted/60 text-xs font-semibold text-muted-foreground">
+                                {% with initials=case.customer.initials|default:"CU" %}
+                                  {{ initials|slice:":2"|upper }}
+                                {% endwith %}
+                              </span>
+                              <div class="leading-tight min-w-0">
+                                <div class="text-sm font-semibold truncate text-foreground">{{ case.customer.name|default:"Customer name" }}</div>
+                                <div class="text-xs text-foreground/60 truncate">{{ case.customer.email|default:"email@domain.com" }}</div>
+                              </div>
+                            </div>
+                          </td>
+                          <td class="p-4 align-middle text-muted-foreground capitalize">{{ case.channel|default:"—" }}</td>
+                          <td class="p-4 align-middle text-right text-muted-foreground">{{ case.started|default:"—" }}</td>
+                          <td class="p-4 align-middle w-8">
+                            <span class="inline-flex h-8 w-8 items-center justify-center rounded-full border border-border/60 text-muted-foreground/80">
+                              <svg class="h-4 w-4" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true">
+                                <circle cx="12" cy="12" r="1"></circle>
+                                <circle cx="12" cy="5" r="1"></circle>
+                                <circle cx="12" cy="19" r="1"></circle>
+                              </svg>
+                            </span>
+                          </td>
+                        </tr>
+                      {% endfor %}
+                    {% else %}
+                      <tr>
+                        <td colspan="11" class="p-8 text-center text-sm text-muted-foreground">
+                          {{ cases_empty_message|default:"No cases available." }}
+                        </td>
+                      </tr>
+                    {% endif %}
+                  </tbody>
+                </table>
+              </div>
+              {% if not cases_loading and not cases %}
+                <div class="border-t border-border/60 px-4 py-4 text-sm text-muted-foreground">
+                  {{ cases_empty_message|default:"No cases yet." }}
+                </div>
+              {% endif %}
+              <div class="px-4 pb-5">
+                <nav role="navigation" aria-label="pagination" class="mx-auto flex w-full justify-center">
+                  <ul class="flex flex-row items-center gap-1">
+                    <li>
+                      <a class="inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-lg text-sm font-medium ring-offset-background transition-all duration-300 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50 [&_svg]:pointer-events-none [&_svg]:size-4 [&_svg]:shrink-0 bg-background/60 hover:bg-accent/40 hover:text-accent-foreground gap-1 pl-2.5 h-10 px-4 py-2 text-muted-foreground/70 pointer-events-none opacity-60" aria-disabled="true" href="#">
+                        <svg class="h-4 w-4" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" aria-hidden="true">
+                          <path stroke-linecap="round" stroke-linejoin="round" d="m15 19-7-7 7-7" />
+                        </svg>
+                        <span>Previous</span>
+                      </a>
+                    </li>
+                    <li>
+                      <a class="inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-lg text-sm font-medium ring-offset-background transition-all duration-300 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50 [&_svg]:pointer-events-none [&_svg]:size-4 [&_svg]:shrink-0 bg-background/80 hover:bg-accent/40 hover:text-accent-foreground h-10 w-10" aria-current="page" href="#">
+                        1
+                      </a>
+                    </li>
+                    <li>
+                      <a class="inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-lg text-sm font-medium ring-offset-background transition-all duration-300 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50 [&_svg]:pointer-events-none [&_svg]:size-4 [&_svg]:shrink-0 hover:bg-accent/40 hover:text-accent-foreground h-10 w-10 text-muted-foreground/70" aria-disabled="true" href="#">
+                        2
+                      </a>
+                    </li>
+                    <li>
+                      <a class="inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-lg text-sm font-medium ring-offset-background transition-all duration-300 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50 [&_svg]:pointer-events-none [&_svg]:size-4 [&_svg]:shrink-0 bg-background/60 hover:bg-accent/40 hover:text-accent-foreground gap-1 pr-2.5 h-10 px-4 py-2 text-muted-foreground/70 pointer-events-none opacity-60" aria-disabled="true" href="#">
+                        <span>Next</span>
+                        <svg class="h-4 w-4" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" aria-hidden="true">
+                          <path stroke-linecap="round" stroke-linejoin="round" d="m9 5 7 7-7 7" />
+                        </svg>
+                      </a>
+                    </li>
+                  </ul>
+                </nav>
+              </div>
+            </div>
+            </div>
+          </div>
+        </div>
+      </section>
+    </div>
+  </main>
+</div>
+
+<div
+  class="fixed inset-0 z-40 bg-background/60 backdrop-blur-sm opacity-0 pointer-events-none transition-opacity duration-300"
+  data-case-overlay
+  style="opacity: 0; pointer-events: none;"
+></div>
+
+<aside
+  class="fixed inset-y-0 right-0 z-50 flex w-full max-w-full translate-x-full transform transition-transform duration-300 sm:w-[360px] lg:w-[420px] xl:w-[460px] border-l border-border/70 bg-card/95 backdrop-blur shadow-2xl"
+  data-case-panel
+  data-state="empty"
+  role="dialog"
+  aria-modal="true"
+  aria-labelledby="case-panel-heading"
+  aria-hidden="true"
+  tabindex="-1"
+  style="transform: translateX(100%);"
+>
+  <div class="relative flex h-full w-full flex-col">
+    <div id="case-panel-heading" class="sr-only" data-case-aria-title>Select a case</div>
+    <button
+      type="button"
+      class="absolute right-4 top-4 inline-flex h-9 w-9 items-center justify-center rounded-full border border-border/70 bg-background/80 text-muted-foreground transition hover:bg-background"
+      data-case-close
+      aria-label="Close case details"
+    >
+      <svg class="h-4 w-4" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" aria-hidden="true">
+        <path stroke-linecap="round" stroke-linejoin="round" d="m8 8 8 8m0-8-8 8" />
+      </svg>
+    </button>
+    <div class="flex h-full flex-col">
+      <div class="flex-1 overflow-y-auto" data-case-scroll>
+        <div class="space-y-6 px-6 py-10" data-case-empty>
+          <div class="space-y-2">
+            <h2 class="text-xl font-semibold text-foreground">Select a case</h2>
+            <p class="text-sm text-muted-foreground">Choose a case from the list to review AI insights and activity.</p>
+          </div>
+          <div class="rounded-xl border border-dashed border-border/60 bg-muted/40 px-4 py-6 text-center text-sm text-muted-foreground">
+            Nothing to show yet.
+          </div>
+        </div>
+        <div class="hidden space-y-6 px-6 py-10" data-case-loading>
+          <div class="space-y-3 animate-pulse">
+            <div class="h-5 w-32 rounded bg-muted/50"></div>
+            <div class="h-6 w-3/4 rounded bg-muted/50"></div>
+            <div class="h-4 w-1/2 rounded bg-muted/50"></div>
+          </div>
+          <div class="space-y-4">
+            <div class="space-y-2">
+              <div class="h-4 w-32 rounded bg-muted/40 animate-pulse"></div>
+              <div class="h-14 w-full rounded-lg bg-muted/30 animate-pulse"></div>
+            </div>
+            <div class="space-y-2">
+              <div class="h-4 w-28 rounded bg-muted/40 animate-pulse"></div>
+              <div class="h-20 w-full rounded-lg bg-muted/30 animate-pulse"></div>
+            </div>
+            <div class="space-y-2">
+              <div class="h-4 w-24 rounded bg-muted/40 animate-pulse"></div>
+              <div class="h-16 w-full rounded-lg bg-muted/30 animate-pulse"></div>
+            </div>
+          </div>
+        </div>
+        <div class="hidden space-y-4 px-6 py-10" data-case-error>
+          <div class="rounded-lg border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive" data-case-error-message>
+            Unable to load case details. Please try again.
+          </div>
+        </div>
+        <div class="hidden h-full flex-col" data-case-content>
+          <div class="px-4 py-3 border-b border-border/60 bg-card/80 backdrop-blur">
+            <div class="flex flex-col gap-1 pr-12">
+              <span class="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground" data-case-number>Case</span>
+              <div class="flex flex-wrap items-center gap-2 text-sm">
+                <span class="font-semibold text-base sm:text-lg text-foreground" data-case-title>Case title</span>
+                <span class="inline-flex items-center rounded-full border px-2.5 py-0.5 text-xs font-semibold capitalize" data-case-priority-badge>—</span>
+                <span class="inline-flex items-center rounded-full border px-2.5 py-0.5 text-xs font-semibold capitalize" data-case-status-badge>—</span>
+                <span class="ml-auto text-xs text-muted-foreground" data-case-started></span>
+              </div>
+            </div>
+          </div>
+          <div class="border-b border-border/60 bg-card/70 px-4 py-3">
+            <div class="flex items-center gap-3">
+              <span class="inline-flex h-10 w-10 items-center justify-center rounded-full bg-primary/10 text-sm font-semibold text-primary uppercase" data-case-customer-initials>CU</span>
+              <div class="flex flex-col">
+                <span class="text-sm font-semibold text-foreground" data-case-customer-name>Customer</span>
+                <span class="text-xs text-muted-foreground" data-case-customer-email>—</span>
+              </div>
+              <span class="ml-auto inline-flex items-center rounded-full border border-border/60 px-2.5 py-0.5 text-xs font-medium capitalize text-muted-foreground" data-case-channel-label>—</span>
+            </div>
+          </div>
+          <div class="flex flex-1 min-h-0 flex-col">
+            <div class="px-4 pt-3">
+              <div class="grid grid-cols-4 gap-2 w-full rounded-lg border border-border/40 bg-muted/70 p-1" role="tablist" data-case-tabs>
+                <button
+                  type="button"
+                  class="case-panel-tab rounded-md px-3 py-2 text-xs font-semibold tracking-wide transition-colors data-[state=active]:bg-primary data-[state=active]:text-primary-foreground data-[state=active]:shadow-sm data-[state=inactive]:bg-transparent data-[state=inactive]:text-muted-foreground"
+                  data-case-tab="overview"
+                  data-state="active"
+                  role="tab"
+                  aria-selected="true"
+                >
+                  Overview
+                </button>
+                <button
+                  type="button"
+                  class="case-panel-tab rounded-md px-3 py-2 text-xs font-semibold tracking-wide transition-colors data-[state=active]:bg-primary data-[state=active]:text-primary-foreground data-[state=active]:shadow-sm data-[state=inactive]:bg-transparent data-[state=inactive]:text-muted-foreground"
+                  data-case-tab="documents"
+                  data-state="inactive"
+                  role="tab"
+                  aria-selected="false"
+                >
+                  Documents
+                </button>
+                <button
+                  type="button"
+                  class="case-panel-tab rounded-md px-3 py-2 text-xs font-semibold tracking-wide transition-colors data-[state=active]:bg-primary data-[state=active]:text-primary-foreground data-[state=active]:shadow-sm data-[state=inactive]:bg-transparent data-[state=inactive]:text-muted-foreground"
+                  data-case-tab="history"
+                  data-state="inactive"
+                  role="tab"
+                  aria-selected="false"
+                >
+                  History
+                </button>
+                <button
+                  type="button"
+                  class="case-panel-tab rounded-md px-3 py-2 text-xs font-semibold tracking-wide transition-colors data-[state=active]:bg-primary data-[state=active]:text-primary-foreground data-[state=active]:shadow-sm data-[state=inactive]:bg-transparent data-[state=inactive]:text-muted-foreground"
+                  data-case-tab="messages"
+                  data-state="inactive"
+                  role="tab"
+                  aria-selected="false"
+                >
+                  Messages
+                </button>
+              </div>
+            </div>
+            <div class="flex-1 min-h-0 overflow-hidden">
+              <div class="flex-1 min-h-0 overflow-y-auto px-4 py-4 space-y-4" data-case-scroll>
+                <div class="space-y-4" data-case-tab-panel="overview">
+                  <section class="space-y-3">
+                    <div class="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Summary</div>
+                    <div class="rounded-xl border border-border/60 bg-card/95 px-4 py-4 space-y-3">
+                      <div>
+                        <div class="text-xs font-semibold uppercase tracking-wide text-muted-foreground/80">Description</div>
+                        <p class="mt-1 text-sm leading-relaxed text-foreground" data-case-description>No summary provided.</p>
+                      </div>
+                      <div>
+                        <div class="text-xs font-semibold uppercase tracking-wide text-muted-foreground/80">AI diagnosis</div>
+                        <p class="mt-1 text-sm leading-relaxed text-foreground" data-case-diagnosis>No AI diagnosis yet.</p>
+                      </div>
+                      <div>
+                        <div class="text-xs font-semibold uppercase tracking-wide text-muted-foreground/80">Actions taken</div>
+                        <p class="mt-1 text-sm leading-relaxed text-foreground" data-case-actions>No resolution actions captured.</p>
+                      </div>
+                    </div>
+                  </section>
+                  <section class="space-y-3">
+                    <div class="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Suggested next steps</div>
+                    <div class="rounded-xl border border-border/60 bg-muted/60 px-4 py-3">
+                      <ul class="space-y-2 text-sm text-foreground" data-case-suggestions>
+                        <li class="text-muted-foreground">No suggestions available.</li>
+                      </ul>
+                    </div>
+                  </section>
+                  <section class="space-y-3">
+                    <div class="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Notes</div>
+                    <div class="rounded-xl border border-border/60 bg-card/95 px-4 py-3">
+                      <ul class="space-y-3 text-sm" data-case-notes>
+                        <li class="text-muted-foreground">No notes on this case.</li>
+                      </ul>
+                    </div>
+                  </section>
+                </div>
+                <div class="space-y-3 hidden" data-case-tab-panel="documents">
+                  <div class="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Documents</div>
+                  <div class="rounded-xl border border-border/60 bg-card/95 px-4 py-3">
+                    <ul class="space-y-3" data-case-documents>
+                      <li class="text-sm text-muted-foreground">No documents attached.</li>
+                    </ul>
+                  </div>
+                </div>
+                <div class="space-y-3 hidden" data-case-tab-panel="history">
+                  <div class="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Activity</div>
+                  <div class="rounded-xl border border-border/60 bg-card/95 px-4 py-3">
+                    <ul class="space-y-3" data-case-history>
+                      <li class="text-sm text-muted-foreground">No history yet.</li>
+                    </ul>
+                  </div>
+                </div>
+                <div class="space-y-3 hidden" data-case-tab-panel="messages">
+                  <div class="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Messages</div>
+                  <div class="rounded-xl border border-border/60 bg-card/95 px-4 py-3">
+                    <ul class="space-y-3" data-case-messages>
+                      <li class="text-sm text-muted-foreground">No conversation messages yet.</li>
+                    </ul>
+                  </div>
+                </div>
+              </div>
+            </div>
+            <footer class="mt-auto flex flex-col gap-2 border-t border-border/60 px-4 py-4">
+              <button type="button" class="w-full rounded-lg border border-border/70 bg-muted/80 px-4 py-2 text-sm font-medium text-foreground transition hover:bg-muted/70">Assign owner</button>
+              <button type="button" class="w-full rounded-lg bg-primary px-4 py-2 text-sm font-semibold text-primary-foreground transition hover:bg-primary/90">Mark resolved</button>
+            </footer>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</aside>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+  document.addEventListener("DOMContentLoaded", function () {
+    var table = document.querySelector("[data-cases-table]");
+    var panel = document.querySelector("[data-case-panel]");
+    var overlay = document.querySelector("[data-case-overlay]");
+    if (!table || !panel) {
+      return;
+    }
+
+    function activateTab(targetName) {
+      if (!tabButtons || !tabButtons.length || !tabPanels || !tabPanels.length) {
+        return;
+      }
+      var resolved = targetName || defaultTab;
+      tabButtons.forEach(function (button) {
+        var name = button.getAttribute("data-case-tab");
+        var isActive = name === resolved;
+        button.dataset.state = isActive ? "active" : "inactive";
+        button.setAttribute("aria-selected", isActive ? "true" : "false");
+      });
+      tabPanels.forEach(function (panelEl) {
+        var name = panelEl.getAttribute("data-case-tab-panel");
+        var isActive = name === resolved;
+        panelEl.classList.toggle("hidden", !isActive);
+      });
+      if (scrollRoot) {
+        scrollRoot.scrollTop = 0;
+      }
+    }
+
+    var closeTrigger = panel.querySelector("[data-case-close]");
+    var scrollRoot = panel.querySelector("[data-case-scroll]");
+    var body = document.body;
+
+    var priorityMap = {
+      critical: "border-transparent bg-red-500/10 text-red-600",
+      high: "border-transparent bg-orange-500/10 text-orange-600",
+      medium: "border-transparent bg-amber-500/10 text-amber-600",
+      low: "border-transparent bg-emerald-500/10 text-emerald-600",
+    };
+    var statusMap = {
+      open: "border-transparent bg-emerald-500/10 text-emerald-600",
+      closed: "border-transparent bg-muted/60 text-muted-foreground",
+      resolved: "border-transparent bg-emerald-500/10 text-emerald-600",
+    };
+
+    var emptyState = panel.querySelector("[data-case-empty]");
+    var loadingState = panel.querySelector("[data-case-loading]");
+    var errorState = panel.querySelector("[data-case-error]");
+    var errorMessage = panel.querySelector("[data-case-error-message]");
+    var contentState = panel.querySelector("[data-case-content]");
+
+    var fieldAriaTitle = panel.querySelector("[data-case-aria-title]");
+    var fieldNumber = panel.querySelector("[data-case-number]");
+    var fieldTitle = panel.querySelector("[data-case-title]");
+    var fieldPriority = panel.querySelector("[data-case-priority-badge]");
+    var fieldStatus = panel.querySelector("[data-case-status-badge]");
+    var fieldStarted = panel.querySelector("[data-case-started]");
+    var fieldCustomerInitials = panel.querySelector("[data-case-customer-initials]");
+    var fieldCustomerName = panel.querySelector("[data-case-customer-name]");
+    var fieldCustomerEmail = panel.querySelector("[data-case-customer-email]");
+    var fieldDescription = panel.querySelector("[data-case-description]");
+    var fieldDiagnosis = panel.querySelector("[data-case-diagnosis]");
+    var fieldActions = panel.querySelector("[data-case-actions]");
+    var fieldSuggestions = panel.querySelector("[data-case-suggestions]");
+    var fieldHistory = panel.querySelector("[data-case-history]");
+    var fieldMessages = panel.querySelector("[data-case-messages]");
+    var fieldNotes = panel.querySelector("[data-case-notes]");
+    var fieldDocuments = panel.querySelector("[data-case-documents]");
+    var fieldChannel = panel.querySelector("[data-case-channel-label]");
+
+    var tabButtons = Array.prototype.slice.call(panel.querySelectorAll("[data-case-tab]") || []);
+    var tabPanels = Array.prototype.slice.call(panel.querySelectorAll("[data-case-tab-panel]") || []);
+    var defaultTab = "overview";
+    if (tabButtons.length) {
+      var firstTab = tabButtons[0].getAttribute("data-case-tab");
+      if (firstTab) {
+        defaultTab = firstTab;
+      }
+    }
+
+    var selectedClass = "ring-1 ring-primary/70 bg-primary/5";
+    var activeRow = null;
+    var inFlight = null;
+    var isPanelOpen = false;
+
+    function setPanelState(state) {
+      panel.dataset.state = state;
+      panel.setAttribute("aria-busy", state === "loading" ? "true" : "false");
+      if (emptyState) emptyState.classList.toggle("hidden", state !== "empty");
+      if (loadingState) loadingState.classList.toggle("hidden", state !== "loading");
+      if (errorState) errorState.classList.toggle("hidden", state !== "error");
+      if (contentState) contentState.classList.toggle("hidden", state !== "content");
+      if (fieldAriaTitle) {
+        if (state === "empty") {
+          fieldAriaTitle.textContent = "Select a case";
+        } else if (state === "loading") {
+          fieldAriaTitle.textContent = "Loading case details";
+        } else if (state === "error") {
+          fieldAriaTitle.textContent = "Case details unavailable";
+        }
+      }
+      if (state !== "content" && fieldChannel) {
+        fieldChannel.textContent = "—";
+      }
+      if (state === "content") {
+        activateTab(defaultTab);
+      }
+    }
+
+    function openPanel() {
+      if (isPanelOpen) {
+        return;
+      }
+      isPanelOpen = true;
+      panel.setAttribute("aria-hidden", "false");
+      panel.classList.remove("translate-x-full");
+      panel.classList.add("translate-x-0");
+      panel.style.transform = "translateX(0)";
+      if (overlay) {
+        overlay.classList.remove("opacity-0", "pointer-events-none");
+        overlay.classList.add("opacity-100", "pointer-events-auto");
+        overlay.style.opacity = "1";
+        overlay.style.pointerEvents = "auto";
+      }
+      if (body) {
+        body.classList.add("overflow-hidden");
+      }
+      try {
+        panel.focus({ preventScroll: true });
+      } catch (_err) {
+        panel.focus();
+      }
+    }
+
+    function closePanel(options) {
+      options = options || {};
+      if (inFlight) {
+        inFlight.abort();
+        inFlight = null;
+      }
+      if (!options.suppressState) {
+        setPanelState("empty");
+      } else {
+        if (fieldChannel) {
+          fieldChannel.textContent = "—";
+        }
+        if (fieldAriaTitle) {
+          fieldAriaTitle.textContent = "Select a case";
+        }
+      }
+      if (!isPanelOpen && !options.force) {
+        return;
+      }
+      if (overlay) {
+        overlay.classList.remove("opacity-100", "pointer-events-auto");
+        overlay.classList.add("opacity-0", "pointer-events-none");
+        overlay.style.opacity = "0";
+        overlay.style.pointerEvents = "none";
+      }
+      panel.classList.add("translate-x-full");
+      panel.classList.remove("translate-x-0");
+      panel.style.transform = "translateX(100%)";
+      panel.setAttribute("aria-hidden", "true");
+      if (body) {
+        body.classList.remove("overflow-hidden");
+      }
+      isPanelOpen = false;
+      if (options.resetSelection !== false && activeRow) {
+        activeRow.classList.remove(selectedClass);
+        activeRow.dataset.selected = "false";
+        activeRow.setAttribute("aria-expanded", "false");
+        activeRow = null;
+      }
+      activateTab(defaultTab);
+    }
+
+    function formatDateTime(value) {
+      if (!value) {
+        return "—";
+      }
+      try {
+        var date = new Date(value);
+        if (Number.isNaN(date.getTime())) {
+          return value;
+        }
+        return date.toLocaleString(undefined, {
+          year: "numeric",
+          month: "short",
+          day: "numeric",
+          hour: "2-digit",
+          minute: "2-digit",
+        });
+      } catch (_e) {
+        return value;
+      }
+    }
+
+    function populateList(target, items, renderItem, emptyMessage) {
+      if (!target) return;
+      target.innerHTML = "";
+      if (!items || !items.length) {
+        if (emptyMessage) {
+          var fallback = document.createElement("li");
+          fallback.className = "text-sm text-muted-foreground";
+          fallback.textContent = emptyMessage;
+          target.appendChild(fallback);
+        }
+        return;
+      }
+      items.forEach(function (item) {
+        var element = renderItem(item);
+        if (element) {
+          target.appendChild(element);
+        }
+      });
+    }
+
+    function applyBadge(badge, value, map) {
+      if (!badge) return;
+      var normalized = (value || "").toString().toLowerCase();
+      var display = value ? value.replace(/_/g, " ") : "—";
+      if (display !== "—") {
+        display = display.charAt(0).toUpperCase() + display.slice(1);
+      }
+      badge.textContent = display;
+      badge.className = "inline-flex items-center rounded-full border px-2.5 py-0.5 text-xs font-semibold capitalize";
+      if (normalized && map[normalized]) {
+        badge.className += " " + map[normalized];
+      } else {
+        badge.className += " border-transparent bg-muted/60 text-muted-foreground";
+      }
+    }
+
+    function populatePanel(payload, rowDataset) {
+      var summary = payload.case || {};
+      if (fieldNumber) fieldNumber.textContent = summary.caseNumber || rowDataset.caseNumber || "Case";
+      var resolvedTitle = summary.title || rowDataset.caseTitle || "Untitled case";
+      if (fieldTitle) fieldTitle.textContent = resolvedTitle;
+      if (fieldAriaTitle) fieldAriaTitle.textContent = resolvedTitle;
+      applyBadge(fieldPriority, summary.priority || rowDataset.casePriority || "unknown", priorityMap);
+      applyBadge(fieldStatus, summary.status || rowDataset.caseStatus || "unknown", statusMap);
+      if (fieldStarted) {
+        var started = summary.startedAt || rowDataset.caseStarted;
+        fieldStarted.textContent = started ? "Started " + formatDateTime(started) : "Start time unavailable";
+      }
+
+      if (fieldChannel) {
+        var channelDisplay = summary.channel || rowDataset.caseChannel || "—";
+        if (channelDisplay && channelDisplay !== "—") {
+          channelDisplay = channelDisplay.toString().replace(/_/g, " ");
+          channelDisplay = channelDisplay.charAt(0).toUpperCase() + channelDisplay.slice(1);
+        }
+        fieldChannel.textContent = channelDisplay;
+      }
+
+      var customer = summary.customer || {};
+      if (fieldCustomerInitials) {
+        var initials = customer.initials || (rowDataset.caseCustomer || "CU").slice(0, 2).toUpperCase();
+        fieldCustomerInitials.textContent = initials;
+      }
+      if (fieldCustomerName) fieldCustomerName.textContent = customer.displayName || rowDataset.caseCustomer || "Customer";
+      if (fieldCustomerEmail) fieldCustomerEmail.textContent = customer.email || rowDataset.caseEmail || "—";
+
+      if (fieldDescription) fieldDescription.textContent = payload.description || "No summary provided.";
+      if (fieldDiagnosis) fieldDiagnosis.textContent = payload.aiDiagnosis || "No AI diagnosis yet.";
+      if (fieldActions) fieldActions.textContent = payload.aiActionsTaken || "No resolution actions captured.";
+
+      populateList(
+        fieldSuggestions,
+        payload.aiSuggestedActions,
+        function (action) {
+          var li = document.createElement("li");
+          li.className = "rounded-md border border-border/60 bg-background/80 px-3 py-2 text-sm text-foreground";
+          li.textContent = action;
+          return li;
+        },
+        "No suggestions available."
+      );
+
+      populateList(
+        fieldHistory,
+        payload.history,
+        function (item) {
+          var li = document.createElement("li");
+          li.className = "rounded-lg border border-border/60 bg-muted/40 px-3 py-2";
+          var title = document.createElement("div");
+          title.className = "text-sm font-medium text-foreground";
+          title.textContent = item.summary || "Activity";
+          var meta = document.createElement("div");
+          meta.className = "mt-1 text-xs text-muted-foreground";
+          meta.textContent = (item.source || "system").replace(/_/g, " ") + " • " + formatDateTime(item.occurredAt);
+          li.appendChild(title);
+          li.appendChild(meta);
+          return li;
+        },
+        "No history yet."
+      );
+
+      populateList(
+        fieldMessages,
+        payload.messages,
+        function (item) {
+          var li = document.createElement("li");
+          li.className = "rounded-lg border border-border/60 bg-background/70 px-3 py-2";
+          var header = document.createElement("div");
+          header.className = "flex items-center justify-between text-xs text-muted-foreground";
+          header.textContent = (item.senderDisplayName || item.sender || "Participant") + " • " + formatDateTime(item.sentAt);
+          var body = document.createElement("div");
+          body.className = "mt-2 text-sm text-foreground whitespace-pre-line";
+          body.textContent = item.content || "";
+          li.appendChild(header);
+          li.appendChild(body);
+          return li;
+        },
+        "No conversation messages yet."
+      );
+
+      populateList(
+        fieldNotes,
+        payload.notes,
+        function (item) {
+          var li = document.createElement("li");
+          li.className = "rounded-lg border border-border/60 bg-muted/60 px-3 py-2";
+          var header = document.createElement("div");
+          header.className = "flex items-center justify-between text-xs text-muted-foreground";
+          header.textContent = (item.authorType || "agent").replace(/_/g, " ") + " • " + formatDateTime(item.createdAt);
+          var body = document.createElement("div");
+          body.className = "mt-2 text-sm text-foreground whitespace-pre-line";
+          body.textContent = item.content || "";
+          li.appendChild(header);
+          li.appendChild(body);
+          return li;
+        },
+        "No notes on this case."
+      );
+
+      populateList(
+        fieldDocuments,
+        payload.documents,
+        function (item) {
+          var li = document.createElement("li");
+          li.className = "flex items-start justify-between gap-3 rounded-lg border border-border/60 bg-muted/40 px-3 py-2";
+          var left = document.createElement("div");
+          left.className = "flex-1";
+          var title = document.createElement("div");
+          title.className = "text-sm font-medium text-foreground truncate";
+          title.textContent = item.name || "Document";
+          var meta = document.createElement("div");
+          meta.className = "text-xs text-muted-foreground mt-1";
+          meta.textContent = formatDateTime(item.capturedAt);
+          left.appendChild(title);
+          left.appendChild(meta);
+          li.appendChild(left);
+          if (item.documentUrl) {
+            var link = document.createElement("a");
+            link.className = "text-xs font-medium text-primary hover:underline";
+            link.href = item.documentUrl;
+            link.target = "_blank";
+            link.rel = "noreferrer";
+            link.textContent = "Open";
+            li.appendChild(link);
+          }
+          return li;
+        },
+        "No documents attached."
+      );
+      activateTab(defaultTab);
+    }
+
+    function selectRow(row) {
+      if (activeRow && activeRow !== row) {
+        activeRow.classList.remove(selectedClass);
+        activeRow.dataset.selected = "false";
+        activeRow.setAttribute("aria-expanded", "false");
+      }
+      activeRow = row;
+      if (row) {
+        row.classList.add(selectedClass);
+        row.dataset.selected = "true";
+        row.setAttribute("aria-expanded", "true");
+        try {
+          row.focus({ preventScroll: true });
+        } catch (_err) {
+          row.focus();
+        }
+      }
+    }
+
+    function handleRowActivation(row) {
+      var uuid = row.getAttribute("data-case-uuid");
+      if (!uuid) {
+        return;
+      }
+      selectRow(row);
+      if (inFlight) {
+        inFlight.abort();
+      }
+      var controller = new AbortController();
+      inFlight = controller;
+      openPanel();
+      setPanelState("loading");
+      if (scrollRoot) {
+        scrollRoot.scrollTop = 0;
+      }
+      fetch("/api/cases/" + encodeURIComponent(uuid) + "/", {
+        method: "GET",
+        headers: { Accept: "application/json" },
+        credentials: "same-origin",
+        signal: controller.signal,
+      })
+        .then(function (response) {
+          if (!response.ok) {
+            throw new Error("Failed to load");
+          }
+          return response.json();
+        })
+        .then(function (payload) {
+          if (controller.signal.aborted) {
+            return;
+          }
+          setPanelState("content");
+          populatePanel(payload || {}, {
+            caseNumber: row.getAttribute("data-case-number") || "",
+            caseTitle: row.getAttribute("data-case-title") || "",
+            casePriority: row.getAttribute("data-case-priority") || "",
+            caseStatus: row.getAttribute("data-case-status") || "",
+            caseStarted: row.getAttribute("data-case-started") || "",
+            caseCustomer: row.getAttribute("data-case-customer") || "",
+            caseEmail: row.getAttribute("data-case-email") || "",
+            caseChannel: row.getAttribute("data-case-channel") || "",
+          });
+          if (scrollRoot) {
+            scrollRoot.scrollTop = 0;
+          }
+        })
+        .catch(function (error) {
+          if (controller.signal.aborted) {
+            return;
+          }
+          console.error("Failed to load case detail", error);
+          if (errorMessage) {
+            errorMessage.textContent = "Unable to load case details. Please try again.";
+          }
+          setPanelState("error");
+          if (scrollRoot) {
+            scrollRoot.scrollTop = 0;
+          }
+        })
+        .finally(function () {
+          if (inFlight === controller) {
+            inFlight = null;
+          }
+        });
+    }
+
+    var caseRows = Array.prototype.slice.call(document.querySelectorAll("[data-case-row]") || []);
+    caseRows.forEach(function (row) {
+      row.addEventListener("click", function (event) {
+        if (event.defaultPrevented) {
+          return;
+        }
+        handleRowActivation(row);
+      });
+      row.addEventListener("keydown", function (event) {
+        if (event.key === "Enter" || event.key === " ") {
+          event.preventDefault();
+          handleRowActivation(row);
+        }
+      });
+    });
+
+    if (overlay) {
+      overlay.addEventListener("click", function () {
+        closePanel();
+      });
+    }
+    if (closeTrigger) {
+      closeTrigger.addEventListener("click", function () {
+        closePanel();
+      });
+    }
+    document.addEventListener("keydown", function (event) {
+      if (event.key === "Escape" && isPanelOpen) {
+        event.preventDefault();
+        closePanel();
+      }
+    });
+
+    tabButtons.forEach(function (button) {
+      button.addEventListener("click", function () {
+        var target = button.getAttribute("data-case-tab");
+        activateTab(target);
+      });
+    });
+
+    closePanel({ suppressState: true, resetSelection: false, force: true });
+  });
+</script>
+{% endblock %}

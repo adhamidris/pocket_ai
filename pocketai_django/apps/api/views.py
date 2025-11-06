@@ -1,8 +1,870 @@
 from __future__ import annotations
 
-from django.http import JsonResponse
+import json
+import logging
+import uuid
+from http import HTTPStatus
+
+from django.conf import settings
+from django.contrib.auth import login as auth_login
+from django.http import HttpRequest, JsonResponse
+from django.views.decorators.csrf import csrf_protect
+from django.views.decorators.http import require_http_methods
+
+from apps.accounts.models import AgentProfile, BusinessProfile
+from apps.cases.models import Case, CaseMessage, CasePriority, CaseStatus
+from apps.customers.models import Customer, CustomerNoteAuthor
+from apps.services.cases import (
+    CaseDetail,
+    CaseListResult,
+    CaseSummary,
+    CaseServiceError,
+    add_case_message,
+    add_case_note,
+    add_history_entry,
+    create_case,
+    get_case_detail,
+    list_cases,
+    update_case,
+)
+from apps.services.registration import (
+    AgentProfileError,
+    AgentProfileResult,
+    BusinessProfileError,
+    BusinessProfileResult,
+    EmailAlreadyRegistered,
+    KnowledgeUploadError,
+    KnowledgeUploadResult,
+    RegistrationError,
+    RegistrationResult,
+    configure_agent_profile,
+    finalize_knowledge_uploads,
+    start_registration as start_registration_service,
+    upsert_business_profile,
+)
+
+logger = logging.getLogger(__name__)
 
 
 def placeholder(_request):
     """Placeholder endpoint to be fleshed out in backend migration."""
     return JsonResponse({"status": "ok", "message": "API scaffold ready"}, status=200)
+
+
+@csrf_protect
+@require_http_methods(["POST"])
+def start_registration(request: HttpRequest) -> JsonResponse:
+    """Handle the first step of the registration wizard."""
+    try:
+        payload = json.loads(request.body.decode("utf-8") or "{}")
+    except (json.JSONDecodeError, UnicodeDecodeError):
+        return JsonResponse(
+            {"error": "INVALID_JSON", "message": "Request body must be valid JSON."},
+            status=HTTPStatus.BAD_REQUEST,
+        )
+
+    first_name = str(payload.get("firstName") or "").strip()
+    email = str(payload.get("email") or "").strip()
+    password = str(payload.get("password") or "")
+    confirm_password = str(payload.get("confirmPassword") or "")
+
+    errors: dict[str, str] = {}
+    if len(first_name) < 2:
+        errors["firstName"] = "First name must be at least 2 characters."
+    if not email or "@" not in email:
+        errors["email"] = "Enter a valid email address."
+    if len(password) < 8:
+        errors["password"] = "Password must be at least 8 characters."
+    if password != confirm_password:
+        errors["confirmPassword"] = "Passwords must match."
+
+    if errors:
+        return JsonResponse(
+            {"error": "VALIDATION_ERROR", "message": "Fix the highlighted fields.", "errors": errors},
+            status=HTTPStatus.BAD_REQUEST,
+        )
+
+    try:
+        result: RegistrationResult = start_registration_service(
+            first_name=first_name,
+            email=email,
+            password=password,
+        )
+    except EmailAlreadyRegistered:
+        return JsonResponse(
+            {
+                "error": "EMAIL_REGISTERED",
+                "message": "An account with this email already exists.",
+                "field": "email",
+            },
+            status=HTTPStatus.CONFLICT,
+        )
+    except RegistrationError as exc:
+        return JsonResponse(
+            {"error": "REGISTRATION_FAILED", "message": str(exc)},
+            status=HTTPStatus.BAD_REQUEST,
+        )
+    except Exception:  # pragma: no cover - defensive logging
+        logger.exception("Failed to start registration.")
+        return JsonResponse(
+            {"error": "SERVER_ERROR", "message": "Unable to start registration right now."},
+            status=HTTPStatus.INTERNAL_SERVER_ERROR,
+        )
+
+    session = result.session
+    user = result.user
+
+    response = {
+        "registrationId": str(session.id),
+        "user": {
+            "id": str(user.public_id),
+            "email": user.email,
+            "firstName": user.first_name,
+        },
+        "nextStep": "business",
+        "session": {
+            "id": str(session.id),
+            "currentStep": session.current_step,
+            "stepsCompleted": session.steps_completed,
+            "totalSteps": session.total_steps,
+        },
+    }
+    return JsonResponse(response, status=HTTPStatus.CREATED)
+
+
+@csrf_protect
+@require_http_methods(["PUT"])
+def update_business_profile(request: HttpRequest, session_id: str) -> JsonResponse:
+    """Persist the business profile for the given registration session."""
+    try:
+        payload = json.loads(request.body.decode("utf-8") or "{}")
+    except (json.JSONDecodeError, UnicodeDecodeError):
+        return JsonResponse(
+            {"error": "INVALID_JSON", "message": "Request body must be valid JSON."},
+            status=HTTPStatus.BAD_REQUEST,
+        )
+
+    business_name = str(payload.get("businessName") or "").strip()
+    industry = str(payload.get("industry") or "").strip()
+    industry_key = str(payload.get("industryKey") or "").strip()
+    line_of_business = payload.get("lineOfBusiness") or []
+    line_of_business_custom = payload.get("lineOfBusinessCustom") or []
+    country = str(payload.get("country") or "").strip()
+    website = str(payload.get("website") or "").strip()
+
+    if business_name and len(business_name) > 255:
+        return JsonResponse(
+            {"error": "VALIDATION_ERROR", "message": "Business name is too long."},
+            status=HTTPStatus.BAD_REQUEST,
+        )
+
+    try:
+        result: BusinessProfileResult = upsert_business_profile(
+            session_id=session_id,
+            name=business_name,
+            industry=industry,
+            industry_key=industry_key,
+            line_of_business=line_of_business,
+            line_of_business_custom=line_of_business_custom,
+            country=country,
+            website=website,
+        )
+    except BusinessProfileError as exc:
+        return JsonResponse(
+            {"error": "VALIDATION_ERROR", "message": str(exc)},
+            status=HTTPStatus.BAD_REQUEST,
+        )
+    except Exception:  # pragma: no cover - defensive logging
+        logger.exception("Failed to store business profile.")
+        return JsonResponse(
+            {"error": "SERVER_ERROR", "message": "Unable to save the business profile right now."},
+            status=HTTPStatus.INTERNAL_SERVER_ERROR,
+        )
+
+    profile = result.profile
+    session = result.session
+
+    response = {
+        "business": {
+            "id": str(profile.id),
+            "name": profile.name,
+            "industry": profile.industry,
+            "industryKey": profile.industry_key,
+            "lineOfBusiness": profile.line_of_business,
+            "lineOfBusinessCustom": profile.line_of_business_custom,
+            "country": profile.country,
+            "website": profile.website,
+            "status": profile.status,
+        },
+        "session": {
+            "id": str(session.id),
+            "currentStep": session.current_step,
+            "stepsCompleted": session.steps_completed,
+            "totalSteps": session.total_steps,
+        },
+        "nextStep": "agent",
+    }
+    return JsonResponse(response, status=HTTPStatus.OK)
+
+
+@csrf_protect
+@require_http_methods(["PUT"])
+def configure_agent(request: HttpRequest, business_id: str) -> JsonResponse:
+    """Persist the agent configuration for the given business profile."""
+    try:
+        payload = json.loads(request.body.decode("utf-8") or "{}")
+    except (json.JSONDecodeError, UnicodeDecodeError):
+        return JsonResponse(
+            {"error": "INVALID_JSON", "message": "Request body must be valid JSON."},
+            status=HTTPStatus.BAD_REQUEST,
+        )
+
+    agent_name = str(payload.get("agentName") or "").strip()
+    agent_role = str(payload.get("agentTitle") or "").strip()
+    agent_tone = str(payload.get("agentTone") or "").strip()
+    agent_traits = payload.get("agentTraits") or []
+    agent_escalation = str(payload.get("agentEscalation") or "").strip()
+
+    if agent_traits and not isinstance(agent_traits, list):
+        return JsonResponse(
+            {"error": "VALIDATION_ERROR", "message": "Traits must be a list of strings."},
+            status=HTTPStatus.BAD_REQUEST,
+        )
+
+    try:
+        result: AgentProfileResult = configure_agent_profile(
+            business_id=business_id,
+            name=agent_name,
+            role=agent_role,
+            tone=agent_tone,
+            traits=agent_traits,
+            escalation_rule=agent_escalation,
+        )
+    except AgentProfileError as exc:
+        return JsonResponse(
+            {"error": "VALIDATION_ERROR", "message": str(exc)},
+            status=HTTPStatus.BAD_REQUEST,
+        )
+    except Exception:  # pragma: no cover - defensive logging
+        logger.exception("Failed to configure agent profile.")
+        return JsonResponse(
+            {"error": "SERVER_ERROR", "message": "Unable to save the agent profile right now."},
+            status=HTTPStatus.INTERNAL_SERVER_ERROR,
+        )
+
+    profile = result.profile
+    session = result.session
+
+    response = {
+        "agent": {
+            "id": str(profile.id),
+            "name": profile.name,
+            "role": profile.role,
+            "tone": profile.tone,
+            "traits": profile.traits,
+            "escalationRule": profile.escalation_rule,
+            "status": profile.status,
+        },
+        "session": {
+            "id": str(session.id),
+            "currentStep": session.current_step,
+            "stepsCompleted": session.steps_completed,
+            "totalSteps": session.total_steps,
+        },
+        "nextStep": "uploads",
+    }
+    return JsonResponse(response, status=HTTPStatus.OK)
+
+
+def _resolve_business_profile(request: HttpRequest, business_id: str | None) -> tuple[BusinessProfile | None, JsonResponse | None]:
+    """
+    Determine the business profile for the request either from parameter or the authenticated user.
+    """
+
+    if business_id:
+        try:
+            return BusinessProfile.objects.get(id=business_id), None
+        except BusinessProfile.DoesNotExist:
+            return None, JsonResponse(
+                {"error": "BUSINESS_NOT_FOUND", "message": "Business profile not found."},
+                status=HTTPStatus.NOT_FOUND,
+            )
+
+    if request.user.is_authenticated:
+        business = request.user.business_profiles.order_by("-created_at").first()
+        if business:
+            return business, None
+
+    return None, JsonResponse(
+        {"error": "BUSINESS_REQUIRED", "message": "A business_id is required to perform this action."},
+        status=HTTPStatus.BAD_REQUEST,
+    )
+
+
+def _iso(dt):
+    return dt.isoformat() if dt else None
+
+
+def _serialize_case_summary(summary: CaseSummary) -> dict:
+    return {
+        "id": str(summary.id),
+        "caseNumber": summary.case_number,
+        "title": summary.title,
+        "description": summary.description,
+        "priority": summary.priority,
+        "status": summary.status,
+        "customer": {
+            "id": str(summary.customer_id) if summary.customer_id else None,
+            "displayName": summary.customer_name,
+            "email": summary.customer_email,
+            "initials": summary.customer_initials,
+        },
+        "agent": {
+            "id": str(summary.agent_id) if summary.agent_id else None,
+            "name": summary.agent_name,
+        },
+        "channel": summary.channel,
+        "startedAt": _iso(summary.started_at),
+        "updatedAt": _iso(summary.updated_at),
+        "closedAt": _iso(summary.closed_at),
+        "lastMessageAt": _iso(summary.last_message_at),
+    }
+
+
+def _serialize_case_detail(detail: CaseDetail) -> dict:
+    return {
+        "case": _serialize_case_summary(detail.summary),
+        "description": detail.description,
+        "aiDiagnosis": detail.ai_diagnosis,
+        "aiActionsTaken": detail.ai_actions_taken,
+        "aiSuggestedActions": list(detail.ai_suggested_actions),
+        "metadata": detail.metadata,
+        "history": [
+            {
+                "id": str(item.id),
+                "summary": item.summary,
+                "source": item.source,
+                "occurredAt": _iso(item.occurred_at),
+                "sessionReference": item.session_reference or None,
+                "metadata": item.metadata,
+            }
+            for item in detail.history
+        ],
+        "messages": [
+            {
+                "id": str(msg.id),
+                "sender": msg.sender,
+                "senderDisplayName": msg.sender_display_name,
+                "content": msg.content,
+                "contentType": msg.content_type,
+                "sentAt": _iso(msg.sent_at),
+                "sessionReference": msg.session_reference or None,
+                "metadata": msg.metadata,
+            }
+            for msg in detail.messages
+        ],
+        "documents": [
+            {
+                "id": str(doc.id),
+                "name": doc.name,
+                "documentUrl": doc.document_url,
+                "knowledgeUploadId": str(doc.knowledge_upload_id) if doc.knowledge_upload_id else None,
+                "knowledgeUploadName": doc.knowledge_upload_name,
+                "capturedAt": _iso(doc.captured_at),
+                "metadata": doc.metadata,
+            }
+            for doc in detail.documents
+        ],
+        "notes": [
+            {
+                "id": str(note.id),
+                "authorType": note.author_type,
+                "content": note.content,
+                "isPinned": note.is_pinned,
+                "createdAt": _iso(note.created_at),
+                "metadata": note.metadata,
+            }
+            for note in detail.notes
+        ],
+    }
+
+
+def _serialize_case_list(result: CaseListResult) -> dict:
+    return {
+        "items": [_serialize_case_summary(item) for item in result.items],
+        "total": result.total_count,
+        "metrics": {
+            "open": result.metrics.open_total,
+            "urgent": result.metrics.urgent_open,
+            "urgentDeltaHint": result.metrics.urgent_delta_hint,
+            "avgOpenHours": result.metrics.average_open_hours,
+        },
+        "filters": result.filters_applied,
+    }
+
+
+@require_http_methods(["GET", "POST"])
+def cases_collection(request: HttpRequest) -> JsonResponse:
+    if request.method == "GET":
+        business_id = request.GET.get("business_id")
+    else:
+        try:
+            payload = json.loads(request.body.decode("utf-8") or "{}")
+        except (json.JSONDecodeError, UnicodeDecodeError):
+            return JsonResponse(
+                {"error": "INVALID_JSON", "message": "Request body must be valid JSON."},
+                status=HTTPStatus.BAD_REQUEST,
+            )
+        business_id = payload.get("businessId")
+
+    business, error = _resolve_business_profile(request, business_id)
+    if error:
+        return error
+    assert business is not None  # for mypy
+
+    if request.method == "GET":
+        status_filter = request.GET.get("status")
+        priority_filter = request.GET.get("priority")
+        search = request.GET.get("search")
+        agent_id_str = request.GET.get("agent_id")
+        customer_id_str = request.GET.get("customer_id")
+        limit = int(request.GET.get("limit", 50))
+        offset = int(request.GET.get("offset", 0))
+
+        agent_id = None
+        if agent_id_str:
+            try:
+                agent_id = uuid.UUID(agent_id_str)
+            except ValueError:
+                return JsonResponse(
+                    {"error": "VALIDATION_ERROR", "message": "agent_id must be a valid UUID."},
+                    status=HTTPStatus.BAD_REQUEST,
+                )
+
+        customer_id = None
+        if customer_id_str:
+            try:
+                customer_id = uuid.UUID(customer_id_str)
+            except ValueError:
+                return JsonResponse(
+                    {"error": "VALIDATION_ERROR", "message": "customer_id must be a valid UUID."},
+                    status=HTTPStatus.BAD_REQUEST,
+                )
+
+        result = list_cases(
+            business_profile=business,
+            status=status_filter,
+            priority=priority_filter,
+            search=search,
+            agent_id=agent_id,
+            customer_id=customer_id,
+            limit=max(1, min(limit, 100)),
+            offset=max(0, offset),
+        )
+
+        return JsonResponse(_serialize_case_list(result), status=HTTPStatus.OK)
+
+    # POST - create new case
+    payload = payload or {}
+    title = (payload.get("title") or "").strip()
+    description = (payload.get("description") or "").strip()
+    priority = (payload.get("priority") or CasePriority.MEDIUM).lower()
+    status = (payload.get("status") or CaseStatus.OPEN).lower()
+    agent_id = payload.get("agentId")
+    customer_id = payload.get("customerId")
+    ai_diagnosis = payload.get("aiDiagnosis") or ""
+    ai_actions_taken = payload.get("aiActionsTaken") or ""
+    ai_suggested_actions = payload.get("aiSuggestedActions") or []
+    metadata = payload.get("metadata") or {}
+    customer_snapshot = payload.get("customerSnapshot") or {}
+
+    if not title:
+        return JsonResponse(
+            {"error": "VALIDATION_ERROR", "message": "Case title is required.", "field": "title"},
+            status=HTTPStatus.BAD_REQUEST,
+        )
+    if not description:
+        return JsonResponse(
+            {"error": "VALIDATION_ERROR", "message": "Case description is required.", "field": "description"},
+            status=HTTPStatus.BAD_REQUEST,
+        )
+
+    agent_profile = None
+    if agent_id:
+        try:
+            agent_profile = AgentProfile.objects.get(id=agent_id, business_profile=business)
+        except AgentProfile.DoesNotExist:
+            return JsonResponse(
+                {"error": "AGENT_NOT_FOUND", "message": "Agent profile not found for business."},
+                status=HTTPStatus.BAD_REQUEST,
+            )
+
+    customer = None
+    if customer_id:
+        try:
+            customer = Customer.objects.get(id=customer_id, business_profile=business)
+        except Customer.DoesNotExist:
+            return JsonResponse(
+                {"error": "CUSTOMER_NOT_FOUND", "message": "Customer not found for business."},
+                status=HTTPStatus.BAD_REQUEST,
+            )
+
+    try:
+        case = create_case(
+            business_profile=business,
+            title=title,
+            description=description,
+            priority=priority,
+            status=status,
+            agent_profile=agent_profile,
+            customer=customer,
+            customer_snapshot=customer_snapshot,
+            ai_diagnosis=ai_diagnosis,
+            ai_actions_taken=ai_actions_taken,
+            ai_suggested_actions=ai_suggested_actions,
+            metadata=metadata,
+            created_by=request.user if request.user.is_authenticated else None,
+        )
+    except CaseServiceError as exc:
+        return JsonResponse(
+            {"error": "CASE_CREATE_FAILED", "message": str(exc)},
+            status=HTTPStatus.BAD_REQUEST,
+        )
+    except Exception:
+        logger.exception("Failed to create case.")
+        return JsonResponse(
+            {"error": "SERVER_ERROR", "message": "Unable to create case right now."},
+            status=HTTPStatus.INTERNAL_SERVER_ERROR,
+        )
+
+    detail = get_case_detail(business_profile=business, case_id=case.id)
+    return JsonResponse({"case": _serialize_case_detail(detail)}, status=HTTPStatus.CREATED)
+
+
+@require_http_methods(["GET", "PATCH"])
+def case_detail_view(request: HttpRequest, case_id: uuid.UUID) -> JsonResponse:
+    payload: dict | None = None
+    if request.method == "PATCH":
+        try:
+            payload = json.loads(request.body.decode("utf-8") or "{}")
+        except (json.JSONDecodeError, UnicodeDecodeError):
+            return JsonResponse(
+                {"error": "INVALID_JSON", "message": "Request body must be valid JSON."},
+                status=HTTPStatus.BAD_REQUEST,
+            )
+        business_id = request.GET.get("business_id") or payload.get("businessId")
+    else:
+        business_id = request.GET.get("business_id")
+
+    business, error = _resolve_business_profile(request, business_id)
+    if error:
+        return error
+    assert business is not None
+
+    if request.method == "GET":
+        try:
+            detail = get_case_detail(business_profile=business, case_id=case_id)
+        except Case.DoesNotExist:
+            return JsonResponse(
+                {"error": "CASE_NOT_FOUND", "message": "Case not found."},
+                status=HTTPStatus.NOT_FOUND,
+            )
+        return JsonResponse(_serialize_case_detail(detail), status=HTTPStatus.OK)
+
+    payload = payload or {}
+
+    try:
+        update_case(
+            business_profile=business,
+            case_id=case_id,
+            title=payload.get("title"),
+            description=payload.get("description"),
+            priority=(payload.get("priority") or "").lower() or None,
+            status=(payload.get("status") or "").lower() or None,
+            ai_diagnosis=payload.get("aiDiagnosis"),
+            ai_actions_taken=payload.get("aiActionsTaken"),
+            ai_suggested_actions=payload.get("aiSuggestedActions"),
+            metadata=payload.get("metadata"),
+        )
+    except CaseServiceError as exc:
+        return JsonResponse(
+            {"error": "CASE_UPDATE_FAILED", "message": str(exc)},
+            status=HTTPStatus.BAD_REQUEST,
+        )
+    except Exception:
+        logger.exception("Failed to update case.")
+        return JsonResponse(
+            {"error": "SERVER_ERROR", "message": "Unable to update case right now."},
+            status=HTTPStatus.INTERNAL_SERVER_ERROR,
+        )
+
+    detail = get_case_detail(business_profile=business, case_id=case_id)
+    return JsonResponse(_serialize_case_detail(detail), status=HTTPStatus.OK)
+
+
+@require_http_methods(["POST"])
+def case_history_view(request: HttpRequest, case_id: uuid.UUID) -> JsonResponse:
+    try:
+        payload = json.loads(request.body.decode("utf-8") or "{}")
+    except (json.JSONDecodeError, UnicodeDecodeError):
+        return JsonResponse(
+            {"error": "INVALID_JSON", "message": "Request body must be valid JSON."},
+            status=HTTPStatus.BAD_REQUEST,
+        )
+
+    business_id = request.GET.get("business_id") or payload.get("businessId")
+    business, error = _resolve_business_profile(request, business_id)
+    if error:
+        return error
+    assert business is not None
+
+    summary = (payload.get("summary") or "").strip()
+    source = (payload.get("source") or "system").lower()
+    session_reference = payload.get("sessionReference")
+    metadata = payload.get("metadata") or {}
+
+    if not summary:
+        return JsonResponse(
+            {"error": "VALIDATION_ERROR", "message": "History summary is required.", "field": "summary"},
+            status=HTTPStatus.BAD_REQUEST,
+        )
+
+    try:
+        case = Case.objects.get(business_profile=business, id=case_id)
+    except Case.DoesNotExist:
+        return JsonResponse(
+            {"error": "CASE_NOT_FOUND", "message": "Case not found."},
+            status=HTTPStatus.NOT_FOUND,
+        )
+
+    entry = add_history_entry(
+        case=case,
+        summary=summary,
+        source=source,
+        session_reference=session_reference,
+        metadata=metadata,
+    )
+
+    detail = get_case_detail(business_profile=business, case_id=case_id)
+    return JsonResponse(_serialize_case_detail(detail), status=HTTPStatus.CREATED)
+
+
+@require_http_methods(["POST"])
+def case_messages_view(request: HttpRequest, case_id: uuid.UUID) -> JsonResponse:
+    try:
+        payload = json.loads(request.body.decode("utf-8") or "{}")
+    except (json.JSONDecodeError, UnicodeDecodeError):
+        return JsonResponse(
+            {"error": "INVALID_JSON", "message": "Request body must be valid JSON."},
+            status=HTTPStatus.BAD_REQUEST,
+        )
+
+    business_id = request.GET.get("business_id") or payload.get("businessId")
+    business, error = _resolve_business_profile(request, business_id)
+    if error:
+        return error
+    assert business is not None
+
+    sender = (payload.get("sender") or "").lower()
+    content = (payload.get("content") or "").strip()
+    sender_display = payload.get("senderDisplayName") or ""
+    session_reference = payload.get("sessionReference")
+    content_type = payload.get("contentType") or "text"
+    metadata = payload.get("metadata") or {}
+
+    if sender not in CaseMessage.Sender.values:
+        return JsonResponse(
+            {"error": "VALIDATION_ERROR", "message": "Sender must be one of the supported types."},
+            status=HTTPStatus.BAD_REQUEST,
+        )
+    if not content:
+        return JsonResponse(
+            {"error": "VALIDATION_ERROR", "message": "Message content is required.", "field": "content"},
+            status=HTTPStatus.BAD_REQUEST,
+        )
+
+    try:
+        case = Case.objects.get(business_profile=business, id=case_id)
+    except Case.DoesNotExist:
+        return JsonResponse(
+            {"error": "CASE_NOT_FOUND", "message": "Case not found."},
+            status=HTTPStatus.NOT_FOUND,
+        )
+
+    add_case_message(
+        case=case,
+        sender=sender,
+        content=content,
+        sender_display_name=sender_display,
+        session_reference=session_reference,
+        content_type=content_type,
+        metadata=metadata,
+    )
+
+    detail = get_case_detail(business_profile=business, case_id=case_id)
+    return JsonResponse(_serialize_case_detail(detail), status=HTTPStatus.CREATED)
+
+
+@require_http_methods(["POST"])
+def case_notes_view(request: HttpRequest, case_id: uuid.UUID) -> JsonResponse:
+    try:
+        payload = json.loads(request.body.decode("utf-8") or "{}")
+    except (json.JSONDecodeError, UnicodeDecodeError):
+        return JsonResponse(
+            {"error": "INVALID_JSON", "message": "Request body must be valid JSON."},
+            status=HTTPStatus.BAD_REQUEST,
+        )
+
+    business_id = request.GET.get("business_id") or payload.get("businessId")
+    business, error = _resolve_business_profile(request, business_id)
+    if error:
+        return error
+    assert business is not None
+
+    author_type = (payload.get("authorType") or "").lower()
+    content = (payload.get("content") or "").strip()
+    is_pinned = bool(payload.get("isPinned"))
+    metadata = payload.get("metadata") or {}
+
+    if not content:
+        return JsonResponse(
+            {"error": "VALIDATION_ERROR", "message": "Note content is required.", "field": "content"},
+            status=HTTPStatus.BAD_REQUEST,
+        )
+
+    if author_type and author_type not in CustomerNoteAuthor.values:
+        return JsonResponse(
+            {"error": "VALIDATION_ERROR", "message": "Invalid author type supplied."},
+            status=HTTPStatus.BAD_REQUEST,
+        )
+
+    try:
+        case = Case.objects.select_related("customer").get(business_profile=business, id=case_id)
+    except Case.DoesNotExist:
+        return JsonResponse(
+            {"error": "CASE_NOT_FOUND", "message": "Case not found."},
+            status=HTTPStatus.NOT_FOUND,
+        )
+
+    if not case.customer:
+        return JsonResponse(
+            {"error": "NOTE_NOT_ALLOWED", "message": "Notes require an associated customer."},
+            status=HTTPStatus.BAD_REQUEST,
+        )
+
+    add_case_note(
+        case=case,
+        customer=case.customer,
+        author_type=author_type or CustomerNoteAuthor.AI_AGENT,
+        content=content,
+        is_pinned=is_pinned,
+        metadata=metadata,
+    )
+
+    detail = get_case_detail(business_profile=business, case_id=case_id)
+    return JsonResponse(_serialize_case_detail(detail), status=HTTPStatus.CREATED)
+
+
+@csrf_protect
+@require_http_methods(["PUT"])
+def finalize_uploads(request: HttpRequest, business_id: str) -> JsonResponse:
+    """Persist knowledge uploads for the final registration step."""
+    try:
+        payload = json.loads(request.body.decode("utf-8") or "{}")
+    except (json.JSONDecodeError, UnicodeDecodeError):
+        return JsonResponse(
+            {"error": "INVALID_JSON", "message": "Request body must be valid JSON."},
+            status=HTTPStatus.BAD_REQUEST,
+        )
+
+    selected = payload.get("selected") or []
+    links_payload = payload.get("links") or {}
+    skip_raw = payload.get("skip")
+
+    if not isinstance(selected, list):
+        selected = []
+    normalized_selected = [str(value) for value in selected if isinstance(value, str)]
+
+    skip_requested = False
+    if isinstance(skip_raw, bool):
+        skip_requested = skip_raw
+    elif isinstance(skip_raw, str):
+        skip_requested = skip_raw.strip().lower() in {"true", "1", "yes", "on"}
+    elif isinstance(skip_raw, int):
+        skip_requested = skip_raw == 1
+
+    normalized_links: dict[str, list[str]] = {}
+    if isinstance(links_payload, dict):
+        for key, values in links_payload.items():
+            if not isinstance(key, str):
+                continue
+            if not isinstance(values, list):
+                continue
+            cleaned_values = [str(item) for item in values if isinstance(item, str)]
+            if cleaned_values:
+                normalized_links[key] = cleaned_values
+
+    if skip_requested:
+        normalized_selected = []
+        normalized_links = {}
+
+    try:
+        result: KnowledgeUploadResult = finalize_knowledge_uploads(
+            business_id=business_id,
+            selected_types=normalized_selected,
+            link_map=normalized_links,
+            skip=skip_requested,
+        )
+    except KnowledgeUploadError as exc:
+        return JsonResponse(
+            {
+                "error": "VALIDATION_ERROR",
+                "message": str(exc),
+                "field": getattr(exc, "field", None),
+            },
+            status=HTTPStatus.BAD_REQUEST,
+        )
+    except Exception:  # pragma: no cover - defensive logging
+        logger.exception("Failed to store knowledge uploads.")
+        return JsonResponse(
+            {"error": "SERVER_ERROR", "message": "Unable to save uploads right now."},
+            status=HTTPStatus.INTERNAL_SERVER_ERROR,
+        )
+
+    session = result.session
+    business = result.business
+
+    user = getattr(business, "user", None)
+    if user is not None:
+        backend_path = settings.AUTHENTICATION_BACKENDS[0] if settings.AUTHENTICATION_BACKENDS else "django.contrib.auth.backends.ModelBackend"
+        auth_login(request, user, backend=backend_path)
+        request.session["auth_entrypoint"] = "app"
+
+    redirect_url = f"/dashboard/?business_id={business.id}"
+
+    response = {
+        "uploads": [
+            {
+                "id": str(upload.id),
+                "resourceType": upload.resource_type,
+                "url": upload.url,
+                "status": upload.status,
+                "sourceName": upload.source_name,
+            }
+            for upload in result.uploads
+        ],
+        "business": {
+            "id": str(business.id),
+            "status": business.status,
+        },
+        "session": {
+            "id": str(session.id),
+            "currentStep": session.current_step,
+            "stepsCompleted": session.steps_completed,
+            "totalSteps": session.total_steps,
+            "isComplete": session.is_complete,
+        },
+        "nextStep": "complete",
+        "redirectUrl": redirect_url,
+    }
+    return JsonResponse(response, status=HTTPStatus.OK)

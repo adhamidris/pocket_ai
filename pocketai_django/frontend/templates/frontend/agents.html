@@ -1,0 +1,391 @@
+{% extends "frontend/base_app.html" %}
+
+{% block title %}Agents | Pocket AI{% endblock %}
+
+{% block content %}
+<div class="min-h-screen bg-background flex">
+  {% include "frontend/components/dashboard/sidebar.html" with active="agents" user_name=user_name %}
+  <main class="flex-1 overflow-auto">
+    <div class="w-full px-4 md:px-6 lg:px-8 py-6 space-y-6">
+      <header class="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+        <div class="space-y-1.5">
+          <h1 class="text-xl md:text-2xl font-semibold text-gradient-hero">Agents</h1>
+          <p class="text-sm text-muted-foreground">Create, configure, and monitor conversational agents for every channel.</p>
+        </div>
+        <div class="flex flex-wrap items-center justify-start md:justify-end gap-2">
+          <button
+            type="button"
+            class="inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-lg text-sm font-medium ring-offset-background transition-all duration-300 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50 [&_svg]:pointer-events-none [&_svg]:size-4 [&_svg]:shrink-0 bg-primary text-primary-foreground hover:bg-primary/90 shadow-sm hover:shadow-md h-10 px-4 py-2"
+            data-dialog-target="create-agent"
+          >
+            <svg class="h-4 w-4" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" aria-hidden="true">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M12 4v16m8-8H4" />
+            </svg>
+            Create agent
+          </button>
+          <button
+            type="button"
+            class="inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-lg text-sm font-medium ring-offset-background transition-all duration-300 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-60 [&_svg]:pointer-events-none [&_svg]:size-4 [&_svg]:shrink-0 border border-input bg-background text-muted-foreground h-10 px-4 py-2"
+            disabled
+          >
+            <svg class="h-4 w-4" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" aria-hidden="true">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M12 6v12m6-6H6" />
+            </svg>
+            Templates
+          </button>
+        </div>
+      </header>
+
+      <section class="grid grid-cols-1 sm:grid-cols-3 gap-4">
+        {% for stat in agents_stats %}
+          <div class="rounded-lg border bg-card text-card-foreground shadow-sm border border-border/70 bg-card/70 backdrop-blur transition-all duration-300 hover:border-primary/35">
+            <div class="p-5 space-y-2">
+              <span class="text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground/70">{{ stat.label }}</span>
+              {% if stat.value %}
+                <div class="text-3xl font-semibold tracking-tight text-foreground">{{ stat.value }}</div>
+              {% else %}
+                <div class="text-sm text-muted-foreground">{{ stat.helper }}</div>
+              {% endif %}
+            </div>
+          </div>
+        {% empty %}
+          <div class="rounded-lg border border-dashed border-border/70 bg-muted/40 p-6 text-center text-sm text-muted-foreground">
+            Metrics will surface once you start deploying agents.
+          </div>
+        {% endfor %}
+      </section>
+
+      <section class="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+        <div class="flex flex-col gap-2 md:flex-row md:items-center md:flex-wrap w-full lg:w-auto">
+          <div class="relative w-full sm:w-[220px] md:w-[240px]">
+            <svg class="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" aria-hidden="true">
+              <path stroke-linecap="round" stroke-linejoin="round" d="m21 21-4.35-4.35m0 0a7.5 7.5 0 1 0-10.6-10.6 7.5 7.5 0 0 0 10.6 10.6Z" />
+            </svg>
+            <input
+              type="search"
+              name="agent-search"
+              class="pl-9 w-full h-10 rounded-md border border-border/60 bg-muted/70 text-sm focus-visible:ring-0 focus-visible:border-border transition-colors"
+              placeholder="{{ agents_filters.search_placeholder|default:'Search name, ID, role…' }}"
+              autocomplete="off"
+              data-search-ready="true"
+            />
+          </div>
+        </div>
+        <div class="flex flex-col gap-2 md:flex-row md:items-center md:justify-end md:flex-wrap w-full lg:w-auto">
+          <button
+            type="button"
+            class="inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-lg text-sm font-medium ring-offset-background transition-all duration-300 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50 [&_svg]:pointer-events-none [&_svg]:size-4 [&_svg]:shrink-0 border border-input bg-background hover:bg-accent hover:text-accent-foreground hover:border-primary/50 h-10 px-3 py-2"
+            data-dropdown-trigger="agent-status"
+            aria-haspopup="true"
+            aria-expanded="false"
+          >
+            <svg class="h-4 w-4 text-muted-foreground" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M16 7a4 4 0 1 1-8 0 4 4 0 0 1 8 0Z" />
+              <path stroke-linecap="round" stroke-linejoin="round" d="M12 14c-4.418 0-8 2.015-8 4.5V21h16v-2.5c0-2.485-3.582-4.5-8-4.5Z" />
+            </svg>
+            <span data-dropdown-label="agent-status">{{ agents_filters.status_label|default:"All statuses" }}</span>
+            <svg class="h-4 w-4 text-muted-foreground" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 20 20" aria-hidden="true">
+              <path stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="m6 8 4 4 4-4" />
+            </svg>
+          </button>
+          <button
+            type="button"
+            class="inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-lg text-sm font-medium ring-offset-background transition-all duration-300 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50 [&_svg]:pointer-events-none [&_svg]:size-4 [&_svg]:shrink-0 border border-input bg-background hover:bg-accent hover:text-accent-foreground hover:border-primary/50 h-10 px-3 py-2"
+            data-dropdown-trigger="agent-page-size"
+            aria-haspopup="true"
+            aria-expanded="false"
+          >
+            <span>Page size: {{ agents_filters.limit|default:25 }}</span>
+            <svg class="h-4 w-4 text-muted-foreground" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 20 20" aria-hidden="true">
+              <path stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="m6 8 4 4 4-4" />
+            </svg>
+          </button>
+        </div>
+      </section>
+
+      <section class="space-y-4">
+        <div class="relative border border-border/70 bg-card text-card-foreground shadow-lg shadow-black/5 backdrop-blur hover:border-primary/35 transition-colors dark:border-slate-700/50 dark:bg-slate-800/70 dark:shadow-black/25 rounded-xl overflow-hidden">
+          <div class="absolute inset-x-0 top-0 h-px bg-gradient-to-r from-primary/35 via-primary/20 to-transparent"></div>
+          <div class="relative overflow-x-auto overflow-y-auto max-h-[70vh]">
+            <table class="w-full caption-bottom text-sm rounded-xl border border-border/70 bg-background/60 shadow-sm backdrop-blur [&_th]:px-3 [&_td]:px-3 [&_th:first-child]:pl-4 [&_td:first-child]:pl-4 [&_th:last-child]:pr-4 [&_td:last-child]:pr-4 [&_th]:py-3 [&_td]:py-3">
+              <thead class="sticky top-0 z-10 bg-muted/70 backdrop-blur border-b border-border/80">
+                <tr class="border-b transition-colors hover:bg-transparent">
+                  <th scope="col" class="h-12 text-left align-middle font-medium text-muted-foreground w-[240px]">Name / ID</th>
+                  <th scope="col" class="h-12 text-left align-middle font-medium text-muted-foreground w-[220px]">Roles</th>
+                  <th scope="col" class="h-12 text-left align-middle font-medium text-muted-foreground w-[120px]">Status</th>
+                  <th scope="col" class="h-12 text-right align-middle font-medium text-muted-foreground w-[120px]">Conversations</th>
+                  <th scope="col" class="h-12 text-right align-middle font-medium text-muted-foreground w-[120px]">CSAT</th>
+                  <th scope="col" class="h-12 text-right align-middle font-medium text-muted-foreground w-[120px]">AHT</th>
+                  <th scope="col" class="h-12 text-right align-middle font-medium text-muted-foreground w-[120px]">Escalations</th>
+                  <th scope="col" class="h-12 text-left align-middle font-medium text-muted-foreground w-[160px]">Updated</th>
+                  <th scope="col" class="h-12 text-right align-middle font-medium text-muted-foreground w-10"></th>
+                </tr>
+              </thead>
+              <tbody class="[&_tr:last-child]:border-0">
+                {% if agents_backend_notice %}
+                  <tr class="border-b transition-colors hover:bg-transparent">
+                    <td colspan="9" class="py-12 text-center text-sm text-muted-foreground">{{ agents_backend_notice }}</td>
+                  </tr>
+                {% elif agents_auth_notice %}
+                  <tr class="border-b transition-colors hover:bg-transparent">
+                    <td colspan="9" class="py-12 text-center text-sm text-muted-foreground">{{ agents_auth_notice }}</td>
+                  </tr>
+                {% elif agents_loading %}
+                  {% for _ in skeleton_rows %}
+                    <tr class="border-b transition-colors hover:bg-muted/50">
+                      <td class="py-4">
+                        <div class="flex items-center gap-3">
+                          <span class="inline-flex h-10 w-10 items-center justify-center rounded-full border border-border/60 bg-muted/50 text-xs font-semibold uppercase text-muted-foreground" aria-hidden="true">AI</span>
+                          <div class="space-y-2">
+                            <span class="block h-3 w-32 rounded bg-muted/60 animate-pulse" aria-hidden="true"></span>
+                            <span class="block h-3 w-24 rounded bg-muted/40 animate-pulse" aria-hidden="true"></span>
+                          </div>
+                        </div>
+                      </td>
+                      <td class="py-4">
+                        <span class="block h-3 w-28 rounded bg-muted/50 animate-pulse" aria-hidden="true"></span>
+                      </td>
+                      <td class="py-4">
+                        <span class="inline-flex h-5 w-16 rounded-full bg-muted/50 animate-pulse" aria-hidden="true"></span>
+                      </td>
+                      <td class="py-4 text-right">
+                        <span class="inline-block h-3 w-12 rounded bg-muted/50 animate-pulse" aria-hidden="true"></span>
+                      </td>
+                      <td class="py-4 text-right">
+                        <span class="inline-block h-3 w-12 rounded bg-muted/50 animate-pulse" aria-hidden="true"></span>
+                      </td>
+                      <td class="py-4 text-right">
+                        <span class="inline-block h-3 w-12 rounded bg-muted/50 animate-pulse" aria-hidden="true"></span>
+                      </td>
+                      <td class="py-4 text-right">
+                        <span class="inline-block h-3 w-12 rounded bg-muted/50 animate-pulse" aria-hidden="true"></span>
+                      </td>
+                      <td class="py-4">
+                        <span class="block h-3 w-32 rounded bg-muted/50 animate-pulse" aria-hidden="true"></span>
+                      </td>
+                      <td class="py-4 text-right">
+                        <span class="inline-flex h-8 w-8 items-center justify-center rounded-full bg-muted/40 animate-pulse" aria-hidden="true"></span>
+                      </td>
+                    </tr>
+                  {% endfor %}
+                {% elif agents_error_message %}
+                  <tr class="border-b transition-colors hover:bg-transparent">
+                    <td colspan="9" class="py-12 text-center text-sm text-muted-foreground">{{ agents_error_message }}</td>
+                  </tr>
+                {% elif agents %}
+                  {% for agent in agents %}
+                    <tr class="border-b transition-colors hover:bg-muted/50">
+                      <td class="py-4">
+                        <div class="flex items-center gap-3">
+                          <span class="inline-flex h-10 w-10 items-center justify-center rounded-full border border-border/70 bg-muted/50 text-xs font-semibold uppercase text-muted-foreground">
+                            {{ agent.initials|default:"AI" }}
+                          </span>
+                          <div class="space-y-1">
+                            <div class="text-sm font-semibold text-foreground">{{ agent.name|default:"Unnamed agent" }}</div>
+                            <div class="text-xs text-muted-foreground">ID: {{ agent.identifier|default:"AG-0000" }}</div>
+                          </div>
+                        </div>
+                      </td>
+                      <td class="py-4">
+                        <div class="flex flex-wrap gap-1">
+                          {% for role in agent.roles %}
+                            <span class="inline-flex items-center rounded-full border border-border/70 bg-muted/40 px-2 py-0.5 text-[11px] font-medium text-muted-foreground">{{ role }}</span>
+                          {% empty %}
+                            <span class="text-xs text-muted-foreground">—</span>
+                          {% endfor %}
+                        </div>
+                      </td>
+                      <td class="py-4">
+                        <span class="inline-flex items-center rounded-full px-2 py-1 text-[11px] font-medium {% if agent.status == 'Active' %}bg-emerald-100/70 text-emerald-700 border border-emerald-200{% elif agent.status == 'Inactive' %}bg-muted/70 text-muted-foreground border border-border/60{% else %}bg-amber-100/70 text-amber-700 border border-amber-200{% endif %}">
+                          {{ agent.status|default:"Draft" }}
+                        </span>
+                      </td>
+                      <td class="py-4 text-right">
+                        <div class="text-sm font-medium text-foreground">{{ agent.conversations|default:"—" }}</div>
+                      </td>
+                      <td class="py-4 text-right">
+                        <div class="text-sm font-medium text-foreground">
+                          {% if agent.satisfaction %}
+                            {{ agent.satisfaction }}
+                          {% else %}
+                            —
+                          {% endif %}
+                        </div>
+                      </td>
+                      <td class="py-4 text-right">
+                        <div class="text-sm font-medium text-foreground">
+                          {% if agent.aht %}
+                            {{ agent.aht }}
+                          {% else %}
+                            —
+                          {% endif %}
+                        </div>
+                      </td>
+                      <td class="py-4 text-right">
+                        <div class="text-sm font-medium text-foreground">{{ agent.escalations|default:"—" }}</div>
+                      </td>
+                      <td class="py-4">
+                        <div class="text-sm text-muted-foreground">{{ agent.updated|default:"—" }}</div>
+                      </td>
+                      <td class="py-4 text-right">
+                        <button
+                          type="button"
+                          class="inline-flex h-8 w-8 items-center justify-center rounded-full border border-input bg-background hover:bg-accent hover:text-accent-foreground transition-colors"
+                          data-sheet-target="agent-detail"
+                          aria-label="Open agent detail"
+                        >
+                          <svg class="h-4 w-4 text-muted-foreground" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor">
+                            <path stroke-linecap="round" stroke-linejoin="round" d="M12 6v6h4.5M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z" />
+                          </svg>
+                        </button>
+                      </td>
+                    </tr>
+                  {% endfor %}
+                {% else %}
+                  <tr class="border-b transition-colors hover:bg-transparent">
+                    <td colspan="9" class="py-12 text-center text-sm text-muted-foreground">{{ agents_empty_message }}</td>
+                  </tr>
+                {% endif %}
+              </tbody>
+            </table>
+          </div>
+          <div class="flex flex-col gap-3 md:flex-row md:items-center md:justify-between border-t border-border/70 px-4 py-3 text-xs text-muted-foreground">
+            <div>
+              Showing {{ agents_showing_count|default:0 }} of {{ agents_total|default:0 }} agents
+            </div>
+            <div class="flex items-center gap-2">
+              <button
+                type="button"
+                class="inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-md text-xs font-medium ring-offset-background transition-all duration-300 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-40 border border-input bg-background hover:bg-accent hover:text-accent-foreground h-8 px-3 py-1"
+                {% if not agents_has_prev %}disabled{% endif %}
+                data-page="prev"
+              >
+                Previous
+              </button>
+              <button
+                type="button"
+                class="inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-md text-xs font-medium ring-offset-background transition-all duration-300 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-40 border border-input bg-background hover:bg-accent hover:text-accent-foreground h-8 px-3 py-1"
+                {% if not agents_has_next %}disabled{% endif %}
+                data-page="next"
+              >
+                Next
+              </button>
+              {% if agents_loading %}
+                <svg class="h-3.5 w-3.5 animate-spin text-muted-foreground" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                  <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                  <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 0 1 8-8v4a4 4 0 0 0-4 4H4Z"></path>
+                </svg>
+              {% endif %}
+            </div>
+          </div>
+        </div>
+      </section>
+    </div>
+  </main>
+
+  <aside class="hidden xl:flex w-full max-w-md border-l border-border/70 bg-card/70 backdrop-blur-sm min-h-screen flex-col">
+    <div class="px-6 py-4 border-b border-border/70">
+      <div class="text-base font-semibold tracking-tight text-foreground">Agent detail</div>
+      <p class="text-xs text-muted-foreground mt-1">Select an agent to configure knowledge, KPIs, and automations.</p>
+    </div>
+    <div class="flex-1 overflow-y-auto p-6 space-y-6">
+      <div class="rounded-xl border border-dashed border-border/70 bg-muted/40 p-6 text-center">
+        <div class="mx-auto flex h-12 w-12 items-center justify-center rounded-full bg-muted">
+          <svg class="h-6 w-6 text-muted-foreground" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M9 12h3.75M9 15h3.75M9 18h3.75m3-.75c0 .414.336.75.75.75h.75a2.25 2.25 0 0 0 2.25-2.25V8.25A2.25 2.25 0 0 0 18 6h-5.25a2.25 2.25 0 0 0-2.25 2.25V9" />
+            <path stroke-linecap="round" stroke-linejoin="round" d="M3 9l7.5-7.5L18 9M4.5 21h13.5" />
+          </svg>
+        </div>
+        <div class="mt-3 text-sm font-semibold text-foreground">{{ agents_panel_empty_title|default:"No agent selected" }}</div>
+        <p class="mt-1 text-xs text-muted-foreground">
+          {{ agents_panel_empty_message|default:"Choose an agent from the table to preview configuration and analytics." }}
+        </p>
+      </div>
+
+      <div class="space-y-4">
+        <div class="rounded-lg bg-muted/40 p-1 grid grid-cols-4 text-xs font-medium text-muted-foreground">
+          <div class="rounded-md bg-background text-foreground shadow-sm px-3 py-2">Overview</div>
+          <div class="rounded-md px-3 py-2">KPIs</div>
+          <div class="rounded-md px-3 py-2">Knowledge</div>
+          <div class="rounded-md px-3 py-2">Analytics</div>
+        </div>
+
+        <div class="grid gap-3">
+          <div class="rounded-lg border border-border/70 bg-card text-card-foreground shadow-sm">
+            <div class="p-4 space-y-3">
+              <div class="text-xs font-semibold uppercase tracking-[0.18em] text-muted-foreground/80">Profile</div>
+              <div class="space-y-2 text-sm text-muted-foreground">
+                <div class="flex items-center gap-2">
+                  <span class="inline-flex h-3 w-32 rounded bg-muted/60 animate-pulse" aria-hidden="true"></span>
+                </div>
+                <div class="flex items-center gap-2">
+                  <span class="inline-flex h-3 w-24 rounded bg-muted/50 animate-pulse" aria-hidden="true"></span>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div class="rounded-lg border border-border/70 bg-card text-card-foreground shadow-sm">
+            <div class="p-4 space-y-3">
+              <div class="text-xs font-semibold uppercase tracking-[0.18em] text-muted-foreground/80">Capabilities</div>
+              <div class="space-y-2 text-sm text-muted-foreground">
+                {% for _ in "1234" %}
+                  <div class="flex items-center gap-2">
+                    <span class="inline-flex h-3 w-4 rounded bg-muted/50 animate-pulse" aria-hidden="true"></span>
+                    <span class="inline-flex h-3 w-32 rounded bg-muted/50 animate-pulse" aria-hidden="true"></span>
+                  </div>
+                {% endfor %}
+              </div>
+            </div>
+          </div>
+
+          <div class="rounded-lg border border-dashed border-border/60 bg-muted/30 p-4 text-sm text-muted-foreground">
+            Analytics, KPIs, and knowledge setup will appear here once backend data is connected.
+          </div>
+        </div>
+      </div>
+    </div>
+  </aside>
+</div>
+
+<div class="fixed inset-0 z-50 hidden items-center justify-center bg-background/80 backdrop-blur-sm" data-dialog="create-agent" role="dialog" aria-modal="true">
+  <div class="w-full max-w-lg rounded-2xl border border-border/70 bg-card shadow-lg shadow-black/10">
+    <div class="px-6 py-4 border-b border-border/70 flex items-start justify-between">
+      <div>
+        <div class="text-base font-semibold text-foreground">Create agent</div>
+        <p class="text-xs text-muted-foreground mt-1">Kick off the agent builder to configure persona, tone, and capabilities.</p>
+      </div>
+      <button type="button" class="inline-flex h-8 w-8 items-center justify-center rounded-full hover:bg-muted/70 transition-colors" data-dialog-close>
+        <svg class="h-4 w-4 text-muted-foreground" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor">
+          <path stroke-linecap="round" stroke-linejoin="round" d="M6 18 18 6M6 6l12 12" />
+        </svg>
+      </button>
+    </div>
+    <div class="px-6 py-5 space-y-4 text-sm text-muted-foreground">
+      <div class="space-y-2">
+        <label class="text-xs font-semibold uppercase tracking-[0.18em] text-muted-foreground/80">Agent name</label>
+        <input type="text" class="w-full rounded-md border border-input bg-background px-3 py-2 text-sm" placeholder="e.g. Onboarding Specialist" disabled>
+      </div>
+      <div class="space-y-2">
+        <label class="text-xs font-semibold uppercase tracking-[0.18em] text-muted-foreground/80">Primary role</label>
+        <div class="grid grid-cols-2 gap-2">
+          {% for option in agents_modal_roles %}
+            <button type="button" class="rounded-lg border border-border/60 bg-muted/40 px-3 py-2 text-left text-sm hover:border-primary/60 hover:text-primary transition-colors" disabled>
+              {{ option }}
+            </button>
+          {% endfor %}
+        </div>
+      </div>
+      <div class="rounded-lg border border-dashed border-border/60 bg-muted/20 p-4 text-xs leading-relaxed text-muted-foreground">
+        The interactive agent builder will appear here once backend wiring is connected. For now, this modal acts as a visual placeholder for the upcoming flow.
+      </div>
+    </div>
+    <div class="px-6 py-4 border-t border-border/70 flex items-center justify-end gap-2">
+      <button type="button" class="inline-flex items-center justify-center rounded-md border border-input bg-background px-4 py-2 text-sm font-medium text-muted-foreground" data-dialog-close>Cancel</button>
+      <button type="button" class="inline-flex items-center justify-center rounded-md bg-primary text-primary-foreground px-4 py-2 text-sm font-medium opacity-60 cursor-not-allowed">
+        Continue
+      </button>
+    </div>
+  </div>
+</div>
+{% endblock %}
