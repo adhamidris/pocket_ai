@@ -32,4 +32,5 @@ urlpatterns = [
     path("cases/<uuid:case_id>/history/", views.case_history_view, name="cases-history"),
     path("cases/<uuid:case_id>/messages/", views.case_messages_view, name="cases-messages"),
     path("cases/<uuid:case_id>/notes/", views.case_notes_view, name="cases-notes"),
+    path("customers/<uuid:customer_id>/", views.customer_detail_view, name="customers-detail"),
 ]

@@ -13,6 +13,13 @@ from .cases import (
     list_cases,
     update_case,
 )
+from .customers import (
+    CustomerDetail,
+    CustomerListResult,
+    CustomerSummary,
+    get_customer_detail,
+    list_customers,
+)
 
 __all__ = [
     "CaseDetail",
@@ -25,7 +32,12 @@ __all__ = [
     "add_history_entry",
     "bulk_attach_documents",
     "create_case",
+    "CustomerDetail",
+    "CustomerListResult",
+    "CustomerSummary",
     "get_case_detail",
+    "get_customer_detail",
     "list_cases",
+    "list_customers",
     "update_case",
 ]

@@ -136,7 +136,7 @@
                   <th scope="col" class="h-12 text-right align-middle font-medium text-muted-foreground">Last contact</th>
                 </tr>
               </thead>
-              <tbody class="[&_tr:last-child]:border-0">
+              <tbody class="[&_tr:last-child]:border-0" data-customers-table>
                 {% if customers_backend_notice %}
                   <tr class="border-b transition-colors hover:bg-transparent">
                     <td colspan="5" class="py-12 text-center text-sm text-muted-foreground">{{ customers_backend_notice }}</td>
@@ -173,16 +173,32 @@
                   {% endfor %}
                 {% elif customers %}
                   {% for customer in customers %}
-                    <tr class="border-b transition-colors hover:bg-muted/50">
+                    <tr
+                      class="border-b transition-colors hover:bg-muted/50 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-primary/60 focus-visible:ring-offset-0 cursor-pointer"
+                      data-customer-row
+                      data-customer-uuid="{{ customer.uuid }}"
+                      data-customer-name="{{ customer.name|default:'Customer'|escape }}"
+                      data-customer-email="{{ customer.email|default:'—'|escape }}"
+                      data-customer-stage="{{ customer.state|default:'unknown'|lower }}"
+                      data-customer-stage-label="{{ customer.state_label|default:'—'|escape }}"
+                      data-customer-last="{{ customer.last_contact_iso|default:'' }}"
+                      data-customer-cases-open="{{ customer.cases_open|default:0 }}"
+                      data-customer-cases-total="{{ customer.cases_total|default:0 }}"
+                      tabindex="0"
+                      role="button"
+                      aria-haspopup="dialog"
+                      aria-expanded="false"
+                      data-selected="false"
+                    >
                       <td class="py-4">
                         <div class="flex items-center gap-3">
                           <span class="inline-flex h-10 w-10 items-center justify-center rounded-full border border-border/70 bg-muted/60 text-xs font-semibold uppercase text-muted-foreground">
-                            {{ customer.initials|default:"" }}
+                            {{ customer.initials|default:"CU" }}
                           </span>
                           <div class="space-y-1">
-                            <div class="text-sm font-semibold text-foreground">{{ customer.full_name|default:"Unnamed customer" }}</div>
+                            <div class="text-sm font-semibold text-foreground">{{ customer.name|default:"Unnamed customer" }}</div>
                             <div class="text-xs text-muted-foreground">
-                              {{ customer.lifecycle_stage_label|default:customer.lifecycle_stage|default:"Lifecycle —" }}
+                              {{ customer.state_label|default:"Lifecycle —" }}
                             </div>
                           </div>
                         </div>
@@ -191,16 +207,10 @@
                         <div class="text-sm text-muted-foreground">{{ customer.email|default:"—" }}</div>
                       </td>
                       <td class="py-4 text-right">
-                        <div class="text-sm font-medium text-foreground">{{ customer.conversations_total|default:"—" }}</div>
+                        <div class="text-sm font-medium text-foreground">{{ customer.cases_total|default:"—" }}</div>
                       </td>
                       <td class="py-4 text-right">
-                        <div class="text-sm font-medium text-foreground">
-                          {% if customer.satisfaction %}
-                            {{ customer.satisfaction }}
-                          {% else %}
-                            —
-                          {% endif %}
-                        </div>
+                        <div class="text-sm font-medium text-foreground">—</div>
                       </td>
                       <td class="py-4 text-right">
                         <div class="text-sm text-muted-foreground">{{ customer.last_contact|default:"—" }}</div>
@@ -248,80 +258,544 @@
       </section>
     </div>
   </main>
-
-  <aside class="hidden xl:flex w-full max-w-md border-l border-border/70 bg-card/70 backdrop-blur-sm min-h-screen flex-col">
-    <div class="px-6 py-4 border-b border-border/70">
-      <div class="text-base font-semibold tracking-tight text-foreground">Customer overview</div>
-    </div>
-    <div class="flex-1 overflow-y-auto p-6 space-y-6">
-      <div class="rounded-xl border border-dashed border-border/70 bg-muted/40 p-6 text-center">
-        <div class="mx-auto flex h-12 w-12 items-center justify-center rounded-full bg-muted">
-          <svg class="h-6 w-6 text-muted-foreground" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor">
-            <path stroke-linecap="round" stroke-linejoin="round" d="M12 6.5a3.5 3.5 0 1 1-3.5 3.5 3.5 3.5 0 0 1 3.5-3.5Zm0 0V4m4 4.5a3.5 3.5 0 1 1-7 0m9 13v-1a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v1" />
-          </svg>
-        </div>
-        <div class="mt-3 text-sm font-semibold text-foreground">{{ customers_detail_empty_title|default:"No customer selected" }}</div>
-        <p class="mt-1 text-xs text-muted-foreground">
-          {{ customers_detail_empty_message|default:"Choose a customer from the table to inspect profiles, activity, and notes." }}
-        </p>
-      </div>
-
-      <div class="space-y-4">
-        <div class="rounded-lg bg-muted/40 p-1 grid grid-cols-4 text-xs font-medium text-muted-foreground">
-          <div class="rounded-md bg-background text-foreground shadow-sm px-3 py-2">Overview</div>
-          <div class="rounded-md px-3 py-2">Cases</div>
-          <div class="rounded-md px-3 py-2">Activity</div>
-          <div class="rounded-md px-3 py-2">Notes</div>
-        </div>
-
-        <div class="grid gap-3">
-          <div class="rounded-lg border border-border/70 bg-card text-card-foreground shadow-sm">
-            <div class="p-4 space-y-3">
-              <div class="text-xs font-semibold uppercase tracking-[0.18em] text-muted-foreground/80">Contact</div>
-              <div class="space-y-2 text-sm text-muted-foreground">
-                <div class="flex items-center gap-2">
-                  <svg class="h-4 w-4" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor">
-                    <path stroke-linecap="round" stroke-linejoin="round" d="M3 8l9 6 9-6-9-6-9 6Zm18 0v8l-9 6-9-6V8" />
-                  </svg>
-                  <span class="inline-flex h-3 w-28 rounded bg-muted/60 animate-pulse" aria-hidden="true"></span>
-                </div>
-                <div class="flex items-center gap-2">
-                  <svg class="h-4 w-4" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor">
-                    <path stroke-linecap="round" stroke-linejoin="round" d="M2 5.5V7l9.543 5.265a3 3 0 0 0 2.914 0L24 7V5.5a3 3 0 0 0-1.553-2.643l-7.5-4.166a3 3 0 0 0-2.894 0l-7.5 4.166A3 3 0 0 0 2 5.5Z" />
-                    <path stroke-linecap="round" stroke-linejoin="round" d="M2 7v11.5a3 3 0 0 0 1.553 2.643l7.5 4.166a3 3 0 0 0 2.894 0l7.5-4.166A3 3 0 0 0 24 18.5V7" />
-                  </svg>
-                  <span class="inline-flex h-3 w-20 rounded bg-muted/50 animate-pulse" aria-hidden="true"></span>
-                </div>
-                <div class="flex items-center gap-2">
-                  <svg class="h-4 w-4" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor">
-                    <path stroke-linecap="round" stroke-linejoin="round" d="M12 11.25a2.25 2.25 0 1 0 0-4.5 2.25 2.25 0 0 0 0 4.5Zm7.5 0a9.25 9.25 0 1 1-15 0" />
-                  </svg>
-                  <span class="inline-flex h-3 w-24 rounded bg-muted/50 animate-pulse" aria-hidden="true"></span>
-                </div>
-              </div>
-            </div>
-          </div>
-
-          <div class="rounded-lg border border-border/70 bg-card text-card-foreground shadow-sm">
-            <div class="p-4 space-y-3">
-              <div class="text-xs font-semibold uppercase tracking-[0.18em] text-muted-foreground/80">Stats</div>
-              <div class="grid grid-cols-2 gap-3 text-sm">
-                {% for _ in "1234" %}
-                  <div class="space-y-1">
-                    <span class="block h-3 w-24 rounded bg-muted/60 animate-pulse" aria-hidden="true"></span>
-                    <span class="block h-4 w-16 rounded bg-muted/40 animate-pulse" aria-hidden="true"></span>
-                  </div>
-                {% endfor %}
-              </div>
-            </div>
-          </div>
-
-          <div class="rounded-lg border border-dashed border-border/60 bg-muted/30 p-4 text-sm text-muted-foreground">
-            Timeline and notes will appear here once a customer is selected.
-          </div>
-        </div>
-      </div>
-    </div>
-  </aside>
 </div>
+
+<div
+  class="fixed inset-0 z-40 bg-background/60 backdrop-blur-sm opacity-0 pointer-events-none transition-opacity duration-300"
+  data-customer-overlay
+  style="opacity: 0; pointer-events: none;"
+></div>
+
+<aside
+  class="fixed inset-y-0 right-0 z-50 flex w-full max-w-full translate-x-full transform transition-transform duration-300 sm:w-[360px] lg:w-[420px] xl:w-[480px] border-l border-border/70 bg-card/95 backdrop-blur shadow-2xl"
+  data-customer-panel
+  data-state="empty"
+  role="dialog"
+  aria-modal="true"
+  aria-labelledby="customer-panel-heading"
+  aria-hidden="true"
+  tabindex="-1"
+  style="transform: translateX(100%);"
+>
+  <div class="relative flex h-full w-full flex-col">
+    <div id="customer-panel-heading" class="sr-only" data-customer-aria-title>Select a customer</div>
+    <button
+      type="button"
+      class="absolute right-4 top-4 inline-flex h-9 w-9 items-center justify-center rounded-full border border-border/70 bg-background/80 text-muted-foreground transition hover:bg-background"
+      data-customer-close
+      aria-label="Close customer details"
+    >
+      <svg class="h-4 w-4" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" aria-hidden="true">
+        <path stroke-linecap="round" stroke-linejoin="round" d="m8 8 8 8m0-8-8 8" />
+      </svg>
+    </button>
+    <div class="flex h-full flex-col" data-customer-scroll>
+      <div class="space-y-6 px-6 py-10" data-customer-empty>
+        <div class="space-y-2">
+          <h2 class="text-xl font-semibold text-foreground">{{ customers_detail_empty_title|default:"No customer selected" }}</h2>
+          <p class="text-sm text-muted-foreground">
+            {{ customers_detail_empty_message|default:"Choose a customer from the table to inspect profiles, activity, and notes." }}
+          </p>
+        </div>
+        <div class="rounded-xl border border-dashed border-border/60 bg-muted/40 px-4 py-6 text-center text-sm text-muted-foreground">
+          Nothing to show yet.
+        </div>
+      </div>
+      <div class="hidden space-y-6 px-6 py-10" data-customer-loading>
+        <div class="space-y-3 animate-pulse">
+          <div class="h-6 w-40 rounded bg-muted/50"></div>
+          <div class="h-4 w-32 rounded bg-muted/40"></div>
+        </div>
+        <div class="space-y-3">
+          <div class="h-16 w-full rounded-xl border border-border/70 bg-muted/30 animate-pulse"></div>
+          <div class="h-24 w-full rounded-xl border border-border/70 bg-muted/20 animate-pulse"></div>
+        </div>
+      </div>
+      <div class="hidden space-y-4 px-6 py-10" data-customer-error>
+        <div class="rounded-lg border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive" data-customer-error-message>
+          Unable to load customer details. Please try again.
+        </div>
+      </div>
+      <div class="hidden flex h-full flex-col" data-customer-content>
+        <header class="border-b border-border/70 px-4 pb-4 pt-6 space-y-3">
+          <div class="flex flex-col gap-1">
+            <div class="text-sm font-medium text-muted-foreground">Customer</div>
+            <div class="flex flex-wrap items-center gap-2">
+              <span class="text-lg font-semibold text-foreground" data-customer-name>Customer</span>
+              <span class="inline-flex items-center rounded-full border border-border/60 px-2.5 py-0.5 text-xs font-semibold capitalize" data-customer-stage>—</span>
+              <span class="ml-auto text-xs text-muted-foreground" data-customer-last-contact></span>
+            </div>
+          </div>
+        </header>
+        <div class="flex-1 min-h-0 overflow-y-auto px-4 py-5 space-y-5">
+          <section class="grid grid-cols-1 sm:grid-cols-3 gap-3" data-customer-stats>
+            <div class="rounded-lg border border-border/60 bg-card/90 px-3 py-3">
+              <div class="text-xs font-medium text-muted-foreground uppercase tracking-wide">Open cases</div>
+              <div class="text-xl font-semibold text-foreground" data-customer-open-cases>0</div>
+            </div>
+            <div class="rounded-lg border border-border/60 bg-card/90 px-3 py-3">
+              <div class="text-xs font-medium text-muted-foreground uppercase tracking-wide">Total cases</div>
+              <div class="text-xl font-semibold text-foreground" data-customer-total-cases>0</div>
+            </div>
+            <div class="rounded-lg border border-border/60 bg-card/90 px-3 py-3">
+              <div class="text-xs font-medium text-muted-foreground uppercase tracking-wide">First seen</div>
+              <div class="text-sm font-semibold text-foreground" data-customer-first-seen>—</div>
+            </div>
+          </section>
+          <section class="space-y-3">
+            <div class="text-xs font-semibold uppercase tracking-[0.18em] text-muted-foreground/80">Contact</div>
+            <div class="rounded-lg border border-border/60 bg-card/90 px-4 py-3 space-y-2">
+              <div class="flex items-center gap-2 text-sm">
+                <svg class="h-4 w-4 text-muted-foreground" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor">
+                  <path stroke-linecap="round" stroke-linejoin="round" d="M2.25 6.75 12 12l9.75-5.25M4.5 5.25h15a2.25 2.25 0 0 1 2.25 2.25v9a2.25 2.25 0 0 1-2.25 2.25h-15A2.25 2.25 0 0 1 2.25 16.5v-9A2.25 2.25 0 0 1 4.5 5.25Z" />
+                </svg>
+                <span data-customer-email>—</span>
+              </div>
+              <div class="flex items-center gap-2 text-sm">
+                <svg class="h-4 w-4 text-muted-foreground" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor">
+                  <path stroke-linecap="round" stroke-linejoin="round" d="M2.25 4.5h4.436a2 2 0 0 1 1.924 1.47l1.1 4.108a2 2 0 0 1-.502 1.908l-2.49 2.49a16.5 16.5 0 0 0 6.99 6.99l2.49-2.49a2 2 0 0 1 1.908-.502l4.108 1.1A2 2 0 0 1 21 21.314V22" />
+                </svg>
+                <span data-customer-phone>—</span>
+              </div>
+              <div class="text-sm text-muted-foreground" data-customer-address>—</div>
+            </div>
+            <div class="text-xs font-semibold uppercase tracking-[0.18em] text-muted-foreground/80">Additional</div>
+            <div class="rounded-lg border border-border/60 bg-card/90 px-4 py-3">
+              <ul class="space-y-2 text-sm text-muted-foreground" data-customer-contacts>
+                <li>No extra contact methods.</li>
+              </ul>
+            </div>
+          </section>
+          <section class="space-y-3">
+            <div class="text-xs font-semibold uppercase tracking-[0.18em] text-muted-foreground/80">Tags</div>
+            <div class="flex flex-wrap gap-2 text-xs" data-customer-tags>
+              <span class="text-muted-foreground">No tags assigned.</span>
+            </div>
+          </section>
+          <section class="space-y-3">
+            <div class="text-xs font-semibold uppercase tracking-[0.18em] text-muted-foreground/80">Cases</div>
+            <div class="rounded-lg border border-border/60 bg-card/90 px-4 py-3 space-y-3">
+              <div>
+                <div class="text-xs font-medium text-muted-foreground mb-1">Open</div>
+                <ul class="space-y-2 text-sm text-muted-foreground" data-customer-cases-open>
+                  <li>No open cases.</li>
+                </ul>
+              </div>
+              <div>
+                <div class="text-xs font-medium text-muted-foreground mb-1">Closed</div>
+                <ul class="space-y-2 text-sm text-muted-foreground" data-customer-cases-closed>
+                  <li>No closed cases.</li>
+                </ul>
+              </div>
+            </div>
+          </section>
+          <section class="space-y-3">
+            <div class="text-xs font-semibold uppercase tracking-[0.18em] text-muted-foreground/80">Activity</div>
+            <ul class="space-y-3" data-customer-activity>
+              <li class="text-sm text-muted-foreground">No recent activity.</li>
+            </ul>
+          </section>
+          <section class="space-y-3">
+            <div class="flex items-center justify-between">
+              <div class="text-xs font-semibold uppercase tracking-[0.18em] text-muted-foreground/80">Notes</div>
+            </div>
+            <ul class="space-y-3" data-customer-notes>
+              <li class="text-sm text-muted-foreground">No notes yet.</li>
+            </ul>
+          </section>
+        </div>
+      </div>
+    </div>
+  </div>
+</aside>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+  document.addEventListener("DOMContentLoaded", function () {
+    var table = document.querySelector("[data-customers-table]");
+    var panel = document.querySelector("[data-customer-panel]");
+    var overlay = document.querySelector("[data-customer-overlay]");
+    if (!table || !panel) {
+      return;
+    }
+
+    var closeTrigger = panel.querySelector("[data-customer-close]");
+    var scrollRoot = panel.querySelector("[data-customer-scroll]");
+    var body = document.body;
+
+    var emptyState = panel.querySelector("[data-customer-empty]");
+    var loadingState = panel.querySelector("[data-customer-loading]");
+    var errorState = panel.querySelector("[data-customer-error]");
+    var errorMessage = panel.querySelector("[data-customer-error-message]");
+    var contentState = panel.querySelector("[data-customer-content]");
+
+    var fieldAriaTitle = panel.querySelector("[data-customer-aria-title]");
+    var fieldName = panel.querySelector("[data-customer-name]");
+    var fieldStage = panel.querySelector("[data-customer-stage]");
+    var fieldLastContact = panel.querySelector("[data-customer-last-contact]");
+    var fieldEmail = panel.querySelector("[data-customer-email]");
+    var fieldPhone = panel.querySelector("[data-customer-phone]");
+    var fieldAddress = panel.querySelector("[data-customer-address]");
+    var fieldContacts = panel.querySelector("[data-customer-contacts]");
+    var fieldTags = panel.querySelector("[data-customer-tags]");
+    var fieldOpenCasesStat = panel.querySelector("[data-customer-open-cases]");
+    var fieldTotalCasesStat = panel.querySelector("[data-customer-total-cases]");
+    var fieldFirstSeen = panel.querySelector("[data-customer-first-seen]");
+    var fieldCasesOpen = panel.querySelector("[data-customer-cases-open]");
+    var fieldCasesClosed = panel.querySelector("[data-customer-cases-closed]");
+    var fieldActivity = panel.querySelector("[data-customer-activity]");
+    var fieldNotes = panel.querySelector("[data-customer-notes]");
+
+    var selectedClasses = ["ring-1", "ring-primary/70", "bg-primary/5"];
+    var activeRow = null;
+    var inFlight = null;
+    var isPanelOpen = false;
+    var abortSupported = typeof window.AbortController === "function";
+
+    function setPanelState(state) {
+      panel.dataset.state = state;
+      if (emptyState) emptyState.classList.toggle("hidden", state !== "empty");
+      if (loadingState) loadingState.classList.toggle("hidden", state !== "loading");
+      if (errorState) errorState.classList.toggle("hidden", state !== "error");
+      if (contentState) contentState.classList.toggle("hidden", state !== "content");
+      if (fieldAriaTitle) {
+        if (state === "empty") fieldAriaTitle.textContent = "Select a customer";
+        else if (state === "loading") fieldAriaTitle.textContent = "Loading customer details";
+        else if (state === "error") fieldAriaTitle.textContent = "Customer details unavailable";
+      }
+    }
+
+    function openPanel() {
+      if (isPanelOpen) {
+          return;
+      }
+      isPanelOpen = true;
+      panel.setAttribute("aria-hidden", "false");
+      panel.classList.remove("translate-x-full");
+      panel.classList.add("translate-x-0");
+      panel.style.transform = "translateX(0)";
+      if (overlay) {
+        overlay.classList.remove("opacity-0", "pointer-events-none");
+        overlay.classList.add("opacity-100", "pointer-events-auto");
+        overlay.style.opacity = "1";
+        overlay.style.pointerEvents = "auto";
+      }
+      if (body) {
+        body.classList.add("overflow-hidden");
+      }
+      try {
+        panel.focus({ preventScroll: true });
+      } catch (_err) {
+        panel.focus();
+      }
+    }
+
+    function closePanel(options) {
+      options = options || {};
+      if (inFlight && typeof inFlight.abort === "function") {
+        inFlight.abort();
+      }
+      inFlight = null;
+      if (!options.suppressState) {
+        setPanelState("empty");
+      }
+      if (!isPanelOpen && !options.force) {
+        return;
+      }
+      if (overlay) {
+        overlay.classList.remove("opacity-100", "pointer-events-auto");
+        overlay.classList.add("opacity-0", "pointer-events-none");
+        overlay.style.opacity = "0";
+        overlay.style.pointerEvents = "none";
+      }
+      panel.classList.add("translate-x-full");
+      panel.classList.remove("translate-x-0");
+      panel.style.transform = "translateX(100%)";
+      panel.setAttribute("aria-hidden", "true");
+      if (body) {
+        body.classList.remove("overflow-hidden");
+      }
+      isPanelOpen = false;
+      if (options.resetSelection !== false && activeRow) {
+        selectedClasses.forEach(function (cls) {
+          activeRow.classList.remove(cls);
+        });
+        activeRow.dataset.selected = "false";
+        activeRow.setAttribute("aria-expanded", "false");
+        activeRow = null;
+      }
+    }
+
+    function formatDateTime(value) {
+      if (!value) {
+        return "—";
+      }
+      try {
+        var date = new Date(value);
+        if (Number.isNaN(date.getTime())) {
+          return value;
+        }
+        return date.toLocaleString(undefined, {
+          year: "numeric",
+          month: "short",
+          day: "numeric",
+          hour: "2-digit",
+          minute: "2-digit",
+        });
+      } catch (_e) {
+        return value;
+      }
+    }
+
+    function populateList(target, items, renderItem, emptyMessage) {
+      if (!target) return;
+      target.innerHTML = "";
+      if (!items || !items.length) {
+        if (emptyMessage) {
+          var fallback = document.createElement("li");
+          fallback.className = "text-sm text-muted-foreground";
+          fallback.textContent = emptyMessage;
+          target.appendChild(fallback);
+        }
+        return;
+      }
+      items.forEach(function (item) {
+        var element = renderItem(item);
+        if (element) {
+          target.appendChild(element);
+        }
+      });
+    }
+
+    function selectRow(row) {
+      if (activeRow && activeRow !== row) {
+        selectedClasses.forEach(function (cls) {
+          activeRow.classList.remove(cls);
+        });
+        activeRow.dataset.selected = "false";
+        activeRow.setAttribute("aria-expanded", "false");
+      }
+      activeRow = row;
+      if (row) {
+        selectedClasses.forEach(function (cls) {
+          row.classList.add(cls);
+        });
+        row.dataset.selected = "true";
+        row.setAttribute("aria-expanded", "true");
+      }
+    }
+
+    function populatePanel(payload, dataset) {
+      var summary = payload.customer || {};
+      var name = summary.displayName || dataset.customerName || "Customer";
+      if (fieldName) fieldName.textContent = name;
+      if (fieldAriaTitle) fieldAriaTitle.textContent = name;
+      var stageLabel = (summary.stateLabel || dataset.customerStageLabel || "—").toString();
+      if (fieldStage) fieldStage.textContent = stageLabel.charAt(0).toUpperCase() + stageLabel.slice(1);
+      if (fieldLastContact) {
+        var last = summary.lastInteractionAt || dataset.customerLast;
+        fieldLastContact.textContent = last ? "Last contact " + formatDateTime(last) : "No recent contact";
+      }
+      if (fieldEmail) fieldEmail.textContent = summary.email || dataset.customerEmail || "—";
+      if (fieldPhone) fieldPhone.textContent = payload.primaryPhone || "—";
+      if (fieldAddress) {
+        var address = payload.primaryAddress || {};
+        var parts = [address.line1, address.line2, address.city, address.region, address.country].filter(Boolean);
+        fieldAddress.textContent = parts.length ? parts.join(", ") : "No address provided.";
+      }
+      if (fieldOpenCasesStat) fieldOpenCasesStat.textContent = payload.stats && payload.stats.open_cases !== undefined ? payload.stats.open_cases : dataset.customerCasesOpen || 0;
+      if (fieldTotalCasesStat) fieldTotalCasesStat.textContent = payload.stats && payload.stats.total_cases !== undefined ? payload.stats.total_cases : dataset.customerCasesTotal || 0;
+      if (fieldFirstSeen) fieldFirstSeen.textContent = payload.stats && payload.stats.first_seen_at ? formatDateTime(payload.stats.first_seen_at) : "—";
+
+      populateList(
+        fieldContacts,
+        payload.contacts,
+        function (contact) {
+          var li = document.createElement("li");
+          li.className = "flex items-center gap-2 text-sm";
+          li.innerHTML = '<span class="text-muted-foreground uppercase text-[10px] tracking-wide">' + contact.contactType + "</span><span>" + contact.value + "</span>";
+          return li;
+        },
+        "No extra contact methods."
+      );
+
+      populateList(
+        fieldTags,
+        payload.tags,
+        function (tag) {
+          var span = document.createElement("span");
+          span.className = "inline-flex items-center rounded-full border border-border/60 bg-muted/60 px-2.5 py-0.5 text-xs font-medium capitalize text-muted-foreground";
+          span.textContent = tag;
+          return span;
+        },
+        "No tags assigned."
+      );
+
+      populateList(
+        fieldCasesOpen,
+        payload.casesOpen,
+        function (item) {
+          var li = document.createElement("li");
+          li.className = "flex items-center justify-between text-sm text-muted-foreground";
+          li.textContent = item.caseNumber + " • " + formatDateTime(item.startedAt);
+          return li;
+        },
+        "No open cases."
+      );
+
+      populateList(
+        fieldCasesClosed,
+        payload.casesClosed,
+        function (item) {
+          var li = document.createElement("li");
+          li.className = "flex items-center justify-between text-sm text-muted-foreground";
+          li.textContent = item.caseNumber + " • " + formatDateTime(item.startedAt);
+          return li;
+        },
+        "No closed cases."
+      );
+
+      populateList(
+        fieldActivity,
+        payload.activity,
+        function (item) {
+          var li = document.createElement("li");
+          li.className = "rounded-lg border border-border/60 bg-card/90 px-3 py-2";
+          var title = document.createElement("div");
+          title.className = "text-sm font-semibold text-foreground";
+          title.textContent = item.subject;
+          var meta = document.createElement("div");
+          meta.className = "text-xs text-muted-foreground";
+          var metaParts = [item.activityType, item.actorType, formatDateTime(item.occurredAt)];
+          if (item.caseNumber) metaParts.push(item.caseNumber);
+          meta.textContent = metaParts.filter(Boolean).join(" • ");
+          var desc = document.createElement("div");
+          desc.className = "mt-2 text-sm text-muted-foreground";
+          desc.textContent = item.description || "No description.";
+          li.appendChild(title);
+          li.appendChild(meta);
+          li.appendChild(desc);
+          return li;
+        },
+        "No recent activity."
+      );
+
+      populateList(
+        fieldNotes,
+        payload.notes,
+        function (item) {
+          var li = document.createElement("li");
+          li.className = "rounded-lg border border-border/60 bg-background/80 px-3 py-2";
+          var header = document.createElement("div");
+          header.className = "flex items-center justify-between text-xs text-muted-foreground";
+          header.textContent = item.authorType.replace(/_/g, " ") + " • " + formatDateTime(item.createdAt);
+          var body = document.createElement("div");
+          body.className = "mt-2 text-sm text-foreground whitespace-pre-line";
+          body.textContent = item.content || "";
+          li.appendChild(header);
+          li.appendChild(body);
+          return li;
+        },
+        "No notes yet."
+      );
+    }
+
+    function handleRowActivation(row) {
+      var uuid = row.getAttribute("data-customer-uuid");
+      if (!uuid) {
+        return;
+      }
+      selectRow(row);
+      if (inFlight && typeof inFlight.abort === "function") {
+        inFlight.abort();
+      }
+      inFlight = abortSupported ? new AbortController() : null;
+      openPanel();
+      setPanelState("loading");
+      if (scrollRoot) {
+        scrollRoot.scrollTop = 0;
+      }
+      fetch("/api/customers/" + encodeURIComponent(uuid) + "/", {
+        method: "GET",
+        headers: { Accept: "application/json" },
+        credentials: "same-origin",
+        signal: inFlight ? inFlight.signal : undefined,
+      })
+        .then(function (response) {
+          if (!response.ok) {
+            throw new Error("Failed to load customer");
+          }
+          return response.json();
+        })
+        .then(function (payload) {
+          if (inFlight && inFlight.signal && inFlight.signal.aborted) {
+            return;
+          }
+          setPanelState("content");
+          populatePanel(payload || {}, {
+            customerName: row.getAttribute("data-customer-name") || "",
+            customerEmail: row.getAttribute("data-customer-email") || "",
+            customerStageLabel: row.getAttribute("data-customer-stage-label") || "",
+            customerLast: row.getAttribute("data-customer-last") || "",
+            customerCasesOpen: row.getAttribute("data-customer-cases-open") || "",
+            customerCasesTotal: row.getAttribute("data-customer-cases-total") || "",
+          });
+          if (scrollRoot) {
+            scrollRoot.scrollTop = 0;
+          }
+        })
+        .catch(function (error) {
+          if (inFlight && inFlight.signal && inFlight.signal.aborted) {
+            return;
+          }
+          console.error("Failed to load customer detail", error);
+          if (errorMessage) {
+            errorMessage.textContent = "Unable to load customer details. Please try again.";
+          }
+          setPanelState("error");
+        })
+        .finally(function () {
+          inFlight = null;
+        });
+    }
+
+    table.addEventListener("click", function (event) {
+      var row = event.target.closest("[data-customer-row]");
+      if (!row) {
+        return;
+      }
+      handleRowActivation(row);
+    });
+
+    table.addEventListener("keydown", function (event) {
+      if (event.key === "Enter" || event.key === " ") {
+        var row = event.target.closest("[data-customer-row]");
+        if (row) {
+          event.preventDefault();
+          handleRowActivation(row);
+        }
+      }
+    });
+
+    if (overlay) {
+      overlay.addEventListener("click", function () {
+        closePanel();
+      });
+    }
+    if (closeTrigger) {
+      closeTrigger.addEventListener("click", function () {
+        closePanel();
+      });
+    }
+    document.addEventListener("keydown", function (event) {
+      if (event.key === "Escape" && isPanelOpen) {
+        event.preventDefault();
+        closePanel();
+      }
+    });
+
+    closePanel({ suppressState: true, resetSelection: false, force: true });
+  });
+</script>
 {% endblock %}

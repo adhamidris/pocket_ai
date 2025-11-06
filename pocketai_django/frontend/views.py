@@ -1,14 +1,18 @@
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, timedelta
 from typing import Dict, List
 
 from django.contrib.auth.decorators import login_required
 from django.http import HttpRequest, HttpResponse
 from django.middleware.csrf import get_token
 from django.shortcuts import render
+from django.utils import timezone
 
+from apps.cases.models import Case, CaseStatus
+from apps.customers.models import Customer
 from apps.services.cases import list_cases
+from apps.services.customers import list_customers
 
 def _mobile_app_section() -> Dict[str, object]:
     return {
@@ -1276,9 +1280,64 @@ def dashboard_customers(request: HttpRequest) -> HttpResponse:
     user_name = _current_user_name(request)
     stats = [
         {"label": "New customers", "value": None, "helper": "No data to measure yet"},
-        {"label": "Satisfied customers", "value": None, "helper": "No data to measure yet"},
-        {"label": "Expansion opportunities", "value": None, "helper": "No data to measure yet"},
+        {"label": "Active customers", "value": None, "helper": "No customers yet"},
+        {"label": "Open cases", "value": None, "helper": "Create cases to populate data"},
     ]
+    customers: list[dict[str, object]] = []
+    total_customers = 0
+    now = timezone.now()
+    thirty_days_ago = now - timedelta(days=30)
+    business = None
+    if request.user.is_authenticated:
+        business = request.user.business_profiles.order_by("-created_at").first()
+
+    if business:
+        try:
+            result = list_customers(business_profile=business, limit=50)
+            total_customers = result.total_count
+            for item in result.items:
+                name = item.display_name or "Customer"
+                tokens = [token for token in name.split() if token]
+                if not tokens:
+                    initials = "CU"
+                elif len(tokens) == 1:
+                    initials = tokens[0][:2].upper()
+                else:
+                    initials = (tokens[0][0] + tokens[-1][0]).upper()
+                state_label = item.state.replace("_", " ").title() if item.state else "—"
+                last_contact = item.last_interaction_at
+                customers.append(
+                    {
+                        "uuid": str(item.id),
+                        "name": name,
+                        "initials": initials,
+                        "email": item.email or "—",
+                        "state": item.state or "",
+                        "state_label": state_label,
+                        "cases_open": item.open_cases,
+                        "cases_total": item.total_cases,
+                        "last_contact": last_contact.strftime("%b %d, %Y %H:%M") if last_contact else "No activity yet",
+                        "last_contact_iso": last_contact.isoformat() if last_contact else "",
+                    }
+                )
+        except Exception:
+            pass
+
+        new_customers = Customer.objects.filter(
+            business_profile=business,
+            created_at__gte=thirty_days_ago,
+        ).count()
+        active_customers = Customer.objects.filter(
+            business_profile=business,
+            record_state="active",
+        ).count()
+        open_cases = Case.objects.filter(business_profile=business, status=CaseStatus.OPEN).count()
+        stats = [
+            {"label": "New customers", "value": new_customers or 0, "helper": "Last 30 days"},
+            {"label": "Active customers", "value": active_customers or 0, "helper": "Currently engaged"},
+            {"label": "Open cases", "value": open_cases or 0, "helper": "Customer cases awaiting action"},
+        ]
+
     context = {
         "user_name": user_name,
         "customers_stats": stats,
@@ -1292,10 +1351,10 @@ def dashboard_customers(request: HttpRequest) -> HttpResponse:
         "customers_auth_notice": None,
         "customers_loading": False,
         "skeleton_rows": range(6),
-        "customers": [],
+        "customers": customers,
         "customers_empty_message": "No customers added yet. Import customers or add one.",
-        "customers_showing_count": 0,
-        "customers_total": 0,
+        "customers_showing_count": len(customers),
+        "customers_total": total_customers if total_customers else len(customers),
         "customers_has_prev": False,
         "customers_has_next": False,
         "customers_detail_empty_title": "No customer selected",

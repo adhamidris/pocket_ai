@@ -27,6 +27,7 @@ from apps.services.cases import (
     list_cases,
     update_case,
 )
+from apps.services.customers import CustomerDetail as CustomerDetailData, CustomerSummary, get_customer_detail
 from apps.services.registration import (
     AgentProfileError,
     AgentProfileResult,
@@ -403,6 +404,85 @@ def _serialize_case_list(result: CaseListResult) -> dict:
     }
 
 
+def _serialize_customer_summary(summary: CustomerSummary) -> dict:
+    return {
+        "id": str(summary.id),
+        "displayName": summary.display_name,
+        "email": summary.email,
+        "state": summary.state,
+        "stateLabel": (summary.state or "").replace("_", " ").title() if summary.state else None,
+        "lastInteractionAt": _iso(summary.last_interaction_at),
+        "totalCases": summary.total_cases,
+        "openCases": summary.open_cases,
+    }
+
+
+def _serialize_customer_detail(detail: CustomerDetailData) -> dict:
+    return {
+        "customer": _serialize_customer_summary(detail.summary),
+        "primaryPhone": detail.primary_phone,
+        "primaryAddress": detail.primary_address,
+        "firstSeenAt": _iso(detail.first_seen_at),
+        "stats": {
+            "total_cases": detail.stats.get("total_cases"),
+            "open_cases": detail.stats.get("open_cases"),
+            "closed_cases": detail.stats.get("closed_cases"),
+            "first_seen_at": _iso(detail.stats.get("first_seen_at")),
+            "last_interaction_at": _iso(detail.stats.get("last_interaction_at")),
+        },
+        "contacts": [
+            {
+                "contactType": contact.contact_type,
+                "label": contact.label,
+                "value": contact.value,
+                "isPrimary": contact.is_primary,
+            }
+            for contact in detail.contacts
+        ],
+        "tags": list(detail.tags),
+        "casesOpen": [
+            {
+                "id": str(case.id),
+                "caseNumber": case.case_number,
+                "status": case.status,
+                "startedAt": _iso(case.started_at),
+            }
+            for case in detail.cases_open
+        ],
+        "casesClosed": [
+            {
+                "id": str(case.id),
+                "caseNumber": case.case_number,
+                "status": case.status,
+                "startedAt": _iso(case.started_at),
+            }
+            for case in detail.cases_closed
+        ],
+        "activity": [
+            {
+                "id": str(item.id),
+                "subject": item.subject,
+                "actorType": item.actor_type,
+                "activityType": item.activity_type,
+                "description": item.description,
+                "occurredAt": _iso(item.occurred_at),
+                "caseNumber": item.case_number,
+            }
+            for item in detail.activity
+        ],
+        "notes": [
+            {
+                "id": str(note.id),
+                "authorType": note.author_type,
+                "content": note.content,
+                "isPinned": note.is_pinned,
+                "createdAt": _iso(note.created_at),
+            }
+            for note in detail.notes
+        ],
+    }
+
+
 @require_http_methods(["GET", "POST"])
 def cases_collection(request: HttpRequest) -> JsonResponse:
     if request.method == "GET":
@@ -763,6 +843,25 @@ def case_notes_view(request: HttpRequest, case_id: uuid.UUID) -> JsonResponse:
 
     detail = get_case_detail(business_profile=business, case_id=case_id)
     return JsonResponse(_serialize_case_detail(detail), status=HTTPStatus.CREATED)
+
+
+@require_http_methods(["GET"])
+def customer_detail_view(request: HttpRequest, customer_id: uuid.UUID) -> JsonResponse:
+    business_id = request.GET.get("business_id")
+    business, error = _resolve_business_profile(request, business_id)
+    if error:
+        return error
+    assert business is not None
+
+    try:
+        detail = get_customer_detail(business_profile=business, customer_id=customer_id)
+    except Customer.DoesNotExist:
+        return JsonResponse(
+            {"error": "CUSTOMER_NOT_FOUND", "message": "Customer not found."},
+            status=HTTPStatus.NOT_FOUND,
+        )
+
+    return JsonResponse(_serialize_customer_detail(detail), status=HTTPStatus.OK)
 
 
 @csrf_protect
