@@ -599,7 +599,8 @@
       }
     }
 
-    var selectedClass = "ring-1 ring-primary/70 bg-primary/5";
+    var selectedClasses = ["ring-1", "ring-primary/70", "bg-primary/5"];
+    var abortSupported = typeof window.AbortController === "function";
     var activeRow = null;
     var inFlight = null;
     var isPanelOpen = false;
@@ -655,10 +656,10 @@
 
     function closePanel(options) {
       options = options || {};
-      if (inFlight) {
+      if (inFlight && typeof inFlight.abort === "function") {
         inFlight.abort();
-        inFlight = null;
       }
+      inFlight = null;
       if (!options.suppressState) {
         setPanelState("empty");
       } else {
@@ -687,7 +688,9 @@
       }
       isPanelOpen = false;
       if (options.resetSelection !== false && activeRow) {
-        activeRow.classList.remove(selectedClass);
+        selectedClasses.forEach(function (cls) {
+          activeRow.classList.remove(cls);
+        });
         activeRow.dataset.selected = "false";
         activeRow.setAttribute("aria-expanded", "false");
         activeRow = null;
@@ -890,13 +893,17 @@
 
     function selectRow(row) {
       if (activeRow && activeRow !== row) {
-        activeRow.classList.remove(selectedClass);
+        selectedClasses.forEach(function (cls) {
+          activeRow.classList.remove(cls);
+        });
         activeRow.dataset.selected = "false";
         activeRow.setAttribute("aria-expanded", "false");
       }
       activeRow = row;
       if (row) {
-        row.classList.add(selectedClass);
+        selectedClasses.forEach(function (cls) {
+          row.classList.add(cls);
+        });
         row.dataset.selected = "true";
         row.setAttribute("aria-expanded", "true");
         try {
@@ -913,10 +920,11 @@
         return;
       }
       selectRow(row);
-      if (inFlight) {
+      if (inFlight && typeof inFlight.abort === "function") {
         inFlight.abort();
       }
-      var controller = new AbortController();
+      inFlight = null;
+      var controller = abortSupported ? new AbortController() : null;
       inFlight = controller;
       openPanel();
       setPanelState("loading");
@@ -927,7 +935,7 @@
         method: "GET",
         headers: { Accept: "application/json" },
         credentials: "same-origin",
-        signal: controller.signal,
+        signal: controller ? controller.signal : undefined,
       })
         .then(function (response) {
           if (!response.ok) {
@@ -936,7 +944,7 @@
           return response.json();
         })
         .then(function (payload) {
-          if (controller.signal.aborted) {
+          if (controller && controller.signal.aborted) {
             return;
           }
           setPanelState("content");
@@ -955,7 +963,7 @@
           }
         })
         .catch(function (error) {
-          if (controller.signal.aborted) {
+          if (controller && controller.signal.aborted) {
             return;
           }
           console.error("Failed to load case detail", error);
@@ -968,7 +976,7 @@
           }
         })
         .finally(function () {
-          if (inFlight === controller) {
+          if (controller && inFlight === controller) {
             inFlight = null;
           }
         });
@@ -980,14 +988,34 @@
         if (event.defaultPrevented) {
           return;
         }
+        event.stopPropagation();
         handleRowActivation(row);
       });
       row.addEventListener("keydown", function (event) {
         if (event.key === "Enter" || event.key === " ") {
           event.preventDefault();
+          event.stopPropagation();
           handleRowActivation(row);
         }
       });
+    });
+
+    table.addEventListener("click", function (event) {
+      var row = event.target.closest("[data-case-row]");
+      if (!row) {
+        return;
+      }
+      handleRowActivation(row);
+    });
+
+    table.addEventListener("keydown", function (event) {
+      if (event.key === "Enter" || event.key === " ") {
+        var row = event.target.closest("[data-case-row]");
+        if (row) {
+          event.preventDefault();
+          handleRowActivation(row);
+        }
+      }
     });
 
     if (overlay) {
