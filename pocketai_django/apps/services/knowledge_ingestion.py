@@ -29,6 +29,11 @@ from apps.services.embeddings import build_embedding_service, EmbeddingProviderE
 logger = logging.getLogger(__name__)
 
 try:  # pragma: no cover - dependency failure should be surfaced at runtime
+    import fitz  # type: ignore[attr-defined]  # PyMuPDF
+except ImportError:  # pragma: no cover - optional dependency
+    fitz = None  # type: ignore
+
+try:  # pragma: no cover - dependency failure should be surfaced at runtime
     from pypdf import PdfReader
 except ImportError:  # pragma: no cover - fallback handled via runtime check
     PdfReader = None  # type: ignore
@@ -410,9 +415,25 @@ class KnowledgeIngestionService:
         return suffix.strip(".") if suffix else None
 
     @staticmethod
+    @staticmethod
     def _extract_pdf(path: Path) -> str:
+        pymupdf_error: Exception | None = None
+        if fitz is not None:
+            try:
+                document = fitz.open(path)
+                fragments = []
+                for page in document:
+                    fragments.append(page.get_text("text") or "")
+                return "\n".join(fragments)
+            except Exception as exc:  # pragma: no cover - fall back to PyPDF
+                pymupdf_error = exc
+                logger.warning("PyMuPDF extraction failed for %s: %s", path, exc)
+
         if PdfReader is None:
-            raise KnowledgeIngestionError("PDF ingestion requires the pypdf package.")
+            raise KnowledgeIngestionError(
+                f"PDF ingestion requires PyMuPDF or pypdf (PyMuPDF error: {pymupdf_error})"
+            )
+
         try:
             reader = PdfReader(str(path))
             fragments = []

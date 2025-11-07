@@ -1067,7 +1067,7 @@ class ActionDispatcher:
     def _handle_add_case_history(self, *, conversation: Conversation, payload: dict) -> dict:
         if not conversation.case_id:
             raise ActionExecutionError("No linked case to update")
-        summary = (payload.get("summary") or "").strip()
+        summary = (payload.get("summary") or payload.get("entry") or "").strip()
         if not summary:
             raise ActionExecutionError("History summary is required")
         source = payload.get("source") or "ai"

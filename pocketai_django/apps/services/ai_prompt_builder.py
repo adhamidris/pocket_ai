@@ -67,6 +67,7 @@ class PromptBuilder:
         - Use `add_case_history` to log important updates, milestones, or clarifications without mutating the case description.
         - Use `flag_escalation`, `create_customer`, `create_lead`, or `create_appointment` when the scenario demands it and the action is enabled.
         - Use `read_knowledge` whenever you need the exact wording from a knowledge upload. Provide `knowledge_ids` as an array of the IDs listed in the knowledge section. After the platform returns the content, continue the conversation without mentioning the internal fetch.
+        - Whenever you trigger `read_knowledge`, compose the assistant reply as a single flowing two-part update: the first sentence must address the customer and explain that you’re checking the relevant resources (end with a natural segue like “I’ll confirm the exact fees for you now”). The follow-up message—after the knowledge is read—must continue the same thought without restarting the greeting so the conversation feels continuous.
         - `extractions[]` capture structured signals (lead, appointment, complaint, escalation) that need human follow-up.
         - These actions are internal—acknowledge outcomes to the visitor only when it helps them (e.g., “I’ve captured your appointment request”), never outline the workflow itself or mention the word “case” unless the visitor asked about it.
         - Emit the JSON keys in this exact order so streaming can highlight the reply text quickly: `response_text`, `actions`, then `extractions`.

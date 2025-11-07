@@ -33,6 +33,7 @@ class ChatPortalClient {
     this.streamingMessageNode = null;
     this.streamingMessageBodyEl = null;
     this.streamingBuffer = "";
+    this.markdownRenderer = this.createMarkdownRenderer();
   }
 
   async init() {
@@ -289,6 +290,11 @@ class ChatPortalClient {
     messages.forEach((message) => this.appendMessage(message));
   }
 
+  renderMarkdown(text) {
+    if (!text) return "";
+    return this.markdownRenderer.render(text);
+  }
+
   appendMessage(raw) {
     const container = this.elements.messages;
     if (!container) return;
@@ -337,9 +343,10 @@ class ChatPortalClient {
     author.textContent = message.author.name;
     bubble.appendChild(author);
 
-    const body = document.createElement("p");
-    body.textContent = message.body;
+    const body = document.createElement("div");
+    body.className = "space-y-2 leading-relaxed";
     body.dataset.messageBody = "true";
+    body.innerHTML = this.renderMarkdown(message.body);
     bubble.appendChild(body);
 
     const timestamp = document.createElement("p");
@@ -363,7 +370,7 @@ class ChatPortalClient {
     this.ensureStreamingMessageNode();
     this.streamingBuffer += chunk;
     if (this.streamingMessageBodyEl) {
-      this.streamingMessageBodyEl.textContent = this.streamingBuffer;
+      this.streamingMessageBodyEl.innerHTML = this.renderMarkdown(this.streamingBuffer);
     }
     this.elements.messages.scrollTo({ top: this.elements.messages.scrollHeight, behavior: "smooth" });
   }
@@ -385,7 +392,7 @@ class ChatPortalClient {
   finalizeStreamingMessage(finalText) {
     const text = finalText || this.streamingBuffer;
     if (this.streamingMessageBodyEl) {
-      this.streamingMessageBodyEl.textContent = text;
+      this.streamingMessageBodyEl.innerHTML = this.renderMarkdown(text);
     } else if (text) {
       this.appendMessage({
         sender: "ai",
@@ -487,6 +494,96 @@ class ChatPortalClient {
     } catch (error) {
       console.warn("Unable to persist session token", error);
     }
+  }
+
+  createMarkdownRenderer() {
+    const escapeHtml = (value = "") =>
+      value
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;")
+        .replace(/'/g, "&#39;");
+
+    const applyInlineFormatting = (value = "") => {
+      let output = escapeHtml(value);
+      output = output.replace(
+        /\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g,
+        (_, label, url) =>
+          `<a href="${url}" target="_blank" rel="nofollow noopener noreferrer" class="text-primary underline">${label}</a>`
+      );
+      output = output.replace(/`([^`]+)`/g, '<code class="bg-muted/60 px-1 py-0.5 rounded text-xs font-mono">$1</code>');
+      output = output.replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>");
+      output = output.replace(/__(.+?)__/g, "<strong>$1</strong>");
+      output = output.replace(/(\*|_)([^*_]+)\1/g, "<em>$2</em>");
+      return output;
+    };
+
+    const wrapList = (items, ordered) => {
+      if (!items.length) return "";
+      const tag = ordered ? "ol" : "ul";
+      const classes = ordered ? "list-decimal pl-5 space-y-1" : "list-disc pl-5 space-y-1";
+      const inner = items.map((item) => `<li>${applyInlineFormatting(item)}</li>`).join("");
+      return `<${tag} class="${classes}">${inner}</${tag}>`;
+    };
+
+    const renderBlocks = (input = "") => {
+      const lines = input.replace(/\r\n/g, "\n").split("\n");
+      const blocks = [];
+      let currentList = null;
+
+      const flushList = () => {
+        if (!currentList) return;
+        blocks.push(wrapList(currentList.items, currentList.ordered));
+        currentList = null;
+      };
+
+      for (const line of lines) {
+        const matchUnordered = line.match(/^\s*[-*+]\s+(.*)/);
+        const matchOrdered = line.match(/^\s*\d+\.\s+(.*)/);
+        if (matchUnordered) {
+          if (!currentList || currentList.ordered) {
+            flushList();
+            currentList = { ordered: false, items: [] };
+          }
+          currentList.items.push(matchUnordered[1]);
+          continue;
+        }
+        if (matchOrdered) {
+          if (!currentList || !currentList.ordered) {
+            flushList();
+            currentList = { ordered: true, items: [] };
+          }
+          currentList.items.push(matchOrdered[1]);
+          continue;
+        }
+
+        const trimmed = line.trim();
+        if (!trimmed) {
+          flushList();
+          continue;
+        }
+
+        flushList();
+        const heading = trimmed.match(/^(#{1,3})\s+(.*)$/);
+        if (heading) {
+          const level = heading[1].length;
+          const tag = level === 1 ? "h3" : level === 2 ? "h4" : "h5";
+          const classes = "font-semibold text-foreground";
+          blocks.push(`<${tag} class="${classes}">${applyInlineFormatting(heading[2])}</${tag}>`);
+          continue;
+        }
+
+        blocks.push(`<p>${applyInlineFormatting(trimmed)}</p>`);
+      }
+
+      flushList();
+      return blocks.join("") || applyInlineFormatting(input);
+    };
+
+    return {
+      render: renderBlocks,
+    };
   }
 
   formatTimestamp(value) {
