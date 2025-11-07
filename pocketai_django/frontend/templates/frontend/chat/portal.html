@@ -1,5 +1,5 @@
 {% extends "frontend/base.html" %}
-{% load ui_components %}
+{% load static ui_components %}
 
 {% block title %}Pocket AI Chat | {{ portal.agent.name }}{% endblock %}
 
@@ -11,10 +11,18 @@
 <section class="min-h-screen bg-background">
   <div class="container mx-auto px-4 md:px-8 py-10 md:py-16" data-chat-portal
        data-session-token="{{ portal.session_token }}"
+       data-session-cache-key="{{ portal.session_storage_key }}"
+       data-endpoint-bootstrap="{{ portal.endpoints.bootstrap }}"
        data-endpoint-messages="{{ portal.endpoints.messages }}"
        data-endpoint-stream-send="{{ portal.endpoints.stream_send }}"
        data-endpoint-events="{{ portal.endpoints.events }}"
-       data-endpoint-csat="{{ portal.endpoints.csat }}">
+       data-endpoint-csat="{{ portal.endpoints.csat }}"
+       data-business-slug="{{ portal.business.slug }}"
+       data-agent-slug="{{ portal.agent.slug }}"
+       data-agent-name="{{ portal.agent.name }}"
+       data-agent-initials="{{ portal.agent.initials }}"
+       data-bootstrap-script-id="{{ portal.bootstrap_script_id }}"
+       data-initial-status="{{ portal.conversation_status_code }}">
     <div class="grid lg:grid-cols-[360px_1fr] gap-8">
       <aside class="hidden lg:block border border-border/60 rounded-2xl bg-card/70 p-6 shadow-soft">
         <div class="flex items-center gap-4">
@@ -76,7 +84,7 @@
           </div>
         </div>
 
-        <div class="border-t border-border/60 px-4 md:px-6 py-4" data-chat-csat>
+        <div class="border-t border-border/60 px-4 md:px-6 py-4{% if portal.conversation_status_code != 'resolved' %} hidden{% endif %}" data-chat-csat>
           <form class="flex flex-col gap-2 md:flex-row md:items-center md:justify-between" data-chat-csat-form>
             <div>
               <p class="text-sm font-semibold text-foreground">How was your experience?</p>
@@ -103,5 +111,6 @@
 {% endblock %}
 
 {% block extra_js %}
+  {{ portal.bootstrap_payload|json_script:portal.bootstrap_script_id }}
   <script src="{% static 'js/chat-portal.js' %}" type="module"></script>
 {% endblock %}

@@ -71,3 +71,19 @@ Yes, you can!
 To connect a domain, navigate to Project > Settings > Domains and click Connect Domain.
 
 Read more here: [Setting up a custom domain](https://docs.lovable.dev/tips-tricks/custom-domain#step-by-step-guide)
+
+## Django LLM configuration
+
+The Django-side AI orchestration loads API credentials from the repository-level `.env`. Add entries such as `DEEPSEEK_API_KEY` or `OPENAI_API_KEY` there before running `python manage.py runserver`.
+
+To confirm that Django can see your key (and that heuristics won’t run), execute:
+
+```sh
+cd pocketai_django
+DJANGO_SETTINGS_MODULE=pocketai.settings venv/bin/python - <<'PY'
+from apps.services.llm_provider import load_default_provider
+print("Provider:", load_default_provider().__class__.__name__)
+PY
+```
+
+If a provider class name prints (e.g., `DeepSeekChatProvider`), the LLM calls are active; otherwise Django will fall back to heuristics.

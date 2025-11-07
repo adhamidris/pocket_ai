@@ -23,6 +23,7 @@ INSTALLED_APPS = [
     "apps.accounts",
     "apps.cases",
     "apps.customers",
+    "apps.conversations",
     "frontend",
 ]
 

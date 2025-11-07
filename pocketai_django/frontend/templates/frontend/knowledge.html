@@ -158,7 +158,10 @@
           <div class="relative border border-border/70 bg-card shadow-lg shadow-black/5 backdrop-blur transition-colors hover:border-primary/35 dark:border-slate-700/50 dark:bg-slate-800/70 dark:shadow-black/25 rounded-xl">
             <div class="absolute inset-x-0 top-0 h-px bg-gradient-to-r from-primary/35 via-primary/20 to-transparent"></div>
             <div class="relative max-h-[65vh] overflow-auto">
-              <table class="w-full caption-bottom text-sm rounded-xl border border-border/70 bg-background/60 shadow-sm backdrop-blur [&_th]:px-3 [&_td]:px-3 [&_th:first-child]:pl-4 [&_td:first-child]:pl-4 [&_th:last-child]:pr-4 [&_td:last-child]:pr-4 [&_th]:py-3 [&_td]:py-3">
+              <table
+                class="w-full caption-bottom text-sm rounded-xl border border-border/70 bg-background/60 shadow-sm backdrop-blur [&_th]:px-3 [&_td]:px-3 [&_th:first-child]:pl-4 [&_td:first-child]:pl-4 [&_th:last-child]:pr-4 [&_td:last-child]:pr-4 [&_th]:py-3 [&_td]:py-3"
+                data-documents-table
+              >
                 <thead class="sticky top-0 z-10 bg-muted/70 backdrop-blur border-b border-border/80">
                   <tr class="border-b transition-colors hover:bg-transparent">
                     <th scope="col" class="h-12 text-left font-medium text-muted-foreground w-[220px]">Name</th>
@@ -177,6 +180,10 @@
                   {% elif knowledge_auth_notice %}
                     <tr>
                       <td colspan="6" class="py-12 text-center text-sm text-muted-foreground">{{ knowledge_auth_notice }}</td>
+                    </tr>
+                  {% elif knowledge_error_message %}
+                    <tr>
+                      <td colspan="6" class="py-12 text-center text-sm text-muted-foreground">{{ knowledge_error_message }}</td>
                     </tr>
                   {% elif knowledge_loading %}
                     {% for _ in skeleton_rows %}
@@ -209,7 +216,29 @@
                     {% endfor %}
                   {% elif knowledge_documents %}
                     {% for doc in knowledge_documents %}
-                      <tr class="border-b transition-colors hover:bg-muted/60">
+                      <tr
+                        class="border-b transition-colors hover:bg-muted/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40 focus-visible:ring-offset-2 cursor-pointer"
+                        data-document-row
+                        data-document-id="{{ doc.uuid }}"
+                        data-document-name="{{ doc.name|escape }}"
+                        data-document-identifier="{{ doc.identifier }}"
+                        data-document-status="{{ doc.status_code|default:''|lower }}"
+                        data-document-status-label="{{ doc.status_label|escape }}"
+                        data-document-source="{{ doc.source_label|escape }}"
+                        data-document-type="{{ doc.source_type|default:''|lower }}"
+                        data-document-updated="{{ doc.updated|default:''|escape }}"
+                        data-document-updated-iso="{{ doc.updated_iso|default:'' }}"
+                        data-document-size="{{ doc.size_display|default:'—' }}"
+                        data-document-language="{{ doc.language|default:''|escape }}"
+                        data-document-category="{{ doc.category|default:''|escape }}"
+                        data-document-tokens="{{ doc.token_count|default:0 }}"
+                        data-document-sensitive="{{ doc.is_sensitive|yesno:'true,false' }}"
+                        data-document-last-synced="{{ doc.last_synced_iso|default:'' }}"
+                        data-document-last-ingested="{{ doc.last_ingested_iso|default:'' }}"
+                        data-document-integration="{{ doc.integration_name|default:''|escape }}"
+                        tabindex="0"
+                        aria-expanded="false"
+                      >
                         <td class="py-4">
                           <div class="flex flex-col">
                             <span class="font-medium leading-tight text-foreground">{{ doc.name }}</span>
@@ -220,17 +249,24 @@
                           <div class="text-sm text-muted-foreground">{{ doc.classification }}</div>
                         </td>
                         <td class="py-4">
-                          <span class="inline-flex items-center rounded-full bg-muted/60 px-2 py-0.5 text-[11px] font-medium text-muted-foreground">{{ doc.type_badge }}</span>
+                          <span class="inline-flex items-center rounded-full border border-border/60 bg-muted/40 px-2 py-0.5 text-[11px] font-medium text-muted-foreground">{{ doc.type_badge }}</span>
                         </td>
                         <td class="py-4">
-                          <span class="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-semibold {{ doc.status_badge_class }}">{{ doc.status_label }}</span>
+                          <span class="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-semibold capitalize {{ doc.status_badge_class }}">
+                            {{ doc.status_label }}
+                          </span>
                         </td>
                         <td class="py-4 text-right">
-                          <div class="text-sm font-medium text-foreground">{{ doc.updated_at }}</div>
-                          <div class="text-xs text-muted-foreground">{{ doc.size }}</div>
+                          <div class="text-sm font-medium text-foreground">{{ doc.updated }}</div>
+                          <div class="text-xs text-muted-foreground">{{ doc.size_display }}</div>
                         </td>
                         <td class="py-4">
-                          <button type="button" class="p-1.5 rounded-md hover:bg-muted transition-colors" aria-label="Document actions">
+                          <button
+                            type="button"
+                            class="p-1.5 rounded-md hover:bg-muted transition-colors"
+                            aria-label="Open document detail"
+                            data-document-trigger
+                          >
                             <svg class="h-4 w-4 text-muted-foreground" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor">
                               <path stroke-linecap="round" stroke-linejoin="round" d="M12 5v.008M12 12v.008m0 6.984v.008" />
                             </svg>
@@ -261,36 +297,6 @@
                     <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 0 1 8-8v4a4 4 0 0 0-4 4H4Z"></path>
                   </svg>
                 {% endif %}
-              </div>
-            </div>
-          </div>
-
-          <div class="grid gap-4 lg:grid-cols-2 xl:grid-cols-3 hidden" data-empty-panel="documents">
-            <!-- placeholder for JS-enhanced cards -->
-          </div>
-
-          <div class="hidden xl:flex xl:gap-4" data-knowledge-detail>
-            <div class="flex-1 rounded-xl border border-dashed border-border/70 bg-muted/30 p-6 text-center">
-              <div class="mx-auto flex h-12 w-12 items-center justify-center rounded-full bg-muted">
-                <svg class="h-6 w-6 text-muted-foreground" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor">
-                  <path stroke-linecap="round" stroke-linejoin="round" d="M3 7.5 12 12l9-4.5M3 12l9 4.5 9-4.5M3 16.5 12 21l9-4.5" />
-                </svg>
-              </div>
-              <div class="mt-3 text-sm font-semibold text-foreground">{{ knowledge_panel_empty_title|default:"Select a document" }}</div>
-              <p class="mt-1 text-xs text-muted-foreground">{{ knowledge_panel_empty_message|default:"Choose a document to preview summary, classification, and sync details here." }}</p>
-            </div>
-            <div class="w-64 rounded-xl border border-border/70 bg-card/60 p-5 space-y-3">
-              <div class="text-xs font-semibold uppercase tracking-wide text-muted-foreground/80">Processing queue</div>
-              <div class="space-y-3">
-                {% for _ in "123" %}
-                  <div class="space-y-1">
-                    <span class="block h-3 w-32 rounded bg-muted/50 animate-pulse" aria-hidden="true"></span>
-                    <span class="block h-2 w-full rounded bg-muted/40 animate-pulse" aria-hidden="true"></span>
-                  </div>
-                {% endfor %}
-              </div>
-              <div class="rounded-lg border border-dashed border-border/60 bg-muted/30 px-3 py-2 text-[11px] text-muted-foreground">
-                Upload progress and sync status will surface here after backend integration.
               </div>
             </div>
           </div>
@@ -379,4 +385,648 @@
     </div>
   </main>
 </div>
+
+<div
+  class="fixed inset-0 z-40 bg-background/60 backdrop-blur-sm opacity-0 pointer-events-none transition-opacity duration-300"
+  data-document-overlay
+  style="opacity: 0; pointer-events: none;"
+></div>
+
+<aside
+  class="fixed inset-y-0 right-0 z-50 flex w-full max-w-full translate-x-full transform transition-transform duration-300 sm:w-[360px] lg:w-[420px] xl:w-[480px] border-l border-border/70 bg-card/95 backdrop-blur shadow-2xl"
+  data-document-panel
+  data-state="empty"
+  role="dialog"
+  aria-modal="true"
+  aria-labelledby="document-panel-heading"
+  aria-hidden="true"
+  tabindex="-1"
+  style="transform: translateX(100%);"
+>
+  <div class="relative flex h-full w-full flex-col">
+    <div id="document-panel-heading" class="sr-only" data-document-aria-title>Select a document</div>
+    <button
+      type="button"
+      class="absolute right-4 top-4 inline-flex h-9 w-9 items-center justify-center rounded-full border border-border/70 bg-background/80 text-muted-foreground transition hover:bg-background"
+      data-document-close
+      aria-label="Close document detail"
+    >
+      <svg class="h-4 w-4" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor">
+        <path stroke-linecap="round" stroke-linejoin="round" d="m8 8 8 8m0-8-8 8" />
+      </svg>
+    </button>
+    <div class="flex h-full flex-col">
+      <div class="flex-1 overflow-y-auto" data-document-scroll>
+        <div class="space-y-6 px-6 py-10" data-document-empty>
+          <div class="space-y-2 text-center">
+            <div class="mx-auto flex h-12 w-12 items-center justify-center rounded-full bg-muted/60 text-muted-foreground">
+              <svg class="h-5 w-5" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M3 7.5 12 12l9-4.5M3 12l9 4.5 9-4.5M3 16.5 12 21l9-4.5" />
+              </svg>
+            </div>
+            <h2 class="text-base font-semibold text-foreground">{{ knowledge_panel_empty_title|default:"Select a document" }}</h2>
+            <p class="text-sm text-muted-foreground">
+              {{ knowledge_panel_empty_message|default:"Choose a document to preview summary, classification, and sync details here." }}
+            </p>
+          </div>
+        </div>
+        <div class="hidden space-y-6 px-6 py-10" data-document-loading>
+          <div class="space-y-3 animate-pulse">
+            <div class="h-5 w-32 rounded bg-muted/50"></div>
+            <div class="h-6 w-3/4 rounded bg-muted/50"></div>
+            <div class="h-4 w-1/2 rounded bg-muted/50"></div>
+          </div>
+          <div class="space-y-4">
+            <div class="h-24 w-full rounded-xl bg-muted/40 animate-pulse"></div>
+            <div class="h-32 w-full rounded-xl bg-muted/30 animate-pulse"></div>
+            <div class="h-32 w-full rounded-xl bg-muted/20 animate-pulse"></div>
+          </div>
+        </div>
+        <div class="hidden space-y-4 px-6 py-10" data-document-error>
+          <div class="rounded-lg border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive" data-document-error-message>
+            Unable to load document details. Please try again.
+          </div>
+          <button
+            type="button"
+            class="inline-flex items-center justify-center rounded-md border border-border/60 bg-background px-4 py-2 text-sm font-medium text-foreground shadow-sm hover:border-primary/40"
+            data-document-retry
+          >
+            Retry
+          </button>
+        </div>
+        <div class="hidden space-y-6 pb-16" data-document-content>
+          <section class="border-b border-border/70 bg-card/90 px-6 pt-10 pb-6">
+            <div class="flex items-start gap-3">
+              <div class="flex-1 min-w-0">
+                <div class="text-lg font-semibold text-foreground leading-tight" data-document-name>Document name</div>
+                <div class="text-xs text-muted-foreground" data-document-identifier>KN-0000</div>
+              </div>
+              <span class="inline-flex items-center rounded-full border px-2.5 py-0.5 text-[11px] font-semibold capitalize text-muted-foreground" data-document-status-badge>Draft</span>
+            </div>
+            <div class="mt-3 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+              <span data-document-source-label>Upload</span>
+              <span aria-hidden="true">•</span>
+              <span data-document-updated>Updated —</span>
+              <span aria-hidden="true">•</span>
+              <span data-document-last-synced>Last synced —</span>
+            </div>
+          </section>
+
+          <section class="px-6">
+            <div class="grid grid-cols-2 gap-3 text-sm sm:grid-cols-3">
+              <div class="rounded-lg border border-border/50 bg-card/95 p-3">
+                <div class="text-[10px] uppercase tracking-wide text-muted-foreground">Size</div>
+                <div class="text-base font-semibold text-foreground" data-document-size>—</div>
+              </div>
+              <div class="rounded-lg border border-border/50 bg-card/95 p-3">
+                <div class="text-[10px] uppercase tracking-wide text-muted-foreground">Tokens</div>
+                <div class="text-base font-semibold text-foreground" data-document-tokens>—</div>
+              </div>
+              <div class="rounded-lg border border-border/50 bg-card/95 p-3">
+                <div class="text-[10px] uppercase tracking-wide text-muted-foreground">Language</div>
+                <div class="text-base font-semibold text-foreground" data-document-language>—</div>
+              </div>
+              <div class="rounded-lg border border-border/50 bg-card/95 p-3">
+                <div class="text-[10px] uppercase tracking-wide text-muted-foreground">Category</div>
+                <div class="text-base font-semibold text-foreground" data-document-category>—</div>
+              </div>
+              <div class="rounded-lg border border-border/50 bg-card/95 p-3">
+                <div class="text-[10px] uppercase tracking-wide text-muted-foreground">Sensitivity</div>
+                <div class="text-base font-semibold text-foreground" data-document-sensitive>—</div>
+              </div>
+              <div class="rounded-lg border border-border/50 bg-card/95 p-3">
+                <div class="text-[10px] uppercase tracking-wide text-muted-foreground">Integration</div>
+                <div class="text-base font-semibold text-foreground" data-document-integration>—</div>
+              </div>
+            </div>
+          </section>
+
+          <section class="space-y-4 px-6">
+            <div>
+              <div class="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Description</div>
+              <p class="mt-1 text-sm leading-relaxed text-foreground" data-document-description>No description provided.</p>
+            </div>
+            <div>
+              <div class="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Summary</div>
+              <p class="mt-1 text-sm leading-relaxed text-foreground" data-document-summary>No summary available.</p>
+            </div>
+          </section>
+
+          <section class="space-y-4 px-6">
+            <div>
+              <div class="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Tags</div>
+              <div class="mt-2 flex flex-wrap gap-2 text-xs" data-document-tags>
+                <span class="text-muted-foreground">No tags.</span>
+              </div>
+            </div>
+            <div>
+              <div class="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Collections</div>
+              <div class="mt-2 flex flex-wrap gap-2 text-xs" data-document-collections>
+                <span class="text-muted-foreground">Not assigned to collections.</span>
+              </div>
+            </div>
+          </section>
+
+          <section class="space-y-4 px-6">
+            <div class="rounded-xl border border-border/70 bg-card/95 p-4">
+              <div class="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Metadata</div>
+              <pre class="mt-2 whitespace-pre-wrap text-xs text-muted-foreground" data-document-metadata>{"empty": true}</pre>
+            </div>
+            <div class="rounded-xl border border-border/70 bg-card/95 p-4">
+              <div class="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Retention policy</div>
+              <pre class="mt-2 whitespace-pre-wrap text-xs text-muted-foreground" data-document-retention>{"empty": true}</pre>
+            </div>
+          </section>
+
+          <section class="space-y-4 px-6">
+            <div class="rounded-xl border border-border/70 bg-card/95 p-4 space-y-2 hidden" data-document-file-section>
+              <div class="text-xs font-semibold uppercase tracking-wide text-muted-foreground">File details</div>
+              <div class="text-sm text-foreground" data-document-file></div>
+            </div>
+            <div class="rounded-xl border border-border/70 bg-card/95 p-4 space-y-2 hidden" data-document-url-section>
+              <div class="text-xs font-semibold uppercase tracking-wide text-muted-foreground">URL</div>
+              <a href="#" target="_blank" rel="noreferrer" class="text-sm font-medium text-primary hover:underline" data-document-url>—</a>
+              <div class="text-xs text-muted-foreground" data-document-host></div>
+            </div>
+            <div class="rounded-xl border border-border/70 bg-card/95 p-4 space-y-2 hidden" data-document-text-section>
+              <div class="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Text preview</div>
+              <p class="text-sm text-foreground" data-document-text-preview>—</p>
+            </div>
+          </section>
+        </div>
+      </div>
+    </div>
+  </div>
+</aside>
+
+{% endblock %}
+
+{% block extra_js %}
+<script>
+  document.addEventListener("DOMContentLoaded", function () {
+    var table = document.querySelector("[data-documents-table]");
+    var panel = document.querySelector("[data-document-panel]");
+    if (!table || !panel) {
+      return;
+    }
+
+    var overlay = document.querySelector("[data-document-overlay]");
+    var closeTrigger = panel.querySelector("[data-document-close]");
+    var retryButton = panel.querySelector("[data-document-retry]");
+    var scrollRoot = panel.querySelector("[data-document-scroll]");
+    var emptyState = panel.querySelector("[data-document-empty]");
+    var loadingState = panel.querySelector("[data-document-loading]");
+    var errorState = panel.querySelector("[data-document-error]");
+    var errorMessage = panel.querySelector("[data-document-error-message]");
+    var contentState = panel.querySelector("[data-document-content]");
+    var fieldAriaTitle = panel.querySelector("[data-document-aria-title]");
+    var fieldName = panel.querySelector("[data-document-name]");
+    var fieldIdentifier = panel.querySelector("[data-document-identifier]");
+    var fieldStatusBadge = panel.querySelector("[data-document-status-badge]");
+    var fieldSource = panel.querySelector("[data-document-source-label]");
+    var fieldUpdated = panel.querySelector("[data-document-updated]");
+    var fieldLastSynced = panel.querySelector("[data-document-last-synced]");
+    var fieldSize = panel.querySelector("[data-document-size]");
+    var fieldTokens = panel.querySelector("[data-document-tokens]");
+    var fieldLanguage = panel.querySelector("[data-document-language]");
+    var fieldCategory = panel.querySelector("[data-document-category]");
+    var fieldSensitive = panel.querySelector("[data-document-sensitive]");
+    var fieldIntegration = panel.querySelector("[data-document-integration]");
+    var fieldDescription = panel.querySelector("[data-document-description]");
+    var fieldSummary = panel.querySelector("[data-document-summary]");
+    var fieldTags = panel.querySelector("[data-document-tags]");
+    var fieldCollections = panel.querySelector("[data-document-collections]");
+    var fieldMetadata = panel.querySelector("[data-document-metadata]");
+    var fieldRetention = panel.querySelector("[data-document-retention]");
+    var fileSection = panel.querySelector("[data-document-file-section]");
+    var fileField = panel.querySelector("[data-document-file]");
+    var urlSection = panel.querySelector("[data-document-url-section]");
+    var urlField = panel.querySelector("[data-document-url]");
+    var hostField = panel.querySelector("[data-document-host]");
+    var textSection = panel.querySelector("[data-document-text-section]");
+    var textPreviewField = panel.querySelector("[data-document-text-preview]");
+    var body = document.body;
+
+    var selectedClasses = ["ring-1", "ring-primary/60", "bg-primary/5"];
+    var statusClassMap = {
+      ready: "inline-flex items-center rounded-full border border-emerald-200 bg-emerald-50 px-2.5 py-0.5 text-[11px] font-semibold capitalize text-emerald-700",
+      active: "inline-flex items-center rounded-full border border-emerald-200 bg-emerald-50 px-2.5 py-0.5 text-[11px] font-semibold capitalize text-emerald-700",
+      processing: "inline-flex items-center rounded-full border border-amber-200 bg-amber-50 px-2.5 py-0.5 text-[11px] font-semibold capitalize text-amber-700",
+      pending: "inline-flex items-center rounded-full border border-amber-200 bg-amber-50 px-2.5 py-0.5 text-[11px] font-semibold capitalize text-amber-700",
+      failed: "inline-flex items-center rounded-full border border-rose-200 bg-rose-50 px-2.5 py-0.5 text-[11px] font-semibold capitalize text-rose-700",
+      archived: "inline-flex items-center rounded-full border border-border/60 bg-muted/70 px-2.5 py-0.5 text-[11px] font-semibold capitalize text-muted-foreground",
+    };
+
+    var activeRow = null;
+    var inFlight = null;
+    var isPanelOpen = false;
+    var currentDocumentTitle = "";
+
+    function formatDate(value) {
+      if (!value) {
+        return "";
+      }
+      try {
+        var date = new Date(value);
+        if (Number.isNaN(date.getTime())) {
+          return value;
+        }
+        return date.toLocaleString(undefined, {
+          year: "numeric",
+          month: "short",
+          day: "numeric",
+          hour: "2-digit",
+          minute: "2-digit",
+        });
+      } catch (_err) {
+        return value;
+      }
+    }
+
+    function formatBytes(bytes) {
+      var size = Number(bytes);
+      if (!size || size <= 0) {
+        return "—";
+      }
+      var units = ["B", "KB", "MB", "GB", "TB"];
+      var idx = 0;
+      while (size >= 1024 && idx < units.length - 1) {
+        size /= 1024;
+        idx += 1;
+      }
+      if (idx === 0) {
+        return Math.round(size) + " " + units[idx];
+      }
+      return size.toFixed(1) + " " + units[idx];
+    }
+
+    function formatBoolean(flag) {
+      return flag ? "Sensitive" : "Standard";
+    }
+
+    function applyStatusBadge(target, label, code) {
+      if (!target) {
+        return;
+      }
+      var normalized = (code || label || "").toString().toLowerCase();
+      target.className =
+        statusClassMap[normalized] ||
+        "inline-flex items-center rounded-full border border-border/60 bg-muted/70 px-2.5 py-0.5 text-[11px] font-semibold capitalize text-muted-foreground";
+      target.textContent = label || "Draft";
+    }
+
+    function setPanelState(state) {
+      panel.dataset.state = state;
+      if (emptyState) emptyState.classList.toggle("hidden", state !== "empty");
+      if (loadingState) loadingState.classList.toggle("hidden", state !== "loading");
+      if (errorState) errorState.classList.toggle("hidden", state !== "error");
+      if (contentState) contentState.classList.toggle("hidden", state !== "content");
+      if (fieldAriaTitle) {
+        if (state === "empty") {
+          fieldAriaTitle.textContent = "Select a document";
+        } else if (state === "loading") {
+          fieldAriaTitle.textContent = currentDocumentTitle ? "Loading " + currentDocumentTitle : "Loading document";
+        } else if (state === "error") {
+          fieldAriaTitle.textContent = "Document unavailable";
+        } else if (state === "content") {
+          fieldAriaTitle.textContent = currentDocumentTitle || "Document detail";
+        }
+      }
+    }
+
+    function openPanel() {
+      isPanelOpen = true;
+      panel.setAttribute("aria-hidden", "false");
+      panel.classList.remove("translate-x-full");
+      panel.classList.add("translate-x-0");
+      panel.style.transform = "translateX(0)";
+      if (overlay) {
+        overlay.classList.remove("opacity-0", "pointer-events-none");
+        overlay.classList.add("opacity-100");
+        overlay.style.opacity = "1";
+        overlay.style.pointerEvents = "auto";
+      }
+      if (body) {
+        body.classList.add("overflow-hidden");
+      }
+      try {
+        panel.focus({ preventScroll: true });
+      } catch (_err) {
+        panel.focus();
+      }
+    }
+
+    function clearSelection() {
+      if (activeRow) {
+        selectedClasses.forEach(function (cls) {
+          activeRow.classList.remove(cls);
+        });
+        activeRow.dataset.selected = "false";
+        activeRow.setAttribute("aria-expanded", "false");
+      }
+      activeRow = null;
+    }
+
+    function closePanel(options) {
+      options = options || {};
+      if (inFlight && typeof inFlight.abort === "function") {
+        inFlight.abort();
+      }
+      inFlight = null;
+      if (!options.suppressState) {
+        currentDocumentTitle = "";
+        setPanelState("empty");
+      }
+      if (!isPanelOpen && !options.force) {
+        return;
+      }
+      if (overlay) {
+        overlay.classList.add("opacity-0", "pointer-events-none");
+        overlay.classList.remove("opacity-100");
+        overlay.style.opacity = "0";
+        overlay.style.pointerEvents = "none";
+      }
+      panel.classList.add("translate-x-full");
+      panel.classList.remove("translate-x-0");
+      panel.style.transform = "translateX(100%)";
+      panel.setAttribute("aria-hidden", "true");
+      if (body) {
+        body.classList.remove("overflow-hidden");
+      }
+      isPanelOpen = false;
+      if (options.resetSelection !== false) {
+        clearSelection();
+      }
+    }
+
+    function renderBadges(target, values, emptyMessage) {
+      if (!target) return;
+      target.innerHTML = "";
+      if (!values || !values.length) {
+        var empty = document.createElement("span");
+        empty.className = "text-muted-foreground";
+        empty.textContent = emptyMessage || "None.";
+        target.appendChild(empty);
+        return;
+      }
+      values.forEach(function (value) {
+        var pill = document.createElement("span");
+        pill.className =
+          "inline-flex items-center rounded-full border border-border/60 bg-muted/40 px-2 py-0.5 text-[11px] font-medium text-foreground";
+        pill.textContent = value;
+        target.appendChild(pill);
+      });
+    }
+
+    function stringifyJSON(data) {
+      try {
+        return JSON.stringify(data || {}, null, 2);
+      } catch (_err) {
+        return "{}";
+      }
+    }
+
+    function prefillFromRow(row) {
+      var dataset = row.dataset || {};
+      currentDocumentTitle = dataset.documentName || "Document";
+      if (fieldName) fieldName.textContent = currentDocumentTitle;
+      if (fieldIdentifier) fieldIdentifier.textContent = dataset.documentIdentifier || "";
+      applyStatusBadge(fieldStatusBadge, dataset.documentStatusLabel || "Draft", dataset.documentStatus || "");
+      if (fieldSource) fieldSource.textContent = dataset.documentSource || "Unknown source";
+      if (fieldUpdated) {
+        var updatedValue = dataset.documentUpdatedIso || dataset.documentUpdated || "";
+        fieldUpdated.textContent = updatedValue ? "Updated " + formatDate(updatedValue) : "Updated —";
+      }
+      if (fieldLastSynced) {
+        var syncedValue = dataset.documentLastSynced || "";
+        fieldLastSynced.textContent = syncedValue ? "Last synced " + formatDate(syncedValue) : "Last synced —";
+      }
+      if (fieldSize) fieldSize.textContent = dataset.documentSize || "—";
+      if (fieldTokens) fieldTokens.textContent = dataset.documentTokens || "—";
+      if (fieldLanguage) fieldLanguage.textContent = dataset.documentLanguage || "—";
+      if (fieldCategory) fieldCategory.textContent = dataset.documentCategory || "—";
+      if (fieldSensitive) fieldSensitive.textContent = formatBoolean(dataset.documentSensitive === "true");
+      if (fieldIntegration) fieldIntegration.textContent = dataset.documentIntegration || "—";
+      if (fieldDescription) fieldDescription.textContent = "Loading description…";
+      if (fieldSummary) fieldSummary.textContent = "Loading summary…";
+      if (fieldMetadata) fieldMetadata.textContent = "{}";
+      if (fieldRetention) fieldRetention.textContent = "{}";
+      renderBadges(fieldTags, [], "No tags.");
+      renderBadges(fieldCollections, [], "Not assigned to collections.");
+      if (fileSection) fileSection.classList.add("hidden");
+      if (urlSection) urlSection.classList.add("hidden");
+      if (textSection) textSection.classList.add("hidden");
+    }
+
+    function populatePanel(detail, dataset) {
+      dataset = dataset || {};
+      var summary = (detail && detail.summary) || {};
+      currentDocumentTitle = summary.name || dataset.documentName || "Document";
+      if (fieldName) fieldName.textContent = currentDocumentTitle;
+      if (fieldIdentifier) {
+        if (summary.id) {
+          fieldIdentifier.textContent = "KN-" + summary.id.slice(0, 8).toUpperCase();
+        } else {
+          fieldIdentifier.textContent = dataset.documentIdentifier || "";
+        }
+      }
+      applyStatusBadge(
+        fieldStatusBadge,
+        summary.statusLabel || dataset.documentStatusLabel || "Draft",
+        summary.status || dataset.documentStatus || ""
+      );
+      if (fieldSource) fieldSource.textContent = summary.sourceLabel || dataset.documentSource || "Unknown source";
+      if (fieldUpdated) {
+        var updated = summary.updatedAt || dataset.documentUpdatedIso || dataset.documentUpdated || "";
+        fieldUpdated.textContent = updated ? "Updated " + formatDate(updated) : "Updated —";
+      }
+      if (fieldLastSynced) {
+        var synced = summary.lastSyncedAt || dataset.documentLastSynced || "";
+        fieldLastSynced.textContent = synced ? "Last synced " + formatDate(synced) : "Last synced —";
+      }
+      if (fieldSize) {
+        if (summary.sizeBytes != null) {
+          fieldSize.textContent = formatBytes(summary.sizeBytes);
+        } else {
+          fieldSize.textContent = dataset.documentSize || "—";
+        }
+      }
+      if (fieldTokens) fieldTokens.textContent = summary.tokenCount != null ? summary.tokenCount : dataset.documentTokens || "—";
+      if (fieldLanguage) fieldLanguage.textContent = summary.language || dataset.documentLanguage || "—";
+      if (fieldCategory) fieldCategory.textContent = summary.category || dataset.documentCategory || "—";
+      if (fieldSensitive) fieldSensitive.textContent = formatBoolean(summary.isSensitive || dataset.documentSensitive === "true");
+      if (fieldIntegration) fieldIntegration.textContent = summary.integrationName || dataset.documentIntegration || "—";
+      if (fieldDescription) fieldDescription.textContent = detail.description || "No description provided.";
+      if (fieldSummary) fieldSummary.textContent = detail.summaryText || "No summary available.";
+      renderBadges(fieldTags, summary.tags || [], "No tags.");
+      renderBadges(fieldCollections, summary.collections || [], "Not assigned to collections.");
+      if (fieldMetadata) fieldMetadata.textContent = stringifyJSON(detail.metadata);
+      if (fieldRetention) fieldRetention.textContent = stringifyJSON(detail.retentionPolicy);
+
+      if (detail.file) {
+        if (fileSection) fileSection.classList.remove("hidden");
+        if (fileField) {
+          var parts = [];
+          if (detail.file.filename) parts.push(detail.file.filename);
+          if (detail.file.contentType) parts.push(detail.file.contentType);
+          if (detail.file.sizeBytes != null) parts.push(formatBytes(detail.file.sizeBytes));
+          if (detail.file.pageCount != null) parts.push(detail.file.pageCount + " pages");
+          fileField.textContent = parts.join(" • ") || "File metadata unavailable.";
+        }
+      } else if (fileSection) {
+        fileSection.classList.add("hidden");
+      }
+
+      if (detail.url) {
+        if (urlSection) urlSection.classList.remove("hidden");
+        if (urlField) {
+          urlField.textContent = detail.url.url || "Open URL";
+          urlField.href = detail.url.url || "#";
+        }
+        if (hostField) hostField.textContent = detail.url.host || "";
+      } else if (urlSection) {
+        urlSection.classList.add("hidden");
+      }
+
+      if (detail.text) {
+        if (textSection) textSection.classList.remove("hidden");
+        if (textPreviewField) textPreviewField.textContent = detail.text.preview || "No preview available.";
+      } else if (textSection) {
+        textSection.classList.add("hidden");
+      }
+
+      if (fieldAriaTitle) {
+        fieldAriaTitle.textContent = currentDocumentTitle;
+      }
+    }
+
+    function selectRow(row) {
+      if (activeRow && activeRow !== row) {
+        selectedClasses.forEach(function (cls) {
+          activeRow.classList.remove(cls);
+        });
+        activeRow.dataset.selected = "false";
+        activeRow.setAttribute("aria-expanded", "false");
+      }
+      activeRow = row;
+      if (activeRow) {
+        selectedClasses.forEach(function (cls) {
+          activeRow.classList.add(cls);
+        });
+        activeRow.dataset.selected = "true";
+        activeRow.setAttribute("aria-expanded", "true");
+      }
+    }
+
+    function handleRowActivation(row, options) {
+      if (!row) return;
+      var uuid = row.getAttribute("data-document-id");
+      if (!uuid) return;
+      options = options || {};
+      if (!options.forceReload && activeRow === row && isPanelOpen && panel.dataset.state === "content") {
+        openPanel();
+        return;
+      }
+      selectRow(row);
+      prefillFromRow(row);
+      if (inFlight && typeof inFlight.abort === "function") {
+        inFlight.abort();
+      }
+      var controller = typeof window.AbortController === "function" ? new AbortController() : null;
+      inFlight = controller;
+      openPanel();
+      setPanelState("loading");
+      if (scrollRoot) {
+        scrollRoot.scrollTop = 0;
+      }
+      fetch("/api/knowledge/documents/" + encodeURIComponent(uuid) + "/", {
+        method: "GET",
+        headers: { Accept: "application/json" },
+        credentials: "same-origin",
+        signal: controller ? controller.signal : undefined,
+      })
+        .then(function (response) {
+          if (!response.ok) {
+            throw new Error("Failed to load detail");
+          }
+          return response.json();
+        })
+        .then(function (payload) {
+          if (controller && controller.signal.aborted) {
+            return;
+          }
+          populatePanel(payload && payload.document ? payload.document : {}, row.dataset);
+          setPanelState("content");
+          if (scrollRoot) {
+            scrollRoot.scrollTop = 0;
+          }
+        })
+        .catch(function (error) {
+          if (controller && controller.signal.aborted) {
+            return;
+          }
+          console.error("Failed to load document detail", error);
+          if (errorMessage) {
+            errorMessage.textContent = "Unable to load document details. Please try again.";
+          }
+          setPanelState("error");
+        })
+        .finally(function () {
+          if (controller && inFlight === controller) {
+            inFlight = null;
+          }
+        });
+    }
+
+    var rows = Array.prototype.slice.call(document.querySelectorAll("[data-document-row]") || []);
+    rows.forEach(function (row) {
+      row.addEventListener("click", function (event) {
+        if (event.defaultPrevented) return;
+        event.stopPropagation();
+        handleRowActivation(row);
+      });
+      row.addEventListener("keydown", function (event) {
+        if (event.key === "Enter" || event.key === " ") {
+          event.preventDefault();
+          handleRowActivation(row);
+        }
+      });
+      var trigger = row.querySelector("[data-document-trigger]");
+      if (trigger) {
+        trigger.addEventListener("click", function (event) {
+          event.preventDefault();
+          event.stopPropagation();
+          handleRowActivation(row);
+        });
+      }
+    });
+
+    if (overlay) {
+      overlay.addEventListener("click", function () {
+        closePanel();
+      });
+    }
+    if (closeTrigger) {
+      closeTrigger.addEventListener("click", function () {
+        closePanel();
+      });
+    }
+    if (retryButton) {
+      retryButton.addEventListener("click", function () {
+        if (activeRow) {
+          handleRowActivation(activeRow, { forceReload: true });
+        }
+      });
+    }
+    document.addEventListener("keydown", function (event) {
+      if (event.key === "Escape" && isPanelOpen) {
+        event.preventDefault();
+        closePanel();
+      }
+    });
+
+    setPanelState("empty");
+    closePanel({ suppressState: true, resetSelection: false, force: true });
+  });
+</script>
 {% endblock %}

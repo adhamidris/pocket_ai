@@ -152,6 +152,7 @@
                       <th class="h-12 px-4 text-left align-middle font-medium text-muted-foreground">Customer</th>
                       <th class="h-12 px-4 text-left align-middle font-medium text-muted-foreground">Channel</th>
                       <th class="h-12 px-4 text-right align-middle font-medium text-muted-foreground">Started</th>
+                      <th class="h-12 px-4 text-left align-middle font-medium text-muted-foreground">Transcript</th>
                       <th class="h-12 px-4 text-left align-middle font-medium text-muted-foreground w-8"></th>
                     </tr>
                   </thead>
@@ -179,6 +180,7 @@
                           </td>
                           <td class="p-4 align-middle"><span class="block h-3 w-12 rounded bg-muted/60 animate-pulse"></span></td>
                           <td class="p-4 align-middle text-right"><span class="inline-block h-3 w-20 rounded bg-muted/60 animate-pulse"></span></td>
+                          <td class="p-4 align-middle"><span class="inline-flex h-6 w-24 items-center justify-center rounded-full border border-border/50 text-[11px] text-muted-foreground/70">—</span></td>
                           <td class="p-4 align-middle w-8">
                             <span class="inline-flex h-8 w-8 items-center justify-center rounded-full bg-muted/40 animate-pulse"></span>
                           </td>
@@ -242,6 +244,17 @@
                           </td>
                           <td class="p-4 align-middle text-muted-foreground capitalize">{{ case.channel|default:"—" }}</td>
                           <td class="p-4 align-middle text-right text-muted-foreground">{{ case.started|default:"—" }}</td>
+                          <td class="p-4 align-middle">
+                            <a
+                              href="{% url 'frontend:dashboard-case-detail' case.uuid %}"
+                              class="inline-flex items-center gap-1 rounded-full border border-border/60 px-3 py-1 text-xs font-semibold text-foreground hover:border-primary/60 hover:text-primary transition"
+                            >
+                              View transcript
+                              <svg class="h-3.5 w-3.5" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" aria-hidden="true">
+                                <path stroke-linecap="round" stroke-linejoin="round" d="M6 12h12m0 0-4-4m4 4-4 4" />
+                              </svg>
+                            </a>
+                          </td>
                           <td class="p-4 align-middle w-8">
                             <span class="inline-flex h-8 w-8 items-center justify-center rounded-full border border-border/60 text-muted-foreground/80">
                               <svg class="h-4 w-4" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true">
@@ -255,7 +268,7 @@
                       {% endfor %}
                     {% else %}
                       <tr>
-                        <td colspan="11" class="p-8 text-center text-sm text-muted-foreground">
+                        <td colspan="12" class="p-8 text-center text-sm text-muted-foreground">
                           {{ cases_empty_message|default:"No cases available." }}
                         </td>
                       </tr>

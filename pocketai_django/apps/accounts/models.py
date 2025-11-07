@@ -125,6 +125,11 @@ class BusinessProfile(models.Model):
     line_of_business_custom = models.JSONField(default=list, blank=True)
     country = models.CharField(max_length=80, blank=True)
     website = models.URLField(blank=True)
+    slug = models.SlugField(
+        max_length=160,
+        blank=True,
+        help_text="Public slug used to route to the chat portal (derived from the business name).",
+    )
     status = models.CharField(
         max_length=32,
         choices=(
@@ -143,10 +148,34 @@ class BusinessProfile(models.Model):
         indexes = [
             models.Index(fields=["user", "status"], name="business_user_status_idx"),
             models.Index(fields=["industry"], name="business_industry_idx"),
+            models.Index(fields=["slug"], name="business_slug_idx"),
+        ]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["slug"],
+                condition=~models.Q(slug=""),
+                name="business_slug_unique",
+            )
         ]
 
     def __str__(self) -> str:
         return f"{self.name} ({self.user.email})"
+
+    def ensure_slug(self) -> None:
+        if self.slug:
+            return
+        base_slug = slugify(self.name) or "business"
+        candidate = base_slug
+        suffix = 2
+        cls = self.__class__
+        while cls.objects.filter(slug=candidate).exclude(pk=self.pk).exists():
+            candidate = f"{base_slug}-{suffix}"
+            suffix += 1
+        self.slug = candidate
+
+    def save(self, *args, **kwargs):
+        self.ensure_slug()
+        super().save(*args, **kwargs)
 
 
 class AgentProfile(models.Model):
@@ -244,7 +273,7 @@ class AgentProfile(models.Model):
         Intended for use when wiring dashboard links (e.g. `/acme-inc/supportai`).
         """
 
-        business_slug = slugify(self.business_profile.name)
+        business_slug = self.business_profile.slug or slugify(self.business_profile.name)
         return f"/{business_slug}/{self.slug}"
 
     def save(self, *args: Any, **kwargs: Any) -> None:
@@ -265,6 +294,38 @@ class AgentProfile(models.Model):
             self.slug = candidate
 
         super().save(*args, **kwargs)
+
+
+class AgentActionPermission(models.Model):
+    """
+    Per-agent toggle for orchestrator actions (create case, update customer, etc).
+
+    Entries are optional; when absent the orchestrator falls back to the default
+    action registry definition. Stored here so operators can selectively disable
+    behaviours per business requirements.
+    """
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    agent_profile = models.ForeignKey(
+        AgentProfile,
+        related_name="action_permissions",
+        on_delete=models.CASCADE,
+    )
+    action_key = models.CharField(max_length=64, db_index=True)
+    is_enabled = models.BooleanField(default=True)
+    config = models.JSONField(default=dict, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = "accounts_agent_action_permission"
+        unique_together = ("agent_profile", "action_key")
+        indexes = [
+            models.Index(fields=["action_key"], name="agent_action_key_idx"),
+        ]
+
+    def __str__(self) -> str:
+        return f"{self.agent_profile.name}:{self.action_key} ({'on' if self.is_enabled else 'off'})"
 
 
 class KnowledgeSourceType(models.TextChoices):

@@ -3,6 +3,10 @@
 import os
 import sys
 
+from pocketai.env import load_project_env
+
+load_project_env()
+
 
 def main() -> None:
     """Entrypoint for management commands."""

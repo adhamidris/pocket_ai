@@ -14,6 +14,7 @@ urlpatterns = [
     path("dashboard/leads/", views.dashboard_leads, name="dashboard-leads"),
     path("dashboard/knowledge/", views.dashboard_knowledge, name="dashboard-knowledge"),
     path("dashboard/cases/", views.dashboard_cases, name="dashboard-cases"),
+    path("dashboard/cases/<uuid:case_id>/", views.dashboard_case_detail, name="dashboard-case-detail"),
     path("privacy/", views.privacy_policy, name="privacy"),
     path("terms/", views.terms_of_service, name="terms"),
     path("<slug:business_slug>/<slug:agent_slug>/", views.chat_portal, name="chat-portal"),

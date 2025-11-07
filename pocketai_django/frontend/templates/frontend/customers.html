@@ -179,6 +179,7 @@
                       data-customer-uuid="{{ customer.uuid }}"
                       data-customer-name="{{ customer.name|default:'Customer'|escape }}"
                       data-customer-email="{{ customer.email|default:'—'|escape }}"
+                      data-customer-initials="{{ customer.initials|default:'CU'|escape }}"
                       data-customer-stage="{{ customer.state|default:'unknown'|lower }}"
                       data-customer-stage-label="{{ customer.state_label|default:'—'|escape }}"
                       data-customer-last="{{ customer.last_contact_iso|default:'' }}"
@@ -267,7 +268,7 @@
 ></div>
 
 <aside
-  class="fixed inset-y-0 right-0 z-50 flex w-full max-w-full translate-x-full transform transition-transform duration-300 sm:w-[360px] lg:w-[420px] xl:w-[480px] border-l border-border/70 bg-card/95 backdrop-blur shadow-2xl"
+  class="fixed inset-y-0 right-0 z-50 flex w-full max-w-full translate-x-full transform transition-transform duration-300 sm:w-[360px] lg:w-[420px] xl:w-[520px] border-l border-border/70 bg-card/95 backdrop-blur shadow-2xl"
   data-customer-panel
   data-state="empty"
   role="dialog"
@@ -316,93 +317,147 @@
           Unable to load customer details. Please try again.
         </div>
       </div>
-      <div class="hidden flex h-full flex-col" data-customer-content>
-        <header class="border-b border-border/70 px-4 pb-4 pt-6 space-y-3">
-          <div class="flex flex-col gap-1">
-            <div class="text-sm font-medium text-muted-foreground">Customer</div>
-            <div class="flex flex-wrap items-center gap-2">
-              <span class="text-lg font-semibold text-foreground" data-customer-name>Customer</span>
-              <span class="inline-flex items-center rounded-full border border-border/60 px-2.5 py-0.5 text-xs font-semibold capitalize" data-customer-stage>—</span>
-              <span class="ml-auto text-xs text-muted-foreground" data-customer-last-contact></span>
+      <div class="hidden h-full flex-col" data-customer-content>
+        <header class="border-b border-border/70 px-6 pt-6 pb-4">
+          <div class="flex flex-col gap-2">
+            <div class="flex items-start gap-3">
+              <span class="inline-flex h-12 w-12 items-center justify-center rounded-full border border-border/70 bg-primary/10 text-sm font-semibold text-primary uppercase" data-customer-avatar>CU</span>
+              <div class="min-w-0 space-y-1">
+                <div class="flex flex-wrap items-center gap-2">
+                  <span class="text-lg font-semibold text-foreground truncate" data-customer-name>Customer</span>
+                  <span class="inline-flex items-center rounded-full border border-border/60 px-2.5 py-0.5 text-xs font-semibold capitalize" data-customer-stage>—</span>
+                </div>
+                <div class="text-xs text-muted-foreground" data-customer-last-contact>No recent contact</div>
+              </div>
             </div>
+            <div class="text-xs text-muted-foreground">Overview</div>
           </div>
         </header>
-        <div class="flex-1 min-h-0 overflow-y-auto px-4 py-5 space-y-5">
-          <section class="grid grid-cols-1 sm:grid-cols-3 gap-3" data-customer-stats>
-            <div class="rounded-lg border border-border/60 bg-card/90 px-3 py-3">
-              <div class="text-xs font-medium text-muted-foreground uppercase tracking-wide">Open cases</div>
-              <div class="text-xl font-semibold text-foreground" data-customer-open-cases>0</div>
-            </div>
-            <div class="rounded-lg border border-border/60 bg-card/90 px-3 py-3">
-              <div class="text-xs font-medium text-muted-foreground uppercase tracking-wide">Total cases</div>
-              <div class="text-xl font-semibold text-foreground" data-customer-total-cases>0</div>
-            </div>
-            <div class="rounded-lg border border-border/60 bg-card/90 px-3 py-3">
-              <div class="text-xs font-medium text-muted-foreground uppercase tracking-wide">First seen</div>
-              <div class="text-sm font-semibold text-foreground" data-customer-first-seen>—</div>
-            </div>
-          </section>
-          <section class="space-y-3">
-            <div class="text-xs font-semibold uppercase tracking-[0.18em] text-muted-foreground/80">Contact</div>
-            <div class="rounded-lg border border-border/60 bg-card/90 px-4 py-3 space-y-2">
-              <div class="flex items-center gap-2 text-sm">
-                <svg class="h-4 w-4 text-muted-foreground" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor">
-                  <path stroke-linecap="round" stroke-linejoin="round" d="M2.25 6.75 12 12l9.75-5.25M4.5 5.25h15a2.25 2.25 0 0 1 2.25 2.25v9a2.25 2.25 0 0 1-2.25 2.25h-15A2.25 2.25 0 0 1 2.25 16.5v-9A2.25 2.25 0 0 1 4.5 5.25Z" />
-                </svg>
-                <span data-customer-email>—</span>
+        <div class="px-6 pt-3">
+          <div class="grid grid-cols-4 gap-2 rounded-lg border border-border/40 bg-muted/70 p-1" role="tablist" data-customer-tabs>
+            <button
+              type="button"
+              class="customer-tab rounded-md px-3 py-2 text-xs font-semibold tracking-wide transition-colors data-[state=active]:bg-primary data-[state=active]:text-primary-foreground data-[state=active]:shadow-sm data-[state=inactive]:bg-transparent data-[state=inactive]:text-muted-foreground"
+              data-customer-tab="overview"
+              data-state="active"
+              aria-selected="true"
+            >
+              Overview
+            </button>
+            <button
+              type="button"
+              class="customer-tab rounded-md px-3 py-2 text-xs font-semibold tracking-wide transition-colors data-[state=active]:bg-primary data-[state=active]:text-primary-foreground data-[state=active]:shadow-sm data-[state=inactive]:bg-transparent data-[state=inactive]:text-muted-foreground"
+              data-customer-tab="cases"
+              data-state="inactive"
+              aria-selected="false"
+            >
+              Cases
+            </button>
+            <button
+              type="button"
+              class="customer-tab rounded-md px-3 py-2 text-xs font-semibold tracking-wide transition-colors data-[state=active]:bg-primary data-[state=active]:text-primary-foreground data-[state=active]:shadow-sm data-[state=inactive]:bg-transparent data-[state=inactive]:text-muted-foreground"
+              data-customer-tab="activity"
+              data-state="inactive"
+              aria-selected="false"
+            >
+              Activity
+            </button>
+            <button
+              type="button"
+              class="customer-tab rounded-md px-3 py-2 text-xs font-semibold tracking-wide transition-colors data-[state=active]:bg-primary data-[state=active]:text-primary-foreground data-[state=active]:shadow-sm data-[state=inactive]:bg-transparent data-[state=inactive]:text-muted-foreground"
+              data-customer-tab="notes"
+              data-state="inactive"
+              aria-selected="false"
+            >
+              Notes
+            </button>
+          </div>
+        </div>
+        <div class="flex-1 min-h-0 overflow-hidden">
+          <div class="flex-1 min-h-0 overflow-y-auto px-6 py-4 space-y-4" data-customer-tab-panel="overview">
+            <section class="grid grid-cols-1 sm:grid-cols-3 gap-3">
+              <div class="rounded-lg border border-border/60 bg-card/95 px-3 py-3">
+                <div class="text-xs font-medium text-muted-foreground uppercase tracking-wide">Open cases</div>
+                <div class="text-xl font-semibold text-foreground" data-customer-open-cases>0</div>
               </div>
-              <div class="flex items-center gap-2 text-sm">
-                <svg class="h-4 w-4 text-muted-foreground" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor">
-                  <path stroke-linecap="round" stroke-linejoin="round" d="M2.25 4.5h4.436a2 2 0 0 1 1.924 1.47l1.1 4.108a2 2 0 0 1-.502 1.908l-2.49 2.49a16.5 16.5 0 0 0 6.99 6.99l2.49-2.49a2 2 0 0 1 1.908-.502l4.108 1.1A2 2 0 0 1 21 21.314V22" />
-                </svg>
-                <span data-customer-phone>—</span>
+              <div class="rounded-lg border border-border/60 bg-card/95 px-3 py-3">
+                <div class="text-xs font-medium text-muted-foreground uppercase tracking-wide">Total cases</div>
+                <div class="text-xl font-semibold text-foreground" data-customer-total-cases>0</div>
               </div>
-              <div class="text-sm text-muted-foreground" data-customer-address>—</div>
-            </div>
-            <div class="text-xs font-semibold uppercase tracking-[0.18em] text-muted-foreground/80">Additional</div>
-            <div class="rounded-lg border border-border/60 bg-card/90 px-4 py-3">
-              <ul class="space-y-2 text-sm text-muted-foreground" data-customer-contacts>
-                <li>No extra contact methods.</li>
-              </ul>
-            </div>
-          </section>
-          <section class="space-y-3">
-            <div class="text-xs font-semibold uppercase tracking-[0.18em] text-muted-foreground/80">Tags</div>
-            <div class="flex flex-wrap gap-2 text-xs" data-customer-tags>
-              <span class="text-muted-foreground">No tags assigned.</span>
-            </div>
-          </section>
-          <section class="space-y-3">
-            <div class="text-xs font-semibold uppercase tracking-[0.18em] text-muted-foreground/80">Cases</div>
-            <div class="rounded-lg border border-border/60 bg-card/90 px-4 py-3 space-y-3">
-              <div>
-                <div class="text-xs font-medium text-muted-foreground mb-1">Open</div>
+              <div class="rounded-lg border border-border/60 bg-card/95 px-3 py-3">
+                <div class="text-xs font-medium text-muted-foreground uppercase tracking-wide">First seen</div>
+                <div class="text-sm font-semibold text-foreground" data-customer-first-seen>—</div>
+              </div>
+            </section>
+            <section class="space-y-2">
+              <div class="text-xs font-semibold uppercase tracking-[0.18em] text-muted-foreground/80">Primary contact</div>
+              <div class="rounded-lg border border-border/60 bg-card/95 px-4 py-3 space-y-2">
+                <div class="flex items-center gap-2 text-sm">
+                  <svg class="h-4 w-4 text-muted-foreground" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor">
+                    <path stroke-linecap="round" stroke-linejoin="round" d="M2.25 6.75 12 12l9.75-5.25M4.5 5.25h15a2.25 2.25 0 0 1 2.25 2.25v9a2.25 2.25 0 0 1-2.25 2.25h-15A2.25 2.25 0 0 1 2.25 16.5v-9A2.25 2.25 0 0 1 4.5 5.25Z" />
+                  </svg>
+                  <span data-customer-email>—</span>
+                </div>
+                <div class="flex items-center gap-2 text-sm">
+                  <svg class="h-4 w-4 text-muted-foreground" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor">
+                    <path stroke-linecap="round" stroke-linejoin="round" d="M2.25 4.5h4.436a2 2 0 0 1 1.924 1.47l1.1 4.108a2 2 0 0 1-.502 1.908l-2.49 2.49a16.5 16.5 0 0 0 6.99 6.99l2.49-2.49a2 2 0 0 1 1.908-.502l4.108 1.1A2 2 0 0 1 21 21.314V22" />
+                  </svg>
+                  <span data-customer-phone>—</span>
+                </div>
+                <div class="text-sm text-muted-foreground" data-customer-address>—</div>
+              </div>
+            </section>
+            <section class="space-y-2">
+              <div class="text-xs font-semibold uppercase tracking-[0.18em] text-muted-foreground/80">Additional contacts</div>
+              <div class="rounded-lg border border-border/60 bg-card/95 px-4 py-3">
+                <ul class="space-y-2 text-sm text-muted-foreground" data-customer-contacts>
+                  <li>No extra contact methods.</li>
+                </ul>
+              </div>
+            </section>
+            <section class="space-y-2">
+              <div class="text-xs font-semibold uppercase tracking-[0.18em] text-muted-foreground/80">Tags</div>
+              <div class="rounded-lg border border-border/60 bg-card/95 px-4 py-3">
+                <div class="flex flex-wrap gap-2 text-xs" data-customer-tags>
+                  <span class="text-muted-foreground">No tags assigned.</span>
+                </div>
+              </div>
+            </section>
+          </div>
+          <div class="hidden flex-1 min-h-0 overflow-y-auto px-6 py-4 space-y-4" data-customer-tab-panel="cases">
+            <section class="space-y-3">
+              <div class="text-xs font-semibold uppercase tracking-[0.18em] text-muted-foreground/80">Open cases</div>
+              <div class="rounded-lg border border-border/60 bg-card/95 px-4 py-3">
                 <ul class="space-y-2 text-sm text-muted-foreground" data-customer-cases-open>
                   <li>No open cases.</li>
                 </ul>
               </div>
-              <div>
-                <div class="text-xs font-medium text-muted-foreground mb-1">Closed</div>
+            </section>
+            <section class="space-y-3">
+              <div class="text-xs font-semibold uppercase tracking-[0.18em] text-muted-foreground/80">Resolved cases</div>
+              <div class="rounded-lg border border-border/60 bg-card/95 px-4 py-3">
                 <ul class="space-y-2 text-sm text-muted-foreground" data-customer-cases-closed>
                   <li>No closed cases.</li>
                 </ul>
               </div>
-            </div>
-          </section>
-          <section class="space-y-3">
-            <div class="text-xs font-semibold uppercase tracking-[0.18em] text-muted-foreground/80">Activity</div>
-            <ul class="space-y-3" data-customer-activity>
-              <li class="text-sm text-muted-foreground">No recent activity.</li>
-            </ul>
-          </section>
-          <section class="space-y-3">
-            <div class="flex items-center justify-between">
+            </section>
+          </div>
+          <div class="hidden flex-1 min-h-0 overflow-y-auto px-6 py-4 space-y-4" data-customer-tab-panel="activity">
+            <section class="space-y-3">
+              <div class="text-xs font-semibold uppercase tracking-[0.18em] text-muted-foreground/80">Activity</div>
+              <ul class="space-y-3" data-customer-activity>
+                <li class="text-sm text-muted-foreground">No recent activity.</li>
+              </ul>
+            </section>
+          </div>
+          <div class="hidden flex-1 min-h-0 overflow-y-auto px-6 py-4 space-y-4" data-customer-tab-panel="notes">
+            <section class="space-y-3">
               <div class="text-xs font-semibold uppercase tracking-[0.18em] text-muted-foreground/80">Notes</div>
-            </div>
-            <ul class="space-y-3" data-customer-notes>
-              <li class="text-sm text-muted-foreground">No notes yet.</li>
-            </ul>
-          </section>
+              <ul class="space-y-3" data-customer-notes>
+                <li class="text-sm text-muted-foreground">No notes yet.</li>
+              </ul>
+            </section>
+          </div>
         </div>
       </div>
     </div>
@@ -431,6 +486,7 @@
     var contentState = panel.querySelector("[data-customer-content]");
 
     var fieldAriaTitle = panel.querySelector("[data-customer-aria-title]");
+    var fieldAvatar = panel.querySelector("[data-customer-avatar]");
     var fieldName = panel.querySelector("[data-customer-name]");
     var fieldStage = panel.querySelector("[data-customer-stage]");
     var fieldLastContact = panel.querySelector("[data-customer-last-contact]");
@@ -446,8 +502,17 @@
     var fieldCasesClosed = panel.querySelector("[data-customer-cases-closed]");
     var fieldActivity = panel.querySelector("[data-customer-activity]");
     var fieldNotes = panel.querySelector("[data-customer-notes]");
+    var tabButtons = Array.prototype.slice.call(panel.querySelectorAll("[data-customer-tab]") || []);
+    var tabPanels = Array.prototype.slice.call(panel.querySelectorAll("[data-customer-tab-panel]") || []);
+    var defaultTab = tabButtons.length ? tabButtons[0].getAttribute("data-customer-tab") : "overview";
+    var stageBaseClass = fieldStage ? fieldStage.className : "";
 
     var selectedClasses = ["ring-1", "ring-primary/70", "bg-primary/5"];
+    var stageMap = {
+      active: "border-transparent bg-emerald-500/10 text-emerald-600",
+      archived: "border-transparent bg-muted/50 text-muted-foreground",
+      placeholder: "border-transparent bg-orange-500/10 text-orange-600",
+    };
     var activeRow = null;
     var inFlight = null;
     var isPanelOpen = false;
@@ -463,6 +528,13 @@
         if (state === "empty") fieldAriaTitle.textContent = "Select a customer";
         else if (state === "loading") fieldAriaTitle.textContent = "Loading customer details";
         else if (state === "error") fieldAriaTitle.textContent = "Customer details unavailable";
+      }
+      if (state !== "content" && fieldStage) {
+        fieldStage.className = stageBaseClass;
+        fieldStage.textContent = "—";
+      }
+      if (state === "content") {
+        activateTab(defaultTab);
       }
     }
 
@@ -525,6 +597,7 @@
         activeRow.setAttribute("aria-expanded", "false");
         activeRow = null;
       }
+      activateTab(defaultTab);
     }
 
     function formatDateTime(value) {
@@ -568,6 +641,27 @@
       });
     }
 
+    function activateTab(targetName) {
+      if (!tabButtons.length || !tabPanels.length) {
+        return;
+      }
+      var resolved = targetName || defaultTab;
+      tabButtons.forEach(function (button) {
+        var name = button.getAttribute("data-customer-tab");
+        var isActive = name === resolved;
+        button.dataset.state = isActive ? "active" : "inactive";
+        button.setAttribute("aria-selected", isActive ? "true" : "false");
+      });
+      tabPanels.forEach(function (panelEl) {
+        var name = panelEl.getAttribute("data-customer-tab-panel");
+        var isActive = name === resolved;
+        panelEl.classList.toggle("hidden", !isActive);
+      });
+      if (scrollRoot && isPanelOpen) {
+        scrollRoot.scrollTop = 0;
+      }
+    }
+
     function selectRow(row) {
       if (activeRow && activeRow !== row) {
         selectedClasses.forEach(function (cls) {
@@ -591,8 +685,14 @@
       var name = summary.displayName || dataset.customerName || "Customer";
       if (fieldName) fieldName.textContent = name;
       if (fieldAriaTitle) fieldAriaTitle.textContent = name;
+      if (fieldAvatar) fieldAvatar.textContent = summary.initials || dataset.customerInitials || "CU";
+      var stageValue = (summary.state || dataset.customerStage || "").toString().toLowerCase();
       var stageLabel = (summary.stateLabel || dataset.customerStageLabel || "—").toString();
-      if (fieldStage) fieldStage.textContent = stageLabel.charAt(0).toUpperCase() + stageLabel.slice(1);
+      if (fieldStage) {
+        var badgeClass = stageBaseClass + (stageMap[stageValue] ? " " + stageMap[stageValue] : " border-border/60 bg-muted/60 text-muted-foreground");
+        fieldStage.className = badgeClass;
+        fieldStage.textContent = stageLabel;
+      }
       if (fieldLastContact) {
         var last = summary.lastInteractionAt || dataset.customerLast;
         fieldLastContact.textContent = last ? "Last contact " + formatDateTime(last) : "No recent contact";
@@ -620,17 +720,22 @@
         "No extra contact methods."
       );
 
-      populateList(
-        fieldTags,
-        payload.tags,
-        function (tag) {
-          var span = document.createElement("span");
-          span.className = "inline-flex items-center rounded-full border border-border/60 bg-muted/60 px-2.5 py-0.5 text-xs font-medium capitalize text-muted-foreground";
-          span.textContent = tag;
-          return span;
-        },
-        "No tags assigned."
-      );
+      if (fieldTags) {
+        fieldTags.innerHTML = "";
+        if (payload.tags && payload.tags.length) {
+          payload.tags.forEach(function (tag) {
+            var span = document.createElement("span");
+            span.className = "inline-flex items-center rounded-full border border-border/60 bg-muted/60 px-2.5 py-0.5 text-xs font-medium capitalize text-muted-foreground";
+            span.textContent = tag;
+            fieldTags.appendChild(span);
+          });
+        } else {
+          var tagFallback = document.createElement("span");
+          tagFallback.className = "text-muted-foreground text-sm";
+          tagFallback.textContent = "No tags assigned.";
+          fieldTags.appendChild(tagFallback);
+        }
+      }
 
       populateList(
         fieldCasesOpen,
@@ -737,6 +842,8 @@
             customerName: row.getAttribute("data-customer-name") || "",
             customerEmail: row.getAttribute("data-customer-email") || "",
             customerStageLabel: row.getAttribute("data-customer-stage-label") || "",
+            customerStage: row.getAttribute("data-customer-stage") || "",
+            customerInitials: row.getAttribute("data-customer-initials") || "",
             customerLast: row.getAttribute("data-customer-last") || "",
             customerCasesOpen: row.getAttribute("data-customer-cases-open") || "",
             customerCasesTotal: row.getAttribute("data-customer-cases-total") || "",
@@ -793,6 +900,13 @@
         event.preventDefault();
         closePanel();
       }
+    });
+
+    tabButtons.forEach(function (button) {
+      button.addEventListener("click", function () {
+        var target = button.getAttribute("data-customer-tab");
+        activateTab(target);
+      });
     });
 
     closePanel({ suppressState: true, resetSelection: false, force: true });

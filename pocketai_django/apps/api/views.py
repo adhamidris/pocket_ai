@@ -11,9 +11,18 @@ from django.http import HttpRequest, JsonResponse
 from django.views.decorators.csrf import csrf_protect
 from django.views.decorators.http import require_http_methods
 
-from apps.accounts.models import AgentProfile, BusinessProfile
+from apps.accounts.models import AgentProfile, BusinessProfile, KnowledgeUpload
 from apps.cases.models import Case, CaseMessage, CasePriority, CaseStatus
 from apps.customers.models import Customer, CustomerNoteAuthor
+from apps.services.action_controls import list_action_settings, set_action_setting
+from apps.services.agents import (
+    AgentListValidationError,
+    agent_identifier,
+    display_role_label,
+    display_tone_label,
+    get_agent_detail,
+    list_agents,
+)
 from apps.services.cases import (
     CaseDetail,
     CaseListResult,
@@ -28,6 +37,17 @@ from apps.services.cases import (
     update_case,
 )
 from apps.services.customers import CustomerDetail as CustomerDetailData, CustomerSummary, get_customer_detail
+from apps.services.documents import (
+    CsvPreviewError,
+    DocumentDetail,
+    DocumentListItem,
+    DocumentListValidationError as KnowledgeDocumentListValidationError,
+    DocumentScrapeError,
+    get_document_detail as get_knowledge_document_detail,
+    list_documents as list_knowledge_documents,
+    preview_csv_upload,
+    scrape_document_source,
+)
 from apps.services.registration import (
     AgentProfileError,
     AgentProfileResult,
@@ -282,9 +302,19 @@ def _resolve_business_profile(request: HttpRequest, business_id: str | None) -> 
     Determine the business profile for the request either from parameter or the authenticated user.
     """
 
-    if business_id:
+    header_business_id = request.headers.get("X-Business-Id") or request.META.get("HTTP_X_BUSINESS_ID")
+    candidate = business_id or header_business_id
+
+    if candidate:
         try:
-            return BusinessProfile.objects.get(id=business_id), None
+            candidate_uuid = candidate if isinstance(candidate, uuid.UUID) else uuid.UUID(str(candidate))
+        except (TypeError, ValueError):
+            return None, JsonResponse(
+                {"error": "VALIDATION_ERROR", "message": "business_id must be a valid UUID."},
+                status=HTTPStatus.BAD_REQUEST,
+            )
+        try:
+            return BusinessProfile.objects.get(id=candidate_uuid), None
         except BusinessProfile.DoesNotExist:
             return None, JsonResponse(
                 {"error": "BUSINESS_NOT_FOUND", "message": "Business profile not found."},
@@ -330,6 +360,59 @@ def _serialize_case_summary(summary: CaseSummary) -> dict:
         "closedAt": _iso(summary.closed_at),
         "lastMessageAt": _iso(summary.last_message_at),
     }
+
+
+def _serialize_document_summary(item: DocumentListItem) -> dict:
+    return {
+        "id": str(item.id),
+        "name": item.name,
+        "status": item.status,
+        "statusLabel": item.status_label,
+        "sourceType": item.source_type,
+        "sourceLabel": item.source_label,
+        "tags": list(item.tags),
+        "collections": list(item.collections),
+        "language": item.language,
+        "category": item.category,
+        "tokenCount": item.token_count,
+        "sizeBytes": item.size_bytes,
+        "isSensitive": item.is_sensitive,
+        "lastIngestedAt": _iso(item.last_ingested_at),
+        "lastSyncedAt": _iso(item.last_synced_at),
+        "updatedAt": _iso(item.updated_at),
+        "integrationName": item.integration_name,
+        "ingestionError": item.ingestion_error,
+    }
+
+
+def _serialize_document_detail(detail: DocumentDetail) -> dict:
+    payload = {
+        "summary": _serialize_document_summary(detail.summary),
+        "description": detail.description,
+        "summaryText": detail.summary_text,
+        "metadata": detail.metadata,
+        "ingestionMetadata": detail.ingestion_metadata,
+        "retentionPolicy": detail.retention_policy,
+        "createdByAgent": detail.created_by_agent,
+    }
+    if detail.file_detail:
+        payload["file"] = {
+            "filename": detail.file_detail.filename,
+            "contentType": detail.file_detail.content_type,
+            "sizeBytes": detail.file_detail.size_bytes,
+            "pageCount": detail.file_detail.page_count,
+        }
+    if detail.url_detail:
+        payload["url"] = {
+            "url": detail.url_detail.url,
+            "host": detail.url_detail.host,
+        }
+    if detail.text_detail:
+        payload["text"] = {
+            "characters": detail.text_detail.characters,
+            "preview": detail.text_detail.preview,
+        }
+    return payload
 
 
 def _serialize_case_detail(detail: CaseDetail) -> dict:
@@ -481,6 +564,361 @@ def _serialize_customer_detail(detail: CustomerDetailData) -> dict:
             for note in detail.notes
         ],
     }
+
+
+@require_http_methods(["GET"])
+def agents_collection(request: HttpRequest) -> JsonResponse:
+    business_id = request.GET.get("business_id")
+    business, error = _resolve_business_profile(request, business_id)
+    if error:
+        return error
+    assert business is not None
+
+    q_name = request.GET.get("q_name") or request.GET.get("qName")
+    role = request.GET.get("role")
+    limit_param = request.GET.get("limit")
+    offset_param = request.GET.get("offset")
+    sort_by = request.GET.get("sort_by") or request.GET.get("sortBy") or "created_at"
+    order = request.GET.get("order") or "desc"
+
+    limit = limit_param if limit_param not in (None, "") else 50
+    offset = offset_param if offset_param not in (None, "") else 0
+
+    try:
+        result = list_agents(
+            business_profile=business,
+            q_name=q_name,
+            role=role,
+            limit=limit,
+            offset=offset,
+            sort_by=sort_by,
+            order=order,
+        )
+    except AgentListValidationError as exc:
+        payload = {
+            "error": "VALIDATION_ERROR",
+            "message": str(exc),
+        }
+        if exc.field:
+            payload["field"] = exc.field
+        return JsonResponse(payload, status=HTTPStatus.BAD_REQUEST)
+
+    response = {
+        "items": [
+            {
+                "id": str(item.id),
+                "identifier": agent_identifier(item.id),
+                "name": item.name,
+                "role": item.role,
+                "roleLabel": display_role_label(item.role),
+                "tone": item.tone,
+                "toneLabel": display_tone_label(item.tone),
+                "status": item.status,
+                "statusLabel": (item.status or "").replace("_", " ").title(),
+                "publicSlug": item.public_slug,
+                "conversations": item.conversations,
+                "openCases": item.open_cases,
+                "closedCases": item.closed_cases,
+                "escalations": item.escalations,
+                "averageHandleSeconds": item.average_handle_seconds,
+                "lastActiveAt": _iso(item.last_active_at),
+                "updatedAt": _iso(item.updated_at),
+                "createdAt": _iso(item.created_at),
+            }
+            for item in result.items
+        ],
+        "total": result.total,
+        "limit": result.limit,
+        "offset": result.offset,
+    }
+    return JsonResponse(response, status=HTTPStatus.OK)
+
+
+@require_http_methods(["GET"])
+def agent_detail_view(request: HttpRequest, agent_id: uuid.UUID) -> JsonResponse:
+    business_id = request.GET.get("business_id")
+    business, error = _resolve_business_profile(request, business_id)
+    if error:
+        return error
+    assert business is not None
+
+    try:
+        detail = get_agent_detail(business_profile=business, agent_id=agent_id)
+    except AgentProfile.DoesNotExist:
+        return JsonResponse(
+            {"error": "AGENT_NOT_FOUND", "message": "Agent profile not found."},
+            status=HTTPStatus.NOT_FOUND,
+        )
+
+    response = {
+        "agent": {
+            "id": str(detail.summary.id),
+            "identifier": agent_identifier(detail.summary.id),
+            "name": detail.summary.name,
+            "status": detail.summary.status,
+            "statusLabel": (detail.summary.status or "").replace("_", " ").title(),
+            "role": detail.summary.role,
+            "roleLabel": display_role_label(detail.summary.role),
+            "tone": detail.summary.tone,
+            "toneLabel": display_tone_label(detail.summary.tone),
+            "publicSlug": detail.summary.public_slug,
+            "shareablePath": detail.shareable_path,
+            "traits": list(detail.traits),
+            "escalationRule": detail.escalation_rule,
+            "kpis": list(detail.selected_kpis),
+            "customKpis": list(detail.custom_kpis),
+            "allowCustomKpiWeighting": detail.allow_custom_kpi_weighting,
+            "knowledge": {
+                "mode": detail.knowledge_mode,
+                "documents": [
+                    {
+                        "id": str(doc.id),
+                        "name": doc.name,
+                        "status": doc.status,
+                        "sourceType": doc.source_type,
+                        "lastSyncedAt": _iso(doc.last_synced_at),
+                    }
+                    for doc in detail.knowledge_documents
+                ],
+            },
+            "stats": {
+                "casesTotal": detail.stats.total_cases,
+                "casesOpen": detail.stats.open_cases,
+                "casesClosed": detail.stats.closed_cases,
+                "escalations": detail.stats.escalations,
+                "averageHandleSeconds": detail.stats.average_handle_seconds,
+                "lastActiveAt": _iso(detail.stats.last_active_at),
+            },
+            "createdAt": _iso(detail.summary.created_at),
+            "updatedAt": _iso(detail.summary.updated_at),
+        }
+    }
+    return JsonResponse(response, status=HTTPStatus.OK)
+
+
+@require_http_methods(["GET", "PUT"])
+def agent_action_settings_view(request: HttpRequest, agent_id: uuid.UUID) -> JsonResponse:
+    if not request.user.is_authenticated:
+        return JsonResponse({"error": "UNAUTHORIZED", "message": "Login required."}, status=HTTPStatus.UNAUTHORIZED)
+
+    agent = (
+        AgentProfile.objects.select_related("business_profile")
+        .prefetch_related("action_permissions")
+        .filter(id=agent_id, user=request.user)
+        .first()
+    )
+    if agent is None:
+        return JsonResponse({"error": "AGENT_NOT_FOUND", "message": "Agent profile not found."}, status=HTTPStatus.NOT_FOUND)
+
+    if request.method == "GET":
+        settings = list_action_settings(agent)
+        return JsonResponse(
+            {
+                "actions": [
+                    {
+                        "key": setting.key,
+                        "label": setting.label,
+                        "description": setting.description,
+                        "enabled": setting.enabled,
+                    }
+                    for setting in settings
+                ]
+            }
+        )
+
+    try:
+        payload = json.loads(request.body.decode("utf-8") or "{}")
+    except (json.JSONDecodeError, UnicodeDecodeError):
+        return JsonResponse({"error": "INVALID_JSON", "message": "Body must be valid JSON."}, status=HTTPStatus.BAD_REQUEST)
+
+    action_key = str(payload.get("action") or payload.get("key") or "").strip()
+    if not action_key:
+        return JsonResponse({"error": "VALIDATION_ERROR", "message": "action is required."}, status=HTTPStatus.BAD_REQUEST)
+    enabled = bool(payload.get("enabled"))
+
+    try:
+        setting = set_action_setting(agent, action_key=action_key, enabled=enabled)
+    except ValueError as exc:
+        return JsonResponse({"error": "VALIDATION_ERROR", "message": str(exc)}, status=HTTPStatus.BAD_REQUEST)
+
+    return JsonResponse(
+        {
+            "action": {
+                "key": setting.key,
+                "label": setting.label,
+                "description": setting.description,
+                "enabled": setting.enabled,
+            }
+        }
+    )
+
+
+@require_http_methods(["GET"])
+def knowledge_documents_collection(request: HttpRequest) -> JsonResponse:
+    business_id = request.GET.get("business_id")
+    business, error = _resolve_business_profile(request, business_id)
+    if error:
+        return error
+    assert business is not None
+
+    q_name = request.GET.get("q")
+    collection_slug = request.GET.get("collection")
+    status = request.GET.get("status")
+    source_type = request.GET.get("source_type")
+    limit = request.GET.get("limit") or 50
+    offset = request.GET.get("offset") or 0
+
+    try:
+        result = list_knowledge_documents(
+            business_profile=business,
+            q_name=q_name,
+            collection_slug=collection_slug,
+            status=status,
+            source_type=source_type,
+            limit=limit,
+            offset=offset,
+        )
+    except KnowledgeDocumentListValidationError as exc:
+        payload = {
+            "error": "VALIDATION_ERROR",
+            "message": str(exc),
+        }
+        if exc.field:
+            payload["field"] = exc.field
+        return JsonResponse(payload, status=HTTPStatus.BAD_REQUEST)
+
+    response = {
+        "items": [_serialize_document_summary(item) for item in result.items],
+        "total": result.total,
+        "limit": result.limit,
+        "offset": result.offset,
+    }
+    return JsonResponse(response, status=HTTPStatus.OK)
+
+
+@require_http_methods(["GET"])
+def knowledge_document_detail(request: HttpRequest, document_id: uuid.UUID) -> JsonResponse:
+    business_id = request.GET.get("business_id")
+    business, error = _resolve_business_profile(request, business_id)
+    if error:
+        return error
+    assert business is not None
+
+    try:
+        detail = get_knowledge_document_detail(business_profile=business, document_id=document_id)
+    except KnowledgeUpload.DoesNotExist:
+        return JsonResponse(
+            {"error": "DOCUMENT_NOT_FOUND", "message": "Document not found."},
+            status=HTTPStatus.NOT_FOUND,
+        )
+
+    return JsonResponse({"document": _serialize_document_detail(detail)}, status=HTTPStatus.OK)
+
+
+@require_http_methods(["POST"])
+def knowledge_document_scrape(request: HttpRequest) -> JsonResponse:
+    try:
+        payload = json.loads(request.body.decode("utf-8") or "{}")
+    except (json.JSONDecodeError, UnicodeDecodeError):
+        return JsonResponse(
+            {"error": "INVALID_JSON", "message": "Request body must be valid JSON."},
+            status=HTTPStatus.BAD_REQUEST,
+        )
+
+    url = str(payload.get("url") or "").strip()
+    if not url:
+        return JsonResponse(
+            {"error": "VALIDATION_ERROR", "message": "Provide a URL to scrape.", "field": "url"},
+            status=HTTPStatus.BAD_REQUEST,
+        )
+
+    timeout = payload.get("timeout")
+    max_bytes = payload.get("maxBytes")
+
+    timeout_value = 10.0
+    if timeout is not None:
+        try:
+            timeout_value = max(1.0, min(float(timeout), 30.0))
+        except (TypeError, ValueError):
+            return JsonResponse(
+                {"error": "VALIDATION_ERROR", "message": "timeout must be numeric.", "field": "timeout"},
+                status=HTTPStatus.BAD_REQUEST,
+            )
+
+    max_bytes_value = 2_000_000
+    if max_bytes is not None:
+        try:
+            max_bytes_value = int(max_bytes)
+        except (TypeError, ValueError):
+            return JsonResponse(
+                {"error": "VALIDATION_ERROR", "message": "maxBytes must be numeric.", "field": "maxBytes"},
+                status=HTTPStatus.BAD_REQUEST,
+            )
+        max_bytes_value = max(100_000, min(max_bytes_value, 5_000_000))
+
+    try:
+        scraped = scrape_document_source(url=url, timeout=timeout_value, max_bytes=max_bytes_value)
+    except DocumentScrapeError as exc:
+        return JsonResponse(
+            {"error": "SCRAPE_FAILED", "message": str(exc)},
+            status=HTTPStatus.BAD_REQUEST,
+        )
+
+    response = {
+        "scraped": {
+            "url": scraped.url,
+            "finalUrl": scraped.final_url,
+            "statusCode": scraped.status_code,
+            "contentType": scraped.content_type,
+            "elapsedMs": scraped.elapsed_ms,
+            "contentLength": scraped.content_length,
+            "truncated": scraped.truncated,
+            "preview": scraped.preview,
+            "wordCount": scraped.word_count,
+            "text": scraped.text,
+        }
+    }
+    return JsonResponse(response, status=HTTPStatus.OK)
+
+
+@require_http_methods(["POST"])
+def knowledge_document_preview_csv(request: HttpRequest) -> JsonResponse:
+    upload = request.FILES.get("file")
+    if not upload:
+        return JsonResponse(
+            {"error": "VALIDATION_ERROR", "message": "Upload a CSV file to preview.", "field": "file"},
+            status=HTTPStatus.BAD_REQUEST,
+        )
+
+    max_rows = request.POST.get("max_rows")
+    max_rows_value = 50
+    if max_rows is not None:
+        try:
+            max_rows_value = max(1, min(int(max_rows), 200))
+        except (TypeError, ValueError):
+            return JsonResponse(
+                {"error": "VALIDATION_ERROR", "message": "max_rows must be numeric.", "field": "max_rows"},
+                status=HTTPStatus.BAD_REQUEST,
+            )
+
+    try:
+        preview = preview_csv_upload(upload, max_rows=max_rows_value)
+    except CsvPreviewError as exc:
+        return JsonResponse(
+            {"error": "CSV_PREVIEW_FAILED", "message": str(exc)},
+            status=HTTPStatus.BAD_REQUEST,
+        )
+
+    response = {
+        "preview": {
+            "columns": list(preview.columns),
+            "rows": [list(row) for row in preview.rows],
+            "rowCount": preview.row_count,
+            "truncated": preview.truncated,
+            "dialect": preview.dialect,
+        }
+    }
+    return JsonResponse(response, status=HTTPStatus.OK)
 
 
 @require_http_methods(["GET", "POST"])

@@ -1,18 +1,81 @@
 from __future__ import annotations
 
-from datetime import date, timedelta
-from typing import Dict, List
+import json
+import uuid
+
+from datetime import date, datetime, timedelta
+from typing import Any, Dict, List
 
 from django.contrib.auth.decorators import login_required
-from django.http import HttpRequest, HttpResponse
+from django.http import Http404, HttpRequest, HttpResponse
+from django.db.models import Count, Q
 from django.middleware.csrf import get_token
 from django.shortcuts import render
+from django.urls import reverse
 from django.utils import timezone
+from django.utils.text import slugify
+from django.test.client import RequestFactory
 
+from apps.accounts.models import AgentProfile
 from apps.cases.models import Case, CaseStatus
+from apps.conversations.models import Conversation, ConversationSender
 from apps.customers.models import Customer
+from apps.services.agents import (
+    AgentListValidationError,
+    agent_identifier,
+    display_role_label,
+    display_tone_label,
+    initials_from_name,
+    list_agents,
+)
 from apps.services.cases import list_cases
 from apps.services.customers import list_customers
+from apps.services.documents import DocumentListValidationError, list_documents
+from apps.api.chat_portal import bootstrap_session as bootstrap_session_view
+
+
+PORTAL_BOOTSTRAP_SCRIPT_ID = "portal-bootstrap-data"
+_portal_request_factory = RequestFactory()
+
+
+def _call_portal_bootstrap_api(
+    request: HttpRequest,
+    *,
+    business_slug: str,
+    agent_slug: str,
+    existing_session_token: str | None,
+    metadata: dict,
+) -> dict:
+    payload = {
+        "business_slug": business_slug,
+        "agent_slug": agent_slug,
+        "session_token": existing_session_token,
+        "metadata": metadata,
+    }
+    api_request = _portal_request_factory.post(
+        reverse("api:chat-portal-session"),
+        data=json.dumps(payload),
+        content_type="application/json",
+    )
+    api_request.user = getattr(request, "user", None)
+    api_request.COOKIES = request.COOKIES.copy()
+    api_request.META.update(
+        {
+            "REMOTE_ADDR": request.META.get("REMOTE_ADDR", ""),
+            "HTTP_USER_AGENT": request.META.get("HTTP_USER_AGENT", ""),
+            "HTTP_REFERER": request.META.get("HTTP_REFERER", ""),
+        }
+    )
+    response = bootstrap_session_view(api_request)
+    if response.status_code == 404:
+        raise Http404("Chat portal not found")
+    if response.status_code >= 400:
+        raise Http404("Unable to start chat session")
+    try:
+        return json.loads(response.content.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:  # pragma: no cover - defensive
+        raise Http404("Invalid bootstrap payload") from exc
+
 
 def _mobile_app_section() -> Dict[str, object]:
     return {
@@ -60,6 +123,146 @@ def _current_user_name(request: HttpRequest) -> str:
     if hasattr(user, "get_username"):
         return user.get_username()
     return str(user)
+
+
+def _case_priority_class(priority: str) -> str:
+    mapping = {
+        "critical": "border-transparent bg-red-500/10 text-red-600",
+        "high": "border-transparent bg-orange-500/10 text-orange-600",
+        "medium": "border-transparent bg-amber-500/10 text-amber-600",
+        "low": "border-transparent bg-emerald-500/10 text-emerald-600",
+    }
+    if not priority:
+        return "border-transparent bg-muted/60 text-muted-foreground"
+    return mapping.get(priority.lower(), "border-transparent bg-muted/60 text-muted-foreground")
+
+
+def _case_status_class(status: str) -> str:
+    mapping = {
+        "open": "border-transparent bg-emerald-500/10 text-emerald-600",
+        "closed": "border-transparent bg-muted/60 text-muted-foreground",
+        "resolved": "border-transparent bg-blue-500/10 text-blue-600",
+        "escalated": "border-transparent bg-rose-500/10 text-rose-600",
+    }
+    if not status:
+        return "border-transparent bg-muted/60 text-muted-foreground"
+    return mapping.get(status.lower(), "border-transparent bg-muted/60 text-muted-foreground")
+
+
+ACTION_BADGE_STYLES = {
+    "create_case": {
+        "label": "Case created",
+        "classes": "border border-emerald-200 bg-emerald-50 text-emerald-700",
+    },
+    "update_case_status": {
+        "label": "Case updated",
+        "classes": "border border-teal-200 bg-teal-50 text-teal-600",
+    },
+    "flag_escalation": {
+        "label": "Escalation flagged",
+        "classes": "border border-rose-200 bg-rose-50 text-rose-600",
+    },
+    "create_customer": {
+        "label": "Customer created",
+        "classes": "border border-blue-200 bg-blue-50 text-blue-600",
+    },
+    "update_customer": {
+        "label": "Customer updated",
+        "classes": "border border-indigo-200 bg-indigo-50 text-indigo-600",
+    },
+    "create_lead": {
+        "label": "Lead captured",
+        "classes": "border border-sky-200 bg-sky-50 text-sky-600",
+    },
+    "create_appointment": {
+        "label": "Appointment logged",
+        "classes": "border border-amber-200 bg-amber-50 text-amber-700",
+    },
+}
+
+ACTION_BADGE_DEFAULT = {
+    "label": "Action applied",
+    "classes": "border border-border/70 bg-muted/40 text-foreground",
+}
+
+
+def _format_datetime_label(value: datetime | None) -> str:
+    if not value:
+        return "—"
+    return value.strftime("%b %d, %Y %I:%M %p")
+
+
+def _describe_action_detail(metadata: dict[str, Any]) -> str:
+    if not isinstance(metadata, dict):
+        return ""
+    if metadata.get("case_number"):
+        return f"#{metadata['case_number']}"
+    if metadata.get("display_name"):
+        return str(metadata["display_name"])
+    if metadata.get("reason"):
+        return str(metadata["reason"])
+    if metadata.get("status"):
+        return str(metadata["status"]).replace("_", " ")
+    return ""
+
+
+def _format_action_badges(actions: list[dict[str, Any]] | None) -> list[dict[str, str]]:
+    formatted: list[dict[str, str]] = []
+    if not actions:
+        return formatted
+    for action in actions:
+        if not isinstance(action, dict):
+            continue
+        key = str(action.get("action") or "").lower()
+        config = ACTION_BADGE_STYLES.get(key, ACTION_BADGE_DEFAULT)
+        status = str(action.get("status") or "").lower()
+        classes = config["classes"]
+        if status == "failed":
+            classes = "border border-rose-200 bg-rose-50 text-rose-600"
+        formatted.append(
+            {
+                "label": config["label"],
+                "classes": classes,
+                "detail": _describe_action_detail(action.get("metadata") or {}),
+                "status": status,
+            }
+        )
+    return formatted
+
+
+def _format_citations(items: list[Any] | None) -> list[dict[str, str | None]]:
+    formatted: list[dict[str, str | None]] = []
+    if not items:
+        return formatted
+    for item in items:
+        if isinstance(item, dict):
+            formatted.append(
+                {
+                    "title": item.get("title") or "Knowledge snippet",
+                    "source": item.get("source"),
+                }
+            )
+        elif isinstance(item, str):
+            formatted.append({"title": item, "source": None})
+        else:
+            formatted.append({"title": str(item), "source": None})
+    return formatted
+
+
+def _format_diagnostics(data: dict[str, Any] | None) -> list[dict[str, str]]:
+    if not isinstance(data, dict):
+        return []
+    entries: list[dict[str, str]] = []
+    if data.get("llm_strategy"):
+        entries.append({"label": "LLM strategy", "value": str(data["llm_strategy"])})
+    if isinstance(data.get("planned_action_count"), (int, float)):
+        entries.append({"label": "Planned actions", "value": str(data["planned_action_count"])})
+    if isinstance(data.get("extraction_count"), (int, float)):
+        entries.append({"label": "Extractions", "value": str(data["extraction_count"])})
+    if isinstance(data.get("citations"), list) and data["citations"]:
+        joined = ", ".join(str(value) for value in data["citations"][:4])
+        entries.append({"label": "Knowledge", "value": joined})
+    return entries
 
 
 def landing(request: HttpRequest) -> HttpResponse:
@@ -1371,6 +1574,103 @@ def dashboard_agents(request: HttpRequest) -> HttpResponse:
         {"label": "Avg. satisfaction", "value": None, "helper": "Scores will populate once conversations start"},
         {"label": "Automation coverage", "value": None, "helper": "Connect channels to calculate coverage"},
     ]
+    agents: list[dict[str, object]] = []
+    total_agents = 0
+    has_error = False
+    business = request.user.business_profiles.order_by("-created_at").first() if request.user.is_authenticated else None
+
+    def _format_duration(seconds: float | None) -> str | None:
+        if not seconds:
+            return None
+        seconds = int(seconds)
+        if seconds < 60:
+            return f"{seconds}s"
+        minutes, remainder = divmod(seconds, 60)
+        if minutes < 60:
+            return f"{minutes}m {remainder:02d}s"
+        hours, minutes = divmod(minutes, 60)
+        return f"{hours}h {minutes:02d}m"
+
+    if business:
+        try:
+            result = list_agents(
+                business_profile=business,
+                limit=25,
+                offset=0,
+                sort_by="updated_at",
+                order="desc",
+            )
+            total_agents = result.total
+            business_slug = slugify(business.name)
+            for item in result.items:
+                initials = initials_from_name(item.name)
+                identifier = agent_identifier(item.id)
+                role_label = display_role_label(item.role)
+                tone_label = display_tone_label(item.tone) or "—"
+                updated_at = item.updated_at
+                updated_label = updated_at.strftime("%b %d, %Y %H:%M") if updated_at else "—"
+                shareable_path = ""
+                if item.public_slug:
+                    shareable_path = f"/{business_slug}/{item.public_slug}".replace("//", "/")
+                agents.append(
+                    {
+                        "uuid": str(item.id),
+                        "name": item.name or "Agent",
+                        "initials": initials,
+                        "identifier": identifier,
+                        "roles": [role_label],
+                        "primary_role": role_label,
+                        "role_code": item.role or "",
+                        "tone_label": tone_label,
+                        "tone_code": item.tone or "",
+                        "status": (item.status or "").replace("_", " ").title() or "Draft",
+                        "status_code": item.status or "",
+                        "conversations": item.conversations or 0,
+                        "satisfaction": None,
+                        "aht": _format_duration(item.average_handle_seconds),
+                        "aht_seconds": item.average_handle_seconds or 0,
+                        "escalations": item.escalations or 0,
+                        "updated": updated_label,
+                        "updated_iso": updated_at.isoformat() if updated_at else "",
+                        "last_active_iso": item.last_active_at.isoformat() if item.last_active_at else "",
+                        "public_slug": item.public_slug,
+                        "shareable_path": shareable_path,
+                    }
+                )
+        except AgentListValidationError:
+            has_error = True
+        except Exception:
+            has_error = True
+
+        active_agents = AgentProfile.objects.filter(business_profile=business, status="active").count()
+        total_recorded_agents = AgentProfile.objects.filter(business_profile=business).count()
+        case_counts = Case.objects.filter(business_profile=business).aggregate(
+            total=Count("id"),
+            automated=Count("id", filter=Q(agent_profile__isnull=False)),
+        )
+        coverage = None
+        if case_counts.get("total"):
+            coverage = round(
+                (case_counts.get("automated", 0) / max(case_counts["total"], 1)) * 100,
+            )
+        stats = [
+            {
+                "label": "Active agents",
+                "value": active_agents or 0,
+                "helper": f"{total_recorded_agents or total_agents} total",
+            },
+            {
+                "label": "Avg. satisfaction",
+                "value": None,
+                "helper": "Scores populate once conversations sync",
+            },
+            {
+                "label": "Automation coverage",
+                "value": f"{coverage}%" if coverage is not None else None,
+                "helper": "Cases handled by AI",
+            },
+        ]
+
     context = {
         "user_name": user_name,
         "agents_stats": stats,
@@ -1379,17 +1679,17 @@ def dashboard_agents(request: HttpRequest) -> HttpResponse:
             "status_label": "All statuses",
             "limit": 25,
         },
-        "agents_backend_notice": None,
+        "agents_backend_notice": None if business else "Link a business profile to create agents.",
         "agents_auth_notice": None,
         "agents_loading": False,
-        "agents_error_message": None,
+        "agents_error_message": "Unable to load agents right now." if has_error else None,
         "skeleton_rows": range(6),
-        "agents": [],
+        "agents": agents,
         "agents_empty_message": "No agents created yet. Launch your first AI teammate to get started.",
-        "agents_showing_count": 0,
-        "agents_total": 0,
+        "agents_showing_count": len(agents),
+        "agents_total": total_agents or len(agents),
         "agents_has_prev": False,
-        "agents_has_next": False,
+        "agents_has_next": bool(total_agents and total_agents > len(agents)),
         "agents_panel_empty_title": "No agent selected",
         "agents_panel_empty_message": "Choose an agent from the table to preview configuration and analytics.",
         "agents_modal_roles": [
@@ -1452,19 +1752,99 @@ def dashboard_leads(request: HttpRequest) -> HttpResponse:
     return render(request, "frontend/leads.html", context)
 
 
+def _format_document_size(size_bytes: int | None) -> str:
+    if not size_bytes:
+        return "—"
+    size = float(size_bytes)
+    units = ["B", "KB", "MB", "GB", "TB"]
+    idx = 0
+    while size >= 1024 and idx < len(units) - 1:
+        size /= 1024
+        idx += 1
+    if idx == 0:
+        return f"{int(size)} {units[idx]}"
+    return f"{size:.1f} {units[idx]}"
+
+
+def _format_document_timestamp(value: datetime | None) -> str:
+    if not value:
+        return "—"
+    localized = timezone.localtime(value)
+    return localized.strftime("%b %d, %Y %H:%M")
+
+
+def _document_status_class(status: str | None) -> str:
+    mapping = {
+        "ready": "bg-emerald-100/70 text-emerald-700 border border-emerald-200",
+        "active": "bg-emerald-100/70 text-emerald-700 border border-emerald-200",
+        "processing": "bg-amber-100/70 text-amber-700 border border-amber-200",
+        "pending": "bg-amber-100/70 text-amber-700 border border-amber-200",
+        "failed": "bg-rose-100/70 text-rose-700 border border-rose-200",
+        "archived": "bg-muted/70 text-muted-foreground border border-border/60",
+    }
+    normalized = (status or "").lower()
+    return mapping.get(normalized, "bg-muted/70 text-muted-foreground border border-border/60")
+
+
+def _document_identifier(doc_id: uuid.UUID) -> str:
+    return f"KN-{str(doc_id).split('-')[0].upper()}"
+
+
 @login_required
 def dashboard_knowledge(request: HttpRequest) -> HttpResponse:
     user_name = _current_user_name(request)
+    documents: list[dict[str, object]] = []
+    total_documents = 0
+    has_error = False
+    business = request.user.business_profiles.order_by("-created_at").first() if request.user.is_authenticated else None
+
+    if business:
+        try:
+            result = list_documents(business_profile=business, limit=50, offset=0)
+            total_documents = result.total
+            for item in result.items:
+                documents.append(
+                    {
+                        "uuid": str(item.id),
+                        "name": item.name or "Document",
+                        "identifier": _document_identifier(item.id),
+                        "classification": item.category or item.language or "General",
+                        "type_badge": item.source_label,
+                        "source_type": item.source_type,
+                        "source_label": item.source_label,
+                        "status_label": item.status_label,
+                        "status_code": item.status,
+                        "status_badge_class": _document_status_class(item.status),
+                        "updated": _format_document_timestamp(item.updated_at),
+                        "updated_iso": item.updated_at.isoformat() if item.updated_at else "",
+                        "size_display": _format_document_size(item.size_bytes),
+                        "size_bytes": item.size_bytes or 0,
+                        "collections": list(item.collections),
+                        "collections_display": ", ".join(item.collections) if item.collections else "—",
+                        "tags": list(item.tags),
+                        "tags_display": ", ".join(item.tags) if item.tags else "—",
+                        "language": item.language or "",
+                        "category": item.category or "",
+                        "token_count": item.token_count or 0,
+                        "is_sensitive": bool(item.is_sensitive),
+                        "last_synced_iso": item.last_synced_at.isoformat() if item.last_synced_at else "",
+                        "last_ingested_iso": item.last_ingested_at.isoformat() if item.last_ingested_at else "",
+                        "integration_name": item.integration_name or "",
+                    }
+                )
+        except DocumentListValidationError:
+            has_error = True
+
     stats = [
         {
             "label": "Documents indexed",
-            "value": None,
-            "helper": "Upload your first files to populate the knowledge base.",
+            "value": total_documents if business else None,
+            "helper": "Up-to-date count of synced files." if business else "Upload your first files to populate the knowledge base.",
             "icon_svg": '<svg class="h-4 w-4" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M9 12h3.75M9 15h3.75M9 18h3.75m3-.75c0 .414.336.75.75.75h.75A2.25 2.25 0 0 0 19.5 15V6A2.25 2.25 0 0 0 17.25 3H6.75A2.25 2.25 0 0 0 4.5 5.25V18A2.25 2.25 0 0 0 6.75 20.25H18"/></svg>',
         },
         {
             "label": "Integrations",
-            "value": None,
+            "value": len({doc["integration_name"] for doc in documents if doc["integration_name"]}) if business else None,
             "helper": "Connect Google Drive, Zendesk, or custom APIs.",
             "icon_svg": '<svg class="h-4 w-4" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M4.5 12a2.25 2.25 0 0 1 2.25-2.25h10.5A2.25 2.25 0 0 1 19.5 12m-15 0a2.25 2.25 0 0 0 2.25 2.25h10.5A2.25 2.25 0 0 0 19.5 12m-15 0V7.5m15 4.5V16.5m0-9A2.25 2.25 0 0 0 17.25 5.25H6.75A2.25 2.25 0 0 0 4.5 7.5M19.5 16.5a2.25 2.25 0 0 1-2.25 2.25H6.75A2.25 2.25 0 0 1 4.5 16.5"/></svg>',
         },
@@ -1481,6 +1861,8 @@ def dashboard_knowledge(request: HttpRequest) -> HttpResponse:
             "icon_svg": '<svg class="h-4 w-4" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M4.5 12a7.5 7.5 0 0 1 13.35-4.35L21 8.25M19.5 3v5.25M19.5 12a7.5 7.5 0 0 1-13.35 4.35L3 15.75M4.5 21v-5.25"/></svg>',
         },
     ]
+
+    documents_showing = len(documents)
     context = {
         "user_name": user_name,
         "knowledge_stats": stats,
@@ -1488,17 +1870,17 @@ def dashboard_knowledge(request: HttpRequest) -> HttpResponse:
             "search_placeholder": "Search documents, tags, sources…",
             "collection_label": "All collections",
         },
-        "knowledge_backend_notice": None,
+        "knowledge_backend_notice": None if business else "Link a business profile to start indexing knowledge.",
         "knowledge_auth_notice": None,
         "knowledge_loading": False,
-        "knowledge_error_message": None,
+        "knowledge_error_message": "Unable to load documents right now." if has_error else None,
         "skeleton_rows": range(5),
-        "knowledge_documents": [],
+        "knowledge_documents": documents,
         "knowledge_documents_empty_message": "No knowledge documents yet. Upload files or connect an integration to populate content.",
-        "knowledge_documents_showing": 0,
-        "knowledge_documents_total": 0,
+        "knowledge_documents_showing": documents_showing,
+        "knowledge_documents_total": total_documents if business else 0,
         "knowledge_documents_has_prev": False,
-        "knowledge_documents_has_next": False,
+        "knowledge_documents_has_next": bool(business and total_documents > documents_showing),
         "knowledge_integrations": [],
         "knowledge_integrations_empty_message": "Connect a source to sync articles, FAQs, or product specs automatically.",
         "knowledge_collections": [],
@@ -1516,22 +1898,6 @@ def dashboard_cases(request: HttpRequest) -> HttpResponse:
     metrics = {"open": None, "urgent": None, "urgent_delta": None, "avg_open": None}
     metrics_message = "Connect your customer channels to start measuring performance."
     total = 0
-
-    def _priority_class(priority: str) -> str:
-        mapping = {
-            "critical": "border-transparent bg-red-500/10 text-red-600",
-            "high": "border-transparent bg-orange-500/10 text-orange-600",
-            "medium": "border-transparent bg-amber-500/10 text-amber-600",
-            "low": "border-transparent bg-emerald-500/10 text-emerald-600",
-        }
-        return mapping.get(priority.lower(), "border-transparent bg-muted/60 text-muted-foreground")
-
-    def _status_class(status: str) -> str:
-        mapping = {
-            "open": "border-transparent bg-emerald-500/10 text-emerald-600",
-            "closed": "border-transparent bg-muted/60 text-muted-foreground",
-        }
-        return mapping.get(status.lower(), "border-transparent bg-muted/60 text-muted-foreground")
 
     business = None
     if request.user.is_authenticated:
@@ -1558,12 +1924,12 @@ def dashboard_cases(request: HttpRequest) -> HttpResponse:
                         "id": item.case_number,
                         "uuid": str(item.id),
                         "priority": item.priority,
-                        "priority_class": _priority_class(item.priority),
+                        "priority_class": _case_priority_class(item.priority),
                         "type": "inquiry",
                         "title": item.title,
                         "description": item.description,
                         "status": item.status,
-                        "status_class": _status_class(item.status),
+                        "status_class": _case_status_class(item.status),
                         "customer": {
                             "name": item.customer_name,
                             "email": item.customer_email or "—",
@@ -1590,35 +1956,226 @@ def dashboard_cases(request: HttpRequest) -> HttpResponse:
     return render(request, "frontend/cases.html", context)
 
 
-def chat_portal(request: HttpRequest, business_slug: str, agent_slug: str) -> HttpResponse:
-    session_token = f"session-{business_slug}-{agent_slug}"
-    messages = [
-        {
-            "author": "Pocket AI",
-            "initials": "AI",
-            "body": "Welcome! Ask me anything about your orders or account.",
-            "sent_at": datetime.now(timezone.utc).isoformat(),
+@login_required
+def dashboard_case_detail(request: HttpRequest, case_id: uuid.UUID) -> HttpResponse:
+    user_name = _current_user_name(request)
+    business = request.user.business_profiles.order_by("-created_at").first()
+    if business is None:
+        raise Http404("Case not found")
+
+    case = (
+        Case.objects.select_related("business_profile", "agent_profile", "customer")
+        .filter(id=case_id, business_profile=business)
+        .first()
+    )
+    if case is None:
+        raise Http404("Case not found")
+
+    conversation = (
+        Conversation.objects.select_related("agent_profile", "customer")
+        .prefetch_related("messages", "extractions")
+        .filter(case=case)
+        .first()
+    )
+
+    customer_name = None
+    customer_email = None
+    if case.customer:
+        customer_name = case.customer.display_name or case.customer.primary_email or "Customer"
+        customer_email = case.customer.primary_email or "—"
+    elif conversation and conversation.customer:
+        customer_name = conversation.customer.display_name or "Customer"
+        customer_email = conversation.customer.primary_email or "—"
+    else:
+        customer_name = "Customer"
+        customer_email = "—"
+
+    conversation_context: dict[str, str] | None = None
+    messages: list[dict[str, Any]] = []
+    extractions: list[dict[str, Any]] = []
+    if conversation:
+        conversation_context = {
+            "status": conversation.status,
+            "status_label": (conversation.status or "").replace("_", " ").title(),
+            "channel": (conversation.channel or "chat").replace("_", " ").title(),
+            "session_token": conversation.session_token,
+            "started_at_label": _format_datetime_label(conversation.started_at),
+            "last_activity_label": _format_datetime_label(conversation.last_activity_at),
         }
-    ]
-    context = {
-        "portal": {
-            "business": {"name": business_slug.replace("-", " ").title()},
-            "agent": {
-                "name": agent_slug.replace("-", " ").title(),
-                "role": "AI Customer Specialist",
-                "bio": "Trained on your knowledge base and policies to provide personalised support.",
-                "initials": agent_slug[:2].upper(),
-            },
-            "session_token": session_token,
-            "conversation_status": "ACTIVE",
-            "messages": messages,
-            "csat_scores": [(i, i) for i in range(1, 6)],
-            "endpoints": {
-                "messages": "/api/chat/messages/",
-                "stream_send": "/api/chat/stream/send/",
-                "events": "/api/chat/events/",
-                "csat": "/api/chat/csat/",
-            },
-        }
+        agent_label = (conversation.agent_profile.name if conversation.agent_profile else None) or (
+            case.agent_profile.name if case.agent_profile else "Pocket AI"
+        )
+        customer_label = customer_name
+        ordered_messages = conversation.messages.all().order_by("sent_at", "created_at")
+        for message in ordered_messages:
+            sender = (message.sender or "system").lower()
+            if sender == ConversationSender.CUSTOMER:
+                author = customer_label
+                initials = initials_from_name(customer_label, "CU")
+            elif sender == ConversationSender.AI:
+                author = agent_label
+                initials = initials_from_name(agent_label, "AI")
+            else:
+                author = "System"
+                initials = "SYS"
+            metadata = message.metadata or {}
+            messages.append(
+                {
+                    "id": str(message.id),
+                    "variant": sender,
+                    "author": author,
+                    "initials": initials,
+                    "body": message.body,
+                    "sent_at_label": _format_datetime_label(message.sent_at),
+                    "actions": _format_action_badges(metadata.get("actions")),
+                    "citations": _format_citations(metadata.get("citations")),
+                    "diagnostics": _format_diagnostics(metadata.get("diagnostics")),
+                }
+            )
+        for extraction in conversation.extractions.all().order_by("-created_at"):
+            payload = extraction.payload or {}
+            summary = (
+                payload.get("reason")
+                or payload.get("title")
+                or payload.get("display_name")
+                or payload.get("status")
+                or ""
+            )
+            extractions.append(
+                {
+                    "id": str(extraction.id),
+                    "type": (extraction.extraction_type or "").replace("_", " ").title(),
+                    "created_at_label": _format_datetime_label(extraction.created_at),
+                    "summary": summary,
+                    "payload": payload,
+                }
+            )
+
+    suggested_actions = case.ai_suggested_actions if isinstance(case.ai_suggested_actions, list) else []
+    case_context = {
+        "id": str(case.id),
+        "case_number": case.case_number,
+        "title": case.title,
+        "description": case.description,
+        "status": case.status,
+        "status_label": (case.status or "").replace("_", " ").title(),
+        "status_class": _case_status_class(case.status),
+        "priority": case.priority,
+        "priority_label": (case.priority or "").replace("_", " ").title(),
+        "priority_class": _case_priority_class(case.priority),
+        "started_at_label": _format_datetime_label(case.started_at),
+        "updated_at_label": _format_datetime_label(case.updated_at),
+        "closed_at_label": _format_datetime_label(case.closed_at),
+        "agent_name": case.agent_profile.name if case.agent_profile else "—",
+        "customer": {
+            "name": customer_name,
+            "email": customer_email,
+            "initials": initials_from_name(customer_name, "CU"),
+        },
+        "ai_diagnosis": case.ai_diagnosis or "No diagnosis provided.",
+        "ai_actions_taken": case.ai_actions_taken or "",
+        "ai_suggested_actions": [str(item) for item in suggested_actions if item],
     }
-    return render(request, "frontend/chat/portal.html", context)
+
+    context = {
+        "user_name": user_name,
+        "case": case_context,
+        "conversation": conversation_context,
+        "messages": messages,
+        "extractions": extractions,
+        "messages_empty_message": "No transcript available for this case yet.",
+        "back_url": reverse("frontend:dashboard-cases"),
+    }
+    return render(request, "frontend/case_detail.html", context)
+
+
+def chat_portal(request: HttpRequest, business_slug: str, agent_slug: str) -> HttpResponse:
+    """Render the public chat portal view backed by the API bootstrap endpoint."""
+
+    existing_token = request.GET.get("session") or request.COOKIES.get(f"chat_session_{business_slug}_{agent_slug}")
+    visitor_metadata = {
+        "ip": request.META.get("REMOTE_ADDR"),
+        "user_agent": request.META.get("HTTP_USER_AGENT"),
+        "referer": request.META.get("HTTP_REFERER"),
+    }
+    bootstrap_payload = _call_portal_bootstrap_api(
+        request,
+        business_slug=business_slug,
+        agent_slug=agent_slug,
+        existing_session_token=existing_token,
+        metadata=visitor_metadata,
+    )
+
+    business = bootstrap_payload.get("business", {})
+    agent = bootstrap_payload.get("agent", {})
+    session = bootstrap_payload.get("session", {})
+    raw_messages = bootstrap_payload.get("messages", [])
+
+    agent_name = agent.get("name") or "Pocket AI"
+    agent_initials = initials_from_name(agent_name) or "AI"
+    messages: list[dict[str, str]] = []
+    for message in raw_messages:
+        sender = (message.get("sender") or "system").lower()
+        if sender == "ai":
+            author = agent_name
+            initials = agent_initials
+        elif sender == "customer":
+            author = "You"
+            initials = "YOU"
+        else:
+            author = "System"
+            initials = "SYS"
+        messages.append(
+            {
+                "author": author,
+                "initials": initials,
+                "body": message.get("body", ""),
+                "sent_at": message.get("sent_at"),
+                "metadata": message.get("metadata") or {},
+            }
+        )
+
+    session_status = (session.get("status") or "new").lower()
+    cookie_business_slug = business.get("slug") or slugify(business.get("name", "")) or business_slug
+    cookie_agent_slug = agent.get("slug") or agent_slug
+    storage_key = f"chat_session_{cookie_business_slug}_{cookie_agent_slug}"
+
+    portal_context = {
+        "business": {
+            "name": business.get("name", ""),
+            "slug": cookie_business_slug,
+        },
+        "agent": {
+            "name": agent_name,
+            "role": agent.get("role") or "AI Customer Specialist",
+            "bio": "Trained on your knowledge base and policies to provide personalised support.",
+            "initials": agent_initials,
+            "slug": cookie_agent_slug,
+        },
+        "session_token": session.get("session_token", ""),
+        "session_storage_key": storage_key,
+        "conversation_status": session_status.replace("_", " ").title(),
+        "conversation_status_code": session_status,
+        "messages": messages,
+        "csat_scores": [(i, i) for i in range(1, 6)],
+        "bootstrap_payload": bootstrap_payload,
+        "bootstrap_script_id": PORTAL_BOOTSTRAP_SCRIPT_ID,
+        "endpoints": {
+            "bootstrap": reverse("api:chat-portal-session"),
+            "messages": reverse("api:chat-messages"),
+            "stream_send": reverse("api:chat-stream-send"),
+            "events": reverse("api:chat-events"),
+            "csat": reverse("api:chat-csat"),
+        },
+    }
+    response = render(request, "frontend/chat/portal.html", {"portal": portal_context})
+    cookie_key = storage_key
+    response.set_cookie(
+        cookie_key,
+        portal_context["session_token"],
+        max_age=3600 * 6,
+        httponly=False,
+        secure=False,
+        samesite="Lax",
+    )
+    return response

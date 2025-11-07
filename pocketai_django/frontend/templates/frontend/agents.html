@@ -107,7 +107,10 @@
         <div class="relative border border-border/70 bg-card text-card-foreground shadow-lg shadow-black/5 backdrop-blur hover:border-primary/35 transition-colors dark:border-slate-700/50 dark:bg-slate-800/70 dark:shadow-black/25 rounded-xl overflow-hidden">
           <div class="absolute inset-x-0 top-0 h-px bg-gradient-to-r from-primary/35 via-primary/20 to-transparent"></div>
           <div class="relative overflow-x-auto overflow-y-auto max-h-[70vh]">
-            <table class="w-full caption-bottom text-sm rounded-xl border border-border/70 bg-background/60 shadow-sm backdrop-blur [&_th]:px-3 [&_td]:px-3 [&_th:first-child]:pl-4 [&_td:first-child]:pl-4 [&_th:last-child]:pr-4 [&_td:last-child]:pr-4 [&_th]:py-3 [&_td]:py-3">
+            <table
+              class="w-full caption-bottom text-sm rounded-xl border border-border/70 bg-background/60 shadow-sm backdrop-blur [&_th]:px-3 [&_td]:px-3 [&_th:first-child]:pl-4 [&_td:first-child]:pl-4 [&_th:last-child]:pr-4 [&_td:last-child]:pr-4 [&_th]:py-3 [&_td]:py-3"
+              data-agents-table
+            >
               <thead class="sticky top-0 z-10 bg-muted/70 backdrop-blur border-b border-border/80">
                 <tr class="border-b transition-colors hover:bg-transparent">
                   <th scope="col" class="h-12 text-left align-middle font-medium text-muted-foreground w-[240px]">Name / ID</th>
@@ -174,7 +177,31 @@
                   </tr>
                 {% elif agents %}
                   {% for agent in agents %}
-                    <tr class="border-b transition-colors hover:bg-muted/50">
+                    <tr
+                      class="border-b transition-colors hover:bg-muted/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40 focus-visible:ring-offset-2 cursor-pointer"
+                      data-agent-row
+                      data-agent-uuid="{{ agent.uuid }}"
+                      data-agent-name="{{ agent.name|default:'Unnamed agent'|escape }}"
+                      data-agent-initials="{{ agent.initials|default:'AI'|escape }}"
+                      data-agent-identifier="{{ agent.identifier|default:'AG-0000' }}"
+                      data-agent-status="{{ agent.status_code|default:''|lower }}"
+                      data-agent-status-label="{{ agent.status|default:'Draft'|escape }}"
+                      data-agent-role="{{ agent.primary_role|default:'Support Agent'|escape }}"
+                      data-agent-tone="{{ agent.tone_label|default:'—'|escape }}"
+                      data-agent-tone-code="{{ agent.tone_code|default:''|lower }}"
+                      data-agent-roles="{{ agent.roles|join:', ' }}"
+                      data-agent-conversations="{{ agent.conversations|default:0 }}"
+                      data-agent-escalations="{{ agent.escalations|default:0 }}"
+                      data-agent-aht-seconds="{{ agent.aht_seconds|default:0 }}"
+                      data-agent-aht="{{ agent.aht|default:'' }}"
+                      data-agent-updated="{{ agent.updated|default:''|escape }}"
+                      data-agent-updated-iso="{{ agent.updated_iso|default:'' }}"
+                      data-agent-last-active="{{ agent.last_active_iso|default:'' }}"
+                      data-agent-shareable="{{ agent.shareable_path|default:'' }}"
+                      data-agent-public-slug="{{ agent.public_slug|default:'' }}"
+                      tabindex="0"
+                      aria-expanded="false"
+                    >
                       <td class="py-4">
                         <div class="flex items-center gap-3">
                           <span class="inline-flex h-10 w-10 items-center justify-center rounded-full border border-border/70 bg-muted/50 text-xs font-semibold uppercase text-muted-foreground">
@@ -196,9 +223,13 @@
                         </div>
                       </td>
                       <td class="py-4">
-                        <span class="inline-flex items-center rounded-full px-2 py-1 text-[11px] font-medium {% if agent.status == 'Active' %}bg-emerald-100/70 text-emerald-700 border border-emerald-200{% elif agent.status == 'Inactive' %}bg-muted/70 text-muted-foreground border border-border/60{% else %}bg-amber-100/70 text-amber-700 border border-amber-200{% endif %}">
-                          {{ agent.status|default:"Draft" }}
-                        </span>
+                        {% with status_code=agent.status_code|default:""|lower %}
+                          <span
+                            class="inline-flex items-center rounded-full px-2 py-1 text-[11px] font-semibold capitalize {% if status_code == 'active' %}bg-emerald-100/70 text-emerald-700 border border-emerald-200{% elif status_code == 'review' %}bg-sky-100/70 text-sky-700 border border-sky-200{% else %}bg-amber-100/70 text-amber-700 border border-amber-200{% endif %}"
+                          >
+                            {{ agent.status|default:"Draft" }}
+                          </span>
+                        {% endwith %}
                       </td>
                       <td class="py-4 text-right">
                         <div class="text-sm font-medium text-foreground">{{ agent.conversations|default:"—" }}</div>
@@ -231,7 +262,7 @@
                         <button
                           type="button"
                           class="inline-flex h-8 w-8 items-center justify-center rounded-full border border-input bg-background hover:bg-accent hover:text-accent-foreground transition-colors"
-                          data-sheet-target="agent-detail"
+                          data-agent-trigger
                           aria-label="Open agent detail"
                         >
                           <svg class="h-4 w-4 text-muted-foreground" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor">
@@ -282,71 +313,214 @@
       </section>
     </div>
   </main>
-
-  <aside class="hidden xl:flex w-full max-w-md border-l border-border/70 bg-card/70 backdrop-blur-sm min-h-screen flex-col">
-    <div class="px-6 py-4 border-b border-border/70">
-      <div class="text-base font-semibold tracking-tight text-foreground">Agent detail</div>
-      <p class="text-xs text-muted-foreground mt-1">Select an agent to configure knowledge, KPIs, and automations.</p>
-    </div>
-    <div class="flex-1 overflow-y-auto p-6 space-y-6">
-      <div class="rounded-xl border border-dashed border-border/70 bg-muted/40 p-6 text-center">
-        <div class="mx-auto flex h-12 w-12 items-center justify-center rounded-full bg-muted">
-          <svg class="h-6 w-6 text-muted-foreground" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor">
-            <path stroke-linecap="round" stroke-linejoin="round" d="M9 12h3.75M9 15h3.75M9 18h3.75m3-.75c0 .414.336.75.75.75h.75a2.25 2.25 0 0 0 2.25-2.25V8.25A2.25 2.25 0 0 0 18 6h-5.25a2.25 2.25 0 0 0-2.25 2.25V9" />
-            <path stroke-linecap="round" stroke-linejoin="round" d="M3 9l7.5-7.5L18 9M4.5 21h13.5" />
-          </svg>
-        </div>
-        <div class="mt-3 text-sm font-semibold text-foreground">{{ agents_panel_empty_title|default:"No agent selected" }}</div>
-        <p class="mt-1 text-xs text-muted-foreground">
-          {{ agents_panel_empty_message|default:"Choose an agent from the table to preview configuration and analytics." }}
-        </p>
-      </div>
-
-      <div class="space-y-4">
-        <div class="rounded-lg bg-muted/40 p-1 grid grid-cols-4 text-xs font-medium text-muted-foreground">
-          <div class="rounded-md bg-background text-foreground shadow-sm px-3 py-2">Overview</div>
-          <div class="rounded-md px-3 py-2">KPIs</div>
-          <div class="rounded-md px-3 py-2">Knowledge</div>
-          <div class="rounded-md px-3 py-2">Analytics</div>
-        </div>
-
-        <div class="grid gap-3">
-          <div class="rounded-lg border border-border/70 bg-card text-card-foreground shadow-sm">
-            <div class="p-4 space-y-3">
-              <div class="text-xs font-semibold uppercase tracking-[0.18em] text-muted-foreground/80">Profile</div>
-              <div class="space-y-2 text-sm text-muted-foreground">
-                <div class="flex items-center gap-2">
-                  <span class="inline-flex h-3 w-32 rounded bg-muted/60 animate-pulse" aria-hidden="true"></span>
-                </div>
-                <div class="flex items-center gap-2">
-                  <span class="inline-flex h-3 w-24 rounded bg-muted/50 animate-pulse" aria-hidden="true"></span>
-                </div>
-              </div>
-            </div>
-          </div>
-
-          <div class="rounded-lg border border-border/70 bg-card text-card-foreground shadow-sm">
-            <div class="p-4 space-y-3">
-              <div class="text-xs font-semibold uppercase tracking-[0.18em] text-muted-foreground/80">Capabilities</div>
-              <div class="space-y-2 text-sm text-muted-foreground">
-                {% for _ in "1234" %}
-                  <div class="flex items-center gap-2">
-                    <span class="inline-flex h-3 w-4 rounded bg-muted/50 animate-pulse" aria-hidden="true"></span>
-                    <span class="inline-flex h-3 w-32 rounded bg-muted/50 animate-pulse" aria-hidden="true"></span>
-                  </div>
-                {% endfor %}
-              </div>
-            </div>
-          </div>
-
-          <div class="rounded-lg border border-dashed border-border/60 bg-muted/30 p-4 text-sm text-muted-foreground">
-            Analytics, KPIs, and knowledge setup will appear here once backend data is connected.
-          </div>
-        </div>
-      </div>
-    </div>
-  </aside>
 </div>
+
+<div
+  class="fixed inset-0 z-40 bg-background/60 backdrop-blur-sm opacity-0 pointer-events-none transition-opacity duration-300"
+  data-agent-overlay
+  style="opacity: 0; pointer-events: none;"
+></div>
+
+<aside
+  class="fixed inset-y-0 right-0 z-50 flex w-full max-w-full translate-x-full transform transition-transform duration-300 sm:w-[360px] lg:w-[420px] xl:w-[460px] border-l border-border/70 bg-card/95 backdrop-blur shadow-2xl"
+  data-agent-panel
+  data-state="empty"
+  role="dialog"
+  aria-modal="true"
+  aria-labelledby="agent-panel-heading"
+  aria-hidden="true"
+  tabindex="-1"
+  style="transform: translateX(100%);"
+>
+  <div class="relative flex h-full w-full flex-col">
+    <div id="agent-panel-heading" class="sr-only" data-agent-aria-title>Select an agent</div>
+    <button
+      type="button"
+      class="absolute right-4 top-4 inline-flex h-9 w-9 items-center justify-center rounded-full border border-border/70 bg-background/80 text-muted-foreground transition hover:bg-background"
+      data-agent-close
+      aria-label="Close agent detail"
+    >
+      <svg class="h-4 w-4" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" aria-hidden="true">
+        <path stroke-linecap="round" stroke-linejoin="round" d="m8 8 8 8m0-8-8 8" />
+      </svg>
+    </button>
+    <div class="flex h-full flex-col">
+      <div class="flex-1 overflow-y-auto" data-agent-scroll>
+        <div class="space-y-6 px-6 py-10" data-agent-empty>
+          <div class="space-y-2 text-center">
+            <div class="mx-auto flex h-12 w-12 items-center justify-center rounded-full bg-muted/60 text-muted-foreground">
+              <svg class="h-5 w-5" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M12 7v10m5-5H7" />
+              </svg>
+            </div>
+            <h2 class="text-base font-semibold text-foreground">{{ agents_panel_empty_title|default:"No agent selected" }}</h2>
+            <p class="text-sm text-muted-foreground">
+              {{ agents_panel_empty_message|default:"Choose an agent from the table to preview configuration and analytics." }}
+            </p>
+          </div>
+        </div>
+        <div class="hidden space-y-6 px-6 py-10" data-agent-loading>
+          <div class="space-y-3 animate-pulse">
+            <div class="h-5 w-32 rounded bg-muted/50"></div>
+            <div class="h-6 w-3/4 rounded bg-muted/50"></div>
+            <div class="h-4 w-1/2 rounded bg-muted/50"></div>
+          </div>
+          <div class="space-y-4 animate-pulse">
+            <div class="h-24 w-full rounded-xl bg-muted/40"></div>
+            <div class="h-36 w-full rounded-xl bg-muted/40"></div>
+            <div class="h-32 w-full rounded-xl bg-muted/30"></div>
+          </div>
+        </div>
+        <div class="hidden space-y-4 px-6 py-10" data-agent-error>
+          <div class="rounded-lg border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive" data-agent-error-message>
+            Unable to load agent details. Please try again.
+          </div>
+          <button
+            type="button"
+            class="inline-flex items-center justify-center rounded-md border border-border/60 bg-background px-4 py-2 text-sm font-medium text-foreground shadow-sm hover:border-primary/40"
+            data-agent-retry
+          >
+            Retry
+          </button>
+        </div>
+        <div class="hidden space-y-6 pb-16" data-agent-content>
+          <section class="border-b border-border/70 bg-card/90 px-6 pt-10 pb-6">
+            <div class="flex items-start gap-3">
+              <span class="inline-flex h-12 w-12 items-center justify-center rounded-full bg-primary/10 text-primary font-semibold uppercase" data-agent-initials>AI</span>
+              <div class="flex-1 min-w-0">
+                <div class="text-lg font-semibold text-foreground leading-tight" data-agent-name>Agent name</div>
+                <div class="mt-1 flex flex-wrap items-center gap-1 text-xs text-muted-foreground">
+                  <span data-agent-identifier>ID</span>
+                  <span aria-hidden="true">•</span>
+                  <span data-agent-role>Support Agent</span>
+                  <span aria-hidden="true">•</span>
+                  <span data-agent-tone>Friendly tone</span>
+                </div>
+              </div>
+              <span class="text-xs text-muted-foreground" data-agent-last-active>—</span>
+            </div>
+            <div class="mt-3 flex flex-wrap items-center gap-2">
+              <span class="inline-flex items-center rounded-full border px-2.5 py-0.5 text-[11px] font-semibold capitalize text-muted-foreground" data-agent-status-badge>Draft</span>
+              <span class="text-xs text-muted-foreground" data-agent-updated>Updated —</span>
+            </div>
+          </section>
+
+          <section class="space-y-4 px-6">
+            <div class="rounded-xl border border-border/70 bg-card/95 p-4 space-y-4 shadow-sm">
+              <div class="text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">Performance</div>
+              <dl class="grid grid-cols-2 gap-4 text-sm sm:grid-cols-3">
+                <div>
+                  <dt class="text-xs uppercase tracking-wide text-muted-foreground">Conversations</dt>
+                  <dd class="text-base font-semibold text-foreground" data-agent-metric-total>—</dd>
+                </div>
+                <div>
+                  <dt class="text-xs uppercase tracking-wide text-muted-foreground">Open cases</dt>
+                  <dd class="text-base font-semibold text-foreground" data-agent-metric-open>—</dd>
+                </div>
+                <div>
+                  <dt class="text-xs uppercase tracking-wide text-muted-foreground">Closed cases</dt>
+                  <dd class="text-base font-semibold text-foreground" data-agent-metric-closed>—</dd>
+                </div>
+                <div>
+                  <dt class="text-xs uppercase tracking-wide text-muted-foreground">Escalations</dt>
+                  <dd class="text-base font-semibold text-foreground" data-agent-metric-escalations>—</dd>
+                </div>
+                <div>
+                  <dt class="text-xs uppercase tracking-wide text-muted-foreground">Avg. handle time</dt>
+                  <dd class="text-base font-semibold text-foreground" data-agent-metric-aht>—</dd>
+                </div>
+              </dl>
+            </div>
+
+            <div class="rounded-xl border border-dashed border-border/60 bg-muted/20 p-4 space-y-3">
+              <div class="flex items-center justify-between gap-2">
+                <div class="text-[11px] font-semibold uppercase tracking-[0.2em] text-muted-foreground">Shareable link</div>
+                <span class="text-[10px] uppercase tracking-wide text-muted-foreground" data-agent-shareable-state>Not published</span>
+              </div>
+              <div class="text-sm font-mono text-foreground break-words" data-agent-shareable>—</div>
+              <div class="flex gap-3 text-xs font-medium text-primary">
+                <a
+                  href="#"
+                  class="inline-flex items-center gap-1 hover:underline"
+                  target="_blank"
+                  rel="noreferrer"
+                  data-agent-shareable-open
+                >
+                  Open
+                  <svg class="h-3.5 w-3.5" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor">
+                    <path stroke-linecap="round" stroke-linejoin="round" d="M13.5 6H18m0 0v4.5M18 6l-7.5 7.5" />
+                    <path stroke-linecap="round" stroke-linejoin="round" d="M6 18 18 6" />
+                  </svg>
+                </a>
+                <button type="button" class="inline-flex items-center gap-1 hover:underline" data-agent-shareable-copy>
+                  Copy
+                  <svg class="h-3.5 w-3.5" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor">
+                    <path stroke-linecap="round" stroke-linejoin="round" d="M8 8h10v12H8z" />
+                    <path stroke-linecap="round" stroke-linejoin="round" d="M16 4H6v12" />
+                  </svg>
+                </button>
+              </div>
+            </div>
+
+            <div class="rounded-xl border border-border/60 bg-card/95 p-4 space-y-3 shadow-sm">
+              <div class="text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">Traits & tone</div>
+              <div class="flex flex-wrap gap-2" data-agent-traits>
+                <span class="text-xs text-muted-foreground">No traits configured.</span>
+              </div>
+            </div>
+
+            <div class="rounded-xl border border-border/60 bg-card/95 p-4 space-y-4 shadow-sm">
+              <div class="text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">KPIs</div>
+              <div class="space-y-2">
+                <div>
+                  <div class="text-[10px] uppercase tracking-wide text-muted-foreground">Core KPIs</div>
+                  <div class="mt-1 flex flex-wrap gap-2" data-agent-kpis>
+                    <span class="text-xs text-muted-foreground">No KPIs selected.</span>
+                  </div>
+                </div>
+                <div>
+                  <div class="text-[10px] uppercase tracking-wide text-muted-foreground">Custom KPIs</div>
+                  <div class="mt-1 flex flex-wrap gap-2" data-agent-custom-kpis>
+                    <span class="text-xs text-muted-foreground">No custom KPIs defined.</span>
+                  </div>
+                </div>
+                <div class="text-[10px] uppercase tracking-wide text-muted-foreground" data-agent-kpi-weighting>
+                  —
+                </div>
+              </div>
+            </div>
+
+            <div class="rounded-xl border border-border/60 bg-card/95 p-4 space-y-3 shadow-sm">
+              <div class="text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">Escalation rule</div>
+              <p class="text-sm text-foreground" data-agent-escalation>None configured.</p>
+            </div>
+
+            <div class="rounded-xl border border-border/60 bg-card/95 p-4 space-y-3 shadow-sm" data-agent-action-container>
+              <div class="flex items-center justify-between gap-3">
+                <div>
+                  <div class="text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">Automation controls</div>
+                  <p class="text-xs text-muted-foreground">Toggle orchestrator actions this agent is allowed to run.</p>
+                </div>
+                <span class="text-xs text-muted-foreground" data-agent-action-state>Idle</span>
+              </div>
+              <div class="space-y-3" data-agent-action-list>
+                <p class="text-xs text-muted-foreground">Select an agent to load action permissions.</p>
+              </div>
+            </div>
+
+            <div class="rounded-xl border border-border/60 bg-card/95 p-4 space-y-3 shadow-sm">
+              <div class="text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">Knowledge access</div>
+              <p class="text-xs text-muted-foreground" data-agent-knowledge-mode>Uses all business knowledge sources.</p>
+              <ul class="divide-y divide-border/60 rounded-lg border border-border/60" data-agent-knowledge-list>
+                <li class="px-3 py-2 text-sm text-muted-foreground">No knowledge items attached.</li>
+              </ul>
+            </div>
+          </section>
+        </div>
+      </div>
+    </div>
+  </div>
+</aside>
 
 <div class="fixed inset-0 z-50 hidden items-center justify-center bg-background/80 backdrop-blur-sm" data-dialog="create-agent" role="dialog" aria-modal="true">
   <div class="w-full max-w-lg rounded-2xl border border-border/70 bg-card shadow-lg shadow-black/10">
@@ -388,4 +562,779 @@
     </div>
   </div>
 </div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+  document.addEventListener("DOMContentLoaded", function () {
+    var table = document.querySelector("[data-agents-table]");
+    var panel = document.querySelector("[data-agent-panel]");
+    var overlay = document.querySelector("[data-agent-overlay]");
+    if (!table || !panel) {
+      return;
+    }
+
+    var body = document.body;
+    var closeTrigger = panel.querySelector("[data-agent-close]");
+    var retryButton = panel.querySelector("[data-agent-retry]");
+    var scrollRoot = panel.querySelector("[data-agent-scroll]");
+    var emptyState = panel.querySelector("[data-agent-empty]");
+    var loadingState = panel.querySelector("[data-agent-loading]");
+    var errorState = panel.querySelector("[data-agent-error]");
+    var errorMessage = panel.querySelector("[data-agent-error-message]");
+    var contentState = panel.querySelector("[data-agent-content]");
+    var fieldAriaTitle = panel.querySelector("[data-agent-aria-title]");
+    var fieldName = panel.querySelector("[data-agent-name]");
+    var fieldIdentifier = panel.querySelector("[data-agent-identifier]");
+    var fieldRole = panel.querySelector("[data-agent-role]");
+    var fieldTone = panel.querySelector("[data-agent-tone]");
+    var fieldInitials = panel.querySelector("[data-agent-initials]");
+    var fieldStatusBadge = panel.querySelector("[data-agent-status-badge]");
+    var fieldUpdated = panel.querySelector("[data-agent-updated]");
+    var fieldLastActive = panel.querySelector("[data-agent-last-active]");
+    var fieldMetricTotal = panel.querySelector("[data-agent-metric-total]");
+    var fieldMetricOpen = panel.querySelector("[data-agent-metric-open]");
+    var fieldMetricClosed = panel.querySelector("[data-agent-metric-closed]");
+    var fieldMetricEscalations = panel.querySelector("[data-agent-metric-escalations]");
+    var fieldMetricAht = panel.querySelector("[data-agent-metric-aht]");
+    var fieldTraits = panel.querySelector("[data-agent-traits]");
+    var fieldKpis = panel.querySelector("[data-agent-kpis]");
+    var fieldCustomKpis = panel.querySelector("[data-agent-custom-kpis]");
+    var fieldKpiWeighting = panel.querySelector("[data-agent-kpi-weighting]");
+    var fieldEscalation = panel.querySelector("[data-agent-escalation]");
+    var fieldKnowledgeMode = panel.querySelector("[data-agent-knowledge-mode]");
+    var fieldKnowledgeList = panel.querySelector("[data-agent-knowledge-list]");
+    var shareableField = panel.querySelector("[data-agent-shareable]");
+    var shareableState = panel.querySelector("[data-agent-shareable-state]");
+    var shareableOpen = panel.querySelector("[data-agent-shareable-open]");
+    var shareableCopy = panel.querySelector("[data-agent-shareable-copy]");
+    var actionList = panel.querySelector("[data-agent-action-list]");
+    var actionStateLabel = panel.querySelector("[data-agent-action-state]");
+
+    var abortSupported = typeof window.AbortController === "function";
+    var selectedClasses = ["ring-1", "ring-primary/60", "bg-primary/5"];
+    var activeRow = null;
+    var inFlight = null;
+    var isPanelOpen = false;
+    var currentAgentTitle = "";
+    var shareableLinkValue = "";
+    var actionFetchController = null;
+    var currentActionAgentId = null;
+    var actionFlashTimer = null;
+
+    function formatNumber(value, fallback) {
+      var candidate = value;
+      if (candidate === null || candidate === undefined || candidate === "") {
+        candidate = fallback;
+      }
+      if (candidate === null || candidate === undefined || candidate === "") {
+        return "—";
+      }
+      var numeric = Number(candidate);
+      if (!Number.isNaN(numeric)) {
+        return numeric.toLocaleString();
+      }
+      return candidate;
+    }
+
+    function formatDateTime(value) {
+      if (!value) {
+        return "";
+      }
+      try {
+        var date = new Date(value);
+        if (Number.isNaN(date.getTime())) {
+          return value;
+        }
+        return date.toLocaleString(undefined, {
+          year: "numeric",
+          month: "short",
+          day: "numeric",
+          hour: "2-digit",
+          minute: "2-digit",
+        });
+      } catch (_err) {
+        return value;
+      }
+    }
+
+    function formatDuration(seconds) {
+      if (seconds === null || seconds === undefined || Number.isNaN(seconds)) {
+        return "—";
+      }
+      var total = Number(seconds);
+      if (total < 60) {
+        return Math.round(total) + "s";
+      }
+      var minutes = Math.floor(total / 60);
+      var remainSeconds = Math.floor(total % 60);
+      if (minutes < 60) {
+        return minutes + "m" + (remainSeconds ? " " + remainSeconds + "s" : "");
+      }
+      var hours = Math.floor(minutes / 60);
+      var remainMinutes = minutes % 60;
+      return hours + "h " + (remainMinutes || 0) + "m";
+    }
+
+    function getInitials(name, fallback) {
+      var source = (name || "").trim();
+      if (!source) {
+        return (fallback || "AI").slice(0, 2).toUpperCase();
+      }
+      var parts = source.split(/\s+/).filter(Boolean);
+      if (!parts.length) {
+        return (fallback || "AI").slice(0, 2).toUpperCase();
+      }
+      if (parts.length === 1) {
+        return parts[0].slice(0, 2).toUpperCase();
+      }
+      return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
+    }
+
+    var statusClassMap = {
+      active: "border border-emerald-200 bg-emerald-50 text-emerald-700",
+      review: "border border-sky-200 bg-sky-50 text-sky-700",
+      draft: "border border-amber-200 bg-amber-50 text-amber-700",
+    };
+
+    function applyStatusBadge(target, label, code) {
+      if (!target) {
+        return;
+      }
+      var normalized = (code || label || "").toString().toLowerCase();
+      var baseClass =
+        "inline-flex items-center rounded-full border px-2.5 py-0.5 text-[11px] font-semibold capitalize";
+      target.className = baseClass + " " + (statusClassMap[normalized] || "border border-border/60 bg-muted/30 text-muted-foreground");
+      target.textContent = label || "Draft";
+    }
+
+    function setPanelState(state) {
+      panel.dataset.state = state;
+      if (emptyState) emptyState.classList.toggle("hidden", state !== "empty");
+      if (loadingState) loadingState.classList.toggle("hidden", state !== "loading");
+      if (errorState) errorState.classList.toggle("hidden", state !== "error");
+      if (contentState) contentState.classList.toggle("hidden", state !== "content");
+      if (fieldAriaTitle) {
+        if (state === "empty") {
+          fieldAriaTitle.textContent = "Select an agent";
+        } else if (state === "loading") {
+          fieldAriaTitle.textContent = currentAgentTitle ? "Loading " + currentAgentTitle : "Loading agent details";
+        } else if (state === "error") {
+          fieldAriaTitle.textContent = "Agent details unavailable";
+        } else if (state === "content") {
+          fieldAriaTitle.textContent = currentAgentTitle || "Agent details";
+        }
+      }
+    }
+
+    function openPanel() {
+      isPanelOpen = true;
+      panel.setAttribute("aria-hidden", "false");
+      panel.classList.remove("translate-x-full");
+      panel.classList.add("translate-x-0");
+      panel.style.transform = "translateX(0)";
+      if (overlay) {
+        overlay.classList.remove("opacity-0", "pointer-events-none");
+        overlay.classList.add("opacity-100");
+        overlay.style.opacity = "1";
+        overlay.style.pointerEvents = "auto";
+      }
+      if (body) {
+        body.classList.add("overflow-hidden");
+      }
+      try {
+        panel.focus({ preventScroll: true });
+      } catch (_err) {
+        panel.focus();
+      }
+    }
+
+    function clearSelection() {
+      if (activeRow) {
+        selectedClasses.forEach(function (cls) {
+          activeRow.classList.remove(cls);
+        });
+        activeRow.dataset.selected = "false";
+        activeRow.setAttribute("aria-expanded", "false");
+      }
+      activeRow = null;
+    }
+
+    function closePanel(options) {
+      options = options || {};
+      if (inFlight && typeof inFlight.abort === "function") {
+        inFlight.abort();
+      }
+      inFlight = null;
+      resetActionArea();
+      setActionStateLabel("idle");
+      if (!options.suppressState) {
+        currentAgentTitle = "";
+        setPanelState("empty");
+      }
+      if (!isPanelOpen && !options.force) {
+        return;
+      }
+      if (overlay) {
+        overlay.classList.add("opacity-0", "pointer-events-none");
+        overlay.classList.remove("opacity-100");
+        overlay.style.opacity = "0";
+        overlay.style.pointerEvents = "none";
+      }
+      panel.classList.add("translate-x-full");
+      panel.classList.remove("translate-x-0");
+      panel.style.transform = "translateX(100%)";
+      panel.setAttribute("aria-hidden", "true");
+      if (body) {
+        body.classList.remove("overflow-hidden");
+      }
+      isPanelOpen = false;
+      if (options.resetSelection !== false) {
+        clearSelection();
+      }
+    }
+
+    function populateChips(target, items, emptyMessage) {
+      if (!target) return;
+      target.innerHTML = "";
+      if (!items || !items.length) {
+        if (emptyMessage) {
+          var span = document.createElement("span");
+          span.className = "text-xs text-muted-foreground";
+          span.textContent = emptyMessage;
+          target.appendChild(span);
+        }
+        return;
+      }
+      items.forEach(function (item) {
+        if (!item) return;
+        var pill = document.createElement("span");
+        pill.className =
+          "inline-flex items-center rounded-full border border-border/60 bg-muted/30 px-2 py-0.5 text-[11px] font-medium text-foreground";
+        pill.textContent = item;
+        target.appendChild(pill);
+      });
+    }
+
+    function populateKnowledge(target, items) {
+      if (!target) return;
+      target.innerHTML = "";
+      if (!items || !items.length) {
+        var empty = document.createElement("li");
+        empty.className = "px-3 py-2 text-sm text-muted-foreground";
+        empty.textContent = "No knowledge items attached.";
+        target.appendChild(empty);
+        return;
+      }
+      items.forEach(function (doc) {
+        var li = document.createElement("li");
+        li.className = "px-3 py-2 space-y-1";
+        var header = document.createElement("div");
+        header.className = "flex items-center justify-between gap-2";
+        var name = document.createElement("span");
+        name.className = "text-sm font-semibold text-foreground";
+        name.textContent = doc.name || "Knowledge item";
+        var badge = document.createElement("span");
+        badge.className =
+          "inline-flex items-center rounded-full border px-2 py-0.5 text-[11px] font-medium capitalize text-muted-foreground";
+        badge.textContent = (doc.status || "unknown").replace(/_/g, " ");
+        header.appendChild(name);
+        header.appendChild(badge);
+        var meta = document.createElement("div");
+        meta.className = "text-xs text-muted-foreground";
+        var source = (doc.sourceType || "source").replace(/_/g, " ");
+        var timestamp = doc.lastSyncedAt ? " • Updated " + formatDateTime(doc.lastSyncedAt) : "";
+        meta.textContent = source + timestamp;
+        li.appendChild(header);
+        li.appendChild(meta);
+        target.appendChild(li);
+      });
+    }
+
+    function updateShareable(path) {
+      shareableLinkValue = path || "";
+      var hasLink = Boolean(shareableLinkValue);
+      if (shareableField) {
+        shareableField.textContent = hasLink ? shareableLinkValue : "Not published";
+      }
+      if (shareableState) {
+        shareableState.textContent = hasLink ? "Live" : "Not published";
+      }
+      if (shareableOpen) {
+        if (hasLink) {
+          shareableOpen.href = shareableLinkValue;
+          shareableOpen.setAttribute("aria-disabled", "false");
+          shareableOpen.classList.remove("opacity-50", "pointer-events-none");
+        } else {
+          shareableOpen.href = "#";
+          shareableOpen.setAttribute("aria-disabled", "true");
+          shareableOpen.classList.add("opacity-50", "pointer-events-none");
+        }
+      }
+      if (shareableCopy) {
+        if (hasLink) {
+          shareableCopy.removeAttribute("disabled");
+          shareableCopy.classList.remove("opacity-50", "cursor-not-allowed");
+        } else {
+          shareableCopy.setAttribute("disabled", "true");
+          shareableCopy.classList.add("opacity-50", "cursor-not-allowed");
+        }
+      }
+    }
+
+    function resetActionArea(message) {
+      if (actionFetchController && typeof actionFetchController.abort === "function") {
+        actionFetchController.abort();
+        actionFetchController = null;
+      }
+      currentActionAgentId = null;
+      if (!actionList) {
+        return;
+      }
+      actionList.innerHTML = "";
+      var placeholder = document.createElement("p");
+      placeholder.className = "text-xs text-muted-foreground";
+      placeholder.textContent = message || "Select an agent to load action permissions.";
+      actionList.appendChild(placeholder);
+    }
+
+    function setActionStateLabel(state, text) {
+      if (!actionStateLabel) {
+        return;
+      }
+      var label = text;
+      if (!label) {
+        if (state === "loading") {
+          label = "Syncing…";
+        } else if (state === "error") {
+          label = "Failed";
+        } else if (state === "ready") {
+          label = "Live";
+        } else {
+          label = "Idle";
+        }
+      }
+      actionStateLabel.textContent = label;
+      actionStateLabel.classList.toggle("text-destructive", state === "error");
+      actionStateLabel.classList.toggle("text-muted-foreground", state !== "error");
+      actionStateLabel.classList.toggle("animate-pulse", state === "loading");
+    }
+
+    function flashActionMessage(message, isError) {
+      setActionStateLabel(isError ? "error" : "ready", message);
+      if (actionFlashTimer) {
+        clearTimeout(actionFlashTimer);
+      }
+      actionFlashTimer = window.setTimeout(function () {
+        setActionStateLabel("ready");
+        actionFlashTimer = null;
+      }, 3200);
+    }
+
+    function applyToggleState(target, enabled) {
+      if (!target) {
+        return;
+      }
+      var base =
+        "inline-flex items-center justify-center rounded-full px-3 py-1 text-xs font-semibold border transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40";
+      if (enabled) {
+        target.className = base + " border-emerald-500 bg-emerald-500/90 text-white shadow-sm";
+        target.textContent = "Enabled";
+        target.dataset.state = "on";
+      } else {
+        target.className = base + " border-border/70 bg-background text-muted-foreground";
+        target.textContent = "Disabled";
+        target.dataset.state = "off";
+      }
+    }
+
+    function renderActionToggles(actions, agentId) {
+      if (!actionList) {
+        return;
+      }
+      actionList.innerHTML = "";
+      if (!actions || !actions.length) {
+        var empty = document.createElement("p");
+        empty.className = "text-xs text-muted-foreground";
+        empty.textContent = "No toggleable actions registered.";
+        actionList.appendChild(empty);
+        return;
+      }
+      actions.forEach(function (action) {
+        var item = document.createElement("div");
+        item.className = "flex items-start justify-between gap-3 rounded-lg border border-border/70 bg-muted/20 px-3 py-2";
+        var info = document.createElement("div");
+        var title = document.createElement("div");
+        title.className = "text-sm font-semibold text-foreground";
+        title.textContent = action.label || action.key;
+        var description = document.createElement("p");
+        description.className = "text-xs text-muted-foreground";
+        description.textContent = action.description || "Action toggle";
+        info.appendChild(title);
+        info.appendChild(description);
+        var toggle = document.createElement("button");
+        toggle.type = "button";
+        applyToggleState(toggle, !!action.enabled);
+        toggle.dataset.actionKey = action.key;
+        toggle.addEventListener("click", function () {
+          var next = toggle.dataset.state !== "on";
+          toggleAgentAction(agentId, action.key, next, toggle);
+        });
+        item.appendChild(info);
+        item.appendChild(toggle);
+        actionList.appendChild(item);
+      });
+    }
+
+    function getCsrfToken() {
+      var match = document.cookie ? document.cookie.match(/csrftoken=([^;]+)/) : null;
+      return match ? decodeURIComponent(match[1]) : "";
+    }
+
+    function toggleAgentAction(agentId, actionKey, enabled, control) {
+      if (!agentId || !actionKey || !control) {
+        return;
+      }
+      control.disabled = true;
+      setActionStateLabel("loading", "Updating…");
+      fetch("/api/agents/" + encodeURIComponent(agentId) + "/actions/", {
+        method: "PUT",
+        headers: {
+          "Content-Type": "application/json",
+          "X-Requested-With": "XMLHttpRequest",
+          "X-CSRFToken": getCsrfToken(),
+        },
+        credentials: "same-origin",
+        body: JSON.stringify({ action: actionKey, enabled: enabled }),
+      })
+        .then(function (response) {
+          if (!response.ok) {
+            throw new Error("Failed to update action");
+          }
+          return response.json();
+        })
+        .then(function (payload) {
+          var updated = payload && payload.action ? payload.action.enabled : enabled;
+          applyToggleState(control, !!updated);
+          var label = (payload && payload.action && payload.action.label) || actionKey;
+          flashActionMessage(label + (updated ? " enabled" : " disabled"), false);
+        })
+        .catch(function (error) {
+          console.error("Failed to update action permission", error);
+          flashActionMessage("Unable to update action.", true);
+        })
+        .finally(function () {
+          control.disabled = false;
+        });
+    }
+
+    function loadAgentActions(agentId) {
+      if (!actionList) {
+        return;
+      }
+      if (!agentId) {
+        resetActionArea();
+        setActionStateLabel("idle");
+        return;
+      }
+      currentActionAgentId = agentId;
+      if (actionFetchController && typeof actionFetchController.abort === "function") {
+        actionFetchController.abort();
+      }
+      var controller = abortSupported ? new AbortController() : null;
+      actionFetchController = controller;
+      setActionStateLabel("loading");
+      fetch("/api/agents/" + encodeURIComponent(agentId) + "/actions/", {
+        method: "GET",
+        headers: { Accept: "application/json" },
+        credentials: "same-origin",
+        signal: controller ? controller.signal : undefined,
+      })
+        .then(function (response) {
+          if (!response.ok) {
+            throw new Error("Failed to load action permissions");
+          }
+          return response.json();
+        })
+        .then(function (payload) {
+          if (controller && controller.signal.aborted) {
+            return;
+          }
+          if (currentActionAgentId !== agentId) {
+            return;
+          }
+          renderActionToggles((payload && payload.actions) || [], agentId);
+          setActionStateLabel("ready");
+        })
+        .catch(function (error) {
+          if (controller && controller.signal.aborted) {
+            return;
+          }
+          console.error("Failed to load action permissions", error);
+          resetActionArea("Unable to load action permissions.");
+          setActionStateLabel("error");
+        })
+        .finally(function () {
+          if (controller && actionFetchController === controller) {
+            actionFetchController = null;
+          }
+        });
+    }
+
+    function selectRow(row) {
+      if (activeRow && activeRow !== row) {
+        selectedClasses.forEach(function (cls) {
+          activeRow.classList.remove(cls);
+        });
+        activeRow.dataset.selected = "false";
+        activeRow.setAttribute("aria-expanded", "false");
+      }
+      activeRow = row;
+      if (activeRow) {
+        selectedClasses.forEach(function (cls) {
+          activeRow.classList.add(cls);
+        });
+        activeRow.dataset.selected = "true";
+        activeRow.setAttribute("aria-expanded", "true");
+      }
+    }
+
+    function prefillSummaryFromRow(row) {
+      if (!row) return;
+      var dataset = row.dataset || {};
+      currentAgentTitle = dataset.agentName || "Agent";
+      if (fieldName) fieldName.textContent = currentAgentTitle;
+      if (fieldIdentifier) fieldIdentifier.textContent = dataset.agentIdentifier || "";
+      if (fieldRole) fieldRole.textContent = dataset.agentRole || "Support Agent";
+      if (fieldTone) fieldTone.textContent = dataset.agentTone || "—";
+      if (fieldInitials) fieldInitials.textContent = dataset.agentInitials || getInitials(currentAgentTitle);
+      if (fieldUpdated) {
+        var updated = dataset.agentUpdatedIso ? formatDateTime(dataset.agentUpdatedIso) : dataset.agentUpdated || "";
+        fieldUpdated.textContent = updated ? "Updated " + updated : "";
+      }
+      if (fieldLastActive) {
+        var lastActive = dataset.agentLastActive ? formatDateTime(dataset.agentLastActive) : "";
+        fieldLastActive.textContent = lastActive ? "Last active " + lastActive : "No recent activity";
+      }
+      applyStatusBadge(
+        fieldStatusBadge,
+        dataset.agentStatusLabel || dataset.agentStatus || "Draft",
+        dataset.agentStatus || ""
+      );
+      if (fieldMetricTotal) fieldMetricTotal.textContent = formatNumber(dataset.agentConversations);
+      if (fieldMetricOpen) fieldMetricOpen.textContent = "—";
+      if (fieldMetricClosed) fieldMetricClosed.textContent = "—";
+      if (fieldMetricEscalations) fieldMetricEscalations.textContent = formatNumber(dataset.agentEscalations);
+      if (fieldMetricAht) fieldMetricAht.textContent = dataset.agentAht || "—";
+      updateShareable(dataset.agentShareable || "");
+    }
+
+    function populatePanel(agent, rowDataset) {
+      rowDataset = rowDataset || {};
+      currentAgentTitle = agent.name || rowDataset.agentName || "Agent";
+      if (fieldName) fieldName.textContent = currentAgentTitle;
+      if (fieldIdentifier) fieldIdentifier.textContent = agent.identifier || rowDataset.agentIdentifier || "";
+      if (fieldRole) fieldRole.textContent = agent.roleLabel || rowDataset.agentRole || "Support Agent";
+      if (fieldTone) fieldTone.textContent = agent.toneLabel || rowDataset.agentTone || "—";
+      if (fieldInitials) {
+        fieldInitials.textContent = getInitials(agent.name || rowDataset.agentName, rowDataset.agentInitials);
+      }
+      applyStatusBadge(
+        fieldStatusBadge,
+        agent.statusLabel || rowDataset.agentStatusLabel || agent.status || rowDataset.agentStatus || "Draft",
+        agent.status || rowDataset.agentStatus || ""
+      );
+      if (fieldUpdated) {
+        var updatedValue = agent.updatedAt || rowDataset.agentUpdatedIso || rowDataset.agentUpdated;
+        fieldUpdated.textContent = updatedValue ? "Updated " + formatDateTime(updatedValue) : "";
+      }
+      var stats = agent.stats || {};
+      if (fieldMetricTotal) fieldMetricTotal.textContent = formatNumber(stats.casesTotal, rowDataset.agentConversations);
+      if (fieldMetricOpen) fieldMetricOpen.textContent = formatNumber(stats.casesOpen);
+      if (fieldMetricClosed) fieldMetricClosed.textContent = formatNumber(stats.casesClosed);
+      if (fieldMetricEscalations)
+        fieldMetricEscalations.textContent = formatNumber(stats.escalations, rowDataset.agentEscalations);
+      if (fieldMetricAht) {
+        fieldMetricAht.textContent = stats.averageHandleSeconds
+          ? formatDuration(stats.averageHandleSeconds)
+          : rowDataset.agentAht || "—";
+      }
+      if (fieldLastActive) {
+        var lastActive = stats.lastActiveAt || rowDataset.agentLastActive;
+        fieldLastActive.textContent = lastActive ? "Last active " + formatDateTime(lastActive) : "No recent activity";
+      }
+      populateChips(fieldTraits, agent.traits, "No traits configured.");
+      populateChips(fieldKpis, agent.kpis, "No KPIs selected.");
+      populateChips(fieldCustomKpis, agent.customKpis, "No custom KPIs defined.");
+      if (fieldKpiWeighting) {
+        fieldKpiWeighting.textContent = agent.allowCustomKpiWeighting
+          ? "Custom KPI weighting enabled"
+          : "Using default KPI weighting";
+      }
+      if (fieldEscalation) {
+        fieldEscalation.textContent = agent.escalationRule || "None configured.";
+      }
+      if (fieldKnowledgeMode) {
+        var mode = agent.knowledge && agent.knowledge.mode;
+        var modeDisplay = "Uses all business knowledge sources.";
+        if (mode === "select") {
+          modeDisplay = "Uses selected knowledge sources.";
+      }
+      fieldKnowledgeMode.textContent = modeDisplay;
+    }
+    populateKnowledge(fieldKnowledgeList, agent.knowledge && agent.knowledge.documents);
+    updateShareable(agent.shareablePath || rowDataset.agentShareable || "");
+    loadAgentActions(agent.id || rowDataset.agentUuid || null);
+    if (fieldAriaTitle) {
+      fieldAriaTitle.textContent = currentAgentTitle;
+    }
+  }
+
+    function handleRowActivation(row, options) {
+      if (!row) return;
+      var uuid = row.getAttribute("data-agent-uuid");
+      if (!uuid) return;
+      options = options || {};
+      if (!options.forceReload && activeRow === row && isPanelOpen && panel.dataset.state === "content") {
+        openPanel();
+        return;
+      }
+      selectRow(row);
+      prefillSummaryFromRow(row);
+      resetActionArea("Loading action permissions…");
+      setActionStateLabel("loading");
+      if (inFlight && typeof inFlight.abort === "function") {
+        inFlight.abort();
+      }
+      var controller = abortSupported ? new AbortController() : null;
+      inFlight = controller;
+      openPanel();
+      setPanelState("loading");
+      if (scrollRoot) {
+        scrollRoot.scrollTop = 0;
+      }
+      fetch("/api/agents/" + encodeURIComponent(uuid) + "/", {
+        method: "GET",
+        headers: { Accept: "application/json" },
+        credentials: "same-origin",
+        signal: controller ? controller.signal : undefined,
+      })
+        .then(function (response) {
+          if (!response.ok) {
+            throw new Error("Failed to load agent detail");
+          }
+          return response.json();
+        })
+        .then(function (payload) {
+          if (controller && controller.signal.aborted) {
+            return;
+          }
+          if (!payload || !payload.agent) {
+            throw new Error("Invalid payload");
+          }
+          populatePanel(payload.agent, row.dataset);
+          setPanelState("content");
+          if (scrollRoot) {
+            scrollRoot.scrollTop = 0;
+          }
+        })
+        .catch(function (error) {
+          if (controller && controller.signal.aborted) {
+            return;
+          }
+          console.error("Failed to load agent detail", error);
+          if (errorMessage) {
+            errorMessage.textContent = "Unable to load agent details. Please try again.";
+          }
+          setPanelState("error");
+        })
+        .finally(function () {
+          if (controller && inFlight === controller) {
+            inFlight = null;
+          }
+        });
+    }
+
+    var rows = Array.prototype.slice.call(document.querySelectorAll("[data-agent-row]") || []);
+    rows.forEach(function (row) {
+      row.addEventListener("click", function (event) {
+        if (event.defaultPrevented) return;
+        event.stopPropagation();
+        handleRowActivation(row);
+      });
+      row.addEventListener("keydown", function (event) {
+        if (event.key === "Enter" || event.key === " ") {
+          event.preventDefault();
+          handleRowActivation(row);
+        }
+      });
+      var trigger = row.querySelector("[data-agent-trigger]");
+      if (trigger) {
+        trigger.addEventListener("click", function (event) {
+          event.preventDefault();
+          event.stopPropagation();
+          handleRowActivation(row);
+        });
+      }
+    });
+
+    if (overlay) {
+      overlay.addEventListener("click", function () {
+        closePanel();
+      });
+    }
+    if (closeTrigger) {
+      closeTrigger.addEventListener("click", function () {
+        closePanel();
+      });
+    }
+    if (retryButton) {
+      retryButton.addEventListener("click", function () {
+        if (activeRow) {
+          handleRowActivation(activeRow, { forceReload: true });
+        }
+      });
+    }
+    document.addEventListener("keydown", function (event) {
+      if (event.key === "Escape" && isPanelOpen) {
+        event.preventDefault();
+        closePanel();
+      }
+    });
+
+    if (shareableCopy) {
+      shareableCopy.addEventListener("click", function () {
+        if (!shareableLinkValue) {
+          return;
+        }
+        var link = shareableLinkValue;
+        if (link.startsWith("/")) {
+          var origin = window.location.origin.replace(/\/$/, "");
+          link = origin + shareableLinkValue;
+        }
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+          navigator.clipboard.writeText(link).catch(function (error) {
+            console.warn("Clipboard copy failed", error);
+          });
+        } else {
+          var helper = document.createElement("input");
+          helper.value = link;
+          document.body.appendChild(helper);
+          helper.select();
+          try {
+            document.execCommand("copy");
+          } catch (_err) {
+            console.warn("Fallback copy failed");
+          }
+          document.body.removeChild(helper);
+        }
+      });
+    }
+
+    resetActionArea();
+    setActionStateLabel("idle");
+    setPanelState("empty");
+    closePanel({ suppressState: true, resetSelection: false, force: true });
+  });
+</script>
 {% endblock %}

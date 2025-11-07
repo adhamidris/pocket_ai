@@ -1,115 +1,397 @@
 from __future__ import annotations
 
 import json
+import threading
 import time
-from dataclasses import dataclass
-from datetime import datetime, timezone
-from typing import Dict, Iterable, List
+from queue import Empty, Queue
+from typing import Iterable
 
+from django.db import close_old_connections
 from django.http import HttpRequest, HttpResponse, JsonResponse, StreamingHttpResponse
-from django.views.decorators.http import require_GET, require_POST
+from django.views.decorators.csrf import csrf_exempt
+from django.views.decorators.http import require_GET, require_http_methods, require_POST
+
+from apps.conversations.models import ConversationSender
+from apps.services.ai_orchestrator import ActionDispatcher, AiOrchestratorPlan, AiOrchestratorService
+from apps.services.llm_provider import load_default_provider
+from apps.services.chat_portal import (
+    ChatPortalService,
+    PortalAgentSummary,
+    PortalBusinessSummary,
+    PortalMessage,
+    PortalNotFoundError,
+    PortalSessionBootstrap,
+    PortalSessionState,
+    PortalValidationError,
+)
 
 
-@dataclass
-class ChatMessage:
-    id: str
-    author: str
-    body: str
-    sent_at: datetime
+def _service() -> ChatPortalService:
+    return ChatPortalService()
 
 
-ACTIVE_SESSIONS: Dict[str, List[ChatMessage]] = {}
-
-
-def _json_response(payload, status=200):
+def _json_error(code: str, message: str, *, status: int = 400, extra: dict | None = None) -> JsonResponse:
+    payload: dict[str, object] = {"error": {"code": code, "message": message}}
+    if extra:
+        payload["error"].update(extra)
     return JsonResponse(payload, status=status)
 
 
-def ensure_session(session_token: str) -> List[ChatMessage]:
-    if session_token not in ACTIVE_SESSIONS:
-        ACTIVE_SESSIONS[session_token] = [
-            ChatMessage(id="welcome", author="Pocket AI", body="Hi! How can we help today?", sent_at=datetime.now(timezone.utc)),
-        ]
-    return ACTIVE_SESSIONS[session_token]
+def _parse_json_body(request: HttpRequest) -> dict:
+    try:
+        return json.loads(request.body.decode("utf-8") or "{}")
+    except (json.JSONDecodeError, UnicodeDecodeError) as exc:
+        raise PortalValidationError("Invalid JSON payload") from exc
 
 
-@require_POST
-def send_message(request: HttpRequest) -> HttpResponse:
-    data = json.loads(request.body.decode("utf-8"))
-    session_token = data.get("session_token")
-    body = data.get("body")
-    if not session_token or not body:
-        return _json_response({"error": "invalid_request"}, status=400)
-    messages = ensure_session(session_token)
-    messages.append(
-        ChatMessage(
-            id=f"user-{len(messages)}",
-            author="Visitor",
-            body=body,
-            sent_at=datetime.now(timezone.utc),
-        )
+def _business_to_dict(summary: PortalBusinessSummary) -> dict:
+    return {"id": str(summary.id), "name": summary.name, "slug": summary.slug}
+
+
+def _agent_to_dict(summary: PortalAgentSummary) -> dict:
+    return {
+        "id": str(summary.id),
+        "name": summary.name,
+        "role": summary.role,
+        "slug": summary.slug,
+        "shareable_path": summary.shareable_path,
+    }
+
+
+def _session_to_dict(session: PortalSessionState) -> dict:
+    return {
+        "conversation_id": str(session.conversation_id),
+        "session_token": session.session_token,
+        "status": session.status,
+        "started_at": session.started_at.isoformat(),
+        "expires_at": session.expires_at.isoformat() if session.expires_at else None,
+    }
+
+
+def _message_to_dict(message: PortalMessage) -> dict:
+    return {
+        "id": str(message.id),
+        "sender": message.sender,
+        "body": message.body,
+        "sent_at": message.sent_at.isoformat(),
+        "metadata": message.metadata,
+    }
+
+
+def _bootstrap_to_dict(result: PortalSessionBootstrap) -> dict:
+    return {
+        "business": _business_to_dict(result.business),
+        "agent": _agent_to_dict(result.agent),
+        "session": _session_to_dict(result.session),
+        "messages": [_message_to_dict(msg) for msg in result.messages],
+    }
+
+
+@require_GET
+def resolve_portal_handle(request: HttpRequest, business_slug: str, agent_slug: str) -> JsonResponse:
+    service = _service()
+    try:
+        business, agent = service.resolve_handle(business_slug, agent_slug)
+    except PortalNotFoundError as exc:
+        return _json_error("not_found", str(exc), status=404)
+    return JsonResponse(
+        {
+            "business": {"id": str(business.id), "name": business.name, "slug": business.slug},
+            "agent": {
+                "id": str(agent.id),
+                "name": agent.name,
+                "role": agent.role or "AI Assistant",
+                "slug": agent.slug,
+                "shareable_path": agent.shareable_path,
+            },
+        }
     )
-    return _json_response({"ok": True})
 
 
+@csrf_exempt
 @require_POST
-def submit_csat(request: HttpRequest) -> HttpResponse:
-    data = json.loads(request.body.decode("utf-8"))
-    session_token = data.get("session_token")
-    if not session_token:
-        return _json_response({"error": "invalid_request"}, status=400)
-    return _json_response({"conversation_id": session_token, "recorded_at": datetime.now(timezone.utc).isoformat()})
+def bootstrap_session(request: HttpRequest) -> JsonResponse:
+    service = _service()
+    try:
+        payload = _parse_json_body(request)
+    except PortalValidationError as exc:
+        return _json_error("invalid_json", str(exc))
+
+    business_slug = (payload.get("business_slug") or payload.get("businessSlug") or "").strip()
+    agent_slug = (payload.get("agent_slug") or payload.get("agentSlug") or "").strip()
+    existing_session_token = (payload.get("session_token") or payload.get("sessionToken") or "").strip() or None
+    metadata = payload.get("metadata") or {}
+
+    if not business_slug or not agent_slug:
+        return _json_error("validation_error", "business_slug and agent_slug are required.")
+
+    try:
+        result = service.bootstrap_session(
+            business_slug=business_slug,
+            agent_slug=agent_slug,
+            existing_session_token=existing_session_token,
+            metadata=metadata,
+        )
+    except PortalNotFoundError as exc:
+        return _json_error("not_found", str(exc), status=404)
+
+    return JsonResponse(_bootstrap_to_dict(result), status=200)
 
 
+@csrf_exempt
+@require_http_methods(["GET", "POST"])
+def messages_endpoint(request: HttpRequest) -> JsonResponse:
+    service = _service()
+    if request.method == "GET":
+        session_token = request.GET.get("session_token") or request.GET.get("sessionToken")
+        if not session_token:
+            return _json_error("validation_error", "session_token is required")
+        limit_param = request.GET.get("limit")
+        limit = None
+        if limit_param:
+            try:
+                limit = max(1, min(200, int(limit_param)))
+            except ValueError:
+                return _json_error("validation_error", "limit must be an integer between 1 and 200")
+        try:
+            messages = service.list_messages(session_token=session_token, limit=limit)
+            session = service.get_session_state(session_token=session_token)
+        except PortalNotFoundError as exc:
+            return _json_error("not_found", str(exc), status=404)
+        return JsonResponse(
+            {"session": _session_to_dict(session), "messages": [_message_to_dict(msg) for msg in messages]}
+        )
+
+    try:
+        payload = _parse_json_body(request)
+    except PortalValidationError as exc:
+        return _json_error("invalid_json", str(exc))
+
+    session_token = (payload.get("session_token") or payload.get("sessionToken") or "").strip()
+    body = (payload.get("body") or "").strip()
+    metadata = payload.get("metadata") or {}
+
+    try:
+        message = service.append_message(
+            session_token=session_token,
+            sender=ConversationSender.CUSTOMER,
+            body=body,
+            metadata=metadata,
+        )
+    except PortalValidationError as exc:
+        return _json_error("validation_error", str(exc))
+    except PortalNotFoundError as exc:
+        return _json_error("not_found", str(exc), status=404)
+
+    return JsonResponse({"message": _message_to_dict(message)}, status=201)
+
+
+@csrf_exempt
+@require_POST
+def submit_csat(request: HttpRequest) -> JsonResponse:
+    service = _service()
+    try:
+        payload = _parse_json_body(request)
+    except PortalValidationError as exc:
+        return _json_error("invalid_json", str(exc))
+
+    session_token = (payload.get("session_token") or payload.get("sessionToken") or "").strip()
+    try:
+        score = int(payload.get("score"))
+    except (TypeError, ValueError):
+        return _json_error("validation_error", "score must be an integer between 1 and 5")
+    comment = (payload.get("comment") or "").strip() or None
+
+    try:
+        session = service.record_csat(session_token=session_token, score=score, comment=comment)
+    except PortalValidationError as exc:
+        return _json_error("validation_error", str(exc))
+    except PortalNotFoundError as exc:
+        return _json_error("not_found", str(exc), status=404)
+
+    return JsonResponse({"session": _session_to_dict(session)}, status=200)
+
+
+@csrf_exempt
 @require_POST
 def stream_send(request: HttpRequest) -> StreamingHttpResponse:
-    data = json.loads(request.body.decode("utf-8"))
-    session_token = data.get("session_token")
-    body = data.get("body")
-    if not session_token or not body:
+    service = _service()
+    try:
+        payload = _parse_json_body(request)
+    except PortalValidationError:
         return StreamingHttpResponse(status=400)
-    messages = ensure_session(session_token)
-    messages.append(
-        ChatMessage(
-            id=f"user-{len(messages)}",
-            author="Visitor",
+
+    session_token = (payload.get("session_token") or payload.get("sessionToken") or "").strip()
+    body = (payload.get("body") or "").strip()
+    metadata = payload.get("metadata") or {}
+
+    try:
+        service.append_message(
+            session_token=session_token,
+            sender=ConversationSender.CUSTOMER,
             body=body,
-            sent_at=datetime.now(timezone.utc),
+            metadata=metadata,
         )
-    )
+    except PortalValidationError:
+        return StreamingHttpResponse(status=400)
+    except PortalNotFoundError:
+        return StreamingHttpResponse(status=404)
+
+    try:
+        conversation = service.get_conversation(session_token=session_token)
+    except PortalNotFoundError:
+        return StreamingHttpResponse(status=404)
+
+    agent = conversation.agent_profile
+    if not agent:
+        return StreamingHttpResponse(status=500)
+
+    provider = load_default_provider()
+    orchestrator = AiOrchestratorService(agent=agent, provider=provider)
+    dispatcher = ActionDispatcher(agent=agent)
+
+    def serialize_action_results(results):
+        payloads = []
+        for result in results:
+            payloads.append(
+                {
+                    "action": result.action.value,
+                    "status": result.status,
+                    "metadata": result.metadata,
+                    "error": result.error,
+                }
+            )
+        return payloads
+
+    def _response_chunks(text: str, chunk_size: int = 240) -> Iterable[str]:
+        clean = (text or "").strip()
+        if not clean:
+            return
+        words = clean.split()
+        if not words:
+            return
+        current: list[str] = []
+        current_len = 0
+        for word in words:
+            if not current:
+                current.append(word)
+                current_len = len(word)
+                continue
+            projected = current_len + 1 + len(word)
+            if projected <= chunk_size:
+                current.append(word)
+                current_len = projected
+            else:
+                yield " ".join(current)
+                current = [word]
+                current_len = len(word)
+        if current:
+            yield " ".join(current)
+
+    stream_queue: Queue = Queue()
+    stream_sentinel = object()
+    plan_holder: dict[str, Any] = {}
+
+    def on_response_text_delta(chunk: str) -> None:
+        if chunk:
+            stream_queue.put(chunk)
+
+    def orchestrate() -> None:
+        close_old_connections()
+        try:
+            plan_holder["plan"] = orchestrator.run_turn(
+                conversation=conversation,
+                user_message=body,
+                on_response_text_delta=on_response_text_delta,
+            )
+        except Exception as exc:  # pragma: no cover - defensive
+            logger.exception("Orchestrator turn failed: %s", exc)
+            plan_holder["error"] = str(exc)
+        finally:
+            close_old_connections()
+            stream_queue.put(stream_sentinel)
+
+    worker = threading.Thread(target=orchestrate, daemon=True)
+    worker.start()
 
     def event_stream() -> Iterable[str]:
-        yield "event: delta\n"
-        yield "data: \"Pocket AI is thinking...\"\n\n"
-        time.sleep(0.8)
-        response = {
-            "text": f"Our assistant received your message: {body}",
-            "id": f"assistant-{len(messages)}",
-        }
-        messages.append(
-            ChatMessage(
-                id=response["id"],
-                author="Pocket AI",
-                body=response["text"],
-                sent_at=datetime.now(timezone.utc),
+        streamed_from_provider = False
+        while True:
+            try:
+                chunk = stream_queue.get(timeout=0.1)
+            except Empty:
+                if worker.is_alive():
+                    continue
+                else:
+                    continue
+            if chunk is stream_sentinel:
+                break
+            streamed_from_provider = True
+            yield "event: delta\n"
+            yield f"data: {json.dumps({'text': chunk})}\n\n"
+        worker.join()
+        plan: AiOrchestratorPlan | None = plan_holder.get("plan")
+        if not plan:
+            error_message = plan_holder.get("error", "AI orchestration failed")
+            yield "event: error\n"
+            yield f"data: {json.dumps(error_message)}\n\n"
+            return
+        if not streamed_from_provider:
+            for chunk in _response_chunks(plan.response_text):
+                yield "event: delta\n"
+                yield f"data: {json.dumps({'text': chunk})}\n\n"
+
+        action_results = dispatcher.execute(conversation=conversation, planned_actions=plan.planned_actions)
+        if plan.extractions:
+            service.store_extractions(
+                session_token=session_token,
+                items=((extraction.extraction_type, extraction.payload) for extraction in plan.extractions),
             )
+
+        serialized_actions = serialize_action_results(action_results)
+        ai_message = service.append_message(
+            session_token=session_token,
+            sender=ConversationSender.AI,
+            body=plan.response_text,
+            metadata={
+                "citations": [snippet.title for snippet in plan.citations],
+                "actions": serialized_actions,
+                "diagnostics": plan.diagnostics,
+            },
         )
-        yield f"event: final\n"
-        yield f"data: {json.dumps(response)}\n\n"
+
+        session_state = service.get_session_state(session_token=session_token)
+        final_payload = {
+            "text": plan.response_text,
+            "message_id": str(ai_message.id),
+            "session_status": session_state.status,
+        }
+        yield "event: final\n"
+        yield f"data: {json.dumps(final_payload)}\n\n"
 
     return StreamingHttpResponse(event_stream(), content_type="text/event-stream")
 
 
 @require_GET
 def events(request: HttpRequest) -> StreamingHttpResponse:
-    session_token = request.GET.get("session_token")
+    session_token = request.GET.get("session_token") or request.GET.get("sessionToken")
     if not session_token:
         return StreamingHttpResponse(status=400)
+    service = _service()
+    try:
+        session = service.get_session_state(session_token=session_token)
+    except PortalNotFoundError:
+        return StreamingHttpResponse(status=404)
 
-    def heartbeat() -> Iterable[str]:
+    def heartbeat_stream() -> Iterable[str]:
+        yield "event: statusChanged\n"
+        yield f"data: {json.dumps({'status': session.status})}\n\n"
         while True:
             yield "event: heartbeat\n"
             yield "data: {}\n\n"
             time.sleep(15)
 
-    return StreamingHttpResponse(heartbeat(), content_type="text/event-stream")
+    response = StreamingHttpResponse(heartbeat_stream(), content_type="text/event-stream")
+    response["Cache-Control"] = "no-cache"
+    response["X-Accel-Buffering"] = "no"
+    return response
