@@ -32,10 +32,12 @@ class PromptBuilder:
     CASE_MANDATE = textwrap.dedent(
         """
         ### Case Management Mandate
-        - Every conversation session MUST have a case. If none is linked, you must propose a new case via the `create_case` action.
+        - Create a case ONLY when the visitor shares business-related context (orders, payments, account issues, etc.). Ignore pure greetings or chit-chat.
+        - Once legitimate business context exists and no case is linked, you must propose a new case via the `create_case` action.
         - Case payloads require: `title`, `description`, `priority`, `ai_diagnosis`, `ai_actions_taken`, `ai_suggested_actions` (array), and `metadata.source="ai_orchestrator"`.
         - When a case already exists, either update its status (`update_case_status`) or enrich it with new diagnosis/actions.
         - If multiple independent customer intents are detected, summarise each in the assistant reply, but prioritise the highest impact intent when filling the primary case payload.
+        - Case descriptions should only change when the original context was wrong. Otherwise, capture developments via case history entries.
         - These requirements are internal to the agent. Do NOT mention creating/updating cases unless the visitor explicitly asks about case status.
         """
     ).strip()
@@ -47,6 +49,7 @@ class PromptBuilder:
         - Always mention next steps and clarifications in the assistant reply so the customer knows what will happen.
         - Reference knowledge snippets explicitly when they helped decide an answer.
         - Keep internal workflows invisible. Do NOT mention cases, leads, CRM records, or internal notes unless the visitor explicitly asks for that information.
+        - When a visitor asks about case status, only mention the latest status if it directly answers their question; otherwise keep the workflow behind the scenes.
         """
     ).strip()
 
@@ -54,12 +57,27 @@ class PromptBuilder:
         """
         ### Action Output Contract
         - `actions[]` must align with the provided catalog. Each entry needs `action` and `payload`.
-        - Use `create_case` when no case exists or when a new major topic is introduced.
-        - Use `update_case_status` when the customer confirms resolution or closure.
+        - Use `create_case` only when the visitor shares business context (issues with products, services, payments, etc.).
+        - Use `update_case_status` when the customer confirms resolution or closure. Only use status values `open` or `closed` (synonyms mapped accordingly).
+        - Use `update_case_details` only when the original case details were wrong. Include `allow_description_overwrite=true` when you truly must replace the description.
+        - Use `add_case_history` to log important updates, milestones, or clarifications without mutating the case description.
         - Use `flag_escalation`, `create_customer`, `create_lead`, or `create_appointment` when the scenario demands it and the action is enabled.
         - `extractions[]` capture structured signals (lead, appointment, complaint, escalation) that need human follow-up.
         - These actions are internal—acknowledge outcomes to the visitor only when it helps them (e.g., “I’ve captured your appointment request”), never outline the workflow itself or mention the word “case” unless the visitor asked about it.
         - Emit the JSON keys in this exact order so streaming can highlight the reply text quickly: `response_text`, `actions`, then `extractions`.
+        """
+    ).strip()
+
+    CUSTOMER_RULES = textwrap.dedent(
+        """
+        ### Customer Identity Rules
+        - Always try to match the visitor to an existing customer using accurate identifiers: email or phone number.
+        - If a phone or email is provided, include it in your `create_customer` payload so the platform can match existing records.
+        - Never assume identity using name alone. Only create a name-only record when the visitor explicitly refuses to share phone/email, and set `refused_contact=true` in the payload.
+        - If a name and phone/email are present, always include both so the backend can preserve recognizable records.
+        - Do not update existing phone or email values using `update_customer`. Only adjust display name or metadata.
+        - When you believe a customer already exists, issue `create_customer` with the identifiers; the backend will match it.
+        - When the visitor continues after a case is opened, log evolving details using `add_case_history` rather than changing the description.
         """
     ).strip()
 
@@ -92,6 +110,8 @@ class PromptBuilder:
             {self.CONVERSATION_RULES}
 
             {self.ACTION_RULES}
+
+            {self.CUSTOMER_RULES}
             """
         ).strip()
 

@@ -62,6 +62,7 @@ class ChatPortalClient {
       }
       await this.sendMessage(message);
       form.reset();
+      this.clearComposerInput();
     });
   }
 
@@ -182,6 +183,7 @@ class ChatPortalClient {
       if (this.streamingMessageNode) {
         this.resetStreamingState(true);
       }
+      this.clearComposerInput();
     }
   }
 
@@ -401,6 +403,13 @@ class ChatPortalClient {
     this.streamingMessageNode = null;
     this.streamingMessageBodyEl = null;
     this.streamingBuffer = "";
+  }
+
+  clearComposerInput() {
+    const textarea = this.elements.sendForm?.querySelector("textarea[name='message']");
+    if (textarea) {
+      textarea.value = "";
+    }
   }
 
   updateStatus(status) {

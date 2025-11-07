@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import threading
 import time
 from queue import Empty, Queue
@@ -336,16 +337,40 @@ def stream_send(request: HttpRequest) -> StreamingHttpResponse:
             yield "event: error\n"
             yield f"data: {json.dumps(error_message)}\n\n"
             return
+        else:
+            logger.info(
+                "portal plan ready conversation=%s actions=%s extractions=%s",
+                conversation.id,
+                [action.action.value for action in plan.planned_actions],
+                [extraction.extraction_type.value for extraction in plan.extractions],
+            )
         if not streamed_from_provider:
             for chunk in _response_chunks(plan.response_text):
                 yield "event: delta\n"
                 yield f"data: {json.dumps({'text': chunk})}\n\n"
 
         action_results = dispatcher.execute(conversation=conversation, planned_actions=plan.planned_actions)
+        logger.info(
+            "portal action results conversation=%s results=%s",
+            conversation.id,
+            [
+                {
+                    "action": result.action.value,
+                    "status": result.status,
+                    "error": result.error,
+                }
+                for result in action_results
+            ],
+        )
         if plan.extractions:
             service.store_extractions(
                 session_token=session_token,
                 items=((extraction.extraction_type, extraction.payload) for extraction in plan.extractions),
+            )
+            logger.info(
+                "portal extractions stored conversation=%s count=%s",
+                conversation.id,
+                len(plan.extractions),
             )
 
         serialized_actions = serialize_action_results(action_results)
@@ -366,6 +391,12 @@ def stream_send(request: HttpRequest) -> StreamingHttpResponse:
             "message_id": str(ai_message.id),
             "session_status": session_state.status,
         }
+        logger.info(
+            "portal response finalized conversation=%s message_id=%s status=%s",
+            conversation.id,
+            ai_message.id,
+            session_state.status,
+        )
         yield "event: final\n"
         yield f"data: {json.dumps(final_payload)}\n\n"
 
@@ -395,3 +426,4 @@ def events(request: HttpRequest) -> StreamingHttpResponse:
     response["Cache-Control"] = "no-cache"
     response["X-Accel-Buffering"] = "no"
     return response
+logger = logging.getLogger(__name__)
