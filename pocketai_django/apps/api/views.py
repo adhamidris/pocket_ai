@@ -2,16 +2,18 @@ from __future__ import annotations
 
 import json
 import logging
+import mimetypes
 import uuid
 from http import HTTPStatus
+from pathlib import Path
 
 from django.conf import settings
 from django.contrib.auth import login as auth_login
-from django.http import HttpRequest, JsonResponse
+from django.http import FileResponse, HttpRequest, JsonResponse
 from django.views.decorators.csrf import csrf_protect
 from django.views.decorators.http import require_http_methods
 
-from apps.accounts.models import AgentProfile, BusinessProfile, KnowledgeUpload
+from apps.accounts.models import AgentProfile, BusinessProfile, KnowledgeSourceType, KnowledgeUpload
 from apps.cases.models import Case, CaseMessage, CasePriority, CaseStatus
 from apps.customers.models import Customer, CustomerNoteAuthor
 from apps.services.action_controls import list_action_settings, set_action_setting
@@ -330,6 +332,33 @@ def _resolve_business_profile(request: HttpRequest, business_id: str | None) -> 
         {"error": "BUSINESS_REQUIRED", "message": "A business_id is required to perform this action."},
         status=HTTPStatus.BAD_REQUEST,
     )
+
+
+def _serve_document_file(file_detail, *, download: bool) -> FileResponse:
+    media_root = Path(getattr(settings, "MEDIA_ROOT", ""))
+    if not media_root:
+        raise PermissionError("MEDIA_ROOT is not configured.")
+
+    media_root = media_root.resolve()
+    storage_path = Path(file_detail.storage_path)
+    absolute = (media_root / storage_path).resolve()
+    try:
+        absolute.relative_to(media_root)
+    except ValueError as exc:
+        raise PermissionError("Invalid storage path.") from exc
+
+    if not absolute.exists():
+        raise FileNotFoundError(file_detail.storage_path)
+
+    filename = file_detail.filename or absolute.name
+    content_type = file_detail.content_type or mimetypes.guess_type(filename)[0] or "application/octet-stream"
+    response = FileResponse(
+        absolute.open("rb"),
+        as_attachment=download,
+        filename=filename,
+    )
+    response["Content-Type"] = content_type
+    return response
 
 
 def _iso(dt):
@@ -779,6 +808,13 @@ def knowledge_documents_collection(request: HttpRequest) -> JsonResponse:
             offset=offset,
         )
     except KnowledgeDocumentListValidationError as exc:
+        logger.warning(
+            "knowledge_documents_collection validation_error user=%s business=%s field=%s message=%s",
+            getattr(request.user, "id", None),
+            getattr(business, "id", None),
+            exc.field,
+            exc,
+        )
         payload = {
             "error": "VALIDATION_ERROR",
             "message": str(exc),
@@ -786,6 +822,21 @@ def knowledge_documents_collection(request: HttpRequest) -> JsonResponse:
         if exc.field:
             payload["field"] = exc.field
         return JsonResponse(payload, status=HTTPStatus.BAD_REQUEST)
+
+    logger.info(
+        "knowledge_documents_collection user=%s business=%s total=%s limit=%s offset=%s filters=%s",
+        getattr(request.user, "id", None),
+        business.id,
+        result.total,
+        result.limit,
+        result.offset,
+        {
+            "q": q_name,
+            "collection": collection_slug,
+            "status": status,
+            "source_type": source_type,
+        },
+    )
 
     response = {
         "items": [_serialize_document_summary(item) for item in result.items],
@@ -807,12 +858,112 @@ def knowledge_document_detail(request: HttpRequest, document_id: uuid.UUID) -> J
     try:
         detail = get_knowledge_document_detail(business_profile=business, document_id=document_id)
     except KnowledgeUpload.DoesNotExist:
+        logger.warning(
+            "knowledge_document_detail not_found user=%s business=%s document=%s",
+            getattr(request.user, "id", None),
+            business.id,
+            document_id,
+        )
         return JsonResponse(
             {"error": "DOCUMENT_NOT_FOUND", "message": "Document not found."},
             status=HTTPStatus.NOT_FOUND,
         )
 
+    logger.info(
+        "knowledge_document_detail user=%s business=%s document=%s status=%s source=%s",
+        getattr(request.user, "id", None),
+        business.id,
+        document_id,
+        detail.summary.status,
+        detail.summary.source_type,
+    )
+
     return JsonResponse({"document": _serialize_document_detail(detail)}, status=HTTPStatus.OK)
+
+
+@require_http_methods(["GET"])
+def knowledge_document_download(request: HttpRequest, document_id: uuid.UUID):
+    if not request.user.is_authenticated:
+        logger.warning("knowledge_document_download unauthorized document=%s", document_id)
+        return JsonResponse(
+            {"error": "UNAUTHORIZED", "message": "Login required to download documents."},
+            status=HTTPStatus.UNAUTHORIZED,
+        )
+
+    business_id = request.GET.get("business_id")
+    business, error = _resolve_business_profile(request, business_id)
+    if error:
+        return error
+    assert business is not None
+
+    owns_business = request.user.is_staff or request.user.business_profiles.filter(id=business.id).exists()
+    if not owns_business:
+        logger.warning(
+            "knowledge_document_download forbidden user=%s business=%s document=%s",
+            getattr(request.user, "id", None),
+            business.id,
+            document_id,
+        )
+        return JsonResponse(
+            {"error": "FORBIDDEN", "message": "You do not have access to this document."},
+            status=HTTPStatus.FORBIDDEN,
+        )
+
+    upload = (
+        KnowledgeUpload.objects.filter(
+            business_profile=business,
+            id=document_id,
+            source_type=KnowledgeSourceType.FILE,
+        )
+        .select_related("file_detail")
+        .first()
+    )
+    if upload is None or not upload.file_detail:
+        logger.warning(
+            "knowledge_document_download missing_file user=%s business=%s document=%s",
+            getattr(request.user, "id", None),
+            business.id,
+            document_id,
+        )
+        return JsonResponse(
+            {"error": "DOCUMENT_NOT_FOUND", "message": "File not found for download."},
+            status=HTTPStatus.NOT_FOUND,
+        )
+
+    download = request.GET.get("download") == "1"
+    try:
+        response = _serve_document_file(upload.file_detail, download=download)
+    except PermissionError:
+        logger.error(
+            "knowledge_document_download invalid_path user=%s business=%s document=%s",
+            getattr(request.user, "id", None),
+            business.id,
+            document_id,
+        )
+        return JsonResponse(
+            {"error": "FILE_INVALID", "message": "File path is invalid."},
+            status=HTTPStatus.BAD_REQUEST,
+        )
+    except FileNotFoundError:
+        logger.error(
+            "knowledge_document_download file_missing user=%s business=%s document=%s",
+            getattr(request.user, "id", None),
+            business.id,
+            document_id,
+        )
+        return JsonResponse(
+            {"error": "FILE_MISSING", "message": "Original file is no longer available."},
+            status=HTTPStatus.GONE,
+        )
+
+    logger.info(
+        "knowledge_document_download success user=%s business=%s document=%s as_attachment=%s",
+        getattr(request.user, "id", None),
+        business.id,
+        document_id,
+        download,
+    )
+    return response
 
 
 @require_http_methods(["POST"])

@@ -4,21 +4,24 @@ import dataclasses
 import logging
 import uuid
 from enum import Enum
+from types import SimpleNamespace
 from typing import Callable, Iterable, Mapping, Sequence
 
 from django.db import transaction
 from django.utils import timezone
 
-from apps.accounts.models import AgentProfile, KnowledgeStatus, KnowledgeUpload
+from apps.accounts.models import AgentProfile, KnowledgeStatus, KnowledgeUpload, KnowledgeUploadChunk
 from apps.cases.models import Case, CaseHistoryEntry, CasePriority, CaseStatus
 from apps.conversations.models import (
     Conversation,
     ConversationExtraction,
     ConversationExtractionType,
+    ConversationSender,
     ConversationStatus,
 )
 from apps.customers.models import Customer, CustomerRecordOrigin
 from apps.services.ai_prompt_builder import PromptBuilder, PromptBundle
+from apps.services.embeddings import build_embedding_service, EmbeddingProviderError
 from apps.services.llm_provider import BaseLLMProvider, PromptGenerationError
 
 
@@ -35,6 +38,7 @@ class ActionType(str, Enum):
     UPDATE_CUSTOMER = "update_customer"
     CREATE_LEAD = "create_lead"
     CREATE_APPOINTMENT = "create_appointment"
+    READ_KNOWLEDGE = "read_knowledge"
 
 
 def _is_business_text(text: str | None) -> bool:
@@ -143,6 +147,11 @@ ACTION_REGISTRY: dict[ActionType, ActionDescriptor] = {
         label="Create Appointment",
         description="Persist appointment requests for downstream scheduling.",
     ),
+    ActionType.READ_KNOWLEDGE: ActionDescriptor(
+        key=ActionType.READ_KNOWLEDGE,
+        label="Read Knowledge Document",
+        description="Request the full content of one or more knowledge uploads by ID (payload.knowledge_ids[]).",
+    ),
 }
 
 
@@ -152,6 +161,8 @@ class KnowledgeSnippet:
     title: str
     summary: str
     source: str
+    content: str | None = None
+    public_label: str | None = None
 
 
 @dataclasses.dataclass(frozen=True)
@@ -188,9 +199,74 @@ class ActionExecutionError(Exception):
 
 
 class KnowledgeSearchService:
-    """Stubbed RAG search leveraging the KnowledgeUpload catalog."""
+    """Chunk-aware RAG search leveraging extracted knowledge uploads."""
+
+    def __init__(self) -> None:
+        self.embedding_service = build_embedding_service()
 
     def search(self, *, business_profile, query: str, limit: int = 3) -> Sequence[KnowledgeSnippet]:
+        normalized_query = (query or "").strip()
+        if normalized_query:
+            chunk_snippets = self._search_chunks(business_profile, normalized_query, limit=limit)
+            if chunk_snippets:
+                return tuple(chunk_snippets)
+        return tuple(self._fallback_snippets(business_profile=business_profile, limit=limit))
+
+    def _search_chunks(self, business_profile, query: str, limit: int) -> Sequence[KnowledgeSnippet]:
+        hits = self._chunk_hits(business_profile, query, limit=limit * 3)
+        if not hits:
+            return tuple()
+
+        snippets: list[KnowledgeSnippet] = []
+        seen_uploads: set[uuid.UUID] = set()
+        for chunk in hits:
+            upload = chunk.upload
+            if upload.id in seen_uploads:
+                continue
+            snippets.append(self._chunk_to_snippet(chunk))
+            seen_uploads.add(upload.id)
+            if len(snippets) >= limit:
+                break
+        return tuple(snippets)
+
+    def _chunk_hits(self, business_profile, query: str, limit: int) -> Sequence[KnowledgeUploadChunk]:
+        base_qs = (
+            KnowledgeUploadChunk.objects.filter(
+                upload__business_profile=business_profile,
+                upload__status=KnowledgeStatus.ACTIVE,
+            )
+            .select_related("upload")
+            .order_by("-upload__updated_at")
+        )
+        # Embedding search
+        if self.embedding_service:
+            candidates = list(base_qs.exclude(embedding__isnull=True)[:400])
+            if candidates:
+                try:
+                    query_vector = self.embedding_service.embed_text(query)
+                except EmbeddingProviderError as exc:
+                    logger.warning("Query embedding failed: %s", exc)
+                else:
+                    if query_vector:
+                        scored: list[tuple[float, KnowledgeUploadChunk]] = []
+                        for chunk in candidates:
+                            vector = chunk.embedding
+                            if not isinstance(vector, list):
+                                continue
+                            score = self._cosine_similarity(query_vector, vector)
+                            scored.append((score, chunk))
+                        scored.sort(key=lambda item: item[0], reverse=True)
+                        hits = [chunk for score, chunk in scored[:limit] if score > 0]
+                        if hits:
+                            return tuple(hits)
+        # Keyword fallback
+        keyword_hits = (
+            base_qs.filter(content__icontains=query)
+            .order_by("-upload__updated_at")[:limit]
+        )
+        return tuple(keyword_hits)
+
+    def _fallback_snippets(self, *, business_profile, limit: int) -> Sequence[KnowledgeSnippet]:
         qs = (
             KnowledgeUpload.objects.filter(
                 business_profile=business_profile,
@@ -200,15 +276,125 @@ class KnowledgeSearchService:
         )
         snippets: list[KnowledgeSnippet] = []
         for upload in qs:
+            label = self._public_label(upload)
             snippets.append(
                 KnowledgeSnippet(
                     id=upload.id,
-                    title=upload.display_name or upload.source_name or "Untitled document",
-                    summary=(upload.summary or upload.description or "")[:280],
+                    title=label,
+                    summary=self._summarize_upload(upload),
                     source=upload.source_name or upload.source_type,
+                    public_label=label,
                 )
             )
         return tuple(snippets)
+
+    def _chunk_to_snippet(self, chunk: KnowledgeUploadChunk) -> KnowledgeSnippet:
+        upload = chunk.upload
+        label = self._public_label(upload)
+        summary = self._summarize_chunk(chunk)
+        content = self._trim_content(chunk.content, max_chars=1200)
+        return KnowledgeSnippet(
+            id=upload.id,
+            title=label,
+            summary=summary,
+            source=upload.source_name or upload.source_type,
+            content=content,
+            public_label=label,
+        )
+
+    def load_contents(
+        self,
+        *,
+        business_profile,
+        knowledge_ids: Sequence[str],
+        max_chars: int = 2000,
+    ) -> Sequence[KnowledgeSnippet]:
+        normalized: list[uuid.UUID] = []
+        for value in knowledge_ids:
+            try:
+                normalized.append(uuid.UUID(str(value)))
+            except (TypeError, ValueError):
+                continue
+        if not normalized:
+            return tuple()
+        qs = (
+            KnowledgeUpload.objects.filter(
+                business_profile=business_profile,
+                status=KnowledgeStatus.ACTIVE,
+                id__in=normalized,
+            )
+            .select_related("text_detail")
+            .order_by("-updated_at")
+        )
+        snippets: list[KnowledgeSnippet] = []
+        for upload in qs:
+            label = self._public_label(upload)
+            content = self._trim_content(self._extract_content(upload), max_chars=max_chars)
+            snippets.append(
+                KnowledgeSnippet(
+                    id=upload.id,
+                    title=label,
+                    summary=self._summarize_upload(upload),
+                    source=upload.source_name or upload.source_type,
+                    content=content,
+                    public_label=label,
+                )
+            )
+        return tuple(snippets)
+
+    @staticmethod
+    def _public_label(upload: KnowledgeUpload) -> str:
+        metadata = upload.metadata or {}
+        if isinstance(metadata, dict):
+            for key in ("public_label", "customer_label", "display_label"):
+                label = metadata.get(key)
+                if isinstance(label, str) and label.strip():
+                    return label.strip()
+        return (upload.display_name or upload.source_name or upload.external_reference or "Knowledge Resource").strip()
+
+    @staticmethod
+    def _summarize_upload(upload: KnowledgeUpload) -> str:
+        summary = (upload.summary or upload.description or "No summary available.").strip()
+        return summary[:280]
+
+    @staticmethod
+    def _summarize_chunk(chunk: KnowledgeUploadChunk) -> str:
+        text = (chunk.content or "").strip()
+        if not text:
+            return "No summary available."
+        first_line = text.splitlines()[0].strip()
+        snippet = first_line or text
+        return snippet[:280]
+
+    @staticmethod
+    def _extract_content(upload: KnowledgeUpload) -> str:
+        if upload.text_detail and upload.text_detail.content:
+            return upload.text_detail.content
+        if upload.description:
+            return upload.description
+        if upload.summary:
+            return upload.summary
+        return ""
+
+    @staticmethod
+    def _trim_content(content: str, *, max_chars: int) -> str:
+        text = (content or "").strip()
+        if not text:
+            return ""
+        if len(text) <= max_chars:
+            return text
+        return f"{text[:max_chars].rstrip()}…"
+
+    @staticmethod
+    def _cosine_similarity(a: Sequence[float], b: Sequence[float]) -> float:
+        if not a or not b or len(a) != len(b):
+            return 0.0
+        dot = sum(x * y for x, y in zip(a, b))
+        norm_a = sum(x * x for x in a) ** 0.5
+        norm_b = sum(y * y for y in b) ** 0.5
+        if norm_a == 0 or norm_b == 0:
+            return 0.0
+        return dot / (norm_a * norm_b)
 
 
 @dataclasses.dataclass(frozen=True)
@@ -216,6 +402,7 @@ class LlmPlan:
     response_text: str
     planned_actions: Sequence[PlannedAction]
     extractions: Sequence[ExtractionPlan]
+    knowledge_requests: Sequence[str]
 
 
 class AiOrchestratorService:
@@ -243,6 +430,8 @@ class AiOrchestratorService:
         conversation: Conversation,
         user_message: str,
         on_response_text_delta: Callable[[str], None] | None = None,
+        on_status_change: Callable[[str], None] | None = None,
+        on_placeholder_response: Callable[[str], None] | None = None,
     ) -> AiOrchestratorPlan:
         """
         Build the orchestration plan for the latest customer message.
@@ -259,45 +448,168 @@ class AiOrchestratorService:
             conversation.case_id,
             query[:160],
         )
-        citations = self.knowledge_service.search(
-            business_profile=conversation.business_profile,
-            query=query,
+        citations = list(
+            self.knowledge_service.search(
+                business_profile=conversation.business_profile,
+                query=query,
+            )
         )
         actions_catalog = self._actions_catalog()
-        recent_messages = self._recent_messages(conversation)
-        prompt_bundle = self.prompt_builder.build(
-            conversation=conversation,
-            knowledge_snippets=[
-                {"id": str(snippet.id), "title": snippet.title, "summary": snippet.summary, "source": snippet.source}
-                for snippet in citations
-            ],
-            transcript=recent_messages,
-            actions_catalog=actions_catalog,
-        )
+        recent_messages = list(self._recent_messages(conversation))
+        knowledge_payload = [self._serialize_snippet(snippet) for snippet in citations]
+        snippet_lookup: dict[str, KnowledgeSnippet] = {str(snippet.id): snippet for snippet in citations}
+        loaded_content_ids: set[str] = {str(snippet.id) for snippet in citations if snippet.content}
+        knowledge_reads: list[dict[str, str]] = []
+        placeholder_response: str | None = None
+        knowledge_loading = False
+        placeholder_sent = False
+        placeholder_added_to_prompt = False
+        streamed_chunks: list[str] = []
+        last_iteration_streamed = False
+        iteration_streamed = False
 
-        llm_plan = self._invoke_llm(prompt_bundle, on_response_text_delta=on_response_text_delta)
+        def _record_stream_chunk(chunk: str) -> None:
+            if not chunk:
+                return
+            streamed_chunks.append(chunk)
+            if on_response_text_delta:
+                on_response_text_delta(chunk)
+
+        def _provider_stream_callback(chunk: str) -> None:
+            nonlocal iteration_streamed
+            if not chunk:
+                return
+            iteration_streamed = True
+            _record_stream_chunk(chunk)
+
+        def _remember_placeholder_for_prompt(text: str | None) -> None:
+            nonlocal placeholder_added_to_prompt
+            if placeholder_added_to_prompt or not text:
+                return
+            recent_messages.append(
+                SimpleNamespace(
+                    sender=ConversationSender.AI,
+                    body=text,
+                    sent_at=timezone.now(),
+                    metadata={"placeholder": True},
+                )
+            )
+            placeholder_added_to_prompt = True
+
+        prompt_bundle: PromptBundle | None = None
+        final_plan: LlmPlan | None = None
+        plan_candidate: LlmPlan | None = None
+        max_turns = 3
+
+        for _ in range(max_turns):
+            prompt_bundle = self.prompt_builder.build(
+                conversation=conversation,
+                knowledge_snippets=knowledge_payload,
+                transcript=recent_messages,
+                actions_catalog=actions_catalog,
+            )
+
+            iteration_streamed = False
+            stream_callback = _provider_stream_callback if on_response_text_delta else None
+            plan_candidate = self._invoke_llm(prompt_bundle, on_response_text_delta=stream_callback)
+            last_iteration_streamed = iteration_streamed
+            if not plan_candidate:
+                final_plan = None
+                break
+
+            pending_requests = [
+                knowledge_id
+                for knowledge_id in plan_candidate.knowledge_requests
+                if knowledge_id not in loaded_content_ids
+            ]
+            if not pending_requests:
+                final_plan = plan_candidate
+                break
+
+            if plan_candidate.response_text:
+                placeholder_response = plan_candidate.response_text
+                if on_placeholder_response and not placeholder_sent:
+                    on_placeholder_response(placeholder_response)
+                    placeholder_sent = True
+                _remember_placeholder_for_prompt(placeholder_response)
+            knowledge_loading = True
+            if on_status_change:
+                on_status_change("reading_document")
+
+            fetched = self.knowledge_service.load_contents(
+                business_profile=conversation.business_profile,
+                knowledge_ids=pending_requests,
+            )
+            if not fetched:
+                logger.info(
+                    "LLM requested knowledge ids %s but nothing was fetched; proceeding without extra context",
+                    pending_requests,
+                )
+                final_plan = plan_candidate
+                break
+
+            for snippet in fetched:
+                key = str(snippet.id)
+                loaded_content_ids.add(key)
+                snippet_lookup[key] = snippet
+                payload = self._serialize_snippet(snippet)
+                if snippet.content:
+                    payload["content"] = snippet.content
+                self._upsert_knowledge_payload(knowledge_payload, payload)
+                knowledge_reads.append(
+                    {
+                        "id": key,
+                        "label": snippet.public_label or snippet.title,
+                    }
+                )
+                logger.info("Loaded knowledge snippet id=%s label=%s", key, snippet.public_label or snippet.title)
+        else:
+            final_plan = plan_candidate
+
+        llm_plan = final_plan
+        resolved_citations = tuple(snippet_lookup.values()) if snippet_lookup else tuple(citations)
         if llm_plan:
-            planned_actions = list(llm_plan.planned_actions)
+            if knowledge_loading and on_status_change:
+                on_status_change("responding")
+            planned_actions = [
+                action for action in llm_plan.planned_actions if action.action != ActionType.READ_KNOWLEDGE
+            ]
             extractions = list(llm_plan.extractions)
-            response_text = llm_plan.response_text
+            response_text = (llm_plan.response_text or "").strip()
+            if knowledge_loading and not response_text and placeholder_response:
+                response_text = placeholder_response.strip()
             llm_source = "provider"
         else:
             planned_actions, extractions = self._plan_actions(conversation=conversation, user_message=query)
             response_text = self._compose_placeholder_response(
                 user_message=query,
-                citations=citations,
+                citations=resolved_citations,
                 planned_actions=planned_actions,
             )
             llm_source = "heuristic"
 
+        if on_response_text_delta and response_text and not last_iteration_streamed:
+            _record_stream_chunk(response_text)
+
+        streamed_text = "".join(streamed_chunks).strip()
+        if streamed_text:
+            response_text = streamed_text
+
+        response_stream_text = response_text
+
         diagnostics = {
             "planned_action_count": len(planned_actions),
             "extraction_count": len(extractions),
-            "citations": [snippet.title for snippet in citations],
+            "citations": [snippet.title for snippet in resolved_citations],
             "llm_strategy": llm_source,
-            "prompt_preview": prompt_bundle.system_prompt[:160],
-            "transcript_messages": len(prompt_bundle.transcript),
+            "prompt_preview": prompt_bundle.system_prompt[:160] if prompt_bundle else "",
+            "transcript_messages": len(prompt_bundle.transcript) if prompt_bundle else 0,
+            "knowledge_reads": knowledge_reads,
+            "knowledge_loading": knowledge_loading,
+            "response_stream_text": response_stream_text,
         }
+        if placeholder_response:
+            diagnostics["placeholder_response"] = placeholder_response.strip()
 
         self._log_plan_summary(
             conversation=conversation,
@@ -309,7 +621,7 @@ class AiOrchestratorService:
 
         return AiOrchestratorPlan(
             response_text=response_text,
-            citations=citations,
+            citations=resolved_citations,
             planned_actions=planned_actions,
             extractions=extractions,
             diagnostics=diagnostics,
@@ -346,6 +658,30 @@ class AiOrchestratorService:
     def _recent_messages(conversation: Conversation, limit: int = 8) -> Sequence:
         qs = conversation.messages.all().order_by("-sent_at", "-created_at")[:limit]
         return tuple(reversed(tuple(qs)))
+
+    @staticmethod
+    def _serialize_snippet(snippet: KnowledgeSnippet) -> dict[str, str]:
+        payload: dict[str, str] = {
+            "id": str(snippet.id),
+            "title": snippet.title,
+            "summary": snippet.summary,
+            "source": snippet.source,
+        }
+        if snippet.public_label:
+            payload["public_label"] = snippet.public_label
+        if snippet.content:
+            payload["content"] = snippet.content
+        return payload
+
+    @staticmethod
+    def _upsert_knowledge_payload(payload: list[dict], snippet_payload: Mapping[str, object]) -> None:
+        target_id = snippet_payload.get("id")
+        for existing in payload:
+            if existing.get("id") == target_id:
+                existing.update(snippet_payload)
+                break
+        else:
+            payload.append(dict(snippet_payload))
 
     def _invoke_llm(self, bundle: PromptBundle, *, on_response_text_delta: Callable[[str], None] | None = None) -> LlmPlan | None:
         if not self.provider:
@@ -397,9 +733,16 @@ class AiOrchestratorService:
         if not text:
             return None
         planned_actions: list[PlannedAction] = []
+        knowledge_requests: list[str] = []
         for action_payload in raw_payload.get("actions", []) or []:
             key = action_payload.get("action") if isinstance(action_payload, dict) else None
             if not key:
+                continue
+            if key == ActionType.READ_KNOWLEDGE.value:
+                payload = action_payload.get("payload") if isinstance(action_payload, dict) else None
+                requested = self._extract_knowledge_ids(payload or {})
+                if requested:
+                    knowledge_requests.extend(requested)
                 continue
             try:
                 action_type = ActionType(key)
@@ -425,7 +768,29 @@ class AiOrchestratorService:
                 )
             )
 
-        return LlmPlan(response_text=text, planned_actions=planned_actions, extractions=extractions)
+        return LlmPlan(
+            response_text=text,
+            planned_actions=planned_actions,
+            extractions=extractions,
+            knowledge_requests=tuple(knowledge_requests),
+        )
+
+    @staticmethod
+    def _extract_knowledge_ids(payload: Mapping[str, object]) -> Sequence[str]:
+        identifiers: list[str] = []
+        if not payload:
+            return identifiers
+        raw_ids = payload.get("knowledge_ids") or payload.get("knowledge_id")
+        if isinstance(raw_ids, str):
+            raw_ids = [raw_ids]
+        if isinstance(raw_ids, (list, tuple, set)):
+            for item in raw_ids:
+                if item is None:
+                    continue
+                identifier = str(item).strip()
+                if identifier:
+                    identifiers.append(identifier)
+        return identifiers
 
     def _plan_actions(self, *, conversation: Conversation, user_message: str) -> tuple[list[PlannedAction], list[ExtractionPlan]]:
         plans: list[PlannedAction] = []
@@ -794,6 +1159,12 @@ class ActionDispatcher:
         fields.append("updated_at")
         customer.save(update_fields=fields)
         return {"customer_id": str(customer.id), "updated": True}
+
+    def _handle_read_knowledge(self, *, conversation: Conversation, payload: dict) -> dict:  # pragma: no cover - safeguard
+        requested = payload.get("knowledge_ids") or payload.get("knowledge_id") or []
+        if isinstance(requested, str):
+            requested = [requested]
+        return {"requested_ids": requested, "status": "handled_upstream"}
 
     def _match_customer(self, *, business_profile, email: str | None, phone: str | None) -> Customer | None:
         qs = Customer.objects.filter(business_profile=business_profile)

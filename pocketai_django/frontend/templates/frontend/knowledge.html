@@ -10,13 +10,28 @@
       <header class="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
         <div class="text-xl md:text-2xl font-semibold text-gradient-hero">Knowledge</div>
         <div class="flex flex-wrap items-center gap-2">
-          <button type="button" class="inline-flex items-center gap-2 rounded-lg bg-primary text-primary-foreground px-4 py-2 text-sm font-medium shadow-sm transition-all duration-300 hover:bg-primary/90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2">
+          <button
+            type="button"
+            class="inline-flex items-center gap-2 rounded-lg bg-primary text-primary-foreground px-4 py-2 text-sm font-medium shadow-sm transition-all duration-300 hover:bg-primary/90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 {% if not knowledge_upload_enabled %}opacity-40 cursor-not-allowed{% endif %}"
+            data-upload-toggle
+            {% if not knowledge_upload_enabled %}disabled aria-disabled="true"{% endif %}
+          >
             <svg class="h-4 w-4" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" aria-hidden="true">
               <path stroke-linecap="round" stroke-linejoin="round" d="M4 16v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2" />
               <path stroke-linecap="round" stroke-linejoin="round" d="M12 16V4m0 0-4 4m4-4 4 4" />
             </svg>
             Upload Doc
           </button>
+          <a
+            href="{% if knowledge_dump_enabled %}{% url 'frontend:dashboard-knowledge-dump' %}{% else %}#{% endif %}"
+            class="inline-flex items-center gap-2 rounded-lg border border-input bg-background px-4 py-2 text-sm font-medium transition-all duration-300 hover:bg-accent hover:text-accent-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 {% if not knowledge_dump_enabled %}opacity-40 pointer-events-none{% endif %}"
+            {% if knowledge_dump_enabled %}download{% else %}aria-disabled="true"{% endif %}
+          >
+            <svg class="h-4 w-4 text-muted-foreground" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" aria-hidden="true">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M12 3v12m0 0 4-4m-4 4-4-4m-3 7h14" />
+            </svg>
+            Dump JSON
+          </a>
           <button type="button" class="inline-flex items-center gap-2 rounded-lg border border-input bg-background px-4 py-2 text-sm font-medium transition-all duration-300 hover:bg-accent hover:text-accent-foreground hover:border-primary/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2">
             <svg class="h-4 w-4" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" aria-hidden="true">
               <path stroke-linecap="round" stroke-linejoin="round" d="M6.75 3v2.25M3 6.75h2.25M17.25 3v2.25M21 6.75h-2.25M6.75 18.75V21M3 17.25h2.25m12-14.25L12 8.25m0 0L8.25 5.25M12 8.25v7.5m0 0L8.25 12.75M12 15.75l3.75-3" />
@@ -25,6 +40,71 @@
           </button>
         </div>
       </header>
+
+      {% if messages %}
+        <div class="space-y-2">
+          {% for message in messages %}
+            {% with tags=message.tags|default:'' %}
+              <div class="rounded-lg border px-4 py-3 text-sm {% if 'success' in tags %}border-emerald-200 bg-emerald-50/80 text-emerald-800{% elif 'error' in tags or 'danger' in tags %}border-rose-200 bg-rose-50/80 text-rose-800{% else %}border-primary/20 bg-primary/5 text-primary/80{% endif %}">
+                {{ message }}
+              </div>
+            {% endwith %}
+          {% endfor %}
+        </div>
+      {% endif %}
+
+      {% if knowledge_upload_enabled %}
+        <div class="hidden rounded-xl border border-border/60 bg-card/80 p-4 shadow-sm space-y-4" data-upload-panel>
+          <div class="flex items-start justify-between gap-4">
+            <div>
+              <div class="text-sm font-semibold text-foreground">Add knowledge</div>
+              <p class="text-xs text-muted-foreground">Upload a file, capture a URL, or paste a short playbook.</p>
+            </div>
+            <button type="button" class="rounded-md p-1 text-muted-foreground hover:bg-muted" data-upload-cancel aria-label="Close upload panel">
+              <svg class="h-4 w-4" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M6 18 18 6M6 6l12 12" />
+              </svg>
+            </button>
+          </div>
+          <form method="post" action="{% url 'frontend:dashboard-knowledge-upload' %}" enctype="multipart/form-data" class="space-y-4" data-upload-form>
+            {% csrf_token %}
+            <div class="grid gap-4 md:grid-cols-2">
+              <label class="space-y-1 text-sm">
+                <span class="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Display name (optional)</span>
+                <input type="text" name="display_name" placeholder="e.g. Corporate account FAQ" class="w-full rounded-lg border border-input bg-background px-3 py-2 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" />
+              </label>
+              <label class="space-y-1 text-sm">
+                <span class="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Source type</span>
+                <select name="source_type" data-upload-type class="w-full rounded-lg border border-input bg-background px-3 py-2 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
+                  {% for option in knowledge_upload_types %}
+                    <option value="{{ option.value }}"{% if forloop.first %} selected{% endif %}>{{ option.label }}</option>
+                  {% endfor %}
+                </select>
+              </label>
+            </div>
+            <div class="grid gap-4 md:grid-cols-2">
+              <div data-upload-field="file" class="space-y-1">
+                <span class="text-xs font-semibold uppercase tracking-wide text-muted-foreground block">File upload</span>
+                <input type="file" name="knowledge_file" class="w-full rounded-lg border border-dashed border-input bg-background px-3 py-2 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" />
+                <p class="text-xs text-muted-foreground">Accepted: PDF, DOCX, TXT. We’ll index the file under this business.</p>
+              </div>
+              <div data-upload-field="link" class="space-y-1 hidden">
+                <span class="text-xs font-semibold uppercase tracking-wide text-muted-foreground block">External link</span>
+                <input type="url" name="knowledge_url" placeholder="https://example.com/handbook" class="w-full rounded-lg border border-input bg-background px-3 py-2 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" disabled />
+                <p class="text-xs text-muted-foreground">Add a documentation URL or wiki page to reference later.</p>
+              </div>
+            </div>
+            <div data-upload-field="text" class="space-y-1 hidden">
+              <span class="text-xs font-semibold uppercase tracking-wide text-muted-foreground block">Manual entry</span>
+              <textarea name="knowledge_text" rows="4" placeholder="Paste a short SOP or message template…" class="w-full rounded-lg border border-input bg-background px-3 py-2 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" disabled></textarea>
+            </div>
+            <div class="flex items-center justify-end gap-2">
+              <button type="button" class="inline-flex items-center rounded-md border border-input bg-background px-3 py-2 text-xs font-semibold text-muted-foreground hover:bg-muted" data-upload-cancel>Cancel</button>
+              <button type="submit" class="inline-flex items-center rounded-md bg-primary px-4 py-2 text-sm font-semibold text-primary-foreground shadow-sm hover:bg-primary/90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2">Save to knowledge</button>
+            </div>
+          </form>
+        </div>
+      {% endif %}
 
       <section class="space-y-6" data-knowledge-tabs>
         <div class="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
@@ -564,6 +644,80 @@
 {% block extra_js %}
 <script>
   document.addEventListener("DOMContentLoaded", function () {
+    var uploadPanelCard = document.querySelector("[data-upload-panel]");
+    var uploadToggle = document.querySelector("[data-upload-toggle]");
+    var uploadCancelButtons = document.querySelectorAll("[data-upload-cancel]");
+    var uploadTypeSelect = document.querySelector("[data-upload-type]");
+    var uploadFieldBlocks = document.querySelectorAll("[data-upload-field]");
+    var uploadForm = document.querySelector("[data-upload-form]");
+
+    function refreshUploadFields() {
+      if (!uploadFieldBlocks || !uploadTypeSelect) {
+        return;
+      }
+      var activeType = (uploadTypeSelect.value || "").toLowerCase();
+      uploadFieldBlocks.forEach(function (block) {
+        var fieldType = (block.getAttribute("data-upload-field") || "").toLowerCase();
+        var isActive = fieldType === activeType;
+        block.classList.toggle("hidden", !isActive);
+        var inputs = block.querySelectorAll("input, textarea");
+        inputs.forEach(function (input) {
+          if (isActive) {
+            input.removeAttribute("disabled");
+          } else {
+            input.setAttribute("disabled", "disabled");
+            if (input.type === "file") {
+              input.value = "";
+            }
+          }
+        });
+      });
+    }
+
+    function setUploadPanelVisible(visible) {
+      if (!uploadPanelCard) return;
+      uploadPanelCard.classList.toggle("hidden", !visible);
+      if (visible) {
+        refreshUploadFields();
+      }
+    }
+
+    function closeUploadPanel() {
+      if (uploadForm) {
+        uploadForm.reset();
+      }
+      if (uploadTypeSelect && uploadTypeSelect.options.length) {
+        uploadTypeSelect.value = uploadTypeSelect.options[0].value;
+      }
+      refreshUploadFields();
+      setUploadPanelVisible(false);
+    }
+
+    if (uploadToggle && uploadPanelCard) {
+      uploadToggle.addEventListener("click", function () {
+        var isHidden = uploadPanelCard.classList.contains("hidden");
+        if (isHidden) {
+          setUploadPanelVisible(true);
+        } else {
+          closeUploadPanel();
+        }
+      });
+    }
+
+    if (uploadCancelButtons && uploadCancelButtons.length) {
+      uploadCancelButtons.forEach(function (button) {
+        button.addEventListener("click", function (event) {
+          event.preventDefault();
+          closeUploadPanel();
+        });
+      });
+    }
+
+    if (uploadTypeSelect) {
+      uploadTypeSelect.addEventListener("change", refreshUploadFields);
+      refreshUploadFields();
+    }
+
     var table = document.querySelector("[data-documents-table]");
     var panel = document.querySelector("[data-document-panel]");
     if (!table || !panel) {

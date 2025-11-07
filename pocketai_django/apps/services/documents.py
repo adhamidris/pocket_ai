@@ -201,7 +201,14 @@ def list_documents(
     items = []
     for upload in rows:
         tags = tuple(str(tag) for tag in (upload.tags or []))
-        collection_names = tuple(coll.name for coll in getattr(upload, "collections", []))
+        collections_manager = getattr(upload, "collections", None)
+        if hasattr(collections_manager, "all"):
+            collection_iterable = collections_manager.all()
+        elif collections_manager is None:
+            collection_iterable = ()
+        else:
+            collection_iterable = collections_manager
+        collection_names = tuple(coll.name for coll in collection_iterable)
         items.append(
             DocumentListItem(
                 id=upload.id,
@@ -275,24 +282,27 @@ def get_document_detail(*, business_profile: BusinessProfile, document_id: uuid.
     )
 
     file_meta = None
-    if upload.file_detail:
+    file_detail = getattr(upload, "file_detail", None)
+    if file_detail:
         file_meta = DocumentFileMeta(
-            filename=upload.file_detail.filename,
-            content_type=upload.file_detail.content_type or "",
-            size_bytes=upload.file_detail.size_bytes or upload.size_bytes or 0,
-            page_count=upload.file_detail.page_count or 0,
+            filename=file_detail.filename,
+            content_type=file_detail.content_type or "",
+            size_bytes=file_detail.size_bytes or upload.size_bytes or 0,
+            page_count=file_detail.page_count or 0,
         )
 
     url_meta = None
-    if upload.url_detail:
+    url_detail = getattr(upload, "url_detail", None)
+    if url_detail:
         url_meta = DocumentUrlMeta(
-            url=upload.url_detail.url,
-            host=upload.url_detail.normalized_host or urlparse(upload.url_detail.url).netloc,
+            url=url_detail.url,
+            host=url_detail.normalized_host or urlparse(url_detail.url).netloc,
         )
 
     text_meta = None
-    if upload.text_detail:
-        content = upload.text_detail.content or ""
+    text_detail = getattr(upload, "text_detail", None)
+    if text_detail:
+        content = text_detail.content or ""
         preview = content.strip()[:400]
         text_meta = DocumentTextMeta(
             characters=len(content),

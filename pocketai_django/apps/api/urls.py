@@ -41,6 +41,11 @@ urlpatterns = [
     path("chat/csat/", submit_csat, name="chat-csat"),
     path("knowledge/documents/", views.knowledge_documents_collection, name="knowledge-documents-list"),
     path("knowledge/documents/<uuid:document_id>/", views.knowledge_document_detail, name="knowledge-documents-detail"),
+    path(
+        "knowledge/documents/<uuid:document_id>/download/",
+        views.knowledge_document_download,
+        name="knowledge-documents-download",
+    ),
     path("knowledge/documents/scrape/", views.knowledge_document_scrape, name="knowledge-documents-scrape"),
     path("knowledge/documents/preview-csv/", views.knowledge_document_preview_csv, name="knowledge-documents-preview-csv"),
     path("cases/", views.cases_collection, name="cases-collection"),

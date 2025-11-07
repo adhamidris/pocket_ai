@@ -94,6 +94,8 @@ USE_TZ = True
 STATIC_URL = "static/"
 STATICFILES_DIRS = [BASE_DIR / "frontend" / "static"]
 STATIC_ROOT = BASE_DIR / "var" / "staticfiles"
+MEDIA_URL = "/media/"
+MEDIA_ROOT = BASE_DIR / "var" / "media"
 
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 AUTH_USER_MODEL = "accounts.User"
@@ -101,3 +103,20 @@ AUTH_USER_MODEL = "accounts.User"
 LOGIN_URL = "/login/"
 LOGIN_REDIRECT_URL = "/dashboard/"
 LOGOUT_REDIRECT_URL = "/"
+
+LOGGING = {
+      "version": 1,
+      "disable_existing_loggers": False,
+      "handlers": {
+          "console": {
+              "class": "logging.StreamHandler",
+          },
+      },
+      "loggers": {
+          "apps.services.llm_provider": {
+              "handlers": ["console"],
+              "level": "INFO",   # use DEBUG if you want even more detail
+              "propagate": False,
+          },
+      },
+  }

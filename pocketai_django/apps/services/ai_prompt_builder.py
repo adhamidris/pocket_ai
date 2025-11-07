@@ -35,6 +35,8 @@ class PromptBuilder:
         - Create a case ONLY when the visitor shares business-related context (orders, payments, account issues, etc.). Ignore pure greetings or chit-chat.
         - Once legitimate business context exists and no case is linked, you must propose a new case via the `create_case` action.
         - Case payloads require: `title`, `description`, `priority`, `ai_diagnosis`, `ai_actions_taken`, `ai_suggested_actions` (array), and `metadata.source="ai_orchestrator"`.
+        - Keep `ai_diagnosis`, `ai_actions_taken`, and `ai_suggested_actions` up to date. If the visitor supplies information you previously requested (e.g., account type, product, order number), immediately revise these fields to reflect the new facts—never leave them in a “pending info” state once the detail is confirmed.
+        - `ai_actions_taken` must summarize the concrete steps you have already performed (e.g., “Captured corporate account request and queued relationship manager follow-up”), not generic statements like “Collect info.”
         - When a case already exists, either update its status (`update_case_status`) or enrich it with new diagnosis/actions.
         - If multiple independent customer intents are detected, summarise each in the assistant reply, but prioritise the highest impact intent when filling the primary case payload.
         - Case descriptions should only change when the original context was wrong. Otherwise, capture developments via case history entries.
@@ -47,7 +49,9 @@ class PromptBuilder:
         ### Conversation + Summarisation Rules
         - Identify whether the visitor raised multiple requests. If yes, summarise them separately in your reply and create follow-up actions (cases, leads, appointments) per request when enabled.
         - Always mention next steps and clarifications in the assistant reply so the customer knows what will happen.
-        - Reference knowledge snippets explicitly when they helped decide an answer.
+        - Lead the conversation yourself—never promise that external employees, agents, or relationship managers will follow up later. Gather the needed details directly in chat and describe what you will do next.
+        - Reference knowledge snippets explicitly when they helped decide an answer, and never invent policies or offers beyond the uploaded knowledge base.
+        - When the knowledge base does not confirm a requested detail, state that it is not yet confirmed and ask the visitor if they would like to be transferred to a human call or continue the chat while you gather more information.
         - Keep internal workflows invisible. Do NOT mention cases, leads, CRM records, or internal notes unless the visitor explicitly asks for that information.
         - When a visitor asks about case status, only mention the latest status if it directly answers their question; otherwise keep the workflow behind the scenes.
         """
@@ -62,21 +66,29 @@ class PromptBuilder:
         - Use `update_case_details` only when the original case details were wrong. Include `allow_description_overwrite=true` when you truly must replace the description.
         - Use `add_case_history` to log important updates, milestones, or clarifications without mutating the case description.
         - Use `flag_escalation`, `create_customer`, `create_lead`, or `create_appointment` when the scenario demands it and the action is enabled.
+        - Use `read_knowledge` whenever you need the exact wording from a knowledge upload. Provide `knowledge_ids` as an array of the IDs listed in the knowledge section. After the platform returns the content, continue the conversation without mentioning the internal fetch.
         - `extractions[]` capture structured signals (lead, appointment, complaint, escalation) that need human follow-up.
         - These actions are internal—acknowledge outcomes to the visitor only when it helps them (e.g., “I’ve captured your appointment request”), never outline the workflow itself or mention the word “case” unless the visitor asked about it.
         - Emit the JSON keys in this exact order so streaming can highlight the reply text quickly: `response_text`, `actions`, then `extractions`.
         """
     ).strip()
 
+    KNOWLEDGE_RULES = textwrap.dedent(
+        """
+        ### Knowledge Retrieval Rules
+        - You start each turn with only high-level summaries of the available knowledge uploads (each entry lists an ID). When you require precise detail, call `read_knowledge` with the relevant `knowledge_ids`.
+        - Once the platform returns the document content, cite it naturally and continue leading the conversation. Never tell the visitor you are “reading” a document or expose internal file names.
+        - If no available knowledge confirms the requested detail, clearly state that it is not yet confirmed and ask whether the visitor would like to be transferred to a human call or continue chatting.
+        """
+    ).strip()
+
     CUSTOMER_RULES = textwrap.dedent(
         """
         ### Customer Identity Rules
-        - Always try to match the visitor to an existing customer using accurate identifiers: email or phone number.
-        - If a phone or email is provided, include it in your `create_customer` payload so the platform can match existing records.
-        - Never assume identity using name alone. Only create a name-only record when the visitor explicitly refuses to share phone/email, and set `refused_contact=true` in the payload.
-        - If a name and phone/email are present, always include both so the backend can preserve recognizable records.
-        - Do not update existing phone or email values using `update_customer`. Only adjust display name or metadata.
-        - When you believe a customer already exists, issue `create_customer` with the identifiers; the backend will match it.
+        - Treat phone numbers and emails as authoritative identifiers. Whenever either is shared you must immediately run `create_customer` with the provided identifier(s) so the backend can match existing records and attach the conversation/case to that customer.
+        - If no customer matches the supplied identifier, still include the full name plus all available identifiers in `create_customer` so a fresh customer record is created for future reuse.
+        - When only a name is available (no phone/email), create a customer record with that name, set `refused_contact=true` to document the missing contact info, and NEVER attempt to match an existing customer using the name alone.
+        - Do not update existing phone or email values using `update_customer`. Only adjust display name or metadata when the visitor explicitly confirms the change.
         - When the visitor continues after a case is opened, log evolving details using `add_case_history` rather than changing the description.
         """
     ).strip()
@@ -111,6 +123,8 @@ class PromptBuilder:
 
             {self.ACTION_RULES}
 
+            {self.KNOWLEDGE_RULES}
+
             {self.CUSTOMER_RULES}
             """
         ).strip()
@@ -138,6 +152,8 @@ class PromptBuilder:
                 "title": snippet.get("title"),
                 "summary": snippet.get("summary"),
                 "source": snippet.get("source"),
+                "content": snippet.get("content"),
+                "public_label": snippet.get("public_label"),
             }
             for snippet in knowledge_snippets
         ]
@@ -184,10 +200,18 @@ class PromptBuilder:
             transcript_lines.append(f"- [{sender}] {message.body}")
         transcript_block = "\n".join(transcript_lines) or "(no prior messages)"
 
-        knowledge_block = []
+        knowledge_block_lines = []
         for snippet in knowledge_snippets:
-            knowledge_block.append(f"- {snippet.get('title')}: {snippet.get('summary')}")
-        knowledge_block = "\n".join(knowledge_block) if knowledge_block else "- No knowledge snippets were retrieved"
+            title = snippet.get("public_label") or snippet.get("title") or "Untitled knowledge"
+            identifier = snippet.get("id") or "unknown-id"
+            summary = snippet.get("summary") or "No summary available."
+            knowledge_block_lines.append(f"- [ID: {identifier}] {title}: {summary}")
+            content = snippet.get("content")
+            if content:
+                formatted = textwrap.indent(content.strip(), "    ")
+                knowledge_block_lines.append("    Full content:")
+                knowledge_block_lines.append(formatted)
+        knowledge_block = "\n".join(knowledge_block_lines) if knowledge_block_lines else "- No knowledge snippets were retrieved"
 
         actions_block = []
         for action in actions_catalog:

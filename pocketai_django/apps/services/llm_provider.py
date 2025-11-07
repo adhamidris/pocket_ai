@@ -83,6 +83,10 @@ class OpenAIChatProvider:
             "top_p": self.top_p,
             "response_format": self._response_schema(),
         }
+        try:
+            logger.info("LLM request payload: %s", json.dumps(payload, ensure_ascii=False))
+        except Exception:  # pragma: no cover - log best effort
+            logger.warning("Failed to serialize LLM payload for logging.")
 
         body = json.dumps(payload).encode("utf-8")
         request = urllib_request.Request(
@@ -111,6 +115,8 @@ class OpenAIChatProvider:
             data = json.loads(raw_body)
         except ValueError as exc:
             raise PromptGenerationError("OpenAI response was not valid JSON.") from exc
+
+        logger.info("LLM raw response: %s", raw_body)
 
         content = self._extract_content(data)
         try:
@@ -162,10 +168,15 @@ class DeepSeekChatProvider(OpenAIChatProvider):
             {"role": "system", "content": self._system_prompt(bundle)},
             {"role": "user", "content": self._user_payload(bundle)},
         ]
+        try:
+            logger.info("LLM request messages: %s", json.dumps(messages, ensure_ascii=False))
+        except Exception:  # pragma: no cover - log best effort
+            logger.warning("Failed to serialize LLM messages for logging.")
         if on_stream_delta:
             content = self._generate_streaming(messages, on_stream_delta)
         else:
             content = self._generate_blocking(messages)
+        logger.info("LLM raw response: %s", content)
         return self._parse_payload(content)
 
     def _generate_blocking(self, messages: list[Mapping[str, str]]) -> str:

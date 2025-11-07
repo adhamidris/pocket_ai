@@ -297,6 +297,15 @@ def stream_send(request: HttpRequest) -> StreamingHttpResponse:
         if chunk:
             stream_queue.put(chunk)
 
+    def on_status_change(state: str) -> None:
+        if state:
+            stream_queue.put({"type": "status", "state": state})
+
+    def on_placeholder_response(text: str) -> None:
+        clean = (text or "").strip()
+        if clean:
+            stream_queue.put({"type": "placeholder", "text": clean})
+
     def orchestrate() -> None:
         close_old_connections()
         try:
@@ -304,6 +313,8 @@ def stream_send(request: HttpRequest) -> StreamingHttpResponse:
                 conversation=conversation,
                 user_message=body,
                 on_response_text_delta=on_response_text_delta,
+                on_status_change=on_status_change,
+                on_placeholder_response=on_placeholder_response,
             )
         except Exception as exc:  # pragma: no cover - defensive
             logger.exception("Orchestrator turn failed: %s", exc)
@@ -315,7 +326,10 @@ def stream_send(request: HttpRequest) -> StreamingHttpResponse:
     worker = threading.Thread(target=orchestrate, daemon=True)
     worker.start()
 
+    placeholder_message = None
+
     def event_stream() -> Iterable[str]:
+        nonlocal placeholder_message
         streamed_from_provider = False
         while True:
             try:
@@ -327,6 +341,25 @@ def stream_send(request: HttpRequest) -> StreamingHttpResponse:
                     continue
             if chunk is stream_sentinel:
                 break
+            if isinstance(chunk, dict):
+                if chunk.get("type") == "status":
+                    yield "event: status\n"
+                    yield f"data: {json.dumps({'state': chunk.get('state')})}\n\n"
+                    continue
+                if chunk.get("type") == "placeholder":
+                    placeholder_text = chunk.get("text") or ""
+                    payload = {"text": placeholder_text}
+                    if placeholder_text and placeholder_message is None:
+                        placeholder_message = service.append_message(
+                            session_token=session_token,
+                            sender=ConversationSender.AI,
+                            body=placeholder_text,
+                            metadata={"placeholder": True},
+                        )
+                        payload["message_id"] = str(placeholder_message.id)
+                    yield "event: placeholder\n"
+                    yield f"data: {json.dumps(payload)}\n\n"
+                    continue
             streamed_from_provider = True
             yield "event: delta\n"
             yield f"data: {json.dumps({'text': chunk})}\n\n"
@@ -345,7 +378,9 @@ def stream_send(request: HttpRequest) -> StreamingHttpResponse:
                 [extraction.extraction_type.value for extraction in plan.extractions],
             )
         if not streamed_from_provider:
-            for chunk in _response_chunks(plan.response_text):
+            stream_text = plan.diagnostics.get("response_stream_text") if plan and plan.diagnostics else None
+            stream_text = stream_text or plan.response_text
+            for chunk in _response_chunks(stream_text):
                 yield "event: delta\n"
                 yield f"data: {json.dumps({'text': chunk})}\n\n"
 

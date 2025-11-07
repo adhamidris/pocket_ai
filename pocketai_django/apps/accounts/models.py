@@ -457,6 +457,7 @@ class KnowledgeUpload(models.Model):
     checksum_sha256 = models.CharField(max_length=128, blank=True, default="")
     size_bytes = models.BigIntegerField(default=0, validators=[MinValueValidator(0)])
     token_count = models.PositiveIntegerField(default=0)
+    chunk_count = models.PositiveIntegerField(default=0)
     is_sensitive = models.BooleanField(default=False)
     is_active = models.BooleanField(default=True)
     version = models.PositiveIntegerField(default=1)
@@ -585,6 +586,39 @@ class KnowledgeUploadText(models.Model):
 
     def __str__(self) -> str:
         return f"Text snippet for {self.upload}"
+
+
+class KnowledgeUploadChunk(models.Model):
+    """
+    Normalized chunk of extracted knowledge text for search + embedding retrieval.
+    """
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    upload = models.ForeignKey(
+        KnowledgeUpload,
+        related_name="chunks",
+        on_delete=models.CASCADE,
+    )
+    chunk_index = models.PositiveIntegerField()
+    content = models.TextField()
+    token_count = models.PositiveIntegerField(default=0)
+    embedding = models.JSONField(default=list, blank=True, null=True)
+    metadata = models.JSONField(default=dict, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = "accounts_knowledge_upload_chunk"
+        ordering = ("upload_id", "chunk_index")
+        constraints = [
+            models.UniqueConstraint(
+                fields=["upload", "chunk_index"],
+                name="knowledge_chunk_unique_index",
+            )
+        ]
+
+    def __str__(self) -> str:
+        return f"Chunk {self.chunk_index} for {self.upload_id}"
 
 
 class KnowledgeCollection(models.Model):

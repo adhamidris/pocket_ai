@@ -1,22 +1,41 @@
 from __future__ import annotations
 
+import hashlib
 import json
+import logging
+import mimetypes
 import uuid
 
 from datetime import date, datetime, timedelta
+from pathlib import Path
 from typing import Any, Dict, List
+from urllib.parse import urlparse
 
+from django.conf import settings
+from django.contrib import messages
 from django.contrib.auth.decorators import login_required
-from django.http import Http404, HttpRequest, HttpResponse
+from django.core.exceptions import ValidationError
+from django.core.validators import URLValidator
 from django.db.models import Count, Q
+from django.http import Http404, HttpRequest, HttpResponse
 from django.middleware.csrf import get_token
-from django.shortcuts import render
+from django.shortcuts import redirect, render
+from django.test.client import RequestFactory
 from django.urls import reverse
 from django.utils import timezone
 from django.utils.text import slugify
-from django.test.client import RequestFactory
+from django.views.decorators.http import require_http_methods
 
-from apps.accounts.models import AgentProfile
+from apps.accounts.models import (
+    AgentProfile,
+    BusinessProfile,
+    KnowledgeSourceType,
+    KnowledgeStatus,
+    KnowledgeUpload,
+    KnowledgeUploadFile,
+    KnowledgeUploadText,
+    KnowledgeUploadUrl,
+)
 from apps.cases.models import Case, CaseStatus
 from apps.conversations.models import Conversation, ConversationSender
 from apps.customers.models import Customer
@@ -31,11 +50,19 @@ from apps.services.agents import (
 from apps.services.cases import list_cases
 from apps.services.customers import list_customers
 from apps.services.documents import DocumentListValidationError, list_documents
+from apps.services.knowledge_ingestion import queue_ingestion_job
 from apps.api.chat_portal import bootstrap_session as bootstrap_session_view
 
 
 PORTAL_BOOTSTRAP_SCRIPT_ID = "portal-bootstrap-data"
 _portal_request_factory = RequestFactory()
+logger = logging.getLogger(__name__)
+
+KNOWLEDGE_UPLOAD_SIMPLE_TYPES: tuple[tuple[str, str], ...] = (
+    (KnowledgeSourceType.FILE, "File Upload"),
+    (KnowledgeSourceType.LINK, "External Link"),
+    (KnowledgeSourceType.TEXT, "Manual Entry"),
+)
 
 
 def _call_portal_bootstrap_api(
@@ -1790,13 +1817,147 @@ def _document_identifier(doc_id: uuid.UUID) -> str:
     return f"KN-{str(doc_id).split('-')[0].upper()}"
 
 
+def _primary_business_for_user(user) -> BusinessProfile | None:
+    if not getattr(user, "is_authenticated", False):
+        return None
+    return user.business_profiles.order_by("-created_at").first()
+
+
+def _knowledge_storage_root() -> Path:
+    root = Path(getattr(settings, "MEDIA_ROOT", settings.BASE_DIR / "var" / "media"))
+    root.mkdir(parents=True, exist_ok=True)
+    return root
+
+
+def _create_file_upload(
+    *,
+    request: HttpRequest,
+    business: BusinessProfile,
+    display_name: str,
+    upload_file,
+) -> KnowledgeUpload:
+    if not upload_file or not getattr(upload_file, "name", "").strip():
+        raise KnowledgeUploadError("Select a file to upload.", field="knowledge_file")
+
+    root = _knowledge_storage_root()
+    storage_dir = root / "knowledge" / str(business.id)
+    storage_dir.mkdir(parents=True, exist_ok=True)
+
+    original_name = Path(upload_file.name).name
+    stem = slugify(Path(original_name).stem) or "document"
+    suffix = Path(original_name).suffix
+    unique_name = f"{uuid.uuid4().hex}_{stem}{suffix}"
+    destination = storage_dir / unique_name
+
+    checksum = hashlib.sha256()
+    with destination.open("wb+") as handle:
+        for chunk in upload_file.chunks():
+            checksum.update(chunk)
+            handle.write(chunk)
+
+    size_bytes = int(getattr(upload_file, "size", destination.stat().st_size))
+    label = display_name or original_name
+    metadata = {
+        "uploaded_via": "dashboard",
+        "public_label": label,
+    }
+    upload = KnowledgeUpload.objects.create(
+        business_profile=business,
+        user=request.user,
+        display_name=label[:255],
+        source_type=KnowledgeSourceType.FILE,
+        status=KnowledgeStatus.PROCESSING,
+        source_name=label[:255],
+        size_bytes=size_bytes,
+        metadata=metadata,
+    )
+
+    KnowledgeUploadFile.objects.create(
+        upload=upload,
+        filename=original_name[:255],
+        content_type=upload_file.content_type or mimetypes.guess_type(original_name)[0] or "",
+        storage_path=str(destination.relative_to(root)),
+        size_bytes=size_bytes,
+        checksum_sha256=checksum.hexdigest(),
+        metadata={"original_name": original_name},
+    )
+    queue_ingestion_job(upload, trigger="dashboard_file_upload")
+    return upload
+
+
+def _create_link_upload(
+    *,
+    request: HttpRequest,
+    business: BusinessProfile,
+    display_name: str,
+    url_value: str,
+) -> KnowledgeUpload:
+    validator = URLValidator()
+    validator(url_value)
+    parsed = urlparse(url_value)
+    host = parsed.netloc or parsed.path or url_value
+    label = display_name or host or "External Resource"
+    metadata = {
+        "uploaded_via": "dashboard",
+        "public_label": label,
+    }
+    upload = KnowledgeUpload.objects.create(
+        business_profile=business,
+        user=request.user,
+        display_name=label[:255],
+        source_type=KnowledgeSourceType.LINK,
+        status=KnowledgeStatus.PROCESSING,
+        source_name=host[:255],
+        legacy_url=url_value,
+        metadata=metadata,
+    )
+    KnowledgeUploadUrl.objects.create(
+        upload=upload,
+        url=url_value,
+        normalized_host=host[:120],
+    )
+    queue_ingestion_job(upload, trigger="dashboard_link_upload")
+    return upload
+
+
+def _create_text_upload(
+    *,
+    request: HttpRequest,
+    business: BusinessProfile,
+    display_name: str,
+    content: str,
+) -> KnowledgeUpload:
+    normalized_content = (content or "").strip()
+    if not normalized_content:
+        raise KnowledgeUploadError("Add content to store a manual snippet.", field="knowledge_text")
+    label = display_name or (normalized_content.splitlines()[0][:80] if normalized_content else "Manual entry")
+    metadata = {
+        "uploaded_via": "dashboard",
+        "public_label": label,
+    }
+    upload = KnowledgeUpload.objects.create(
+        business_profile=business,
+        user=request.user,
+        display_name=label[:255],
+        source_type=KnowledgeSourceType.TEXT,
+        status=KnowledgeStatus.ACTIVE,
+        source_name=label[:255],
+        size_bytes=len(normalized_content.encode("utf-8")),
+        summary=normalized_content[:500],
+        metadata=metadata,
+        last_ingested_at=timezone.now(),
+    )
+    KnowledgeUploadText.objects.create(upload=upload, content=normalized_content)
+    return upload
+
+
 @login_required
 def dashboard_knowledge(request: HttpRequest) -> HttpResponse:
     user_name = _current_user_name(request)
     documents: list[dict[str, object]] = []
     total_documents = 0
     has_error = False
-    business = request.user.business_profiles.order_by("-created_at").first() if request.user.is_authenticated else None
+    business = _primary_business_for_user(request.user)
 
     if business:
         try:
@@ -1887,8 +2048,109 @@ def dashboard_knowledge(request: HttpRequest) -> HttpResponse:
         "knowledge_collections_empty_message": "Group documents into collections to control agent access.",
         "knowledge_panel_empty_title": "Select a document",
         "knowledge_panel_empty_message": "Choose a document to preview summary, classification, and sync details here.",
+        "knowledge_upload_types": [
+            {"value": value, "label": label} for value, label in KNOWLEDGE_UPLOAD_SIMPLE_TYPES
+        ],
+        "knowledge_upload_enabled": bool(business),
+        "knowledge_dump_enabled": bool(business),
     }
     return render(request, "frontend/knowledge.html", context)
+
+
+@login_required
+@require_http_methods(["POST"])
+def dashboard_knowledge_upload(request: HttpRequest) -> HttpResponse:
+    business = _primary_business_for_user(request.user)
+    if not business:
+        messages.error(request, "Link a business profile before uploading knowledge.")
+        return redirect("frontend:dashboard-knowledge")
+
+    source_type = (request.POST.get("source_type") or "").strip().lower()
+    valid_types = {value for value, _label in KNOWLEDGE_UPLOAD_SIMPLE_TYPES}
+    if source_type not in valid_types:
+        messages.error(request, "Select a valid knowledge type.")
+        return redirect("frontend:dashboard-knowledge")
+
+    display_name = (request.POST.get("display_name") or "").strip()
+    upload_record: KnowledgeUpload | None = None
+    try:
+        if source_type == KnowledgeSourceType.FILE:
+            upload_record = _create_file_upload(
+                request=request,
+                business=business,
+                display_name=display_name,
+                upload_file=request.FILES.get("knowledge_file"),
+            )
+        elif source_type == KnowledgeSourceType.LINK:
+            url_value = (request.POST.get("knowledge_url") or "").strip()
+            if not url_value:
+                raise KnowledgeUploadError("Add a URL to capture this resource.", field="knowledge_url")
+            upload_record = _create_link_upload(
+                request=request,
+                business=business,
+                display_name=display_name,
+                url_value=url_value,
+            )
+        elif source_type == KnowledgeSourceType.TEXT:
+            upload_record = _create_text_upload(
+                request=request,
+                business=business,
+                display_name=display_name,
+                content=request.POST.get("knowledge_text") or "",
+            )
+        else:  # pragma: no cover - defensive fallback
+            raise KnowledgeUploadError("Unsupported knowledge type selected.", field="source_type")
+    except (KnowledgeUploadError, ValidationError) as exc:
+        messages.error(request, str(exc))
+    except Exception:  # pragma: no cover - defensive logging
+        logger.exception("Failed to store knowledge upload from dashboard.")
+        messages.error(request, "Unable to save the document right now. Please try again.")
+    else:
+        if upload_record:
+            messages.success(request, f'"{upload_record.display_name}" added to your knowledge base.')
+    return redirect("frontend:dashboard-knowledge")
+
+
+@login_required
+@require_http_methods(["GET"])
+def dashboard_knowledge_dump(request: HttpRequest) -> HttpResponse:
+    business = _primary_business_for_user(request.user)
+    if not business:
+        messages.error(request, "Link a business profile before exporting knowledge.")
+        return redirect("frontend:dashboard-knowledge")
+
+    uploads = (
+        KnowledgeUpload.objects.filter(business_profile=business)
+        .prefetch_related("collections")
+        .order_by("-updated_at")
+    )
+    documents: list[dict[str, object]] = []
+    for upload in uploads:
+        documents.append(
+            {
+                "id": str(upload.id),
+                "display_name": upload.display_name,
+                "source_type": upload.source_type,
+                "status": upload.status,
+                "size_bytes": upload.size_bytes,
+                "updated_at": upload.updated_at.isoformat() if upload.updated_at else None,
+                "metadata": upload.metadata,
+                "tags": upload.tags,
+                "collections": list(upload.collections.values_list("name", flat=True)),
+            }
+        )
+
+    payload = {
+        "business_id": str(business.id),
+        "business_name": business.name,
+        "generated_at": timezone.now().isoformat(),
+        "count": len(documents),
+        "documents": documents,
+    }
+    response = HttpResponse(json.dumps(payload, indent=2, default=str), content_type="application/json")
+    timestamp = timezone.now().strftime("%Y%m%d%H%M%S")
+    response["Content-Disposition"] = f'attachment; filename=\"knowledge_dump_{timestamp}.json\"'
+    return response
 
 
 @login_required

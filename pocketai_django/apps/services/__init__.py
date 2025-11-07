@@ -51,6 +51,13 @@ from .documents import (
     preview_csv_upload,
     scrape_document_source,
 )
+from .embeddings import EmbeddingProviderError, EmbeddingService, build_embedding_service
+from .knowledge_ingestion import (
+    IngestionJobResult,
+    KnowledgeIngestionError,
+    KnowledgeIngestionService,
+    queue_ingestion_job,
+)
 
 __all__ = [
     "CaseDetail",
@@ -98,4 +105,11 @@ __all__ = [
     "update_case",
     "DocumentListValidationError",
     "DocumentScrapeError",
+    "EmbeddingService",
+    "EmbeddingProviderError",
+    "build_embedding_service",
+    "KnowledgeIngestionService",
+    "KnowledgeIngestionError",
+    "IngestionJobResult",
+    "queue_ingestion_job",
 ]
