@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import dataclasses
 import textwrap
+from datetime import datetime
 from typing import Mapping, Sequence
 
 from apps.accounts.models import AgentProfile
@@ -13,7 +14,7 @@ class PromptBundle:
     system_prompt: str
     user_prompt: str
     transcript: Sequence[Mapping[str, str]]
-    knowledge_snippets: Sequence[Mapping[str, str]]
+    knowledge_snippets: Sequence[Mapping[str, object]]
     actions_catalog: Sequence[Mapping[str, str]]
     agent_traits: Mapping[str, str]
 
@@ -55,6 +56,8 @@ class PromptBuilder:
         - Keep internal workflows invisible. Do NOT mention cases, leads, CRM records, or internal notes unless the visitor explicitly asks for that information.
         - When a visitor asks about case status, only mention the latest status if it directly answers their question; otherwise keep the workflow behind the scenes.
         - Do not repeat the same acknowledgement or promise in consecutive replies. If you already confirmed a fact or said you would “pull up” a document, move forward with the new information instead of restating the earlier message.
+        - When the visitor pivots to a different product variant (for example, another card tier or benefit), assume the relevant data is already loaded and move straight to the requested details. Never say “I’ll check” if you already have the figures—respond with the concrete fees, limits, or features immediately.
+        - Structure replies with lightweight Markdown (headings for card names, bullet lists for fees/features, tables when comparing tiers) so the customer can scan the answer quickly without feeling like it’s raw prose.
         """
     ).strip()
 
@@ -67,10 +70,10 @@ class PromptBuilder:
         - Use `update_case_details` when a clarification updates facts inside the already-established context (e.g., the customer now specifies it is a business account). Include `allow_description_overwrite=true` only for those major same-context corrections.
         - Use `add_case_history` to log important updates, milestones, or clarifications once a case exists; default to this for ongoing conversations and only change the description when a major same-context clarification is confirmed.
         - Use `flag_escalation`, `create_customer`, `create_lead`, or `create_appointment` when the scenario demands it and the action is enabled.
-        - Use `read_knowledge` whenever you need the exact wording from a knowledge upload. Provide `knowledge_ids` as an array of the IDs listed in the knowledge section. After the platform returns the content, continue the conversation without mentioning the internal fetch.
-        - On the very first substantive response about a product, fee, policy, or process—and any time a new topic tied to an available snippet emerges—pair your reply with a `read_knowledge` action for the matching snippets so you cite the actual document rather than repeating the summary. Skipping this when a snippet exists is considered an error.
-        - Once a snippet in your prompt already shows a `Full content:` section, treat it as fully loaded for this turn and DO NOT call `read_knowledge` for that same snippet again.
-        - Whenever you trigger `read_knowledge`, compose the assistant reply as a single flowing two-part update: the first sentence must address the customer and explain that you’re checking the relevant resources (end with a natural segue like “I’ll confirm the exact fees for you now”). The follow-up message—after the knowledge is read—must continue the same thought without restarting the greeting so the conversation feels continuous.
+        - Use `read_knowledge` only when a snippet is still summary-only/preview or when the visitor explicitly asks for a topic that is not covered in the Knowledge Ledger. When `status=ready`, you already have this data—respond immediately instead of rereading.
+        - When you do need `read_knowledge`, provide the `knowledge_ids` listed in the ledger and keep the fetch invisible to the visitor.
+        - On the first substantive response about a snippet that is still summary-only, pair your reply with `read_knowledge` so you quote the actual document instead of the hint.
+        - Once a snippet is marked “ready”, skip investigative fillers (“I’ll check”) and go straight to the requested numbers/features.
         - `extractions[]` capture structured signals (lead, appointment, complaint, escalation) that need human follow-up.
         - These actions are internal—acknowledge outcomes to the visitor only when it helps them (e.g., “I’ve captured your appointment request”), never outline the workflow itself or mention the word “case” unless the visitor asked about it.
         - Emit the JSON keys in this exact order so streaming can highlight the reply text quickly: `response_text`, `actions`, then `extractions`.
@@ -80,11 +83,12 @@ class PromptBuilder:
     KNOWLEDGE_RULES = textwrap.dedent(
         """
         ### Knowledge Retrieval Rules
-        - You start each turn with only high-level summaries of the available knowledge uploads (each entry lists an ID). When you require precise detail, call `read_knowledge` with the relevant `knowledge_ids`.
-        - Once the platform returns the document content, cite it naturally and continue leading the conversation. Never tell the visitor you are “reading” a document or expose internal file names.
-        - If no available knowledge confirms the requested detail, clearly state that it is not yet confirmed and ask whether the visitor would like to be transferred to a human call or continue chatting.
-        - The summaries are deliberately incomplete. Treat them only as hints—never rely on them for specifics, and do not answer with policy/product detail unless you have already pulled the full document via `read_knowledge`.
-        - If a snippet is labeled as a system notice (for example, document unavailable), immediately tell the visitor the document could not be retrieved, explain the limitation, and offer an alternative next step or follow-up.
+        - Use the Knowledge Ledger in this prompt as your source of truth. Each snippet lists its `status`, `read` scope, last usage, and coverage topics that were already delivered.
+        - When `status=ready`, the backend already loaded the full document. You already have this data—respond immediately and only call `read_knowledge` if the visitor explicitly asks for content outside the listed coverage.
+        - For snippets still marked summary-only or preview, call `read_knowledge` with the provided IDs before citing details so you can quote the real document.
+        - After you answer a question with a snippet, reflect that topic in the coverage list so future turns avoid redundant reads.
+        - Cite snippets naturally when they inform an answer, but keep internal file names and retrieval steps invisible to the visitor.
+        - If no snippet confirms the requested detail, say so plainly and offer escalation or follow-up. If a snippet is labeled as a system notice (document unavailable), explain the limitation and propose an alternative.
         """
     ).strip()
 
@@ -103,9 +107,10 @@ class PromptBuilder:
         self,
         *,
         conversation: Conversation,
-        knowledge_snippets: Sequence[Mapping[str, str]],
+        knowledge_snippets: Sequence[Mapping[str, object]],
         transcript: Sequence[ConversationMessage],
         actions_catalog: Sequence[Mapping[str, str]],
+        knowledge_log: Sequence[Mapping[str, object]] | None = None,
     ) -> PromptBundle:
         business = conversation.business_profile
         industry = (business.industry or "").strip() or "general services"
@@ -141,6 +146,7 @@ class PromptBuilder:
             actions_catalog=actions_catalog,
             transcript=transcript,
             business_industry=industry,
+            knowledge_log=knowledge_log or (),
         )
 
         transcript_payload = [
@@ -198,10 +204,11 @@ class PromptBuilder:
         self,
         *,
         case_context: str,
-        knowledge_snippets: Sequence[Mapping[str, str]],
+        knowledge_snippets: Sequence[Mapping[str, object]],
         actions_catalog: Sequence[Mapping[str, str]],
         transcript: Sequence[ConversationMessage],
         business_industry: str,
+        knowledge_log: Sequence[Mapping[str, object]],
     ) -> str:
         transcript_lines = []
         for message in transcript:
@@ -211,39 +218,9 @@ class PromptBuilder:
 
         knowledge_block_lines = []
         for snippet in knowledge_snippets:
-            title = snippet.get("public_label") or snippet.get("title") or "Untitled knowledge"
-            identifier = snippet.get("id") or "unknown-id"
-            summary = snippet.get("summary") or "No summary available."
-            notice = snippet.get("system_notice")
-            knowledge_block_lines.append(f"- [ID: {identifier}] {title}: {summary}")
-            if notice == "missing_document":
-                knowledge_block_lines.append(
-                    "    System notice: Inform the visitor that this document is unavailable right now and offer a follow-up or alternative guidance."
-                )
-            content = snippet.get("content")
-            if content:
-                formatted = textwrap.indent(content.strip(), "    ")
-                knowledge_block_lines.append("    Full content:")
-                knowledge_block_lines.append(formatted)
-            tables = snippet.get("structuredTables") or []
-            if tables:
-                knowledge_block_lines.append("    Structured tables detected (call `read_knowledge` to access full rows):")
-                for table in tables[:3]:
-                    table_title = table.get("title") or f"Table {table.get('order_index') or table.get('orderIndex')}"
-                    page_number = table.get("page_number") or table.get("pageNumber") or "n/a"
-                    columns = table.get("column_schema") or table.get("columnSchema") or []
-                    formatted_cols = ", ".join(columns[:6]) if isinstance(columns, (list, tuple)) else ""
-                    knowledge_block_lines.append(
-                        f"      • {table_title} (page {page_number}) columns: {formatted_cols or 'unspecified'}"
-                    )
-            issues = snippet.get("issues") or []
-            if issues:
-                knowledge_block_lines.append("    Known ingestion issues:")
-                for issue in issues[:3]:
-                    knowledge_block_lines.append(
-                        f"      • {issue.get('severity', '').upper()} {issue.get('code')}: {issue.get('description')}"
-                    )
+            knowledge_block_lines.extend(self._render_snippet_entry(snippet))
         knowledge_block = "\n".join(knowledge_block_lines) if knowledge_block_lines else "- No knowledge snippets were retrieved"
+        previous_deliveries_block = self._render_previous_deliveries(knowledge_log)
 
         actions_block = []
         for action in actions_catalog:
@@ -262,9 +239,12 @@ class PromptBuilder:
             ### Business Context
             - Industry: {business_industry}
 
-            ### Knowledge Snippets
+            ### Knowledge Ledger
             {knowledge_block}
-            Reminder: these summaries are just hints—call `read_knowledge` before citing any detail. If a snippet already includes a `Full content:` section, you already have it for this turn—do not request it again. If a snippet is marked as a system notice (e.g., missing document), follow the instructions explicitly and explain the gap to the visitor.
+            Ledger directive: When a snippet shows status=ready, you already have that data—respond now. Only invoke `read_knowledge` for summary-only/preview snippets or when the visitor asks for topics outside the listed coverage.
+
+            ### Previously Delivered
+            {previous_deliveries_block}
 
             ### Available Actions
             {actions_block}
@@ -275,3 +255,99 @@ class PromptBuilder:
             3. Always produce at least one `create_case` or `update_case_status` action so the conversation is tracked.
             """
         ).strip()
+
+    def _render_snippet_entry(self, snippet: Mapping[str, object]) -> list[str]:
+        lines: list[str] = []
+        lines.append(self._build_ledger_line(snippet))
+        summary = snippet.get("summary") or "No summary available."
+        lines.append(f"    Summary: {summary}")
+        notice = snippet.get("system_notice")
+        if notice == "missing_document":
+            lines.append(
+                "    System notice: Inform the visitor that this document is unavailable right now and offer a follow-up or alternative guidance."
+            )
+        content = snippet.get("content")
+        if content:
+            formatted = textwrap.indent(content.strip(), "    ")
+            lines.append("    Full content:")
+            lines.append(formatted)
+        tables = snippet.get("structuredTables") or []
+        if tables:
+            lines.append("    Structured tables detected (call `read_knowledge` to access full rows):")
+            for table in tables[:3]:
+                table_title = table.get("title") or f"Table {table.get('order_index') or table.get('orderIndex')}"
+                page_number = table.get("page_number") or table.get("pageNumber") or "n/a"
+                columns = table.get("column_schema") or table.get("columnSchema") or []
+                formatted_cols = ", ".join(columns[:6]) if isinstance(columns, (list, tuple)) else ""
+                lines.append(f"      • {table_title} (page {page_number}) columns: {formatted_cols or 'unspecified'}")
+        issues = snippet.get("issues") or []
+        if issues:
+            lines.append("    Known ingestion issues:")
+            for issue in issues[:3]:
+                lines.append(f"      • {issue.get('severity', '').upper()} {issue.get('code')}: {issue.get('description')}")
+        return lines
+
+    def _build_ledger_line(self, snippet: Mapping[str, object]) -> str:
+        title = snippet.get("public_label") or snippet.get("title") or "Untitled knowledge"
+        identifier = snippet.get("id") or "unknown-id"
+        status = (snippet.get("status") or ("ready" if snippet.get("data_ready") else "summary-only")).lower()
+        coverage_display = self._format_coverage(snippet.get("coverage"))
+        last_used_for = snippet.get("last_used_for") or "not used yet"
+        last_used_at = self._format_timestamp(snippet.get("last_used_at"))
+        last_used = f"{last_used_for}{f' @ {last_used_at}' if last_used_at else ''}"
+        read_state = self._describe_read_state(snippet.get("read_state"))
+        pin_marker = " [PINNED]" if snippet.get("pin") else ""
+        return (
+            f"- [ID: {identifier}] {title}{pin_marker} — status={status}, read={read_state}, "
+            f"coverage={coverage_display}, last_used={last_used}"
+        )
+
+    @staticmethod
+    def _format_coverage(raw: object) -> str:
+        if isinstance(raw, (list, tuple, set)):
+            tokens = [str(item).strip().lower() for item in raw if isinstance(item, str) and item.strip()]
+        elif isinstance(raw, str):
+            tokens = [raw.strip().lower()]
+        else:
+            tokens = []
+        if not tokens:
+            return "none yet"
+        return "/".join(tokens)
+
+    @staticmethod
+    def _format_timestamp(raw: object) -> str:
+        if not raw:
+            return ""
+        try:
+            parsed = datetime.fromisoformat(str(raw))
+        except ValueError:
+            return ""
+        return parsed.strftime("%H:%M")
+
+    @staticmethod
+    def _describe_read_state(read_state: object) -> str:
+        normalized = str(read_state or "").lower()
+        if normalized == "full":
+            return "full document"
+        if normalized == "preview":
+            return "chunk preview"
+        return "summary-only"
+
+    def _render_previous_deliveries(self, knowledge_log: Sequence[Mapping[str, object]]) -> str:
+        entries = list(knowledge_log or [])
+        if not entries:
+            return "- No tracked deliveries yet"
+        recent = entries[-5:]
+        recent.reverse()
+        lines: list[str] = []
+        for entry in recent:
+            label = entry.get("label") or entry.get("id") or "knowledge"
+            topics = entry.get("topics") or []
+            topic_display = "/".join(str(topic).strip().lower() for topic in topics if isinstance(topic, str) and topic.strip())
+            descriptor = entry.get("usage") or f"{label} {topic_display}".strip()
+            timestamp = self._format_timestamp(entry.get("used_at"))
+            if timestamp:
+                lines.append(f"- {descriptor or label} shared at {timestamp}")
+            else:
+                lines.append(f"- {descriptor or label} (shared earlier)")
+        return "\n".join(lines)

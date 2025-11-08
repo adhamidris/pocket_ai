@@ -177,6 +177,9 @@ class KnowledgeSnippet:
     structured_tables: Sequence[Mapping[str, object]] = dataclasses.field(default_factory=tuple)
     issues: Sequence[Mapping[str, object]] = dataclasses.field(default_factory=tuple)
     page_summaries: Sequence[Mapping[str, object]] = dataclasses.field(default_factory=tuple)
+    read_state: str = "summary"
+    topic_hints: Sequence[str] = dataclasses.field(default_factory=tuple)
+    is_pinned: bool = False
 
 
 @dataclasses.dataclass(frozen=True)
@@ -213,6 +216,22 @@ class ActionExecutionError(Exception):
 
 
 MAX_INLINE_KNOWLEDGE_CHARS = 60000
+KNOWLEDGE_READ_STATE_SUMMARY = "summary"
+KNOWLEDGE_READ_STATE_PREVIEW = "preview"
+KNOWLEDGE_READ_STATE_FULL = "full"
+RECENT_SNIPPET_TURN_WINDOW = 4
+LEDGER_LOG_LIMIT = 8
+TOPIC_KEYWORD_MAP: dict[str, tuple[str, ...]] = {
+    "fees": ("fee", "fees", "charge", "charges", "pricing", "annual fee", "monthly fee", "maintenance fee"),
+    "limits": ("limit", "limits", "cap", "caps", "maximum", "max", "ceiling", "spend limit", "withdrawal limit"),
+    "benefits": ("benefit", "benefits", "perk", "perks", "reward", "rewards", "cashback", "cash back", "points", "miles"),
+    "eligibility": ("eligibility", "eligible", "qualify", "qualification", "qualifications", "requirement", "requirements", "criteria"),
+    "documents": ("document", "documents", "paperwork", "proof", "statement", "statements", "id", "identification"),
+    "timeline": ("timeline", "processing time", "turnaround", "how long", "timeframe", "sla"),
+    "support": ("support", "contact", "phone", "email", "help desk", "representative"),
+    "apr": ("apr", "interest", "interest rate", "rate", "percentage"),
+    "restrictions": ("restriction", "restrictions", "blackout", "exclusion", "not covered"),
+}
 
 
 class KnowledgeSearchService:
@@ -305,14 +324,13 @@ class KnowledgeSearchService:
                     structured_tables=structured["tables"],
                     issues=structured["issues"],
                     page_summaries=structured["pages"],
+                    read_state=KNOWLEDGE_READ_STATE_SUMMARY,
+                    topic_hints=self._topic_hints(upload),
+                    is_pinned=self._is_pinned(upload),
                 )
             )
         if not snippets:
-            logger.warning(
-                "Knowledge load returned no snippets for business=%s ids=%s",
-                business_profile.id,
-                [str(value) for value in normalized],
-            )
+            logger.warning("Knowledge load returned no snippets for business=%s", business_profile.id)
         return tuple(snippets)
 
     def _chunk_to_snippet(self, chunk: KnowledgeUploadChunk) -> KnowledgeSnippet:
@@ -331,6 +349,9 @@ class KnowledgeSearchService:
             structured_tables=structured["tables"],
             issues=structured["issues"],
             page_summaries=structured["pages"],
+            read_state=KNOWLEDGE_READ_STATE_PREVIEW if content else KNOWLEDGE_READ_STATE_SUMMARY,
+            topic_hints=self._topic_hints(upload),
+            is_pinned=self._is_pinned(upload),
         )
 
     def load_contents(
@@ -402,6 +423,9 @@ class KnowledgeSearchService:
                     structured_tables=structured["tables"],
                     issues=structured["issues"],
                     page_summaries=structured["pages"],
+                    read_state=KNOWLEDGE_READ_STATE_FULL if combined_content else KNOWLEDGE_READ_STATE_SUMMARY,
+                    topic_hints=self._topic_hints(upload),
+                    is_pinned=self._is_pinned(upload),
                 )
             )
         return tuple(snippets)
@@ -534,6 +558,77 @@ class KnowledgeSearchService:
             return 0.0
         return dot / (norm_a * norm_b)
 
+    @staticmethod
+    def _is_pinned(upload: KnowledgeUpload) -> bool:
+        metadata = upload.metadata if isinstance(upload.metadata, dict) else {}
+        ingestion = upload.ingestion_metadata if isinstance(upload.ingestion_metadata, dict) else {}
+        tags = upload.tags if isinstance(upload.tags, list) else []
+        flag_sources: list[object] = []
+        flag_sources.extend(metadata.get(key) for key in ("pin", "pinned", "always_on_prompt", "alwaysOnPrompt") if metadata)
+        flag_sources.extend(ingestion.get(key) for key in ("pin", "pinned") if ingestion)
+        normalized_tags = {str(tag).strip().lower() for tag in tags if isinstance(tag, str)}
+        if any(KnowledgeSearchService._coerce_bool(flag) for flag in flag_sources if flag is not None):
+            return True
+        if any(tag in {"pin", "pinned", "always-on", "always_on", "alwayson"} for tag in normalized_tags):
+            return True
+        return False
+
+    @staticmethod
+    def _coerce_bool(value: object) -> bool:
+        if isinstance(value, bool):
+            return value
+        if isinstance(value, (int, float)):
+            return bool(value)
+        if isinstance(value, str):
+            normalized = value.strip().lower()
+            return normalized in {"1", "true", "yes", "y", "t", "pin"}
+        return False
+
+    @classmethod
+    def _topic_hints(cls, upload: KnowledgeUpload) -> tuple[str, ...]:
+        metadata = upload.metadata if isinstance(upload.metadata, dict) else {}
+        tags = upload.tags if isinstance(upload.tags, list) else []
+        hints: list[str] = []
+        for source in (
+            metadata.get("coverage"),
+            metadata.get("topics"),
+            metadata.get("labels"),
+            metadata.get("keywords"),
+            tags,
+            [upload.category] if upload.category else [],
+        ):
+            hints.extend(cls._normalize_topic_list(source))
+        seen: set[str] = set()
+        ordered: list[str] = []
+        for hint in hints:
+            if hint and hint not in seen:
+                seen.add(hint)
+                ordered.append(hint)
+        return tuple(ordered)
+
+    @staticmethod
+    def _normalize_topic_list(source: object) -> list[str]:
+        if source is None:
+            return []
+        if isinstance(source, str):
+            normalized = KnowledgeSearchService._normalize_topic_value(source)
+            return [normalized] if normalized else []
+        if isinstance(source, (list, tuple, set)):
+            result: list[str] = []
+            for item in source:
+                normalized = KnowledgeSearchService._normalize_topic_value(item)
+                if normalized:
+                    result.append(normalized)
+            return result
+        return []
+
+    @staticmethod
+    def _normalize_topic_value(value: object) -> str:
+        if not isinstance(value, str):
+            return ""
+        normalized = " ".join(value.replace("_", " ").replace("/", " ").split()).strip().lower()
+        return normalized
+
 
 @dataclasses.dataclass(frozen=True)
 class LlmPlan:
@@ -587,6 +682,11 @@ class AiOrchestratorService:
             query[:160],
         )
         metadata_snapshot = dict(conversation.metadata or {})
+        turn_index = int(metadata_snapshot.get("knowledge_turn_counter") or 0) + 1
+        metadata_snapshot["knowledge_turn_counter"] = turn_index
+        if not isinstance(metadata_snapshot.get("knowledge_delivery_log"), list):
+            metadata_snapshot["knowledge_delivery_log"] = []
+        metadata_dirty = True
         raw_cache = metadata_snapshot.get("knowledge_cache") if isinstance(metadata_snapshot, dict) else {}
         cached_entries: dict[str, dict[str, object]] = {}
         if isinstance(raw_cache, dict):
@@ -594,6 +694,13 @@ class AiOrchestratorService:
                 if isinstance(value, dict):
                     cached_entries[str(key)] = value
         cache_dirty = False
+        visitor_mentions, mention_updates = self._detect_snippet_mentions(
+            query=query,
+            cached_entries=cached_entries,
+            turn_index=turn_index,
+        )
+        if mention_updates:
+            cache_dirty = True
 
         citations = list(
             self.knowledge_service.search(
@@ -605,19 +712,27 @@ class AiOrchestratorService:
         recent_messages = list(self._recent_messages(conversation))
         knowledge_payload: list[dict[str, object]] = []
         for cached_snippet in cached_entries.values():
-            self._upsert_knowledge_payload(knowledge_payload, dict(cached_snippet))
+            if not self._should_include_snippet(
+                cached_snippet,
+                turn_index=turn_index,
+                visitor_mentions=visitor_mentions,
+            ):
+                continue
+            self._upsert_knowledge_payload(knowledge_payload, self._prepare_prompt_snippet(cached_snippet))
         for snippet in citations:
-            self._upsert_knowledge_payload(knowledge_payload, self._serialize_snippet(snippet))
+            serialized = self._serialize_snippet(snippet)
+            serialized["status"] = serialized.get("status") or self._determine_snippet_status(serialized)
+            serialized.setdefault("coverage", [])
+            self._upsert_knowledge_payload(knowledge_payload, serialized)
         snippet_lookup: dict[str, KnowledgeSnippet] = {str(snippet.id): snippet for snippet in citations}
         loaded_content_ids: set[str] = {
             str(identifier)
             for identifier, payload in cached_entries.items()
             if isinstance(payload, dict) and payload.get("content")
         }
-        knowledge_reads: list[dict[str, str]] = []
+        knowledge_reads: list[dict[str, object]] = []
         placeholder_response: str | None = None
         knowledge_loading = False
-        placeholder_sent = False
         placeholder_added_to_prompt = False
         streamed_chunks: list[str] = []
         active_iteration_chunks: list[str] = []
@@ -664,6 +779,7 @@ class AiOrchestratorService:
                 knowledge_snippets=knowledge_payload,
                 transcript=recent_messages,
                 actions_catalog=actions_catalog,
+                knowledge_log=metadata_snapshot.get("knowledge_delivery_log") or (),
             )
 
             iteration_streamed = False
@@ -689,9 +805,6 @@ class AiOrchestratorService:
 
             if plan_candidate.response_text:
                 placeholder_response = plan_candidate.response_text
-                if on_placeholder_response and not placeholder_sent:
-                    on_placeholder_response(placeholder_response)
-                    placeholder_sent = True
                 _remember_placeholder_for_prompt(placeholder_response)
             knowledge_loading = True
             if on_status_change:
@@ -726,21 +839,33 @@ class AiOrchestratorService:
                 cache_dirty = self._cache_snippet(cached_entries, payload) or cache_dirty
                 if snippet.content:
                     payload["content"] = snippet.content
-                self._upsert_knowledge_payload(knowledge_payload, payload)
+                entry = cached_entries.get(key, payload)
+                usage_changed, topics, usage_label = self._mark_snippet_usage(
+                    entry=entry,
+                    query=query,
+                    turn_index=turn_index,
+                    metadata_snapshot=metadata_snapshot,
+                )
+                if usage_changed:
+                    cache_dirty = True
+                    metadata_dirty = True
+                prepared = self._prepare_prompt_snippet(entry)
+                self._upsert_knowledge_payload(knowledge_payload, prepared)
                 knowledge_reads.append(
                     {
                         "id": key,
                         "label": snippet.public_label or snippet.title,
+                        "topics": topics,
+                        "usage": usage_label,
                     }
                 )
                 logger.info("Loaded knowledge snippet id=%s label=%s", key, snippet.public_label or snippet.title)
         else:
             final_plan = plan_candidate
 
-        if cache_dirty:
-            updated_metadata = dict(metadata_snapshot)
-            updated_metadata["knowledge_cache"] = cached_entries
-            conversation.metadata = updated_metadata
+        metadata_snapshot["knowledge_cache"] = cached_entries
+        if cache_dirty or metadata_dirty:
+            conversation.metadata = metadata_snapshot
             conversation.save(update_fields=["metadata"])
 
         llm_plan = final_plan
@@ -766,8 +891,14 @@ class AiOrchestratorService:
             llm_source = "heuristic"
 
         if response_text and not last_iteration_streamed:
+            has_ready_context = any(bool(item.get("content")) for item in knowledge_payload)
             response_text = self._strip_placeholder_overlap(placeholder_response, response_text)
-            response_text = self._dedupe_response(conversation, response_text)
+            response_text = self._dedupe_response(
+                conversation,
+                response_text,
+                knowledge_reads,
+                has_ready_context=has_ready_context,
+            )
             streamed_chunks = [response_text]
             _emit_stream_chunk(response_text)
 
@@ -814,6 +945,21 @@ class AiOrchestratorService:
             return False
         snapshot = cache.get(identifier)
         data = dict(payload)
+        data["id"] = identifier
+        data["status"] = data.get("status") or self._determine_snippet_status(data)
+        preserved_keys = {
+            "coverage",
+            "last_used_for",
+            "last_used_at",
+            "last_active_turn",
+            "last_customer_reference_turn",
+            "pin",
+            "topic_hints",
+        }
+        if snapshot:
+            for key in preserved_keys:
+                if key in snapshot and key not in data:
+                    data[key] = snapshot[key]
         if snapshot == data:
             return False
         cache[identifier] = data
@@ -832,7 +978,14 @@ class AiOrchestratorService:
             return current[len(base) :].lstrip() or current
         return response_text
 
-    def _dedupe_response(self, conversation: Conversation, response_text: str) -> str:
+    def _dedupe_response(
+        self,
+        conversation: Conversation,
+        response_text: str,
+        knowledge_reads: Sequence[Mapping[str, object]],
+        *,
+        has_ready_context: bool,
+    ) -> str:
         text = (response_text or "").strip()
         if not text:
             return text
@@ -845,10 +998,19 @@ class AiOrchestratorService:
             return text
         previous_sentences = {sentence.lower() for sentence in self._split_sentences(last_ai.body)}
         new_sentences = self._split_sentences(text)
+        just_read = {item.get("label", "").lower() for item in knowledge_reads if item.get("label")}
         filtered: list[str] = []
         for sentence in new_sentences:
             normalized = sentence.lower()
             if normalized and normalized in previous_sentences:
+                continue
+            # If we just read a doc, encourage immediate answers by skipping filler such as "I'll check".
+            if (just_read or has_ready_context) and (
+                normalized.startswith("i'll check")
+                or normalized.startswith("i will check")
+                or normalized.startswith("let me check")
+                or "i’ll check" in normalized
+            ):
                 continue
             filtered.append(sentence)
         if filtered:
@@ -862,6 +1024,221 @@ class AiOrchestratorService:
             return []
         parts = re.split(r"(?<=[.!?])\s+", cleaned)
         return [part.strip() for part in parts if part and part.strip()]
+
+    @staticmethod
+    def _determine_snippet_status(snapshot: Mapping[str, object]) -> str:
+        if snapshot.get("system_notice") == "missing_document":
+            return "unavailable"
+        state = snapshot.get("read_state") or ""
+        if (state == KNOWLEDGE_READ_STATE_FULL) or snapshot.get("content"):
+            return "ready"
+        if state == KNOWLEDGE_READ_STATE_PREVIEW:
+            return "preview"
+        return "summary-only"
+
+    def _prepare_prompt_snippet(self, entry: Mapping[str, object]) -> dict[str, object]:
+        payload = dict(entry)
+        payload["status"] = payload.get("status") or self._determine_snippet_status(payload)
+        payload.setdefault("coverage", [])
+        payload.setdefault("read_state", payload.get("read_state") or KNOWLEDGE_READ_STATE_SUMMARY)
+        if payload.get("pin") is None:
+            payload["pin"] = False
+        payload.pop("last_active_turn", None)
+        payload.pop("last_customer_reference_turn", None)
+        return payload
+
+    def _should_include_snippet(
+        self,
+        entry: Mapping[str, object],
+        *,
+        turn_index: int,
+        visitor_mentions: set[str],
+    ) -> bool:
+        identifier = entry.get("id")
+        if not identifier:
+            return False
+        if entry.get("pin"):
+            return True
+        if identifier in visitor_mentions:
+            return True
+        last_turn = int(entry.get("last_active_turn") or 0)
+        if last_turn == 0:
+            return True
+        return (turn_index - last_turn) <= RECENT_SNIPPET_TURN_WINDOW
+
+    def _detect_snippet_mentions(
+        self,
+        *,
+        query: str,
+        cached_entries: Mapping[str, dict[str, object]],
+        turn_index: int,
+    ) -> tuple[set[str], bool]:
+        mentions: set[str] = set()
+        updated = False
+        normalized_query = (query or "").lower()
+        tokenized = set(re.split(r"[^a-z0-9]+", normalized_query))
+        for identifier, entry in cached_entries.items():
+            keywords = self._extract_snippet_keywords(entry)
+            if not keywords:
+                continue
+            if self._text_mentions_keywords(normalized_query, tokenized, keywords):
+                mentions.add(identifier)
+                if entry.get("last_customer_reference_turn") != turn_index:
+                    entry["last_customer_reference_turn"] = turn_index
+                    entry["last_active_turn"] = turn_index
+                    updated = True
+        return mentions, updated
+
+    @staticmethod
+    def _extract_snippet_keywords(entry: Mapping[str, object]) -> set[str]:
+        keywords: set[str] = set()
+        for field in ("public_label", "title"):
+            label = entry.get(field)
+            if isinstance(label, str) and label.strip():
+                for token in re.split(r"[^a-z0-9]+", label.lower()):
+                    if token and len(token) >= 4:
+                        keywords.add(token)
+        topic_hints = entry.get("topic_hints")
+        if isinstance(topic_hints, (list, tuple, set)):
+            for hint in topic_hints:
+                if isinstance(hint, str) and hint.strip():
+                    keywords.add(hint.strip().lower())
+        coverage = entry.get("coverage")
+        if isinstance(coverage, (list, tuple, set)):
+            for cov in coverage:
+                if isinstance(cov, str) and cov.strip():
+                    keywords.add(cov.strip().lower())
+        return keywords
+
+    @staticmethod
+    def _text_mentions_keywords(text: str, tokens: set[str], keywords: set[str]) -> bool:
+        for keyword in keywords:
+            if not keyword:
+                continue
+            if " " in keyword:
+                if keyword in text:
+                    return True
+            else:
+                if keyword in tokens:
+                    return True
+        return False
+
+    @staticmethod
+    def _merge_topics(existing: Sequence[str] | None, new_topics: Sequence[str]) -> list[str]:
+        merged: list[str] = []
+        seen: set[str] = set()
+        sources = list(existing or []) + list(new_topics or [])
+        for topic in sources:
+            normalized = str(topic).strip().lower()
+            if not normalized or normalized in seen:
+                continue
+            seen.add(normalized)
+            merged.append(normalized)
+        return merged
+
+    def _infer_topics_from_text(self, text: str) -> tuple[str, ...]:
+        normalized_text = (text or "").lower()
+        tokens = set(re.split(r"[^a-z0-9]+", normalized_text))
+        matches: list[str] = []
+        for topic, keywords in TOPIC_KEYWORD_MAP.items():
+            if self._text_mentions_keywords(normalized_text, tokens, set(keywords)):
+                matches.append(topic)
+        if matches:
+            ordered: list[str] = []
+            seen: set[str] = set()
+            for topic in matches:
+                if topic not in seen:
+                    seen.add(topic)
+                    ordered.append(topic)
+            return tuple(ordered)
+        return tuple()
+
+    @staticmethod
+    def _detect_product_label(query: str, snapshot: Mapping[str, object]) -> str | None:
+        label = (snapshot.get("public_label") or snapshot.get("title") or "").strip()
+        if not label:
+            return None
+        normalized_query = (query or "").lower()
+        tokens = [token for token in re.split(r"[^a-z0-9]+", label.lower()) if len(token) >= 4]
+        if not tokens:
+            return None
+        for token in tokens:
+            if token and token in normalized_query:
+                return label
+        return None
+
+    def _mark_snippet_usage(
+        self,
+        *,
+        entry: dict[str, object],
+        query: str,
+        turn_index: int,
+        metadata_snapshot: dict,
+    ) -> tuple[bool, list[str], str]:
+        changed = False
+        entry_status = entry.get("status")
+        status = entry_status or self._determine_snippet_status(entry)
+        if entry_status != status:
+            entry["status"] = status
+            changed = True
+        entry["last_active_turn"] = turn_index
+        entry["last_used_at"] = timezone.now().isoformat()
+        topics = list(self._infer_topics_from_text(query))
+        topic_hints = entry.get("topic_hints")
+        if not topics and isinstance(topic_hints, (list, tuple)):
+            normalized_hints = [str(hint).strip().lower() for hint in topic_hints if isinstance(hint, str) and hint.strip()]
+            if normalized_hints:
+                topics = [normalized_hints[0]]
+        if not topics:
+            topics = ["details"]
+        existing = entry.get("coverage")
+        existing_coverage = existing if isinstance(existing, list) else (existing or [])
+        merged = self._merge_topics(existing_coverage, topics)
+        if merged != existing_coverage:
+            entry["coverage"] = merged
+            changed = True
+        product_label = self._detect_product_label(query, entry)
+        topic_display = "/".join(topics)
+        usage_label = topic_display
+        if product_label:
+            usage_label = f"{product_label} {topic_display}".strip()
+        if usage_label and entry.get("last_used_for") != usage_label:
+            entry["last_used_for"] = usage_label
+            changed = True
+        if self._append_delivery_log(
+            metadata_snapshot=metadata_snapshot,
+            identifier=str(entry.get("id")),
+            label=entry.get("public_label") or entry.get("title") or "Knowledge",
+            usage_label=usage_label,
+            topics=topics,
+        ):
+            changed = True
+        return changed, topics, usage_label
+
+    @staticmethod
+    def _append_delivery_log(
+        *,
+        metadata_snapshot: dict,
+        identifier: str,
+        label: str,
+        usage_label: str,
+        topics: Sequence[str],
+    ) -> bool:
+        if not identifier:
+            return False
+        log = metadata_snapshot.get("knowledge_delivery_log")
+        if not isinstance(log, list):
+            log = []
+        entry = {
+            "id": identifier,
+            "label": label,
+            "usage": usage_label,
+            "topics": list(topics),
+            "used_at": timezone.now().isoformat(),
+        }
+        log.append(entry)
+        metadata_snapshot["knowledge_delivery_log"] = log[-LEDGER_LOG_LIMIT:]
+        return True
 
     # ------------------------------------------------------------------
     # Internal helpers
@@ -896,12 +1273,14 @@ class AiOrchestratorService:
         return tuple(reversed(tuple(qs)))
 
     @staticmethod
-    def _serialize_snippet(snippet: KnowledgeSnippet) -> dict[str, str]:
-        payload: dict[str, str] = {
+    def _serialize_snippet(snippet: KnowledgeSnippet) -> dict[str, object]:
+        payload: dict[str, object] = {
             "id": str(snippet.id),
             "title": snippet.title,
             "summary": snippet.summary,
             "source": snippet.source,
+            "data_ready": bool(snippet.content),
+            "read_state": snippet.read_state,
         }
         if snippet.public_label:
             payload["public_label"] = snippet.public_label
@@ -913,6 +1292,10 @@ class AiOrchestratorService:
             payload["issues"] = [dict(issue) for issue in snippet.issues]
         if snippet.page_summaries:
             payload["pageSummaries"] = [dict(page) for page in snippet.page_summaries]
+        if snippet.topic_hints:
+            payload["topic_hints"] = list(snippet.topic_hints)
+        if snippet.is_pinned:
+            payload["pin"] = True
         return payload
 
     @staticmethod
@@ -930,7 +1313,7 @@ class AiOrchestratorService:
         *,
         identifiers: Sequence[str],
         knowledge_payload: list[dict[str, object]],
-        knowledge_reads: list[dict[str, str]],
+        knowledge_reads: list[dict[str, object]],
         loaded_content_ids: set[str],
         knowledge_cache: dict[str, dict[str, object]],
     ) -> bool:
@@ -967,6 +1350,10 @@ class AiOrchestratorService:
                 "reassure them you will monitor for updates, and offer alternative guidance or escalation."
             ),
             "system_notice": "missing_document",
+            "data_ready": False,
+            "read_state": KNOWLEDGE_READ_STATE_SUMMARY,
+            "status": "unavailable",
+            "coverage": [],
         }
 
     def _invoke_llm(self, bundle: PromptBundle, *, on_response_text_delta: Callable[[str], None] | None = None) -> LlmPlan | None:
