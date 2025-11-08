@@ -399,6 +399,25 @@ class KnowledgeAuditAction(models.TextChoices):
     RESTORED = "restored", "Restored"
 
 
+class KnowledgeBlockType(models.TextChoices):
+    HEADING = "heading", "Heading"
+    PARAGRAPH = "paragraph", "Paragraph"
+    LIST = "list", "List"
+    TABLE = "table", "Table"
+    FIGURE = "figure", "Figure"
+    IMAGE = "image", "Image"
+    FOOTER = "footer", "Footer"
+    HEADER = "header", "Header"
+    OCR_ONLY = "ocr_only", "OCR Text"
+    OTHER = "other", "Other"
+
+
+class KnowledgeIssueSeverity(models.TextChoices):
+    INFO = "info", "Info"
+    WARNING = "warning", "Warning"
+    ERROR = "error", "Error"
+
+
 class KnowledgeUpload(models.Model):
     """
     Central knowledge artifact powering the AI agent experience.
@@ -619,6 +638,294 @@ class KnowledgeUploadChunk(models.Model):
 
     def __str__(self) -> str:
         return f"Chunk {self.chunk_index} for {self.upload_id}"
+
+
+class KnowledgeUploadPage(models.Model):
+    """
+    Captures per-page layout, measurements, and extraction metadata.
+    """
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    upload = models.ForeignKey(
+        KnowledgeUpload,
+        related_name="pages",
+        on_delete=models.CASCADE,
+    )
+    page_number = models.PositiveIntegerField()
+    width = models.FloatField(default=0.0)
+    height = models.FloatField(default=0.0)
+    rotation = models.IntegerField(default=0)
+    text_density = models.FloatField(default=0.0)
+    has_ocr_content = models.BooleanField(default=False)
+    content_type = models.CharField(max_length=32, blank=True, default="")
+    metadata = models.JSONField(default=dict, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = "accounts_knowledge_upload_page"
+        ordering = ("upload_id", "page_number")
+        indexes = [
+            models.Index(fields=["upload", "page_number"], name="knowledge_page_idx"),
+        ]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["upload", "page_number"],
+                name="knowledge_page_unique_number",
+            )
+        ]
+
+    def __str__(self) -> str:
+        return f"Page {self.page_number} ({self.upload_id})"
+
+
+class KnowledgeUploadPageBlock(models.Model):
+    """
+    Stores layout-aware text/image/table blocks with bounding box provenance.
+    """
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    upload = models.ForeignKey(
+        KnowledgeUpload,
+        related_name="page_blocks",
+        on_delete=models.CASCADE,
+    )
+    page = models.ForeignKey(
+        KnowledgeUploadPage,
+        related_name="blocks",
+        on_delete=models.CASCADE,
+    )
+    block_type = models.CharField(
+        max_length=32,
+        choices=KnowledgeBlockType.choices,
+        default=KnowledgeBlockType.PARAGRAPH,
+    )
+    order_index = models.PositiveIntegerField(default=0)
+    text = models.TextField(blank=True, default="")
+    bbox = models.JSONField(default=dict, blank=True)
+    section_heading = models.CharField(max_length=255, blank=True, default="")
+    heading_path = models.JSONField(default=list, blank=True)
+    detected_language = models.CharField(max_length=32, blank=True, default="")
+    confidence = models.FloatField(null=True, blank=True)
+    metadata = models.JSONField(default=dict, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = "accounts_knowledge_upload_page_block"
+        ordering = ("page_id", "order_index")
+        indexes = [
+            models.Index(fields=["upload", "block_type"], name="knowledge_block_type_idx"),
+            models.Index(fields=["page", "block_type"], name="knowledge_block_page_idx"),
+        ]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["page", "order_index"],
+                name="knowledge_block_unique_order",
+            )
+        ]
+
+    def __str__(self) -> str:
+        return f"Block {self.order_index} ({self.block_type}) on page {self.page_id}"
+
+
+class KnowledgeUploadTable(models.Model):
+    """
+    Normalized representation of detected tables with provenance metadata.
+    """
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    upload = models.ForeignKey(
+        KnowledgeUpload,
+        related_name="tables",
+        on_delete=models.CASCADE,
+    )
+    page = models.ForeignKey(
+        KnowledgeUploadPage,
+        related_name="tables",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+    )
+    source_block = models.ForeignKey(
+        KnowledgeUploadPageBlock,
+        related_name="tables",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+    )
+    title = models.CharField(max_length=255, blank=True, default="")
+    section_heading = models.CharField(max_length=255, blank=True, default="")
+    order_index = models.PositiveIntegerField(default=0)
+    bbox = models.JSONField(default=dict, blank=True)
+    column_schema = models.JSONField(
+        default=list,
+        blank=True,
+        help_text="Ordered schema describing each detected column.",
+    )
+    data_dictionary = models.JSONField(
+        default=dict,
+        blank=True,
+        help_text="Optional metadata describing column semantics/normalization.",
+    )
+    metadata = models.JSONField(default=dict, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = "accounts_knowledge_upload_table"
+        ordering = ("upload_id", "order_index")
+        indexes = [
+            models.Index(fields=["upload", "order_index"], name="knowledge_table_upload_idx"),
+            models.Index(fields=["page", "order_index"], name="knowledge_table_page_idx"),
+        ]
+
+    def __str__(self) -> str:
+        return f"Table {self.order_index} for {self.upload_id}"
+
+
+class KnowledgeUploadTableRow(models.Model):
+    """
+    Row-level representation to retain positional accuracy and provenance.
+    """
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    table = models.ForeignKey(
+        KnowledgeUploadTable,
+        related_name="rows",
+        on_delete=models.CASCADE,
+    )
+    row_index = models.PositiveIntegerField()
+    page_number = models.PositiveIntegerField(null=True, blank=True)
+    bbox = models.JSONField(default=dict, blank=True)
+    raw_text = models.TextField(blank=True, default="")
+    metadata = models.JSONField(default=dict, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = "accounts_knowledge_upload_table_row"
+        ordering = ("table_id", "row_index")
+        constraints = [
+            models.UniqueConstraint(
+                fields=["table", "row_index"],
+                name="knowledge_table_row_unique_index",
+            )
+        ]
+
+    def __str__(self) -> str:
+        return f"Row {self.row_index} for table {self.table_id}"
+
+
+class KnowledgeUploadTableCell(models.Model):
+    """
+    Cell-level storage for both raw and normalized values plus coordinates.
+    """
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    table = models.ForeignKey(
+        KnowledgeUploadTable,
+        related_name="cells",
+        on_delete=models.CASCADE,
+    )
+    row = models.ForeignKey(
+        KnowledgeUploadTableRow,
+        related_name="cells",
+        on_delete=models.CASCADE,
+    )
+    column_index = models.PositiveIntegerField()
+    column_key = models.CharField(max_length=160, blank=True, default="")
+    raw_text = models.TextField(blank=True, default="")
+    normalized_value = models.JSONField(
+        default=dict,
+        blank=True,
+        help_text="Parsed/typed representation (e.g., amount, currency).",
+    )
+    bbox = models.JSONField(default=dict, blank=True)
+    confidence = models.FloatField(null=True, blank=True)
+    metadata = models.JSONField(default=dict, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = "accounts_knowledge_upload_table_cell"
+        ordering = ("table_id", "row_id", "column_index")
+        indexes = [
+            models.Index(fields=["table", "column_index"], name="knowledge_cell_column_idx"),
+        ]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["row", "column_index"],
+                name="knowledge_cell_unique_row_column",
+            )
+        ]
+
+    def __str__(self) -> str:
+        return f"Cell r{self.row_id}-c{self.column_index}"
+
+
+class KnowledgeUploadIssue(models.Model):
+    """
+    Structured issues log connected back to uploads, pages, and table artifacts.
+    """
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    upload = models.ForeignKey(
+        KnowledgeUpload,
+        related_name="issues",
+        on_delete=models.CASCADE,
+    )
+    page = models.ForeignKey(
+        KnowledgeUploadPage,
+        related_name="issues",
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+    )
+    table = models.ForeignKey(
+        KnowledgeUploadTable,
+        related_name="issues",
+        null=True,
+        blank=True,
+        on_delete=models.CASCADE,
+    )
+    table_row = models.ForeignKey(
+        KnowledgeUploadTableRow,
+        related_name="issues",
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+    )
+    table_cell = models.ForeignKey(
+        KnowledgeUploadTableCell,
+        related_name="issues",
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+    )
+    issue_code = models.CharField(max_length=120)
+    severity = models.CharField(
+        max_length=16,
+        choices=KnowledgeIssueSeverity.choices,
+        default=KnowledgeIssueSeverity.INFO,
+    )
+    description = models.TextField(blank=True, default="")
+    detected_by = models.CharField(max_length=64, blank=True, default="")
+    details = models.JSONField(default=dict, blank=True)
+    resolved = models.BooleanField(default=False)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = "accounts_knowledge_upload_issue"
+        ordering = ("-created_at",)
+        indexes = [
+            models.Index(fields=["upload", "severity"], name="knowledge_issue_severity_idx"),
+            models.Index(fields=["table", "issue_code"], name="knowledge_issue_table_idx"),
+        ]
+
+    def __str__(self) -> str:
+        return f"Issue {self.issue_code} ({self.severity}) for upload {self.upload_id}"
 
 
 class KnowledgeCollection(models.Model):

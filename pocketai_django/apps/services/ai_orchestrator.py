@@ -5,12 +5,23 @@ import logging
 import uuid
 from enum import Enum
 from types import SimpleNamespace
+import re
 from typing import Callable, Iterable, Mapping, Sequence
 
 from django.db import transaction
+from django.db.models import Prefetch
 from django.utils import timezone
 
-from apps.accounts.models import AgentProfile, KnowledgeStatus, KnowledgeUpload, KnowledgeUploadChunk
+from apps.accounts.models import (
+    AgentProfile,
+    KnowledgeStatus,
+    KnowledgeUpload,
+    KnowledgeUploadChunk,
+    KnowledgeUploadIssue,
+    KnowledgeUploadTable,
+    KnowledgeUploadTableCell,
+    KnowledgeUploadTableRow,
+)
 from apps.cases.models import Case, CaseHistoryEntry, CasePriority, CaseStatus
 from apps.conversations.models import (
     Conversation,
@@ -163,6 +174,9 @@ class KnowledgeSnippet:
     source: str
     content: str | None = None
     public_label: str | None = None
+    structured_tables: Sequence[Mapping[str, object]] = dataclasses.field(default_factory=tuple)
+    issues: Sequence[Mapping[str, object]] = dataclasses.field(default_factory=tuple)
+    page_summaries: Sequence[Mapping[str, object]] = dataclasses.field(default_factory=tuple)
 
 
 @dataclasses.dataclass(frozen=True)
@@ -196,6 +210,9 @@ class ActionExecutionResult:
 
 class ActionExecutionError(Exception):
     """Raised when an action cannot be executed."""
+
+
+MAX_INLINE_KNOWLEDGE_CHARS = 60000
 
 
 class KnowledgeSearchService:
@@ -277,6 +294,7 @@ class KnowledgeSearchService:
         snippets: list[KnowledgeSnippet] = []
         for upload in qs:
             label = self._public_label(upload)
+            structured = self._structured_exports(upload)
             snippets.append(
                 KnowledgeSnippet(
                     id=upload.id,
@@ -284,7 +302,16 @@ class KnowledgeSearchService:
                     summary=self._summarize_upload(upload),
                     source=upload.source_name or upload.source_type,
                     public_label=label,
+                    structured_tables=structured["tables"],
+                    issues=structured["issues"],
+                    page_summaries=structured["pages"],
                 )
+            )
+        if not snippets:
+            logger.warning(
+                "Knowledge load returned no snippets for business=%s ids=%s",
+                business_profile.id,
+                [str(value) for value in normalized],
             )
         return tuple(snippets)
 
@@ -293,6 +320,7 @@ class KnowledgeSearchService:
         label = self._public_label(upload)
         summary = self._summarize_chunk(chunk)
         content = self._trim_content(chunk.content, max_chars=1200)
+        structured = self._structured_exports(upload)
         return KnowledgeSnippet(
             id=upload.id,
             title=label,
@@ -300,6 +328,9 @@ class KnowledgeSearchService:
             source=upload.source_name or upload.source_type,
             content=content,
             public_label=label,
+            structured_tables=structured["tables"],
+            issues=structured["issues"],
+            page_summaries=structured["pages"],
         )
 
     def load_contents(
@@ -307,7 +338,7 @@ class KnowledgeSearchService:
         *,
         business_profile,
         knowledge_ids: Sequence[str],
-        max_chars: int = 2000,
+        max_chars: int | None = None,
     ) -> Sequence[KnowledgeSnippet]:
         normalized: list[uuid.UUID] = []
         for value in knowledge_ids:
@@ -317,6 +348,24 @@ class KnowledgeSearchService:
                 continue
         if not normalized:
             return tuple()
+        table_prefetch = Prefetch(
+            "tables",
+            queryset=KnowledgeUploadTable.objects.order_by("order_index").select_related("page").prefetch_related(
+                Prefetch(
+                    "rows",
+                    queryset=KnowledgeUploadTableRow.objects.order_by("row_index").prefetch_related(
+                        Prefetch(
+                            "cells",
+                            queryset=KnowledgeUploadTableCell.objects.order_by("column_index"),
+                        )
+                    ),
+                )
+            ),
+        )
+        issue_prefetch = Prefetch(
+            "issues",
+            queryset=KnowledgeUploadIssue.objects.order_by("-created_at").select_related("page", "table", "table_row", "table_cell"),
+        )
         qs = (
             KnowledgeUpload.objects.filter(
                 business_profile=business_profile,
@@ -324,23 +373,110 @@ class KnowledgeSearchService:
                 id__in=normalized,
             )
             .select_related("text_detail")
+            .prefetch_related(table_prefetch, issue_prefetch)
             .order_by("-updated_at")
         )
         snippets: list[KnowledgeSnippet] = []
+        limit = max_chars if max_chars is not None else MAX_INLINE_KNOWLEDGE_CHARS
         for upload in qs:
             label = self._public_label(upload)
-            content = self._trim_content(self._extract_content(upload), max_chars=max_chars)
+            raw_content = self._extract_content(upload)
+            content = self._trim_content(raw_content, max_chars=limit) if raw_content else ""
+            structured = self._structured_exports(upload)
+            table_text = self._render_structured_tables_text(upload)
+            issue_text = self._render_issue_text(upload)
+            supplemental_sections = [content]
+            if table_text:
+                supplemental_sections.append(table_text)
+            if issue_text:
+                supplemental_sections.append(issue_text)
+            combined_content = "\n\n".join(section for section in supplemental_sections if section)
             snippets.append(
                 KnowledgeSnippet(
                     id=upload.id,
                     title=label,
                     summary=self._summarize_upload(upload),
                     source=upload.source_name or upload.source_type,
-                    content=content,
+                    content=combined_content,
                     public_label=label,
+                    structured_tables=structured["tables"],
+                    issues=structured["issues"],
+                    page_summaries=structured["pages"],
                 )
             )
         return tuple(snippets)
+
+    @staticmethod
+    def _structured_exports(upload: KnowledgeUpload, *, max_tables: int = 3) -> dict[str, tuple[Mapping[str, object], ...]]:
+        metadata = upload.ingestion_metadata or {}
+        exports = metadata.get("structured_exports") if isinstance(metadata, dict) else None
+        if not isinstance(exports, dict):
+            return {"tables": tuple(), "issues": tuple(), "pages": tuple()}
+        tables = exports.get("tables") or []
+        issues = exports.get("issues") or []
+        pages = exports.get("pages") or []
+        def _normalize_list(source: Any, limit: int | None = None) -> tuple[Mapping[str, object], ...]:
+            if not isinstance(source, list):
+                return tuple()
+            sliced = source if limit is None else source[:limit]
+            normalized: list[Mapping[str, object]] = []
+            for item in sliced:
+                if isinstance(item, dict):
+                    normalized.append(item)
+            return tuple(normalized)
+        return {
+            "tables": _normalize_list(tables, max_tables),
+            "issues": _normalize_list(issues, 10),
+            "pages": _normalize_list(pages, 10),
+        }
+
+    @staticmethod
+    def _render_structured_tables_text(upload: KnowledgeUpload, *, max_preview_rows: int = 5) -> str:
+        tables_manager = getattr(upload, "tables", None)
+        if not hasattr(tables_manager, "all"):
+            return ""
+        tables = list(tables_manager.all())
+        if not tables:
+            return ""
+        lines = ["[Structured Tables]"]
+        for table in tables:
+            page_number = table.page.page_number if table.page else None
+            title = table.title or f"Table {table.order_index}"
+            header = ", ".join((table.column_schema or [])[:10])
+            lines.append(f"- {title} (page {page_number or 'n/a'}) columns: {header or 'unspecified'}")
+            rows = list(table.rows.all()) if hasattr(table, "rows") else []
+            preview_rows = rows[:max_preview_rows]
+            for row in preview_rows:
+                cells = list(row.cells.all()) if hasattr(row, "cells") else []
+                cell_values = [cell.raw_text for cell in sorted(cells, key=lambda c: c.column_index)]
+                if cell_values:
+                    lines.append(f"    • {' | '.join(cell_values)}")
+            if len(rows) > max_preview_rows:
+                lines.append(f"    • … ({len(rows) - max_preview_rows} more rows)")
+        return "\n".join(lines)
+
+    @staticmethod
+    def _render_issue_text(upload: KnowledgeUpload, *, max_issues: int = 5) -> str:
+        issues_manager = getattr(upload, "issues", None)
+        if not hasattr(issues_manager, "all"):
+            return ""
+        issues = list(issues_manager.all())[:max_issues]
+        if not issues:
+            return ""
+        lines = ["[Ingestion Issues]"]
+        for issue in issues:
+            location = []
+            if issue.page:
+                location.append(f"page {issue.page.page_number}")
+            if issue.table:
+                location.append(f"table {issue.table.order_index}")
+            if issue.table_row:
+                location.append(f"row {issue.table_row.row_index}")
+            if issue.table_cell:
+                location.append(f"cell {issue.table_cell.column_index}")
+            location_str = " • ".join(location)
+            lines.append(f"- {issue.severity.upper()} {issue.issue_code}: {issue.description} ({location_str or 'no location'})")
+        return "\n".join(lines)
 
     @staticmethod
     def _public_label(upload: KnowledgeUpload) -> str:
@@ -379,11 +515,13 @@ class KnowledgeSearchService:
     @staticmethod
     def _trim_content(content: str, *, max_chars: int) -> str:
         text = (content or "").strip()
-        if not text:
-            return ""
+        if not text or max_chars <= 0:
+            return text
         if len(text) <= max_chars:
             return text
-        return f"{text[:max_chars].rstrip()}…"
+        logger.info("Trimming knowledge content from %s to %s chars", len(text), max_chars)
+        trimmed = text[:max_chars].rstrip()
+        return f"{trimmed}\n\n[Content truncated]"
 
     @staticmethod
     def _cosine_similarity(a: Sequence[float], b: Sequence[float]) -> float:
@@ -448,6 +586,15 @@ class AiOrchestratorService:
             conversation.case_id,
             query[:160],
         )
+        metadata_snapshot = dict(conversation.metadata or {})
+        raw_cache = metadata_snapshot.get("knowledge_cache") if isinstance(metadata_snapshot, dict) else {}
+        cached_entries: dict[str, dict[str, object]] = {}
+        if isinstance(raw_cache, dict):
+            for key, value in raw_cache.items():
+                if isinstance(value, dict):
+                    cached_entries[str(key)] = value
+        cache_dirty = False
+
         citations = list(
             self.knowledge_service.search(
                 business_profile=conversation.business_profile,
@@ -456,9 +603,17 @@ class AiOrchestratorService:
         )
         actions_catalog = self._actions_catalog()
         recent_messages = list(self._recent_messages(conversation))
-        knowledge_payload = [self._serialize_snippet(snippet) for snippet in citations]
+        knowledge_payload: list[dict[str, object]] = []
+        for cached_snippet in cached_entries.values():
+            self._upsert_knowledge_payload(knowledge_payload, dict(cached_snippet))
+        for snippet in citations:
+            self._upsert_knowledge_payload(knowledge_payload, self._serialize_snippet(snippet))
         snippet_lookup: dict[str, KnowledgeSnippet] = {str(snippet.id): snippet for snippet in citations}
-        loaded_content_ids: set[str] = set()
+        loaded_content_ids: set[str] = {
+            str(identifier)
+            for identifier, payload in cached_entries.items()
+            if isinstance(payload, dict) and payload.get("content")
+        }
         knowledge_reads: list[dict[str, str]] = []
         placeholder_response: str | None = None
         knowledge_loading = False
@@ -548,17 +703,27 @@ class AiOrchestratorService:
             )
             if not fetched:
                 logger.info(
-                    "LLM requested knowledge ids %s but nothing was fetched; proceeding without extra context",
+                    "LLM requested knowledge ids %s but nothing was fetched; inserting system notice",
                     pending_requests,
                 )
-                final_plan = plan_candidate
-                break
-
+                cache_dirty = (
+                    self._handle_missing_knowledge(
+                        identifiers=pending_requests,
+                        knowledge_payload=knowledge_payload,
+                        knowledge_reads=knowledge_reads,
+                        loaded_content_ids=loaded_content_ids,
+                        knowledge_cache=cached_entries,
+                    )
+                    or cache_dirty
+                )
+                knowledge_loading = False
+                continue
             for snippet in fetched:
                 key = str(snippet.id)
                 loaded_content_ids.add(key)
                 snippet_lookup[key] = snippet
                 payload = self._serialize_snippet(snippet)
+                cache_dirty = self._cache_snippet(cached_entries, payload) or cache_dirty
                 if snippet.content:
                     payload["content"] = snippet.content
                 self._upsert_knowledge_payload(knowledge_payload, payload)
@@ -571,6 +736,12 @@ class AiOrchestratorService:
                 logger.info("Loaded knowledge snippet id=%s label=%s", key, snippet.public_label or snippet.title)
         else:
             final_plan = plan_candidate
+
+        if cache_dirty:
+            updated_metadata = dict(metadata_snapshot)
+            updated_metadata["knowledge_cache"] = cached_entries
+            conversation.metadata = updated_metadata
+            conversation.save(update_fields=["metadata"])
 
         llm_plan = final_plan
         resolved_citations = tuple(snippet_lookup.values()) if snippet_lookup else tuple(citations)
@@ -595,6 +766,8 @@ class AiOrchestratorService:
             llm_source = "heuristic"
 
         if response_text and not last_iteration_streamed:
+            response_text = self._strip_placeholder_overlap(placeholder_response, response_text)
+            response_text = self._dedupe_response(conversation, response_text)
             streamed_chunks = [response_text]
             _emit_stream_chunk(response_text)
 
@@ -614,6 +787,7 @@ class AiOrchestratorService:
             "knowledge_reads": knowledge_reads,
             "knowledge_loading": knowledge_loading,
             "response_stream_text": response_stream_text,
+            "cached_snippets": len(cached_entries),
         }
         if placeholder_response:
             diagnostics["placeholder_response"] = placeholder_response.strip()
@@ -633,6 +807,61 @@ class AiOrchestratorService:
             extractions=extractions,
             diagnostics=diagnostics,
         )
+
+    def _cache_snippet(self, cache: dict[str, dict[str, object]], payload: Mapping[str, object]) -> bool:
+        identifier = str(payload.get("id") or "")
+        if not identifier:
+            return False
+        snapshot = cache.get(identifier)
+        data = dict(payload)
+        if snapshot == data:
+            return False
+        cache[identifier] = data
+        return True
+
+    def _strip_placeholder_overlap(self, placeholder: str | None, response_text: str) -> str:
+        if not placeholder or not response_text:
+            return response_text
+        base = placeholder.strip()
+        current = response_text.strip()
+        if not base or not current:
+            return response_text
+        lower_base = base.lower()
+        lower_current = current.lower()
+        if lower_current.startswith(lower_base):
+            return current[len(base) :].lstrip() or current
+        return response_text
+
+    def _dedupe_response(self, conversation: Conversation, response_text: str) -> str:
+        text = (response_text or "").strip()
+        if not text:
+            return text
+        last_ai = (
+            conversation.messages.filter(sender=ConversationSender.AI)
+            .order_by("-sent_at", "-created_at")
+            .first()
+        )
+        if not last_ai or not last_ai.body:
+            return text
+        previous_sentences = {sentence.lower() for sentence in self._split_sentences(last_ai.body)}
+        new_sentences = self._split_sentences(text)
+        filtered: list[str] = []
+        for sentence in new_sentences:
+            normalized = sentence.lower()
+            if normalized and normalized in previous_sentences:
+                continue
+            filtered.append(sentence)
+        if filtered:
+            return " ".join(filtered).strip()
+        return text
+
+    @staticmethod
+    def _split_sentences(text: str) -> list[str]:
+        cleaned = (text or "").strip()
+        if not cleaned:
+            return []
+        parts = re.split(r"(?<=[.!?])\s+", cleaned)
+        return [part.strip() for part in parts if part and part.strip()]
 
     # ------------------------------------------------------------------
     # Internal helpers
@@ -678,6 +907,12 @@ class AiOrchestratorService:
             payload["public_label"] = snippet.public_label
         if snippet.content:
             payload["content"] = snippet.content
+        if snippet.structured_tables:
+            payload["structuredTables"] = [dict(table) for table in snippet.structured_tables]
+        if snippet.issues:
+            payload["issues"] = [dict(issue) for issue in snippet.issues]
+        if snippet.page_summaries:
+            payload["pageSummaries"] = [dict(page) for page in snippet.page_summaries]
         return payload
 
     @staticmethod
@@ -689,6 +924,50 @@ class AiOrchestratorService:
                 break
         else:
             payload.append(dict(snippet_payload))
+
+    def _handle_missing_knowledge(
+        self,
+        *,
+        identifiers: Sequence[str],
+        knowledge_payload: list[dict[str, object]],
+        knowledge_reads: list[dict[str, str]],
+        loaded_content_ids: set[str],
+        knowledge_cache: dict[str, dict[str, object]],
+    ) -> bool:
+        if not identifiers:
+            return False
+        dirty = False
+        for raw_id in identifiers:
+            notice = self._missing_knowledge_notice(raw_id)
+            self._upsert_knowledge_payload(knowledge_payload, notice)
+            knowledge_reads.append(
+                {
+                    "id": notice["id"],
+                    "label": notice.get("public_label") or notice.get("title") or "missing_document",
+                }
+            )
+            loaded_content_ids.add(notice["id"])
+            dirty = self._cache_snippet(knowledge_cache, notice) or dirty
+        return dirty
+
+    @staticmethod
+    def _missing_knowledge_notice(identifier: str | None) -> dict[str, str]:
+        clean_id = (identifier or "missing-document").strip()
+        display_fragment = clean_id[:8] if clean_id else "doc"
+        return {
+            "id": clean_id or "missing-document",
+            "title": "Document unavailable",
+            "public_label": f"Doc {display_fragment} unavailable",
+            "summary": (
+                "System notice: The requested knowledge resource could not be retrieved. "
+                "Let the visitor know the latest document is unavailable and offer to follow up once it is restored."
+            ),
+            "content": (
+                "System directive: Inform the visitor that the referenced document is temporarily unavailable, "
+                "reassure them you will monitor for updates, and offer alternative guidance or escalation."
+            ),
+            "system_notice": "missing_document",
+        }
 
     def _invoke_llm(self, bundle: PromptBundle, *, on_response_text_delta: Callable[[str], None] | None = None) -> LlmPlan | None:
         if not self.provider:

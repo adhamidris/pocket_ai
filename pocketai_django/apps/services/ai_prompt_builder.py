@@ -54,6 +54,7 @@ class PromptBuilder:
         - When the knowledge base does not confirm a requested detail, state that it is not yet confirmed and ask the visitor if they would like to be transferred to a human call or continue the chat while you gather more information.
         - Keep internal workflows invisible. Do NOT mention cases, leads, CRM records, or internal notes unless the visitor explicitly asks for that information.
         - When a visitor asks about case status, only mention the latest status if it directly answers their question; otherwise keep the workflow behind the scenes.
+        - Do not repeat the same acknowledgement or promise in consecutive replies. If you already confirmed a fact or said you would “pull up” a document, move forward with the new information instead of restating the earlier message.
         """
     ).strip()
 
@@ -83,6 +84,7 @@ class PromptBuilder:
         - Once the platform returns the document content, cite it naturally and continue leading the conversation. Never tell the visitor you are “reading” a document or expose internal file names.
         - If no available knowledge confirms the requested detail, clearly state that it is not yet confirmed and ask whether the visitor would like to be transferred to a human call or continue chatting.
         - The summaries are deliberately incomplete. Treat them only as hints—never rely on them for specifics, and do not answer with policy/product detail unless you have already pulled the full document via `read_knowledge`.
+        - If a snippet is labeled as a system notice (for example, document unavailable), immediately tell the visitor the document could not be retrieved, explain the limitation, and offer an alternative next step or follow-up.
         """
     ).strip()
 
@@ -158,6 +160,9 @@ class PromptBuilder:
                 "source": snippet.get("source"),
                 "content": snippet.get("content"),
                 "public_label": snippet.get("public_label"),
+                "structuredTables": snippet.get("structuredTables") or [],
+                "issues": snippet.get("issues") or [],
+                "pageSummaries": snippet.get("pageSummaries") or [],
             }
             for snippet in knowledge_snippets
         ]
@@ -209,12 +214,35 @@ class PromptBuilder:
             title = snippet.get("public_label") or snippet.get("title") or "Untitled knowledge"
             identifier = snippet.get("id") or "unknown-id"
             summary = snippet.get("summary") or "No summary available."
+            notice = snippet.get("system_notice")
             knowledge_block_lines.append(f"- [ID: {identifier}] {title}: {summary}")
+            if notice == "missing_document":
+                knowledge_block_lines.append(
+                    "    System notice: Inform the visitor that this document is unavailable right now and offer a follow-up or alternative guidance."
+                )
             content = snippet.get("content")
             if content:
                 formatted = textwrap.indent(content.strip(), "    ")
                 knowledge_block_lines.append("    Full content:")
                 knowledge_block_lines.append(formatted)
+            tables = snippet.get("structuredTables") or []
+            if tables:
+                knowledge_block_lines.append("    Structured tables detected (call `read_knowledge` to access full rows):")
+                for table in tables[:3]:
+                    table_title = table.get("title") or f"Table {table.get('order_index') or table.get('orderIndex')}"
+                    page_number = table.get("page_number") or table.get("pageNumber") or "n/a"
+                    columns = table.get("column_schema") or table.get("columnSchema") or []
+                    formatted_cols = ", ".join(columns[:6]) if isinstance(columns, (list, tuple)) else ""
+                    knowledge_block_lines.append(
+                        f"      • {table_title} (page {page_number}) columns: {formatted_cols or 'unspecified'}"
+                    )
+            issues = snippet.get("issues") or []
+            if issues:
+                knowledge_block_lines.append("    Known ingestion issues:")
+                for issue in issues[:3]:
+                    knowledge_block_lines.append(
+                        f"      • {issue.get('severity', '').upper()} {issue.get('code')}: {issue.get('description')}"
+                    )
         knowledge_block = "\n".join(knowledge_block_lines) if knowledge_block_lines else "- No knowledge snippets were retrieved"
 
         actions_block = []
@@ -236,7 +264,7 @@ class PromptBuilder:
 
             ### Knowledge Snippets
             {knowledge_block}
-            Reminder: these summaries are just hints—call `read_knowledge` before citing any detail. If a snippet already includes a `Full content:` section, you already have it for this turn—do not request it again.
+            Reminder: these summaries are just hints—call `read_knowledge` before citing any detail. If a snippet already includes a `Full content:` section, you already have it for this turn—do not request it again. If a snippet is marked as a system notice (e.g., missing document), follow the instructions explicitly and explain the gap to the visitor.
 
             ### Available Actions
             {actions_block}

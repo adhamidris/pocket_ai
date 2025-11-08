@@ -441,6 +441,95 @@ def _serialize_document_detail(detail: DocumentDetail) -> dict:
             "characters": detail.text_detail.characters,
             "preview": detail.text_detail.preview,
         }
+    if detail.pages:
+        payload["layoutPages"] = [
+            {
+                "pageNumber": page.page_number,
+                "width": page.width,
+                "height": page.height,
+                "rotation": page.rotation,
+                "textDensity": page.text_density,
+                "hasOcrContent": page.has_ocr_content,
+                "contentType": page.content_type,
+                "metadata": page.metadata,
+                "blocks": [
+                    {
+                        "blockType": block.block_type,
+                        "orderIndex": block.order_index,
+                        "text": block.text,
+                        "bbox": block.bbox,
+                        "sectionHeading": block.section_heading,
+                        "headingPath": list(block.heading_path),
+                        "detectedLanguage": block.detected_language,
+                        "confidence": block.confidence,
+                        "metadata": block.metadata,
+                    }
+                    for block in page.blocks
+                ],
+            }
+            for page in detail.pages
+        ]
+    if detail.tables:
+        payload["structuredTables"] = [
+            {
+                "orderIndex": table.order_index,
+                "title": table.title,
+                "sectionHeading": table.section_heading,
+                "pageNumber": table.page_number,
+                "columnSchema": list(table.column_schema),
+                "rowCount": table.row_count,
+                "bbox": table.bbox,
+                "metadata": table.metadata,
+                "rows": [
+                    {
+                        "rowIndex": row.row_index,
+                        "pageNumber": row.page_number,
+                        "bbox": row.bbox,
+                        "rawText": row.raw_text,
+                        "metadata": row.metadata,
+                        "cells": [
+                            {
+                                "columnIndex": cell.column_index,
+                                "columnKey": cell.column_key,
+                                "rawText": cell.raw_text,
+                                "normalizedValue": cell.normalized_value,
+                                "bbox": cell.bbox,
+                                "confidence": cell.confidence,
+                                "metadata": cell.metadata,
+                            }
+                            for cell in row.cells
+                        ],
+                    }
+                    for row in table.rows
+                ],
+            }
+            for table in detail.tables
+        ]
+    if detail.issues:
+        payload["issues"] = [
+            {
+                "code": issue.code,
+                "severity": issue.severity,
+                "description": issue.description,
+                "pageNumber": issue.page_number,
+                "tableOrderIndex": issue.table_order_index,
+                "rowIndex": issue.row_index,
+                "columnIndex": issue.column_index,
+                "details": issue.details,
+                "createdAt": _iso(issue.created_at),
+            }
+            for issue in detail.issues
+        ]
+    if detail.chunks:
+        payload["chunks"] = [
+            {
+                "index": chunk.index,
+                "content": chunk.content,
+                "tokenCount": chunk.token_count,
+                "metadata": chunk.metadata,
+            }
+            for chunk in detail.chunks
+        ]
     return payload
 
 
