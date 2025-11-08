@@ -32,7 +32,11 @@ class ChatPortalClient {
     };
     this.streamingMessageNode = null;
     this.streamingMessageBodyEl = null;
+    this.streamingMessageBubbleEl = null;
+    this.streamingStatusEl = null;
+    this.streamingStatusTextEl = null;
     this.streamingBuffer = "";
+    this.streamingRewritePending = false;
     this.markdownRenderer = this.createMarkdownRenderer();
   }
 
@@ -211,9 +215,11 @@ class ChatPortalClient {
           // Keep the typing indicator visible during background work
           this.elements.typingIndicator?.classList.remove("hidden");
           if (payload.state === "reading_document") {
-            // Drop the existing streaming bubble so the next phase can
-            // render a fresh response without duplicating text.
-            this.resetStreamingState(true);
+            this.ensureStreamingMessageNode();
+            this.streamingRewritePending = true;
+            this.setStreamingPendingState("reading");
+          } else if (payload.state === "responding") {
+            this.setStreamingPendingState("updating");
           }
         }
       } catch (_err) {
@@ -355,6 +361,7 @@ class ChatPortalClient {
     bubble.className = `flex-1 rounded-2xl px-4 py-3 text-sm text-foreground shadow-soft ${
       message.sender === "customer" ? "bg-primary/10" : "bg-muted/60"
     }`;
+    bubble.dataset.messageBubble = "true";
 
     const author = document.createElement("p");
     author.className = "font-medium text-sm text-muted-foreground mb-1";
@@ -386,6 +393,14 @@ class ChatPortalClient {
   appendStreamingChunk(chunk) {
     if (!chunk || !this.elements.messages) return;
     this.ensureStreamingMessageNode();
+    if (this.streamingRewritePending) {
+      this.streamingBuffer = "";
+      if (this.streamingMessageBodyEl) {
+        this.streamingMessageBodyEl.innerHTML = "";
+      }
+      this.streamingRewritePending = false;
+      this.setStreamingPendingState("updating");
+    }
     this.streamingBuffer += chunk;
     if (this.streamingMessageBodyEl) {
       this.streamingMessageBodyEl.innerHTML = this.renderMarkdown(this.streamingBuffer);
@@ -404,7 +419,9 @@ class ChatPortalClient {
     });
     this.streamingMessageNode = placeholder;
     this.streamingMessageBodyEl = placeholder.querySelector("[data-message-body]");
+    this.streamingMessageBubbleEl = placeholder.querySelector("[data-message-bubble]");
     this.elements.messages.appendChild(placeholder);
+    this.setStreamingPendingState("drafting");
   }
 
   finalizeStreamingMessage(finalText) {
@@ -422,12 +439,56 @@ class ChatPortalClient {
   }
 
   resetStreamingState(removeNode = false) {
+    this.clearStreamingPendingState();
     if (removeNode && this.streamingMessageNode && this.streamingMessageNode.parentNode) {
       this.streamingMessageNode.parentNode.removeChild(this.streamingMessageNode);
     }
     this.streamingMessageNode = null;
     this.streamingMessageBodyEl = null;
+    this.streamingMessageBubbleEl = null;
     this.streamingBuffer = "";
+    this.streamingRewritePending = false;
+    this.streamingStatusEl = null;
+    this.streamingStatusTextEl = null;
+  }
+
+  setStreamingPendingState(mode = "drafting") {
+    if (!this.streamingMessageBubbleEl) return;
+    const labelMap = {
+      drafting: "Drafting response…",
+      reading: "Consulting documents…",
+      updating: "Updating details…",
+    };
+    const label = labelMap[mode] || labelMap.drafting;
+    this.streamingMessageBubbleEl.classList.add("opacity-80", "relative");
+    let badge = this.streamingStatusEl;
+    if (!badge) {
+      badge = document.createElement("div");
+      badge.dataset.streamingStatus = "true";
+      badge.className = "absolute right-4 bottom-3 text-xs text-muted-foreground flex items-center gap-2 bg-background/80 px-3 py-1 rounded-full shadow";
+      const dot = document.createElement("span");
+      dot.className = "inline-block h-2 w-2 rounded-full bg-primary animate-pulse";
+      const text = document.createElement("span");
+      text.textContent = label;
+      badge.appendChild(dot);
+      badge.appendChild(text);
+      this.streamingStatusEl = badge;
+      this.streamingStatusTextEl = text;
+      this.streamingMessageBubbleEl.appendChild(badge);
+    } else if (this.streamingStatusTextEl) {
+      this.streamingStatusTextEl.textContent = label;
+    }
+  }
+
+  clearStreamingPendingState() {
+    if (this.streamingMessageBubbleEl) {
+      this.streamingMessageBubbleEl.classList.remove("opacity-80");
+    }
+    if (this.streamingStatusEl && this.streamingStatusEl.parentNode) {
+      this.streamingStatusEl.parentNode.removeChild(this.streamingStatusEl);
+    }
+    this.streamingStatusEl = null;
+    this.streamingStatusTextEl = null;
   }
 
   updateStatus(status) {
