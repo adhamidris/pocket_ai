@@ -168,16 +168,22 @@ class DeepSeekChatProvider(OpenAIChatProvider):
             {"role": "system", "content": self._system_prompt(bundle)},
             {"role": "user", "content": self._user_payload(bundle)},
         ]
-        try:
-            logger.info("LLM request messages: %s", json.dumps(messages, ensure_ascii=False))
-        except Exception:  # pragma: no cover - log best effort
-            logger.warning("Failed to serialize LLM messages for logging.")
+        request_payload = {
+            "model": self.model,
+            "temperature": self.temperature,
+            "top_p": self.top_p,
+            "stream": bool(on_stream_delta),
+            "messages": messages,
+        }
+        self._log_pretty("DeepSeek request payload", request_payload)
         if on_stream_delta:
             content = self._generate_streaming(messages, on_stream_delta)
         else:
             content = self._generate_blocking(messages)
-        logger.info("LLM raw response: %s", content)
-        return self._parse_payload(content)
+        self._log_pretty("DeepSeek raw response", content)
+        parsed = self._parse_payload(content)
+        self._log_pretty("DeepSeek parsed payload", parsed)
+        return parsed
 
     def _generate_blocking(self, messages: list[Mapping[str, str]]) -> str:
         try:
@@ -248,6 +254,26 @@ class DeepSeekChatProvider(OpenAIChatProvider):
                 "extractions": [],
             }
 
+    @staticmethod
+    def _log_pretty(label: str, payload: Any) -> None:
+        try:
+            if isinstance(payload, str):
+                payload = payload.strip()
+                if payload:
+                    try:
+                        as_json = json.loads(payload)
+                    except json.JSONDecodeError:
+                        formatted = payload
+                    else:
+                        formatted = json.dumps(as_json, indent=2, ensure_ascii=False)
+                else:
+                    formatted = ""
+            else:
+                formatted = json.dumps(payload, indent=2, ensure_ascii=False)
+        except (TypeError, ValueError):
+            formatted = str(payload)
+        logger.info("%s:\n%s", label, formatted)
+
     def _system_prompt(self, bundle: PromptBundle) -> str:
         schema_hint = (
             "You must reply with JSON matching the schema provided. "
@@ -256,29 +282,7 @@ class DeepSeekChatProvider(OpenAIChatProvider):
         return f"{bundle.system_prompt}\n\n{schema_hint}"
 
     def _user_payload(self, bundle: PromptBundle) -> str:
-        lines: list[str] = [bundle.user_prompt.strip(), "", "Conversation transcript:"]
-        for turn in bundle.transcript:
-            sender = turn.get("sender", "unknown")
-            content = turn.get("content", "")
-            lines.append(f"- {sender}: {content}")
-        lines.append("")
-        lines.append("Knowledge snippets:")
-        if bundle.knowledge_snippets:
-            for snippet in bundle.knowledge_snippets:
-                lines.append(f"- {snippet.get('title')}: {snippet.get('summary')}")
-        else:
-            lines.append("- (none available)")
-        lines.append("")
-        lines.append("Action catalog (responders may choose any subset):")
-        for action in bundle.actions_catalog:
-            status = "enabled" if action.get("enabled") else "disabled"
-            lines.append(f"- {action.get('key')} ({status}): {action.get('description')}")
-        lines.append("")
-        lines.append(
-            "Return JSON with fields: response_text, actions[], extractions[], "
-            "where each action has 'action' + 'payload', and extractions have 'type' + 'payload'."
-        )
-        return "\n".join(lines)
+        return bundle.user_prompt.strip()
 
     @staticmethod
     def _response_schema() -> Mapping[str, Any]:
@@ -450,29 +454,7 @@ class _ResponseTextExtractor:
         return f"{bundle.system_prompt}\n\n{schema_hint}"
 
     def _user_payload(self, bundle: PromptBundle) -> str:
-        lines: list[str] = [bundle.user_prompt.strip(), "", "Conversation transcript:"]
-        for turn in bundle.transcript:
-            sender = turn.get("sender", "unknown")
-            content = turn.get("content", "")
-            lines.append(f"- {sender}: {content}")
-        lines.append("")
-        lines.append("Knowledge snippets:")
-        if bundle.knowledge_snippets:
-            for snippet in bundle.knowledge_snippets:
-                lines.append(f"- {snippet.get('title')}: {snippet.get('summary')}")
-        else:
-            lines.append("- (none available)")
-        lines.append("")
-        lines.append("Action catalog (responders may choose any subset):")
-        for action in bundle.actions_catalog:
-            status = "enabled" if action.get("enabled") else "disabled"
-            lines.append(f"- {action.get('key')} ({status}): {action.get('description')}")
-        lines.append("")
-        lines.append(
-            "Return JSON with fields: response_text, actions[], extractions[], "
-            "where each action has 'action' + 'payload', and extractions have 'type' + 'payload'."
-        )
-        return "\n".join(lines)
+        return bundle.user_prompt.strip()
 
     @staticmethod
     def _response_schema() -> Mapping[str, Any]:

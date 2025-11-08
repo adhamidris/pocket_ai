@@ -104,19 +104,35 @@ LOGIN_URL = "/login/"
 LOGIN_REDIRECT_URL = "/dashboard/"
 LOGOUT_REDIRECT_URL = "/"
 
+LOG_DIR = BASE_DIR / "var" / "logs"
+LOG_DIR.mkdir(parents=True, exist_ok=True)
+DEEPSEEK_LOG_FILE = LOG_DIR / "deepseek_calls.log"
+
 LOGGING = {
-      "version": 1,
-      "disable_existing_loggers": False,
-      "handlers": {
-          "console": {
-              "class": "logging.StreamHandler",
-          },
-      },
-      "loggers": {
-          "apps.services.llm_provider": {
-              "handlers": ["console"],
-              "level": "INFO",   # use DEBUG if you want even more detail
-              "propagate": False,
-          },
-      },
-  }
+    "version": 1,
+    "disable_existing_loggers": False,
+    "formatters": {
+        "verbose": {
+            "format": "%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+        },
+    },
+    "handlers": {
+        "console": {
+            "class": "logging.StreamHandler",
+        },
+        "deepseek_file": {
+            "class": "logging.handlers.RotatingFileHandler",
+            "filename": str(DEEPSEEK_LOG_FILE),
+            "maxBytes": 1024 * 1024,
+            "backupCount": 3,
+            "formatter": "verbose",
+        },
+    },
+    "loggers": {
+        "apps.services.llm_provider": {
+            "handlers": ["console", "deepseek_file"],
+            "level": "INFO",  # use DEBUG if you want even more detail
+            "propagate": False,
+        },
+    },
+}

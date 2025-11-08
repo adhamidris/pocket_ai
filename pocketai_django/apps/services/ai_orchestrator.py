@@ -458,29 +458,30 @@ class AiOrchestratorService:
         recent_messages = list(self._recent_messages(conversation))
         knowledge_payload = [self._serialize_snippet(snippet) for snippet in citations]
         snippet_lookup: dict[str, KnowledgeSnippet] = {str(snippet.id): snippet for snippet in citations}
-        loaded_content_ids: set[str] = {str(snippet.id) for snippet in citations if snippet.content}
+        loaded_content_ids: set[str] = set()
         knowledge_reads: list[dict[str, str]] = []
         placeholder_response: str | None = None
         knowledge_loading = False
         placeholder_sent = False
         placeholder_added_to_prompt = False
         streamed_chunks: list[str] = []
+        active_iteration_chunks: list[str] = []
         last_iteration_streamed = False
         iteration_streamed = False
 
-        def _record_stream_chunk(chunk: str) -> None:
+        def _emit_stream_chunk(chunk: str) -> None:
             if not chunk:
                 return
-            streamed_chunks.append(chunk)
             if on_response_text_delta:
                 on_response_text_delta(chunk)
 
         def _provider_stream_callback(chunk: str) -> None:
-            nonlocal iteration_streamed
+            nonlocal iteration_streamed, active_iteration_chunks
             if not chunk:
                 return
             iteration_streamed = True
-            _record_stream_chunk(chunk)
+            active_iteration_chunks.append(chunk)
+            _emit_stream_chunk(chunk)
 
         def _remember_placeholder_for_prompt(text: str | None) -> None:
             nonlocal placeholder_added_to_prompt
@@ -502,6 +503,7 @@ class AiOrchestratorService:
         max_turns = 3
 
         for _ in range(max_turns):
+            active_iteration_chunks = []
             prompt_bundle = self.prompt_builder.build(
                 conversation=conversation,
                 knowledge_snippets=knowledge_payload,
@@ -512,7 +514,6 @@ class AiOrchestratorService:
             iteration_streamed = False
             stream_callback = _provider_stream_callback if on_response_text_delta else None
             plan_candidate = self._invoke_llm(prompt_bundle, on_response_text_delta=stream_callback)
-            last_iteration_streamed = iteration_streamed
             if not plan_candidate:
                 final_plan = None
                 break
@@ -524,6 +525,11 @@ class AiOrchestratorService:
             ]
             if not pending_requests:
                 final_plan = plan_candidate
+                last_iteration_streamed = iteration_streamed
+                if iteration_streamed:
+                    streamed_chunks = list(active_iteration_chunks)
+                else:
+                    streamed_chunks = []
                 break
 
             if plan_candidate.response_text:
@@ -588,8 +594,9 @@ class AiOrchestratorService:
             )
             llm_source = "heuristic"
 
-        if on_response_text_delta and response_text and not last_iteration_streamed:
-            _record_stream_chunk(response_text)
+        if response_text and not last_iteration_streamed:
+            streamed_chunks = [response_text]
+            _emit_stream_chunk(response_text)
 
         streamed_text = "".join(streamed_chunks).strip()
         if streamed_text:

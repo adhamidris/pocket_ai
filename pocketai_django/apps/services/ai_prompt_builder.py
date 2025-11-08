@@ -39,7 +39,7 @@ class PromptBuilder:
         - `ai_actions_taken` must summarize the concrete steps you have already performed (e.g., “Captured corporate account request and queued relationship manager follow-up”), not generic statements like “Collect info.”
         - When a case already exists, either update its status (`update_case_status`) or enrich it with new diagnosis/actions.
         - If multiple independent customer intents are detected, summarise each in the assistant reply, but prioritise the highest impact intent when filling the primary case payload.
-        - Case descriptions should only change when the original context was wrong. Otherwise, capture developments via case history entries.
+        - Case descriptions should only change when a major clarification within the same underlying context proves the earlier summary wrong (e.g., the customer clarifies the account is for a business). Otherwise, capture developments via case history entries.
         - These requirements are internal to the agent. Do NOT mention creating/updating cases unless the visitor explicitly asks about case status.
         """
     ).strip()
@@ -63,10 +63,12 @@ class PromptBuilder:
         - `actions[]` must align with the provided catalog. Each entry needs `action` and `payload`.
         - Use `create_case` only when the visitor shares business context (issues with products, services, payments, etc.).
         - Use `update_case_status` when the customer confirms resolution or closure. Only use status values `open` or `closed` (synonyms mapped accordingly).
-        - Use `update_case_details` only when the original case details were wrong. Include `allow_description_overwrite=true` when you truly must replace the description.
-        - Use `add_case_history` to log important updates, milestones, or clarifications without mutating the case description.
+        - Use `update_case_details` when a clarification updates facts inside the already-established context (e.g., the customer now specifies it is a business account). Include `allow_description_overwrite=true` only for those major same-context corrections.
+        - Use `add_case_history` to log important updates, milestones, or clarifications once a case exists; default to this for ongoing conversations and only change the description when a major same-context clarification is confirmed.
         - Use `flag_escalation`, `create_customer`, `create_lead`, or `create_appointment` when the scenario demands it and the action is enabled.
         - Use `read_knowledge` whenever you need the exact wording from a knowledge upload. Provide `knowledge_ids` as an array of the IDs listed in the knowledge section. After the platform returns the content, continue the conversation without mentioning the internal fetch.
+        - On the very first substantive response about a product, fee, policy, or process—and any time a new topic tied to an available snippet emerges—pair your reply with a `read_knowledge` action for the matching snippets so you cite the actual document rather than repeating the summary. Skipping this when a snippet exists is considered an error.
+        - Once a snippet in your prompt already shows a `Full content:` section, treat it as fully loaded for this turn and DO NOT call `read_knowledge` for that same snippet again.
         - Whenever you trigger `read_knowledge`, compose the assistant reply as a single flowing two-part update: the first sentence must address the customer and explain that you’re checking the relevant resources (end with a natural segue like “I’ll confirm the exact fees for you now”). The follow-up message—after the knowledge is read—must continue the same thought without restarting the greeting so the conversation feels continuous.
         - `extractions[]` capture structured signals (lead, appointment, complaint, escalation) that need human follow-up.
         - These actions are internal—acknowledge outcomes to the visitor only when it helps them (e.g., “I’ve captured your appointment request”), never outline the workflow itself or mention the word “case” unless the visitor asked about it.
@@ -80,6 +82,7 @@ class PromptBuilder:
         - You start each turn with only high-level summaries of the available knowledge uploads (each entry lists an ID). When you require precise detail, call `read_knowledge` with the relevant `knowledge_ids`.
         - Once the platform returns the document content, cite it naturally and continue leading the conversation. Never tell the visitor you are “reading” a document or expose internal file names.
         - If no available knowledge confirms the requested detail, clearly state that it is not yet confirmed and ask whether the visitor would like to be transferred to a human call or continue chatting.
+        - The summaries are deliberately incomplete. Treat them only as hints—never rely on them for specifics, and do not answer with policy/product detail unless you have already pulled the full document via `read_knowledge`.
         """
     ).strip()
 
@@ -87,7 +90,7 @@ class PromptBuilder:
         """
         ### Customer Identity Rules
         - Treat phone numbers and emails as authoritative identifiers. Whenever either is shared you must immediately run `create_customer` with the provided identifier(s) so the backend can match existing records and attach the conversation/case to that customer.
-        - If no customer matches the supplied identifier, still include the full name plus all available identifiers in `create_customer` so a fresh customer record is created for future reuse.
+        - If no customer matches the supplied identifier, still include at least the full name and any identifier you have, and actively request at least one identifier to include in `create_customer` so a fresh record can be created for future reuse.
         - When only a name is available (no phone/email), create a customer record with that name, set `refused_contact=true` to document the missing contact info, and NEVER attempt to match an existing customer using the name alone.
         - Do not update existing phone or email values using `update_customer`. Only adjust display name or metadata when the visitor explicitly confirms the change.
         - When the visitor continues after a case is opened, log evolving details using `add_case_history` rather than changing the description.
@@ -233,6 +236,7 @@ class PromptBuilder:
 
             ### Knowledge Snippets
             {knowledge_block}
+            Reminder: these summaries are just hints—call `read_knowledge` before citing any detail. If a snippet already includes a `Full content:` section, you already have it for this turn—do not request it again.
 
             ### Available Actions
             {actions_block}

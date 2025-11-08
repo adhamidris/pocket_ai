@@ -143,6 +143,35 @@ class ChatPortalService:
             self._touch_conversation_after_message(conversation, message)
         return self._serialize_message(message)
 
+    def update_message(
+        self,
+        *,
+        session_token: str,
+        message_id: uuid.UUID,
+        body: str | None = None,
+        metadata: dict | None = None,
+    ) -> PortalMessage:
+        if not message_id:
+            raise PortalValidationError("message_id is required")
+        conversation = self._get_active_conversation_by_token(session_token)
+        message = conversation.messages.filter(id=message_id).first()
+        if message is None:
+            raise PortalNotFoundError("Message not found")
+
+        updated_fields: list[str] = []
+        if body is not None:
+            clean_body = body.strip()
+            if not clean_body:
+                raise PortalValidationError("Message body cannot be empty")
+            message.body = clean_body
+            updated_fields.append("body")
+        if metadata is not None:
+            message.metadata = metadata
+            updated_fields.append("metadata")
+        if updated_fields:
+            message.save(update_fields=updated_fields)
+        return self._serialize_message(message)
+
     def list_messages(self, *, session_token: str, limit: int | None = None) -> Sequence[PortalMessage]:
         conversation = self._get_active_conversation_by_token(session_token)
         qs = conversation.messages.all()

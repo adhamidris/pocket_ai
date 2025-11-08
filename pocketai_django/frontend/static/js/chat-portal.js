@@ -52,6 +52,7 @@ class ChatPortalClient {
 
   bindSendForm() {
     const form = this.elements.sendForm;
+    const textarea = form?.querySelector("textarea[name='message']");
     if (!form) return;
     form.addEventListener("submit", async (event) => {
       event.preventDefault();
@@ -61,9 +62,10 @@ class ChatPortalClient {
         this.showToast("Start failed", "Session is still initialising.", true);
         return;
       }
+      if (textarea) {
+        textarea.value = "";
+      }
       await this.sendMessage(message);
-      form.reset();
-      this.clearComposerInput();
     });
   }
 
@@ -184,7 +186,6 @@ class ChatPortalClient {
       if (this.streamingMessageNode) {
         this.resetStreamingState(true);
       }
-      this.clearComposerInput();
     }
   }
 
@@ -203,6 +204,23 @@ class ChatPortalClient {
   }
 
   handleStreamEvent(eventType, data) {
+    if (eventType === "status") {
+      try {
+        const payload = data ? JSON.parse(data) : null;
+        if (payload && payload.state) {
+          // Keep the typing indicator visible during background work
+          this.elements.typingIndicator?.classList.remove("hidden");
+          if (payload.state === "reading_document") {
+            // Drop the existing streaming bubble so the next phase can
+            // render a fresh response without duplicating text.
+            this.resetStreamingState(true);
+          }
+        }
+      } catch (_err) {
+        // ignore malformed status payloads
+      }
+      return;
+    }
     if (eventType === "delta") {
       try {
         const payload = data ? JSON.parse(data) : null;
@@ -410,13 +428,6 @@ class ChatPortalClient {
     this.streamingMessageNode = null;
     this.streamingMessageBodyEl = null;
     this.streamingBuffer = "";
-  }
-
-  clearComposerInput() {
-    const textarea = this.elements.sendForm?.querySelector("textarea[name='message']");
-    if (textarea) {
-      textarea.value = "";
-    }
   }
 
   updateStatus(status) {

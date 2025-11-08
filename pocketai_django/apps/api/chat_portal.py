@@ -409,16 +409,28 @@ def stream_send(request: HttpRequest) -> StreamingHttpResponse:
             )
 
         serialized_actions = serialize_action_results(action_results)
-        ai_message = service.append_message(
-            session_token=session_token,
-            sender=ConversationSender.AI,
-            body=plan.response_text,
-            metadata={
-                "citations": [snippet.title for snippet in plan.citations],
-                "actions": serialized_actions,
-                "diagnostics": plan.diagnostics,
-            },
-        )
+        message_metadata = {
+            "citations": [snippet.title for snippet in plan.citations],
+            "actions": serialized_actions,
+            "diagnostics": plan.diagnostics,
+        }
+        if placeholder_message:
+            merged_metadata = dict(placeholder_message.metadata or {})
+            merged_metadata.pop("placeholder", None)
+            merged_metadata.update(message_metadata)
+            ai_message = service.update_message(
+                session_token=session_token,
+                message_id=placeholder_message.id,
+                body=plan.response_text,
+                metadata=merged_metadata,
+            )
+        else:
+            ai_message = service.append_message(
+                session_token=session_token,
+                sender=ConversationSender.AI,
+                body=plan.response_text,
+                metadata=message_metadata,
+            )
 
         session_state = service.get_session_state(session_token=session_token)
         final_payload = {
