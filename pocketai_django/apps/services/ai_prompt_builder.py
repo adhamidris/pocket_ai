@@ -77,6 +77,9 @@ class PromptBuilder:
         - `extractions[]` capture structured signals (lead, appointment, complaint, escalation) that need human follow-up.
         - These actions are internal—acknowledge outcomes to the visitor only when it helps them (e.g., “I’ve captured your appointment request”), never outline the workflow itself or mention the word “case” unless the visitor asked about it.
         - Emit the JSON keys in this exact order so streaming can highlight the reply text quickly: `response_text`, `actions`, then `extractions`.
+        ### Placeholder Output Rules
+        - When you include `read_knowledge`, `response_text` must be a short visitor-facing placeholder (e.g., "Reviewing Knowledge").
+        - Keep it <= 180 characters; do not invent numbers or policies; do not cite snippets yet. The final answer must follow after the read completes.
         """
     ).strip()
 
@@ -159,18 +162,26 @@ class PromptBuilder:
         ]
 
         knowledge_payload = [
-            {
-                "id": snippet.get("id"),
-                "title": snippet.get("title"),
-                "summary": snippet.get("summary"),
-                "source": snippet.get("source"),
-                "content": snippet.get("content"),
-                "public_label": snippet.get("public_label"),
-                "structuredTables": snippet.get("structuredTables") or [],
-                "issues": snippet.get("issues") or [],
-                "pageSummaries": snippet.get("pageSummaries") or [],
-            }
-            for snippet in knowledge_snippets
+        {
+            "id": s.get("id"),
+            "title": s.get("title"),
+            "summary": s.get("summary"),
+            "source": s.get("source"),
+            "content": s.get("content"),
+            "public_label": s.get("public_label"),
+            "structuredTables": s.get("structuredTables") or [],
+            "issues": s.get("issues") or [],
+            "pageSummaries": s.get("pageSummaries") or [],
+
+            # important for tool choice:
+            "status": s.get("status"),
+            "read_state": s.get("read_state"),
+            "coverage": s.get("coverage") or [],
+            "last_used_for": s.get("last_used_for"),
+            "last_used_at": s.get("last_used_at"),
+            "pin": bool(s.get("pin")),
+        }
+        for s in knowledge_snippets
         ]
 
         return PromptBundle(
@@ -253,6 +264,7 @@ class PromptBuilder:
             1. Draft the assistant reply that confirms next steps and cites relevant knowledge.
             2. Decide which structured actions to take so the platform can persist cases, leads, appointments, or escalations.
             3. Always produce at least one `create_case` or `update_case_status` action so the conversation is tracked.
+            4. If you include `read_knowledge`, set `response_text` to a brief placeholder that promises an update after reviewing the document (<= 180 characters; no invented facts; do not cite snippets yet).
             """
         ).strip()
 

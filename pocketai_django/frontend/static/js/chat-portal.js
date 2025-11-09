@@ -30,6 +30,10 @@ class ChatPortalClient {
       toastRoot: document.getElementById("toast-root"),
       statusBadge: container.querySelector("[data-chat-status]"),
     };
+    this.lastPlaceholderText = "";
+    this.streamingDedupDone = false;
+    this.streamingPlaceholderEl = null;
+    this.streamingFinalBodyEl = null;
     this.streamingMessageNode = null;
     this.streamingMessageBodyEl = null;
     this.streamingMessageBubbleEl = null;
@@ -208,6 +212,34 @@ class ChatPortalClient {
   }
 
   handleStreamEvent(eventType, data) {
+    // **ADD THE NEW CODE HERE - FIRST**
+    if (eventType === "placeholder") {
+      try {
+        const payload = data ? JSON.parse(data) : null;
+        const text = payload?.text || "";
+        if (text) {
+          // **ADD THESE TWO LINES HERE**
+          this.lastPlaceholderText = text;   // remember for dedupe
+          this.streamingDedupDone = false;   // reset for this turn
+          
+          this.ensureStreamingMessageNode();
+          if (this.streamingPlaceholderEl) {
+            this.streamingPlaceholderEl.innerHTML = this.renderMarkdown(text);
+          } else {
+            // Fallback: append as a regular AI message if we somehow don't have a streaming node
+            this.appendMessage({ sender: "ai", body: text, sent_at: new Date().toISOString() });
+          }
+          this.elements.messages?.scrollTo({ top: this.elements.messages.scrollHeight, behavior: "smooth" });
+        }
+      } catch (_err) {
+        // ignore malformed placeholder payloads
+      }
+      // show typing while we continue with reading/responding
+      this.elements.typingIndicator?.classList.remove("hidden");
+      return;
+    }
+    
+    // EXISTING CODE CONTINUES HERE
     if (eventType === "status") {
       try {
         const payload = data ? JSON.parse(data) : null;
@@ -227,11 +259,45 @@ class ChatPortalClient {
       }
       return;
     }
+    
+    // **REPLACE THE DELTA HANDLER WITH THIS NEW VERSION**
     if (eventType === "delta") {
       try {
         const payload = data ? JSON.parse(data) : null;
         if (payload?.text) {
-          this.appendStreamingChunk(payload.text);
+          let chunk = payload.text;
+
+          // --- DEDUPE: strip placeholder prefix from the very first streamed delta ---
+          if (this.lastPlaceholderText && !this.streamingDedupDone) {
+            const base = (this.lastPlaceholderText || "").trim();
+            const baseLower = base.toLowerCase();
+            let chunkLower = chunk.toLowerCase();
+
+            // Try a few strip candidates to be robust to punctuation/quotes
+            const stripCandidates = [
+              base,
+              base.replace(/[.?!:—-]+$/g, "").trim(),         // trailing punctuation
+              base.replace(/["""']+/g, "").trim(),           // smart quotes
+            ];
+
+            for (const cand of stripCandidates) {
+              const cLower = cand.toLowerCase();
+              if (cLower && chunkLower.startsWith(cLower)) {
+                // Remove the exact-length prefix from the ORIGINAL chunk (preserve case/markup)
+                chunk = chunk.slice(cand.length).replace(/^\s+/, "");
+                this.streamingDedupDone = true;
+                break;
+              }
+            }
+
+            // If the first chunk was only the placeholder, skip appending empty text.
+            if (!chunk) {
+              return;
+            }
+          }
+          // ---------------------------------------------------------------------------
+
+          this.appendStreamingChunk(chunk);
         }
       } catch (error) {
         console.warn("Failed to parse stream delta", error);
@@ -239,6 +305,7 @@ class ChatPortalClient {
       this.elements.typingIndicator?.classList.remove("hidden");
       return;
     }
+    
     if (!data && eventType !== "final") return;
     if (eventType !== "final") {
       if (eventType === "error") {
@@ -270,7 +337,7 @@ class ChatPortalClient {
     } finally {
       this.elements.typingIndicator?.classList.add("hidden");
     }
-  }
+ }
 
   connectEventStream() {
     if (!this.endpoints.events || !this.sessionToken) return;
@@ -395,15 +462,15 @@ class ChatPortalClient {
     this.ensureStreamingMessageNode();
     if (this.streamingRewritePending) {
       this.streamingBuffer = "";
-      if (this.streamingMessageBodyEl) {
-        this.streamingMessageBodyEl.innerHTML = "";
+      if (this.streamingFinalBodyEl) {
+        this.streamingFinalBodyEl.innerHTML = "";
       }
       this.streamingRewritePending = false;
       this.setStreamingPendingState("updating");
     }
     this.streamingBuffer += chunk;
-    if (this.streamingMessageBodyEl) {
-      this.streamingMessageBodyEl.innerHTML = this.renderMarkdown(this.streamingBuffer);
+    if (this.streamingFinalBodyEl) {
+      this.streamingFinalBodyEl.innerHTML = this.renderMarkdown(this.streamingBuffer);
     }
     this.elements.messages.scrollTo({ top: this.elements.messages.scrollHeight, behavior: "smooth" });
   }
@@ -420,20 +487,42 @@ class ChatPortalClient {
     this.streamingMessageNode = placeholder;
     this.streamingMessageBodyEl = placeholder.querySelector("[data-message-body]");
     this.streamingMessageBubbleEl = placeholder.querySelector("[data-message-bubble]");
+    
+    // **ADD THE NEW CODE HERE**
+    // Create two stacked containers inside the message body:
+    //  - placeholder (fixed once received)
+    //  - final body (streams deltas)
+    if (this.streamingMessageBodyEl) {
+      // Clear whatever was there, and set up the two zones
+      this.streamingMessageBodyEl.innerHTML = "";
+  
+      const placeholderEl = document.createElement("div");
+      placeholderEl.dataset.messagePlaceholder = "true";
+      placeholderEl.className = "text-muted-foreground text-sm mb-2";
+      // initially empty; will fill on 'placeholder' event
+  
+      const finalEl = document.createElement("div");
+      finalEl.dataset.messageFinalBody = "true";
+      finalEl.className = "space-y-2 leading-relaxed";
+      // we'll stream deltas here
+  
+      this.streamingMessageBodyEl.appendChild(placeholderEl);
+      this.streamingMessageBodyEl.appendChild(finalEl);
+  
+      this.streamingPlaceholderEl = placeholderEl;
+      this.streamingFinalBodyEl = finalEl;
+    }
+    
     this.elements.messages.appendChild(placeholder);
     this.setStreamingPendingState("drafting");
   }
 
   finalizeStreamingMessage(finalText) {
     const text = finalText || this.streamingBuffer;
-    if (this.streamingMessageBodyEl) {
-      this.streamingMessageBodyEl.innerHTML = this.renderMarkdown(text);
+    if (this.streamingFinalBodyEl) {
+      this.streamingFinalBodyEl.innerHTML = this.renderMarkdown(text);
     } else if (text) {
-      this.appendMessage({
-        sender: "ai",
-        body: text,
-        sent_at: new Date().toISOString(),
-      });
+      this.appendMessage({ sender: "ai", body: text, sent_at: new Date().toISOString() });
     }
     this.resetStreamingState(false);
   }
@@ -443,6 +532,9 @@ class ChatPortalClient {
     if (removeNode && this.streamingMessageNode && this.streamingMessageNode.parentNode) {
       this.streamingMessageNode.parentNode.removeChild(this.streamingMessageNode);
     }
+    this.streamingDedupDone = false;
+    this.streamingPlaceholderEl = null;
+    this.streamingFinalBodyEl = null;
     this.streamingMessageNode = null;
     this.streamingMessageBodyEl = null;
     this.streamingMessageBubbleEl = null;

@@ -29,6 +29,7 @@ from apps.conversations.models import (
     ConversationExtractionType,
     ConversationSender,
     ConversationStatus,
+    ConversationMessage
 )
 from apps.customers.models import Customer, CustomerRecordOrigin
 from apps.services.ai_prompt_builder import PromptBuilder, PromptBundle
@@ -738,6 +739,7 @@ class AiOrchestratorService:
         active_iteration_chunks: list[str] = []
         last_iteration_streamed = False
         iteration_streamed = False
+        cache_satisfied_read = False
 
         def _emit_stream_chunk(chunk: str) -> None:
             if not chunk:
@@ -754,17 +756,18 @@ class AiOrchestratorService:
             _emit_stream_chunk(chunk)
 
         def _remember_placeholder_for_prompt(text: str | None) -> None:
-            nonlocal placeholder_added_to_prompt
+            nonlocal placeholder_added_to_prompt, recent_messages
             if placeholder_added_to_prompt or not text:
                 return
-            recent_messages.append(
-                SimpleNamespace(
-                    sender=ConversationSender.AI,
-                    body=text,
-                    sent_at=timezone.now(),
-                    metadata={"placeholder": True},
-                )
+            # 1) Persist a separate placeholder message so it never disappears
+            placeholder_msg = ConversationMessage.objects.create(
+                conversation=conversation,
+                sender=ConversationSender.AI,
+                body=text.strip(),
+                metadata={"placeholder": True},
             )
+            # 2) Also inject into this turn's in-memory transcript so the next LLM pass "remembers" it
+            recent_messages.append(placeholder_msg)
             placeholder_added_to_prompt = True
 
         prompt_bundle: PromptBundle | None = None
@@ -788,24 +791,37 @@ class AiOrchestratorService:
             if not plan_candidate:
                 final_plan = None
                 break
-
+            ready_ids_in_payload = {
+                str(s.get("id"))
+                for s in knowledge_payload
+                if s.get("content") or str(s.get("status") or "").lower() == "ready"
+            }
             pending_requests = [
-                knowledge_id
-                for knowledge_id in plan_candidate.knowledge_requests
-                if knowledge_id not in loaded_content_ids
+                kid for kid in plan_candidate.knowledge_requests
+                if kid not in loaded_content_ids and kid not in ready_ids_in_payload
             ]
             if not pending_requests:
                 final_plan = plan_candidate
+                requested_again = bool(getattr(plan_candidate, "knowledge_requests", None))
+                if requested_again:
+                    cache_satisfied_read = True
+                    if on_status_change:
+                        on_status_change("reading_document")
                 last_iteration_streamed = iteration_streamed
                 if iteration_streamed:
                     streamed_chunks = list(active_iteration_chunks)
                 else:
                     streamed_chunks = []
+                if requested_again and on_status_change:
+                    on_status_change("responding")
                 break
 
             if plan_candidate.response_text:
                 placeholder_response = plan_candidate.response_text
                 _remember_placeholder_for_prompt(placeholder_response)
+            if on_placeholder_response and placeholder_response:
+                on_placeholder_response(placeholder_response.strip())
+
             knowledge_loading = True
             if on_status_change:
                 on_status_change("reading_document")
@@ -836,9 +852,9 @@ class AiOrchestratorService:
                 loaded_content_ids.add(key)
                 snippet_lookup[key] = snippet
                 payload = self._serialize_snippet(snippet)
-                cache_dirty = self._cache_snippet(cached_entries, payload) or cache_dirty
                 if snippet.content:
                     payload["content"] = snippet.content
+                cache_dirty = self._cache_snippet(cached_entries, payload) or cache_dirty
                 entry = cached_entries.get(key, payload)
                 usage_changed, topics, usage_label = self._mark_snippet_usage(
                     entry=entry,
@@ -892,7 +908,11 @@ class AiOrchestratorService:
 
         if response_text and not last_iteration_streamed:
             has_ready_context = any(bool(item.get("content")) for item in knowledge_payload)
+
+            # CHANGED: only strip overlap when there was no placeholder committed
             response_text = self._strip_placeholder_overlap(placeholder_response, response_text)
+
+
             response_text = self._dedupe_response(
                 conversation,
                 response_text,
@@ -1040,9 +1060,14 @@ class AiOrchestratorService:
         payload = dict(entry)
         payload["status"] = payload.get("status") or self._determine_snippet_status(payload)
         payload.setdefault("coverage", [])
-        payload.setdefault("read_state", payload.get("read_state") or KNOWLEDGE_READ_STATE_SUMMARY)
-        if payload.get("pin") is None:
-            payload["pin"] = False
+
+        if payload.get("content"):
+            payload["read_state"] = KNOWLEDGE_READ_STATE_FULL
+            payload["status"] = "ready"
+        else:
+            payload["read_state"] = payload.get("read_state") or KNOWLEDGE_READ_STATE_SUMMARY
+
+        payload["pin"] = bool(payload.get("pin"))
         payload.pop("last_active_turn", None)
         payload.pop("last_customer_reference_turn", None)
         return payload
@@ -1740,7 +1765,7 @@ class ActionDispatcher:
     def _handle_add_case_history(self, *, conversation: Conversation, payload: dict) -> dict:
         if not conversation.case_id:
             raise ActionExecutionError("No linked case to update")
-        summary = (payload.get("summary") or payload.get("entry") or "").strip()
+        summary = (payload.get("summary") or payload.get("entry") or payload.get("note") or payload.get("description") or "").strip()
         if not summary:
             raise ActionExecutionError("History summary is required")
         source = payload.get("source") or "ai"
