@@ -631,16 +631,19 @@ class KnowledgeIngestionService:
 
     def process_next_job(self) -> IngestionJobResult | None:
         job = self._claim_next_job()
+        
         if job is None:
             return None
 
         upload = job.upload
+        logger.info("ingest.start upload=%s job=%s source_type=%s", upload.id, job.id, upload.source_type)
         try:
             extraction = self._extract_upload(upload)
             characters = len(extraction.text)
             self._persist_extraction(upload, extraction)
             self._mark_job_completed(job, extra={"characters": characters, "format": extraction.format_hint})
-            logger.info("Ingested knowledge upload=%s job=%s chars=%s", upload.id, job.id, characters)
+            logger.info("ingest.done upload=%s job=%s chars=%s format=%s", upload.id, job.id, characters, extraction.format_hint)
+
             return IngestionJobResult(
                 job_id=job.id,
                 upload_id=upload.id,
@@ -657,6 +660,7 @@ class KnowledgeIngestionService:
                 characters=0,
                 error=str(exc),
             )
+            
 
     # ------------------------------------------------------------------
     # Extraction path
@@ -681,6 +685,7 @@ class KnowledgeIngestionService:
         raise KnowledgeIngestionError(f"Ingestion not implemented for {upload.source_type}.")
 
     def _extract_from_file(self, file_detail: KnowledgeUploadFile) -> ExtractionResult:
+        
         storage_path = Path(file_detail.storage_path)
         absolute = (self.media_root / storage_path).resolve()
         try:
@@ -693,7 +698,7 @@ class KnowledgeIngestionService:
         format_hint = self._detect_format(file_detail)
         if not format_hint:
             raise UnsupportedFormatError(f"Unsupported file type {format_hint or 'unknown'}.")
-
+        logger.info("extract.file.start path=%s format=%s", absolute, format_hint)
         layout_result: PageRendererResult | None = None
         should_attempt_layout = not (format_hint == "pdf" and fitz is None)
         if should_attempt_layout:
@@ -703,7 +708,9 @@ class KnowledgeIngestionService:
                     format_hint=format_hint,
                     ocr=self.ocr_reconciler,
                 )
+                logger.info("extract.file.result path=%s format=%s pages=%s", absolute, format_hint, len(layout_result.pages))
             except KnowledgeIngestionError as exc:
+                
                 logger.warning("Layout extraction failed for %s: %s", absolute, exc)
 
         if layout_result is None:
@@ -769,7 +776,7 @@ class KnowledgeIngestionService:
             scraped = scrape_document_source(url=url, timeout=10.0, max_bytes=2_000_000)
         except DocumentScrapeError as exc:
             raise KnowledgeIngestionError(str(exc)) from exc
-
+        logger.info("extract.link url=%s status=%s bytes=%s ms=%s", scraped.final_url, scraped.status_code, scraped.content_length, scraped.elapsed_ms)
         metadata = {
             "format": scraped.content_type or "text/html",
             "status_code": scraped.status_code,
@@ -843,6 +850,7 @@ class KnowledgeIngestionService:
         KnowledgeUploadChunk.objects.filter(upload=upload).delete()
         if not segments:
             return 0
+        logger.info("embed.start upload=%s segments=%s provider=%s model=%s", upload.id, len(segments), type(self.embedding_service).__name__ if self.embedding_service else None, getattr(self.embedding_service, "model", "local"))
 
         embeddings: list[list[float]] | None = None
         if self.embedding_service:
@@ -855,11 +863,24 @@ class KnowledgeIngestionService:
                 logger.exception("Unexpected embedding failure upload=%s", upload.id)
                 embeddings = None
 
+        logger.info("embed.done upload=%s got_vectors=%s", upload.id, 0 if not embeddings else len([v for v in embeddings if v]))
+
         chunk_objects: list[KnowledgeUploadChunk] = []
         for index, segment in enumerate(segments):
             vector = None
             if embeddings and index < len(embeddings):
                 vector = embeddings[index]
+                
+                # ADD THE DEFENSIVE TRIM/PAD HERE:
+                expected = getattr(settings, "EMBED_DIM", None)
+                if expected and isinstance(vector, list):
+                    if len(vector) > expected:
+                        logger.warning("Embedding dimension mismatch: got %s, expected %s. Trimming.", len(vector), expected)
+                        vector = vector[:expected]
+                    elif len(vector) < expected:
+                        logger.warning("Embedding dimension mismatch: got %s, expected %s. Padding.", len(vector), expected)
+                        vector = vector + [0.0] * (expected - len(vector))
+            
             chunk_objects.append(
                 KnowledgeUploadChunk(
                     upload=upload,
@@ -875,6 +896,7 @@ class KnowledgeIngestionService:
             )
         KnowledgeUploadChunk.objects.bulk_create(chunk_objects, batch_size=100)
         logger.info("Chunked upload=%s into %s segments", upload.id, len(chunk_objects))
+        logger.info("chunks.persisted upload=%s count=%s", upload.id, len(chunk_objects))
         return len(chunk_objects)
 
     def _persist_structured_artifacts(self, upload: KnowledgeUpload, extraction: ExtractionResult) -> dict[str, Any]:
@@ -1054,23 +1076,21 @@ class KnowledgeIngestionService:
         while start < length:
             end = min(length, start + chunk_chars)
             if end < length:
-                newline = text.rfind("\n", start + 200, end)
-                if newline > start:
-                    end = newline
-                else:
-                    space = text.rfind(" ", start + 200, end)
-                    if space > start:
-                        end = space
+                # Prefer ending on double newline (paragraph) then single newline, then space
+                for sep in ("\n\n", "\n", " "):
+                    idx = text.rfind(sep, start + 200, end)
+                    if idx > start:
+                        end = idx
+                        break
             chunk = text[start:end].strip()
             if chunk:
                 segments.append(chunk)
             if end >= length:
                 break
-            next_start = end - overlap if overlap else end
-            if next_start <= start:
-                next_start = end
-            start = next_start
+            # Overlap
+            start = max(end - overlap, start + 1)
         return segments
+
 
     def _mark_job_completed(self, job: KnowledgeIngestionJob, *, extra: dict[str, Any] | None = None) -> None:
         finished = timezone.now()
@@ -1139,7 +1159,6 @@ class KnowledgeIngestionService:
             return "txt"
         return suffix.strip(".") if suffix else None
 
-    @staticmethod
     @staticmethod
     def _extract_pdf(path: Path) -> str:
         pymupdf_error: Exception | None = None

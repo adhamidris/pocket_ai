@@ -214,27 +214,18 @@ class ChatPortalClient {
   handleStreamEvent(eventType, data) {
     // **ADD THE NEW CODE HERE - FIRST**
     if (eventType === "placeholder") {
+      // Do NOT render a placeholder; only remember it for dedupe.
       try {
         const payload = data ? JSON.parse(data) : null;
         const text = payload?.text || "";
         if (text) {
-          // **ADD THESE TWO LINES HERE**
-          this.lastPlaceholderText = text;   // remember for dedupe
-          this.streamingDedupDone = false;   // reset for this turn
-          
-          this.ensureStreamingMessageNode();
-          if (this.streamingPlaceholderEl) {
-            this.streamingPlaceholderEl.innerHTML = this.renderMarkdown(text);
-          } else {
-            // Fallback: append as a regular AI message if we somehow don't have a streaming node
-            this.appendMessage({ sender: "ai", body: text, sent_at: new Date().toISOString() });
-          }
-          this.elements.messages?.scrollTo({ top: this.elements.messages.scrollHeight, behavior: "smooth" });
+          this.lastPlaceholderText = text;
+          this.streamingDedupDone = false;
         }
       } catch (_err) {
-        // ignore malformed placeholder payloads
+        // ignore malformed payloads
       }
-      // show typing while we continue with reading/responding
+      // Keep typing indicator visible while work continues.
       this.elements.typingIndicator?.classList.remove("hidden");
       return;
     }
@@ -249,7 +240,7 @@ class ChatPortalClient {
           if (payload.state === "reading_document") {
             this.ensureStreamingMessageNode();
             this.streamingRewritePending = true;
-            this.setStreamingPendingState("reading");
+            this.setStreamingPendingState("reading");    // shows: "Retrieving documents…"
           } else if (payload.state === "responding") {
             this.setStreamingPendingState("updating");
           }
@@ -478,42 +469,29 @@ class ChatPortalClient {
   ensureStreamingMessageNode() {
     if (this.streamingMessageNode && this.streamingMessageBodyEl) return;
     if (!this.elements.messages) return;
-    const placeholder = this.buildMessageNode({
+  
+    const node = this.buildMessageNode({
       sender: "ai",
       body: "",
       sent_at: new Date().toISOString(),
       author: { name: this.agentName, initials: this.agentInitials },
     });
-    this.streamingMessageNode = placeholder;
-    this.streamingMessageBodyEl = placeholder.querySelector("[data-message-body]");
-    this.streamingMessageBubbleEl = placeholder.querySelector("[data-message-bubble]");
-    
-    // **ADD THE NEW CODE HERE**
-    // Create two stacked containers inside the message body:
-    //  - placeholder (fixed once received)
-    //  - final body (streams deltas)
+  
+    this.streamingMessageNode = node;
+    this.streamingMessageBodyEl = node.querySelector("[data-message-body]");
+    this.streamingMessageBubbleEl = node.querySelector("[data-message-bubble]");
+  
     if (this.streamingMessageBodyEl) {
-      // Clear whatever was there, and set up the two zones
+      // Single zone only: final body (streaming deltas)
       this.streamingMessageBodyEl.innerHTML = "";
-  
-      const placeholderEl = document.createElement("div");
-      placeholderEl.dataset.messagePlaceholder = "true";
-      placeholderEl.className = "text-muted-foreground text-sm mb-2";
-      // initially empty; will fill on 'placeholder' event
-  
       const finalEl = document.createElement("div");
       finalEl.dataset.messageFinalBody = "true";
       finalEl.className = "space-y-2 leading-relaxed";
-      // we'll stream deltas here
-  
-      this.streamingMessageBodyEl.appendChild(placeholderEl);
       this.streamingMessageBodyEl.appendChild(finalEl);
-  
-      this.streamingPlaceholderEl = placeholderEl;
       this.streamingFinalBodyEl = finalEl;
     }
-    
-    this.elements.messages.appendChild(placeholder);
+  
+    this.elements.messages.appendChild(node);
     this.setStreamingPendingState("drafting");
   }
 
@@ -547,8 +525,8 @@ class ChatPortalClient {
   setStreamingPendingState(mode = "drafting") {
     if (!this.streamingMessageBubbleEl) return;
     const labelMap = {
-      drafting: "Drafting response…",
-      reading: "Consulting documents…",
+      drafting: "Processing..",
+      reading:  "Reading documents…",
       updating: "Updating details…",
     };
     const label = labelMap[mode] || labelMap.drafting;

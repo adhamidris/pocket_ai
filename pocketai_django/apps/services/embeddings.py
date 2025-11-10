@@ -6,7 +6,39 @@ from dataclasses import dataclass
 from typing import Sequence
 
 
+try:
+    from fastembed import TextEmbedding
+except ImportError:
+    TextEmbedding = None
+
+
 logger = logging.getLogger(__name__)
+
+
+class LocalEmbeddingError(RuntimeError):
+    pass
+
+@dataclass
+class LocalEmbeddingService:
+    """Local CPU embeddings via FastEmbed (bge-small by default)."""
+    model: str | None = None
+
+    def __post_init__(self):
+        if TextEmbedding is None:
+            raise EmbeddingProviderError("Install `fastembed` to enable local embeddings.")
+        self.model = self.model or os.getenv("EMBED_MODEL", "BAAI/bge-small-en-v1.5")
+        # FastEmbed downloads on first use; keep instance around
+        self._embedder = TextEmbedding(model_name=self.model)
+
+    def embed_texts(self, texts: Sequence[str]) -> list[list[float]]:
+        if not texts:
+            return []
+        # FastEmbed returns an iterator of vectors
+        return [list(map(float, vec)) for vec in self._embedder.embed(texts)]
+
+    def embed_text(self, text: str) -> list[float]:
+        vectors = self.embed_texts([text])
+        return vectors[0] if vectors else []
 
 
 class EmbeddingProviderError(RuntimeError):
@@ -70,16 +102,25 @@ class EmbeddingService:
         return vectors[0] if vectors else []
 
 
-def build_embedding_service() -> EmbeddingService | None:
-    """
-    Construct an embedding service if credentials are available, otherwise return None.
-    """
+def build_embedding_service():
+    provider = (os.getenv("EMBED_PROVIDER") or "local").lower()
+    if provider == "openai":
+        try:
+            return EmbeddingService()  # your existing OpenAI class
+        except EmbeddingProviderError as exc:
+            logger.info("OpenAI embedding unavailable (%s); falling back to local", exc)
+            try:
+                return LocalEmbeddingService()
+            except Exception as exc2:
+                logger.info("Local embeddings unavailable: %s", exc2)
+                return None
+    else:
+        try:
+            return LocalEmbeddingService()
+        except Exception as exc:
+            logger.info("Local embeddings disabled: %s", exc)
+            return None
 
-    try:
-        return EmbeddingService()
-    except EmbeddingProviderError as exc:
-        logger.info("Embedding service disabled: %s", exc)
-        return None
 
 
 __all__ = ["EmbeddingService", "EmbeddingProviderError", "build_embedding_service"]

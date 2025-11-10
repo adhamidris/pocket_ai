@@ -266,11 +266,11 @@ def list_documents(
     )
     if q_name:
         search = q_name.strip()
-        base_qs = base_qs.filter(
-            Q(display_name__icontains=search)
-            | Q(description__icontains=search)
-            | Q(summary__icontains=search)
-            | Q(tags__icontains=search)
+        base_qs = base_qs.annotate(tags_text=Cast("tags", TextField())).filter(
+            Q(display_name__icontains=search) |
+            Q(description__icontains=search) |
+            Q(summary__icontains=search) |
+            Q(tags_text__icontains=search)
         )
     if collection_slug:
         base_qs = base_qs.filter(collections__slug=collection_slug.strip())
@@ -732,15 +732,21 @@ def _bytes_to_text(raw: bytes, content_type: str) -> str:
     """
     Convert raw bytes into plain text, stripping HTML when necessary.
     """
-
     if not raw:
         return ""
     text = raw.decode("utf-8", errors="ignore")
+
+    # If HTML, strip script/style tags, then all tags
     if "html" in (content_type or "").lower():
-        text = re.sub(r"(?is)<(script|style).*?>.*?</\\1>", " ", text)
+        # strip <script>...</script> and <style>...</style> (case-insensitive, dot matches newline)
+        text = re.sub(r"(?is)<(script|style).*?>.*?</\1>", " ", text)
+        # strip any remaining HTML tags
         text = re.sub(r"(?s)<[^>]+>", " ", text)
-    text = re.sub(r"\\s+", " ", text).strip()
+
+    # collapse any whitespace
+    text = re.sub(r"\s+", " ", text).strip()
     return text
+
 
 
 def _iter_chunks(file_obj: BinaryIO) -> Iterable[bytes]:

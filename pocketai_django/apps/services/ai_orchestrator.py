@@ -1,5 +1,11 @@
 from __future__ import annotations
 
+from django.core.cache import cache
+from django.db.models.expressions import F
+from pgvector.django import CosineDistance  # if using cosine
+from django.contrib.postgres.search import TrigramSimilarity
+
+import time
 import dataclasses
 import logging
 import uuid
@@ -240,6 +246,8 @@ class KnowledgeSearchService:
 
     def __init__(self) -> None:
         self.embedding_service = build_embedding_service()
+        logger.info("emb.provider %s model=%s", type(self.embedding_service).__name__ if self.embedding_service else None, getattr(self.embedding_service, "model", None))
+
 
     def search(self, *, business_profile, query: str, limit: int = 3) -> Sequence[KnowledgeSnippet]:
         normalized_query = (query or "").strip()
@@ -273,35 +281,129 @@ class KnowledgeSearchService:
                 upload__status=KnowledgeStatus.ACTIVE,
             )
             .select_related("upload")
-            .order_by("-upload__updated_at")
         )
-        # Embedding search
+
+        logger.info(
+            "rag.dataset business=%s chunks=%s with_vec=%s",
+            business_profile.id,
+            base_qs.count(),
+            base_qs.exclude(embedding__isnull=True).count(),
+        )
+
+
+        ann_candidates: list[KnowledgeUploadChunk] = []
+        fts_candidates: list[KnowledgeUploadChunk] = []
+        query_vector: list[float] | None = None
+
+        # --- Vector (ANN) ---
         if self.embedding_service:
-            candidates = list(base_qs.exclude(embedding__isnull=True)[:400])
-            if candidates:
+            cache_key = f"rag:qvec:{business_profile.id}:{getattr(self.embedding_service, 'model', 'local')}:{hash(query)}"
+            query_vector: list[float] | None = cache.get(cache_key)
+            cache_hit = query_vector is not None
+            if not cache_hit:
                 try:
+                    t0 = time.time()
                     query_vector = self.embedding_service.embed_text(query)
+                    cache.set(cache_key, query_vector, timeout=300)
+                    took = int((time.time() - t0) * 1000)
+                    logger.info(
+                        "rag.query_embed business=%s cache_hit=%s model=%s dim=%s took_ms=%s",
+                        business_profile.id,
+                        cache_hit,
+                        getattr(self.embedding_service, "model", "local"),
+                        len(query_vector) if query_vector else 0,
+                        took,
+                    )
                 except EmbeddingProviderError as exc:
                     logger.warning("Query embedding failed: %s", exc)
-                else:
-                    if query_vector:
-                        scored: list[tuple[float, KnowledgeUploadChunk]] = []
-                        for chunk in candidates:
-                            vector = chunk.embedding
-                            if not isinstance(vector, list):
-                                continue
-                            score = self._cosine_similarity(query_vector, vector)
-                            scored.append((score, chunk))
-                        scored.sort(key=lambda item: item[0], reverse=True)
-                        hits = [chunk for score, chunk in scored[:limit] if score > 0]
-                        if hits:
-                            return tuple(hits)
-        # Keyword fallback
-        keyword_hits = (
-            base_qs.filter(content__icontains=query)
-            .order_by("-upload__updated_at")[:limit]
+                    query_vector = None
+
+            if query_vector:
+                # K: larger pool for reranking & MMR
+                K = max(limit * 10, 60)
+                ann_qs = (
+                    base_qs.exclude(embedding__isnull=True)
+                    .annotate(distance=CosineDistance("embedding", query_vector))
+                    .order_by("distance")[:K]
+                )
+                ann_candidates = list(ann_qs)
+                if ann_candidates:
+                    ds = [getattr(c, "distance", 0.0) for c in ann_candidates if getattr(c, "distance", None) is not None]
+                    logger.info(
+                        "rag.ann_result business=%s K=%s ann_candidates=%s d_min=%.4f d_max=%.4f d_avg=%.4f",
+                        business_profile.id, K, len(ann_candidates),
+                        min(ds) if ds else -1, max(ds) if ds else -1, (sum(ds)/len(ds)) if ds else -1,
+                    )
+
+        # --- Keyword FTS (trigram similarity) ---
+        # Requires pg_trgm extension + GIN index on content
+        N = max(limit * 8, 40)
+        fts_qs = (
+            base_qs.annotate(sim=TrigramSimilarity("content", query))
+            .filter(sim__gt=0.15)
+            .order_by("-sim")[:N]
         )
-        return tuple(keyword_hits)
+        fts_candidates = list(fts_qs)
+
+        logger.info(
+            "rag.search_summary business=%s vector_enabled=%s vector_used=%s ann_candidates=%s fts_candidates=%s limit=%s",
+            business_profile.id,
+            bool(self.embedding_service),
+            bool(query_vector),
+            len(ann_candidates),
+            len(fts_candidates),
+            limit,
+        )
+
+        # Union & dedupe preserving order preference (vector first)
+        seen = set()
+        merged: list[KnowledgeUploadChunk] = []
+        for c in ann_candidates + fts_candidates:
+            if c.id not in seen:
+                seen.add(c.id)
+                merged.append(c)
+
+        if not merged:
+            return tuple()
+
+        # --- Optional: MMR reranking (diversity over similarity) ---
+        def _get_vec(ch: KnowledgeUploadChunk) -> list[float] | None:
+            v = getattr(ch, "embedding", None)
+            return v if isinstance(v, list) else None
+
+        def _cos(a: Sequence[float] | None, b: Sequence[float] | None) -> float:
+            if not a or not b or len(a) != len(b):
+                return 0.0
+            dot = sum(x * y for x, y in zip(a, b))
+            na = sum(x * x for x in a) ** 0.5
+            nb = sum(y * y for y in b) ** 0.5
+            return 0.0 if na == 0 or nb == 0 else dot / (na * nb)
+
+        def mmr_select(cands: list[KnowledgeUploadChunk], qvec: list[float] | None, k: int, lam: float = 0.7):
+            if not qvec:
+                return cands[:k]
+            selected: list[KnowledgeUploadChunk] = []
+            remaining = list(cands)
+            while remaining and len(selected) < k:
+                def score(ch: KnowledgeUploadChunk) -> float:
+                    v = _get_vec(ch)
+                    rel = _cos(qvec, v)
+                    div = 0.0
+                    if selected and v:
+                        div = max(_cos(_get_vec(s), v) for s in selected if _get_vec(s)) if any(_get_vec(s) for s in selected) else 0.0
+                    return lam * rel - (1 - lam) * div
+                best = max(remaining, key=score)
+                selected.append(best)
+                remaining.remove(best)
+            return selected
+
+        # Distance threshold: keep reasonable matches for ANN (cosine distance < ~0.4)
+        # We already ordered by distance; if you want a hard cut:
+        # ann_candidates = [c for c in ann_candidates if getattr(c, "distance", 0.0) < 0.4]
+
+        final = mmr_select(merged, query_vector if self.embedding_service else None, k=limit)
+        return tuple(final)
+
 
     def _fallback_snippets(self, *, business_profile, limit: int) -> Sequence[KnowledgeSnippet]:
         qs = (
@@ -801,19 +903,45 @@ class AiOrchestratorService:
                 if kid not in loaded_content_ids and kid not in ready_ids_in_payload
             ]
             if not pending_requests:
-                final_plan = plan_candidate
                 requested_again = bool(getattr(plan_candidate, "knowledge_requests", None))
+                # If the model re-requested knowledge that is already cached/ready,
                 if requested_again:
+                    for kid in plan_candidate.knowledge_requests:
+                        entry = cached_entries.get(str(kid))
+                        if not isinstance(entry, dict):
+                            continue
+                        usage_changed, topics, usage_label = self._mark_snippet_usage(
+                            entry=entry,
+                            query=query,
+                            turn_index=turn_index,
+                            metadata_snapshot=metadata_snapshot,
+                        )
+                        if usage_changed:
+                            cache_dirty = True
+                            metadata_dirty = True
+                        prepared = self._prepare_prompt_snippet(entry)
+                        self._upsert_knowledge_payload(knowledge_payload, prepared)
+                        # Keep the human-readable ledger for diagnostics/UX.
+                        knowledge_reads.append(
+                            {
+                                "id": str(entry.get("id")),
+                                "label": entry.get("public_label") or entry.get("title") or "Knowledge",
+                                "topics": topics,
+                                "usage": usage_label,
+                            }
+                        )
+                # Preserve any streamed text from this iteration.
+                last_iteration_streamed = iteration_streamed
+                streamed_chunks = list(active_iteration_chunks) if iteration_streamed else []
+                # Give the model one more pass (max once) with the updated ledger,
+                # instead of finalising immediately on a cache-satisfied read.
+                if requested_again and not cache_satisfied_read:
                     cache_satisfied_read = True
                     if on_status_change:
-                        on_status_change("reading_document")
-                last_iteration_streamed = iteration_streamed
-                if iteration_streamed:
-                    streamed_chunks = list(active_iteration_chunks)
-                else:
-                    streamed_chunks = []
-                if requested_again and on_status_change:
-                    on_status_change("responding")
+                        on_status_change("responding")
+                    continue
+                # Otherwise, finalise the plan.
+                final_plan = plan_candidate
                 break
 
             if plan_candidate.response_text:

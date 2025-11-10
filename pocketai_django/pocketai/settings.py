@@ -1,6 +1,7 @@
 """Django settings for the server-rendered PocketAI project."""
 
 from pathlib import Path
+import os
 
 # Base directory of the Django project (the folder that contains manage.py)
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -9,6 +10,9 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 SECRET_KEY = "django-insecure-change-me"
 
 DEBUG = True
+
+os.environ.setdefault("TOKENIZERS_PARALLELISM", "false")
+
 
 ALLOWED_HOSTS: list[str] = []
 
@@ -25,7 +29,23 @@ INSTALLED_APPS = [
     "apps.customers",
     "apps.conversations",
     "frontend",
+    #Vectorizing
+    "pgvector.django",
+    "django.contrib.postgres",
 ]
+
+CACHES = {
+    "default": {
+        "BACKEND": "django.core.cache.backends.locmem.LocMemCache",
+        "LOCATION": "pocketai-cache",
+        "TIMEOUT": 300,  # seconds
+    }
+}
+
+EMBED_PROVIDER = os.getenv("EMBED_PROVIDER", "local")
+EMBED_MODEL = os.getenv("EMBED_MODEL", "BAAI/bge-small-en-v1.5")
+EMBED_DIM = int(os.getenv("EMBED_DIM", "384"))
+EMBED_DISTANCE = os.getenv("EMBED_DISTANCE", "cosine")  # 'cosine'|'l2'|'ip'
 
 MIDDLEWARE = [
     "django.middleware.security.SecurityMiddleware",
@@ -62,9 +82,13 @@ ASGI_APPLICATION = "pocketai.asgi.application"
 
 # Database: placeholder SQLite setup until backend migration
 DATABASES = {
-    "default": {
-        "ENGINE": "django.db.backends.sqlite3",
-        "NAME": BASE_DIR / "db.sqlite3",
+    'default': {
+        'ENGINE': 'django.db.backends.postgresql',
+        'NAME': 'djangopocket',
+        'USER': 'djangopocket',
+        'PASSWORD': 'adham123',
+        'HOST': 'localhost',
+        'PORT': '5432',
     }
 }
 
@@ -134,5 +158,7 @@ LOGGING = {
             "level": "INFO",  # use DEBUG if you want even more detail
             "propagate": False,
         },
+        "apps.services.knowledge_ingestion": {"handlers": ["console"], "level": "INFO", "propagate": False},
+        "apps.services.ai_orchestrator": {"handlers": ["console"], "level": "INFO", "propagate": False},
     },
 }

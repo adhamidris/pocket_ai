@@ -11,6 +11,10 @@ from django.utils.text import slugify
 
 from .managers import UserManager
 
+from django.conf import settings
+from pgvector.django import VectorField
+
+
 
 class User(AbstractBaseUser, PermissionsMixin):
     """
@@ -621,7 +625,7 @@ class KnowledgeUploadChunk(models.Model):
     chunk_index = models.PositiveIntegerField()
     content = models.TextField()
     token_count = models.PositiveIntegerField(default=0)
-    embedding = models.JSONField(default=list, blank=True, null=True)
+    embedding = VectorField(dimensions=settings.EMBED_DIM, null=True, blank=True)
     metadata = models.JSONField(default=dict, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
