@@ -8,6 +8,7 @@ from .chat_portal import (
     resolve_portal_handle,
     stream_send,
     submit_csat,
+    submit_feedback,
 )
 
 app_name = "api"
@@ -39,6 +40,7 @@ urlpatterns = [
     path("chat/stream/send/", stream_send, name="chat-stream-send"),
     path("chat/events/", events, name="chat-events"),
     path("chat/csat/", submit_csat, name="chat-csat"),
+    path("chat/feedback/", submit_feedback, name="chat-feedback"),
     path("knowledge/documents/", views.knowledge_documents_collection, name="knowledge-documents-list"),
     path("knowledge/documents/<uuid:document_id>/", views.knowledge_document_detail, name="knowledge-documents-detail"),
     path(

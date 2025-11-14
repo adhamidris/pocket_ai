@@ -1,0 +1,78 @@
+[
+  {
+    "name": "Siwa Oasis Escape",
+    "slug": "siwa-oasis-escape",
+    "trip_code": "trip-ax-9901",
+    "sku": "siwa_deluxe",
+    "identifier": "siwa_ax_9901",
+    "policy_id": "POLICY-SIWA-AX",
+    "region": "Desert",
+    "duration_days": 4,
+    "business": "Atlas Travel",
+    "pricing": {
+      "adult_price_per_person": "1450 USD",
+      "child_price_per_person": "650 USD",
+      "currency": "USD"
+    },
+    "addons": [
+      {"name": "Desert transfer", "code": "DX_44", "price": "120"},
+      {"name": "Stargazing dome", "code": "DOME-7", "price": "280"}
+    ],
+    "aliases": [
+      "siwa_ax_9901",
+      "TRIP-AX-9901",
+      "siwa-oasis-escape"
+    ]
+  },
+  {
+    "name": "Luxor Sunrise Cruise",
+    "slug": "luxor-sunrise-cruise",
+    "trip_code": "LUX-AX-77",
+    "sku": "luxor_ultra",
+    "identifier": "luxor_AX_77",
+    "policy_id": "POLICY-LUXOR-AX",
+    "region": "Nile",
+    "duration_days": 3,
+    "business": "Atlas Travel",
+    "pricing": {
+      "adult_price_per_person": "1600 USD",
+      "child_price_per_person": "720 USD",
+      "currency": "USD"
+    },
+    "addons": [
+      {"name": "Balloon ride", "code": "BAL-7", "price": "250"},
+      {"name": "Private guide", "code": "guide77", "price": "300"}
+    ],
+    "extra": {
+      "aliases": ["lux_ax_77", "luxor-sunrise", "LUX-AX-77"],
+      "policy": {"slug": "luxor-ultra", "sku": "lux-ax-77"}
+    }
+  },
+  {
+    "name": "Fayoum Short Hop",
+    "slug": "fayoum-short-hop",
+    "trip_code": "fy-4",
+    "sku": "fayoum-basic",
+    "identifier": "FAYOUM_004",
+    "policy_id": "POLICY-FY-4",
+    "region": "Oasis",
+    "duration_days": 2,
+    "business": "Atlas Travel",
+    "pricing": {
+      "adult_price_per_person": "520 USD",
+      "child_price_per_person": "300 USD",
+      "currency": "USD"
+    },
+    "addons": [
+      {"name": "Wildlife ranger", "code": "fyR-04", "price": "95"}
+    ],
+    "aliases": [
+      "fy-4",
+      "fayoum_short",
+      "fayoum-basic"
+    ],
+    "metadata": {
+      "legacy": {"sku": "FY_004", "policy_id": "fy-004"}
+    }
+  }
+]

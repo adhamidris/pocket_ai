@@ -6,6 +6,7 @@ from django.core.management.base import BaseCommand
 
 from apps.accounts.models import (
     KnowledgeIngestionJobStatus,
+    KnowledgeIngestionJobType,
     KnowledgeSourceType,
     KnowledgeStatus,
     KnowledgeUpload,
@@ -71,17 +72,18 @@ class Command(BaseCommand):
 
             processed += 1
             if result.status == KnowledgeIngestionJobStatus.COMPLETED:
+                units = "chars" if result.job_type == KnowledgeIngestionJobType.INGEST else "chunks"
                 self.stdout.write(
                     self.style.SUCCESS(
-                        f"Processed job {result.job_id} for upload {result.upload_id} ({result.characters} chars)."
+                        f"Processed {result.job_type} job {result.job_id} for upload {result.upload_id} ({result.characters} {units})."
                     )
                 )
             else:
-                    self.stdout.write(
-                        self.style.ERROR(
-                            f"Failed job {result.job_id} for upload {result.upload_id}: {result.error or 'unknown error'}"
-                        )
+                self.stdout.write(
+                    self.style.ERROR(
+                        f"Failed job {result.job_id} for upload {result.upload_id}: {result.error or 'unknown error'}"
                     )
+                )
             if sleep_seconds and watch:
                 time.sleep(sleep_seconds)
 

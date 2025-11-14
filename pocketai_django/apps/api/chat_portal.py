@@ -4,6 +4,7 @@ import json
 import logging
 import threading
 import time
+import uuid
 from queue import Empty, Queue
 from typing import Iterable
 
@@ -211,6 +212,58 @@ def submit_csat(request: HttpRequest) -> JsonResponse:
         return _json_error("not_found", str(exc), status=404)
 
     return JsonResponse({"session": _session_to_dict(session)}, status=200)
+
+
+@csrf_exempt
+@require_POST
+def submit_feedback(request: HttpRequest) -> JsonResponse:
+    service = _service()
+    try:
+        payload = _parse_json_body(request)
+    except PortalValidationError as exc:
+        return _json_error("invalid_json", str(exc))
+
+    session_token = (payload.get("session_token") or payload.get("sessionToken") or "").strip()
+    feedback_type = (payload.get("feedback_type") or payload.get("feedbackType") or "").strip()
+    if not session_token or not feedback_type:
+        return _json_error("validation_error", "session_token and feedback_type are required.")
+    message_id_value = payload.get("message_id") or payload.get("messageId")
+    message_id: uuid.UUID | None = None
+    if message_id_value:
+        try:
+            message_id = uuid.UUID(str(message_id_value))
+        except (TypeError, ValueError):
+            return _json_error("validation_error", "message_id must be a valid UUID.")
+    feedback_payload = {
+        "query_text": payload.get("query_text"),
+        "expected_behavior": payload.get("expected_behavior"),
+        "expected_entities": payload.get("expected_entities") or [],
+        "expected_aliases": payload.get("expected_aliases") or [],
+        "notes": payload.get("notes"),
+        "auto_promote": payload.get("auto_promote", True),
+    }
+    try:
+        feedback = service.record_feedback(
+            session_token=session_token,
+            feedback_type=feedback_type,
+            message_id=message_id,
+            payload=feedback_payload,
+        )
+    except PortalValidationError as exc:
+        return _json_error("validation_error", str(exc))
+    except PortalNotFoundError as exc:
+        return _json_error("not_found", str(exc), status=404)
+
+    return JsonResponse(
+        {
+            "feedback": {
+                "id": str(feedback.id),
+                "feedback_type": feedback.feedback_type,
+                "created_at": feedback.created_at.isoformat(),
+            }
+        },
+        status=201,
+    )
 
 
 @csrf_exempt

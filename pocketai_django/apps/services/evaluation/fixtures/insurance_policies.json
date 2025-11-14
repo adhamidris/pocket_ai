@@ -1,0 +1,54 @@
+{
+  "policies": [
+    {
+      "policyName": "Atlas Shield Classic",
+      "policy_id": "ATLAS-CL-01",
+      "code": "atlas_cl01",
+      "slug": "atlas-shield-classic",
+      "identifiers": {
+        "sku": "atlasShield",
+        "reference": "shield_classic"
+      },
+      "coverage": {
+        "medical_limit": "100000",
+        "trip_delay": "500",
+        "baggage": "2000"
+      },
+      "aliases": ["ATLAS-CL-01", "atlas_cl01", "shield_classic"]
+    },
+    {
+      "policyName": "Delta Guard Premium",
+      "policy_id": "delta_guard-prem",
+      "code": "DG_PREM",
+      "slug": "delta-guard-premium",
+      "identifiers": {
+        "sku": "dg-prem",
+        "reference": "deltaGuardPrem"
+      },
+      "coverage": {
+        "medical_limit": "250000",
+        "trip_delay": "1500",
+        "baggage": "5000"
+      },
+      "aliases": ["dg-prem", "delta_guard-prem", "deltaGuardPrem"]
+    },
+    {
+      "policyName": "Nimbus Micro Biz",
+      "policy_id": "NB-z-5",
+      "code": "nb_z5",
+      "slug": "nimbus-micro-biz",
+      "meta": {
+        "alias": {
+          "sku": "nbiz_05",
+          "id": "NB-Z-5"
+        }
+      },
+      "coverage": {
+        "medical_limit": "50000",
+        "trip_delay": "350",
+        "baggage": "1200"
+      },
+      "aliases": ["nb-z-5", "NB_z5", "nbiz_05"]
+    }
+  ]
+}

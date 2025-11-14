@@ -1,0 +1,30 @@
+[
+  {
+    "name": "Nebula Card Metal",
+    "sku": "NB-MET-01",
+    "slug": "nebula-card-metal",
+    "identifier": "nb_met01",
+    "product_code": "NB_METAL",
+    "policy": {"id": "nebulaMetal01", "tier": "metal"},
+    "features": {"apr": "11.9%", "cashback": "2%"},
+    "aliases": ["NB_METAL", "nb_met01", "nebula-card-metal"]
+  },
+  {
+    "name": "Nebula Card Lite",
+    "sku": "nb-lite",
+    "slug": "nebula-card-lite",
+    "identifier": "NBLT_2",
+    "product_code": "NB-LT-2",
+    "features": {"apr": "18.5%", "cashback": "1%"},
+    "aliases": ["nb-lite", "NB-LT-2", "nblt_2"]
+  },
+  {
+    "name": "Orion Business Edge",
+    "sku": "orion_edge",
+    "slug": "orion-business-edge",
+    "identifier": "ORION_EDGE",
+    "product_code": "EDGE-44",
+    "features": {"apr": "14.2%", "cashback": "3%"},
+    "aliases": ["edge-44", "ORION_EDGE", "orion-edge"]
+  }
+]

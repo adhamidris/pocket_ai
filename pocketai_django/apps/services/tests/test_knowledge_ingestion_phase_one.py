@@ -1,0 +1,193 @@
+from __future__ import annotations
+
+import json
+import shutil
+import tempfile
+from pathlib import Path
+from unittest import mock
+
+from django.test import TestCase, override_settings
+
+from apps.accounts.models import (
+    BusinessProfile,
+    KnowledgeAlias,
+    KnowledgeEntity,
+    KnowledgeSourceType,
+    KnowledgeStatus,
+    KnowledgeUpload,
+    KnowledgeUploadFile,
+    KnowledgeUploadTable,
+    KnowledgeUploadTableRow,
+    RegistrationSession,
+    User,
+)
+from apps.services.knowledge_ingestion import KnowledgeIngestionService
+
+try:
+    from openpyxl import Workbook
+except ImportError:
+    Workbook = None
+
+
+class KnowledgeIngestionAliasTests(TestCase):
+    def test_collect_aliases_detects_short_identifiers(self):
+        aliases, sources = KnowledgeIngestionService._collect_aliases_from_record(
+            record={"slug": "trip-1"},
+            flattened={"slug": "trip-1", "code": "A-9"},
+            attributes={"slug": "trip-1"},
+            entity_name="Trip 1",
+        )
+        self.assertIn("trip-1", aliases)
+        self.assertTrue(any(source.startswith("record_slug") for source in sources))
+
+
+class KnowledgeIngestionJsonTests(TestCase):
+    def setUp(self) -> None:
+        super().setUp()
+        self._media_root = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self._media_root)
+        self.override = override_settings(MEDIA_ROOT=self._media_root)
+        self.override.enable()
+        self.addCleanup(self.override.disable)
+        self.user = User.objects.create(email="ingest@example.com", first_name="Test")
+        self.registration = RegistrationSession.objects.create(user=self.user)
+        self.business = BusinessProfile.objects.create(
+            user=self.user,
+            registration_session=self.registration,
+            name="Travel Co",
+            industry="travel",
+            metadata={"ingest_max_json_entities": 2},
+        )
+
+    @mock.patch("apps.services.knowledge_ingestion.build_embedding_service", return_value=None)
+    def test_json_ingestion_persists_entities_and_aliases(self, _build_embeddings):
+        upload = KnowledgeUpload.objects.create(
+            business_profile=self.business,
+            user=self.user,
+            source_type=KnowledgeSourceType.FILE,
+            status=KnowledgeStatus.PENDING,
+            display_name="Trips",
+        )
+        storage_path = Path("uploads/sample.json")
+        target_path = Path(self._media_root) / storage_path
+        target_path.parent.mkdir(parents=True, exist_ok=True)
+        payload = {
+            "trips": [
+                {"slug": "trip-1", "name": "Trip One", "code": "TR-ONE"},
+                {"slug": "trip-2", "name": "Trip Two", "code": "TR-TWO"},
+                {"slug": "trip-3", "name": "Trip Three", "code": "TR-THREE"},
+            ]
+        }
+        target_path.write_text(json.dumps(payload), encoding="utf-8")
+        KnowledgeUploadFile.objects.create(
+            upload=upload,
+            filename="sample.json",
+            storage_path=str(storage_path),
+            content_type="application/json",
+            size_bytes=target_path.stat().st_size,
+        )
+
+        service = KnowledgeIngestionService(media_root=Path(self._media_root))
+        extraction = service._extract_upload(upload)
+        service._persist_extraction(upload, extraction)
+
+        upload.refresh_from_db()
+        self.assertEqual(KnowledgeEntity.objects.filter(upload=upload).count(), 2)
+        alias_count = KnowledgeAlias.objects.filter(entity__upload=upload).count()
+        self.assertGreater(alias_count, 0)
+        self.assertEqual(upload.ingestion_metadata.get("alias_count"), alias_count)
+        self.assertEqual(upload.ingestion_metadata.get("truncated_entities"), 2)
+
+
+class KnowledgeIngestionSpreadsheetTests(TestCase):
+    def setUp(self) -> None:
+        super().setUp()
+        self._media_root = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self._media_root)
+        self.override = override_settings(MEDIA_ROOT=self._media_root)
+        self.override.enable()
+        self.addCleanup(self.override.disable)
+        self.user = User.objects.create(email="spreadsheet@example.com", first_name="Sheet")
+        self.registration = RegistrationSession.objects.create(user=self.user)
+        self.business = BusinessProfile.objects.create(
+            user=self.user,
+            registration_session=self.registration,
+            name="Data Co",
+            industry="finance",
+        )
+
+    @mock.patch("apps.services.knowledge_ingestion.build_embedding_service", return_value=None)
+    def test_csv_ingestion_creates_tables(self, _build_embeddings):
+        upload = KnowledgeUpload.objects.create(
+            business_profile=self.business,
+            user=self.user,
+            source_type=KnowledgeSourceType.FILE,
+            status=KnowledgeStatus.PENDING,
+            display_name="Plans CSV",
+        )
+        storage_path = Path("uploads/plans.csv")
+        target_path = Path(self._media_root) / storage_path
+        target_path.parent.mkdir(parents=True, exist_ok=True)
+        target_path.write_text("plan,price\nBasic,10\nPro,25\n", encoding="utf-8")
+        KnowledgeUploadFile.objects.create(
+            upload=upload,
+            filename="plans.csv",
+            storage_path=str(storage_path),
+            content_type="text/csv",
+            size_bytes=target_path.stat().st_size,
+        )
+        service = KnowledgeIngestionService(media_root=Path(self._media_root))
+        extraction = service._extract_upload(upload)
+        service._persist_extraction(upload, extraction)
+        tables = KnowledgeUploadTable.objects.filter(upload=upload)
+        self.assertEqual(tables.count(), 1)
+        rows = KnowledgeUploadTableRow.objects.filter(table__upload=upload)
+        self.assertEqual(rows.count(), 2)
+        self.assertEqual(tables.first().column_schema, ["plan", "price"])
+        entities = KnowledgeEntity.objects.filter(upload=upload)
+        self.assertEqual(entities.count(), 2)
+        self.assertTrue(
+            KnowledgeAlias.objects.filter(entity__upload=upload, alias_normalized="basic").exists()
+        )
+
+    @mock.patch("apps.services.knowledge_ingestion.build_embedding_service", return_value=None)
+    def test_xlsx_ingestion_creates_tables(self, _build_embeddings):
+        if Workbook is None:
+            self.skipTest("openpyxl not installed")
+        upload = KnowledgeUpload.objects.create(
+            business_profile=self.business,
+            user=self.user,
+            source_type=KnowledgeSourceType.FILE,
+            status=KnowledgeStatus.PENDING,
+            display_name="Plans XLSX",
+        )
+        storage_path = Path("uploads/plans.xlsx")
+        target_path = Path(self._media_root) / storage_path
+        target_path.parent.mkdir(parents=True, exist_ok=True)
+        workbook = Workbook()
+        sheet = workbook.active
+        sheet.title = "Plans"
+        sheet.append(["plan", "price"])
+        sheet.append(["Starter", 5])
+        sheet.append(["Enterprise", 99])
+        workbook.save(target_path)
+        KnowledgeUploadFile.objects.create(
+            upload=upload,
+            filename="plans.xlsx",
+            storage_path=str(storage_path),
+            content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            size_bytes=target_path.stat().st_size,
+        )
+        service = KnowledgeIngestionService(media_root=Path(self._media_root))
+        extraction = service._extract_upload(upload)
+        service._persist_extraction(upload, extraction)
+        tables = KnowledgeUploadTable.objects.filter(upload=upload)
+        self.assertEqual(tables.count(), 1)
+        rows = KnowledgeUploadTableRow.objects.filter(table__upload=upload)
+        self.assertEqual(rows.count(), 2)
+        self.assertEqual(tables.first().column_schema, ["plan", "price"])
+        entities = KnowledgeEntity.objects.filter(upload=upload)
+        self.assertEqual(entities.count(), 2)
+        self.assertTrue(
+            KnowledgeAlias.objects.filter(entity__upload=upload, alias_normalized="starter").exists()
+        )

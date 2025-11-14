@@ -1,0 +1,46 @@
+from __future__ import annotations
+
+from typing import Mapping
+
+FEATURE_FLAG_METADATA_KEY = "features"
+FEATURE_FLAG_DEFAULTS: dict[str, bool] = {
+    "alias_lookup": True,
+    "entity_chunking": True,
+    "hybrid_search": True,
+}
+
+_TRUE_VALUES = {"1", "true", "yes", "on", "enabled"}
+_FALSE_VALUES = {"0", "false", "no", "off", "disabled", ""}
+
+
+def coerce_feature_value(value: object, default: bool) -> bool:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return bool(value)
+    if isinstance(value, str):
+        trimmed = value.strip().lower()
+        if trimmed in _TRUE_VALUES:
+            return True
+        if trimmed in _FALSE_VALUES:
+            return False
+    return bool(default)
+
+
+def sanitize_feature_payload(payload: Mapping[str, object] | None) -> dict[str, bool]:
+    sanitized: dict[str, bool] = {}
+    if isinstance(payload, Mapping):
+        for key, raw in payload.items():
+            if key in FEATURE_FLAG_DEFAULTS:
+                sanitized[key] = coerce_feature_value(raw, FEATURE_FLAG_DEFAULTS[key])
+    for key, default in FEATURE_FLAG_DEFAULTS.items():
+        sanitized.setdefault(key, bool(default))
+    return sanitized
+
+
+__all__ = [
+    "FEATURE_FLAG_DEFAULTS",
+    "FEATURE_FLAG_METADATA_KEY",
+    "coerce_feature_value",
+    "sanitize_feature_payload",
+]

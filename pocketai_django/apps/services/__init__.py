@@ -58,6 +58,7 @@ from .knowledge_ingestion import (
     KnowledgeIngestionService,
     queue_ingestion_job,
 )
+from .evaluation.harness import RAGEvaluationHarness
 
 __all__ = [
     "CaseDetail",
@@ -112,4 +113,5 @@ __all__ = [
     "KnowledgeIngestionError",
     "IngestionJobResult",
     "queue_ingestion_job",
+    "RAGEvaluationHarness",
 ]

@@ -1,9 +1,28 @@
-from django.contrib import admin
+import json
+
+from django import forms
+from django.contrib import admin, messages
 from django.contrib.auth import logout
 from django.contrib.auth.admin import UserAdmin as DjangoUserAdmin
 from django.contrib.auth.models import AnonymousUser
 
-from .models import AgentProfile, BusinessProfile, KnowledgeUpload, RegistrationSession, User
+from .models import (
+    AgentProfile,
+    BusinessProfile,
+    IntegrationSyncFrequency,
+    KnowledgeAlias,
+    KnowledgeEntity,
+    KnowledgeFeedbackCase,
+    KnowledgeIntegration,
+    KnowledgeIngestionJob,
+    KnowledgeUpload,
+    KnowledgeVisibility,
+    KnowledgeDriftSample,
+    RAGEvaluationRun,
+    RegistrationSession,
+    User,
+)
+from apps.services.evaluation.harness import RAGEvaluationHarness
 
 
 admin.site.site_header = "PocketAI Operations Console"
@@ -33,6 +52,126 @@ def _pocket_admin_login(self, request, extra_context=None):
 
 admin.site.login = _pocket_admin_login.__get__(admin.site, admin.site.__class__)
 
+
+class MonospaceJSONWidget(forms.Textarea):
+    """Smaller helper to provide a consistent monospace textarea widget."""
+
+    def __init__(self, *args, **kwargs):
+        attrs = kwargs.setdefault("attrs", {})
+        attrs.setdefault("rows", 12)
+        attrs.setdefault("class", "vLargeTextField monospace")
+        super().__init__(*args, **kwargs)
+
+
+class KnowledgeIntegrationAdminForm(forms.ModelForm):
+    default_sync_frequency = forms.ChoiceField(choices=IntegrationSyncFrequency.choices)
+    default_visibility = forms.ChoiceField(choices=KnowledgeVisibility.choices)
+    resource_configs = forms.JSONField(
+        required=False,
+        widget=MonospaceJSONWidget,
+        help_text="Provide a JSON list of sheet resources (drive_file_id, sheet_gid, sheet_name, privacy).",
+    )
+
+    class Meta:
+        model = KnowledgeIntegration
+        exclude = ("settings",)
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        default_vis = KnowledgeVisibility.PRIVATE
+        default_freq = IntegrationSyncFrequency.DAILY
+        if self.instance and self.instance.pk:
+            default_vis = self.instance.get_default_visibility() or default_vis
+            default_freq = self.instance.get_default_sync_frequency() or default_freq
+            resources = self.instance.resource_configs
+            if resources:
+                self.fields["resource_configs"].initial = json.dumps(resources, indent=2)
+        else:
+            self.fields["resource_configs"].initial = json.dumps([], indent=2)
+        self.fields["default_visibility"].initial = default_vis
+        self.fields["default_sync_frequency"].initial = default_freq
+
+    @staticmethod
+    def _sanitize_column_list(value):
+        if not isinstance(value, (list, tuple)):
+            return []
+        sanitized: list[str] = []
+        for entry in value:
+            if entry is None:
+                continue
+            text = str(entry).strip()
+            if text:
+                sanitized.append(text)
+        return sanitized
+
+    def clean_resource_configs(self):
+        resources = self.cleaned_data.get("resource_configs")
+        if not resources:
+            return []
+        if not isinstance(resources, list):
+            raise forms.ValidationError("Resources must be provided as a JSON list.")
+        visibility_default = self.cleaned_data.get("default_visibility") or KnowledgeVisibility.PRIVATE
+        frequency_default = self.cleaned_data.get("default_sync_frequency") or IntegrationSyncFrequency.DAILY
+        valid_visibilities = {choice for choice, _ in KnowledgeVisibility.choices}
+        valid_frequencies = {choice for choice, _ in IntegrationSyncFrequency.choices}
+        normalized: list[dict[str, object]] = []
+        for idx, resource in enumerate(resources, start=1):
+            if not isinstance(resource, dict):
+                raise forms.ValidationError(f"Resource #{idx} must be an object with metadata.")
+            drive_file_id = str(resource.get("drive_file_id") or "").strip()
+            sheet_gid = str(resource.get("sheet_gid") or resource.get("sheet_id") or resource.get("gid") or "").strip()
+            sheet_name = str(resource.get("sheet_name") or resource.get("tab_name") or resource.get("title") or "").strip()
+            drive_file_name = str(resource.get("drive_file_name") or resource.get("drive_file_title") or drive_file_id).strip() or drive_file_id
+            if not drive_file_id or not sheet_gid or not sheet_name:
+                raise forms.ValidationError(
+                    f"Resource #{idx} must include drive_file_id, sheet_gid, and sheet_name values."
+                )
+            resource_id = str(resource.get("resource_id") or f"{drive_file_id}:{sheet_gid}").strip()
+            sync_frequency = str(resource.get("sync_frequency") or frequency_default)
+            if sync_frequency not in valid_frequencies:
+                raise forms.ValidationError(
+                    f"Resource #{idx} has invalid sync_frequency '{sync_frequency}'."
+                )
+            visibility = str(resource.get("visibility") or visibility_default)
+            if visibility not in valid_visibilities:
+                raise forms.ValidationError(f"Resource #{idx} has invalid visibility '{visibility}'.")
+            column_privacy = resource.get("column_privacy") or {}
+            if not isinstance(column_privacy, dict):
+                column_privacy = {}
+            normalized_privacy = {
+                "shared_columns": self._sanitize_column_list(column_privacy.get("shared_columns")),
+                "internal_only_columns": self._sanitize_column_list(column_privacy.get("internal_only_columns")),
+                "excluded_columns": self._sanitize_column_list(column_privacy.get("excluded_columns")),
+            }
+            metadata = resource.get("metadata") or {}
+            if not isinstance(metadata, dict):
+                metadata = {}
+            normalized.append(
+                {
+                    "resource_id": resource_id,
+                    "drive_file_id": drive_file_id,
+                    "drive_file_name": drive_file_name,
+                    "sheet_gid": sheet_gid,
+                    "sheet_name": sheet_name,
+                    "sync_frequency": sync_frequency,
+                    "visibility": visibility,
+                    "column_privacy": normalized_privacy,
+                    "metadata": metadata,
+                }
+            )
+        return normalized
+
+    def save(self, commit=True):
+        instance: KnowledgeIntegration = super().save(commit=False)
+        instance.set_default_visibility(self.cleaned_data.get("default_visibility") or KnowledgeVisibility.PRIVATE)
+        instance.set_default_sync_frequency(
+            self.cleaned_data.get("default_sync_frequency") or IntegrationSyncFrequency.DAILY
+        )
+        instance.set_resource_configs(self.cleaned_data.get("resource_configs") or [])
+        if commit:
+            instance.save()
+            self.save_m2m()
+        return instance
 
 @admin.register(User)
 class UserAdmin(DjangoUserAdmin):
@@ -95,9 +234,153 @@ class AgentProfileAdmin(admin.ModelAdmin):
     ordering = ("-updated_at",)
 
 
+@admin.register(KnowledgeIntegration)
+class KnowledgeIntegrationAdmin(admin.ModelAdmin):
+    form = KnowledgeIntegrationAdminForm
+    list_display = ("name", "business_profile", "integration_type", "status", "last_synced_at", "resource_total")
+    list_filter = ("integration_type", "status")
+    search_fields = ("name", "business_profile__name", "external_account_id")
+    ordering = ("name",)
+    readonly_fields = ("last_synced_at", "sync_error", "created_at", "updated_at")
+    fieldsets = (
+        (None, {"fields": ("business_profile", "created_by", "name", "slug", "integration_type", "status")}),
+        ("Connection", {"fields": ("external_account_id", "credentials", "metadata", "last_synced_at", "sync_error")}),
+        ("Sync Configuration", {"fields": ("default_sync_frequency", "default_visibility", "resource_configs")}),
+        ("Timestamps", {"fields": ("created_at", "updated_at")}),
+    )
+
+    @admin.display(description="Resources")
+    def resource_total(self, obj: KnowledgeIntegration) -> int:
+        return len(obj.resource_configs)
+
+
 @admin.register(KnowledgeUpload)
 class KnowledgeUploadAdmin(admin.ModelAdmin):
-    list_display = ("id", "display_name", "business_profile", "source_type", "status", "updated_at")
-    list_filter = ("source_type", "status", "visibility", "is_sensitive")
+    list_display = ("id", "display_name", "business_profile", "source_type", "integration", "status", "updated_at")
+    list_filter = ("source_type", "status", "visibility", "is_sensitive", "integration")
     search_fields = ("display_name", "source_name", "legacy_url", "business_profile__name", "user__email")
     ordering = ("-updated_at",)
+    autocomplete_fields = ("integration",)
+
+
+class KnowledgeAliasInline(admin.TabularInline):
+    model = KnowledgeAlias
+    extra = 0
+    readonly_fields = ("alias_raw", "alias_normalized", "source", "created_at", "updated_at")
+
+
+@admin.register(KnowledgeEntity)
+class KnowledgeEntityAdmin(admin.ModelAdmin):
+    list_display = ("id", "entity_name", "entity_type", "business_profile", "upload", "updated_at")
+    list_filter = ("entity_type", "business_profile")
+    search_fields = ("entity_name", "primary_label", "upload__display_name", "upload__id")
+    ordering = ("-updated_at",)
+    inlines = (KnowledgeAliasInline,)
+
+
+@admin.register(KnowledgeAlias)
+class KnowledgeAliasAdmin(admin.ModelAdmin):
+    list_display = ("id", "alias_raw", "business_profile", "entity", "source", "updated_at")
+    list_filter = ("source", "business_profile")
+    search_fields = ("alias_raw", "alias_normalized", "entity__entity_name", "business_profile__name")
+    ordering = ("-updated_at",)
+
+
+@admin.register(KnowledgeIngestionJob)
+class KnowledgeIngestionJobAdmin(admin.ModelAdmin):
+    list_display = ("id", "business_profile", "upload", "job_type", "status", "created_at", "started_at", "finished_at")
+    list_filter = ("job_type", "status")
+    search_fields = ("id", "upload__display_name", "upload__id", "business_profile__name")
+    ordering = ("-created_at",)
+    readonly_fields = ("payload_pretty",)
+    fieldsets = (
+        (None, {"fields": ("id", "business_profile", "upload", "job_type", "status", "created_at", "started_at", "finished_at")}),
+        ("Execution", {"fields": ("payload_pretty", "error_detail")}),
+    )
+
+    @admin.display(description="Payload")
+    def payload_pretty(self, obj):
+        payload = obj.payload or {}
+        try:
+            return json.dumps(payload, indent=2, sort_keys=True)
+        except Exception:
+            return str(payload)
+
+
+@admin.register(RAGEvaluationRun)
+class RAGEvaluationRunAdmin(admin.ModelAdmin):
+    list_display = ("slug", "business_profile", "status", "created_at")
+    list_filter = ("status",)
+    search_fields = ("slug", "business_profile__name")
+    readonly_fields = ("metrics_pretty", "latencies_pretty", "thresholds_pretty", "violations_pretty", "created_at", "updated_at")
+    fieldsets = (
+        (None, {"fields": ("slug", "business_profile", "status", "created_at", "updated_at")}),
+        ("Metrics", {"fields": ("metrics_pretty", "latencies_pretty", "thresholds_pretty", "violations_pretty")}),
+    )
+
+    @admin.display(description="Metrics")
+    def metrics_pretty(self, obj):
+        return json.dumps(obj.metrics or {}, indent=2, sort_keys=True)
+
+    @admin.display(description="Latencies")
+    def latencies_pretty(self, obj):
+        return json.dumps(obj.latencies or {}, indent=2, sort_keys=True)
+
+    @admin.display(description="Thresholds")
+    def thresholds_pretty(self, obj):
+        return json.dumps(obj.thresholds or {}, indent=2, sort_keys=True)
+
+    @admin.display(description="Violations")
+    def violations_pretty(self, obj):
+        return json.dumps(obj.violations or {}, indent=2, sort_keys=True)
+
+
+@admin.register(KnowledgeDriftSample)
+class KnowledgeDriftSampleAdmin(admin.ModelAdmin):
+    list_display = ("sample_kind", "business_profile", "observed_at")
+    list_filter = ("sample_kind",)
+    search_fields = ("business_profile__name",)
+    readonly_fields = ("metrics_pretty", "metadata_pretty", "observed_at")
+    fieldsets = (
+        (None, {"fields": ("business_profile", "sample_kind", "observed_at")}),
+        ("Metrics", {"fields": ("metrics_pretty", "metadata_pretty")}),
+    )
+
+    @admin.display(description="Metrics")
+    def metrics_pretty(self, obj):
+        return json.dumps(obj.metrics or {}, indent=2, sort_keys=True)
+
+    @admin.display(description="Metadata")
+    def metadata_pretty(self, obj):
+        return json.dumps(obj.metadata or {}, indent=2, sort_keys=True)
+
+
+@admin.register(KnowledgeFeedbackCase)
+class KnowledgeFeedbackCaseAdmin(admin.ModelAdmin):
+    list_display = ("query_preview", "business_profile", "expected_behavior", "is_active", "updated_at")
+    list_filter = ("expected_behavior", "is_active")
+    search_fields = ("query_text", "business_profile__name")
+    actions = ("deactivate_cases", "replay_in_harness")
+    readonly_fields = ("conversation_feedback", "created_at", "updated_at")
+
+    @admin.display(description="Query")
+    def query_preview(self, obj):
+        return obj.query_text[:80]
+
+    @admin.action(description="Mark selected cases inactive")
+    def deactivate_cases(self, request, queryset):
+        updated = queryset.update(is_active=False)
+        self.message_user(request, f"Marked {updated} cases inactive.")
+
+    @admin.action(description="Replay in RAG harness")
+    def replay_in_harness(self, request, queryset):
+        harness = RAGEvaluationHarness(enforce_thresholds=False)
+        for case in queryset:
+            try:
+                observation = harness.replay_feedback_case(case)
+                self.message_user(
+                    request,
+                    f"{case.query_text[:40]} → top1={observation.top1} status={observation.status}",
+                )
+            except Exception as exc:
+                self.message_user(request, f"Failed to replay {case}: {exc}", level=messages.ERROR)

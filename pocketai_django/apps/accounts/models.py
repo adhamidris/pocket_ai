@@ -1,9 +1,10 @@
 from __future__ import annotations
 
 import uuid
-from typing import Any
+from typing import Any, TypedDict
 
 from django.contrib.auth.models import AbstractBaseUser, PermissionsMixin
+from django.contrib.postgres.indexes import GinIndex
 from django.core.validators import MinValueValidator
 from django.db import models
 from django.utils import timezone
@@ -14,6 +15,29 @@ from .managers import UserManager
 from django.conf import settings
 from pgvector.django import VectorField
 
+from apps.accounts.constants import FEATURE_FLAG_METADATA_KEY, sanitize_feature_payload
+
+
+class IntegrationColumnPrivacyConfig(TypedDict, total=False):
+    """Typed representation of column-level privacy knobs for sheet resources."""
+
+    shared_columns: list[str]
+    internal_only_columns: list[str]
+    excluded_columns: list[str]
+
+
+class IntegrationResourceConfig(TypedDict, total=False):
+    """Snapshot of a drive file + sheet/tab that should sync into the knowledge base."""
+
+    resource_id: str
+    drive_file_id: str
+    drive_file_name: str
+    sheet_gid: str
+    sheet_name: str
+    sync_frequency: str
+    visibility: str
+    column_privacy: IntegrationColumnPrivacyConfig
+    metadata: dict[str, Any]
 
 
 class User(AbstractBaseUser, PermissionsMixin):
@@ -143,6 +167,7 @@ class BusinessProfile(models.Model):
         ),
         default="draft",
     )
+    metadata = models.JSONField(default=dict, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
@@ -177,8 +202,18 @@ class BusinessProfile(models.Model):
             suffix += 1
         self.slug = candidate
 
+    def ensure_feature_flags(self) -> None:
+        metadata_source = self.metadata if isinstance(self.metadata, dict) else {}
+        current = metadata_source.get(FEATURE_FLAG_METADATA_KEY)
+        normalized = sanitize_feature_payload(current)
+        metadata_copy = dict(metadata_source) if isinstance(metadata_source, dict) else {}
+        if metadata_copy.get(FEATURE_FLAG_METADATA_KEY) != normalized:
+            metadata_copy[FEATURE_FLAG_METADATA_KEY] = normalized
+            self.metadata = metadata_copy
+
     def save(self, *args, **kwargs):
         self.ensure_slug()
+        self.ensure_feature_flags()
         super().save(*args, **kwargs)
 
 
@@ -372,6 +407,23 @@ class KnowledgeIntegrationStatus(models.TextChoices):
     ERROR = "error", "Error"
 
 
+class IntegrationSyncFrequency(models.TextChoices):
+    MANUAL = "manual", "Manual"
+    HOURLY = "hourly", "Hourly"
+    DAILY = "daily", "Daily"
+    WEEKLY = "weekly", "Weekly"
+
+
+def default_knowledge_integration_settings() -> dict[str, Any]:
+    """Provide a predictable structure for integration.settings JSON."""
+
+    return {
+        "default_visibility": KnowledgeVisibility.PRIVATE,
+        "default_sync_frequency": IntegrationSyncFrequency.DAILY,
+        "resources": [],
+    }
+
+
 class KnowledgeCollectionVisibility(models.TextChoices):
     PRIVATE = "private", "Private"
     AGENTS = "agents", "Agents Only"
@@ -380,6 +432,7 @@ class KnowledgeCollectionVisibility(models.TextChoices):
 
 class KnowledgeIngestionJobType(models.TextChoices):
     INGEST = "ingest", "Initial Ingest"
+    EMBED = "embed", "Embedding"
     REBUILD = "rebuild", "Rebuild"
     DELETE = "delete", "Delete"
     SYNC = "sync", "Sync"
@@ -388,6 +441,7 @@ class KnowledgeIngestionJobType(models.TextChoices):
 class KnowledgeIngestionJobStatus(models.TextChoices):
     QUEUED = "queued", "Queued"
     RUNNING = "running", "Running"
+    DEFERRED = "deferred", "Deferred"
     COMPLETED = "completed", "Completed"
     FAILED = "failed", "Failed"
     CANCELLED = "cancelled", "Cancelled"
@@ -427,7 +481,10 @@ class KnowledgeUpload(models.Model):
     Central knowledge artifact powering the AI agent experience.
 
     Supports uploads, URLs, manual snippets, and integration-sourced content while
-    tracking ingestion state, access metadata, and collection membership.
+    tracking ingestion state, access metadata, and collection membership. When the
+    source type is ``integration`` the ``source_uid`` tracks the integration
+    resource id (e.g., a Drive file + sheet gid) so sync jobs can upsert rows
+    deterministically.
     """
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
@@ -456,7 +513,12 @@ class KnowledgeUpload(models.Model):
     description = models.TextField(blank=True, default="")
     summary = models.TextField(blank=True, default="")
     source_name = models.CharField(max_length=255, blank=True, default="")
-    source_uid = models.CharField(max_length=255, blank=True, default="")
+    source_uid = models.CharField(
+        max_length=255,
+        blank=True,
+        default="",
+        help_text="Identifier for deduping integration resources (e.g., drive_file:sheet_gid).",
+    )
     external_reference = models.CharField(max_length=255, blank=True, default="")
     legacy_url = models.URLField(blank=True, default="")
     source_type = models.CharField(
@@ -622,6 +684,11 @@ class KnowledgeUploadChunk(models.Model):
         related_name="chunks",
         on_delete=models.CASCADE,
     )
+    business_profile = models.ForeignKey(
+        BusinessProfile,
+        related_name="knowledge_chunks",
+        on_delete=models.CASCADE,
+    )
     chunk_index = models.PositiveIntegerField()
     content = models.TextField()
     token_count = models.PositiveIntegerField(default=0)
@@ -633,6 +700,11 @@ class KnowledgeUploadChunk(models.Model):
     class Meta:
         db_table = "accounts_knowledge_upload_chunk"
         ordering = ("upload_id", "chunk_index")
+        indexes = [
+            models.Index(fields=["upload", "chunk_index"], name="knowledge_chunk_window_idx"),
+            models.Index(fields=["business_profile", "chunk_index"], name="kn_chunk_biz_idx"),
+            models.Index(fields=["business_profile", "upload"], name="kn_chunk_biz_upload_idx"),
+        ]
         constraints = [
             models.UniqueConstraint(
                 fields=["upload", "chunk_index"],
@@ -642,6 +714,107 @@ class KnowledgeUploadChunk(models.Model):
 
     def __str__(self) -> str:
         return f"Chunk {self.chunk_index} for {self.upload_id}"
+
+    def save(self, *args, **kwargs):
+        if self.upload_id and not self.business_profile_id and getattr(self, "upload", None):
+            self.business_profile = self.upload.business_profile
+        super().save(*args, **kwargs)
+
+
+class KnowledgeEntity(models.Model):
+    """
+    Structured entity detected during ingestion (primarily from JSON sources).
+    """
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    business_profile = models.ForeignKey(
+        BusinessProfile,
+        related_name="knowledge_entities",
+        on_delete=models.CASCADE,
+    )
+    upload = models.ForeignKey(
+        KnowledgeUpload,
+        related_name="entities",
+        on_delete=models.CASCADE,
+    )
+    chunk = models.OneToOneField(
+        KnowledgeUploadChunk,
+        related_name="entity_record",
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+    )
+    entity_type = models.CharField(max_length=120, blank=True, default="")
+    entity_name = models.CharField(max_length=255, blank=True, default="")
+    primary_label = models.CharField(max_length=255, blank=True, default="")
+    metadata = models.JSONField(default=dict, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = "accounts_knowledge_entity"
+        indexes = [
+            models.Index(fields=["business_profile", "entity_type"], name="knowledge_entity_type_idx"),
+            models.Index(fields=["upload"], name="knowledge_entity_upload_idx"),
+        ]
+
+    def __str__(self) -> str:
+        label = self.entity_name or self.primary_label or str(self.id)
+        return f"{label} ({self.entity_type or 'entity'})"
+
+
+class KnowledgeAlias(models.Model):
+    """
+    Normalized alias/identifier tied to a structured entity for deterministic lookups.
+    """
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    business_profile = models.ForeignKey(
+        BusinessProfile,
+        related_name="knowledge_aliases",
+        on_delete=models.CASCADE,
+    )
+    entity = models.ForeignKey(
+        KnowledgeEntity,
+        related_name="aliases",
+        on_delete=models.CASCADE,
+    )
+    alias_raw = models.CharField(max_length=255)
+    alias_normalized = models.CharField(max_length=255, db_index=True)
+    alias_search_vector = models.CharField(max_length=255, blank=True, default="")
+    source = models.CharField(max_length=60, blank=True, default="")
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = "accounts_knowledge_alias"
+        indexes = [
+            models.Index(fields=["business_profile", "alias_normalized"], name="kn_alias_biz_norm_idx"),
+            models.Index(
+                fields=["alias_normalized"],
+                name="kn_alias_norm_len_idx",
+                condition=models.Q(alias_normalized__regex=r".{5,}"),
+            ),
+            GinIndex(
+                fields=["alias_normalized"],
+                name="kn_alias_norm_trgm",
+                opclasses=["gin_trgm_ops"],
+            ),
+            GinIndex(
+                fields=["alias_search_vector"],
+                name="knowledge_alias_search_gin",
+                opclasses=["gin_trgm_ops"],
+            ),
+        ]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["entity", "alias_normalized"],
+                name="knowledge_alias_unique_entity_alias",
+            )
+        ]
+
+    def __str__(self) -> str:
+        return self.alias_raw
 
 
 class KnowledgeUploadPage(models.Model):
@@ -856,6 +1029,12 @@ class KnowledgeUploadTableCell(models.Model):
         ordering = ("table_id", "row_id", "column_index")
         indexes = [
             models.Index(fields=["table", "column_index"], name="knowledge_cell_column_idx"),
+            models.Index(fields=["column_key"], name="knowledge_cell_column_key_idx"),
+            GinIndex(
+                fields=["raw_text"],
+                name="knowledge_cell_raw_text_trgm",
+                opclasses=["gin_trgm_ops"],
+            ),
         ]
         constraints = [
             models.UniqueConstraint(
@@ -1037,9 +1216,7 @@ class KnowledgeCollectionLink(models.Model):
 
 
 class KnowledgeIntegration(models.Model):
-    """
-    Represents a third-party source synced into the knowledge base (e.g., Notion).
-    """
+    """Drive, sheet, or wiki connector that syncs content into KnowledgeUpload rows."""
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     business_profile = models.ForeignKey(
@@ -1062,7 +1239,7 @@ class KnowledgeIntegration(models.Model):
     status = models.CharField(max_length=32, choices=KnowledgeIntegrationStatus.choices, default=KnowledgeIntegrationStatus.CONNECTED)
     external_account_id = models.CharField(max_length=255, blank=True, default="")
     credentials = models.JSONField(default=dict, blank=True)
-    settings = models.JSONField(default=dict, blank=True)
+    settings = models.JSONField(default=default_knowledge_integration_settings, blank=True)
     metadata = models.JSONField(default=dict, blank=True)
     last_synced_at = models.DateTimeField(null=True, blank=True)
     sync_error = models.TextField(blank=True, default="")
@@ -1086,6 +1263,45 @@ class KnowledgeIntegration(models.Model):
 
     def __str__(self) -> str:
         return f"{self.name} ({self.get_integration_type_display()})"
+
+    # --- Integration resource helpers -------------------------------------------------
+    @property
+    def resource_configs(self) -> list[IntegrationResourceConfig]:
+        settings = self.settings or {}
+        resources = settings.get("resources") or []
+        if isinstance(resources, list):
+            return [resource for resource in resources if isinstance(resource, dict)]
+        return []
+
+    def set_resource_configs(self, resources: list[IntegrationResourceConfig]) -> None:
+        settings = self.settings or {}
+        settings["resources"] = resources
+        self.settings = settings
+
+    def get_default_visibility(self) -> str:
+        settings = self.settings or {}
+        return settings.get("default_visibility") or KnowledgeVisibility.PRIVATE
+
+    def set_default_visibility(self, visibility: str) -> None:
+        settings = self.settings or {}
+        settings["default_visibility"] = visibility
+        self.settings = settings
+
+    def get_default_sync_frequency(self) -> str:
+        settings = self.settings or {}
+        return settings.get("default_sync_frequency") or IntegrationSyncFrequency.DAILY
+
+    def set_default_sync_frequency(self, frequency: str) -> None:
+        settings = self.settings or {}
+        settings["default_sync_frequency"] = frequency
+        self.settings = settings
+
+    def get_resource_by_id(self, resource_id: str) -> IntegrationResourceConfig | None:
+        for resource in self.resource_configs:
+            rid = resource.get("resource_id")
+            if rid and rid == resource_id:
+                return resource
+        return None
 
     def save(self, *args: Any, **kwargs: Any) -> None:
         if not self.slug:
@@ -1138,6 +1354,107 @@ class KnowledgeIngestionJob(models.Model):
 
     def __str__(self) -> str:
         return f"{self.get_job_type_display()} for {self.upload}"
+
+
+class KnowledgeDriftSample(models.Model):
+    class SampleKind(models.TextChoices):
+        INGESTION = "ingestion", "Ingestion"
+        RETRIEVAL = "retrieval", "Retrieval"
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    business_profile = models.ForeignKey(
+        BusinessProfile,
+        related_name="drift_samples",
+        on_delete=models.CASCADE,
+    )
+    sample_kind = models.CharField(max_length=24, choices=SampleKind.choices)
+    metrics = models.JSONField(default=dict, blank=True)
+    metadata = models.JSONField(default=dict, blank=True)
+    observed_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = "accounts_knowledge_drift_sample"
+        ordering = ("-observed_at",)
+        indexes = [
+            models.Index(fields=["business_profile", "sample_kind", "observed_at"], name="knowledge_drift_kind_idx"),
+        ]
+
+    def __str__(self) -> str:
+        return f"{self.business_profile_id}:{self.sample_kind} at {self.observed_at:%Y-%m-%d %H:%M}"
+
+
+class RAGEvaluationRun(models.Model):
+    class RunStatus(models.TextChoices):
+        PASSED = "pass", "Pass"
+        FAILED = "fail", "Fail"
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    business_profile = models.ForeignKey(
+        BusinessProfile,
+        related_name="evaluation_runs",
+        on_delete=models.CASCADE,
+    )
+    slug = models.CharField(max_length=64)
+    status = models.CharField(max_length=8, choices=RunStatus.choices, default=RunStatus.PASSED)
+    metrics = models.JSONField(default=dict, blank=True)
+    latencies = models.JSONField(default=dict, blank=True)
+    thresholds = models.JSONField(default=dict, blank=True)
+    violations = models.JSONField(default=dict, blank=True)
+    metadata = models.JSONField(default=dict, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = "accounts_rag_evaluation_run"
+        ordering = ("-created_at",)
+        indexes = [
+            models.Index(fields=["business_profile", "slug"], name="rag_eval_business_slug_idx"),
+            models.Index(fields=["status", "created_at"], name="rag_eval_status_idx"),
+        ]
+
+    def __str__(self) -> str:
+        return f"{self.slug} ({self.get_status_display()})"
+
+
+class KnowledgeFeedbackCase(models.Model):
+    class BehaviorChoices(models.TextChoices):
+        ALIAS = "alias_exact", "Alias Path"
+        HYBRID = "hybrid", "Hybrid Search"
+        NOT_FOUND = "not_found", "Not Found"
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    business_profile = models.ForeignKey(
+        BusinessProfile,
+        related_name="feedback_cases",
+        on_delete=models.CASCADE,
+    )
+    conversation_feedback = models.OneToOneField(
+        "conversations.ConversationFeedback",
+        related_name="knowledge_case",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+    )
+    query_text = models.TextField()
+    expected_behavior = models.CharField(max_length=24, choices=BehaviorChoices.choices, default=BehaviorChoices.ALIAS)
+    expected_entities = models.JSONField(default=list, blank=True)
+    expected_aliases = models.JSONField(default=list, blank=True)
+    notes = models.TextField(blank=True)
+    source = models.CharField(max_length=32, default="feedback")
+    is_active = models.BooleanField(default=True)
+    metadata = models.JSONField(default=dict, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = "accounts_knowledge_feedback_case"
+        ordering = ("-created_at",)
+        indexes = [
+            models.Index(fields=["business_profile", "is_active"], name="knowledge_feedback_active_idx"),
+        ]
+
+    def __str__(self) -> str:
+        return f"{self.business_profile_id}:{self.query_text[:40]}"
 
 
 class KnowledgeAuditEvent(models.Model):

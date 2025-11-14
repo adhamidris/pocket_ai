@@ -185,3 +185,36 @@ class ConversationExtraction(models.Model):
 
     def __str__(self) -> str:
         return f"{self.conversation_id}:{self.extraction_type}"
+
+
+class ConversationFeedback(models.Model):
+    class FeedbackType(models.TextChoices):
+        NOT_FOUND_INCORRECT = "not_found_incorrect", "Not Found Incorrect"
+        OTHER = "other", "Other"
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    conversation = models.ForeignKey(
+        Conversation,
+        related_name="feedback_entries",
+        on_delete=models.CASCADE,
+    )
+    message = models.ForeignKey(
+        ConversationMessage,
+        related_name="feedback_entries",
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+    )
+    feedback_type = models.CharField(max_length=32, choices=FeedbackType.choices)
+    payload = models.JSONField(default=dict, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = "conversations_conversation_feedback"
+        ordering = ("-created_at",)
+        indexes = [
+            models.Index(fields=["conversation", "feedback_type"], name="conv_feedback_type_idx"),
+        ]
+
+    def __str__(self) -> str:
+        return f"{self.conversation_id}:{self.feedback_type}"

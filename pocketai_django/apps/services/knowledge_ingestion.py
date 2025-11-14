@@ -1,15 +1,22 @@
 from __future__ import annotations
 
+from collections import deque
+import csv
+import json
 import logging
+import math
 import mimetypes
+import io
 import re
+import statistics
 import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any, Callable, Iterable, Mapping, Optional, Sequence
 
 from django.conf import settings
 from django.db import transaction
+from django.db.models import Case, IntegerField, Value, When
 from django.utils import timezone
 
 from apps.accounts.models import (
@@ -19,6 +26,7 @@ from apps.accounts.models import (
     KnowledgeIssueSeverity,
     KnowledgeSourceType,
     KnowledgeStatus,
+    KnowledgeVisibility,
     KnowledgeUpload,
     KnowledgeUploadChunk,
     KnowledgeUploadFile,
@@ -30,9 +38,13 @@ from apps.accounts.models import (
     KnowledgeUploadTableCell,
     KnowledgeUploadTableRow,
     KnowledgeBlockType,
+    KnowledgeEntity,
+    KnowledgeAlias,
 )
 from apps.services.documents import DocumentScrapeError, scrape_document_source
-from apps.services.embeddings import build_embedding_service, EmbeddingProviderError
+from apps.services.embeddings import LocalEmbeddingService, build_embedding_service, EmbeddingProviderError
+from apps.services.feature_flags import FeatureFlagService
+from apps.services.quality_monitor import QualityMonitor
 
 logger = logging.getLogger(__name__)
 
@@ -51,11 +63,101 @@ try:  # pragma: no cover - dependency failure should be surfaced at runtime
 except ImportError:  # pragma: no cover - fallback handled via runtime check
     DocxDocument = None  # type: ignore
 
+try:  # pragma: no cover - dependency failure should be surfaced at runtime
+    from openpyxl import load_workbook
+except ImportError:  # pragma: no cover - fallback handled via runtime check
+    load_workbook = None  # type: ignore
+
+
+# THESE ARE STANDALONE FUNCTIONS - NOT INSIDE ANY CLASS
+def create_tesseract_ocr_callable() -> Callable[[bytes], str] | None:
+    """
+    Create Tesseract OCR callable for low-density PDF pages
+    Returns None if Tesseract is not available
+    """
+    try:
+        import pytesseract
+        from PIL import Image
+        import io
+        
+        def ocr_callable(image_bytes: bytes) -> str:
+            """OCR callable that takes image bytes and returns text"""
+            try:
+                image = Image.open(io.BytesIO(image_bytes))
+                text = pytesseract.image_to_string(
+                    image,
+                    config='--psm 1'
+                )
+                return text.strip()
+            except Exception as exc:
+                logger.warning(f"Tesseract OCR failed: {exc}")
+                return ""
+        
+        try:
+            pytesseract.get_tesseract_version()
+            logger.info("Tesseract OCR enabled successfully")
+            return ocr_callable
+        except Exception:
+            logger.warning("Tesseract not found - OCR will be disabled")
+            return None
+            
+    except ImportError:
+        logger.warning("pytesseract not installed - pip install pytesseract")
+        return None
+
+
+def create_ocr_reconciler(
+    *,
+    density_threshold: float = 0.00015,
+    enable_ocr: bool = True,
+) -> OCRReconciler:
+    """
+    Factory function to create OCRReconciler with optional Tesseract support
+    """
+    ocr_callable = None
+    
+    if enable_ocr:
+        ocr_callable = create_tesseract_ocr_callable()
+        if ocr_callable:
+            logger.info("OCR enabled with density threshold: %.6f", density_threshold)
+        else:
+            logger.warning("OCR requested but not available")
+    
+    return OCRReconciler(
+        density_threshold=density_threshold,
+        ocr_callable=ocr_callable,
+    )
 
 SUPPORTED_SOURCE_TYPES = {
     KnowledgeSourceType.FILE,
     KnowledgeSourceType.LINK,
 }
+
+ALIAS_KEYWORDS = (
+    "slug",
+    "id",
+    "identifier",
+    "code",
+    "sku",
+    "policy",
+    "policy_id",
+    "record_id",
+    "product_code",
+    "trip_code",
+    "trip_id",
+    "reference",
+    "reference_id",
+)
+
+SLUG_PATTERN = re.compile(r"\b[a-z0-9]+(?:-[a-z0-9]+){1,}\b")
+IDENTIFIER_TOKEN_PATTERN = re.compile(r"[a-z0-9][a-z0-9_\-]{2,}", re.IGNORECASE)
+ID_LINE_PATTERN = re.compile(
+    r"(?:^|\b)(?:id|identifier|sku|code|policy|ref|reference)\s*[:#]\s*([a-z0-9][a-z0-9_\-\/]+)",
+    re.IGNORECASE,
+)
+ALIAS_MIN_LENGTH = 4
+ALIAS_SYMBOL_MIN_LENGTH = 3
+ALIAS_MAX_LENGTH = 255
 
 
 class KnowledgeIngestionError(RuntimeError):
@@ -145,16 +247,75 @@ class PageRendererResult:
     pages: list[PageLayout] = field(default_factory=list)
     issues: list[IssuePayload] = field(default_factory=list)
 
+@dataclass(frozen=True)
+class PdfSpan:
+    page_number: int
+    text: str
+    x0: float
+    y0: float
+    x1: float
+    y1: float
+    font: str | None
+    size: float | None
+
+    @property
+    def x_center(self) -> float:
+        return 0.5 * (self.x0 + self.x1)
+
+    @property
+    def y_center(self) -> float:
+        return 0.5 * (self.y0 + self.y1)
+
+def _union_bbox(bboxes: list[dict[str, float]]) -> dict[str, float]:
+    if not bboxes:
+        return {"x0": 0.0, "y0": 0.0, "x1": 0.0, "y1": 0.0}
+    x0 = min(b["x0"] for b in bboxes)
+    y0 = min(b["y0"] for b in bboxes)
+    x1 = max(b["x1"] for b in bboxes)
+    y1 = max(b["y1"] for b in bboxes)
+    return {"x0": float(x0), "y0": float(y0), "x1": float(x1), "y1": float(y1)}
 
 @dataclass(frozen=True)
 class ExtractionResult:
-    text: str
+    """Enhanced extraction result supporting multiple content representations"""
+    text: str  # Plain text with inline tables (TSV format)
     format_hint: str
     metadata: dict[str, Any]
     pages: list[PageLayout] = field(default_factory=list)
     tables: list[TablePayload] = field(default_factory=list)
     issues: list[IssuePayload] = field(default_factory=list)
+    entities: list[dict[str, Any]] = field(default_factory=list)
+    text_html: str | None = None  # NEW: HTML representation for web content
 
+@dataclass(frozen=True)
+class EnhancedContextDocument:
+    """
+    JSON envelope wrapper for sending structured context to LLM
+    Matches Claude's document format for better model understanding
+    """
+    index: int
+    media_type: str
+    source: str
+    text: str
+    pages: list[dict[str, Any]] | None = None
+    tables: list[dict[str, Any]] | None = None
+    metadata: dict[str, Any] | None = None
+    
+    def to_dict(self) -> dict[str, Any]:
+        """Convert to dictionary for JSON serialization"""
+        result = {
+            "index": self.index,
+            "media_type": self.media_type,
+            "source": self.source,
+            "text": self.text,
+        }
+        if self.pages:
+            result["pages"] = self.pages
+        if self.tables:
+            result["tables"] = self.tables
+        if self.metadata:
+            result["metadata"] = self.metadata
+        return result
 
 class OCRReconciler:
     """
@@ -255,21 +416,64 @@ class PageRenderer:
         )
         return PageRendererResult(text=text, pages=[page])
 
+
     def _render_pdf(self, path: Path, *, ocr: OCRReconciler | None = None) -> PageRendererResult:
+        """
+        Enhanced PDF rendering with:
+        1. Block-based reading order (top-to-bottom, left-to-right)
+        2. Inline TSV representation for tables
+        3. Better structure preservation
+        """
         try:
-            document = self._fitz.open(path)  # type: ignore[call-arg]
-        except Exception as exc:  # pragma: no cover - dependency-specific
+            document = self._fitz.open(path)
+        except Exception as exc:
             raise KnowledgeIngestionError(f"Unable to open PDF for layout parsing: {exc}") from exc
 
         pages: list[PageLayout] = []
         fragments: list[str] = []
         issues: list[IssuePayload] = []
+        
         for index, page in enumerate(document, start=1):
-            plain_text = page.get_text("text") or ""
+            # Get raw blocks for structured extraction
+            raw_blocks = page.get_text("blocks") or []
+            
+            # Sort blocks by reading order: top-to-bottom (y0), then left-to-right (x0)
+            sorted_blocks = sorted(
+                raw_blocks,
+                key=lambda b: (round(b[1] / 5) * 5, b[0])
+            )
+            
+            # NEW: Group blocks into rows based on vertical position
+            block_rows = self._group_blocks_into_rows(sorted_blocks)
+            
+            # Assemble text from rows with inline table formatting
+            block_texts = []
+            for row_blocks in block_rows:
+                # Check if this row looks like a table row (multiple columns)
+                if len(row_blocks) >= 3:  # 3+ blocks in same row = likely table
+                    # Format as TSV
+                    row_cells = [block[4].strip() for block in row_blocks if len(block) > 4]
+                    row_cells = [cell for cell in row_cells if cell]  # Remove empty
+                    if row_cells:
+                        block_texts.append("\t".join(row_cells))
+                else:
+                    # Regular text - just concatenate
+                    for block in row_blocks:
+                        if len(block) > 4:
+                            text_fragment = block[4].strip()
+                            if text_fragment:
+                                block_texts.append(text_fragment)
+            
+            # Join blocks with appropriate spacing
+            plain_text = "\n".join(block_texts) if block_texts else ""
+            
+            # Calculate metrics
             char_count = len(plain_text.strip())
             rect = page.rect
             area = max(rect.width * rect.height, 1.0)
             density = char_count / area
+            
+            # OCR reconciliation
             has_ocr = False
             reconciled_text = plain_text
             if ocr:
@@ -280,8 +484,12 @@ class PageRenderer:
                     text_density=density,
                 )
                 issues.extend(ocr_issues)
+            
             fragments.append(reconciled_text)
+            
+            # Build structured blocks (keep your existing logic)
             blocks = self._build_pdf_blocks(page, index)
+            
             pages.append(
                 PageLayout(
                     page_number=index,
@@ -292,10 +500,215 @@ class PageRenderer:
                     has_ocr_content=has_ocr,
                     content_type="application/pdf",
                     blocks=blocks,
-                    metadata={"char_count": char_count},
+                    metadata={
+                        "char_count": char_count,
+                        "block_count": len(raw_blocks),
+                        "extraction_method": "block_sorted_with_row_detection"
+                    },
                 )
             )
-        return PageRendererResult(text="\n".join(fragments), pages=pages, issues=issues)
+        
+        return PageRendererResult(
+            text="\n\n".join(fragments),
+            pages=pages,
+            issues=issues
+        )
+
+            # [ADD] Helper: collect PdfSpan from 'rawdict'/'dict' shapes
+    def _collect_spans_from_textdict(self, page_index: int, obj: dict) -> list[PdfSpan]:
+        """
+        Walk text 'dict'/'rawdict' structure: blocks(type=0)->lines->spans and collect PdfSpan.
+        Safely handles missing keys; prefers span bbox, falls back to line bbox, else zeros.
+        """
+        page_spans: list[PdfSpan] = []
+        if not obj:
+            return page_spans
+
+        blocks = (obj.get("blocks") or [])
+        for block in blocks:
+            if (block or {}).get("type") != 0:
+                continue
+            lines = (block.get("lines") or [])
+            for line in lines:
+                line_bbox = line.get("bbox") or [0, 0, 0, 0]
+                spans = (line.get("spans") or [])
+                for span in spans:
+                    text = (span.get("text") or "").strip()
+                    if not text:
+                        continue
+                    bbox = span.get("bbox") or line_bbox or [0, 0, 0, 0]
+                    size_val = span.get("size")
+                    try:
+                        size = float(size_val) if size_val is not None else None
+                    except Exception:
+                        size = None
+                    page_spans.append(
+                        PdfSpan(
+                            page_number=page_index,
+                            text=text,
+                            x0=float(bbox[0]),
+                            y0=float(bbox[1]),
+                            x1=float(bbox[2]),
+                            y1=float(bbox[3]),
+                            font=span.get("font"),
+                            size=size,
+                        )
+                    )
+        return page_spans
+
+
+    def extract_pdf_spans(self, path: Path) -> list[list[PdfSpan]]:
+        """
+        Returns a list per page; each page is a list of PdfSpan with geometry + font/size.
+        Robust: tries 'rawdict', falls back to 'dict', then to 'words'.
+        """
+        if self._fitz is None:
+            return []
+        try:
+            doc = self._fitz.open(path)
+        except Exception:
+            return []
+
+        results: list[list[PdfSpan]] = []
+        for page_index, page in enumerate(doc, start=1):
+            # --- Fast path: 'rawdict'
+            page_spans: list[PdfSpan] = []
+            try:
+                raw = page.get_text("rawdict") or {}
+                page_spans = self._collect_spans_from_textdict(page_index, raw)
+            except Exception:
+                page_spans = []
+
+            # --- Fallback 1: 'dict'
+            if not page_spans:
+                try:
+                    dct = page.get_text("dict") or {}
+                    page_spans = self._collect_spans_from_textdict(page_index, dct)
+                except Exception:
+                    page_spans = []
+
+            # --- Fallback 2: 'words'
+            if not page_spans:
+                try:
+                    words = page.get_text("words") or []
+                    word_spans: list[PdfSpan] = []
+                    for w in words:
+                        # words tuple: x0, y0, x1, y1, "word", block_no, line_no, word_no
+                        if not w or len(w) < 5:
+                            continue
+                        x0, y0, x1, y1 = float(w[0]), float(w[1]), float(w[2]), float(w[3])
+                        wtext = (w[4] or "").strip()
+                        if not wtext:
+                            continue
+                        word_spans.append(
+                            PdfSpan(
+                                page_number=page_index,
+                                text=wtext,
+                                x0=x0,
+                                y0=y0,
+                                x1=x1,
+                                y1=y1,
+                                font=None,
+                                size=None,  # no size from 'words'; header logic still has non-size cues
+                            )
+                        )
+                    page_spans = word_spans
+                except Exception:
+                    page_spans = []
+
+            results.append(page_spans)
+        return results
+
+
+    def _group_blocks_into_rows(self, sorted_blocks: list) -> list[list]:
+        """
+        Group blocks that are on the same horizontal line (same Y position)
+        Returns list of rows, where each row is a list of blocks
+        """
+        if not sorted_blocks:
+            return []
+        
+        rows = []
+        current_row = []
+        current_y = None
+        tolerance = 5  # Vertical position tolerance in points
+        
+        for block in sorted_blocks:
+            if len(block) <= 1:
+                continue
+            
+            block_y = block[1]  # Y position
+            
+            if current_y is None:
+                # First block
+                current_y = block_y
+                current_row = [block]
+            elif abs(block_y - current_y) <= tolerance:
+                # Same row
+                current_row.append(block)
+            else:
+                # New row
+                if current_row:
+                    rows.append(current_row)
+                current_row = [block]
+                current_y = block_y
+        
+        # Add last row
+        if current_row:
+            rows.append(current_row)
+        
+        return rows
+
+    def _looks_like_table_text(self, text: str) -> bool:
+        """Check if text block appears to be tabular data"""
+        lines = [line for line in text.splitlines() if line.strip()]
+        if len(lines) < 2:
+            return False
+        
+        # Check for common table indicators
+        sample = lines[0]
+        has_pipes = "|" in sample
+        has_tabs = "\t" in sample
+        has_multi_spaces = bool(re.search(r"\s{3,}", sample))
+        
+        return has_pipes or has_tabs or has_multi_spaces
+
+    def _format_table_as_tsv(self, text: str) -> str:
+        """
+        Convert table text to TSV format for better embedding/retrieval
+        
+        Example output:
+        Card Type\tIssuance Fee\tInterest Rate
+        Classic\tEGP 250\t3.99%
+        Gold\tEGP 300\t3.99%
+        """
+        lines = [line for line in text.splitlines() if line.strip()]
+        if not lines:
+            return text
+        
+        # Detect delimiter
+        first_line = lines[0]
+        if "|" in first_line:
+            delimiter = "|"
+        elif "\t" in first_line:
+            delimiter = "\t"
+        else:
+            # Multiple spaces - use regex split
+            delimiter = None
+        
+        formatted_rows = []
+        for line in lines:
+            if delimiter:
+                cells = [cell.strip() for cell in line.split(delimiter) if cell.strip()]
+            else:
+                # Split on 2+ spaces
+                cells = [cell.strip() for cell in re.split(r"\s{2,}", line) if cell.strip()]
+            
+            # Join with tab for consistent TSV format
+            formatted_rows.append("\t".join(cells))
+        
+        return "\n".join(formatted_rows)
+
 
     def _render_docx(self, path: Path) -> PageRendererResult:
         if DocxDocument is None:
@@ -387,11 +800,24 @@ class PageRenderer:
 
     @staticmethod
     def _resolve_block_type(block: Any, text_fragment: str) -> str:
-        if not text_fragment.strip():
+        stripped = (text_fragment or "").strip()
+        if not stripped:
             return KnowledgeBlockType.IMAGE
-        if "|" in text_fragment or "\t" in text_fragment:
+
+        # Strong table signals: pipes / tabs / multi-spaces in the first line
+        first_line = stripped.splitlines()[0] if "\n" in stripped else stripped
+        looks_tabular = ("|" in first_line) or ("\t" in first_line) or bool(re.search(r"\s{2,}", first_line))
+        if looks_tabular:
             return KnowledgeBlockType.TABLE
-        return KnowledgeBlockType.HEADING if text_fragment.isupper() and len(text_fragment) < 80 else KnowledgeBlockType.PARAGRAPH
+
+        # Headings: short and mostly uppercase or trailing colon
+        if stripped.endswith(":"):
+            return KnowledgeBlockType.HEADING
+        if stripped.isupper() and len(stripped) < 80:
+            return KnowledgeBlockType.HEADING
+
+        # Default
+        return KnowledgeBlockType.PARAGRAPH
 
     @staticmethod
     def _looks_like_heading(content: str) -> bool:
@@ -443,8 +869,17 @@ class TableDetector:
             return False
         if block.block_type == KnowledgeBlockType.TABLE:
             return True
+
+        # Quick bullet-list rejection: first 3 non-empty lines start with bullets
+        heads = ["".join(line.strip().split()[:1]) for line in lines[:3] if line.strip()]
+        bullet_heads = {"*", "**", "***", "****", "*****", "-", "•", "—"}
+        if heads and all(h in bullet_heads for h in heads):
+            return False
+
+        # Original signals (pipes, tabs, or multi-spaces)
         sample = lines[0]
         return ("|" in sample) or ("\t" in sample) or bool(re.search(r"\s{2,}", sample))
+
 
     def _build_table_from_block(
         self,
@@ -543,29 +978,523 @@ class TableDetector:
 
     @staticmethod
     def _normalize_header_cell(cell: str, index: int) -> str:
-        normalized = re.sub(r"[^a-zA-Z0-9]+", "_", cell.strip().lower()).strip("_")
-        return normalized or f"column_{index+1}"
+        raw = (cell or "").strip()
+
+        # collapse letter-by-letter headers: "W H I T E" -> "WHITE"
+        if re.fullmatch(r"(?:[A-Za-z]\s+){2,}[A-Za-z]", raw):
+            raw = raw.replace(" ", "")
+
+        # collapse spaced underscores: "valid_thru_12_28" is okay; but reduce noise
+        s = re.sub(r"\s+", " ", raw)
+        s = s.lower()
+        s = re.sub(r"[^a-z0-9%$€£]+", "_", s)
+        s = re.sub(r"_+", "_", s).strip("_")
+        return s or f"column_{index+1}"
+
 
     @staticmethod
     def _normalize_cell_value(cell: str) -> dict[str, Any]:
-        text = cell.strip()
+        text = (cell or "")
+        # Normalize whitespace incl. thin/nb spaces; preserve decimals/commas
+        text = text.replace("\u00A0", " ").replace("\u2009", " ").replace("\u202F", " ")
+        text = " ".join(text.strip().split())
         if not text:
             return {}
-        numeric = re.sub(r"[,$%]", "", text)
-        try:
-            value = float(numeric)
-            result = {"number": value}
-            if "$" in text:
-                result["currency"] = "USD"
-            if text.endswith("%"):
-                result["unit"] = "percent"
-            return result
-        except ValueError:
-            return {}
+
+        out: dict[str, Any] = {}
+
+        # Percent first (captures "3.99%" or "2 %")
+        m_pct = re.search(r"(\d+(?:[\.,]\d+)?)\s*%", text)
+        if m_pct:
+            try:
+                pct_val = float(m_pct.group(1).replace(",", "."))
+                out["percent"] = pct_val / 100.0
+            except ValueError:
+                pass
+
+        # Currency normalization map
+        currency_alias = {
+            "EG£": "EGP",
+            "LE": "EGP",
+        }
+        currency_codes = r"(EGP|EG£|USD|EUR|AED|SAR|GBP|LE)"
+        symbol = r"[$€£]"
+
+        # Ranges: "EGP 100–200" / "EGP 100-200" / "100–200 EGP"
+        m_range = re.search(
+            rf"(?:(?:{currency_codes}|{symbol})\s*)?([+-]?\d[\d,]*(?:\.\d+)?)\s*[-–]\s*([+-]?\d[\d,]*(?:\.\d+)?)(?:\s*(?:{currency_codes}|{symbol}))?",
+            text,
+        )
+        if m_range:
+            try:
+                a = float(m_range.group(2 if m_range.group(2) else 1).replace(",", ""))
+            except Exception:
+                a = None
+            try:
+                b = float(m_range.group(3 if m_range.group(3) else 2).replace(",", ""))
+            except Exception:
+                b = None
+            cur_match = re.search(rf"{currency_codes}|{symbol}", text)
+            cur = (cur_match.group(0) if cur_match else "").upper()
+            cur = currency_alias.get(cur, cur or "")
+            if a is not None and b is not None:
+                out["range"] = {"min": min(a, b), "max": max(a, b)}
+                if cur:
+                    out["currency"] = "EGP" if cur in {"EG£", "LE"} else cur
+
+        # Currency amount (single)
+        m_amt = re.search(
+            rf"(?:{currency_codes}|{symbol})\s*([+-]?\d[\d,]*(?:\.\d+)?)", text, flags=re.IGNORECASE
+        )
+        if m_amt:
+            try:
+                amount = float(m_amt.group(2).replace(",", "")) if m_amt.lastindex and m_amt.lastindex >= 2 else float(m_amt.group(1).replace(",", ""))
+                cur_match = re.search(rf"{currency_codes}|{symbol}", text, flags=re.IGNORECASE)
+                cur = (cur_match.group(0).upper() if cur_match else "") or ""
+                cur = currency_alias.get(cur, cur)
+                if cur in {"EG£", "LE"}:
+                    cur = "EGP"
+                if cur:
+                    out["currency"] = cur
+                out["amount"] = amount
+            except ValueError:
+                pass
+
+        # Minimum amount (e.g., "min. EGP 100")
+        m_min = re.search(
+            rf"\bmin(?:imum)?\.?\s+(?:{currency_codes}|{symbol})\s*([+-]?\d[\d,]*(?:\.\d+)?)",
+            text,
+            flags=re.IGNORECASE,
+        )
+        if m_min:
+            try:
+                amount = float(m_min.group(2).replace(",", "")) if m_min.lastindex and m_min.lastindex >= 2 else float(m_min.group(1).replace(",", ""))
+                cur_match = re.search(rf"{currency_codes}|{symbol}", text, flags=re.IGNORECASE)
+                cur = (cur_match.group(0).upper() if cur_match else "") or ""
+                cur = currency_alias.get(cur, cur)
+                if cur in {"EG£", "LE"}:
+                    cur = "EGP"
+                out["min"] = {"amount": amount, "currency": cur or out.get("currency")}
+            except ValueError:
+                pass
+
+        # Fallback number (no currency)
+        if "amount" not in out and "range" not in out:
+            m_num = re.search(r"([+-]?\d[\d,]*(?:\.\d+)?)", text)
+            if m_num:
+                try:
+                    out["number"] = float(m_num.group(1).replace(",", ""))
+                except ValueError:
+                    pass
+
+        return out
+
+
+# === [ADD] GeometryTableReconstructor: x/y clustering → grid → TablePayloads ===
+class GeometryTableReconstructor:
+    def __init__(
+        self,
+        y_tol: float = 6.0,
+        x_tol_min: float = 6.0,
+        header_keywords: Optional[Iterable[str]] = None,  # optional, default generic
+    ):
+        self.y_tol = y_tol
+        self.x_tol_min = x_tol_min
+        self.header_keywords = {k.strip().lower() for k in header_keywords} if header_keywords else set()
+
+    @staticmethod
+    def _mostly_numeric_or_amount(s: str) -> bool:
+        """
+        True if cell looks numeric/currency/percent-heavy (typical for data rows).
+        """
+        if not s:
+            return False
+        t = s.replace("\u00A0", " ").replace("\u2009", " ").replace("\u202F", " ").strip()
+        # obvious numeric/amount/percent signals
+        if re.search(r"\d", t) and (re.search(r"[%\d]", t) or re.search(r"[$€£]|EGP|USD|EUR|AED|SAR|GBP|LE", t, re.I)):
+            return True
+        # general numeric density heuristic
+        letters = sum(c.isalpha() for c in t)
+        digits = sum(c.isdigit() for c in t)
+        return digits > 0 and digits >= letters
+
+    # ---- Clustering helpers ----
+    @staticmethod
+    def _greedy_cluster(values: list[tuple[float, int]], tol: float) -> list[list[int]]:
+        """
+        values: list of (key, index) sorted by key
+        Returns list of clusters of indices based on tolerance.
+        """
+        clusters: list[list[int]] = []
+        if not values:
+            return clusters
+        current = [values[0][1]]
+        anchor = values[0][0]
+        for val, idx in values[1:]:
+            if abs(val - anchor) <= tol:
+                current.append(idx)
+            else:
+                clusters.append(current)
+                current = [idx]
+                anchor = val
+        clusters.append(current)
+        return clusters
+
+    def _cluster_rows(self, spans: list[PdfSpan]) -> list[list[int]]:
+        sorted_by_y = sorted(((s.y_center, i) for i, s in enumerate(spans)), key=lambda t: t[0])
+        return self._greedy_cluster(sorted_by_y, self.y_tol)
+
+    def _cluster_columns(self, spans: list[PdfSpan], page_width: float) -> list[list[int]]:
+        x_tol = max(self.x_tol_min, page_width * 0.01)  # ~1% of page width
+        sorted_by_x = sorted(((s.x_center, i) for i, s in enumerate(spans)), key=lambda t: t[0])
+        return self._greedy_cluster(sorted_by_x, x_tol)
+
+    # ---- Header detection ----
+    def _is_header_row(self, cell_texts: list[str], avg_font: float, page_font_median: float) -> bool:
+        """
+        Generic header row scoring with layout-first cues:
+          - font size prominence vs page median
+          - uppercase ratio
+          - trailing colon
+          - cells are mostly NOT numeric/amount values
+          - optional domain keywords (only if provided)
+        """
+        text = " ".join(cell_texts).strip()
+        if not text:
+            return False
+
+        stripped = text.replace("\t", " ").strip()
+        letters = sum(1 for c in stripped if c.isalpha())
+        uppers  = sum(1 for c in stripped if c.isupper())
+        digits  = sum(1 for c in stripped if c.isdigit())
+
+        caps_ratio   = (uppers / letters) if letters else 0.0
+        digit_ratio  = (digits / max(1, len([c for c in stripped if c.isalnum()])))
+        colon        = stripped.endswith(":")
+
+        size_boost = (avg_font > 0 and page_font_median > 0 and (avg_font >= page_font_median * 1.12))
+
+        non_numeric_cells = sum(1 for t in cell_texts if t and not self._mostly_numeric_or_amount(t))
+        non_numeric_ratio = non_numeric_cells / max(1, len(cell_texts))
+
+        keyword_hit = False
+        if self.header_keywords:
+            low = stripped.lower()
+            keyword_hit = any(k in low for k in self.header_keywords)
+
+        # Combine signals (tuned to be conservative):
+        # - any strong layout signal, or majority non-numeric cells with low digit density
+        if size_boost:
+            return True
+        if colon:
+            return True
+        if caps_ratio > 0.6:
+            return True
+        if non_numeric_ratio >= 0.6 and digit_ratio < 0.35:
+            return True
+        if keyword_hit:
+            return True
+        return False
+
+    # ---- Build tables for a single page ----
+        # ---- Build tables for a single page ----
+        # ---- Build tables for a single page ----
+    def _build_page_tables(
+            self,
+            page_number: int,
+            page_width: float,
+            page_spans: list[PdfSpan],
+            page_layout: PageLayout,
+            order_offset: int,
+        ) -> tuple[list[TablePayload], list[IssuePayload], dict]:
+            """
+            Build geometry-first tables by:
+            - clustering spans into row bins (y)
+            - deriving column bins from the FIRST QUALIFYING ROW (row-local)
+            - allowing 2 columns if header/numeric cues present
+            - using union-of-spans bboxes for cells & rows
+            - accumulating subsequent rows that map to those bins
+            - stopping when rows become too sparse (prevents giant noisy tables)
+            """
+            issues: list[IssuePayload] = []
+            tables: list[TablePayload] = []
+
+            if not page_spans:
+                return tables, issues, {"bins": None, "header": None, "schema": None}
+
+            # Page-wide row bins (y)
+            row_clusters = self._cluster_rows(page_spans)
+
+            # For header cue only
+            font_sizes = [s.size for s in page_spans if s.size]
+            page_font_median = statistics.median(font_sizes) if font_sizes else 0.0
+
+            # Helper: compute row-local column bins from spans in the row
+            def make_local_bins(row_span_idxs: list[int]) -> list[tuple[float, float]]:
+                spans_in_row = [page_spans[i] for i in row_span_idxs]
+                if not spans_in_row:
+                    return []
+                # cluster x-centers within the row
+                x_tol = max(self.x_tol_min, page_width * 0.01)
+                sorted_by_x = sorted(((s.x_center, j) for j, s in enumerate(spans_in_row)), key=lambda t: t[0])
+                clusters = self._greedy_cluster(sorted_by_x, x_tol)
+                # convert to (min_x0, max_x1) per bin
+                bins: list[tuple[float, float]] = []
+                for cl in clusters:
+                    members = [spans_in_row[j] for j in cl]
+                    if not members:
+                        bins.append((0.0, 0.0))
+                    else:
+                        x0 = min(m.x0 for m in members)
+                        x1 = max(m.x1 for m in members)
+                        bins.append((float(x0), float(x1)))
+                # left→right
+                bins.sort(key=lambda b: (b[0], b[1]))
+                return bins
+
+            def assign_to_bins(row_span_idxs: list[int], col_bins: list[tuple[float, float]]):
+                spans_in_row = [page_spans[i] for i in row_span_idxs]
+                row_fonts = [s.size for s in spans_in_row if s.size]
+                avg_font = (sum(row_fonts) / len(row_fonts)) if row_fonts else 0.0
+                cell_texts: list[str] = []
+                cell_bboxes: list[dict[str, float]] = []
+                cell_counts: list[int] = []
+                for (x_min, x_max) in col_bins:
+                    members = [s for s in spans_in_row if (x_min <= s.x_center <= x_max)]
+                    members.sort(key=lambda s: (round(s.y_center / 2) * 2, s.x_center))
+                    text = " ".join([m.text for m in members if m.text]).strip()
+                    if members:
+                        bbox = {
+                            "x0": float(min(m.x0 for m in members)),
+                            "y0": float(min(m.y0 for m in members)),
+                            "x1": float(max(m.x1 for m in members)),
+                            "y1": float(max(m.y1 for m in members)),
+                        }
+                    else:
+                        bbox = {"x0": 0.0, "y0": 0.0, "x1": 0.0, "y1": 0.0}
+                    cell_texts.append(text)
+                    cell_bboxes.append(bbox)
+                    cell_counts.append(len(members))
+                return cell_texts, cell_bboxes, cell_counts, avg_font
+
+            # Find anchor row: row that qualifies as table start
+            start_row_idx = None
+            anchor_bins: list[tuple[float, float]] = []
+            header_is_present = False
+            header_cells: list[str] = []
+            for r_idx, row_span_idxs in enumerate(row_clusters):
+                bins = make_local_bins(row_span_idxs)
+                if len(bins) < 2:
+                    continue
+                cell_texts, cell_bboxes, cell_counts, avg_font = assign_to_bins(row_span_idxs, bins)
+                populated_cols = sum(1 for t in cell_texts if t)
+                has_numeric = any(self._mostly_numeric_or_amount(t) for t in cell_texts if t)
+                is_header = self._is_header_row(cell_texts, avg_font, page_font_median)
+
+                # reject obvious bullet-list anchors: col0 is just bullets and col1 is a long paragraph
+                first = (cell_texts[0] or "").strip()
+                second = (cell_texts[1] or "").strip() if len(cell_texts) > 1 else ""
+                if re.fullmatch(r"(\*{1,5}|[-•—])+\.?", first) and len(second) >= 60:
+                    continue
+
+                # Guard against "repeating labels" grids (e.g., VALID THRU/dates repeated across columns)
+                short_repeats = sum(1 for t in cell_texts if 0 < len(t.strip()) <= 12)
+                distinct = len({t.strip().lower() for t in cell_texts if t.strip()})
+                repetitive = (distinct <= max(2, len(cell_texts)//4)) and (short_repeats >= len(cell_texts)//2)
+                
+                qualifies = ((populated_cols >= 3) or (populated_cols >= 2 and (is_header or has_numeric))) and not repetitive
+                if not qualifies:
+                    continue
+
+                start_row_idx = r_idx
+                anchor_bins = bins
+                header_is_present = is_header
+                header_cells = cell_texts[:] if is_header else []
+                break
+
+            if start_row_idx is None:
+                return tables, issues, {"bins": None, "header": None, "schema": None}
+
+            # Build schema
+            if header_is_present and any(c.strip() for c in header_cells):
+                schema = [
+                    TableDetector._normalize_header_cell(raw, idx) or f"column_{idx+1}"
+                    for idx, raw in enumerate(header_cells)
+                ]
+            else:
+                schema = [f"column_{i+1}" for i in range(len(anchor_bins))]
+
+            # Collect rows
+            order_index = order_offset + 1
+            table_rows: list[TableRowPayload] = []
+
+            # Header row payload (if present)
+            if header_is_present:
+                h_texts, h_bboxes, h_counts, h_font = assign_to_bins(row_clusters[start_row_idx], anchor_bins)
+                header_cells_payload: list[TableCellPayload] = []
+                for c_idx, (raw, bbox) in enumerate(zip(h_texts, h_bboxes)):
+                    header_cells_payload.append(
+                        TableCellPayload(
+                            row_index=0,
+                            column_index=c_idx,
+                            column_key=schema[c_idx] if c_idx < len(schema) else f"column_{c_idx+1}",
+                            raw_text=raw,
+                            normalized_value=self._normalize_cell_value(raw),
+                            bbox=bbox,
+                            confidence=None,
+                            metadata={"span_count": h_counts[c_idx]},
+                        )
+                    )
+                table_rows.append(
+                    TableRowPayload(
+                        row_index=0,
+                        page_number=page_number,
+                        bbox=_union_bbox(h_bboxes),
+                        raw_text=" | ".join(h_texts),
+                        metadata={"row_type": "header"},
+                        cells=header_cells_payload,
+                    )
+                )
+
+            # Data rows (including anchor row if it wasn't header)
+            # Sparsity control: stop growing table when rows become too empty
+            sparse_streak = 0
+            SPARSE_ROW_MAX_EMPTY_RATIO = 0.7  # tweakable: 70% or more cells empty = sparse
+            SPARSE_STREAK_LIMIT = 5           # tweakable: stop after 5 consecutive sparse rows
+            
+            next_row_idx = 1 if header_is_present else 0
+            data_start = start_row_idx + (1 if header_is_present else 0)
+            
+            for r_idx in range(data_start, len(row_clusters)):
+                texts, bboxes, counts, _ = assign_to_bins(row_clusters[r_idx], anchor_bins)
+                
+                # skip totally empty
+                if not any(t.strip() for t in texts):
+                    continue
+                
+                # Calculate sparsity: what fraction of cells are empty?
+                empty_ratio = 1.0 - (sum(1 for t in texts if t.strip()) / max(1, len(texts)))
+                
+                if empty_ratio >= SPARSE_ROW_MAX_EMPTY_RATIO:
+                    sparse_streak += 1
+                    if sparse_streak >= SPARSE_STREAK_LIMIT:
+                        # Stop table: we've entered a different layout/section
+                        break
+                else:
+                    # Reset streak when we hit a non-sparse row
+                    sparse_streak = 0
+                
+                # Build cell payloads for this row
+                cells_payload: list[TableCellPayload] = []
+                for c_idx, (raw, bbox) in enumerate(zip(texts, bboxes)):
+                    cells_payload.append(
+                        TableCellPayload(
+                            row_index=next_row_idx,
+                            column_index=c_idx,
+                            column_key=schema[c_idx] if c_idx < len(schema) else f"column_{c_idx+1}",
+                            raw_text=raw,
+                            normalized_value=self._normalize_cell_value(raw),
+                            bbox=bbox,
+                            confidence=None,
+                            metadata={"span_count": counts[c_idx]},
+                        )
+                    )
+                
+                table_rows.append(
+                    TableRowPayload(
+                        row_index=next_row_idx,
+                        page_number=page_number,
+                        bbox=_union_bbox(bboxes),
+                        raw_text=" | ".join(texts),
+                        metadata={"row_type": "data"},
+                        cells=cells_payload,
+                    )
+                )
+                next_row_idx += 1
+
+            table_payload = TablePayload(
+                order_index=order_index,
+                title=page_layout.section_heading if getattr(page_layout, "section_heading", "") else f"Table {order_index}",
+                section_heading=getattr(page_layout, "section_heading", "") or "",
+                page_number=page_number,
+                bbox=_union_bbox([row.bbox for row in table_rows]) if table_rows else {"x0": 0.0, "y0": 0.0, "x1": 0.0, "y1": 0.0},
+                column_schema=schema,
+                data_dictionary={},
+                metadata={"detected_via": "geometry", "col_bins": anchor_bins, "start_row_idx": start_row_idx},
+                rows=table_rows,
+            )
+            tables.append(table_payload)
+
+            meta = {"bins": anchor_bins, "header": schema if header_is_present else None, "schema": schema}
+            return tables, issues, meta
+
+
+    # ---- Header propagation across pages ----
+    @staticmethod
+    def _bins_compatible(prev_bins: list[tuple[float, float]] | None, next_bins: list[tuple[float, float]] | None, tol: float = 8.0) -> bool:
+        if not prev_bins or not next_bins or len(prev_bins) != len(next_bins):
+            return False
+        for (a0, a1), (b0, b1) in zip(prev_bins, next_bins):
+            if max(abs(a0 - b0), abs(a1 - b1)) > tol:
+                return False
+        return True
+
+    def reconstruct(self, page_spans: list[list[PdfSpan]], pages: list[PageLayout]) -> tuple[list[TablePayload], list[IssuePayload]]:
+        all_tables: list[TablePayload] = []
+        all_issues: list[IssuePayload] = []
+        prev_bins: list[tuple[float, float]] | None = None
+        prev_order_index = 0
+        prev_schema: list[str] | None = None
+
+        for p_idx, (spans, layout) in enumerate(zip(page_spans, pages), start=1):
+            width = float(getattr(layout, "width", 612.0) or 612.0)
+            page_tables, page_issues, meta = self._build_page_tables(
+                page_number=p_idx,
+                page_width=width,
+                page_spans=spans,
+                page_layout=layout,
+                order_offset=len(all_tables),
+            )
+            # Header propagation: if no explicit header and bins align with previous
+            if not page_tables and prev_bins and spans:
+                # None produced — try to create a propagated header notice if bins align
+                # (No-op; we only signal if a table exists.)
+                pass
+            elif page_tables:
+                # Compare first table bins to previous
+                bins = meta.get("bins")
+                schema = page_tables[0].column_schema
+                if self._bins_compatible(prev_bins, bins) and schema == prev_schema:
+                    # Mark propagated
+                    page_tables[0].metadata["header_propagated"] = True
+                    page_tables[0].metadata["continuation_of"] = prev_order_index
+                    all_issues.append(
+                        IssuePayload(
+                            code="header_propagated",
+                            severity=KnowledgeIssueSeverity.INFO.value,
+                            description="Header propagated across page break.",
+                            page_number=p_idx,
+                            table_order_index=page_tables[0].order_index,
+                            details={}
+                        )
+                    )
+                prev_bins = bins
+                prev_order_index = page_tables[0].order_index
+                prev_schema = schema
+
+            all_tables.extend(page_tables)
+            all_issues.extend(page_issues)
+        return all_tables, all_issues
+
+    # Reuse existing normalization for consistency
+    _normalize_cell_value = staticmethod(TableDetector._normalize_cell_value)
+
+
 @dataclass(frozen=True)
 class IngestionJobResult:
     job_id: uuid.UUID
     upload_id: uuid.UUID
+    job_type: KnowledgeIngestionJobType
     status: KnowledgeIngestionJobStatus
     characters: int
     error: str | None = None
@@ -595,15 +1524,34 @@ def queue_ingestion_job(upload: KnowledgeUpload, *, trigger: str = "upload", for
         upload.status = KnowledgeStatus.PROCESSING
         upload.save(update_fields=["status", "updated_at"])
 
+    active_limit = max(0, int(getattr(settings, "INGEST_MAX_ACTIVE_JOBS_PER_BUSINESS", 0)))
+    job_status = KnowledgeIngestionJobStatus.QUEUED
+    payload: dict[str, object] = {"trigger": trigger}
+    if active_limit:
+        active_jobs = KnowledgeIngestionJob.objects.filter(
+            business_profile=upload.business_profile,
+            status__in=(KnowledgeIngestionJobStatus.QUEUED, KnowledgeIngestionJobStatus.RUNNING),
+            job_type=KnowledgeIngestionJobType.INGEST,
+        ).count()
+        if active_jobs >= active_limit:
+            job_status = KnowledgeIngestionJobStatus.DEFERRED
+            payload["rate_limited"] = True
+
     job = KnowledgeIngestionJob.objects.create(
         business_profile=upload.business_profile,
         upload=upload,
         job_type=KnowledgeIngestionJobType.INGEST,
-        status=KnowledgeIngestionJobStatus.QUEUED,
-        payload={"trigger": trigger},
+        status=job_status,
+        payload=payload,
     )
 
-    logger.info("Queued ingestion job upload=%s job=%s trigger=%s", upload.id, job.id, trigger)
+    logger.info(
+        "Queued ingestion job upload=%s job=%s trigger=%s status=%s",
+        upload.id,
+        job.id,
+        trigger,
+        job_status,
+    )
     return job
 
 
@@ -616,24 +1564,206 @@ class KnowledgeIngestionService:
     can serve full document context.
     """
 
-    def __init__(self, *, media_root: Path | None = None):
+    def __init__(self, *, media_root: Path | None = None, enable_ocr: bool = True):
         root = media_root or getattr(settings, "MEDIA_ROOT", None)
         if not root:
             raise RuntimeError("MEDIA_ROOT must be configured for ingestion.")
         self.media_root = Path(root).resolve()
         self.embedding_service = build_embedding_service()
-        self.ocr_reconciler = OCRReconciler()
+        self._fallback_embedding_service: LocalEmbeddingService | None = None
+        self.ingest_inline_chunk_limit = max(0, int(getattr(settings, "INGEST_SYNC_EMBED_CHUNK_LIMIT", 200)))
+        self.embedding_batch_size = max(16, int(getattr(settings, "INGEST_EMBED_BATCH_SIZE", 64)))
+        self.embedding_job_payload_size = max(self.embedding_batch_size * 4, 256)
+        self.ingest_concurrency_limit = max(0, int(getattr(settings, "INGEST_MAX_ACTIVE_JOBS_PER_BUSINESS", 0)))
+        self.embedding_backlog_threshold = max(0, int(getattr(settings, "INGEST_EMBEDDING_BACKLOG_THRESHOLD", 500)))
+        self._fallback_embedding_attempted = False
+        
+        # NEW: Create OCR reconciler with Tesseract support
+        self.ocr_reconciler = create_ocr_reconciler(enable_ocr=enable_ocr)
+        
         self.page_renderer = PageRenderer(pymupdf_module=fitz)
         self.table_detector = TableDetector()
+        self.default_json_entity_limit = max(
+            1,
+            int(getattr(settings, "INGEST_MAX_JSON_ENTITIES_DEFAULT", 200)),
+        )
+        candidate_cap = int(getattr(settings, "INGEST_MAX_JSON_ENTITY_CANDIDATES", 0)) or (
+            self.default_json_entity_limit * 4
+        )
+        self.max_json_entity_candidates = max(self.default_json_entity_limit, candidate_cap)
+        self.default_table_max_rows = max(1, int(getattr(settings, "TABLE_MAX_ROWS_DEFAULT", 5000)))
+        self.default_table_max_columns = max(1, int(getattr(settings, "TABLE_MAX_COLUMNS_DEFAULT", 80)))
+        self.alias_warning_threshold = int(getattr(settings, "INGEST_ALIAS_WARNING_THRESHOLD", 2000))
 
     # ------------------------------------------------------------------
     # Job coordination
 
+    def _json_entity_limit(self, business_profile) -> int:
+        if not business_profile:
+            return self.default_json_entity_limit
+        metadata = business_profile.metadata if isinstance(getattr(business_profile, "metadata", None), dict) else {}
+        override = metadata.get("ingest_max_json_entities")
+        try:
+            value = int(override)
+            return max(1, value)
+        except (TypeError, ValueError):
+            return self.default_json_entity_limit
+
+    def _suppress_list_like_heuristics(
+        self, tables: list[TablePayload]
+    ) -> tuple[list[TablePayload], list[IssuePayload]]:
+        """
+        Drop heuristic tables that are actually bullet lists:
+        - mainly 2 columns,
+        - first col looks like bullets (*, **, -, •, —),
+        - second col is long paragraph-like text for the majority of sampled rows.
+        """
+        out: list[TablePayload] = []
+        issues: list[IssuePayload] = []
+        bullet_re = re.compile(r"^(\*{1,5}|[-•—])+$")
+        for t in tables:
+            rows = t.rows or []
+            if len(rows) < 2:
+                out.append(t)
+                continue
+            sample = rows[: min(10, len(rows))]
+            bullety = 0
+            long_second = 0
+            examined = 0
+            for r in sample:
+                cells = r.cells or []
+                if not cells:
+                    continue
+                c0 = (cells[0].raw_text or "").strip() if len(cells) >= 1 else ""
+                c1 = (cells[1].raw_text or "").strip() if len(cells) >= 2 else ""
+                examined += 1
+                if bullet_re.fullmatch(c0):
+                    bullety += 1
+                if len(c1) >= 60:
+                    long_second += 1
+            if examined >= 3 and (len(t.column_schema or []) <= 2) and (bullety / examined >= 0.5) and (long_second / examined >= 0.5):
+                issues.append(
+                    IssuePayload(
+                        code="list_promoted_suppressed",
+                        severity=KnowledgeIssueSeverity.INFO.value,
+                        description="Heuristic table looked like a bullet/list; suppressed in favor of plain text.",
+                        page_number=t.page_number,
+                        table_order_index=t.order_index,
+                        details={"rows_checked": examined},
+                    )
+                )
+                continue
+            out.append(t)
+        return out, issues
+
+    def _suppress_sparse_geometry_tables(
+        self, tables: list[TablePayload]
+    ) -> tuple[list[TablePayload], list[IssuePayload]]:
+        """
+        Drop geometry tables that are too sparse:
+        - >60% of cells are empty across sampled rows,
+        - >50% of columns are mostly empty (>60% empty in that column).
+        
+        This prevents giant noisy tables from low-quality geometry detection.
+        """
+        out: list[TablePayload] = []
+        issues: list[IssuePayload] = []
+        
+        CELL_EMPTY_THRESHOLD = 0.6      # 60% empty cells
+        COLUMN_EMPTY_THRESHOLD = 0.6    # 60% empty in a column = "mostly empty"
+        COLUMN_SPARSE_RATIO = 0.5       # 50% of columns mostly empty
+        
+        for t in tables:
+            rows = t.rows or []
+            if len(rows) < 2:
+                out.append(t)
+                continue
+            
+            # Sample first N rows (excluding header if present)
+            sample_size = min(10, len(rows))
+            sample = rows[:sample_size]
+            
+            # Skip if no column schema
+            num_cols = len(t.column_schema or [])
+            if num_cols == 0:
+                out.append(t)
+                continue
+            
+            # Count empty cells overall
+            total_cells = 0
+            empty_cells = 0
+            
+            # Track emptiness per column
+            column_empty_counts = [0] * num_cols
+            column_total_counts = [0] * num_cols
+            
+            for r in sample:
+                cells = r.cells or []
+                for c_idx in range(num_cols):
+                    if c_idx < len(cells):
+                        cell_text = (cells[c_idx].raw_text or "").strip()
+                        total_cells += 1
+                        column_total_counts[c_idx] += 1
+                        
+                        if not cell_text:
+                            empty_cells += 1
+                            column_empty_counts[c_idx] += 1
+                    else:
+                        # Missing cell counts as empty
+                        total_cells += 1
+                        empty_cells += 1
+                        column_total_counts[c_idx] += 1
+                        column_empty_counts[c_idx] += 1
+            
+            if total_cells == 0:
+                out.append(t)
+                continue
+            
+            # Calculate overall empty ratio
+            overall_empty_ratio = empty_cells / total_cells
+            
+            # Calculate per-column empty ratios
+            mostly_empty_columns = 0
+            for c_idx in range(num_cols):
+                if column_total_counts[c_idx] > 0:
+                    col_empty_ratio = column_empty_counts[c_idx] / column_total_counts[c_idx]
+                    if col_empty_ratio > COLUMN_EMPTY_THRESHOLD:
+                        mostly_empty_columns += 1
+            
+            column_sparse_ratio = mostly_empty_columns / num_cols if num_cols > 0 else 0
+            
+            # Suppress if both conditions met
+            if overall_empty_ratio > CELL_EMPTY_THRESHOLD and column_sparse_ratio > COLUMN_SPARSE_RATIO:
+                issues.append(
+                    IssuePayload(
+                        code="geometry_suppressed_sparse",
+                        severity=KnowledgeIssueSeverity.INFO.value,
+                        description=f"Geometry table was too sparse ({overall_empty_ratio:.1%} empty cells, {column_sparse_ratio:.1%} sparse columns); suppressed.",
+                        page_number=t.page_number,
+                        table_order_index=t.order_index,
+                        details={
+                            "rows_checked": sample_size,
+                            "overall_empty_ratio": round(overall_empty_ratio, 3),
+                            "mostly_empty_columns": mostly_empty_columns,
+                            "total_columns": num_cols,
+                            "column_sparse_ratio": round(column_sparse_ratio, 3),
+                        },
+                    )
+                )
+                continue
+            
+            out.append(t)
+        
+        return out, issues
+
     def process_next_job(self) -> IngestionJobResult | None:
         job = self._claim_next_job()
-        
+
         if job is None:
             return None
+
+        if job.job_type == KnowledgeIngestionJobType.EMBED:
+            return self._process_embedding_job(job)
 
         upload = job.upload
         logger.info("ingest.start upload=%s job=%s source_type=%s", upload.id, job.id, upload.source_type)
@@ -647,6 +1777,7 @@ class KnowledgeIngestionService:
             return IngestionJobResult(
                 job_id=job.id,
                 upload_id=upload.id,
+                job_type=job.job_type,
                 status=KnowledgeIngestionJobStatus.COMPLETED,
                 characters=characters,
             )
@@ -656,11 +1787,109 @@ class KnowledgeIngestionService:
             return IngestionJobResult(
                 job_id=job.id,
                 upload_id=upload.id,
+                job_type=job.job_type,
                 status=KnowledgeIngestionJobStatus.FAILED,
                 characters=0,
                 error=str(exc),
             )
-            
+
+    def _process_embedding_job(self, job: KnowledgeIngestionJob) -> IngestionJobResult:
+        payload = job.payload or {}
+        chunk_ids = payload.get("chunk_ids") if isinstance(payload, dict) else []
+        normalized_ids: list[uuid.UUID] = []
+        for value in chunk_ids or []:
+            try:
+                normalized_ids.append(uuid.UUID(str(value)))
+            except (TypeError, ValueError):
+                continue
+        if not normalized_ids:
+            self._mark_job_completed(job, extra={"embedded_chunks": 0})
+            return IngestionJobResult(
+                job_id=job.id,
+                upload_id=job.upload_id,
+                job_type=job.job_type,
+                status=KnowledgeIngestionJobStatus.COMPLETED,
+                characters=0,
+            )
+        chunks = list(
+            KnowledgeUploadChunk.objects.filter(
+                id__in=normalized_ids,
+                upload=job.upload,
+            ).order_by("chunk_index")
+        )
+        if not chunks:
+            self._mark_job_completed(job, extra={"embedded_chunks": 0})
+            return IngestionJobResult(
+                job_id=job.id,
+                upload_id=job.upload_id,
+                job_type=job.job_type,
+                status=KnowledgeIngestionJobStatus.COMPLETED,
+                characters=0,
+            )
+        provider = self.embedding_service or self._get_fallback_embedding_service()
+        if not provider:
+            error = "Embedding backend unavailable"
+            self._handle_failure(job, error)
+            return IngestionJobResult(
+                job_id=job.id,
+                upload_id=job.upload_id,
+                job_type=job.job_type,
+                status=KnowledgeIngestionJobStatus.FAILED,
+                characters=0,
+                error=error,
+            )
+        updated: list[KnowledgeUploadChunk] = []
+        processed = 0
+        batched: list[list[KnowledgeUploadChunk]] = [
+            chunks[i : i + self.embedding_batch_size] for i in range(0, len(chunks), self.embedding_batch_size)
+        ]
+        for batch in batched:
+            texts = [chunk.content or "" for chunk in batch]
+            if not any(texts):
+                continue
+            try:
+                vectors = provider.embed_texts(texts)
+            except EmbeddingProviderError as exc:
+                self._handle_failure(job, f"Embedding batch failed: {exc}")
+                return IngestionJobResult(
+                    job_id=job.id,
+                    upload_id=job.upload_id,
+                    job_type=job.job_type,
+                    status=KnowledgeIngestionJobStatus.FAILED,
+                    characters=processed,
+                    error=str(exc),
+                )
+            except Exception as exc:  # pragma: no cover - defensive
+                self._handle_failure(job, f"Embedding batch exception: {exc}")
+                return IngestionJobResult(
+                    job_id=job.id,
+                    upload_id=job.upload_id,
+                    job_type=job.job_type,
+                    status=KnowledgeIngestionJobStatus.FAILED,
+                    characters=processed,
+                    error=str(exc),
+                )
+            for chunk, vector in zip(batch, vectors):
+                normalized = self._normalize_embedding(vector)
+                if normalized:
+                    chunk.embedding = normalized
+                    chunk.updated_at = timezone.now()
+                    updated.append(chunk)
+                    processed += 1
+        processed_ids = [str(chunk.id) for chunk in updated]
+        if updated:
+            KnowledgeUploadChunk.objects.bulk_update(updated, ["embedding", "updated_at"])
+        if processed_ids:
+            self._update_upload_embedding_metadata(job.upload, processed_ids=processed_ids)
+        self._mark_job_completed(job, extra={"embedded_chunks": processed})
+        return IngestionJobResult(
+            job_id=job.id,
+            upload_id=job.upload_id,
+            job_type=job.job_type,
+            status=KnowledgeIngestionJobStatus.COMPLETED,
+            characters=processed,
+        )
+
 
     # ------------------------------------------------------------------
     # Extraction path
@@ -673,7 +1902,8 @@ class KnowledgeIngestionService:
                 file_detail = upload.file_detail
             if file_detail is None:
                 raise KnowledgeIngestionError("File metadata missing for upload.")
-            return self._extract_from_file(file_detail)
+            limit = self._json_entity_limit(upload.business_profile)
+            return self._extract_from_file(file_detail, upload=upload, entity_limit=limit)
 
         if upload.source_type == KnowledgeSourceType.LINK:
             url_detail = getattr(upload, "url_detail", None)
@@ -684,7 +1914,13 @@ class KnowledgeIngestionService:
 
         raise KnowledgeIngestionError(f"Ingestion not implemented for {upload.source_type}.")
 
-    def _extract_from_file(self, file_detail: KnowledgeUploadFile) -> ExtractionResult:
+    def _extract_from_file(
+        self,
+        file_detail: KnowledgeUploadFile,
+        *,
+        upload: KnowledgeUpload | None = None,
+        entity_limit: int | None = None,
+    ) -> ExtractionResult:
         
         storage_path = Path(file_detail.storage_path)
         absolute = (self.media_root / storage_path).resolve()
@@ -699,6 +1935,22 @@ class KnowledgeIngestionService:
         if not format_hint:
             raise UnsupportedFormatError(f"Unsupported file type {format_hint or 'unknown'}.")
         logger.info("extract.file.start path=%s format=%s", absolute, format_hint)
+        if format_hint == "json":
+            limit = entity_limit or self.default_json_entity_limit
+            return self._extract_json(absolute, entity_limit=limit)
+        if format_hint in {"csv", "tsv"}:
+            return self._extract_csv(
+                absolute,
+                format_hint=format_hint,
+                file_detail=file_detail,
+                upload=upload,
+            )
+        if format_hint == "xlsx":
+            return self._extract_xlsx(
+                absolute,
+                file_detail=file_detail,
+                upload=upload,
+            )
         layout_result: PageRendererResult | None = None
         should_attempt_layout = not (format_hint == "pdf" and fitz is None)
         if should_attempt_layout:
@@ -739,12 +1991,55 @@ class KnowledgeIngestionService:
             )
         text = layout_result.text
 
-        tables, table_issues = self.table_detector.detect_tables(
-            layout_result.pages,
-            format_hint=format_hint,
-        )
-        issues = layout_result.issues + table_issues
+        # Geometry-based reconstruction (PDF only, when PyMuPDF available)
+                # Geometry-based reconstruction (PDF only, when PyMuPDF available)
+        geometry_tables: list[TablePayload] = []
+        geom_issues: list[IssuePayload] = []
+        if format_hint == "pdf" and fitz is not None:
+            try:
+                page_spans = self.page_renderer.extract_pdf_spans(absolute)
+                for idx, spans in enumerate(page_spans, start=1):
+                    logger.info("geometry.spans page=%s count=%s", idx, len(spans))
+                recon = GeometryTableReconstructor()
+                geometry_tables, geom_issues = recon.reconstruct(page_spans, layout_result.pages)
+                logger.info("geometry.tables path=%s count=%s", absolute, len(geometry_tables))
+            except Exception as exc:  # best-effort guard
+                logger.warning("geometry.reconstruct_failed path=%s err=%s", absolute, exc)
+                geometry_tables, geom_issues = [], [
+                    IssuePayload(
+                        code="geometry_failed",
+                        severity=KnowledgeIssueSeverity.ERROR.value,
+                        description=str(exc),
+                    )
+                ]
 
+
+        # Fallback / combine with heuristic detector
+        tables, table_issues = self.table_detector.detect_tables(layout_result.pages)
+
+        if geometry_tables:
+            # Prefer geometry if any were found
+            tables = geometry_tables
+            issues = layout_result.issues + table_issues + geom_issues
+        else:
+            # Geometry empty → filter out "list-like" heuristic tables
+            filtered, suppress_issues = self._suppress_list_like_heuristics(tables)
+            if len(filtered) != len(tables):
+                logger.info(
+                    "heuristic.suppressed_list_like_tables before=%s after=%s",
+                    len(tables), len(filtered)
+                )
+            tables = filtered
+            issues = layout_result.issues + table_issues + geom_issues + suppress_issues
+
+
+
+        tables, table_metrics = self._apply_table_limits(tables, upload=upload)
+        table_entities = self._table_row_entities(
+            tables,
+            business_profile=getattr(upload, "business_profile", None),
+            upload=upload,
+        )
         metadata = {
             "format": format_hint,
             "filename": file_detail.filename,
@@ -752,6 +2047,7 @@ class KnowledgeIngestionService:
             "storage_path": file_detail.storage_path,
             "page_count": len(layout_result.pages),
             "table_count": len(tables),
+            "table_truncation": table_metrics,
         }
         return ExtractionResult(
             text=text,
@@ -760,6 +2056,7 @@ class KnowledgeIngestionService:
             pages=layout_result.pages,
             tables=tables,
             issues=issues,
+            entities=table_entities,
         )
 
     def _fallback_text_extraction(self, path: Path, format_hint: str) -> str:
@@ -767,25 +2064,102 @@ class KnowledgeIngestionService:
             return self._extract_pdf(path)
         if format_hint == "docx":
             return self._extract_docx(path)
-        if format_hint in {"txt", "text"}:
+        if format_hint in {"txt", "text", "csv", "tsv"}:
             return self._extract_text_file(path)
         raise UnsupportedFormatError(f"Unsupported file type {format_hint}.")
 
     def _extract_from_link(self, url: str) -> ExtractionResult:
+        """
+        Fetch link via scrape_document_source and return plain text extraction.
+        (Keeps signature consistent with _extract_upload() caller.)
+        """
         try:
-            scraped = scrape_document_source(url=url, timeout=10.0, max_bytes=2_000_000)
+            scraped = scrape_document_source(url=url, timeout=15.0, max_bytes=2_000_000)
         except DocumentScrapeError as exc:
             raise KnowledgeIngestionError(str(exc)) from exc
-        logger.info("extract.link url=%s status=%s bytes=%s ms=%s", scraped.final_url, scraped.status_code, scraped.content_length, scraped.elapsed_ms)
-        metadata = {
-            "format": scraped.content_type or "text/html",
-            "status_code": scraped.status_code,
-            "content_length": scraped.content_length,
-            "elapsed_ms": scraped.elapsed_ms,
-            "word_count": scraped.word_count,
-            "source_url": scraped.final_url or scraped.url,
-        }
-        return ExtractionResult(text=scraped.text, format_hint="text/html", metadata=metadata)
+
+        text = scraped.text or ""
+        content_type = (scraped.content_type or "").lower()
+        fmt = "text/html" if "html" in content_type else "text/plain"
+
+        page = PageLayout(
+            page_number=1,
+            width=612,
+            height=792,
+            rotation=0,
+            text_density=len(text.strip()) / float(612 * 792),
+            has_ocr_content=False,
+            content_type=fmt,
+            blocks=[
+                PageBlockPayload(
+                    block_type=KnowledgeBlockType.PARAGRAPH,
+                    order_index=0,
+                    text=text,
+                )
+            ],
+            metadata={"url": scraped.final_url},
+        )
+
+        return ExtractionResult(
+            text=text,
+            format_hint=fmt,
+            metadata={
+                "url": scraped.final_url,
+                "status_code": scraped.status_code,
+                "content_type": scraped.content_type,
+                "word_count": scraped.word_count,
+            },
+            pages=[page],
+            tables=[],
+            issues=[],
+        )
+
+    def _sanitize_html(self, soup: BeautifulSoup, allowed_tags: list[str]) -> str:
+        """
+        Sanitize HTML keeping only allowed semantic tags
+        Removes all attributes except href for links
+        """
+        # Remove disallowed tags but keep their content
+        for tag in soup.find_all():
+            if tag.name not in allowed_tags:
+                tag.unwrap()
+        
+        # Clean attributes (keep only href for links)
+        for tag in soup.find_all():
+            if tag.name == "a" and tag.has_attr("href"):
+                href = tag["href"]
+                tag.attrs = {"href": href}
+            else:
+                tag.attrs = {}
+        
+        # Convert to string and clean up
+        html = str(soup)
+        
+        # Remove excessive whitespace
+        html = re.sub(r"\n\s*\n", "\n\n", html)
+        html = re.sub(r" +", " ", html)
+        
+        return html.strip()
+
+    def _detect_encoding(self, content_bytes: bytes) -> str:
+        """Detect content encoding from bytes"""
+        # Try UTF-8 first (most common)
+        try:
+            content_bytes.decode("utf-8")
+            return "utf-8"
+        except UnicodeDecodeError:
+            pass
+        
+        # Try common encodings
+        for encoding in ["latin-1", "iso-8859-1", "windows-1252"]:
+            try:
+                content_bytes.decode(encoding)
+                return encoding
+            except UnicodeDecodeError:
+                continue
+        
+        # Fallback
+        return "utf-8"
 
     # ------------------------------------------------------------------
     # Persistence
@@ -810,6 +2184,8 @@ class KnowledgeIngestionService:
             }
         )
         ingestion_metadata.update(extraction.metadata or {})
+        feature_state = FeatureFlagService.snapshot(upload.business_profile)
+        ingestion_metadata["feature_flags"] = feature_state.as_dict()
 
         defaults = {
             "content": normalized,
@@ -819,10 +2195,41 @@ class KnowledgeIngestionService:
             },
         }
 
+        entity_payloads = list(extraction.entities or [])
+        if entity_payloads and not feature_state.entity_chunking:
+            logger.info(
+                "json.entities.disabled upload=%s business=%s entities=%s",
+                upload.id,
+                upload.business_profile_id,
+                len(entity_payloads),
+            )
+            entity_payloads = []
+        entity_stats: dict[str, Any] = {}
         with transaction.atomic():
             structured_summary = self._persist_structured_artifacts(upload, extraction)
             KnowledgeUploadText.objects.update_or_create(upload=upload, defaults=defaults)
-            chunk_count = self._build_chunks(upload, normalized)
+            chunk_count, missing_chunk_ids, chunk_objects = self._build_chunks(
+                upload,
+                normalized,
+                entities=entity_payloads,
+            )
+            if entity_payloads:
+                entity_stats = self._persist_entities(upload, entity_payloads, chunk_objects)
+                alias_count = entity_stats.get("alias_count", 0)
+                alias_sources = entity_stats.get("alias_sources") or extraction.metadata.get("json_alias_sources") or []
+                ingestion_metadata["alias_count"] = alias_count
+                ingestion_metadata["alias_patterns_used"] = sorted(set(alias_sources))
+                if alias_count > self.alias_warning_threshold:
+                    logger.warning(
+                        "json.aliases.threshold upload=%s business=%s aliases=%s threshold=%s",
+                        upload.id,
+                        upload.business_profile_id,
+                        alias_count,
+                        self.alias_warning_threshold,
+                    )
+            else:
+                ingestion_metadata.pop("alias_count", None)
+                ingestion_metadata.pop("alias_patterns_used", None)
             upload.summary = summary
             upload.token_count = words
             upload.chunk_count = chunk_count
@@ -831,6 +2238,14 @@ class KnowledgeIngestionService:
             upload.ingestion_error = ""
             if structured_summary:
                 ingestion_metadata["structured_exports"] = structured_summary
+            if missing_chunk_ids:
+                ingestion_metadata["pending_embedding_chunks"] = missing_chunk_ids[:50]
+                ingestion_metadata["pending_embedding_chunk_count"] = len(missing_chunk_ids)
+            else:
+                ingestion_metadata.pop("pending_embedding_chunks", None)
+                ingestion_metadata.pop("pending_embedding_chunk_count", None)
+            if "json_entities_truncated" in extraction.metadata:
+                ingestion_metadata["truncated_entities"] = extraction.metadata.get("json_entities_truncated", 0)
             upload.ingestion_metadata = ingestion_metadata
             upload.save(
                 update_fields=[
@@ -844,60 +2259,495 @@ class KnowledgeIngestionService:
                     "updated_at",
                 ]
             )
-
-    def _build_chunks(self, upload: KnowledgeUpload, content: str) -> int:
-        segments = self._chunk_text(content)
-        KnowledgeUploadChunk.objects.filter(upload=upload).delete()
-        if not segments:
-            return 0
-        logger.info("embed.start upload=%s segments=%s provider=%s model=%s", upload.id, len(segments), type(self.embedding_service).__name__ if self.embedding_service else None, getattr(self.embedding_service, "model", "local"))
-
-        embeddings: list[list[float]] | None = None
-        if self.embedding_service:
+        if entity_payloads:
+            truncated = extraction.metadata.get("json_entities_truncated", 0)
+            logger.info(
+                "json.entities.summary upload=%s business=%s entities=%s aliases=%s truncated=%s",
+                upload.id,
+                upload.business_profile_id,
+                entity_stats.get("entity_count", len(entity_payloads)),
+                entity_stats.get("alias_count", 0),
+                truncated,
+            )
             try:
-                embeddings = self.embedding_service.embed_texts(segments)
+                QualityMonitor.record_ingestion_sample(
+                    business_profile=upload.business_profile,
+                    alias_values=entity_stats.get("alias_values") or [],
+                    truncated_entities=int(truncated),
+                    indexed_entities=entity_stats.get("entity_count", len(entity_payloads)),
+                )
+            except Exception as exc:  # pragma: no cover - monitoring failures must not block ingestion
+                logger.warning("quality.ingestion.monitor_failed business=%s error=%s", upload.business_profile_id, exc)
+
+    def _build_chunks(
+        self,
+        upload: KnowledgeUpload,
+        content: str,
+        *,
+        entities: Sequence[Mapping[str, Any]] | None = None,
+    ) -> tuple[int, list[str], list[KnowledgeUploadChunk]]:
+        """
+        Build semantic chunks from either structured entities or sliding windows of text/tables.
+        """
+        from apps.accounts.models import KnowledgeUploadTable  # local import to avoid cycles
+
+        entity_payloads = list(entities or [])
+        if entity_payloads:
+            segment_payloads = self._build_entity_segment_payloads(entity_payloads)
+        else:
+            text_segments = self._chunk_text(content)
+            segment_payloads: list[dict[str, Any]] = []
+            for segment in text_segments:
+                if not segment:
+                    continue
+                augmented, aliases = self._inject_identifiers_into_text(segment)
+                metadata = {"strategy": "sliding_window"}
+                if aliases:
+                    metadata.update(self._alias_metadata(aliases))
+                segment_payloads.append({"text": augmented, "metadata": metadata})
+
+            table_segment_payloads: list[dict[str, Any]] = []
+            privacy_rules = self._table_privacy_rules(upload)
+            try:
+                tables = (
+                    KnowledgeUploadTable.objects.filter(upload=upload)
+                    .order_by("order_index")
+                    .prefetch_related("rows__cells")
+                )
+                for t in tables:
+                    raw_schema = list(map(str, (t.column_schema or [])))
+                    column_map: list[tuple[str, str, int]] = []
+                    hidden_columns: list[str] = []
+                    for idx, column in enumerate(raw_schema):
+                        label = column or f"column_{idx + 1}"
+                        if self._column_is_sensitive(label, privacy_rules):
+                            hidden_columns.append(label)
+                            continue
+                        canonical = self._canonical_column_name(label, f"column_{idx + 1}")
+                        column_map.append((label, canonical, idx))
+                    if not column_map:
+                        continue
+                    cols = [entry[0] for entry in column_map]
+                    tsv_lines: list[str] = []
+                    header_line = "\t".join(cols) if cols else ""
+                    if header_line:
+                        tsv_lines.append(header_line)
+
+                    data_row_count = 0
+                    for r in t.rows.all():
+                        if (r.metadata or {}).get("row_type") == "header":
+                            continue
+                        row_attributes = self._row_model_attributes(r, raw_schema)
+                        if self._row_is_internal(row_attributes, privacy_rules):
+                            continue
+                        canonical_lookup = {
+                            self._canonical_column_name(key, key): value
+                            for key, value in row_attributes.items()
+                        }
+                        cells = [canonical_lookup.get(entry[1], "") for entry in column_map]
+                        if any(cells):
+                            tsv_lines.append("\t".join(cells))
+                            data_row_count += 1
+                        if data_row_count >= 12:
+                            break
+
+                    if len(tsv_lines) <= 1:
+                        continue
+
+                    if tsv_lines:
+                        preface = []
+                        if t.section_heading:
+                            preface.append(f"[Section] {t.section_heading}")
+                        title = t.title or f"Table {t.order_index}"
+                        preface.append(f"[Table] {title}")
+                        table_block = "\n".join(preface + tsv_lines)
+                        if len(table_block) <= 1500:
+                            blocks = [table_block]
+                        else:
+                            blocks = []
+                            current: list[str] = []
+                            current_len = 0
+                            for line in (preface + tsv_lines):
+                                if current_len + len(line) + 1 > 1500 and current:
+                                    blocks.append("\n".join(current))
+                                    current, current_len = [], 0
+                                current.append(line)
+                                current_len += len(line) + 1
+                            if current:
+                                blocks.append("\n".join(current))
+
+                        base_metadata: dict[str, Any] = {
+                            "strategy": "table_extract",
+                            "is_table_chunk": True,
+                            "table_title": title,
+                            "visibility": getattr(upload, "visibility", KnowledgeVisibility.PRIVATE),
+                        }
+                        if hidden_columns:
+                            base_metadata["restricted_columns"] = hidden_columns[:8]
+                        table_metadata = t.metadata if isinstance(t.metadata, dict) else {}
+                        for key in ("entity_type", "entity_name", "entity_business"):
+                            if table_metadata.get(key):
+                                base_metadata[key] = table_metadata[key]
+                        alias_list = base_metadata.get("aliases") or []
+                        for block in blocks:
+                            if not block:
+                                continue
+                            block_text = self._append_identifier_line(block, alias_list) if alias_list else block
+                            table_segment_payloads.append({"text": block_text, "metadata": dict(base_metadata)})
+            except Exception:
+                table_segment_payloads = []
+
+            segment_payloads.extend(table_segment_payloads)
+
+        KnowledgeUploadChunk.objects.filter(upload=upload).delete()
+        if not segment_payloads:
+            return 0, [], []
+
+        logger.info(
+            "embed.start upload=%s segments=%s provider=%s model=%s",
+            upload.id,
+            len(segment_payloads),
+            type(self.embedding_service).__name__ if self.embedding_service else None,
+            getattr(self.embedding_service, "model", "local"),
+        )
+
+        total_segments = len(segment_payloads)
+        inline_limit = total_segments
+        if self.ingest_inline_chunk_limit:
+            inline_limit = min(total_segments, self.ingest_inline_chunk_limit)
+        embeddings: list[list[float] | None] = [None] * total_segments
+        if self.embedding_service and inline_limit:
+            try:
+                inline_vectors = self.embedding_service.embed_texts(
+                    [payload["text"] for payload in segment_payloads[:inline_limit]]
+                )
+                for idx, vector in enumerate(inline_vectors):
+                    embeddings[idx] = self._normalize_embedding(vector)
             except EmbeddingProviderError as exc:
                 logger.warning("Embedding generation failed upload=%s error=%s", upload.id, exc)
-                embeddings = None
-            except Exception as exc:  # pragma: no cover - defensive
+            except Exception:
                 logger.exception("Unexpected embedding failure upload=%s", upload.id)
-                embeddings = None
 
-        logger.info("embed.done upload=%s got_vectors=%s", upload.id, 0 if not embeddings else len([v for v in embeddings if v]))
+        got_vectors = len([v for v in embeddings if v])
+        staged_vectors = total_segments - inline_limit if self.ingest_inline_chunk_limit else 0
+        logger.info(
+            "embed.inline upload=%s segments=%s inline=%s staged=%s got_vectors=%s",
+            upload.id,
+            total_segments,
+            inline_limit,
+            staged_vectors,
+            got_vectors,
+        )
 
         chunk_objects: list[KnowledgeUploadChunk] = []
-        for index, segment in enumerate(segments):
+        fallback_targets: list[KnowledgeUploadChunk] = []
+        for index, payload in enumerate(segment_payloads):
+            segment_text = payload.get("text") or ""
             vector = None
             if embeddings and index < len(embeddings):
                 vector = embeddings[index]
-                
-                # ADD THE DEFENSIVE TRIM/PAD HERE:
-                expected = getattr(settings, "EMBED_DIM", None)
-                if expected and isinstance(vector, list):
-                    if len(vector) > expected:
-                        logger.warning("Embedding dimension mismatch: got %s, expected %s. Trimming.", len(vector), expected)
-                        vector = vector[:expected]
-                    elif len(vector) < expected:
-                        logger.warning("Embedding dimension mismatch: got %s, expected %s. Padding.", len(vector), expected)
-                        vector = vector + [0.0] * (expected - len(vector))
-            
-            chunk_objects.append(
-                KnowledgeUploadChunk(
-                    upload=upload,
-                    chunk_index=index,
-                    content=segment,
-                    token_count=len(segment.split()),
-                    embedding=vector,
-                    metadata={
-                        "strategy": "sliding_window",
-                        "overlap": index > 0,
-                    },
-                )
+
+            chunk_metadata = {
+                "strategy": "json_entity" if entity_payloads else "sliding_window_plus_tables",
+            }
+            extra_meta = payload.get("metadata") or {}
+            if isinstance(extra_meta, dict):
+                chunk_metadata.update(extra_meta)
+            chunk_metadata.setdefault("is_table_chunk", False)
+            self._finalize_alias_metadata(chunk_metadata)
+
+            chunk = KnowledgeUploadChunk(
+                upload=upload,
+                business_profile=upload.business_profile,
+                chunk_index=index,
+                content=segment_text,
+                token_count=len(segment_text.split()),
+                embedding=vector,
+                metadata=chunk_metadata,
             )
+            if chunk.embedding is None:
+                fallback_targets.append(chunk)
+            chunk_objects.append(chunk)
+
+        backfilled = 0
+        if fallback_targets:
+            backfilled = self._apply_fallback_embeddings(upload, fallback_targets)
+            if backfilled:
+                logger.info(
+                    "embed.fallback upload=%s requested=%s backfilled=%s",
+                    upload.id,
+                    len(fallback_targets),
+                    backfilled,
+                )
+            else:
+                logger.warning(
+                    "embed.fallback_failed upload=%s requested=%s",
+                    upload.id,
+                    len(fallback_targets),
+                )
+
+        missing_chunk_ids = [str(chunk.id) for chunk in chunk_objects if chunk.embedding is None]
+
         KnowledgeUploadChunk.objects.bulk_create(chunk_objects, batch_size=100)
-        logger.info("Chunked upload=%s into %s segments", upload.id, len(chunk_objects))
-        logger.info("chunks.persisted upload=%s count=%s", upload.id, len(chunk_objects))
-        return len(chunk_objects)
+        logger.info(
+            "chunks.persisted upload=%s count=%s missing_embeddings=%s",
+            upload.id,
+            len(chunk_objects),
+            len(missing_chunk_ids),
+        )
+        if missing_chunk_ids:
+            self._schedule_embedding_jobs(upload, missing_chunk_ids)
+        return len(chunk_objects), missing_chunk_ids, chunk_objects
+
+    def _build_entity_segment_payloads(self, entities: Sequence[Mapping[str, Any]]) -> list[dict[str, Any]]:
+        payloads: list[dict[str, Any]] = []
+        for index, entity in enumerate(entities):
+            attributes = entity.get("attributes") or {}
+            columns = entity.get("columns") or []
+            alias_list = list(entity.get("aliases") or [])
+            entity_type = entity.get("entity_type") or "record"
+            entity_name = entity.get("entity_name") or f"{entity_type.title()} {index + 1}"
+            lines = [f"{entity_type.title()}: {entity_name}"]
+            for column in columns[:16]:
+                value = attributes.get(column)
+                if value:
+                    lines.append(f"- {column}: {value}")
+            text = "\n".join(lines).strip()
+            text, inline_aliases = self._inject_identifiers_into_text(text)
+            combined_aliases = alias_list[:]
+            for alias in inline_aliases:
+                if alias and alias not in combined_aliases:
+                    combined_aliases.append(alias)
+            metadata: dict[str, Any] = {
+                "strategy": entity.get("chunk_strategy") or "json_entity",
+                "entity_type": entity_type,
+                "entity_name": entity_name,
+                "entity_business": entity.get("entity_business"),
+                "entity_index": entity.get("entity_index", index),
+                "visibility": entity.get("visibility") or entity.get("entity_visibility"),
+            }
+            table_meta = entity.get("table_metadata")
+            if isinstance(table_meta, dict):
+                metadata["table_metadata"] = table_meta
+            metadata.update(self._alias_metadata(combined_aliases))
+            payloads.append({"text": text, "metadata": metadata})
+        return payloads
+
+    def _persist_entities(
+        self,
+        upload: KnowledgeUpload,
+        entities: Sequence[Mapping[str, Any]],
+        chunks: Sequence[KnowledgeUploadChunk],
+    ) -> dict[str, Any]:
+        KnowledgeEntity.objects.filter(upload=upload).delete()
+        chunk_by_index: dict[int, KnowledgeUploadChunk] = {}
+        for chunk in chunks:
+            metadata = chunk.metadata if isinstance(chunk.metadata, dict) else {}
+            idx = metadata.get("entity_index")
+            if isinstance(idx, int):
+                chunk_by_index[idx] = chunk
+        business = upload.business_profile
+        entity_models: list[KnowledgeEntity] = []
+        for entity in entities:
+            idx = entity.get("entity_index")
+            chunk = chunk_by_index.get(idx) if isinstance(idx, int) else None
+            entity_model = KnowledgeEntity(
+                business_profile=business,
+                upload=upload,
+                chunk=chunk,
+                entity_type=entity.get("entity_type") or "",
+                entity_name=entity.get("entity_name") or "",
+                primary_label=entity.get("entity_name") or entity.get("entity_type") or "",
+                metadata={
+                    "attributes": entity.get("attributes"),
+                    "columns": entity.get("columns"),
+                    "table_metadata": entity.get("table_metadata"),
+                },
+            )
+            entity_models.append(entity_model)
+        KnowledgeEntity.objects.bulk_create(entity_models, batch_size=200)
+
+        alias_models: list[KnowledgeAlias] = []
+        alias_sources: set[str] = set()
+        alias_values: list[str] = []
+        for model, payload in zip(entity_models, entities):
+            payload_sources = payload.get("alias_sources") or []
+            alias_sources.update(payload_sources)
+            seen_aliases: set[str] = set()
+            for alias in payload.get("aliases") or []:
+                if not alias:
+                    continue
+                cleaned = str(alias).strip()
+                if not cleaned:
+                    continue
+                if len(cleaned) > ALIAS_MAX_LENGTH:
+                    cleaned = cleaned[:ALIAS_MAX_LENGTH]
+                normalized = self._normalize_alias_value(cleaned)
+                if not normalized or normalized in seen_aliases:
+                    continue
+                seen_aliases.add(normalized)
+                alias_models.append(
+                    KnowledgeAlias(
+                        business_profile=business,
+                        entity=model,
+                        alias_raw=cleaned,
+                        alias_normalized=normalized,
+                        alias_search_vector=normalized.replace("-", " "),
+                        source=payload.get("alias_source_type") or "json",
+                    )
+                )
+                if len(alias_values) < 2048:
+                    alias_values.append(normalized)
+        if alias_models:
+            KnowledgeAlias.objects.bulk_create(alias_models, batch_size=500)
+            self._invalidate_alias_cache(business.id)
+        return {
+            "entity_count": len(entity_models),
+            "alias_count": len(alias_models),
+            "alias_sources": sorted(alias_sources),
+            "alias_values": alias_values,
+        }
+
+    def _schedule_embedding_jobs(self, upload: KnowledgeUpload, chunk_ids: Sequence[str]) -> None:
+        if not chunk_ids:
+            return
+        batch_size = self.embedding_job_payload_size
+        business = upload.business_profile
+        for idx in range(0, len(chunk_ids), batch_size):
+            batch = chunk_ids[idx : idx + batch_size]
+            job = KnowledgeIngestionJob.objects.create(
+                business_profile=business,
+                upload=upload,
+                job_type=KnowledgeIngestionJobType.EMBED,
+                status=KnowledgeIngestionJobStatus.QUEUED,
+                payload={"chunk_ids": batch},
+            )
+            logger.info("Queued embedding job upload=%s job=%s chunks=%s", upload.id, job.id, len(batch))
+        backlog = self._embedding_backlog_count(business.id)
+        if self.embedding_backlog_threshold and backlog >= self.embedding_backlog_threshold:
+            logger.warning(
+                "embedding.backlog threshold exceeded business=%s backlog=%s threshold=%s",
+                business.id,
+                backlog,
+                self.embedding_backlog_threshold,
+            )
+
+    def _update_upload_embedding_metadata(self, upload: KnowledgeUpload, *, processed_ids: Sequence[str]) -> None:
+        metadata = dict(upload.ingestion_metadata or {})
+        pending = metadata.get("pending_embedding_chunks")
+        if isinstance(pending, list):
+            pending_set = {str(value) for value in pending}
+            for chunk_id in processed_ids:
+                pending_set.discard(str(chunk_id))
+            if pending_set:
+                metadata["pending_embedding_chunks"] = list(pending_set)[:50]
+            else:
+                metadata.pop("pending_embedding_chunks", None)
+        remaining = KnowledgeUploadChunk.objects.filter(upload=upload, embedding__isnull=True).count()
+        if remaining:
+            metadata["pending_embedding_chunk_count"] = remaining
+        else:
+            metadata.pop("pending_embedding_chunk_count", None)
+        upload.ingestion_metadata = metadata
+        upload.save(update_fields=["ingestion_metadata", "updated_at"])
+
+    def _invalidate_alias_cache(self, business_id: uuid.UUID) -> None:
+        try:
+            from apps.services.ai_orchestrator import KnowledgeSearchService
+        except ImportError:  # pragma: no cover - defensive import
+            return
+        KnowledgeSearchService.invalidate_alias_cache(business_id)
+
+    def _embedding_backlog_count(self, business_id: uuid.UUID) -> int:
+        return KnowledgeIngestionJob.objects.filter(
+            business_profile_id=business_id,
+            job_type=KnowledgeIngestionJobType.EMBED,
+            status__in=(KnowledgeIngestionJobStatus.QUEUED, KnowledgeIngestionJobStatus.RUNNING),
+        ).count()
+
+    def _release_deferred_jobs(self, business_id: uuid.UUID) -> None:
+        if not self.ingest_concurrency_limit:
+            return
+        active = KnowledgeIngestionJob.objects.filter(
+            business_profile_id=business_id,
+            status__in=(KnowledgeIngestionJobStatus.QUEUED, KnowledgeIngestionJobStatus.RUNNING),
+            job_type=KnowledgeIngestionJobType.INGEST,
+        ).count()
+        available = self.ingest_concurrency_limit - active
+        if available <= 0:
+            return
+        deferred = list(
+            KnowledgeIngestionJob.objects.filter(
+                business_profile_id=business_id,
+                status=KnowledgeIngestionJobStatus.DEFERRED,
+                job_type=KnowledgeIngestionJobType.INGEST,
+            )
+            .order_by("created_at")[:available]
+        )
+        if not deferred:
+            return
+        ids = [job.id for job in deferred]
+        KnowledgeIngestionJob.objects.filter(id__in=ids).update(status=KnowledgeIngestionJobStatus.QUEUED)
+        logger.info("Promoted %s deferred ingestion jobs for business=%s", len(ids), business_id)
+
+    def _normalize_embedding(self, vector: Sequence[float] | None) -> list[float] | None:
+        if not vector:
+            return None
+        try:
+            values = [float(v) for v in vector]
+        except (TypeError, ValueError):
+            return None
+        expected = getattr(settings, "EMBED_DIM", None)
+        if expected:
+            if len(values) > expected:
+                logger.warning("Embedding dimension mismatch: got %s, expected %s. Trimming.", len(values), expected)
+                values = values[:expected]
+            elif len(values) < expected:
+                logger.warning("Embedding dimension mismatch: got %s, expected %s. Padding.", len(values), expected)
+                values = values + [0.0] * (expected - len(values))
+        return values
+
+    def _get_fallback_embedding_service(self) -> LocalEmbeddingService | None:
+        if isinstance(self.embedding_service, LocalEmbeddingService):
+            return self.embedding_service
+        if self._fallback_embedding_service:
+            return self._fallback_embedding_service
+        if self._fallback_embedding_attempted:
+            return None
+        self._fallback_embedding_attempted = True
+        try:
+            self._fallback_embedding_service = build_embedding_service("local")
+        except EmbeddingProviderError as exc:
+            logger.warning("Local embedding fallback unavailable: %s", exc)
+            self._fallback_embedding_service = None
+        return self._fallback_embedding_service
+
+    def _apply_fallback_embeddings(
+        self,
+        upload: KnowledgeUpload,
+        chunks: Sequence[KnowledgeUploadChunk],
+    ) -> int:
+        service = self._get_fallback_embedding_service()
+        if not service:
+            return 0
+        texts = [chunk.content or "" for chunk in chunks]
+        if not any(texts):
+            return 0
+        try:
+            vectors = service.embed_texts(texts)
+        except EmbeddingProviderError as exc:
+            logger.warning("Fallback embedding generation failed upload=%s error=%s", upload.id, exc)
+            return 0
+        except Exception:
+            logger.exception("Unexpected fallback embedding failure upload=%s", upload.id)
+            return 0
+        filled = 0
+        for chunk, vector in zip(chunks, vectors):
+            normalized = self._normalize_embedding(vector)
+            if normalized:
+                chunk.embedding = normalized
+                filled += 1
+        return filled
 
     def _persist_structured_artifacts(self, upload: KnowledgeUpload, extraction: ExtractionResult) -> dict[str, Any]:
         KnowledgeUploadPage.objects.filter(upload=upload).delete()
@@ -1067,28 +2917,65 @@ class KnowledgeIngestionService:
 
     @staticmethod
     def _chunk_text(content: str, *, chunk_chars: int = 1200, overlap: int = 200) -> list[str]:
+        """
+        Boundary-aware chunker:
+        - Prefers to end chunks on paragraph/line boundaries to avoid splitting table rows
+        - If a chunk starts on a tab-delimited line, pull in up to 2 preceding lines to capture headers
+        """
         text = (content or "").strip()
         if not text:
             return []
+
+        segments: list[str] = []
         length = len(text)
         start = 0
-        segments: list[str] = []
+        overlap = max(0, min(overlap, chunk_chars // 2))
+
         while start < length:
-            end = min(length, start + chunk_chars)
-            if end < length:
-                # Prefer ending on double newline (paragraph) then single newline, then space
-                for sep in ("\n\n", "\n", " "):
-                    idx = text.rfind(sep, start + 200, end)
-                    if idx > start:
-                        end = idx
-                        break
+            end_candidate = min(length, start + chunk_chars)
+            window = text[start:end_candidate]
+
+            # Try to cut on paragraph boundary; otherwise on line boundary.
+            cut = window.rfind("\n\n")
+            if cut == -1:
+                cut = window.rfind("\n")
+            if cut != -1 and cut >= int(chunk_chars * 0.6):
+                end = start + cut
+            else:
+                end = end_candidate
+
+            # Heuristic: if the chunk begins inside a table block (first non-empty line has tabs),
+            # expand start backwards to include up to 2 previous lines (likely headers).
+            # Identify the first non-empty line of the current chunk.
+            first_line_start = start
+            nl_pos = text.find("\n", start, end)
+            if nl_pos == -1:
+                first_line = text[start:end].lstrip()
+            else:
+                first_line = text[start:nl_pos].lstrip()
+
+            if "\t" in first_line and start > 0:
+                back_search_from = max(0, start - 300)
+                back_slice = text[back_search_from:start]
+                back_lines = back_slice.splitlines()
+                take_lines = "\n".join(back_lines[-2:])  # pull up to 2 lines
+                if take_lines:
+                    start = max(0, start - (len(take_lines) + 1))  # +1 for newline
+                    # Recompute cut with the expanded start
+                    end_candidate = min(length, start + chunk_chars)
+                    window = text[start:end_candidate]
+                    cut2 = window.rfind("\n\n")
+                    if cut2 == -1:
+                        cut2 = window.rfind("\n")
+                    end = start + (cut2 if cut2 != -1 else len(window))
+
             chunk = text[start:end].strip()
             if chunk:
                 segments.append(chunk)
             if end >= length:
                 break
-            # Overlap
-            start = max(end - overlap, start + 1)
+            start = max(0, end - overlap)
+
         return segments
 
 
@@ -1102,6 +2989,7 @@ class KnowledgeIngestionService:
             finished_at=finished,
             payload=payload,
         )
+        self._release_deferred_jobs(job.business_profile_id)
 
     def _handle_failure(self, job: KnowledgeIngestionJob, message: str) -> None:
         finished = timezone.now()
@@ -1114,6 +3002,7 @@ class KnowledgeIngestionService:
         upload.ingestion_error = message
         upload.status = KnowledgeStatus.FAILED
         upload.save(update_fields=["ingestion_error", "status", "updated_at"])
+        self._release_deferred_jobs(job.business_profile_id)
 
     # ------------------------------------------------------------------
     # Helpers
@@ -1122,10 +3011,17 @@ class KnowledgeIngestionService:
         job = (
             KnowledgeIngestionJob.objects.filter(
                 status=KnowledgeIngestionJobStatus.QUEUED,
-                job_type=KnowledgeIngestionJobType.INGEST,
+            )
+            .annotate(
+                priority=Case(
+                    When(job_type=KnowledgeIngestionJobType.INGEST, then=Value(0)),
+                    When(job_type=KnowledgeIngestionJobType.EMBED, then=Value(1)),
+                    default=Value(5),
+                    output_field=IntegerField(),
+                )
             )
             .select_related("upload__file_detail", "upload__url_detail", "upload__business_profile")
-            .order_by("created_at")
+            .order_by("priority", "created_at")
             .first()
         )
         if not job:
@@ -1157,6 +3053,16 @@ class KnowledgeIngestionService:
             return "docx"
         if suffix in {".txt", ".md", ".rtf"} or "text" in content_type:
             return "txt"
+        if suffix in {".csv", ".tsv"} or "csv" in content_type:
+            return "tsv" if suffix == ".tsv" or "tsv" in content_type else "csv"
+        if (
+            suffix in {".xlsx", ".xlsm"}
+            or "officedocument.spreadsheetml" in content_type
+            or "vnd.google-apps.spreadsheet" in content_type
+        ):
+            return "xlsx"
+        if suffix == ".json" or "json" in content_type:
+            return "json"
         return suffix.strip(".") if suffix else None
 
     @staticmethod
@@ -1201,6 +3107,1216 @@ class KnowledgeIngestionService:
         except Exception as exc:
             raise KnowledgeIngestionError(f"Unable to extract DOCX text: {exc}") from exc
 
+    def _extract_csv(
+        self,
+        path: Path,
+        *,
+        format_hint: str,
+        file_detail: KnowledgeUploadFile,
+        upload: KnowledgeUpload | None = None,
+    ) -> ExtractionResult:
+        raw_text = self._extract_text_file(path)
+        normalized = raw_text.lstrip("\ufeff")
+        if not normalized.strip():
+            raise KnowledgeIngestionError("CSV document did not contain any rows.")
+        delimiter = "\t" if format_hint == "tsv" else ","
+        sample = normalized[:2048]
+        try:
+            dialect = csv.Sniffer().sniff(sample, delimiters=[",", ";", "\t", "|"])
+            delimiter = dialect.delimiter or delimiter
+        except Exception:
+            # Keep default delimiter
+            pass
+        reader = csv.reader(io.StringIO(normalized), delimiter=delimiter)
+        parsed_rows = [
+            [cell.strip() for cell in row]
+            for row in reader
+            if any((cell or "").strip() for cell in row)
+        ]
+        if not parsed_rows:
+            raise KnowledgeIngestionError("CSV document did not contain any usable rows.")
+        header = parsed_rows[0]
+        data_rows = parsed_rows[1:]
+        max_columns = max(len(row) for row in parsed_rows)
+        column_schema: list[str] = []
+        for idx in range(max_columns):
+            label = header[idx].strip() if idx < len(header) else ""
+            column_schema.append(label or f"column_{idx + 1}")
+        table_rows: list[TableRowPayload] = []
+        for row_idx, row in enumerate(data_rows, start=1):
+            cells: list[TableCellPayload] = []
+            formatted_cells: list[str] = []
+            for col_idx in range(max_columns):
+                value = row[col_idx] if col_idx < len(row) else ""
+                formatted_cells.append(value)
+                cells.append(
+                    TableCellPayload(
+                        row_index=row_idx,
+                        column_index=col_idx,
+                        column_key=column_schema[col_idx],
+                        raw_text=value,
+                    )
+                )
+            table_rows.append(
+                TableRowPayload(
+                    row_index=row_idx,
+                    page_number=None,
+                    raw_text="\t".join(formatted_cells),
+                    metadata={"source": "csv", "line_number": row_idx + 1},
+                    cells=cells,
+                )
+            )
+        table = TablePayload(
+            order_index=1,
+            title=file_detail.filename or "CSV Table",
+            section_heading="",
+            page_number=None,
+            column_schema=column_schema,
+            metadata={
+                "source": "csv",
+                "delimiter": delimiter,
+                "filename": file_detail.filename,
+            },
+            rows=table_rows,
+        )
+        rules = self._table_privacy_rules(upload)
+        tables, table_metrics = self._apply_table_limits([table], upload=upload)
+        if not tables:
+            raise KnowledgeIngestionError("CSV document did not contain rows within configured limits.")
+        table_entities = self._table_row_entities(
+            tables,
+            business_profile=getattr(upload, "business_profile", None),
+            upload=upload,
+        )
+        preview_text = self._table_preview_text(tables, rules=rules)
+        page = PageLayout(
+            page_number=1,
+            width=612,
+            height=792,
+            rotation=0,
+            text_density=len(preview_text.strip()) / float(612 * 792),
+            has_ocr_content=False,
+            content_type="text/csv" if delimiter == "," else "text/tab-separated-values",
+            blocks=[
+                PageBlockPayload(
+                    block_type=KnowledgeBlockType.TABLE,
+                    order_index=0,
+                    text=preview_text or normalized[:2000],
+                    metadata={"source": "csv"},
+                )
+            ],
+            metadata={"table_count": 1, "filename": file_detail.filename},
+        )
+        metadata = {
+            "format": format_hint,
+            "filename": file_detail.filename,
+            "content_type": file_detail.content_type or "",
+            "storage_path": file_detail.storage_path,
+            "table_count": len(tables),
+            "table_truncation": table_metrics,
+        }
+        return ExtractionResult(
+            text=preview_text or normalized,
+            format_hint=format_hint,
+            metadata=metadata,
+            pages=[page],
+            tables=tables,
+            issues=[],
+            entities=table_entities,
+        )
+
+    def _extract_xlsx(
+        self,
+        path: Path,
+        *,
+        file_detail: KnowledgeUploadFile,
+        upload: KnowledgeUpload | None = None,
+    ) -> ExtractionResult:
+        if load_workbook is None:
+            raise KnowledgeIngestionError("XLSX ingestion requires the openpyxl package.")
+        try:
+            workbook = load_workbook(filename=path, read_only=True, data_only=True)
+        except Exception as exc:
+            raise KnowledgeIngestionError(f"Unable to open XLSX file: {exc}") from exc
+        tables: list[TablePayload] = []
+        pages: list[PageLayout] = []
+        order_index = 1
+        rules = self._table_privacy_rules(upload)
+        for sheet_idx, sheet in enumerate(workbook.worksheets, start=1):
+            rows: list[list[str]] = []
+            for raw_row in sheet.iter_rows(values_only=True):
+                values = [
+                    "" if cell is None else str(cell).strip()
+                    for cell in raw_row
+                ]
+                if any(values):
+                    rows.append(values)
+            if not rows:
+                continue
+            header = rows[0]
+            data_rows = rows[1:]
+            max_columns = max(len(row) for row in rows)
+            column_schema: list[str] = []
+            for idx in range(max_columns):
+                label = header[idx].strip() if idx < len(header) else ""
+                column_schema.append(label or f"column_{idx + 1}")
+            table_rows: list[TableRowPayload] = []
+            for row_idx, row in enumerate(data_rows, start=1):
+                cells: list[TableCellPayload] = []
+                values: list[str] = []
+                for col_idx in range(max_columns):
+                    value = row[col_idx] if col_idx < len(row) else ""
+                    values.append(value)
+                    cells.append(
+                        TableCellPayload(
+                            row_index=row_idx,
+                            column_index=col_idx,
+                            column_key=column_schema[col_idx],
+                            raw_text=value,
+                        )
+                    )
+                table_rows.append(
+                    TableRowPayload(
+                        row_index=row_idx,
+                        page_number=sheet_idx,
+                        raw_text="\t".join(values),
+                        metadata={"source": "xlsx", "sheet": sheet.title},
+                        cells=cells,
+                    )
+                )
+            table = TablePayload(
+                order_index=order_index,
+                title=sheet.title or f"Sheet {sheet_idx}",
+                section_heading=sheet.title or "",
+                page_number=sheet_idx,
+                column_schema=column_schema,
+                metadata={
+                    "source": "xlsx",
+                    "sheet_name": sheet.title,
+                    "filename": file_detail.filename,
+                },
+                rows=table_rows,
+            )
+            tables.append(table)
+            preview = self._table_preview_text([table], rules=rules)
+            pages.append(
+                PageLayout(
+                    page_number=sheet_idx,
+                    width=612,
+                    height=792,
+                    rotation=0,
+                    text_density=len(preview.strip()) / float(612 * 792),
+                    has_ocr_content=False,
+                    content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    blocks=[
+                        PageBlockPayload(
+                            block_type=KnowledgeBlockType.TABLE,
+                            order_index=order_index,
+                            text=preview,
+                            metadata={"source": "xlsx", "sheet": sheet.title},
+                        )
+                    ],
+                    metadata={"sheet_name": sheet.title},
+                )
+            )
+            order_index += 1
+        if not tables:
+            raise KnowledgeIngestionError("XLSX workbook did not contain any populated sheets.")
+        tables, table_metrics = self._apply_table_limits(tables, upload=upload)
+        if not tables:
+            raise KnowledgeIngestionError("XLSX workbook exceeded configured limits and no rows were indexed.")
+        preview_text = self._table_preview_text(tables, rules=rules)
+        table_entities = self._table_row_entities(
+            tables,
+            business_profile=getattr(upload, "business_profile", None),
+            upload=upload,
+        )
+        metadata = {
+            "format": "xlsx",
+            "filename": file_detail.filename,
+            "content_type": file_detail.content_type or "",
+            "storage_path": file_detail.storage_path,
+            "table_count": len(tables),
+            "table_truncation": table_metrics,
+        }
+        return ExtractionResult(
+            text=preview_text,
+            format_hint="xlsx",
+            metadata=metadata,
+            pages=pages,
+            tables=tables,
+            issues=[],
+            entities=table_entities,
+        )
+
+    def _extract_json(self, path: Path, *, entity_limit: int | None = None) -> ExtractionResult:
+        raw_text = self._extract_text_file(path)
+        try:
+            data = json.loads(raw_text)
+        except json.JSONDecodeError as exc:
+            raise KnowledgeIngestionError(f"Invalid JSON document: {exc}") from exc
+
+        entities, alias_sources = self._json_entities_from_data(data)
+        if not entities:
+            return ExtractionResult(
+                text=raw_text,
+                format_hint="json",
+                metadata={"json_entity_count": 0},
+                pages=[],
+                tables=[],
+                issues=[
+                    IssuePayload(
+                        code="json_entities_not_detected",
+                        severity=KnowledgeIssueSeverity.WARNING.value,
+                        description="JSON document did not contain a recognizable list of entities.",
+                    )
+                ],
+            )
+
+        limit = max(1, int(entity_limit or self.default_json_entity_limit))
+        limited_entities = entities[: limit]
+        issues: list[IssuePayload] = []
+        truncated_count = max(0, len(entities) - len(limited_entities))
+        if truncated_count:
+            issues.append(
+                IssuePayload(
+                    code="json_entities_truncated",
+                    severity=KnowledgeIssueSeverity.INFO.value,
+                    description=f"Captured first {limit} entities out of {len(entities)}.",
+                )
+            )
+
+        tables: list[TablePayload] = []
+        summaries: list[str] = []
+        for order_index, entity in enumerate(limited_entities, start=1):
+            column_schema = entity["columns"]
+            attributes = entity["attributes"]
+            entity_name = entity["entity_name"]
+            entity_type = entity["entity_type"]
+            aliases = entity.get("aliases") or []
+
+            cells = [
+                TableCellPayload(
+                    row_index=0,
+                    column_index=col_idx,
+                    column_key=column,
+                    raw_text=attributes.get(column, ""),
+                    metadata={},
+                )
+                for col_idx, column in enumerate(column_schema)
+            ]
+            row = TableRowPayload(
+                row_index=0,
+                page_number=None,
+                raw_text=" | ".join(
+                    f"{column}: {attributes.get(column, '')}" for column in column_schema if attributes.get(column)
+                ),
+                metadata={"entity_name": entity_name, **self._alias_metadata(aliases)},
+                cells=cells,
+            )
+            tables.append(
+                TablePayload(
+                    order_index=order_index,
+                    title=entity_name or f"{entity_type.title()} {order_index}",
+                    section_heading=entity_type.title(),
+                    page_number=None,
+                    column_schema=column_schema,
+                    metadata={
+                        "entity_type": entity_type,
+                        "entity_name": entity_name,
+                        "entity_business": entity["entity_business"],
+                        "json_entity": True,
+                        **self._alias_metadata(aliases),
+                    },
+                    rows=[row],
+                )
+            )
+            summary_text = self._render_json_entity_summary(
+                entity_title=entity_name or f"{entity_type.title()} {order_index}",
+                entity_type=entity_type,
+                column_schema=column_schema,
+                attributes=attributes,
+            )
+            if aliases:
+                summary_text = self._append_identifier_line(summary_text, aliases)
+            summaries.append(summary_text)
+
+        text = "\n\n".join(summaries) if summaries else raw_text
+        metadata = {
+            "json_entity_count": len(entities),
+            "json_entities_indexed": len(limited_entities),
+            "json_entity_type": limited_entities[0]["entity_type"] if limited_entities else "record",
+            "json_entity_limit": limit,
+            "json_entities_truncated": truncated_count,
+            "json_alias_sources": sorted(alias_sources),
+        }
+        return ExtractionResult(
+            text=text,
+            format_hint="json",
+            metadata=metadata,
+            pages=[],
+            tables=tables,
+            issues=issues,
+            entities=limited_entities,
+        )
+
+    def _json_entities_from_data(self, data: Any) -> tuple[list[dict[str, Any]], set[str]]:
+        entities: list[dict[str, Any]] = []
+        alias_sources_union: set[str] = set()
+        for record_label, record in self._iter_json_entity_records(data):
+            flattened = self._flatten_json_record(record)
+            if not flattened or not self._is_structured_record(record, flattened):
+                continue
+            entity_index = len(entities)
+            entity_name = self._infer_entity_name(record_label, record, flattened, entity_index)
+            entity_business = (
+                record.get("business")
+                or record.get("company")
+                or record.get("brand")
+                or flattened.get("business")
+                or flattened.get("company")
+            )
+            columns = self._select_entity_columns(flattened)
+            if not columns:
+                columns = list(flattened.keys())[:12]
+            attributes = {column: flattened.get(column, "") for column in columns}
+            aliases, alias_sources = self._collect_aliases_from_record(
+                record=record,
+                flattened=flattened,
+                attributes=attributes,
+                entity_name=entity_name,
+            )
+            alias_sources_union.update(alias_sources)
+            entities.append(
+                {
+                    "entity_type": (record_label.rstrip("s") or record_label or "record").lower(),
+                    "entity_name": entity_name,
+                    "entity_business": entity_business,
+                    "columns": columns,
+                    "attributes": attributes,
+                    "aliases": aliases,
+                    "alias_sources": sorted(alias_sources),
+                    "entity_index": entity_index,
+                }
+            )
+            if len(entities) >= self.max_json_entity_candidates:
+                break
+        return entities, alias_sources_union
+
+    def _iter_json_entity_records(self, data: Any) -> Iterable[tuple[str, Mapping[str, Any]]]:
+        queue: deque[tuple[str, Any]] = deque()
+        if isinstance(data, dict):
+            queue.append(("record", data))
+        elif isinstance(data, list):
+            for item in data:
+                if isinstance(item, dict):
+                    queue.append(("record", item))
+
+        seen_ids: set[int] = set()
+        while queue and len(seen_ids) < self.max_json_entity_candidates:
+            label, record = queue.popleft()
+            if not isinstance(record, dict):
+                continue
+            marker = id(record)
+            if marker in seen_ids:
+                continue
+            seen_ids.add(marker)
+            yield label, record
+            if len(seen_ids) >= self.max_json_entity_candidates:
+                break
+            for key, value in record.items():
+                next_label = key.rstrip("s") or key or label
+                if isinstance(value, dict):
+                    queue.append((next_label, value))
+                elif isinstance(value, list):
+                    for entry in value:
+                        if isinstance(entry, dict):
+                            queue.append((next_label, entry))
+
+    @staticmethod
+    def _flatten_json_record(record: Mapping[str, Any]) -> dict[str, str]:
+        result: dict[str, str] = {}
+
+        def visit(prefix: str, value: Any) -> None:
+            key_prefix = prefix.strip(".")
+            if isinstance(value, dict):
+                for sub_key, sub_val in value.items():
+                    if sub_key is None:
+                        continue
+                    next_prefix = f"{prefix}.{sub_key}" if prefix else str(sub_key)
+                    visit(next_prefix, sub_val)
+            elif isinstance(value, list):
+                if not value:
+                    result[key_prefix] = ""
+                    return
+                scalar_items = [item for item in value if isinstance(item, (str, int, float, bool))]
+                if scalar_items and len(scalar_items) == len(value):
+                    joined = ", ".join(KnowledgeIngestionService._stringify_json_scalar(item) for item in scalar_items[:5])
+                    if len(value) > 5:
+                        joined = f"{joined} …"
+                    result[key_prefix] = joined
+                    return
+                dict_items = [item for item in value if isinstance(item, dict)]
+                if dict_items:
+                    result[f"{key_prefix}_count"] = str(len(dict_items))
+                    first = dict_items[0]
+                    for sub_key, sub_val in list(first.items())[:3]:
+                        nested_key = f"{key_prefix}_0_{sub_key}".strip("_")
+                        result[nested_key] = KnowledgeIngestionService._stringify_json_scalar(sub_val)
+                    return
+                result[key_prefix] = KnowledgeIngestionService._stringify_json_scalar(value)
+            else:
+                result[key_prefix] = KnowledgeIngestionService._stringify_json_scalar(value)
+
+        visit("", record)
+
+        trips = record.get("trips")
+        if isinstance(trips, list):
+            result["trip_count"] = str(len(trips))
+            trip_titles = [
+                item.get("title")
+                for item in trips
+                if isinstance(item, dict) and isinstance(item.get("title"), str)
+            ]
+            if trip_titles:
+                result["trip_titles"] = "; ".join(trip_titles[:3])
+            prices: list[str] = []
+            for trip in trips:
+                if not isinstance(trip, dict):
+                    continue
+                pricing = trip.get("pricing")
+                if isinstance(pricing, dict):
+                    price = (
+                        pricing.get("adult_price_per_person")
+                        or pricing.get("price")
+                        or pricing.get("starts_at")
+                    )
+                    if price:
+                        prices.append(KnowledgeIngestionService._stringify_json_scalar(price))
+                if len(prices) >= 3:
+                    break
+            if prices:
+                result["trip_prices"] = ", ".join(prices)
+
+        return {k: v for k, v in result.items() if k and v is not None}
+
+    @staticmethod
+    def _is_structured_record(record: Mapping[str, Any], flattened: Mapping[str, str]) -> bool:
+        if not flattened:
+            return False
+        key_hints = (
+            "name",
+            "title",
+            "slug",
+            "label",
+            "code",
+            "id",
+            "identifier",
+            "question",
+            "destination",
+            "city",
+            "product",
+            "sku",
+            "reference",
+        )
+        for key in key_hints:
+            direct = record.get(key) if isinstance(record, Mapping) else None
+            indirect = flattened.get(key)
+            value = direct or indirect
+            if isinstance(value, str) and value.strip():
+                return True
+            if isinstance(value, (int, float)):
+                return True
+        populated = sum(1 for value in flattened.values() if value)
+        return populated >= 2
+
+    @staticmethod
+    def _stringify_json_scalar(value: Any) -> str:
+        if value is None:
+            return ""
+        if isinstance(value, bool):
+            return "true" if value else "false"
+        if isinstance(value, (int, float)):
+            return str(value)
+        if isinstance(value, str):
+            return value.strip()
+        return json.dumps(value, ensure_ascii=False)[:500]
+
+    def _table_privacy_rules(self, upload: KnowledgeUpload | None) -> dict[str, Any]:
+        rules = {
+            "sensitive_exact": set(),
+            "sensitive_patterns": [],
+            "row_flag_column": None,
+            "row_flag_values": set(),
+        }
+
+        def merge(config: Mapping[str, Any] | None) -> None:
+            if not isinstance(config, Mapping):
+                return
+            columns = config.get("sensitive_columns") or []
+            patterns = config.get("sensitive_column_patterns") or []
+            for entry in columns:
+                value = str(entry or "").strip()
+                if not value:
+                    continue
+                if self._looks_like_regex(value):
+                    try:
+                        rules["sensitive_patterns"].append(re.compile(value, re.IGNORECASE))
+                    except re.error:
+                        continue
+                else:
+                    rules["sensitive_exact"].add(value.lower())
+            for entry in patterns:
+                value = str(entry or "").strip()
+                if not value:
+                    continue
+                try:
+                    rules["sensitive_patterns"].append(re.compile(value, re.IGNORECASE))
+                except re.error:
+                    continue
+            column = config.get("row_flag_column")
+            if column:
+                canonical = self._canonical_column_name(str(column))
+                if canonical:
+                    rules["row_flag_column"] = canonical
+            values = config.get("row_flag_values") or []
+            combined = set(rules["row_flag_values"])
+            for value in values:
+                token = str(value or "").strip().lower()
+                if token:
+                    combined.add(token)
+            rules["row_flag_values"] = combined
+
+        business_meta = getattr(getattr(upload, "business_profile", None), "metadata", {})
+        upload_meta = getattr(upload, "metadata", {})
+        merge(business_meta.get("table_privacy") or business_meta.get("sensitive_table_config"))
+        merge(upload_meta.get("table_privacy") or upload_meta.get("sensitive_table_config"))
+        return rules
+
+    def _table_ingest_config(self, upload: KnowledgeUpload | None) -> dict[str, Any]:
+        config = {
+            "max_rows": self.default_table_max_rows,
+            "max_columns": self.default_table_max_columns,
+            "column_whitelist": set(),
+        }
+
+        def merge(source: Mapping[str, Any] | None) -> None:
+            if not isinstance(source, Mapping):
+                return
+            rows = source.get("max_rows")
+            columns = source.get("max_columns")
+            whitelist = source.get("column_whitelist")
+            try:
+                if rows is not None:
+                    value = int(rows)
+                    if value > 0:
+                        config["max_rows"] = value
+            except (TypeError, ValueError):
+                pass
+            try:
+                if columns is not None:
+                    value = int(columns)
+                    if value > 0:
+                        config["max_columns"] = value
+            except (TypeError, ValueError):
+                pass
+            if isinstance(whitelist, (list, tuple, set)):
+                normalized = {
+                    self._canonical_column_name(str(item))
+                    for item in whitelist
+                    if self._canonical_column_name(str(item))
+                }
+                if normalized:
+                    config["column_whitelist"] = normalized
+
+        business_meta = getattr(getattr(upload, "business_profile", None), "metadata", {})
+        upload_meta = getattr(upload, "metadata", {})
+        merge(business_meta.get("table_limits"))
+        merge(upload_meta.get("table_limits"))
+        return config
+
+    def _apply_table_limits(
+        self,
+        tables: Sequence[TablePayload],
+        *,
+        upload: KnowledgeUpload | None,
+    ) -> tuple[list[TablePayload], dict[str, int]]:
+        if not tables:
+            return [], {"truncated_tables": 0, "truncated_rows": 0, "truncated_columns": 0}
+        config = self._table_ingest_config(upload)
+        limited: list[TablePayload] = []
+        truncated_tables = 0
+        truncated_rows = 0
+        truncated_columns = 0
+        for table in tables:
+            limited_table, removed_columns, removed_rows, dropped_table = self._limit_table_payload(
+                table,
+                max_rows=config["max_rows"],
+                max_columns=config["max_columns"],
+                column_whitelist=config["column_whitelist"],
+            )
+            truncated_columns += removed_columns
+            truncated_rows += removed_rows
+            if dropped_table:
+                truncated_tables += 1
+                continue
+            limited.append(limited_table)
+        metrics = {
+            "truncated_tables": truncated_tables,
+            "truncated_rows": truncated_rows,
+            "truncated_columns": truncated_columns,
+        }
+        if (truncated_tables or truncated_rows or truncated_columns) and upload:
+            logger.info(
+                "table.truncation upload=%s rows=%s columns=%s tables=%s limits=%s",
+                upload.id,
+                truncated_rows,
+                truncated_columns,
+                truncated_tables,
+                config,
+            )
+        return limited, metrics
+
+    def _limit_table_payload(
+        self,
+        table: TablePayload,
+        *,
+        max_rows: int,
+        max_columns: int,
+        column_whitelist: set[str],
+    ) -> tuple[TablePayload | None, int, int, bool]:
+        schema = list(table.column_schema or [])
+        plan: list[tuple[int, str]] = []
+        removed_columns = 0
+        canonical_whitelist = set(column_whitelist or set())
+        for idx, column in enumerate(schema):
+            label = column or f"column_{idx + 1}"
+            canonical = self._canonical_column_name(label, f"column_{idx + 1}")
+            if canonical_whitelist and canonical not in canonical_whitelist:
+                removed_columns += 1
+                continue
+            if len(plan) >= max_columns:
+                removed_columns += 1
+                continue
+            plan.append((idx, label))
+        if not plan:
+            return None, len(schema), len(table.rows or []), True
+        allowed_indices = [item[0] for item in plan]
+        rows = list(table.rows or [])
+        new_rows: list[TableRowPayload] = []
+        removed_rows = 0
+        for row in rows:
+            if len(new_rows) >= max_rows:
+                removed_rows += 1
+                continue
+            new_cells: list[TableCellPayload] = []
+            cell_lookup = {cell.column_index: cell for cell in row.cells}
+            for new_idx, original_idx in enumerate(allowed_indices):
+                original = cell_lookup.get(original_idx)
+                if original:
+                    new_cells.append(
+                        TableCellPayload(
+                            row_index=row.row_index,
+                            column_index=new_idx,
+                            column_key=plan[new_idx][1],
+                            raw_text=original.raw_text,
+                            normalized_value=original.normalized_value,
+                            bbox=original.bbox,
+                            confidence=original.confidence,
+                            metadata=original.metadata,
+                        )
+                    )
+                else:
+                    new_cells.append(
+                        TableCellPayload(
+                            row_index=row.row_index,
+                            column_index=new_idx,
+                            column_key=plan[new_idx][1],
+                            raw_text="",
+                            normalized_value={},
+                            bbox={},
+                            confidence=None,
+                            metadata={},
+                        )
+                    )
+            row_text = "\t".join(cell.raw_text for cell in new_cells if cell.raw_text) or row.raw_text
+            new_rows.append(
+                TableRowPayload(
+                    row_index=row.row_index,
+                    page_number=row.page_number,
+                    bbox=row.bbox,
+                    raw_text=row_text,
+                    metadata=row.metadata,
+                    cells=new_cells,
+                )
+            )
+        if not new_rows:
+            return None, removed_columns, len(rows), True
+        new_table = TablePayload(
+            order_index=table.order_index,
+            title=table.title,
+            section_heading=table.section_heading,
+            page_number=table.page_number,
+            bbox=table.bbox,
+            column_schema=[label for _, label in plan],
+            data_dictionary=table.data_dictionary,
+            metadata=table.metadata,
+            rows=new_rows,
+        )
+        return new_table, removed_columns, removed_rows, False
+
+    @staticmethod
+    def _looks_like_regex(pattern: str) -> bool:
+        return bool(pattern) and (
+            pattern.startswith("^")
+            or pattern.endswith("$")
+            or any(ch in pattern for ch in "[]().*+?|")
+        )
+
+    @staticmethod
+    def _canonical_column_name(value: str | None, fallback: str | None = None) -> str:
+        if isinstance(value, str):
+            lowered = re.sub(r"\s+", " ", value.strip().lower())
+            if lowered:
+                return lowered
+        if fallback:
+            return fallback.strip().lower()
+        return ""
+
+    def _column_is_sensitive(self, column: str, rules: Mapping[str, Any]) -> bool:
+        canonical = self._canonical_column_name(column)
+        if canonical and canonical in rules.get("sensitive_exact", set()):
+            return True
+        patterns = rules.get("sensitive_patterns") or []
+        combined = column or ""
+        for pattern in patterns:
+            try:
+                if pattern.search(combined) or (canonical and pattern.search(canonical)):
+                    return True
+            except re.error:
+                continue
+        return False
+
+    def _row_is_internal(self, attributes: Mapping[str, str], rules: Mapping[str, Any]) -> bool:
+        column = rules.get("row_flag_column")
+        values = rules.get("row_flag_values") or set()
+        if not column or not values:
+            return False
+        for key, value in attributes.items():
+            canonical = self._canonical_column_name(key)
+            if canonical == column and str(value or "").strip().lower() in values:
+                return True
+        return False
+
+    def _table_preview_text(
+        self,
+        tables: Sequence[TablePayload],
+        *,
+        row_limit: int = 5,
+        rules: Mapping[str, Any] | None = None,
+    ) -> str:
+        if not tables:
+            return ""
+        lines: list[str] = []
+        for table in tables:
+            visible_columns = table.column_schema
+            if rules:
+                visible_columns = [col for col in table.column_schema if not self._column_is_sensitive(col, rules)]
+            if not visible_columns:
+                continue
+            if table.title:
+                lines.append(f"[Table] {table.title}")
+            header_line = "\t".join(visible_columns)
+            if header_line.strip():
+                lines.append(header_line)
+            for row in table.rows[:row_limit]:
+                attributes = self._row_attributes_from_table(row, table.column_schema)
+                if rules and self._row_is_internal(attributes, rules):
+                    continue
+                values = [attributes.get(column, "") for column in visible_columns]
+                if any(values):
+                    lines.append("\t".join(values))
+            lines.append("")
+        return "\n".join(lines).strip()
+
+    def _table_row_entities(
+        self,
+        tables: Sequence[TablePayload],
+        *,
+        business_profile=None,
+        upload: KnowledgeUpload | None = None,
+    ) -> list[dict[str, Any]]:
+        entities: list[dict[str, Any]] = []
+        business_name = getattr(business_profile, "name", None)
+        rules = self._table_privacy_rules(upload)
+        for table_idx, table in enumerate(tables):
+            entity_type = self._derive_table_entity_type(table, table_idx)
+            column_schema = table.column_schema or []
+            for row in table.rows:
+                entity_index = len(entities)
+                attributes = self._row_attributes_from_table(row, column_schema)
+                if self._row_is_internal(attributes, rules):
+                    continue
+                visible_columns = [
+                    column for column in column_schema if not self._column_is_sensitive(column, rules)
+                ]
+                if not visible_columns:
+                    continue
+                limited_attributes = {column: attributes.get(column, "") for column in visible_columns if attributes.get(column)}
+                if not limited_attributes:
+                    continue
+                entity_name = self._infer_table_row_entity_name(
+                    entity_type,
+                    table,
+                    limited_attributes,
+                    row.row_index,
+                )
+                flattened = dict(limited_attributes)
+                flattened["table_title"] = table.title or ""
+                flattened["sheet_name"] = (table.metadata or {}).get("sheet_name", "")
+                flattened["table_order_index"] = str(table.order_index)
+                columns = self._select_entity_columns(limited_attributes)
+                if not columns:
+                    columns = list(limited_attributes.keys())[:12]
+                limited_attributes = {column: limited_attributes.get(column, "") for column in columns}
+                aliases, alias_sources = self._collect_aliases_from_record(
+                    record=flattened,
+                    flattened=flattened,
+                    attributes=limited_attributes,
+                    entity_name=entity_name,
+                )
+                table_meta = {
+                    "table_order_index": table.order_index,
+                    "table_title": table.title,
+                    "section_heading": table.section_heading,
+                    "sheet_name": (table.metadata or {}).get("sheet_name"),
+                    "row_index": row.row_index,
+                }
+                entities.append(
+                    {
+                        "entity_type": entity_type,
+                        "entity_name": entity_name,
+                        "entity_business": business_name,
+                        "columns": columns,
+                        "attributes": limited_attributes,
+                        "aliases": aliases,
+                        "alias_sources": sorted(alias_sources),
+                        "alias_source_type": "table",
+                        "table_metadata": table_meta,
+                        "chunk_strategy": "table_entity",
+                        "table_metadata": table_meta,
+                        "visibility": getattr(upload, "visibility", KnowledgeVisibility.PRIVATE) if upload else KnowledgeVisibility.PRIVATE,
+                        "entity_index": entity_index,
+                    }
+                )
+        return entities
+
+    @staticmethod
+    def _derive_table_entity_type(table: TablePayload, index: int) -> str:
+        candidate = (
+            (table.metadata or {}).get("entity_type")
+            or (table.metadata or {}).get("sheet_name")
+            or table.section_heading
+            or table.title
+            or f"table_{index + 1}"
+        )
+        normalized = re.sub(r"[^a-z0-9]+", "_", (candidate or "").lower())
+        normalized = re.sub(r"_+", "_", normalized).strip("_")
+        return normalized or "table_row"
+
+    def _row_attributes_from_table(
+        self,
+        row: TableRowPayload,
+        column_schema: Sequence[str],
+    ) -> dict[str, str]:
+        attributes: dict[str, str] = {}
+        for cell in row.cells:
+            key = cell.column_key or (column_schema[cell.column_index] if cell.column_index < len(column_schema) else "")
+            key = key.strip() if isinstance(key, str) else ""
+            if not key:
+                key = f"column_{cell.column_index + 1}"
+            value = (cell.raw_text or "").strip()
+            if value:
+                attributes[key] = value
+        # include columns with no explicit cell entry to preserve schema ordering
+        for idx, column in enumerate(column_schema):
+            normalized = column.strip() if isinstance(column, str) else ""
+            if not normalized:
+                normalized = f"column_{idx + 1}"
+            attributes.setdefault(normalized, "")
+        return attributes
+
+    def _row_model_attributes(
+        self,
+        row: KnowledgeUploadTableRow,
+        column_schema: Sequence[str],
+    ) -> dict[str, str]:
+        attributes: dict[str, str] = {}
+        schema = list(column_schema)
+        for cell in row.cells.all():
+            column = cell.column_key or (schema[cell.column_index] if cell.column_index < len(schema) else "")
+            key = column or f"column_{cell.column_index + 1}"
+            attributes[key] = (cell.raw_text or "").strip()
+        if not attributes:
+            for idx, column in enumerate(schema):
+                key = column or f"column_{idx + 1}"
+                attributes.setdefault(key, "")
+        return attributes
+
+    @staticmethod
+    def _infer_table_row_entity_name(
+        entity_type: str,
+        table: TablePayload,
+        attributes: Mapping[str, str],
+        row_index: int,
+    ) -> str:
+        priority_keys = (
+            "name",
+            "title",
+            "plan",
+            "product",
+            "sku",
+            "code",
+            "id",
+            "identifier",
+            "slug",
+            "trip",
+            "customer",
+        )
+        for key in priority_keys:
+            value = attributes.get(key)
+            if value:
+                return value
+        for column in table.column_schema:
+            if not column:
+                continue
+            value = attributes.get(column)
+            if value:
+                return value
+        for value in attributes.values():
+            if value:
+                return value
+        label = entity_type.replace("_", " ").title() or "Row"
+        return f"{label} {row_index}"
+
+    @staticmethod
+    def _infer_entity_name(record_label: str, record: Mapping[str, Any], flattened: Mapping[str, str], index: int) -> str:
+        candidate_keys = ("name", "title", "destination", "city", "label", "slug")
+        for key in candidate_keys:
+            value = record.get(key) if isinstance(record, Mapping) else None
+            if isinstance(value, str) and value.strip():
+                return value.strip()
+            if key in flattened and flattened[key]:
+                return flattened[key]
+        fallback = record.get("id") if isinstance(record, Mapping) else None
+        if fallback:
+            return str(fallback)
+        label = record_label.rstrip("s") or record_label or "record"
+        return f"{label.title()} {index + 1}"
+
+    @staticmethod
+    def _select_entity_columns(flattened: Mapping[str, str]) -> list[str]:
+        if not flattened:
+            return []
+        preferred = [
+            "name",
+            "title",
+            "destination",
+            "slug",
+            "city",
+            "region",
+            "trip_count",
+            "trip_titles",
+            "trip_prices",
+            "adult_price_per_person",
+            "child_price_per_person",
+            "currency",
+            "business",
+            "duration_days",
+        ]
+        columns: list[str] = []
+        for key in preferred:
+            if key in flattened and flattened[key]:
+                columns.append(key)
+        for key in flattened.keys():
+            if key not in columns and flattened[key]:
+                columns.append(key)
+        return columns[:12]
+
+    @staticmethod
+    def _render_json_entity_summary(
+        *,
+        entity_title: str,
+        entity_type: str,
+        column_schema: Sequence[str],
+        attributes: Mapping[str, str],
+    ) -> str:
+        lines = [f"{entity_type.title()}: {entity_title}"]
+        for column in column_schema[:8]:
+            value = attributes.get(column)
+            if value:
+                lines.append(f"- {column}: {value}")
+        return "\n".join(lines)
+
+    @staticmethod
+    def _looks_like_identifier(candidate: str) -> bool:
+        if not candidate:
+            return False
+        token = candidate.strip()
+        if not token:
+            return False
+        lowered = token.lower()
+        if len(lowered) >= ALIAS_MIN_LENGTH:
+            return True
+        if len(lowered) >= ALIAS_SYMBOL_MIN_LENGTH and any(ch in "-_0123456789" for ch in lowered):
+            return True
+        return bool(IDENTIFIER_TOKEN_PATTERN.fullmatch(lowered))
+
+    @staticmethod
+    def _normalize_alias_value(value: str) -> str:
+        if not value:
+            return ""
+        normalized = re.sub(r"\s+", "-", value.strip().lower())
+        normalized = re.sub(r"-{2,}", "-", normalized)
+        normalized = normalized.strip("-")
+        if len(normalized) > ALIAS_MAX_LENGTH:
+            normalized = normalized[:ALIAS_MAX_LENGTH]
+        return normalized
+
+    @staticmethod
+    def _collect_aliases_from_record(
+        *,
+        record: Mapping[str, Any],
+        flattened: Mapping[str, str],
+        attributes: Mapping[str, str],
+        entity_name: str,
+    ) -> tuple[list[str], set[str]]:
+        alias_candidates: list[str] = []
+        alias_sources: set[str] = set()
+        seen: set[str] = set()
+
+        def maybe_add(value: Any, source: str) -> None:
+            if not isinstance(value, str):
+                return
+            candidate = value.strip()
+            if not candidate:
+                return
+            if len(candidate) > ALIAS_MAX_LENGTH:
+                candidate = candidate[:ALIAS_MAX_LENGTH]
+            if not KnowledgeIngestionService._looks_like_identifier(candidate):
+                return
+            lowered = candidate.lower()
+            if lowered in seen:
+                return
+            seen.add(lowered)
+            alias_candidates.append(candidate)
+            alias_sources.add(source)
+
+        maybe_add(entity_name, "entity_name")
+        for key in ALIAS_KEYWORDS:
+            maybe_add(record.get(key), f"record_{key}")
+        for key, value in flattened.items():
+            key_lower = key.lower()
+            if any(keyword in key_lower for keyword in ALIAS_KEYWORDS):
+                maybe_add(value, f"flattened_{key}")
+        for key, value in attributes.items():
+            key_lower = key.lower()
+            if any(keyword in key_lower for keyword in ALIAS_KEYWORDS):
+                maybe_add(value, f"attribute_{key}")
+        # Include values that look like identifiers even if the key didn't match
+        for value in flattened.values():
+            if isinstance(value, str) and KnowledgeIngestionService._looks_like_identifier(value):
+                maybe_add(value, "inline_pattern")
+        return alias_candidates[:8], alias_sources
+
+    @staticmethod
+    def _alias_metadata(aliases: Sequence[str]) -> dict[str, Any]:
+        normalized: list[str] = []
+        seen: set[str] = set()
+        for alias in aliases:
+            if not alias:
+                continue
+            trimmed = alias.strip()
+            if not trimmed:
+                continue
+            if len(trimmed) > ALIAS_MAX_LENGTH:
+                trimmed = trimmed[:ALIAS_MAX_LENGTH]
+            lower = trimmed.lower()
+            if lower in seen:
+                continue
+            seen.add(lower)
+            normalized.append(trimmed)
+        if not normalized:
+            return {}
+        alias_string = " ".join(sorted(seen))
+        return {"aliases": normalized, "alias_string": alias_string}
+
+    @staticmethod
+    def _append_identifier_line(text: str, aliases: Sequence[str]) -> str:
+        alias_list = [alias for alias in aliases if alias]
+        if not alias_list:
+            return text
+        if "Identifiers:" in text:
+            return text
+        suffix = "Identifiers: " + ", ".join(alias_list[:6])
+        return f"{text.rstrip()}\n{suffix}"
+
+    def _extract_inline_identifiers(self, text: str) -> list[str]:
+        if not text:
+            return []
+        aliases: list[str] = []
+        seen: set[str] = set()
+        for match in IDENTIFIER_TOKEN_PATTERN.finditer(text.lower()):
+            alias = match.group().strip()
+            if not alias:
+                continue
+            if len(alias) > ALIAS_MAX_LENGTH:
+                alias = alias[:ALIAS_MAX_LENGTH]
+            if not self._looks_like_identifier(alias):
+                continue
+            if alias not in seen:
+                seen.add(alias)
+                aliases.append(alias)
+        for match in ID_LINE_PATTERN.finditer(text):
+            alias = match.group(1).strip()
+            if len(alias) > ALIAS_MAX_LENGTH:
+                alias = alias[:ALIAS_MAX_LENGTH]
+            alias_lower = alias.lower()
+            if alias_lower and alias_lower not in seen and self._looks_like_identifier(alias):
+                seen.add(alias_lower)
+                aliases.append(alias)
+        return aliases[:6]
+
+    def _inject_identifiers_into_text(self, text: str) -> tuple[str, list[str]]:
+        aliases = self._extract_inline_identifiers(text)
+        if aliases:
+            text = self._append_identifier_line(text, aliases)
+        return text, aliases
+
+    @staticmethod
+    def _finalize_alias_metadata(metadata: dict[str, Any]) -> None:
+        aliases = metadata.get("aliases")
+        if not aliases:
+            metadata.pop("alias_string", None)
+            return
+        normalized: list[str] = []
+        seen: set[str] = set()
+        for alias in aliases if isinstance(aliases, (list, tuple)) else [aliases]:
+            if not alias:
+                continue
+            trimmed = str(alias).strip()
+            if not trimmed:
+                continue
+            if len(trimmed) > ALIAS_MAX_LENGTH:
+                trimmed = trimmed[:ALIAS_MAX_LENGTH]
+            lower = trimmed.lower()
+            if lower in seen:
+                continue
+            seen.add(lower)
+            normalized.append(trimmed)
+        metadata["aliases"] = normalized
+        metadata["alias_string"] = " ".join(sorted(seen))
+
     @staticmethod
     def _extract_text_file(path: Path) -> str:
         encodings = ("utf-8", "utf-16", "latin-1")
@@ -1215,9 +4331,12 @@ class KnowledgeIngestionService:
     @staticmethod
     def _normalize_text(raw: str) -> str:
         text = raw.replace("\x00", " ").replace("\r", "\n")
-        text = re.sub(r"[ \t]+", " ", text)
+        # Collapse runs of spaces only; keep tabs intact for TSV
+        text = re.sub(r"[ ]{2,}", " ", text)
+        # Do NOT touch \t
         text = re.sub(r"\n{3,}", "\n\n", text)
         return text.strip()
+
 
     @staticmethod
     def _build_summary(content: str, limit: int = 500) -> str:

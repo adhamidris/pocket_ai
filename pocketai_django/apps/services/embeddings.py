@@ -41,6 +41,34 @@ class LocalEmbeddingService:
         return vectors[0] if vectors else []
 
 
+def build_embedding_service(preferred_provider: str | None = None):
+    provider = (preferred_provider or os.getenv("EMBED_PROVIDER") or "local").lower()
+    if provider == "openai":
+        try:
+            return EmbeddingService()
+        except EmbeddingProviderError as exc:
+            logger.info("OpenAI embedding unavailable (%s); falling back to local", exc)
+            if preferred_provider == "openai":
+                raise
+            try:
+                return LocalEmbeddingService()
+            except Exception as exc2:
+                logger.info("Local embeddings unavailable: %s", exc2)
+                return None
+    elif provider == "local":
+        try:
+            return LocalEmbeddingService()
+        except Exception as exc:
+            logger.info("Local embeddings disabled: %s", exc)
+            return None
+    else:
+        logger.warning("Unknown embedding provider '%s'; defaulting to local", provider)
+        return build_embedding_service("local")
+
+
+__all__ = ["EmbeddingService", "EmbeddingProviderError", "LocalEmbeddingService", "build_embedding_service"]
+
+
 class EmbeddingProviderError(RuntimeError):
     """Raised when embeddings cannot be generated."""
 
@@ -100,27 +128,3 @@ class EmbeddingService:
     def embed_text(self, text: str) -> list[float]:
         vectors = self.embed_texts([text])
         return vectors[0] if vectors else []
-
-
-def build_embedding_service():
-    provider = (os.getenv("EMBED_PROVIDER") or "local").lower()
-    if provider == "openai":
-        try:
-            return EmbeddingService()  # your existing OpenAI class
-        except EmbeddingProviderError as exc:
-            logger.info("OpenAI embedding unavailable (%s); falling back to local", exc)
-            try:
-                return LocalEmbeddingService()
-            except Exception as exc2:
-                logger.info("Local embeddings unavailable: %s", exc2)
-                return None
-    else:
-        try:
-            return LocalEmbeddingService()
-        except Exception as exc:
-            logger.info("Local embeddings disabled: %s", exc)
-            return None
-
-
-
-__all__ = ["EmbeddingService", "EmbeddingProviderError", "build_embedding_service"]

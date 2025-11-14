@@ -1,11 +1,15 @@
 from __future__ import annotations
 
+from collections import OrderedDict
+
+from django.conf import settings
 from django.core.cache import cache
 from django.db.models.expressions import F
 from pgvector.django import CosineDistance  # if using cosine
 from django.contrib.postgres.search import TrigramSimilarity
 
 import time
+import hashlib
 import dataclasses
 import logging
 import uuid
@@ -14,13 +18,15 @@ from types import SimpleNamespace
 import re
 from typing import Callable, Iterable, Mapping, Sequence
 
-from django.db import transaction
-from django.db.models import Prefetch
+from django.db import connection, transaction
+from django.db.models import Prefetch, Q
 from django.utils import timezone
 
 from apps.accounts.models import (
     AgentProfile,
+    KnowledgeAlias,
     KnowledgeStatus,
+    KnowledgeVisibility,
     KnowledgeUpload,
     KnowledgeUploadChunk,
     KnowledgeUploadIssue,
@@ -40,7 +46,15 @@ from apps.conversations.models import (
 from apps.customers.models import Customer, CustomerRecordOrigin
 from apps.services.ai_prompt_builder import PromptBuilder, PromptBundle
 from apps.services.embeddings import build_embedding_service, EmbeddingProviderError
+from apps.services.feature_flags import FeatureFlagService, FeatureState
 from apps.services.llm_provider import BaseLLMProvider, PromptGenerationError
+from apps.services.quality_monitor import QualityMonitor
+from core.metrics import latency_monitor
+
+try:  # optional dependency
+    from sentence_transformers import CrossEncoder
+except ImportError:  # pragma: no cover - dependency not installed by default
+    CrossEncoder = None
 
 
 logger = logging.getLogger(__name__)
@@ -188,6 +202,163 @@ class KnowledgeSnippet:
     topic_hints: Sequence[str] = dataclasses.field(default_factory=tuple)
     is_pinned: bool = False
 
+    # NEW: carry chunk identity alongside upload
+    upload_id: uuid.UUID | None = None
+    chunk_id: uuid.UUID | None = None
+    chunk_index: int | None = None
+    entity_type: str | None = None
+    entity_name: str | None = None
+    entity_business: str | None = None
+    is_table_chunk: bool = False
+    aliases: Sequence[str] = dataclasses.field(default_factory=tuple)
+    search_stage: str | None = None
+    confidence_score: float | None = None
+    truncated: bool = False
+    source_diagnostics: Mapping[str, object] = dataclasses.field(default_factory=dict)
+    structured_table_count: int = 0
+    issue_count: int = 0
+    structured_table_hint: str | None = None
+
+
+@dataclasses.dataclass(frozen=True)
+class KnowledgeSearchResult:
+    snippets: tuple[KnowledgeSnippet, ...]
+    status: str
+    diagnostics: Mapping[str, object] = dataclasses.field(default_factory=dict)
+
+
+@dataclasses.dataclass(frozen=True)
+class QueryTraits:
+    original: str
+    normalized: str
+    tokens: tuple[str, ...]
+    alias_candidates: tuple[str, ...]
+    token_count: int
+    has_digits: bool
+    has_dashes: bool
+    has_underscores: bool
+    is_identifier_like: bool
+
+
+@dataclasses.dataclass(frozen=True)
+class AliasSearchResult:
+    hits: tuple["ChunkResult", ...]
+    diagnostics: Mapping[str, object] = dataclasses.field(default_factory=dict)
+    short_circuit: bool = False
+
+
+@dataclasses.dataclass(frozen=True)
+class HybridSearchResult:
+    hits: tuple["ChunkResult", ...]
+    query_vector: list[float] | None
+    diagnostics: Mapping[str, object] = dataclasses.field(default_factory=dict)
+
+
+@dataclasses.dataclass
+class ChunkResult:
+    chunk: KnowledgeUploadChunk
+    source_stage: str
+    vector_distance: float | None = None
+    lexical_score: float = 0.0
+    alias_confidence: float = 0.0
+    recency_score: float = 0.0
+    rerank_score: float = 0.0
+    diagnostics: dict[str, object] = dataclasses.field(default_factory=dict)
+
+    @property
+    def chunk_id(self) -> uuid.UUID:
+        return self.chunk.id
+
+
+class QueryNormalizer:
+    _TOKEN_SPLIT = re.compile(r"[^a-z0-9]+")
+    _SPACE_PATTERN = re.compile(r"\s+")
+    _IDENTIFIER_PATTERN = re.compile(r"[a-z0-9][a-z0-9_\\-]{2,}")
+
+    @classmethod
+    def normalize(cls, query: str) -> QueryTraits:
+        original = (query or "").strip()
+        lowered = original.lower()
+        collapsed = cls._SPACE_PATTERN.sub(" ", lowered).strip()
+        tokens = tuple(token for token in cls._TOKEN_SPLIT.split(collapsed) if token)
+        alias_candidates = cls._alias_candidates(original, tokens)
+        has_digits = any(ch.isdigit() for ch in collapsed)
+        has_dashes = "-" in collapsed
+        has_underscores = "_" in collapsed
+        is_identifier_like = cls._is_identifier_like(
+            alias_candidates,
+            tokens,
+            has_digits=has_digits,
+            has_dashes=has_dashes,
+            has_underscores=has_underscores,
+        )
+        normalized = collapsed or original
+        return QueryTraits(
+            original=original,
+            normalized=normalized,
+            tokens=tokens,
+            alias_candidates=alias_candidates,
+            token_count=len(tokens),
+            has_digits=has_digits,
+            has_dashes=has_dashes,
+            has_underscores=has_underscores,
+            is_identifier_like=is_identifier_like,
+        )
+
+    @classmethod
+    def _alias_candidates(cls, original: str, tokens: Sequence[str]) -> tuple[str, ...]:
+        ordered: dict[str, None] = {}
+        raw_candidates = [original]
+        raw_candidates.extend(tokens)
+        for candidate in raw_candidates:
+            canonical = cls._canonical_alias(candidate)
+            if not canonical:
+                continue
+            for variant in cls._alias_variants(canonical):
+                if variant and variant not in ordered:
+                    ordered[variant] = None
+        return tuple(ordered.keys())
+
+    @classmethod
+    def _canonical_alias(cls, value: str) -> str:
+        if not value:
+            return ""
+        lowered = value.strip().lower()
+        if not lowered:
+            return ""
+        sanitized = re.sub(r"[^a-z0-9\\-_\\s]", "", lowered)
+        sanitized = sanitized.replace("_", "-")
+        sanitized = cls._SPACE_PATTERN.sub("-", sanitized)
+        sanitized = re.sub(r"-{2,}", "-", sanitized)
+        return sanitized.strip("-")
+
+    @staticmethod
+    def _alias_variants(value: str) -> tuple[str, ...]:
+        variants: dict[str, None] = {}
+        for form in (value, value.replace("-", "_"), value.replace("-", ""), value.replace("_", ""), value.replace("_", "-")):
+            if form and form not in variants:
+                variants[form] = None
+        return tuple(variants.keys())
+
+    @classmethod
+    def _is_identifier_like(
+        cls,
+        alias_candidates: Sequence[str],
+        tokens: Sequence[str],
+        *,
+        has_digits: bool,
+        has_dashes: bool,
+        has_underscores: bool,
+    ) -> bool:
+        if not tokens:
+            return False
+        if len(tokens) <= 3 and (has_digits or has_dashes or has_underscores):
+            return True
+        for candidate in alias_candidates:
+            if candidate and cls._IDENTIFIER_PATTERN.fullmatch(candidate):
+                return True
+        return any(cls._IDENTIFIER_PATTERN.fullmatch(token) for token in tokens if token)
+
 
 @dataclasses.dataclass(frozen=True)
 class PlannedAction:
@@ -246,164 +417,1399 @@ class KnowledgeSearchService:
 
     def __init__(self) -> None:
         self.embedding_service = build_embedding_service()
+        self.max_chunks_per_upload = max(
+            1,
+            int(getattr(settings, "RAG_MAX_CHUNKS_PER_UPLOAD", 2)),
+        )
+        self.search_snippet_limit = max(1, int(getattr(settings, "RAG_MAX_SNIPPETS_PER_SEARCH", 3)))
+        self.alias_chunks_per_upload_default = max(
+            1,
+            int(getattr(settings, "RAG_ALIAS_MAX_CHUNKS_PER_UPLOAD", self.max_chunks_per_upload)),
+        )
+        self.ann_chunks_per_upload_default = max(
+            1,
+            int(getattr(settings, "RAG_ANN_MAX_CHUNKS_PER_UPLOAD", self.max_chunks_per_upload)),
+        )
+        self.search_preview_char_limit = max(200, int(getattr(settings, "RAG_SEARCH_PREVIEW_CHAR_LIMIT", 800)))
+        self.token_gate_fallback = max(
+            0,
+            int(getattr(settings, "RAG_TOKEN_GATE_FALLBACK", 6)),
+        )
+        self.rerank_pool = max(10, int(getattr(settings, "RAG_RERANK_POOL", 60)))
+        self.mmr_lambda = float(getattr(settings, "RAG_MMR_LAMBDA", 0.7))
+        self.entity_neighbor_min = max(1, int(getattr(settings, "RAG_ENTITY_NEIGHBOR_MIN", 2)))
+        self.vector_distance_ceiling = float(getattr(settings, "RAG_VECTOR_DISTANCE_CEILING", 0.4))
+        self.short_query_ann_multiplier = float(getattr(settings, "RAG_SHORT_QUERY_ANN_MULTIPLIER", 3.0))
+        self.read_ready_threshold = max(200, int(getattr(settings, "RAG_READY_CHAR_THRESHOLD", 900)))
+        self.table_ready_threshold = max(200, int(getattr(settings, "RAG_READY_TABLE_THRESHOLD", 600)))
+        self.cross_encoder_weight = float(getattr(settings, "RAG_CROSS_ENCODER_WEIGHT", 0.6))
+        self.cross_encoder = self._build_cross_encoder()
+        self.alias_result_cap = max(1, int(getattr(settings, "RAG_ALIAS_RESULTS_LIMIT", 4)))
+        self.alias_neighbor_window = max(1, int(getattr(settings, "RAG_ALIAS_NEIGHBOR_WINDOW", 1)))
+        self.alias_cache_ttl = max(60, int(getattr(settings, "RAG_ALIAS_CACHE_TTL", 900)))
+        self.alias_fts_limit = max(5, int(getattr(settings, "RAG_ALIAS_FTS_LIMIT", 20)))
+        self.alias_fts_threshold = float(getattr(settings, "RAG_ALIAS_FTS_THRESHOLD", 0.35))
+        self.query_vector_cache_ttl = max(60, int(getattr(settings, "RAG_QUERY_VECTOR_CACHE_TTL", 300)))
+        self.query_vector_cache_max_bytes = max(1024, int(getattr(settings, "RAG_QUERY_VECTOR_CACHE_MAX_BYTES", 16384)))
+        self.ivfflat_probes = max(1, int(getattr(settings, "RAG_IVFFLAT_PROBES", 8)))
+        self.rerank_weights = {
+            "vector": float(getattr(settings, "RAG_WEIGHT_VECTOR", 1.0)),
+            "lexical": float(getattr(settings, "RAG_WEIGHT_LEXICAL", 0.8)),
+            "alias": float(getattr(settings, "RAG_WEIGHT_ALIAS", 1.2)),
+            "entity": float(getattr(settings, "RAG_WEIGHT_ENTITY", 0.4)),
+            "recency": float(getattr(settings, "RAG_WEIGHT_RECENCY", 0.25)),
+        }
+        self.business_override_key = getattr(settings, "RAG_BUSINESS_OVERRIDE_KEY", "rag_overrides")
+        self.window_cache_limit = max(32, int(getattr(settings, "RAG_NEIGHBOR_WINDOW_CACHE_SIZE", 128)))
+        self._window_cache: OrderedDict[tuple[uuid.UUID, int, int], list[KnowledgeUploadChunk]] = OrderedDict()
+        self.structured_count_cache_limit = 256
+        self._structured_count_cache: OrderedDict[uuid.UUID, tuple[int, int]] = OrderedDict()
+        self.table_result_cap = max(1, int(getattr(settings, "RAG_TABLE_RESULT_LIMIT", 3)))
+        self.table_similarity_threshold = float(getattr(settings, "RAG_TABLE_SIMILARITY_THRESHOLD", 0.3))
+        self.table_column_cache_limit = max(8, int(getattr(settings, "RAG_TABLE_COLUMN_CACHE_SIZE", 32)))
+        self.table_column_sample_limit = max(25, int(getattr(settings, "RAG_TABLE_COLUMN_SAMPLE", 200)))
+        self._table_column_cache: OrderedDict[uuid.UUID, set[str]] = OrderedDict()
+        self.table_rerank_floor = float(getattr(settings, "RAG_TABLE_RERANK_FLOOR", 0.35))
+        self.table_vector_floor = float(getattr(settings, "RAG_TABLE_VECTOR_FLOOR", 0.45))
+        self.table_chunk_sample_limit = max(3, int(getattr(settings, "RAG_TABLE_CHUNK_SAMPLE", 6)))
+        self.table_query_keywords = {
+            "table",
+            "column",
+            "row",
+            "sheet",
+            "spreadsheet",
+            "excel",
+            "csv",
+            "tab",
+            "grid",
+        }
         logger.info("emb.provider %s model=%s", type(self.embedding_service).__name__ if self.embedding_service else None, getattr(self.embedding_service, "model", None))
 
+    def _business_override(self, business_profile, key: str, default: int | float) -> int | float:
+        metadata = getattr(business_profile, "metadata", None)
+        overrides = metadata.get(self.business_override_key) if isinstance(metadata, dict) else None
+        if not isinstance(overrides, dict):
+            return default
+        value = overrides.get(key)
+        if isinstance(value, (int, float)):
+            try:
+                return type(default)(value)
+            except (TypeError, ValueError):
+                return default
+        return default
 
-    def search(self, *, business_profile, query: str, limit: int = 3) -> Sequence[KnowledgeSnippet]:
-        normalized_query = (query or "").strip()
-        if normalized_query:
-            chunk_snippets = self._search_chunks(business_profile, normalized_query, limit=limit)
-            if chunk_snippets:
-                return tuple(chunk_snippets)
-        return tuple(self._fallback_snippets(business_profile=business_profile, limit=limit))
+    def _snippet_limit_for_business(self, business_profile, requested: int | None = None) -> int:
+        base = requested or self.search_snippet_limit
+        override = self._business_override(business_profile, "max_snippets_per_search", base)
+        return max(1, int(override))
 
-    def _search_chunks(self, business_profile, query: str, limit: int) -> Sequence[KnowledgeSnippet]:
-        hits = self._chunk_hits(business_profile, query, limit=limit * 3)
+    def _effective_chunk_cap(self, business_profile, pathway: str) -> int:
+        if pathway == "alias":
+            default = self.alias_chunks_per_upload_default
+            key = "alias_chunks_per_upload"
+        else:
+            default = self.ann_chunks_per_upload_default
+            key = "ann_chunks_per_upload"
+        override = self._business_override(business_profile, key, default)
+        return max(1, int(override))
+
+    def _window_cache_get(self, upload_id: uuid.UUID, start: int, end: int) -> list[KnowledgeUploadChunk] | None:
+        key = (upload_id, start, end)
+        cached = self._window_cache.get(key)
+        if cached is not None:
+            self._window_cache.move_to_end(key)
+        return cached
+
+    def _window_cache_set(self, upload_id: uuid.UUID, start: int, end: int, chunks: list[KnowledgeUploadChunk]) -> None:
+        key = (upload_id, start, end)
+        self._window_cache[key] = chunks
+        self._window_cache.move_to_end(key)
+        if len(self._window_cache) > self.window_cache_limit:
+            self._window_cache.popitem(last=False)
+
+    def _structured_counts(self, upload: KnowledgeUpload) -> tuple[int, int]:
+        cached = self._structured_count_cache.get(upload.id)
+        if cached:
+            self._structured_count_cache.move_to_end(upload.id)
+            return cached
+        metadata = upload.ingestion_metadata if isinstance(upload.ingestion_metadata, dict) else {}
+        exports = metadata.get("structured_exports") if isinstance(metadata, dict) else None
+        tables = issues = 0
+        if isinstance(exports, dict):
+            tables = len(exports.get("tables") or [])
+            issues = len(exports.get("issues") or [])
+        else:
+            try:
+                tables = upload.tables.count()
+            except Exception:
+                tables = 0
+            try:
+                issues = upload.issues.count()
+            except Exception:
+                issues = 0
+        counts = (tables, issues)
+        self._structured_count_cache[upload.id] = counts
+        self._structured_count_cache.move_to_end(upload.id)
+        if len(self._structured_count_cache) > self.structured_count_cache_limit:
+            self._structured_count_cache.popitem(last=False)
+        return counts
+
+
+    def analyze_query(self, query: str) -> QueryTraits:
+        return QueryNormalizer.normalize(query)
+
+    def search(
+        self,
+        *,
+        business_profile,
+        query: str,
+        limit: int | None = None,
+        traits: QueryTraits | None = None,
+        alias_result: AliasSearchResult | None = None,
+    ) -> KnowledgeSearchResult:
+        traits = traits or self.analyze_query(query)
+        overall_start = time.perf_counter()
+        feature_state = FeatureFlagService.snapshot(business_profile)
+        request_id = uuid.uuid4()
+        limit = self._snippet_limit_for_business(business_profile, limit)
+        table_context = self._table_query_context(business_profile, traits)
+        if alias_result is None:
+            alias_result = self.search_by_alias(
+                business_profile=business_profile,
+                traits=traits,
+                limit=self.alias_result_cap,
+                feature_state=feature_state,
+            )
+        diagnostics: dict[str, object] = {
+            "original_query": traits.original,
+            "normalized_query": traits.normalized,
+            "identifier_like": traits.is_identifier_like,
+            "feature_flags": feature_state.as_dict(),
+            "request_id": str(request_id),
+            "tabular_intent": table_context["has_intent"],
+            "tabular_columns_matched": sorted(table_context["matched_columns"])[:5],
+        }
+        if alias_result.diagnostics:
+            diagnostics.update(dict(alias_result.diagnostics))
+        if alias_result.short_circuit and alias_result.hits:
+            chunk_ids = [hit.chunk_id for hit in alias_result.hits[: max(limit, self.alias_result_cap)]]
+            neighbor = max(1, self.alias_neighbor_window)
+            snippets = tuple(
+                self.load_chunk_contents(
+                    business_profile=business_profile,
+                    chunk_ids=chunk_ids,
+                    neighbor=neighbor,
+            )
+            )[:limit]
+            diagnostics["path"] = "alias_exact"
+            logger.info(
+                "rag.alias.short_circuit business=%s query=%s hits=%s neighbor=%s request=%s",
+                business_profile.id,
+                traits.normalized,
+                len(snippets),
+                neighbor,
+                diagnostics["request_id"],
+            )
+            status = "ok" if snippets else "not_found"
+            diagnostics["total_duration_ms"] = self._duration_ms(overall_start)
+            result_obj = KnowledgeSearchResult(snippets=snippets, status=status, diagnostics=diagnostics)
+            self._record_retrieval_event(
+                business_profile=business_profile,
+                traits=traits,
+                alias_result=alias_result,
+                result=result_obj,
+                feature_state=feature_state,
+            )
+            self._log_search_summary(
+                business_profile=business_profile,
+                request_id=request_id,
+                result=result_obj,
+            )
+            return result_obj
+
+        chunk_hits = self._chunk_hits(
+            business_profile,
+            traits=traits,
+            limit=max(limit * 3, self.max_chunks_per_upload * limit),
+            alias_result=alias_result,
+            feature_state=feature_state,
+        )
+        table_snippets: tuple[KnowledgeSnippet, ...] = tuple()
+        table_reason: str | None = None
+        if table_context["has_intent"]:
+            should_run_table = False
+            if not chunk_hits:
+                should_run_table = True
+                table_reason = "no_chunk_candidates"
+            elif self._chunk_hits_are_weak(chunk_hits):
+                should_run_table = True
+                table_reason = "weak_chunk_candidates"
+            if should_run_table:
+                table_snippets = self._table_search_snippets(
+                    business_profile=business_profile,
+                    query_text=traits.normalized or traits.original,
+                    limit=limit,
+                    matched_columns=table_context["matched_columns"],
+                )
+
+        if table_snippets:
+            diagnostics["path"] = "table_direct" if not chunk_hits else "table_blended"
+            diagnostics["reason"] = table_reason or diagnostics.get("reason") or "table_search"
+            diagnostics["total_duration_ms"] = self._duration_ms(overall_start)
+            blended: list[KnowledgeSnippet] = list(table_snippets[:limit])
+            remaining = max(0, limit - len(blended))
+            if chunk_hits and remaining:
+                blended.extend(
+                    self._search_chunks(
+                        chunk_hits,
+                        limit=remaining,
+                        business_profile=business_profile,
+                        pathway="hybrid",
+                    )
+                )
+            status = "ok" if blended else "not_found"
+            result_obj = KnowledgeSearchResult(snippets=tuple(blended), status=status, diagnostics=diagnostics)
+            self._record_retrieval_event(
+                business_profile=business_profile,
+                traits=traits,
+                alias_result=alias_result,
+                result=result_obj,
+                feature_state=feature_state,
+            )
+            self._log_search_summary(
+                business_profile=business_profile,
+                request_id=request_id,
+                result=result_obj,
+            )
+            return result_obj
+
+        if not chunk_hits:
+            diagnostics.setdefault("reason", "no_candidates")
+            diagnostics["path"] = diagnostics.get("path") or "not_found"
+            fallback = tuple(self._fallback_snippets(business_profile=business_profile, limit=limit))
+            status = "ok" if fallback else "not_found"
+            diagnostics["reason"] = diagnostics.get("reason") or ("fallback_used" if fallback else "no_candidates")
+            logger.info(
+                "rag.search.empty business=%s query=%s fallback=%s reason=%s request=%s",
+                business_profile.id,
+                traits.normalized,
+                len(fallback),
+                diagnostics["reason"],
+                diagnostics["request_id"],
+            )
+            diagnostics["total_duration_ms"] = self._duration_ms(overall_start)
+            result_obj = KnowledgeSearchResult(snippets=fallback, status=status, diagnostics=diagnostics)
+            self._record_retrieval_event(
+                business_profile=business_profile,
+                traits=traits,
+                alias_result=alias_result,
+                result=result_obj,
+                feature_state=feature_state,
+            )
+            self._log_search_summary(
+                business_profile=business_profile,
+                request_id=request_id,
+                result=result_obj,
+            )
+            return result_obj
+
+        snippets = tuple(
+            self._search_chunks(
+                chunk_hits,
+                limit=limit,
+                business_profile=business_profile,
+                pathway="hybrid",
+            )
+        )
+        if snippets:
+            diagnostics["path"] = diagnostics.get("path") or "hybrid"
+            diagnostics["total_duration_ms"] = self._duration_ms(overall_start)
+            result_obj = KnowledgeSearchResult(snippets=snippets, status="ok", diagnostics=diagnostics)
+            self._record_retrieval_event(
+                business_profile=business_profile,
+                traits=traits,
+                alias_result=alias_result,
+                result=result_obj,
+                feature_state=feature_state,
+            )
+            self._log_search_summary(
+                business_profile=business_profile,
+                request_id=request_id,
+                result=result_obj,
+            )
+            return result_obj
+
+        fallback = tuple(self._fallback_snippets(business_profile=business_profile, limit=limit))
+        diagnostics["path"] = "fallback"
+        diagnostics["reason"] = "fallback_used"
+        status = "ok" if fallback else "not_found"
+        diagnostics["total_duration_ms"] = self._duration_ms(overall_start)
+        result_obj = KnowledgeSearchResult(snippets=fallback, status=status, diagnostics=diagnostics)
+        self._record_retrieval_event(
+            business_profile=business_profile,
+            traits=traits,
+            alias_result=alias_result,
+            result=result_obj,
+            feature_state=feature_state,
+        )
+        self._log_search_summary(
+            business_profile=business_profile,
+            request_id=request_id,
+            result=result_obj,
+        )
+        return result_obj
+
+    def _build_cross_encoder(self):
+        enabled = bool(getattr(settings, "RAG_ENABLE_CROSS_ENCODER", False))
+        if not enabled or CrossEncoder is None:
+            if enabled and CrossEncoder is None:
+                logger.warning("Cross-encoder reranker requested but sentence_transformers is not installed.")
+            return None
+        model_name = getattr(settings, "RAG_CROSS_ENCODER_MODEL", "cross-encoder/ms-marco-MiniLM-L-6-v2")
+        device = getattr(settings, "RAG_CROSS_ENCODER_DEVICE", None)
+        try:
+            return CrossEncoder(model_name, device=device)
+        except Exception as exc:  # pragma: no cover - optional dependency
+            logger.warning("Failed to initialize cross-encoder model=%s error=%s", model_name, exc)
+            return None
+
+    def search_by_alias(
+        self,
+        *,
+        business_profile,
+        aliases: Sequence[str] | None = None,
+        traits: QueryTraits | None = None,
+        limit: int | None = None,
+        feature_state: FeatureState | None = None,
+    ) -> AliasSearchResult:
+        traits = traits or self.analyze_query(" ".join(aliases or ()))
+        alias_values = tuple(
+            value
+            for value in (aliases or traits.alias_candidates)
+            if value
+        )
+        normalized_aliases = tuple(
+            self._normalize_alias_input(candidate) for candidate in alias_values if candidate
+        )
+        normalized_aliases = tuple(alias for alias in normalized_aliases if alias)
+        if not normalized_aliases:
+            return AliasSearchResult(hits=tuple(), diagnostics={"alias_candidates": 0}, short_circuit=False)
+        feature_state = feature_state or FeatureFlagService.snapshot(business_profile)
+        if not feature_state.alias_lookup:
+            return AliasSearchResult(
+                hits=tuple(),
+                diagnostics={"alias_candidates": len(normalized_aliases), "stage": "alias_disabled"},
+                short_circuit=False,
+            )
+
+        start = time.perf_counter()
+        limit = limit or self.alias_result_cap
+        hits, cache_diag = self._alias_exact_hits(
+            business_profile=business_profile,
+            aliases=normalized_aliases,
+            limit=limit,
+        )
+        diagnostics: dict[str, object] = {
+            "alias_candidates": len(normalized_aliases),
+            "alias_cache_hit": cache_diag.get("cache_hit", 0),
+            "alias_cache_miss": cache_diag.get("cache_miss", 0),
+        }
+        total_cache_ops = diagnostics["alias_cache_hit"] + diagnostics["alias_cache_miss"]
+        if total_cache_ops:
+            diagnostics["alias_cache_hit_rate"] = round(diagnostics["alias_cache_hit"] / max(1, total_cache_ops), 3)
+
+        if hits:
+            diagnostics["stage"] = "alias_exact"
+            diagnostics["duration_ms"] = int((time.perf_counter() - start) * 1000)
+            latency_monitor.observe("rag.alias", diagnostics["duration_ms"], tags={"stage": diagnostics["stage"]})
+            logger.info(
+                "rag.alias.exact business=%s aliases=%s hits=%s cache_hit=%s cache_miss=%s",
+                business_profile.id,
+                normalized_aliases,
+                len(hits),
+                diagnostics["alias_cache_hit"],
+                diagnostics["alias_cache_miss"],
+            )
+            return AliasSearchResult(
+                hits=tuple(hits[:limit]),
+                diagnostics=diagnostics,
+                short_circuit=True,
+            )
+
+        fuzzy_hits = self._alias_fuzzy_hits(
+            business_profile=business_profile,
+            traits=traits,
+            limit=self.alias_fts_limit,
+        )
+        diagnostics["stage"] = "alias_fts"
+        diagnostics["alias_fts_hits"] = len(fuzzy_hits)
+        diagnostics["duration_ms"] = int((time.perf_counter() - start) * 1000)
+        latency_monitor.observe("rag.alias", diagnostics["duration_ms"], tags={"stage": diagnostics["stage"]})
+        logger.info(
+            "rag.alias.fts business=%s query=%s hits=%s threshold=%.2f",
+            business_profile.id,
+            traits.normalized,
+            len(fuzzy_hits),
+            self.alias_fts_threshold,
+        )
+        return AliasSearchResult(
+            hits=tuple(fuzzy_hits[: self.alias_fts_limit]),
+            diagnostics=diagnostics,
+            short_circuit=False,
+        )
+
+    def search_free_text(
+        self,
+        *,
+        business_profile,
+        query: str,
+        limit: int,
+        traits: QueryTraits,
+        alias_candidates: Sequence[ChunkResult] | None = None,
+        feature_state: FeatureState | None = None,
+    ) -> HybridSearchResult:
+        base_qs = self._base_chunk_queryset(business_profile)
+        query_text = (query or "").strip() or traits.normalized or traits.original
+        feature_state = feature_state or FeatureFlagService.snapshot(business_profile)
+        query_vector: list[float] | None
+        vector_diag: dict[str, object]
+        vector_ms = 0
+        vector_hits: Sequence[ChunkResult]
+        if feature_state.hybrid_search:
+            query_vector, vector_diag = self._build_query_vector(
+                business_profile=business_profile,
+                query_text=query_text.lower(),
+            )
+            vector_hits, vector_ms = self._vector_candidates(
+                business_id=business_profile.id,
+                base_qs=base_qs,
+                query_vector=query_vector,
+                limit=limit,
+                traits=traits,
+            )
+        else:
+            query_vector = None
+            vector_diag = {"vector_disabled": True}
+            vector_hits = tuple()
+        lexical_hits, lexical_ms = self._lexical_candidates(
+            base_qs=base_qs,
+            query_text=query_text,
+            traits=traits,
+            limit=limit,
+        )
+        latency_monitor.observe("rag.vector", vector_ms, tags={"business": str(business_profile.id)})
+        latency_monitor.observe("rag.lexical", lexical_ms, tags={"business": str(business_profile.id)})
+        merged = self._merge_candidates(
+            alias_candidates or tuple(),
+            vector_hits,
+            lexical_hits,
+        )
+        reranked, rerank_ms = self._rerank_candidates(
+            merged,
+            query_vector if self.embedding_service else None,
+            traits=traits,
+        )
+        latency_monitor.observe("rag.rerank", rerank_ms, tags={"business": str(business_profile.id)})
+        diagnostics = {
+            "vector_candidates": len(vector_hits),
+            "vector_duration_ms": vector_ms,
+            "fts_candidates": len(lexical_hits),
+            "fts_duration_ms": lexical_ms,
+            "rerank_duration_ms": rerank_ms,
+            "hybrid_enabled": feature_state.hybrid_search,
+        }
+        diagnostics.update(vector_diag)
+        diagnostics.update(self._vector_distance_stats(vector_hits))
+        diagnostics["stage"] = "hybrid"
+        logger.info(
+            "rag.hybrid business=%s alias_stage=%s vector=%s fts=%s hybrid=%s",
+            business_profile.id,
+            len(alias_candidates or ()),
+            len(vector_hits),
+            len(lexical_hits),
+            feature_state.hybrid_search,
+        )
+        return HybridSearchResult(
+            hits=tuple(reranked),
+            query_vector=query_vector,
+            diagnostics=diagnostics,
+        )
+
+    def _search_chunks(
+        self,
+        hits: Sequence[ChunkResult],
+        *,
+        limit: int,
+        business_profile,
+        pathway: str,
+    ) -> Sequence[KnowledgeSnippet]:
         if not hits:
             return tuple()
 
         snippets: list[KnowledgeSnippet] = []
-        seen_uploads: set[uuid.UUID] = set()
-        for chunk in hits:
+        per_upload_counts: dict[uuid.UUID, int] = {}
+        max_per_upload = self._effective_chunk_cap(business_profile, pathway)
+        for hit in hits:
+            chunk = hit.chunk
             upload = chunk.upload
-            if upload.id in seen_uploads:
+            current = per_upload_counts.get(upload.id, 0)
+            if current >= max_per_upload:
                 continue
-            snippets.append(self._chunk_to_snippet(chunk))
-            seen_uploads.add(upload.id)
+            snippets.append(self._chunk_to_snippet(chunk, result=hit))
+            per_upload_counts[upload.id] = current + 1
             if len(snippets) >= limit:
                 break
         return tuple(snippets)
 
-    def _chunk_hits(self, business_profile, query: str, limit: int) -> Sequence[KnowledgeUploadChunk]:
-        base_qs = (
+    def _chunk_hits(
+        self,
+        business_profile,
+        *,
+        traits: QueryTraits,
+        limit: int,
+        alias_result: AliasSearchResult | None = None,
+        feature_state: FeatureState | None = None,
+    ) -> tuple[ChunkResult, ...]:
+        alias_result = alias_result or AliasSearchResult(tuple(), {})
+        if alias_result.short_circuit and alias_result.hits:
+            return tuple(alias_result.hits[:limit])
+
+        alias_candidates = alias_result.hits if alias_result and not alias_result.short_circuit else tuple()
+        ann_cap = self._effective_chunk_cap(business_profile, "ann")
+        feature_state = feature_state or FeatureFlagService.snapshot(business_profile)
+        hybrid = self.search_free_text(
+            business_profile=business_profile,
+            query=traits.normalized or traits.original,
+            limit=max(limit, ann_cap * 2),
+            traits=traits,
+            alias_candidates=alias_candidates,
+            feature_state=feature_state,
+        )
+        candidates = list(hybrid.hits)
+        if not candidates:
+            return tuple()
+
+        prioritized = self._prioritize_token_hits(
+            candidates,
+            traits.tokens,
+            fallback=max(self.token_gate_fallback, limit * 2),
+        )
+        if not prioritized:
+            return tuple()
+
+        reranked, rerank_ms = self._rerank_candidates(
+            prioritized,
+            hybrid.query_vector if self.embedding_service else None,
+            traits=traits,
+        )
+        hybrid.diagnostics["rerank_duration_ms"] = rerank_ms
+        filtered = self._apply_vector_threshold(reranked, hybrid.query_vector)
+        final = self._mmr_select(filtered, hybrid.query_vector, k=limit, lam=self.mmr_lambda)
+        return tuple(final)
+
+    @staticmethod
+    def _normalize_alias_input(value: str) -> str:
+        return QueryNormalizer._canonical_alias(value) if value else ""
+
+    def _alias_exact_hits(
+        self,
+        *,
+        business_profile,
+        aliases: Sequence[str],
+        limit: int,
+    ) -> tuple[list[ChunkResult], dict[str, int]]:
+        if not aliases:
+            return [], {"cache_hit": 0, "cache_miss": 0}
+        version = self._get_alias_cache_version(business_profile.id)
+        ordered_ids: list[uuid.UUID] = []
+        cache_hit = 0
+        cache_miss = 0
+        missing_aliases: list[str] = []
+        for alias in aliases:
+            key = self._alias_cache_key(business_profile.id, alias, version)
+            cached = cache.get(key)
+            if cached:
+                cache_hit += 1
+                for entry in cached:
+                    try:
+                        ordered_ids.append(uuid.UUID(entry["chunk_id"]))
+                    except (KeyError, ValueError, TypeError):
+                        continue
+            else:
+                cache_miss += 1
+                missing_aliases.append(alias)
+
+        if missing_aliases:
+            alias_qs = (
+                KnowledgeAlias.objects.filter(
+                    business_profile=business_profile,
+                    alias_normalized__in=missing_aliases,
+                )
+                .select_related("entity__chunk__upload")
+                .order_by("alias_normalized")
+            )
+            payloads: dict[str, list[dict[str, str]]] = {}
+            for record in alias_qs:
+                entity = record.entity
+                chunk = entity.chunk if entity else None
+                if not chunk or not chunk.upload or chunk.upload.business_profile_id != business_profile.id:
+                    continue
+                entry = {
+                    "chunk_id": str(chunk.id),
+                    "entity_name": entity.entity_name,
+                    "entity_type": entity.entity_type,
+                    "alias": record.alias_normalized,
+                }
+                payloads.setdefault(record.alias_normalized, []).append(entry)
+                ordered_ids.append(chunk.id)
+            for alias_value, payload in payloads.items():
+                self._cache_alias_payload(business_profile.id, alias_value, payload)
+
+        if not ordered_ids:
+            return [], {"cache_hit": cache_hit, "cache_miss": cache_miss}
+
+        chunk_lookup = self._fetch_chunks_by_ids(
+            business_profile=business_profile,
+            chunk_ids=ordered_ids[:limit],
+        )
+        hits: list[ChunkResult] = []
+        for identifier in ordered_ids:
+            chunk = chunk_lookup.get(identifier)
+            if not chunk:
+                continue
+            hits.append(
+                ChunkResult(
+                    chunk=chunk,
+                    source_stage="alias_exact",
+                    alias_confidence=1.0,
+                    recency_score=self._recency_score(chunk.upload),
+                    rerank_score=1.0,
+                    diagnostics={"alias": str(identifier)},
+                )
+            )
+            if len(hits) >= limit:
+                break
+        return hits, {"cache_hit": cache_hit, "cache_miss": cache_miss}
+
+    def _alias_fuzzy_hits(
+        self,
+        *,
+        business_profile,
+        traits: QueryTraits,
+        limit: int,
+    ) -> list[ChunkResult]:
+        query_text = (traits.normalized or traits.original or "").replace("-", " ")
+        if not query_text:
+            return []
+        alias_qs = (
+            KnowledgeAlias.objects.filter(business_profile=business_profile)
+            .annotate(sim=TrigramSimilarity("alias_search_vector", query_text))
+            .filter(sim__gte=self.alias_fts_threshold)
+            .order_by("-sim")[: max(limit, 10)]
+            .select_related("entity__chunk__upload")
+        )
+        seen: set[uuid.UUID] = set()
+        hits: list[ChunkResult] = []
+        for record in alias_qs:
+            entity = record.entity
+            chunk = entity.chunk if entity else None
+            if not chunk or not chunk.upload or chunk.upload.business_profile_id != business_profile.id:
+                continue
+            if chunk.id in seen:
+                continue
+            seen.add(chunk.id)
+            confidence = float(getattr(record, "sim", 0.0) or 0.0)
+            hits.append(
+                ChunkResult(
+                    chunk=chunk,
+                    source_stage="alias_fts",
+                    alias_confidence=min(1.0, confidence),
+                    recency_score=self._recency_score(chunk.upload),
+                    rerank_score=min(1.0, confidence),
+                    diagnostics={"alias": record.alias_normalized},
+                )
+            )
+            if len(hits) >= limit:
+                break
+        return hits
+
+    @staticmethod
+    def _alias_cache_version_key(business_id: uuid.UUID) -> str:
+        return f"rag:alias:ver:{business_id}"
+
+    @staticmethod
+    def _alias_cache_key(business_id: uuid.UUID, alias_value: str, version: int) -> str:
+        return f"rag:alias:{business_id}:{version}:{alias_value}"
+
+    @classmethod
+    def invalidate_alias_cache(cls, business_id: uuid.UUID) -> None:
+        version_key = cls._alias_cache_version_key(business_id)
+        try:
+            cache.incr(version_key)
+        except ValueError:
+            cache.set(version_key, 1, None)
+
+    def _get_alias_cache_version(self, business_id: uuid.UUID) -> int:
+        version_key = self._alias_cache_version_key(business_id)
+        version = cache.get(version_key)
+        if version is None:
+            cache.set(version_key, 0, None)
+            return 0
+        return int(version)
+
+    def _cache_alias_payload(self, business_id: uuid.UUID, alias_value: str, payload: Sequence[Mapping[str, str]]) -> None:
+        version = self._get_alias_cache_version(business_id)
+        key = self._alias_cache_key(business_id, alias_value, version)
+        cache.set(key, list(payload), timeout=self.alias_cache_ttl)
+
+    def _fetch_chunks_by_ids(
+        self,
+        *,
+        business_profile,
+        chunk_ids: Sequence[uuid.UUID],
+    ) -> dict[uuid.UUID, KnowledgeUploadChunk]:
+        if not chunk_ids:
+            return {}
+        qs = (
             KnowledgeUploadChunk.objects.filter(
-                upload__business_profile=business_profile,
+                business_profile=business_profile,
+                upload__status=KnowledgeStatus.ACTIVE,
+                id__in=chunk_ids,
+            )
+            .select_related("upload")
+        )
+        return {chunk.id: chunk for chunk in qs}
+
+    def _base_chunk_queryset(self, business_profile):
+        return (
+            KnowledgeUploadChunk.objects.filter(
+                business_profile=business_profile,
                 upload__status=KnowledgeStatus.ACTIVE,
             )
             .select_related("upload")
         )
 
-        logger.info(
-            "rag.dataset business=%s chunks=%s with_vec=%s",
-            business_profile.id,
-            base_qs.count(),
-            base_qs.exclude(embedding__isnull=True).count(),
+    def _merge_candidates(self, *groups: Sequence[ChunkResult]) -> list[ChunkResult]:
+        seen: set[uuid.UUID] = set()
+        merged: list[ChunkResult] = []
+        for group in groups:
+            for hit in group:
+                if hit.chunk_id in seen:
+                    continue
+                seen.add(hit.chunk_id)
+                merged.append(hit)
+        return merged
+
+    def _vector_candidates(
+        self,
+        *,
+        business_id,
+        base_qs,
+        query_vector: list[float] | None,
+        limit: int,
+        traits: QueryTraits,
+    ) -> tuple[list[ChunkResult], int]:
+        if not query_vector:
+            return [], 0
+        adaptive_factor = self._ann_factor_for_query(traits)
+        base_k = max(limit * 10, 60)
+        K = int(base_k * adaptive_factor)
+        start = time.perf_counter()
+        if self.ivfflat_probes:
+            try:
+                with connection.cursor() as cursor:
+                    cursor.execute("SET ivfflat.probes = %s", [self.ivfflat_probes])
+            except Exception:  # pragma: no cover - diagnostic only
+                logger.debug("Unable to set ivfflat.probes", exc_info=True)
+        ann_qs = (
+            base_qs.exclude(embedding__isnull=True)
+            .annotate(distance=CosineDistance("embedding", query_vector))
+            .order_by("distance")[:K]
         )
-
-
-        ann_candidates: list[KnowledgeUploadChunk] = []
-        fts_candidates: list[KnowledgeUploadChunk] = []
-        query_vector: list[float] | None = None
-
-        # --- Vector (ANN) ---
-        if self.embedding_service:
-            cache_key = f"rag:qvec:{business_profile.id}:{getattr(self.embedding_service, 'model', 'local')}:{hash(query)}"
-            query_vector: list[float] | None = cache.get(cache_key)
-            cache_hit = query_vector is not None
-            if not cache_hit:
+        hits: list[ChunkResult] = []
+        distances: list[float] = []
+        for chunk in ann_qs:
+            distance = getattr(chunk, "distance", None)
+            dist_val = None
+            if distance is not None:
                 try:
-                    t0 = time.time()
-                    query_vector = self.embedding_service.embed_text(query)
-                    cache.set(cache_key, query_vector, timeout=300)
-                    took = int((time.time() - t0) * 1000)
-                    logger.info(
-                        "rag.query_embed business=%s cache_hit=%s model=%s dim=%s took_ms=%s",
-                        business_profile.id,
-                        cache_hit,
-                        getattr(self.embedding_service, "model", "local"),
-                        len(query_vector) if query_vector else 0,
-                        took,
-                    )
-                except EmbeddingProviderError as exc:
-                    logger.warning("Query embedding failed: %s", exc)
-                    query_vector = None
-
-            if query_vector:
-                # K: larger pool for reranking & MMR
-                K = max(limit * 10, 60)
-                ann_qs = (
-                    base_qs.exclude(embedding__isnull=True)
-                    .annotate(distance=CosineDistance("embedding", query_vector))
-                    .order_by("distance")[:K]
+                    dist_val = float(distance)
+                    distances.append(dist_val)
+                except (TypeError, ValueError):
+                    dist_val = None
+            hits.append(
+                ChunkResult(
+                    chunk=chunk,
+                    source_stage="vector_ann",
+                    vector_distance=dist_val,
+                    recency_score=self._recency_score(chunk.upload),
+                    diagnostics={"stage": "vector_ann"},
                 )
-                ann_candidates = list(ann_qs)
-                if ann_candidates:
-                    ds = [getattr(c, "distance", 0.0) for c in ann_candidates if getattr(c, "distance", None) is not None]
-                    logger.info(
-                        "rag.ann_result business=%s K=%s ann_candidates=%s d_min=%.4f d_max=%.4f d_avg=%.4f",
-                        business_profile.id, K, len(ann_candidates),
-                        min(ds) if ds else -1, max(ds) if ds else -1, (sum(ds)/len(ds)) if ds else -1,
-                    )
+            )
+        duration_ms = int((time.perf_counter() - start) * 1000)
+        if distances:
+            logger.info(
+                "rag.vector business=%s query_tokens=%s candidates=%s d_min=%.4f d_max=%.4f d_avg=%.4f",
+                business_id,
+                traits.token_count,
+                len(hits),
+                min(distances),
+                max(distances),
+                (sum(distances) / len(distances)) if distances else -1,
+            )
+        return hits, duration_ms
 
-        # --- Keyword FTS (trigram similarity) ---
-        # Requires pg_trgm extension + GIN index on content
+    @staticmethod
+    def _vector_distance_stats(candidates: Sequence[ChunkResult]) -> dict[str, float]:
+        distances = [
+            float(hit.vector_distance)
+            for hit in candidates
+            if isinstance(hit.vector_distance, (int, float))
+        ]
+        if not distances:
+            return {}
+        average = sum(distances) / len(distances)
+        return {
+            "vector_distance_min": min(distances),
+            "vector_distance_max": max(distances),
+            "vector_distance_mean": round(average, 5),
+        }
+
+    def _lexical_candidates(
+        self,
+        *,
+        base_qs,
+        query_text: str,
+        traits: QueryTraits,
+        limit: int,
+    ) -> tuple[list[ChunkResult], int]:
+        threshold = self._lexical_threshold(traits)
+        token_filter = self._build_fts_token_filter(traits.tokens)
+        fts_base = base_qs.filter(token_filter) if token_filter else base_qs
         N = max(limit * 8, 40)
+        start = time.perf_counter()
         fts_qs = (
-            base_qs.annotate(sim=TrigramSimilarity("content", query))
-            .filter(sim__gt=0.15)
+            fts_base.annotate(sim=TrigramSimilarity("content", query_text))
+            .filter(sim__gte=threshold)
             .order_by("-sim")[:N]
         )
-        fts_candidates = list(fts_qs)
+        hits: list[ChunkResult] = []
+        for chunk in fts_qs:
+            sim = getattr(chunk, "sim", 0.0) or 0.0
+            hits.append(
+                ChunkResult(
+                    chunk=chunk,
+                    source_stage="content_fts",
+                    lexical_score=float(sim),
+                    recency_score=self._recency_score(chunk.upload),
+                    diagnostics={"stage": "content_fts"},
+                )
+            )
+        duration_ms = int((time.perf_counter() - start) * 1000)
+        return hits, duration_ms
 
-        logger.info(
-            "rag.search_summary business=%s vector_enabled=%s vector_used=%s ann_candidates=%s fts_candidates=%s limit=%s",
-            business_profile.id,
-            bool(self.embedding_service),
-            bool(query_vector),
-            len(ann_candidates),
-            len(fts_candidates),
-            limit,
-        )
+    def _build_query_vector(
+        self,
+        *,
+        business_profile,
+        query_text: str,
+    ) -> tuple[list[float] | None, dict[str, object]]:
+        diagnostics: dict[str, object] = {"vector_cache_hit": False}
+        if not self.embedding_service:
+            return None, diagnostics
+        model_name = getattr(self.embedding_service, "model", "local")
+        digest_source = f"{business_profile.id}:{model_name}:{query_text}".encode("utf-8")
+        cache_key = f"rag:qvec:{hashlib.sha256(digest_source).hexdigest()[:32]}"
+        query_vector: list[float] | None = cache.get(cache_key)
+        diagnostics["vector_cache_hit"] = query_vector is not None
+        if query_vector is None:
+            try:
+                t0 = time.time()
+                query_vector = self.embedding_service.embed_text(query_text)
+                payload = list(query_vector) if isinstance(query_vector, (list, tuple)) else query_vector
+                approx_size = len(payload) * 8 if isinstance(payload, list) else 0
+                if approx_size <= self.query_vector_cache_max_bytes:
+                    cache.set(cache_key, payload, timeout=self.query_vector_cache_ttl)
+                diagnostics["vector_embed_ms"] = int((time.time() - t0) * 1000)
+            except EmbeddingProviderError as exc:
+                logger.warning("Query embedding failed: %s", exc)
+                query_vector = None
+        return query_vector, diagnostics
 
-        # Union & dedupe preserving order preference (vector first)
-        seen = set()
-        merged: list[KnowledgeUploadChunk] = []
-        for c in ann_candidates + fts_candidates:
-            if c.id not in seen:
-                seen.add(c.id)
-                merged.append(c)
+    def _apply_vector_threshold(
+        self,
+        candidates: Sequence[ChunkResult],
+        query_vector: list[float] | None,
+    ) -> list[ChunkResult]:
+        if not self.vector_distance_ceiling or not query_vector:
+            return list(candidates)
+        filtered = [
+            hit
+            for hit in candidates
+            if hit.vector_distance is None or hit.vector_distance <= self.vector_distance_ceiling
+        ]
+        return filtered or list(candidates)
 
-        if not merged:
+    def _mmr_select(
+        self,
+        candidates: Sequence[ChunkResult],
+        query_vector: list[float] | None,
+        *,
+        k: int,
+        lam: float,
+    ) -> list[ChunkResult]:
+        if not query_vector:
+            return list(candidates)[:k]
+        selected: list[ChunkResult] = []
+        remaining = list(candidates)
+        while remaining and len(selected) < k:
+            def score(hit: ChunkResult) -> float:
+                vector = self._chunk_embedding(hit)
+                rel = self._cosine_similarity(query_vector, vector) if vector else 0.0
+                diversity = 0.0
+                if selected and vector:
+                    sims = [
+                        self._cosine_similarity(self._chunk_embedding(other), vector)
+                        for other in selected
+                        if self._chunk_embedding(other)
+                    ]
+                    diversity = max(sims) if sims else 0.0
+                return lam * rel - (1 - lam) * diversity
+            best = max(remaining, key=score)
+            selected.append(best)
+            remaining.remove(best)
+        return selected
+
+    @staticmethod
+    def _chunk_embedding(hit: ChunkResult) -> Sequence[float] | None:
+        embedding = getattr(hit.chunk, "embedding", None)
+        return embedding if isinstance(embedding, Sequence) else None
+
+    @staticmethod
+    def _recency_score(upload: KnowledgeUpload) -> float:
+        updated = getattr(upload, "updated_at", None)
+        if not updated:
+            return 0.0
+        delta = timezone.now() - updated
+        days = delta.days + delta.seconds / 86400
+        if days <= 1:
+            return 1.0
+        if days >= 90:
+            return 0.0
+        return max(0.0, 1.0 - (days / 90.0))
+
+    @staticmethod
+    def _lexical_threshold(traits: QueryTraits) -> float:
+        if traits.token_count <= 3:
+            return 0.25
+        if traits.token_count <= 6:
+            return 0.2
+        return 0.15
+
+    @staticmethod
+    def _extract_query_tokens(query: str) -> tuple[str, ...]:
+        if not query:
             return tuple()
+        tokens = [token for token in re.split(r"[^a-z0-9]+", query.lower()) if len(token) >= 3]
+        seen: dict[str, None] = {}
+        for token in tokens:
+            if token and token not in seen:
+                seen[token] = None
+        return tuple(seen.keys())
 
-        # --- Optional: MMR reranking (diversity over similarity) ---
-        def _get_vec(ch: KnowledgeUploadChunk) -> list[float] | None:
-            v = getattr(ch, "embedding", None)
-            return v if isinstance(v, list) else None
+    def _prioritize_token_hits(
+        self,
+        candidates: Sequence[ChunkResult],
+        tokens: tuple[str, ...],
+        fallback: int,
+    ) -> list[ChunkResult]:
+        if not tokens:
+            return list(candidates)
+        matched: list[ChunkResult] = []
+        remainder: list[ChunkResult] = []
+        for candidate in candidates:
+            cont = self._chunk_contains_tokens(candidate.chunk, tokens)
+            if cont:
+                matched.append(candidate)
+            else:
+                remainder.append(candidate)
+        if not matched:
+            return list(candidates)
+        tail = remainder[:fallback] if fallback else []
+        return matched + tail
 
-        def _cos(a: Sequence[float] | None, b: Sequence[float] | None) -> float:
-            if not a or not b or len(a) != len(b):
-                return 0.0
-            dot = sum(x * y for x, y in zip(a, b))
-            na = sum(x * x for x in a) ** 0.5
-            nb = sum(y * y for y in b) ** 0.5
-            return 0.0 if na == 0 or nb == 0 else dot / (na * nb)
+    @staticmethod
+    def _chunk_contains_tokens(chunk: KnowledgeUploadChunk, tokens: tuple[str, ...]) -> bool:
+        if not tokens:
+            return True
+        text = (chunk.content or "").lower()
+        if not text:
+            return False
+        if any(token in text for token in tokens):
+            return True
+        metadata = chunk.metadata if isinstance(chunk.metadata, dict) else {}
+        alias_blob = str(metadata.get("alias_string") or "").lower()
+        if alias_blob and any(token in alias_blob for token in tokens):
+            return True
+        return False
 
-        def mmr_select(cands: list[KnowledgeUploadChunk], qvec: list[float] | None, k: int, lam: float = 0.7):
-            if not qvec:
-                return cands[:k]
-            selected: list[KnowledgeUploadChunk] = []
-            remaining = list(cands)
-            while remaining and len(selected) < k:
-                def score(ch: KnowledgeUploadChunk) -> float:
-                    v = _get_vec(ch)
-                    rel = _cos(qvec, v)
-                    div = 0.0
-                    if selected and v:
-                        div = max(_cos(_get_vec(s), v) for s in selected if _get_vec(s)) if any(_get_vec(s) for s in selected) else 0.0
-                    return lam * rel - (1 - lam) * div
-                best = max(remaining, key=score)
-                selected.append(best)
-                remaining.remove(best)
-            return selected
+    def _build_fts_token_filter(self, tokens: tuple[str, ...]) -> Q | None:
+        if not tokens:
+            return None
+        significant = [token for token in tokens if len(token) >= 4][:3]
+        if not significant:
+            return None
+        clause = Q()
+        for token in significant:
+            clause |= Q(content__icontains=token) | Q(metadata__alias_string__icontains=token)
+        return clause
 
-        # Distance threshold: keep reasonable matches for ANN (cosine distance < ~0.4)
-        # We already ordered by distance; if you want a hard cut:
-        # ann_candidates = [c for c in ann_candidates if getattr(c, "distance", 0.0) < 0.4]
+    def _read_state_for_content(self, content: str | None, metadata: Mapping[str, object] | None) -> str:
+        if not content:
+            return KNOWLEDGE_READ_STATE_SUMMARY
+        target_threshold = self.read_ready_threshold
+        meta = metadata or {}
+        if meta.get("is_table_chunk"):
+            target_threshold = self.table_ready_threshold
+        if len(content) >= target_threshold:
+            return KNOWLEDGE_READ_STATE_FULL
+        return KNOWLEDGE_READ_STATE_SUMMARY
 
-        final = mmr_select(merged, query_vector if self.embedding_service else None, k=limit)
-        return tuple(final)
+    def _ann_factor_for_query(self, traits: QueryTraits) -> float:
+        token_count = traits.token_count
+        if token_count <= 3:
+            return self.short_query_ann_multiplier
+        if token_count <= 6:
+            return 1.5
+        return 1.0
 
+    def _effective_neighbor_window(self, chunk: KnowledgeUploadChunk, default_neighbor: int) -> int:
+        metadata = chunk.metadata if isinstance(chunk.metadata, dict) else {}
+        window = default_neighbor
+        if metadata.get("is_table_chunk"):
+            window = max(window, self.entity_neighbor_min)
+        if metadata.get("entity_name"):
+            window = max(window, self.entity_neighbor_min + 1)
+        return window
+
+    @staticmethod
+    def _fetch_entity_chunks(
+        upload: KnowledgeUpload,
+        entity_name: str,
+        *,
+        cache: dict[tuple[uuid.UUID, str], list[KnowledgeUploadChunk]],
+    ) -> list[KnowledgeUploadChunk]:
+        if not entity_name:
+            return []
+        key = (upload.id, entity_name.lower())
+        if key in cache:
+            return cache[key]
+        qs = KnowledgeUploadChunk.objects.filter(
+            upload=upload,
+            metadata__entity_name__iexact=entity_name,
+        ).order_by("chunk_index")
+        cache[key] = list(qs)
+        return cache[key]
+    
+    def _effective_neighbor_window(self, chunk: KnowledgeUploadChunk, default_neighbor: int) -> int:
+        metadata = chunk.metadata if isinstance(chunk.metadata, dict) else {}
+        window = default_neighbor
+        if metadata.get("is_table_chunk"):
+            window = max(window, self.entity_neighbor_min)
+        if metadata.get("entity_name"):
+            window = max(window, self.entity_neighbor_min + 1)
+        return window
+
+    def _rerank_candidates(
+        self,
+        candidates: Sequence[ChunkResult],
+        query_vector: list[float] | None,
+        *,
+        traits: QueryTraits,
+    ) -> tuple[list[ChunkResult], int]:
+        if not candidates:
+            return [], 0
+        start = time.perf_counter()
+        top_pool = min(len(candidates), self.rerank_pool)
+        scored: list[tuple[float, int, ChunkResult]] = []
+        tail: list[ChunkResult] = []
+        for idx, cand in enumerate(candidates):
+            if idx >= top_pool:
+                tail.append(cand)
+                continue
+            vector_score = 0.0
+            if query_vector:
+                if cand.vector_distance is not None:
+                    try:
+                        vector_score = max(0.0, 1.0 - float(cand.vector_distance))
+                    except (TypeError, ValueError):
+                        vector_score = 0.0
+                else:
+                    vector_score = self._cosine_similarity(query_vector, self._chunk_embedding(cand))
+            lexical_score = cand.lexical_score or self._lexical_overlap_score(cand.chunk, traits.tokens)
+            entity_bonus = self._entity_bonus(cand.chunk, traits.tokens, traits.normalized)
+            alias_bonus = max(cand.alias_confidence, self._alias_bonus(cand.chunk, traits.tokens, traits.normalized))
+            recency_score = cand.recency_score or self._recency_score(cand.chunk.upload)
+            combined = (
+                self.rerank_weights["vector"] * vector_score
+                + self.rerank_weights["lexical"] * lexical_score
+                + self.rerank_weights["alias"] * alias_bonus
+                + self.rerank_weights["entity"] * entity_bonus
+                + self.rerank_weights["recency"] * recency_score
+            )
+            cand.diagnostics["score_breakdown"] = {
+                "vector": round(vector_score, 4),
+                "lexical": round(lexical_score, 4),
+                "alias": round(alias_bonus, 4),
+                "entity": round(entity_bonus, 4),
+                "recency": round(recency_score, 4),
+            }
+            cand.rerank_score = combined
+            scored.append((combined, -idx, cand))
+        if self.cross_encoder and traits.normalized:
+            head = [item[2] for item in scored[: self.rerank_pool]]
+            if head:
+                pairs = [[traits.normalized, (hit.chunk.content or "")] for hit in head]
+                try:
+                    ce_scores = self.cross_encoder.predict(pairs)
+                    ce_values = [float(score) for score in ce_scores]
+                except Exception as exc:  # pragma: no cover - optional dependency
+                    logger.warning("Cross-encoder rerank failed: %s", exc)
+                else:
+                    ce_lookup = {
+                        hit.chunk_id: self.cross_encoder_weight * ce_values[idx]
+                        for idx, hit in enumerate(head)
+                        if idx < len(ce_values)
+                    }
+                    if ce_lookup:
+                        scored = [
+                            (base + ce_lookup.get(hit.chunk_id, 0.0), order, hit)
+                            for base, order, hit in scored
+                        ]
+                        scored.sort(key=lambda item: item[0], reverse=True)
+        scored.sort(key=lambda item: item[0], reverse=True)
+        reranked = [item[2] for item in scored]
+        if tail:
+            reranked.extend(tail)
+        duration_ms = int((time.perf_counter() - start) * 1000)
+        return reranked, duration_ms
+
+    @staticmethod
+    def _lexical_overlap_score(chunk: KnowledgeUploadChunk, tokens: tuple[str, ...]) -> float:
+        if not tokens:
+            return 0.0
+        text = (chunk.content or "").lower()
+        if not text:
+            return 0.0
+        matches = sum(1 for token in tokens if token and token in text)
+        if not matches:
+            return 0.0
+        return matches / len(tokens)
+
+    @staticmethod
+    def _entity_bonus(chunk: KnowledgeUploadChunk, tokens: tuple[str, ...], query_text: str) -> float:
+        metadata = chunk.metadata if isinstance(chunk.metadata, dict) else {}
+        entity_name = (metadata.get("entity_name") or "").strip().lower()
+        if not entity_name:
+            return 0.0
+        if query_text and entity_name in query_text.lower():
+            return 0.5
+        if tokens and any(token == entity_name or token in entity_name for token in tokens if token):
+            return 0.4
+        return 0.0
+
+    @staticmethod
+    def _alias_bonus(chunk: KnowledgeUploadChunk, tokens: tuple[str, ...], query_text: str) -> float:
+        metadata = chunk.metadata if isinstance(chunk.metadata, dict) else {}
+        alias_blob = (metadata.get("alias_string") or "").lower()
+        if not alias_blob:
+            return 0.0
+        bonus = 0.0
+        if query_text:
+            query_normalized = query_text.lower().replace(" ", "-")
+            if query_normalized and query_normalized in alias_blob:
+                bonus += 0.4
+        if tokens and any(token in alias_blob for token in tokens if token):
+            bonus += 0.2
+        return min(bonus, 0.6)
+
+    def _table_query_context(self, business_profile, traits: QueryTraits) -> Mapping[str, object]:
+        query_text = (traits.normalized or traits.original or "").lower()
+        tokens = set(token.lower() for token in traits.tokens)
+        matched_keywords = tokens & self.table_query_keywords
+        columns = self._table_columns_for_business(business_profile)
+        matched_columns = {column for column in columns if column and column in query_text}
+        has_intent = bool(matched_keywords or matched_columns)
+        return {
+            "has_intent": has_intent,
+            "matched_columns": matched_columns,
+            "available_columns": columns,
+        }
+
+    def _table_columns_for_business(self, business_profile) -> set[str]:
+        business_id = getattr(business_profile, "id", None)
+        if not business_id:
+            return set()
+        cached = self._table_column_cache.get(business_id)
+        if cached is not None:
+            self._table_column_cache.move_to_end(business_id)
+            return cached
+        columns: set[str] = set()
+        qs = (
+            KnowledgeUploadTable.objects.filter(
+                upload__business_profile=business_profile
+            )
+            .exclude(upload__visibility=KnowledgeVisibility.INTERNAL)
+            .order_by("-updated_at")
+            .values_list("column_schema", flat=True)[: self.table_column_sample_limit]
+        )
+        for schema in qs:
+            if not isinstance(schema, (list, tuple)):
+                continue
+            for column in schema:
+                if not column:
+                    continue
+                lowered = str(column).strip().lower()
+                if lowered:
+                    columns.add(lowered)
+        self._table_column_cache[business_id] = columns
+        if len(self._table_column_cache) > self.table_column_cache_limit:
+            self._table_column_cache.popitem(last=False)
+        return columns
+
+    def _table_search_snippets(
+        self,
+        *,
+        business_profile,
+        query_text: str,
+        limit: int,
+        matched_columns: set[str],
+    ) -> tuple[KnowledgeSnippet, ...]:
+        normalized_query = (query_text or "").strip()
+        if not normalized_query:
+            return tuple()
+        cell_qs = KnowledgeUploadTableCell.objects.filter(
+            table__upload__business_profile=business_profile
+        )
+        if matched_columns:
+            column_filter = Q()
+            for column in matched_columns:
+                column_filter |= Q(column_key__iexact=column) | Q(column_key__icontains=column)
+            cell_qs = cell_qs.filter(column_filter)
+        cell_qs = (
+            cell_qs.annotate(sim=TrigramSimilarity("raw_text", normalized_query))
+            .filter(sim__gte=self.table_similarity_threshold)
+            .order_by("-sim")
+            .select_related("row__table__upload")
+        )
+        top_cells = list(cell_qs[: self.table_result_cap * 3])
+        if not top_cells:
+            return tuple()
+        row_priority: list[uuid.UUID] = []
+        cell_diag: dict[uuid.UUID, dict[str, object]] = {}
+        for cell in top_cells:
+            row = cell.row
+            if not row or not row.id or row.id in cell_diag:
+                continue
+            table = getattr(row, "table", None)
+            upload = getattr(table, "upload", None) if table else None
+            if not upload or upload.business_profile_id != business_profile.id:
+                continue
+            similarity = float(getattr(cell, "sim", 0.0) or 0.0)
+            cell_diag[row.id] = {
+                "column_key": cell.column_key,
+                "value": cell.raw_text,
+                "similarity": similarity,
+            }
+            row_priority.append(row.id)
+            if len(row_priority) >= self.table_result_cap:
+                break
+        if not row_priority:
+            return tuple()
+        rows = (
+            KnowledgeUploadTableRow.objects.filter(id__in=row_priority)
+            .select_related("table__upload__business_profile")
+            .prefetch_related("cells")
+        )
+        row_map = {row.id: row for row in rows}
+        snippets: list[KnowledgeSnippet] = []
+        for row_id in row_priority:
+            row = row_map.get(row_id)
+            if not row:
+                continue
+            table = row.table
+            upload = getattr(table, "upload", None)
+            if (
+                not table
+                or not upload
+                or upload.business_profile_id != business_profile.id
+                or upload.visibility == KnowledgeVisibility.INTERNAL
+            ):
+                continue
+            business_name = getattr(upload.business_profile, "name", None)
+            cells = sorted(row.cells.all(), key=lambda c: c.column_index)
+            structured = [
+                {
+                    "column": cell.column_key or f"column_{cell.column_index + 1}",
+                    "value": cell.raw_text,
+                }
+                for cell in cells
+            ]
+            summary_parts = [
+                f"{entry['column']}: {entry['value']}"
+                for entry in structured
+                if entry["value"]
+            ]
+            summary = "; ".join(summary_parts[:8]) or (row.raw_text or "")
+            content = "\n".join(summary_parts) or (row.raw_text or summary)
+            structured_table = {
+                "title": table.title or table.section_heading or "Table",
+                "columns": [entry["column"] for entry in structured],
+                "rows": [[entry["value"] for entry in structured]],
+                "metadata": {
+                    "sheet_name": (table.metadata or {}).get("sheet_name"),
+                    "row_index": row.row_index,
+                    "table_order_index": table.order_index,
+                },
+            }
+            diag = cell_diag.get(row_id, {})
+            snippets.append(
+                KnowledgeSnippet(
+                    id=uuid.uuid4(),
+                    title=structured_table["title"],
+                    summary=summary or structured_table["title"],
+                    source="table_direct",
+                    content=content,
+                    public_label=structured_table["title"],
+                    structured_tables=(structured_table,),
+                    issues=tuple(),
+                    page_summaries=tuple(),
+                    read_state=KNOWLEDGE_READ_STATE_SUMMARY,
+                    topic_hints=tuple(),
+                    is_pinned=False,
+                    upload_id=table.upload_id,
+                    chunk_id=None,
+                    chunk_index=None,
+                    entity_type=table.section_heading or "table_row",
+                    entity_name=diag.get("column_key") or structured_table["title"],
+                    entity_business=business_name,
+                    is_table_chunk=True,
+                    aliases=tuple(),
+                    search_stage="table_direct",
+                    confidence_score=diag.get("similarity"),
+                    truncated=False,
+                    source_diagnostics={
+                        "table_id": str(table.id),
+                        "row_index": row.row_index,
+                        "column_key": diag.get("column_key"),
+                        "similarity": diag.get("similarity"),
+                    },
+                    structured_table_count=1,
+                    issue_count=0,
+                    structured_table_hint=diag.get("column_key"),
+                )
+            )
+        return tuple(snippets)
 
     def _fallback_snippets(self, *, business_profile, limit: int) -> Sequence[KnowledgeSnippet]:
         qs = (
@@ -417,6 +1823,8 @@ class KnowledgeSearchService:
         for upload in qs:
             label = self._public_label(upload)
             structured = self._structured_exports(upload)
+            table_count = len(structured["tables"])
+            issue_count = len(structured["issues"])
             snippets.append(
                 KnowledgeSnippet(
                     id=upload.id,
@@ -430,31 +1838,143 @@ class KnowledgeSearchService:
                     read_state=KNOWLEDGE_READ_STATE_SUMMARY,
                     topic_hints=self._topic_hints(upload),
                     is_pinned=self._is_pinned(upload),
+                    entity_type=None,
+                    entity_name=None,
+                    entity_business=None,
+                    is_table_chunk=False,
+                    aliases=tuple(),
+                    search_stage="fallback",
+                    confidence_score=0.0,
+                    truncated=False,
+                    source_diagnostics={"reason": "fallback"},
+                    structured_table_count=table_count,
+                    issue_count=issue_count,
+                    structured_table_hint=None,
                 )
             )
         if not snippets:
             logger.warning("Knowledge load returned no snippets for business=%s", business_profile.id)
         return tuple(snippets)
 
-    def _chunk_to_snippet(self, chunk: KnowledgeUploadChunk) -> KnowledgeSnippet:
+    def _chunk_to_snippet(
+        self,
+        chunk: KnowledgeUploadChunk,
+        *,
+        result: ChunkResult | None = None,
+        search_stage: str | None = None,
+    ) -> KnowledgeSnippet:
         upload = chunk.upload
         label = self._public_label(upload)
+        chunk_number = (chunk.chunk_index or 0) + 1 if chunk.chunk_index is not None else None
+        title = f"{label} – chunk {chunk_number}" if chunk_number else label or "Document"
         summary = self._summarize_chunk(chunk)
-        content = self._trim_content(chunk.content, max_chars=1200)
-        structured = self._structured_exports(upload)
+        content, truncated = self._trim_with_flag(chunk.content, max_chars=self.search_preview_char_limit)
+        chunk_metadata = chunk.metadata if isinstance(chunk.metadata, dict) else {}
+        read_state = self._read_state_for_content(content, chunk_metadata)
+        entity_type = chunk_metadata.get("entity_type")
+        entity_name = chunk_metadata.get("entity_name")
+        entity_business = chunk_metadata.get("entity_business")
+        is_table_chunk = bool(chunk_metadata.get("is_table_chunk"))
+        aliases = tuple(chunk_metadata.get("aliases") or ())
+        table_count, issue_count = self._structured_counts(upload)
+        structured_preview: tuple[Mapping[str, object], ...] = tuple()
+        table_hint = None
+        if table_count:
+            label_name = "tables" if table_count != 1 else "table"
+            table_hint = f"{table_count} structured {label_name} available via load_document"
+
+        source_stage = search_stage or (result.source_stage if result else None)
+        confidence = None
+        if result:
+            confidence = result.alias_confidence or result.rerank_score or result.lexical_score or 0.0
+        diagnostics = dict(result.diagnostics) if result else {}
+        if result and result.vector_distance is not None:
+            diagnostics.setdefault("vector_distance", result.vector_distance)
+        diagnostics["structured_table_count"] = table_count
+        diagnostics["issue_count"] = issue_count
+
         return KnowledgeSnippet(
-            id=upload.id,
-            title=label,
+            id=chunk.id,
+            title=title,
             summary=summary,
-            source=upload.source_name or upload.source_type,
+            source=upload.get_source_type_display(),
             content=content,
             public_label=label,
-            structured_tables=structured["tables"],
-            issues=structured["issues"],
-            page_summaries=structured["pages"],
-            read_state=KNOWLEDGE_READ_STATE_PREVIEW if content else KNOWLEDGE_READ_STATE_SUMMARY,
-            topic_hints=self._topic_hints(upload),
-            is_pinned=self._is_pinned(upload),
+            structured_tables=structured_preview,
+            issues=tuple(),
+            page_summaries=tuple(),
+            read_state=read_state,
+            topic_hints=tuple(),
+            is_pinned=False,
+            upload_id=upload.id,
+            chunk_id=chunk.id,
+            chunk_index=chunk.chunk_index,
+            entity_type=entity_type,
+            entity_name=entity_name,
+            entity_business=entity_business,
+            is_table_chunk=is_table_chunk,
+            aliases=aliases,
+            search_stage=source_stage,
+            confidence_score=confidence,
+            truncated=truncated,
+            source_diagnostics=diagnostics,
+            structured_table_count=table_count,
+            issue_count=issue_count,
+            structured_table_hint=table_hint,
+        )
+
+    @staticmethod
+    def _duration_ms(start: float | None) -> int:
+        if start is None:
+            return 0
+        elapsed = (time.perf_counter() - start) * 1000
+        return int(max(0.0, elapsed))
+
+    def _record_retrieval_event(
+        self,
+        *,
+        business_profile,
+        traits: QueryTraits,
+        alias_result: AliasSearchResult,
+        result: KnowledgeSearchResult,
+        feature_state: FeatureState | None = None,
+    ) -> None:
+        try:
+            QualityMonitor.record_retrieval_sample(
+                business_profile=business_profile,
+                query_type="identifier" if traits.is_identifier_like else "natural",
+                alias_hit=bool(alias_result.short_circuit and alias_result.hits),
+                fallback_used=result.status == "not_found" or result.diagnostics.get("path") == "fallback",
+                latency_ms=result.diagnostics.get("total_duration_ms"),
+                stage=result.diagnostics.get("path"),
+                feature_flags=feature_state.as_dict() if feature_state else None,
+                diagnostics=result.diagnostics,
+                result_status=result.status,
+            )
+        except Exception as exc:  # pragma: no cover - monitoring must not block retrieval
+            logger.warning(
+                "quality.retrieval.monitor_failed business=%s error=%s",
+                business_profile.id if business_profile else None,
+                exc,
+            )
+
+    def _log_search_summary(
+        self,
+        *,
+        business_profile,
+        request_id: uuid.UUID,
+        result: KnowledgeSearchResult,
+    ) -> None:
+        diagnostics = dict(result.diagnostics or {})
+        logger.info(
+            "rag.search.summary business=%s request=%s stage=%s status=%s snippets=%s reason=%s features=%s",
+            business_profile.id,
+            request_id,
+            diagnostics.get("path") or "unknown",
+            result.status,
+            len(result.snippets),
+            diagnostics.get("reason"),
+            diagnostics.get("feature_flags"),
         )
 
     def load_contents(
@@ -505,16 +2025,23 @@ class KnowledgeSearchService:
         for upload in qs:
             label = self._public_label(upload)
             raw_content = self._extract_content(upload)
-            content = self._trim_content(raw_content, max_chars=limit) if raw_content else ""
+            if raw_content:
+                content, truncated = self._trim_with_flag(raw_content, max_chars=limit)
+            else:
+                content, truncated = ("", False)
             structured = self._structured_exports(upload)
+            enriched_tables = self._serialize_structured_tables_with_rows(upload, max_tables=3, max_rows=5)
             table_text = self._render_structured_tables_text(upload)
             issue_text = self._render_issue_text(upload)
+            table_count = len(enriched_tables) or len(structured["tables"])
+            issue_count = len(structured["issues"])
             supplemental_sections = [content]
             if table_text:
                 supplemental_sections.append(table_text)
             if issue_text:
                 supplemental_sections.append(issue_text)
             combined_content = "\n\n".join(section for section in supplemental_sections if section)
+            doc_read_state = self._read_state_for_content(combined_content, {})
             snippets.append(
                 KnowledgeSnippet(
                     id=upload.id,
@@ -523,15 +2050,177 @@ class KnowledgeSearchService:
                     source=upload.source_name or upload.source_type,
                     content=combined_content,
                     public_label=label,
-                    structured_tables=structured["tables"],
+                    structured_tables=enriched_tables or structured["tables"],
                     issues=structured["issues"],
                     page_summaries=structured["pages"],
-                    read_state=KNOWLEDGE_READ_STATE_FULL if combined_content else KNOWLEDGE_READ_STATE_SUMMARY,
+                    read_state=doc_read_state,
                     topic_hints=self._topic_hints(upload),
                     is_pinned=self._is_pinned(upload),
+                    entity_type=None,
+                    entity_name=None,
+                    entity_business=None,
+                    is_table_chunk=False,
+                    aliases=tuple(),
+                    search_stage="load_document",
+                    confidence_score=1.0,
+                    truncated=truncated,
+                    source_diagnostics={"load": "document"},
+                    structured_table_count=table_count,
+                    issue_count=issue_count,
+                    structured_table_hint=None,
                 )
             )
         return tuple(snippets)
+
+    # ADD this method inside KnowledgeSearchService
+
+    def load_chunk_contents(
+        self,
+        *,
+        business_profile,
+        chunk_ids: Sequence[str],
+        neighbor: int = 1,
+        max_chars: int | None = None,
+    ) -> Sequence[KnowledgeSnippet]:
+        """
+        Fetch exact chunk(s) and stitch +/- neighbor chunks from the same upload
+        for minimal, focused context delivery.
+        """
+        normalized: list[uuid.UUID] = []
+        for value in (chunk_ids or ()):
+            try:
+                normalized.append(uuid.UUID(str(value)))
+            except (TypeError, ValueError):
+                continue
+        if not normalized:
+            return tuple()
+
+        # Pull requested chunks with their uploads
+        chunks: list[KnowledgeUploadChunk] = list(
+            KnowledgeUploadChunk.objects.filter(
+                id__in=normalized,
+                business_profile=business_profile,
+                upload__status=KnowledgeStatus.ACTIVE,
+            )
+            .select_related("upload")
+            .order_by("upload_id", "chunk_index")
+        )
+        if not chunks:
+            return tuple()
+
+        # Group by upload for neighbor stitching
+        by_upload: dict[uuid.UUID, list[KnowledgeUploadChunk]] = {}
+        for ch in chunks:
+            by_upload.setdefault(ch.upload_id, []).append(ch)
+
+        # For each upload, fetch neighbors for the selected indices
+        stitched_snippets: list[KnowledgeSnippet] = []
+        limit = max_chars if max_chars is not None else MAX_INLINE_KNOWLEDGE_CHARS
+
+        entity_chunk_cache: dict[tuple[uuid.UUID, str], list[KnowledgeUploadChunk]] = {}
+        structured_cache: dict[uuid.UUID, tuple[Mapping[str, object], ...]] = {}
+        issue_cache: dict[uuid.UUID, tuple[Mapping[str, object], ...]] = {}
+
+        for upload_id, requested in by_upload.items():
+            upload = requested[0].upload  # same upload
+            # Determine all chunk indices we need
+            request_entries: list[tuple[KnowledgeUploadChunk, int]] = []
+            for ch in requested:
+                if ch.chunk_index is None:
+                    continue
+                effective_neighbor = self._effective_neighbor_window(ch, neighbor)
+                request_entries.append((ch, effective_neighbor))
+            if not request_entries:
+                continue
+
+            min_idx = min(max(0, ch.chunk_index - span) for ch, span in request_entries if ch.chunk_index is not None)
+            max_idx = max((ch.chunk_index or 0) + span for ch, span in request_entries)
+            cached_window = self._window_cache_get(upload.id, min_idx, max_idx)
+            if cached_window is not None:
+                window_chunks = cached_window
+            else:
+                window_chunks = list(
+                    KnowledgeUploadChunk.objects.filter(
+                        upload=upload,
+                        chunk_index__gte=min_idx,
+                        chunk_index__lte=max_idx,
+                    ).order_by("chunk_index")
+                )
+                self._window_cache_set(upload.id, min_idx, max_idx, window_chunks)
+            by_index = {ch.chunk_index: ch for ch in window_chunks}
+            if upload.id not in structured_cache:
+                structured_cache[upload.id] = tuple(self._serialize_structured_tables_with_rows(upload, max_tables=3, max_rows=5))
+                issue_cache[upload.id] = self._ingestion_issue_summaries(upload)
+
+            # Build one stitched snippet per requested chunk (not per merged range),
+            # so each request id returns a focused snippet keyed by that chunk id
+            for req, span in request_entries:
+                idx = req.chunk_index
+                start = max(0, idx - span)
+                end = idx + span
+                parts: list[str] = []
+                for i in range(start, end + 1):
+                    ch = by_index.get(i)
+                    if ch and ch.content:
+                        parts.append(ch.content)
+                extra_parts: list[str] = []
+                chunk_metadata = req.metadata if isinstance(req.metadata, dict) else {}
+                entity_name = chunk_metadata.get("entity_name")
+                if entity_name:
+                    entity_chunks = self._fetch_entity_chunks(upload, entity_name, cache=entity_chunk_cache)
+                    for extra in entity_chunks:
+                        if extra.chunk_index == idx:
+                            continue
+                        if extra.content:
+                            extra_parts.append(extra.content)
+                        if len(extra_parts) >= 2:
+                            break
+                combined_sections = parts + extra_parts
+                combined = "\n\n".join(section for section in combined_sections if section).strip()
+                if combined:
+                    trimmed, truncated = self._trim_with_flag(combined, max_chars=limit)
+                else:
+                    trimmed, truncated = ("", False)
+
+                label = getattr(upload, "display_name", None) or "Document"
+                summary = (trimmed.splitlines()[0] if trimmed else req.content or "No summary available.").strip()
+                chunk_metadata = req.metadata if isinstance(req.metadata, dict) else {}
+                read_state = self._read_state_for_content(trimmed, chunk_metadata)
+                structured_tables = structured_cache.get(upload.id) or tuple()
+                issues = issue_cache.get(upload.id) or tuple()
+                snippet = KnowledgeSnippet(
+                    id=req.id,  # keep id = CHUNK id so the ledger continues to reference this chunk
+                    title=f"{label} – chunk {req.chunk_index}",
+                    summary=summary[:280],
+                    source=upload.get_source_type_display(),
+                    content=trimmed,
+                    public_label=label,
+                    structured_tables=structured_tables,
+                    issues=issues,
+                    page_summaries=tuple(),
+                    read_state=read_state,
+                    topic_hints=tuple(),
+                    is_pinned=False,
+                    upload_id=upload.id,
+                    chunk_id=req.id,
+                    chunk_index=req.chunk_index,
+                    entity_type=chunk_metadata.get("entity_type"),
+                    entity_name=chunk_metadata.get("entity_name"),
+                    entity_business=chunk_metadata.get("entity_business"),
+                    is_table_chunk=bool(chunk_metadata.get("is_table_chunk")),
+                    aliases=tuple(chunk_metadata.get("aliases") or ()),
+                    search_stage="load_chunk",
+                    confidence_score=1.0,
+                    truncated=truncated,
+                    source_diagnostics={"neighbor_window": span},
+                    structured_table_count=len(structured_tables),
+                    issue_count=len(issues),
+                    structured_table_hint=None,
+                )
+                stitched_snippets.append(snippet)
+
+        return tuple(stitched_snippets)
+
 
     @staticmethod
     def _structured_exports(upload: KnowledgeUpload, *, max_tables: int = 3) -> dict[str, tuple[Mapping[str, object], ...]]:
@@ -556,6 +2245,50 @@ class KnowledgeSearchService:
             "issues": _normalize_list(issues, 10),
             "pages": _normalize_list(pages, 10),
         }
+
+    @staticmethod
+    def _ingestion_issue_summaries(upload: KnowledgeUpload) -> tuple[Mapping[str, object], ...]:
+        metadata = upload.ingestion_metadata if isinstance(upload.ingestion_metadata, dict) else {}
+        exports = metadata.get("structured_exports")
+        if not isinstance(exports, dict):
+            return tuple()
+        issues = exports.get("issues")
+        if not isinstance(issues, list):
+            return tuple()
+        normalized: list[Mapping[str, object]] = []
+        for issue in issues:
+            if isinstance(issue, dict):
+                normalized.append(issue)
+        return tuple(normalized)
+
+    # apps/services/ai_orchestrator.py (inside KnowledgeSearchService)
+    def _serialize_structured_tables_with_rows(self, upload, *, max_tables: int = 3, max_rows: int = 5):
+        tables_manager = getattr(upload, "tables", None)
+        if not hasattr(tables_manager, "all"):
+            return []
+        enriched = []
+        for table in list(tables_manager.all())[:max_tables]:
+            columns = list(table.column_schema or [])
+            rows_iter = list(table.rows.all()) if hasattr(table, "rows") else []
+            rows_sample = []
+            for row in rows_iter[:max_rows]:
+                cells = list(row.cells.all()) if hasattr(row, "cells") else []
+                ordered = sorted(cells, key=lambda c: c.column_index)
+                rows_sample.append([c.raw_text for c in ordered])
+            enriched.append({
+                "order_index": table.order_index,
+                "title": table.title or f"Table {table.order_index}",
+                "section_heading": table.section_heading or "",
+                "page_number": table.page.page_number if table.page else None,
+                "column_schema": columns,
+                "row_count": len(rows_iter),
+                "rowsSample": rows_sample,
+                "bbox": dict(table.bbox or {}),
+                "metadata": dict(table.metadata or {}),
+            })
+        return enriched
+
+
 
     @staticmethod
     def _render_structured_tables_text(upload: KnowledgeUpload, *, max_preview_rows: int = 5) -> str:
@@ -641,14 +2374,19 @@ class KnowledgeSearchService:
 
     @staticmethod
     def _trim_content(content: str, *, max_chars: int) -> str:
+        text, _ = KnowledgeSearchService._trim_with_flag(content, max_chars=max_chars)
+        return text
+
+    @staticmethod
+    def _trim_with_flag(content: str, *, max_chars: int) -> tuple[str, bool]:
         text = (content or "").strip()
         if not text or max_chars <= 0:
-            return text
+            return text, False
         if len(text) <= max_chars:
-            return text
+            return text, False
         logger.info("Trimming knowledge content from %s to %s chars", len(text), max_chars)
         trimmed = text[:max_chars].rstrip()
-        return f"{trimmed}\n\n[Content truncated]"
+        return f"{trimmed}\n\n[Content truncated]", True
 
     @staticmethod
     def _cosine_similarity(a: Sequence[float], b: Sequence[float]) -> float:
@@ -660,6 +2398,29 @@ class KnowledgeSearchService:
         if norm_a == 0 or norm_b == 0:
             return 0.0
         return dot / (norm_a * norm_b)
+
+    def _chunk_hits_are_weak(self, hits: Sequence[ChunkResult]) -> bool:
+        if not hits:
+            return True
+        sample = hits[: self.table_chunk_sample_limit]
+
+        def _is_table_chunk(candidate: ChunkResult) -> bool:
+            metadata = candidate.chunk.metadata if isinstance(candidate.chunk.metadata, dict) else {}
+            return bool(metadata.get("is_table_chunk"))
+
+        has_table_chunk = any(_is_table_chunk(hit) for hit in sample)
+        best_rerank = max((hit.rerank_score or 0.0) for hit in sample)
+        vector_distances = [hit.vector_distance for hit in sample if hit.vector_distance is not None]
+        best_vector = min(vector_distances) if vector_distances else None
+        if has_table_chunk and best_rerank >= self.table_rerank_floor:
+            return False
+        if best_rerank < self.table_rerank_floor:
+            return True
+        if best_vector is not None and best_vector > self.table_vector_floor:
+            return True
+        if not has_table_chunk and best_rerank < (self.table_rerank_floor * 1.2):
+            return True
+        return False
 
     @staticmethod
     def _is_pinned(upload: KnowledgeUpload) -> bool:
@@ -756,6 +2517,19 @@ class AiOrchestratorService:
         self.provider = provider
         self._permission_cache: dict[str, bool] = {}
         self._hydrate_permissions()
+        self.business_override_key = getattr(settings, "RAG_BUSINESS_OVERRIDE_KEY", "rag_overrides")
+        default_snippet_budget = max(3, int(getattr(settings, "RAG_KNOWLEDGE_SNIPPET_BUDGET", 6)))
+        self.knowledge_snippet_budget = max(
+            3,
+            int(self._business_override(agent.business_profile, "prompt_snippet_budget", default_snippet_budget)),
+        )
+        default_chunk_reads = max(1, int(getattr(settings, "RAG_MAX_CHUNK_READS_PER_TURN", 3)))
+        self.max_chunk_reads_per_turn = max(
+            1,
+            int(self._business_override(agent.business_profile, "max_chunk_reads_per_turn", default_chunk_reads)),
+        )
+        self.knowledge_trace_limit = max(5, int(getattr(settings, "RAG_KNOWLEDGE_TRACE_LIMIT", 12)))
+        self.alias_low_confidence_threshold = float(getattr(settings, "RAG_ALIAS_LOW_CONFIDENCE_THRESHOLD", 0.35))
 
     # ------------------------------------------------------------------
     # Public API
@@ -787,6 +2561,11 @@ class AiOrchestratorService:
         metadata_snapshot = dict(conversation.metadata or {})
         turn_index = int(metadata_snapshot.get("knowledge_turn_counter") or 0) + 1
         metadata_snapshot["knowledge_turn_counter"] = turn_index
+        prompt_budget = self._business_override(
+            conversation.business_profile,
+            "prompt_snippet_budget",
+            self.knowledge_snippet_budget,
+        )
         if not isinstance(metadata_snapshot.get("knowledge_delivery_log"), list):
             metadata_snapshot["knowledge_delivery_log"] = []
         metadata_dirty = True
@@ -797,6 +2576,8 @@ class AiOrchestratorService:
                 if isinstance(value, dict):
                     cached_entries[str(key)] = value
         cache_dirty = False
+        tool_trace_history = list(metadata_snapshot.get("knowledge_trace") or [])
+        tool_trace: list[dict[str, object]] = []
         visitor_mentions, mention_updates = self._detect_snippet_mentions(
             query=query,
             cached_entries=cached_entries,
@@ -805,12 +2586,62 @@ class AiOrchestratorService:
         if mention_updates:
             cache_dirty = True
 
-        citations = list(
-            self.knowledge_service.search(
+        query_traits = self.knowledge_service.analyze_query(query)
+        identifier_tokens = self._identifier_tokens(query_traits.tokens)
+        alias_result: AliasSearchResult | None = None
+        if query_traits.is_identifier_like or identifier_tokens:
+            alias_start = time.perf_counter()
+            alias_result = self.knowledge_service.search_by_alias(
                 business_profile=conversation.business_profile,
-                query=query,
+                traits=query_traits,
+                aliases=identifier_tokens or None,
             )
+            alias_duration = int((time.perf_counter() - alias_start) * 1000)
+            tool_trace.append(
+                self._record_tool_invocation(
+                    tool="search_by_identifier",
+                    query=query,
+                    traits=query_traits,
+                    duration_ms=alias_duration,
+                    result_count=len(alias_result.hits),
+                    metadata=alias_result.diagnostics,
+                )
+            )
+        else:
+            alias_result = AliasSearchResult(tuple(), {})
+
+        search_start = time.perf_counter()
+        search_result = self.knowledge_service.search(
+            business_profile=conversation.business_profile,
+            query=query,
+            traits=query_traits,
+            alias_result=alias_result,
         )
+        search_duration = int((time.perf_counter() - search_start) * 1000)
+        if search_result.diagnostics.get("path") != "alias_exact":
+            tool_trace.append(
+                self._record_tool_invocation(
+                    tool="search_free_text",
+                    query=query,
+                    traits=query_traits,
+                    duration_ms=search_duration,
+                    result_count=len(search_result.snippets),
+                    metadata=search_result.diagnostics,
+                )
+            )
+        knowledge_status = search_result.status
+        knowledge_diagnostics = dict(search_result.diagnostics or {})
+        metadata_snapshot["knowledge_search_status"] = knowledge_status
+        metadata_snapshot["knowledge_route"] = {
+            "identifier_like": query_traits.is_identifier_like,
+            "identifier_tokens": identifier_tokens,
+            "alias_short_circuit": bool(alias_result.short_circuit and alias_result.hits),
+            "search_path": knowledge_diagnostics.get("path"),
+            "status": knowledge_status,
+        }
+        metadata_snapshot["knowledge_last_diagnostics"] = knowledge_diagnostics
+        metadata_dirty = True
+        citations = list(search_result.snippets)
         actions_catalog = self._actions_catalog()
         recent_messages = list(self._recent_messages(conversation))
         knowledge_payload: list[dict[str, object]] = []
@@ -827,6 +2658,27 @@ class AiOrchestratorService:
             serialized["status"] = serialized.get("status") or self._determine_snippet_status(serialized)
             serialized.setdefault("coverage", [])
             self._upsert_knowledge_payload(knowledge_payload, serialized)
+        if knowledge_status == "not_found" and not citations:
+            placeholder = {
+                "id": "knowledge:not-found",
+                "title": "No matching knowledge",
+                "status": "not_found",
+                "reason": knowledge_diagnostics.get("reason", "no_candidates"),
+                "coverage": [],
+                "read": KNOWLEDGE_READ_STATE_SUMMARY,
+                "content": "",
+            }
+            self._upsert_knowledge_payload(knowledge_payload, placeholder)
+        if knowledge_diagnostics.get("path") == "fallback":
+            self._upsert_knowledge_payload(
+                knowledge_payload,
+                self._fallback_notice_snippet("fallback", summary="Fallback snippets are being used; verify facts before responding."),
+            )
+        if alias_result and alias_result.hits and not alias_result.short_circuit:
+            top_alias = alias_result.hits[0]
+            if (top_alias.alias_confidence or 0.0) < self.alias_low_confidence_threshold:
+                self._upsert_knowledge_payload(knowledge_payload, self._clarify_identifier_notice())
+        self._enforce_snippet_budget(knowledge_payload, budget=prompt_budget)
         snippet_lookup: dict[str, KnowledgeSnippet] = {str(snippet.id): snippet for snippet in citations}
         loaded_content_ids: set[str] = {
             str(identifier)
@@ -842,6 +2694,9 @@ class AiOrchestratorService:
         last_iteration_streamed = False
         iteration_streamed = False
         cache_satisfied_read = False
+        forced_read_once = False  # NEW: prevent repeated forced reads
+
+
 
         def _emit_stream_chunk(chunk: str) -> None:
             if not chunk:
@@ -879,6 +2734,7 @@ class AiOrchestratorService:
 
         for _ in range(max_turns):
             active_iteration_chunks = []
+            self._enforce_snippet_budget(knowledge_payload, budget=prompt_budget)
             prompt_bundle = self.prompt_builder.build(
                 conversation=conversation,
                 knowledge_snippets=knowledge_payload,
@@ -896,17 +2752,25 @@ class AiOrchestratorService:
             ready_ids_in_payload = {
                 str(s.get("id"))
                 for s in knowledge_payload
-                if s.get("content") or str(s.get("status") or "").lower() == "ready"
+                if (
+                    str(s.get("status") or "").lower() == "ready"
+                    or str(s.get("read_state") or "").lower() == KNOWLEDGE_READ_STATE_FULL
+                )
             }
+
+
+            # Map numeric ledger indices -> true snippet UUIDs, skip unavailable/suppressed
+            normalized_kids = self._coerce_knowledge_ids(plan_candidate.knowledge_requests, knowledge_payload)
+
             pending_requests = [
-                kid for kid in plan_candidate.knowledge_requests
+                kid for kid in normalized_kids
                 if kid not in loaded_content_ids and kid not in ready_ids_in_payload
             ]
+
             if not pending_requests:
-                requested_again = bool(getattr(plan_candidate, "knowledge_requests", None))
-                # If the model re-requested knowledge that is already cached/ready,
+                requested_again = bool(normalized_kids)
                 if requested_again:
-                    for kid in plan_candidate.knowledge_requests:
+                    for kid in normalized_kids:
                         entry = cached_entries.get(str(kid))
                         if not isinstance(entry, dict):
                             continue
@@ -921,7 +2785,6 @@ class AiOrchestratorService:
                             metadata_dirty = True
                         prepared = self._prepare_prompt_snippet(entry)
                         self._upsert_knowledge_payload(knowledge_payload, prepared)
-                        # Keep the human-readable ledger for diagnostics/UX.
                         knowledge_reads.append(
                             {
                                 "id": str(entry.get("id")),
@@ -930,35 +2793,98 @@ class AiOrchestratorService:
                                 "usage": usage_label,
                             }
                         )
+
                 # Preserve any streamed text from this iteration.
                 last_iteration_streamed = iteration_streamed
                 streamed_chunks = list(active_iteration_chunks) if iteration_streamed else []
-                # Give the model one more pass (max once) with the updated ledger,
-                # instead of finalising immediately on a cache-satisfied read.
+
+                # Give the model one more pass with the updated ledger if it re-requested a doc
                 if requested_again and not cache_satisfied_read:
                     cache_satisfied_read = True
                     if on_status_change:
                         on_status_change("responding")
                     continue
-                # Otherwise, finalise the plan.
+
                 final_plan = plan_candidate
                 break
 
-            if plan_candidate.response_text:
+
+            # Only commit a placeholder if we are actually going to read knowledge this turn
+            will_read = bool(pending_requests)
+            if will_read and plan_candidate.response_text:
                 placeholder_response = plan_candidate.response_text
                 _remember_placeholder_for_prompt(placeholder_response)
             if on_placeholder_response and placeholder_response:
                 on_placeholder_response(placeholder_response.strip())
 
+
             knowledge_loading = True
             if on_status_change:
                 on_status_change("reading_document")
 
-            fetched = self.knowledge_service.load_contents(
-                business_profile=conversation.business_profile,
-                knowledge_ids=pending_requests,
-            )
-            if not fetched:
+            try:
+                chunk_uuid_list = list(
+                    KnowledgeUploadChunk.objects.filter(id__in=pending_requests).values_list("id", flat=True)
+                )
+                upload_uuid_list = list(
+                    KnowledgeUpload.objects.filter(id__in=pending_requests).values_list("id", flat=True)
+                )
+                if self.max_chunk_reads_per_turn and len(chunk_uuid_list) > self.max_chunk_reads_per_turn:
+                    exceeded = len(chunk_uuid_list) - self.max_chunk_reads_per_turn
+                    chunk_uuid_list = chunk_uuid_list[: self.max_chunk_reads_per_turn]
+                    self._upsert_knowledge_payload(knowledge_payload, self._chunk_read_budget_notice(exceeded))
+                chunk_id_set = {str(x) for x in chunk_uuid_list}
+                upload_id_set = {str(x) for x in upload_uuid_list}
+            except Exception:
+                # If detection fails, treat all as uploads (safe fallback)
+                chunk_id_set = set()
+                upload_id_set = set(map(str, pending_requests))
+
+            fetched_snippets: list[KnowledgeSnippet] = []
+
+            # 1) Load chunk-focused spans (with small neighbor context)
+            if chunk_id_set:
+                chunk_start = time.perf_counter()
+                chunk_snippets = self.knowledge_service.load_chunk_contents(
+                    business_profile=conversation.business_profile,
+                    chunk_ids=sorted(chunk_id_set),
+                    neighbor=1,  # tweakable
+                )
+                fetched_snippets.extend(chunk_snippets)
+                chunk_duration = int((time.perf_counter() - chunk_start) * 1000)
+                tool_trace.append(
+                    self._record_tool_invocation(
+                        tool="load_chunk_contents",
+                        query=query,
+                        traits=query_traits,
+                        duration_ms=chunk_duration,
+                        result_count=len(chunk_snippets),
+                        metadata={"chunk_ids": list(chunk_id_set)},
+                    )
+                )
+
+            # 2) Load full uploads for the rest
+            remaining_upload_ids = [uid for uid in pending_requests if str(uid) in upload_id_set]
+            if remaining_upload_ids:
+                doc_start = time.perf_counter()
+                doc_snippets = self.knowledge_service.load_contents(
+                    business_profile=conversation.business_profile,
+                    knowledge_ids=remaining_upload_ids,
+                )
+                fetched_snippets.extend(doc_snippets)
+                doc_duration = int((time.perf_counter() - doc_start) * 1000)
+                tool_trace.append(
+                    self._record_tool_invocation(
+                        tool="load_document_contents",
+                        query=query,
+                        traits=query_traits,
+                        duration_ms=doc_duration,
+                        result_count=len(doc_snippets),
+                        metadata={"upload_ids": [str(uid) for uid in remaining_upload_ids]},
+                    )
+                )
+
+            if not fetched_snippets:
                 logger.info(
                     "LLM requested knowledge ids %s but nothing was fetched; inserting system notice",
                     pending_requests,
@@ -975,8 +2901,9 @@ class AiOrchestratorService:
                 )
                 knowledge_loading = False
                 continue
-            for snippet in fetched:
-                key = str(snippet.id)
+
+            for snippet in fetched_snippets:
+                key = str(snippet.id)  # NOTE: for chunks this is the chunk UUID
                 loaded_content_ids.add(key)
                 snippet_lookup[key] = snippet
                 payload = self._serialize_snippet(snippet)
@@ -1004,10 +2931,15 @@ class AiOrchestratorService:
                     }
                 )
                 logger.info("Loaded knowledge snippet id=%s label=%s", key, snippet.public_label or snippet.title)
+
         else:
             final_plan = plan_candidate
 
         metadata_snapshot["knowledge_cache"] = cached_entries
+        if tool_trace:
+            tool_trace_history.extend(tool_trace)
+            metadata_snapshot["knowledge_trace"] = tool_trace_history[-self.knowledge_trace_limit :]
+            metadata_dirty = True
         if cache_dirty or metadata_dirty:
             conversation.metadata = metadata_snapshot
             conversation.save(update_fields=["metadata"])
@@ -1037,9 +2969,16 @@ class AiOrchestratorService:
         if response_text and not last_iteration_streamed:
             has_ready_context = any(bool(item.get("content")) for item in knowledge_payload)
 
-            # CHANGED: only strip overlap when there was no placeholder committed
-            response_text = self._strip_placeholder_overlap(placeholder_response, response_text)
+            # If the LLM left a placeholder but no document read actually happened, upgrade to a safe fallback now.
+            if self._is_placeholder_text(response_text) and not knowledge_loading:
+                response_text = self._compose_placeholder_response(
+                    user_message=query,
+                    citations=resolved_citations,
+                    planned_actions=planned_actions,
+                )
 
+            # Only strip overlap if a placeholder was actually committed earlier
+            response_text = self._strip_placeholder_overlap(placeholder_response, response_text)
 
             response_text = self._dedupe_response(
                 conversation,
@@ -1050,9 +2989,13 @@ class AiOrchestratorService:
             streamed_chunks = [response_text]
             _emit_stream_chunk(response_text)
 
+
         streamed_text = "".join(streamed_chunks).strip()
         if streamed_text:
             response_text = streamed_text
+
+        response_text = self._maybe_prepend_not_found_notice(response_text, knowledge_status=knowledge_status)
+        response_text = self._maybe_append_ingestion_notice(response_text, knowledge_payload)
 
         response_stream_text = response_text
 
@@ -1067,6 +3010,8 @@ class AiOrchestratorService:
             "knowledge_loading": knowledge_loading,
             "response_stream_text": response_stream_text,
             "cached_snippets": len(cached_entries),
+            "knowledge_status": knowledge_status,
+            "tool_trace": tool_trace,
         }
         if placeholder_response:
             diagnostics["placeholder_response"] = placeholder_response.strip()
@@ -1177,28 +3122,84 @@ class AiOrchestratorService:
     def _determine_snippet_status(snapshot: Mapping[str, object]) -> str:
         if snapshot.get("system_notice") == "missing_document":
             return "unavailable"
-        state = snapshot.get("read_state") or ""
-        if (state == KNOWLEDGE_READ_STATE_FULL) or snapshot.get("content"):
+        state = (snapshot.get("read_state") or "").strip().lower()
+        if state == KNOWLEDGE_READ_STATE_FULL:
             return "ready"
         if state == KNOWLEDGE_READ_STATE_PREVIEW:
             return "preview"
         return "summary-only"
 
+
+    def _is_table_critical_query(self, query: str) -> bool:
+        q = (query or "").lower()
+        tokens = set(re.split(r"[^a-z0-9]+", q))
+        fee_tokens = set(TOPIC_KEYWORD_MAP.get("fees", ()))
+        limit_tokens = set(TOPIC_KEYWORD_MAP.get("limits", ()))
+        apr_tokens = set(TOPIC_KEYWORD_MAP.get("apr", ()))
+        return any(t in tokens for t in (fee_tokens | limit_tokens | apr_tokens))
+
+    @staticmethod
+    def _should_force_read_for_tables(knowledge_payload: Sequence[Mapping[str, object]]) -> tuple[bool, list[str]]:
+        """
+        Returns (should_force, candidate_ids).
+        Force when we see structured table hints but the snippet is not ready/full.
+        """
+        ids: list[str] = []
+        should = False
+        for s in knowledge_payload:
+            tables = s.get("structuredTables") or []
+            table_count = int(s.get("structured_table_count") or 0)
+            hint_present = bool(s.get("structured_table_hint"))
+            status = str(s.get("status") or "").lower()
+            sid = str(s.get("id") or "") if s.get("id") else ""
+            has_tables = bool(tables) or table_count > 0 or hint_present
+            if has_tables and status != "ready" and sid:
+                should = True
+                ids.append(sid)
+        return should, ids[:3]  # safety: cap the count
+
+
+    # REPLACE the entire _prepare_prompt_snippet function
     def _prepare_prompt_snippet(self, entry: Mapping[str, object]) -> dict[str, object]:
         payload = dict(entry)
+
+        # Normalize status/read_state, but DO NOT overwrite the explicit read_state
         payload["status"] = payload.get("status") or self._determine_snippet_status(payload)
+        payload["read_state"] = (payload.get("read_state") or KNOWLEDGE_READ_STATE_SUMMARY)
+
+        # Ensure chunk metadata is preserved (pass-through if present)
+        if "upload_id" in entry and entry["upload_id"]:
+            payload["upload_id"] = str(entry["upload_id"])
+        if "chunk_id" in entry and entry["chunk_id"]:
+            payload["chunk_id"] = str(entry["chunk_id"])
+        if "chunk_index" in entry and entry["chunk_index"] is not None:
+            payload["chunk_index"] = int(entry["chunk_index"])
+
         payload.setdefault("coverage", [])
-
-        if payload.get("content"):
-            payload["read_state"] = KNOWLEDGE_READ_STATE_FULL
-            payload["status"] = "ready"
-        else:
-            payload["read_state"] = payload.get("read_state") or KNOWLEDGE_READ_STATE_SUMMARY
-
         payload["pin"] = bool(payload.get("pin"))
+
+        # Remove transient fields that shouldn't hit the prompt
         payload.pop("last_active_turn", None)
         payload.pop("last_customer_reference_turn", None)
         return payload
+
+
+
+    def _business_override(self, business_profile, key: str, default: int | float) -> int | float:
+        metadata = getattr(business_profile, "metadata", None)
+        overrides = metadata.get(self.business_override_key) if isinstance(metadata, dict) else None
+        if not isinstance(overrides, dict):
+            return default
+        value = overrides.get(key)
+        if isinstance(value, (int, float)):
+            try:
+                return type(default)(value)
+            except (TypeError, ValueError):
+                return default
+        return default
+
+
+
 
     def _should_include_snippet(
         self,
@@ -1426,33 +3427,56 @@ class AiOrchestratorService:
         return tuple(reversed(tuple(qs)))
 
     @staticmethod
+    # REPLACE the entire _serialize_snippet function
     def _serialize_snippet(snippet: KnowledgeSnippet) -> dict[str, object]:
+        """
+        Turn a KnowledgeSnippet into a stable dict for the prompt ledger/cache.
+        We preserve chunk metadata so the LLM can request chunk reads.
+        """
         payload: dict[str, object] = {
             "id": str(snippet.id),
             "title": snippet.title,
             "summary": snippet.summary,
             "source": snippet.source,
-            "data_ready": bool(snippet.content),
-            "read_state": snippet.read_state,
+            "content": snippet.content or "",
+            "public_label": snippet.public_label or "",
+            "structuredTables": list(snippet.structured_tables or ()),
+            "issues": list(snippet.issues or ()),
+            "pageSummaries": list(snippet.page_summaries or ()),
+            "read_state": snippet.read_state or KNOWLEDGE_READ_STATE_SUMMARY,
+            "topic_hints": list(snippet.topic_hints or ()),
+            "is_pinned": bool(snippet.is_pinned),
         }
-        if snippet.public_label:
-            payload["public_label"] = snippet.public_label
-        if snippet.content:
-            payload["content"] = snippet.content
-        if snippet.structured_tables:
-            payload["structuredTables"] = [dict(table) for table in snippet.structured_tables]
-        if snippet.issues:
-            payload["issues"] = [dict(issue) for issue in snippet.issues]
-        if snippet.page_summaries:
-            payload["pageSummaries"] = [dict(page) for page in snippet.page_summaries]
-        if snippet.topic_hints:
-            payload["topic_hints"] = list(snippet.topic_hints)
-        if snippet.is_pinned:
-            payload["pin"] = True
+        if snippet.search_stage:
+            payload["search_stage"] = snippet.search_stage
+        if snippet.confidence_score is not None:
+            payload["confidence_score"] = float(snippet.confidence_score)
+        payload["truncated"] = bool(snippet.truncated)
+        payload["source_diagnostics"] = dict(snippet.source_diagnostics or {})
+        payload["aliases"] = list(snippet.aliases or ())
+        # NEW: carry chunk identity
+        if snippet.upload_id:
+            payload["upload_id"] = str(snippet.upload_id)
+        if snippet.chunk_id:
+            payload["chunk_id"] = str(snippet.chunk_id)
+        if snippet.chunk_index is not None:
+            payload["chunk_index"] = int(snippet.chunk_index)
+        if snippet.entity_type:
+            payload["entity_type"] = snippet.entity_type
+        if snippet.entity_name:
+            payload["entity_name"] = snippet.entity_name
+        if snippet.entity_business:
+            payload["entity_business"] = snippet.entity_business
+        payload["is_table_chunk"] = bool(snippet.is_table_chunk)
+        # status will be normalized later by _determine_snippet_status
         return payload
+
 
     @staticmethod
     def _upsert_knowledge_payload(payload: list[dict], snippet_payload: Mapping[str, object]) -> None:
+        # Do not surface suppressed/system notices into the prompt ledger
+        if snippet_payload.get("suppress_in_prompt"):
+            return
         target_id = snippet_payload.get("id")
         for existing in payload:
             if existing.get("id") == target_id:
@@ -1460,6 +3484,126 @@ class AiOrchestratorService:
                 break
         else:
             payload.append(dict(snippet_payload))
+
+    def _enforce_snippet_budget(self, payload: list[dict[str, object]], *, budget: int | None = None) -> list[dict[str, object]]:
+        limit = budget if budget is not None else self.knowledge_snippet_budget
+        if limit <= 0 or len(payload) <= limit:
+            return payload
+        priorities = {
+            "system_notice": 0,
+            "alias_exact": 1,
+            "alias_fts": 2,
+            "vector_ann": 3,
+            "content_fts": 4,
+            "fallback": 5,
+        }
+        ranked = sorted(
+            payload,
+            key=lambda item: (
+                0 if item.get("pin") else priorities.get(item.get("search_stage") or item.get("status"), 6),
+                -float(item.get("confidence_score") or 0.0),
+            ),
+        )
+        keep = {entry.get("id") for entry in ranked[:limit]}
+        payload[:] = [entry for entry in payload if entry.get("id") in keep]
+        return payload
+
+    @staticmethod
+    def _identifier_tokens(tokens: Sequence[str]) -> tuple[str, ...]:
+        identifier_like: list[str] = []
+        for token in tokens:
+            if any(ch.isdigit() for ch in token) or "-" in token or "_" in token:
+                identifier_like.append(token)
+        return tuple(identifier_like)
+
+    def _record_tool_invocation(
+        self,
+        *,
+        tool: str,
+        query: str,
+        traits: QueryTraits,
+        duration_ms: int,
+        result_count: int,
+        metadata: Mapping[str, object] | None = None,
+    ) -> dict[str, object]:
+        entry = {
+            "tool": tool,
+            "query": query[:160],
+            "token_count": traits.token_count,
+            "identifier_like": traits.is_identifier_like,
+            "duration_ms": duration_ms,
+            "result_count": result_count,
+            "timestamp": timezone.now().isoformat(),
+        }
+        if metadata:
+            entry["metadata"] = dict(metadata)
+        return entry
+
+    @staticmethod
+    def _fallback_notice_snippet(reason: str, summary: str | None = None) -> dict[str, object]:
+        return {
+            "id": f"notice:{reason}",
+            "title": "Knowledge fallback in use",
+            "summary": summary
+            or "Only generic snippets were available for this query. Phrase the answer cautiously or ask for a specific identifier.",
+            "status": "system_notice",
+            "read_state": KNOWLEDGE_READ_STATE_SUMMARY,
+            "search_stage": "system_notice",
+            "confidence_score": 0.0,
+            "truncated": False,
+        }
+
+    @staticmethod
+    def _clarify_identifier_notice() -> dict[str, object]:
+        return {
+            "id": "notice:clarify-identifier",
+            "title": "Need clearer identifier",
+            "summary": "Similar aliases exist but none are confident matches. Ask the visitor to confirm the exact identifier or provide more digits.",
+            "status": "system_notice",
+            "read_state": KNOWLEDGE_READ_STATE_SUMMARY,
+            "search_stage": "system_notice",
+            "confidence_score": 0.0,
+        }
+
+    @staticmethod
+    def _chunk_read_budget_notice(exceeded: int) -> dict[str, object]:
+        return {
+            "id": f"notice:chunk-budget:{exceeded}",
+            "title": "Chunk read budget reached",
+            "summary": "Only the first few chunk reads were executed this turn to control cost. Request fewer IDs or ask for more specific identifiers.",
+            "status": "system_notice",
+            "read_state": KNOWLEDGE_READ_STATE_SUMMARY,
+            "search_stage": "system_notice",
+        }
+
+    def _maybe_prepend_not_found_notice(self, text: str, *, knowledge_status: str) -> str:
+        if knowledge_status != "not_found":
+            return text
+        normalized = (text or "").lower()
+        if "not found" in normalized and "knowledge" in normalized:
+            return text
+        notice = "I couldn’t find that identifier in the knowledge base. "
+        return f"{notice}{text}".strip() if text else notice.strip()
+
+    def _maybe_append_ingestion_notice(self, text: str, knowledge_payload: Sequence[Mapping[str, object]]) -> str:
+        if not self._has_ingestion_red_flags(knowledge_payload):
+            return text
+        notice = " Some of the ingested files were truncated, so certain details may be missing."
+        return (text or "") + notice if text else notice.strip()
+
+    @staticmethod
+    def _has_ingestion_red_flags(knowledge_payload: Sequence[Mapping[str, object]]) -> bool:
+        for entry in knowledge_payload:
+            if entry.get("truncated"):
+                return True
+            issues = entry.get("issues") or []
+            for issue in issues:
+                code = str(issue.get("issue_code") or "").lower()
+                if "truncate" in code or "missing" in code:
+                    return True
+        return False
+
+
 
     def _handle_missing_knowledge(
         self,
@@ -1491,7 +3635,7 @@ class AiOrchestratorService:
         clean_id = (identifier or "missing-document").strip()
         display_fragment = clean_id[:8] if clean_id else "doc"
         return {
-            "id": clean_id or "missing-document",
+            "id": f"missing:{display_fragment}",  # avoid numeric IDs like "1"
             "title": "Document unavailable",
             "public_label": f"Doc {display_fragment} unavailable",
             "summary": (
@@ -1507,6 +3651,7 @@ class AiOrchestratorService:
             "read_state": KNOWLEDGE_READ_STATE_SUMMARY,
             "status": "unavailable",
             "coverage": [],
+            "suppress_in_prompt": True,  # <-- do not surface in ledger
         }
 
     def _invoke_llm(self, bundle: PromptBundle, *, on_response_text_delta: Callable[[str], None] | None = None) -> LlmPlan | None:
@@ -1617,6 +3762,55 @@ class AiOrchestratorService:
                 if identifier:
                     identifiers.append(identifier)
         return identifiers
+
+    def _coerce_knowledge_ids(self, requested: Sequence[str] | None, knowledge_payload: Sequence[dict]) -> list[str]:
+        """
+        Converts LLM-provided `knowledge_ids` that reference ledger indices (1-based)
+        into real snippet UUIDs. Also accepts real UUIDs and filters duplicates.
+        Skips entries marked unavailable or suppressed from the prompt.
+        """
+        ids: list[str] = []
+        seen: set[str] = set()
+        requested = requested or []
+        # Build a clean view of the ledger as shown to the model
+        visible_payload = [s for s in knowledge_payload if not s.get("suppress_in_prompt")]
+        for item in requested:
+            s = str(item).strip()
+            # numeric index? map 1-based index -> visible payload entry id
+            if s.isdigit():
+                idx = int(s)
+                if 1 <= idx <= len(visible_payload):
+                    target = visible_payload[idx - 1]
+                    kid = str(target.get("id") or "").strip()
+                    status = str(target.get("status") or "").strip().lower()
+                    if kid and status != "unavailable" and kid not in seen:
+                        ids.append(kid)
+                        seen.add(kid)
+                continue
+            # try UUID
+            try:
+                kid = str(uuid.UUID(s))
+                if kid not in seen:
+                    ids.append(kid)
+                    seen.add(kid)
+            except Exception:
+                continue
+        return ids
+
+    @staticmethod
+    def _is_placeholder_text(text: str) -> bool:
+        t = (text or "").strip().lower()
+        if not t:
+            return False
+        return (
+            t == "reviewing knowledge"
+            or t == "reviewing the document"
+            or t == "reviewing docs"
+            or t.startswith("reviewing ")
+            or t == "loading details"
+        )
+
+
 
     def _plan_actions(self, *, conversation: Conversation, user_message: str) -> tuple[list[PlannedAction], list[ExtractionPlan]]:
         plans: list[PlannedAction] = []

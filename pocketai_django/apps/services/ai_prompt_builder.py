@@ -80,6 +80,7 @@ class PromptBuilder:
         ### Placeholder Output Rules
         - When you include `read_knowledge`, `response_text` must be a short visitor-facing placeholder (e.g., "Reviewing Knowledge").
         - Keep it <= 180 characters; do not invent numbers or policies; do not cite snippets yet. The final answer must follow after the read completes.
+        - Do NOT output a placeholder unless a `read_knowledge` action is included in the same turn; if no read is pending, respond with the real answer immediately.
         """
     ).strip()
 
@@ -89,9 +90,14 @@ class PromptBuilder:
         - Use the Knowledge Ledger in this prompt as your source of truth. Each snippet lists its `status`, `read` scope, last usage, and coverage topics that were already delivered.
         - When `status=ready`, the backend already loaded the full document. You already have this data—respond immediately and only call `read_knowledge` if the visitor explicitly asks for content outside the listed coverage.
         - For snippets still marked summary-only or preview, call `read_knowledge` with the provided IDs before citing details so you can quote the real document.
+        - Retrieval tools available this turn: `search_by_identifier`, `search_free_text`, `load_chunk_contents`, and `load_document_contents`. Treat them as authoritative signals of what the backend already executed.
+        - When the visitor quotes an internal identifier (slug, SKU, policy code, booking ID), prefer the snippet whose `aliases` list contains that exact identifier before falling back to descriptions.
+        - When the visitor names a specific product, location, offer, or entity, prefer the snippet whose `entity_name` or `entity_type` matches that request—even if snippets share the same source document. Only fall back to other chunks when no entity-aligned snippet exists.
         - After you answer a question with a snippet, reflect that topic in the coverage list so future turns avoid redundant reads.
         - Cite snippets naturally when they inform an answer, but keep internal file names and retrieval steps invisible to the visitor.
         - If no snippet confirms the requested detail, say so plainly and offer escalation or follow-up. If a snippet is labeled as a system notice (document unavailable), explain the limitation and propose an alternative.
+        - When `status=not_found`, you must tell the visitor that the knowledge base does not contain their identifier and either ask for clarification or offer to escalate.
+        - When snippet metadata indicates `truncated=true` or issues referencing truncation, warn the visitor that some data may be missing before quoting partial details.
         """
     ).strip()
 
@@ -105,6 +111,16 @@ class PromptBuilder:
         - When the visitor continues after a case is opened, log evolving details using `add_case_history` rather than changing the description.
         """
     ).strip()
+
+    CHUNK_READ_NUDGE = textwrap.dedent(
+        """
+        ### Retrieval Focus Directive
+        - When you need more context from a knowledge snippet, request that exact snippet ID (chunk) rather than the entire document, unless you truly need the whole document.
+        - Prefer loading a narrow window around that chunk via `load_chunk_contents`; avoid whole-document reads unless necessary.
+        - Respect chunk read budgets. If the ledger warns that the budget was reached, ask the visitor for a more specific identifier instead of requesting more chunks.
+        """
+    ).strip()
+
 
     def build(
         self,
@@ -138,6 +154,8 @@ class PromptBuilder:
             {self.ACTION_RULES}
 
             {self.KNOWLEDGE_RULES}
+
+            {self.CHUNK_READ_NUDGE}
 
             {self.CUSTOMER_RULES}
             """
@@ -180,6 +198,17 @@ class PromptBuilder:
             "last_used_for": s.get("last_used_for"),
             "last_used_at": s.get("last_used_at"),
             "pin": bool(s.get("pin")),
+            "entity_type": s.get("entity_type"),
+            "entity_name": s.get("entity_name"),
+            "entity_business": s.get("entity_business"),
+            "is_table_chunk": bool(s.get("is_table_chunk")),
+            "chunk_index": s.get("chunk_index"),
+            "chunk_id": s.get("chunk_id"),
+            "aliases": s.get("aliases") or [],
+            "search_stage": s.get("search_stage"),
+            "confidence_score": s.get("confidence_score"),
+            "truncated": bool(s.get("truncated")),
+            "source_diagnostics": s.get("source_diagnostics") or {},
         }
         for s in knowledge_snippets
         ]
@@ -227,10 +256,17 @@ class PromptBuilder:
             transcript_lines.append(f"- [{sender}] {message.body}")
         transcript_block = "\n".join(transcript_lines) or "(no prior messages)"
 
-        knowledge_block_lines = []
-        for snippet in knowledge_snippets:
-            knowledge_block_lines.extend(self._render_snippet_entry(snippet))
-        knowledge_block = "\n".join(knowledge_block_lines) if knowledge_block_lines else "- No knowledge snippets were retrieved"
+        use_envelope = True
+        if use_envelope:
+            knowledge_block = self.build_knowledge_context_envelope(
+                knowledge_snippets,
+                use_json_envelope=True
+            )
+        else:
+            knowledge_block_lines = []
+            for snippet in knowledge_snippets:
+                knowledge_block_lines.extend(self._render_snippet_entry(snippet))
+            knowledge_block = "\n".join(knowledge_block_lines) if knowledge_block_lines else "- No knowledge snippets were retrieved"
         previous_deliveries_block = self._render_previous_deliveries(knowledge_log)
 
         actions_block = []
@@ -251,8 +287,9 @@ class PromptBuilder:
             - Industry: {business_industry}
 
             ### Knowledge Ledger
-            {knowledge_block}
+           {knowledge_block}
             Ledger directive: When a snippet shows status=ready, you already have that data—respond now. Only invoke `read_knowledge` for summary-only/preview snippets or when the visitor asks for topics outside the listed coverage.
+            Ledger directive (chunk focus): When you need more context from a knowledge snippet, request that exact snippet ID (chunk) rather than the entire document, unless you truly need the whole document.
 
             ### Previously Delivered
             {previous_deliveries_block}
@@ -363,3 +400,111 @@ class PromptBuilder:
             else:
                 lines.append(f"- {descriptor or label} (shared earlier)")
         return "\n".join(lines)
+
+    def build_knowledge_context_envelope(
+        self,
+        knowledge_snippets: Sequence[Mapping[str, object]],
+        *,
+        use_json_envelope: bool = True,
+    ) -> str:
+        """
+        Build JSON envelope wrapper for knowledge context (Claude-style)
+        
+        This provides better structure for the LLM to understand document sources,
+        tables, and metadata when reasoning about knowledge base content.
+        
+        Args:
+            knowledge_snippets: List of knowledge snippet dictionaries
+            use_json_envelope: Whether to wrap in JSON structure (default: True)
+        
+        Returns:
+            Formatted context string (JSON envelope or plain text)
+        """
+        import json
+        
+        if not use_json_envelope:
+            # Fall back to existing knowledge block format
+            return self._build_plain_knowledge_block(knowledge_snippets)
+        
+        # Build JSON envelope structure
+        documents = []
+        
+        for idx, snippet in enumerate(knowledge_snippets, start=1):
+            # Build document structure
+            doc = {
+                "index": idx,
+                "media_type": snippet.get("mime_type") or "text/plain",
+                "source": snippet.get("public_label") or snippet.get("title") or f"document_{snippet.get('id')}",
+                "text": snippet.get("content") or snippet.get("summary") or "",
+            }
+            
+            # Add structured tables if available
+            tables = snippet.get("structuredTables") or []
+            if tables:
+                doc["tables"] = []
+                for t in tables[:5]:
+                    entry = {
+                        "title": t.get("title"),
+                        "page_number": t.get("page_number") or t.get("pageNumber"),
+                        "column_schema": t.get("column_schema") or t.get("columnSchema") or [],
+                        "row_count": len(t.get("rows") or t.get("rowsSample") or []),
+                    }
+                    rows = t.get("rows") or t.get("rowsSample") or []
+                    if rows:
+                        entry["rowsSample"] = rows[:5]   # keep it small and consistent
+                    doc["tables"].append(entry)
+
+            
+            # Add page summaries if available
+            page_summaries = snippet.get("pageSummaries") or []
+            if page_summaries:
+                doc["pages"] = [
+                    {
+                        "page_number": p.get("page_number"),
+                        "summary": p.get("summary"),
+                    }
+                    for p in page_summaries[:10]  # Limit to 10 pages
+                ]
+            
+            # Add metadata
+            doc["metadata"] = {
+                "status": snippet.get("status"),
+                "read_state": snippet.get("read_state"),
+                "coverage": snippet.get("coverage") or [],
+                "last_used_for": snippet.get("last_used_for"),
+                "entity_type": snippet.get("entity_type"),
+                "entity_name": snippet.get("entity_name"),
+                "entity_business": snippet.get("entity_business"),
+                "is_table_chunk": bool(snippet.get("is_table_chunk")),
+                "chunk_index": snippet.get("chunk_index"),
+                "chunk_id": snippet.get("chunk_id"),
+                "search_stage": snippet.get("search_stage"),
+                "confidence_score": snippet.get("confidence_score"),
+                "truncated": bool(snippet.get("truncated")),
+                "aliases": snippet.get("aliases") or [],
+                "issues": snippet.get("issues") or [],
+            }
+
+            documents.append(doc)
+        
+        # Wrap in envelope
+        envelope = {"documents": documents}
+        
+        # Return as formatted JSON with instruction
+        return f"""<documents>
+{json.dumps(envelope, indent=2, ensure_ascii=False)}
+</documents>
+
+Use the documents above to answer the user's question. Reference documents by their index and source when citing information."""
+
+    def _build_plain_knowledge_block(
+        self,
+        knowledge_snippets: Sequence[Mapping[str, object]]
+    ) -> str:
+        """
+        Legacy plain text knowledge block (your existing format)
+        """
+        knowledge_block_lines = []
+        for snippet in knowledge_snippets:
+            knowledge_block_lines.extend(self._render_snippet_entry(snippet))
+        return "\n".join(knowledge_block_lines) if knowledge_block_lines else "- No knowledge snippets were retrieved"
