@@ -27,3 +27,4 @@ dist-ssr
 .env
 backend/.env
 .env
+pocketai_django/.venv/
