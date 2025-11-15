@@ -1,6 +1,9 @@
 """Django settings for the server-rendered PocketAI project."""
 
 from pathlib import Path
+import base64
+import binascii
+import hashlib
 import os
 
 # Base directory of the Django project (the folder that contains manage.py)
@@ -15,6 +18,50 @@ os.environ.setdefault("TOKENIZERS_PARALLELISM", "false")
 
 
 ALLOWED_HOSTS: list[str] = []
+
+
+def _split_scopes(raw: str | None) -> list[str]:
+    if not raw:
+        return []
+    return [scope.strip() for scope in raw.split() if scope.strip()]
+
+
+def _integration_credentials_key() -> str:
+    provided = os.getenv("INTEGRATION_CREDENTIALS_KEY", "").strip()
+    if provided:
+        candidate = provided.encode("utf-8")
+        try:
+            base64.urlsafe_b64decode(candidate)
+            return provided
+        except (binascii.Error, ValueError):
+            digest = hashlib.sha256(candidate).digest()
+            return base64.urlsafe_b64encode(digest).decode("utf-8")
+
+    digest = hashlib.sha256(SECRET_KEY.encode("utf-8")).digest()
+    return base64.urlsafe_b64encode(digest).decode("utf-8")
+
+
+GOOGLE_OAUTH_CLIENT_ID = os.getenv("GOOGLE_OAUTH_CLIENT_ID", "")
+GOOGLE_OAUTH_CLIENT_SECRET = os.getenv("GOOGLE_OAUTH_CLIENT_SECRET", "")
+GOOGLE_OAUTH_REDIRECT_URI = os.getenv(
+    "GOOGLE_OAUTH_REDIRECT_URI",
+    "http://localhost:8000/api/integrations/google/callback/",
+)
+_default_google_scopes = [
+    "https://www.googleapis.com/auth/drive.readonly",
+    "https://www.googleapis.com/auth/spreadsheets.readonly",
+    "openid",
+    "https://www.googleapis.com/auth/userinfo.email",
+    "https://www.googleapis.com/auth/userinfo.profile",
+]
+GOOGLE_OAUTH_SCOPES = _split_scopes(os.getenv("GOOGLE_OAUTH_SCOPES")) or _default_google_scopes
+INTEGRATIONS_DASHBOARD_URL = os.getenv(
+    "INTEGRATIONS_DASHBOARD_URL",
+    "/dashboard/knowledge?panel=integrations",
+)
+INTEGRATION_CREDENTIALS_KEY = _integration_credentials_key()
+INTEGRATION_CREDENTIAL_ROTATION_DAYS = int(os.getenv("INTEGRATION_CREDENTIAL_ROTATION_DAYS", "30"))
+INTEGRATION_CREDENTIAL_MAX_ERRORS = int(os.getenv("INTEGRATION_CREDENTIAL_MAX_ERRORS", "3"))
 
 INSTALLED_APPS = [
     "django.contrib.admin",

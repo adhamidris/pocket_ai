@@ -23,12 +23,16 @@ from django.shortcuts import redirect, render
 from django.test.client import RequestFactory
 from django.urls import reverse
 from django.utils import timezone
+from django.utils.dateparse import parse_datetime
 from django.utils.text import slugify
 from django.views.decorators.http import require_http_methods
 
 from apps.accounts.models import (
     AgentProfile,
     BusinessProfile,
+    KnowledgeIntegration,
+    KnowledgeIntegrationStatus,
+    KnowledgeIntegrationType,
     KnowledgeSourceType,
     KnowledgeStatus,
     KnowledgeUpload,
@@ -52,6 +56,7 @@ from apps.services.customers import list_customers
 from apps.services.documents import DocumentListValidationError, list_documents
 from apps.services.knowledge_ingestion import queue_ingestion_job
 from apps.api.chat_portal import bootstrap_session as bootstrap_session_view
+from apps.api.views import start_google_drive_oauth as start_google_drive_oauth_view
 
 
 PORTAL_BOOTSTRAP_SCRIPT_ID = "portal-bootstrap-data"
@@ -63,6 +68,16 @@ KNOWLEDGE_UPLOAD_SIMPLE_TYPES: tuple[tuple[str, str], ...] = (
     (KnowledgeSourceType.LINK, "External Link"),
     (KnowledgeSourceType.TEXT, "Manual Entry"),
 )
+
+INTEGRATION_TYPE_DESCRIPTIONS = {
+    KnowledgeIntegrationType.GOOGLE_DRIVE: "Sync Google Sheets automatically to keep SOPs and trackers up to date.",
+    KnowledgeIntegrationType.NOTION: "Mirror Notion pages into the knowledge base.",
+    KnowledgeIntegrationType.ZENDESK: "Import help-center articles from Zendesk Guide.",
+    KnowledgeIntegrationType.HUBSPOT: "Bring HubSpot knowledge articles into Pocket AI.",
+    KnowledgeIntegrationType.SLACK: "Capture curated Slack posts as living documentation.",
+    KnowledgeIntegrationType.CONFLUENCE: "Sync wiki spaces from Confluence.",
+    KnowledgeIntegrationType.CUSTOM: "Custom connector managed by your team.",
+}
 
 
 def _call_portal_bootstrap_api(
@@ -102,6 +117,87 @@ def _call_portal_bootstrap_api(
         return json.loads(response.content.decode("utf-8"))
     except (UnicodeDecodeError, json.JSONDecodeError) as exc:  # pragma: no cover - defensive
         raise Http404("Invalid bootstrap payload") from exc
+
+
+def _format_dashboard_datetime(value: datetime | str | None) -> str | None:
+    if not value:
+        return None
+    dt: datetime | None
+    if isinstance(value, str):
+        dt = parse_datetime(value)
+    else:
+        dt = value
+    if not dt:
+        return None
+    if timezone.is_naive(dt):
+        dt = timezone.make_aware(dt, timezone.get_current_timezone())
+    local_dt = timezone.localtime(dt)
+    hour = local_dt.strftime("%I").lstrip("0") or "0"
+    minute = local_dt.strftime("%M")
+    ampm = local_dt.strftime("%p")
+    month = local_dt.strftime("%b")
+    return f"{month} {local_dt.day}, {hour}:{minute} {ampm}"
+
+
+def _integration_status_badge(status: str) -> str:
+    palette = {
+        KnowledgeIntegrationStatus.CONNECTED: "bg-emerald-50 text-emerald-700 border border-emerald-100",
+        KnowledgeIntegrationStatus.SYNCING: "bg-blue-50 text-blue-700 border border-blue-100",
+        KnowledgeIntegrationStatus.ERROR: "bg-rose-50 text-rose-700 border border-rose-100",
+        KnowledgeIntegrationStatus.DISCONNECTED: "bg-amber-50 text-amber-700 border border-amber-100",
+    }
+    return palette.get(status, "bg-muted text-muted-foreground border border-border/60")
+
+
+def _describe_integration_type(integration_type: str) -> str:
+    return INTEGRATION_TYPE_DESCRIPTIONS.get(
+        integration_type,
+        "Keep this data source in sync with Pocket AI.",
+    )
+
+
+def _serialize_dashboard_integration(integration: KnowledgeIntegration) -> dict[str, object]:
+    metadata = integration.metadata or {}
+    sync_stats = metadata.get("sync_stats") or {}
+    schedule = integration.get_sync_schedule()
+    description = _describe_integration_type(integration.integration_type)
+    last_sync = _format_dashboard_datetime(integration.last_synced_at)
+    next_sync = _format_dashboard_datetime(schedule.get("next_run_at"))
+    rows_ingested = sync_stats.get("rows_ingested")
+    sheets_url = ""
+    sync_url = ""
+    if integration.integration_type == KnowledgeIntegrationType.GOOGLE_DRIVE:
+        sheets_url = reverse("api:integrations-sheets", args=[integration.id])
+        sync_url = reverse("api:integrations-google-sync")
+    return {
+        "id": str(integration.id),
+        "name": integration.name,
+        "description": description,
+        "status": integration.status,
+        "status_label": integration.get_status_display(),
+        "status_class": _integration_status_badge(integration.status),
+        "last_sync": last_sync,
+        "next_sync": next_sync,
+        "resource_count": len(integration.resource_configs or []),
+        "rows_ingested": rows_ingested,
+        "sync_error": integration.sync_error,
+        "default_visibility": integration.get_default_visibility(),
+        "default_sync_frequency": integration.get_default_sync_frequency(),
+        "api": {
+            "sheets": sheets_url,
+            "sync": sync_url,
+        },
+    }
+
+
+def _gather_dashboard_integrations(business: BusinessProfile | None) -> list[dict[str, object]]:
+    if not business:
+        return []
+    integrations = (
+        KnowledgeIntegration.objects.filter(business_profile=business)
+        .order_by("name")
+    )
+    return [_serialize_dashboard_integration(integration) for integration in integrations]
 
 
 def _mobile_app_section() -> Dict[str, object]:
@@ -2024,6 +2120,7 @@ def dashboard_knowledge(request: HttpRequest) -> HttpResponse:
     ]
 
     documents_showing = len(documents)
+    integrations_cards = _gather_dashboard_integrations(business)
     context = {
         "user_name": user_name,
         "knowledge_stats": stats,
@@ -2042,8 +2139,11 @@ def dashboard_knowledge(request: HttpRequest) -> HttpResponse:
         "knowledge_documents_total": total_documents if business else 0,
         "knowledge_documents_has_prev": False,
         "knowledge_documents_has_next": bool(business and total_documents > documents_showing),
-        "knowledge_integrations": [],
+        "knowledge_integrations": integrations_cards,
         "knowledge_integrations_empty_message": "Connect a source to sync articles, FAQs, or product specs automatically.",
+        "knowledge_integrations_enabled": bool(business),
+        "knowledge_business_id": str(business.id) if business else "",
+        "knowledge_integrations_connect_url": reverse("frontend:dashboard-knowledge-integrations-connect"),
         "knowledge_collections": [],
         "knowledge_collections_empty_message": "Group documents into collections to control agent access.",
         "knowledge_panel_empty_title": "Select a document",
@@ -2151,6 +2251,54 @@ def dashboard_knowledge_dump(request: HttpRequest) -> HttpResponse:
     timestamp = timezone.now().strftime("%Y%m%d%H%M%S")
     response["Content-Disposition"] = f'attachment; filename=\"knowledge_dump_{timestamp}.json\"'
     return response
+
+
+@login_required
+@require_http_methods(["POST"])
+def dashboard_knowledge_integrations_connect(request: HttpRequest) -> HttpResponse:
+    business = _primary_business_for_user(request.user)
+    if not business:
+        messages.error(request, "Link a business profile before connecting integrations.")
+        return redirect("frontend:dashboard-knowledge")
+
+    payload = json.dumps({"businessId": str(business.id)})
+    api_request = _portal_request_factory.post(
+        reverse("api:integrations-google-start"),
+        data=payload,
+        content_type="application/json",
+    )
+    api_request.user = request.user
+    api_request.COOKIES = request.COOKIES.copy()
+    api_request.META.update(
+        {
+            "REMOTE_ADDR": request.META.get("REMOTE_ADDR", ""),
+            "HTTP_USER_AGENT": request.META.get("HTTP_USER_AGENT", ""),
+            "HTTP_REFERER": request.META.get("HTTP_REFERER", ""),
+        }
+    )
+    api_request._dont_enforce_csrf_checks = True  # Reuse API view without duplicating logic
+
+    response = start_google_drive_oauth_view(api_request)
+    if response.status_code != 200:
+        try:
+            data = json.loads(response.content.decode("utf-8"))
+            message = data.get("message") or data.get("error") or "Unable to start Google authorization."
+        except (ValueError, UnicodeDecodeError):
+            message = "Unable to start Google authorization."
+        messages.error(request, message)
+        return redirect("frontend:dashboard-knowledge")
+
+    try:
+        data = json.loads(response.content.decode("utf-8"))
+    except (ValueError, UnicodeDecodeError):
+        messages.error(request, "Google returned an invalid authorization payload.")
+        return redirect("frontend:dashboard-knowledge")
+
+    authorization_url = data.get("authorizationUrl")
+    if not authorization_url:
+        messages.error(request, "Missing authorization URL from Google.")
+        return redirect("frontend:dashboard-knowledge")
+    return redirect(authorization_url)
 
 
 @login_required

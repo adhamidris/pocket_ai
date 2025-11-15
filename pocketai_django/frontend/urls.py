@@ -15,6 +15,11 @@ urlpatterns = [
     path("dashboard/knowledge/", views.dashboard_knowledge, name="dashboard-knowledge"),
     path("dashboard/knowledge/upload/", views.dashboard_knowledge_upload, name="dashboard-knowledge-upload"),
     path("dashboard/knowledge/dump/", views.dashboard_knowledge_dump, name="dashboard-knowledge-dump"),
+    path(
+        "dashboard/knowledge/integrations/google/start/",
+        views.dashboard_knowledge_integrations_connect,
+        name="dashboard-knowledge-integrations-connect",
+    ),
     path("dashboard/cases/", views.dashboard_cases, name="dashboard-cases"),
     path("dashboard/cases/<uuid:case_id>/", views.dashboard_case_detail, name="dashboard-case-detail"),
     path("privacy/", views.privacy_policy, name="privacy"),

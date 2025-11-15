@@ -131,6 +131,7 @@ def create_ocr_reconciler(
 SUPPORTED_SOURCE_TYPES = {
     KnowledgeSourceType.FILE,
     KnowledgeSourceType.LINK,
+    KnowledgeSourceType.INTEGRATION,
 }
 
 ALIAS_KEYWORDS = (
@@ -1895,7 +1896,7 @@ class KnowledgeIngestionService:
     # Extraction path
 
     def _extract_upload(self, upload: KnowledgeUpload) -> ExtractionResult:
-        if upload.source_type == KnowledgeSourceType.FILE:
+        if upload.source_type in {KnowledgeSourceType.FILE, KnowledgeSourceType.INTEGRATION}:
             file_detail = getattr(upload, "file_detail", None)
             if not isinstance(file_detail, KnowledgeUploadFile):
                 upload = KnowledgeUpload.objects.select_related("file_detail").get(id=upload.id)

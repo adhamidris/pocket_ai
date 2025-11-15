@@ -12,7 +12,10 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { Separator } from "@/components/ui/separator";
 import { Progress } from "@/components/ui/progress";
 import { Switch } from "@/components/ui/switch";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Textarea } from "@/components/ui/textarea";
 import { Pagination, PaginationContent, PaginationItem, PaginationLink, PaginationNext, PaginationPrevious } from "@/components/ui/pagination";
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import {
   UploadCloud,
   FileText,
@@ -33,6 +36,19 @@ import {
   Search,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { ApiError } from "@/services/http";
+import {
+  startGoogleDriveOAuth,
+  fetchGoogleDriveResources,
+  fetchIntegrations,
+  saveGoogleDriveResources,
+  syncGoogleDriveNow,
+  type GoogleSheetResource,
+  type GoogleResourcesResponse,
+  type IntegrationSummary,
+  type IntegrationProvider,
+} from "@/services/integrations";
+import { formatDistanceToNow } from "date-fns";
 
 type DocumentStatus = "ready" | "processing" | "error";
 
@@ -52,16 +68,6 @@ type KnowledgeDocument = {
   summary: string;
 };
 
-type KnowledgeIntegration = {
-  id: string;
-  name: string;
-  description: string;
-  status: "connected" | "disconnected" | "beta";
-  icon: React.ReactNode;
-  lastSync?: string;
-  scope?: string;
-};
-
 type KnowledgeCollection = {
   id: string;
   name: string;
@@ -72,6 +78,104 @@ type KnowledgeCollection = {
   focus?: string;
   owner: string;
 };
+
+type SheetEditState = {
+  selected: boolean;
+  visibility: string;
+  syncFrequency: string;
+  internalOnlyColumns: string;
+  excludedColumns: string;
+};
+
+type WizardStepId = "connect" | "select" | "privacy" | "done";
+
+const columnListToString = (values?: string[]) => (values && values.length ? values.join(", ") : "");
+const columnInputToList = (value: string) =>
+  value
+    .split(",")
+    .map((part) => part.trim())
+    .filter(Boolean);
+
+const PROVIDER_META: Record<string, { icon: React.ReactNode; description: string; scope?: string }> = {
+  google_drive: {
+    icon: <Layers className="w-5 h-5 text-primary" />,
+    description: "Sync folders containing policies, playbooks, and spreadsheets.",
+    scope: "Customer Success › SOPs",
+  },
+  notion: {
+    icon: <FileText className="w-5 h-5 text-primary" />,
+    description: "Import knowledge bases, wiki pages, and product docs.",
+    scope: "Team workspace › Support KB",
+  },
+  sharepoint: {
+    icon: <ShieldCheck className="w-5 h-5 text-primary" />,
+    description: "Centralize compliance and legal templates.",
+  },
+  custom_api: {
+    icon: <Plug className="w-5 h-5 text-primary" />,
+    description: "Bring proprietary knowledge sources via JSON schema.",
+    scope: "Knowledge Hub API v2",
+  },
+  excel: {
+    icon: <FileSpreadsheet className="w-5 h-5 text-primary" />,
+    description: "Automate ingestion of live operational spreadsheets.",
+  },
+  s3: {
+    icon: <Database className="w-5 h-5 text-primary" />,
+    description: "Ingest archived PDF manuals and product catalogs.",
+  },
+};
+
+const integrationDemoSeeds: IntegrationSummary[] = [
+  {
+    id: "int-google-demo",
+    name: "Google Drive",
+    type: "google_drive",
+    status: "connected",
+    lastSyncedAt: new Date(Date.now() - 14 * 60 * 1000).toISOString(),
+    resourceCount: 3,
+    syncError: "",
+    defaultVisibility: "private",
+    defaultSyncFrequency: "daily",
+    hasCredentials: true,
+    actions: {},
+    account: { email: "cx-ops@example.com", name: "CX Ops" },
+  },
+  {
+    id: "int-notion-demo",
+    name: "Notion",
+    type: "notion",
+    status: "beta",
+    lastSyncedAt: undefined,
+    resourceCount: 2,
+    syncError: "",
+    defaultVisibility: "internal",
+    defaultSyncFrequency: "weekly",
+    hasCredentials: true,
+    actions: {},
+    account: { email: "workspace@example.com", name: "Team Workspace" },
+  },
+  {
+    id: "int-sharepoint-demo",
+    name: "SharePoint",
+    type: "sharepoint",
+    status: "disconnected",
+    lastSyncedAt: undefined,
+    resourceCount: 0,
+    syncError: "",
+    defaultVisibility: "private",
+    defaultSyncFrequency: "weekly",
+    hasCredentials: false,
+    actions: {},
+    account: null,
+  },
+];
+
+const VISIBILITY_OPTIONS = [
+  { value: "private", label: "Private" },
+  { value: "internal", label: "Internal" },
+  { value: "shared", label: "Shared" },
+];
 
 const documentSeeds: KnowledgeDocument[] = [
   {
@@ -331,15 +435,112 @@ const StatBadge = ({ label, value, icon }: { label: string; value: string; icon:
   </Card>
 );
 
+const FieldLabel = ({ label, tooltip }: { label: string; tooltip?: string }) => (
+  <div className="text-[11px] uppercase text-muted-foreground font-semibold flex items-center gap-1">
+    {label}
+    {tooltip ? (
+      <TooltipProvider>
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <button type="button" className="text-muted-foreground hover:text-foreground">
+              <HelpCircle className="w-3 h-3" />
+            </button>
+          </TooltipTrigger>
+          <TooltipContent className="max-w-xs text-xs">{tooltip}</TooltipContent>
+        </Tooltip>
+      </TooltipProvider>
+    ) : null}
+  </div>
+);
+
 const Knowledge = () => {
   const [tab, setTab] = React.useState<"documents" | "integrations" | "collections">("documents");
   const [documents] = React.useState<KnowledgeDocument[]>(documentSeeds);
-  const [integrations] = React.useState<KnowledgeIntegration[]>(integrationSeeds);
+  const [integrations, setIntegrations] = React.useState<IntegrationSummary[]>(integrationDemoSeeds);
+  const [providers, setProviders] = React.useState<IntegrationProvider[]>([]);
   const [collections] = React.useState<KnowledgeCollection[]>(collectionSeeds);
+  const [businessId, setBusinessId] = React.useState<string | null>(null);
+  const [googleIntegrationId, setGoogleIntegrationId] = React.useState<string | null>(null);
+  const [isLoadingIntegrations, setIsLoadingIntegrations] = React.useState(true);
+  const [integrationsError, setIntegrationsError] = React.useState<string | null>(null);
   const [search, setSearch] = React.useState("");
   const [activeDoc, setActiveDoc] = React.useState<KnowledgeDocument | null>(documentSeeds[0] || null);
   const [panelOpen, setPanelOpen] = React.useState(false);
   const [isNarrow, setIsNarrow] = React.useState(false);
+  const [isConnectingGoogle, setIsConnectingGoogle] = React.useState(false);
+  const [connectError, setConnectError] = React.useState<string | null>(null);
+  const [googleResources, setGoogleResources] = React.useState<GoogleResourcesResponse | null>(null);
+  const [sheetForm, setSheetForm] = React.useState<Record<string, SheetEditState>>({});
+  const [isLoadingSheets, setIsLoadingSheets] = React.useState(false);
+  const [sheetError, setSheetError] = React.useState<string | null>(null);
+  const [sheetSuccess, setSheetSuccess] = React.useState<string | null>(null);
+  const [isSavingSheets, setIsSavingSheets] = React.useState(false);
+  const [refreshSheetsVersion, setRefreshSheetsVersion] = React.useState(0);
+  const [syncNowMessage, setSyncNowMessage] = React.useState<string | null>(null);
+  const [syncNowError, setSyncNowError] = React.useState<string | null>(null);
+  const [syncingIntegrationId, setSyncingIntegrationId] = React.useState<string | null>(null);
+  const providerTiles = React.useMemo<IntegrationProvider[]>(() => {
+    if (providers.length) return providers;
+    return [
+      {
+        type: "google_drive",
+        label: "Google Drive",
+        description: "Sync spreadsheets securely via OAuth.",
+        status: "available",
+        connectUrl: "",
+        requiresOAuth: true,
+        supportsSheets: true,
+      },
+      {
+        type: "excel_online",
+        label: "Excel Online",
+        description: "OneDrive-hosted spreadsheets (coming soon).",
+        status: "coming_soon",
+        connectUrl: "",
+        requiresOAuth: true,
+        supportsSheets: true,
+      },
+    ];
+  }, [providers]);
+
+  const formatIntegrationTime = React.useCallback((timestamp?: string) => {
+    if (!timestamp) return "Never";
+    const parsed = new Date(timestamp);
+    if (Number.isNaN(parsed.getTime())) {
+      return timestamp;
+    }
+    return formatDistanceToNow(parsed, { addSuffix: true });
+  }, []);
+
+  const loadIntegrations = React.useCallback(() => {
+    setIsLoadingIntegrations(true);
+    fetchIntegrations()
+      .then((data) => {
+        setBusinessId(data.businessId);
+        setProviders(data.providers || []);
+        setIntegrations(data.integrations.length ? data.integrations : integrationDemoSeeds);
+        const google = data.integrations.find((entry) => entry.type === "google_drive");
+        setGoogleIntegrationId(google?.id ?? null);
+        setIntegrationsError(null);
+      })
+      .catch((error) => {
+        if (error instanceof ApiError) {
+          setIntegrationsError(error.message || "Unable to load integrations.");
+        } else if (error instanceof Error) {
+          setIntegrationsError(error.message);
+        } else {
+          setIntegrationsError("Unable to load integrations.");
+        }
+        setProviders([]);
+        setIntegrations(integrationDemoSeeds);
+        setGoogleIntegrationId(null);
+      })
+      .finally(() => setIsLoadingIntegrations(false));
+  }, []);
+
+  React.useEffect(() => {
+    loadIntegrations();
+  }, [loadIntegrations]);
 
   React.useEffect(() => {
     const mq = window.matchMedia("(max-width: 1023px)");
@@ -348,6 +549,96 @@ const Knowledge = () => {
     setIsNarrow(mq.matches);
     return () => mq.removeEventListener("change", onChange);
   }, []);
+
+  const buildSheetFormState = React.useCallback((data: GoogleResourcesResponse) => {
+    const map: Record<string, SheetEditState> = {};
+    const seen = new Set<string>();
+    const combined: GoogleSheetResource[] = [];
+    data.availableResources.forEach((resource) => {
+      combined.push(resource);
+      seen.add(resource.resourceId);
+    });
+    data.selectedResources.forEach((resource) => {
+      if (!seen.has(resource.resourceId)) {
+        combined.push({ ...resource, selected: true });
+        seen.add(resource.resourceId);
+      }
+    });
+    combined.forEach((resource) => {
+      map[resource.resourceId] = {
+        selected: resource.selected ?? data.selectedResources.some((entry) => entry.resourceId === resource.resourceId),
+        visibility: resource.visibility || data.defaultVisibility,
+        syncFrequency: resource.syncFrequency || data.defaultSyncFrequency,
+        internalOnlyColumns: columnListToString(resource.columnPrivacy?.internalOnlyColumns),
+        excludedColumns: columnListToString(resource.columnPrivacy?.excludedColumns),
+      };
+    });
+    return map;
+  }, []);
+
+  const refreshGoogleResources = React.useCallback(() => {
+    if (!googleIntegrationId) return;
+    setRefreshSheetsVersion((prev) => prev + 1);
+  }, [googleIntegrationId]);
+
+  React.useEffect(() => {
+    if (tab !== "integrations") return;
+    if (!googleIntegrationId) {
+      setGoogleResources(null);
+      setSheetForm({});
+      setIsLoadingSheets(false);
+      return;
+    }
+    let cancelled = false;
+    setIsLoadingSheets(true);
+    fetchGoogleDriveResources({ integrationId: googleIntegrationId, businessId: businessId || undefined })
+      .then((data) => {
+        if (cancelled) return;
+        setGoogleResources(data);
+        setSheetForm(buildSheetFormState(data));
+        setSheetError(null);
+      })
+      .catch((error) => {
+        if (cancelled) return;
+        if (error instanceof ApiError) {
+          setSheetError(error.message || "Unable to load Google Sheets.");
+        } else if (error instanceof Error) {
+          setSheetError(error.message);
+        } else {
+          setSheetError("Unable to load Google Sheets.");
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setIsLoadingSheets(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [tab, refreshSheetsVersion, buildSheetFormState, googleIntegrationId, businessId]);
+
+  const handleConnectGoogle = React.useCallback(async () => {
+    setConnectError(null);
+    setIsConnectingGoogle(true);
+    try {
+      const response = await startGoogleDriveOAuth(businessId || undefined);
+      if (response?.authorizationUrl) {
+        window.location.href = response.authorizationUrl;
+        return;
+      }
+      throw new Error("Missing authorization URL from backend.");
+    } catch (error) {
+      console.error("Failed to initiate Google Drive OAuth", error);
+      if (error instanceof ApiError) {
+        setConnectError(error.message || "Unable to start Google OAuth.");
+      } else if (error instanceof Error) {
+        setConnectError(error.message);
+      } else {
+        setConnectError("Unable to start Google OAuth.");
+      }
+    } finally {
+      setIsConnectingGoogle(false);
+    }
+  }, [businessId]);
 
   const filteredDocs = React.useMemo(() => {
     if (!search) return documents;
@@ -376,6 +667,178 @@ const Knowledge = () => {
     }
   };
 
+  const updateSheetState = React.useCallback(
+    (resourceId: string, patch: Partial<SheetEditState>) => {
+      setSheetForm((prev) => {
+        const base: SheetEditState =
+          prev[resourceId] || {
+            selected: false,
+            visibility: googleResources?.defaultVisibility || "private",
+            syncFrequency: googleResources?.defaultSyncFrequency || "daily",
+            internalOnlyColumns: "",
+            excludedColumns: "",
+          };
+        return {
+          ...prev,
+          [resourceId]: { ...base, ...patch },
+        };
+      });
+    },
+    [googleResources],
+  );
+
+  const findResourceMeta = React.useCallback(
+    (resourceId: string) => {
+      if (!googleResources) return undefined;
+      return (
+        googleResources.availableResources.find((resource) => resource.resourceId === resourceId) ||
+        googleResources.selectedResources.find((resource) => resource.resourceId === resourceId)
+      );
+    },
+    [googleResources],
+  );
+
+  const handleSaveSheetConfig = React.useCallback(async () => {
+    if (!googleResources) return;
+    setSheetError(null);
+    setSheetSuccess(null);
+    setIsSavingSheets(true);
+    try {
+      const selectedEntries = Object.entries(sheetForm).filter(([, state]) => state.selected);
+      const payloadResources = selectedEntries
+        .map(([resourceId, state]) => {
+          const meta = findResourceMeta(resourceId);
+          if (!meta) return null;
+          return {
+            resourceId,
+            driveFileId: meta.driveFileId,
+            sheetGid: meta.sheetGid,
+            sheetName: meta.sheetName,
+            driveFileName: meta.driveFileName,
+            visibility: state.visibility,
+            syncFrequency: state.syncFrequency,
+            columnPrivacy: {
+              sharedColumns: meta.columnPrivacy?.sharedColumns || [],
+              internalOnlyColumns: columnInputToList(state.internalOnlyColumns),
+              excludedColumns: columnInputToList(state.excludedColumns),
+            },
+          };
+        })
+        .filter((entry): entry is NonNullable<typeof entry> => Boolean(entry));
+
+      await saveGoogleDriveResources(
+        googleResources.integration.id,
+        {
+          resources: payloadResources,
+          defaultVisibility: googleResources.defaultVisibility,
+          defaultSyncFrequency: googleResources.defaultSyncFrequency,
+        },
+        { businessId: businessId || undefined },
+      );
+
+      setSheetSuccess("Sheet sync settings saved.");
+      refreshGoogleResources();
+    } catch (error) {
+      if (error instanceof ApiError) {
+        setSheetError(error.message || "Unable to save sheet configuration.");
+      } else if (error instanceof Error) {
+        setSheetError(error.message);
+      } else {
+        setSheetError("Unable to save sheet configuration.");
+      }
+    } finally {
+      setIsSavingSheets(false);
+    }
+  }, [googleResources, sheetForm, findResourceMeta, refreshGoogleResources, businessId]);
+
+  const selectedSheetCount = React.useMemo(() => Object.values(sheetForm).filter((state) => state.selected).length, [sheetForm]);
+  const missingSheetConfigs = React.useMemo(() => {
+    if (!googleResources) return [] as GoogleSheetResource[];
+    return googleResources.selectedResources.filter(
+      (resource) => !googleResources.availableResources.some((available) => available.resourceId === resource.resourceId),
+    );
+  }, [googleResources]);
+
+  const privacyWarnings = React.useMemo(() => {
+    if (!googleResources) return [] as string[];
+    return Object.entries(sheetForm)
+      .filter(([, state]) => state.selected && !state.internalOnlyColumns && !state.excludedColumns)
+      .map(([resourceId]) => resourceId);
+  }, [googleResources, sheetForm]);
+
+  const privacyWarningNames = React.useMemo(() => {
+    if (!googleResources) return [] as string[];
+    return privacyWarnings
+      .map((resourceId) => findResourceMeta(resourceId)?.sheetName || resourceId)
+      .filter(Boolean);
+  }, [privacyWarnings, findResourceMeta, googleResources]);
+
+  const hasConnectedGoogle = React.useMemo(() => {
+    if (!googleIntegrationId) return false;
+    return integrations.some((entry) => entry.id === googleIntegrationId && entry.hasCredentials);
+  }, [googleIntegrationId, integrations]);
+
+  const sheetsSelected = React.useMemo(() => selectedSheetCount > 0, [selectedSheetCount]);
+  const privacyReady = sheetsSelected && privacyWarnings.length === 0;
+  const wizardSteps = React.useMemo(
+    () =>
+      (
+        [
+          {
+            id: "connect" as WizardStepId,
+            label: "Connect account",
+            description: "Authorize Google Drive via OAuth from the dashboard.",
+            complete: hasConnectedGoogle,
+          },
+          {
+            id: "select" as WizardStepId,
+            label: "Select sheets",
+            description: "Pick spreadsheets + tabs that should sync automatically.",
+            complete: sheetsSelected,
+          },
+          {
+            id: "privacy" as WizardStepId,
+            label: "Review privacy",
+            description: "Exclude or mask sensitive columns before ingesting.",
+            complete: privacyReady,
+          },
+          {
+            id: "done" as WizardStepId,
+            label: "Ready to sync",
+            description: "Kick off ingestion or let the scheduler keep things fresh.",
+            complete: privacyReady && hasConnectedGoogle,
+          },
+        ] satisfies Array<{ id: WizardStepId; label: string; description: string; complete: boolean }>
+      ),
+    [hasConnectedGoogle, sheetsSelected, privacyReady],
+  );
+  const activeWizardStep = React.useMemo(() => wizardSteps.find((step) => !step.complete)?.id ?? "done", [wizardSteps]);
+
+  const handleSyncNow = React.useCallback(async () => {
+    if (!googleIntegrationId) {
+      setSyncNowError("Connect Google Drive before triggering a sync.");
+      return;
+    }
+    setSyncNowError(null);
+    setSyncNowMessage(null);
+    setSyncingIntegrationId(googleIntegrationId);
+    try {
+      await syncGoogleDriveNow({ integrationId: googleIntegrationId });
+      setSyncNowMessage("Sync started. Ingestion jobs queued.");
+      refreshGoogleResources();
+    } catch (error) {
+      if (error instanceof ApiError) {
+        setSyncNowError(error.message || "Unable to start sync.");
+      } else if (error instanceof Error) {
+        setSyncNowError(error.message);
+      } else {
+        setSyncNowError("Unable to start sync.");
+      }
+    } finally {
+      setSyncingIntegrationId(null);
+    }
+  }, [googleIntegrationId, refreshGoogleResources]);
+
   return (
     <div className="min-h-screen bg-background flex">
       <Sidebar />
@@ -387,11 +850,27 @@ const Knowledge = () => {
               <Button className="gap-2">
                 <UploadCloud className="w-4 h-4" /> Upload Doc
               </Button>
-              <Button variant="outline" className="gap-2">
-                <LinkIcon className="w-4 h-4" /> Connect Integrations
+              <Button
+                variant="outline"
+                className="gap-2"
+                onClick={handleConnectGoogle}
+                disabled={isConnectingGoogle}
+              >
+                {isConnectingGoogle ? (
+                  <RefreshCw className="w-4 h-4 animate-spin" />
+                ) : (
+                  <LinkIcon className="w-4 h-4" />
+                )}
+                {isConnectingGoogle ? "Connecting…" : "Connect Google Drive"}
               </Button>
             </div>
           </header>
+          {connectError && (
+            <div className="mt-2 flex items-center gap-1 text-xs text-destructive">
+              <AlertTriangle className="w-3 h-3" />
+              <span>{connectError}</span>
+            </div>
+          )}
 
           <Tabs value={tab} onValueChange={(v) => setTab(v as typeof tab)} className="mt-6">
               <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
@@ -621,50 +1100,361 @@ const Knowledge = () => {
             </TabsContent>
 
             <TabsContent value="integrations" className="mt-5">
-              <div className="space-y-2">
-                <div className="flex items-center gap-2 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
-                  <Plug className="w-3.5 h-3.5" />
-                  <span>Connected sources</span>
-                </div>
-                <div className="grid gap-4 lg:grid-cols-2 xl:grid-cols-3">
-                {integrations.map((integration) => (
-                  <Card key={integration.id} className={cn("border border-border/60 bg-card/70 p-4 flex flex-col gap-4", integration.status === "disconnected" && "border-dashed border-primary/40")}
-                  >
-                    <div className="flex items-start gap-3">
-                      <div className="h-10 w-10 rounded-full bg-primary/10 grid place-items-center">
-                        {integration.icon}
+              <div className="space-y-4">
+                <Card className="border border-primary/30 bg-primary/5 p-4 space-y-4">
+                  <div className="flex items-center gap-2 text-[11px] font-semibold uppercase tracking-wide text-primary">
+                    <Plug className="w-3.5 h-3.5" />
+                    <span>Connect -> Select -> Review -> Done</span>
+                  </div>
+                  <div className="grid gap-4 md:grid-cols-4">
+                    {wizardSteps.map((step, index) => (
+                      <div key={step.id} className="flex items-start gap-3">
+                        <div
+                          className={cn(
+                            "h-8 w-8 rounded-full border grid place-items-center text-xs font-semibold",
+                            step.complete
+                              ? "border-primary bg-primary text-primary-foreground"
+                              : activeWizardStep === step.id
+                                ? "border-primary text-primary"
+                                : "border-border/60 text-muted-foreground",
+                          )}
+                        >
+                          {step.complete ? <CheckCircle2 className="w-4 h-4" /> : index + 1}
+                        </div>
+                        <div className="space-y-1">
+                          <div className="text-xs font-semibold">{step.label}</div>
+                          <p className="text-xs text-muted-foreground leading-relaxed">{step.description}</p>
+                        </div>
                       </div>
-                      <div className="flex-1 space-y-1">
-                        <div className="flex items-center gap-2">
-                          <div className="text-sm font-semibold">{integration.name}</div>
-                          <Badge variant="secondary" className="capitalize">
-                            {integration.status}
+                    ))}
+                  </div>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <Button size="sm" className="gap-2" onClick={handleConnectGoogle} disabled={isConnectingGoogle}>
+                      {isConnectingGoogle ? <RefreshCw className="w-4 h-4 animate-spin" /> : <LinkIcon className="w-4 h-4" />}
+                      {isConnectingGoogle ? "Connecting…" : "Connect Google Drive"}
+                    </Button>
+                    <div className="text-xs text-muted-foreground">
+                      Finish each step to keep spreadsheets syncing automatically.
+                    </div>
+                  </div>
+                </Card>
+
+                {integrationsError && (
+                  <div className="flex items-center gap-2 rounded-md border border-destructive/40 bg-destructive/10 px-4 py-2 text-xs text-destructive">
+                    <AlertTriangle className="w-3 h-3" />
+                    <span>{integrationsError}</span>
+                    <Button size="sm" variant="ghost" className="h-6 px-2" onClick={loadIntegrations}>
+                      Retry
+                    </Button>
+                  </div>
+                )}
+
+                <Card className="border border-border/60 bg-card/80 p-4 space-y-3">
+                  <div className="flex items-center gap-2 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+                    <Layers className="w-3.5 h-3.5" />
+                    <span>Available connectors</span>
+                  </div>
+                  <div className="grid gap-3 md:grid-cols-2">
+                    {providerTiles.map((provider) => (
+                      <div key={provider.type} className="rounded-lg border border-border/60 bg-background/80 p-3 space-y-2">
+                        <div className="flex items-center justify-between">
+                          <div className="text-sm font-semibold">{provider.label}</div>
+                          <Badge variant="outline" className="text-[11px] capitalize">
+                            {provider.status}
                           </Badge>
                         </div>
-                        <p className="text-xs text-muted-foreground leading-relaxed">{integration.description}</p>
-                        {integration.scope && (
-                          <div className="inline-flex items-center gap-1 rounded-full border border-border/60 bg-muted/60 px-2 py-1 text-[11px] text-muted-foreground">
-                            <Layers className="w-3 h-3" /> {integration.scope}
-                          </div>
+                        <p className="text-xs text-muted-foreground leading-relaxed">{provider.description}</p>
+                        {provider.status === "available" && provider.type === "google_drive" && (
+                          <Button size="sm" variant="outline" className="gap-2" onClick={handleConnectGoogle} disabled={isConnectingGoogle}>
+                            {isConnectingGoogle ? <RefreshCw className="w-4 h-4 animate-spin" /> : <LinkIcon className="w-4 h-4" />}
+                            {isConnectingGoogle ? "Connecting…" : "Launch connect"}
+                          </Button>
                         )}
                       </div>
+                    ))}
+                  </div>
+                </Card>
+
+                <div className="space-y-2">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+                      <Plug className="w-3.5 h-3.5" />
+                      <span>Connected sources</span>
+                      {isLoadingIntegrations && <span className="text-[10px] uppercase text-primary">Refreshing…</span>}
                     </div>
-                    <div className="flex items-center justify-between text-xs text-muted-foreground">
-                      <span>Last sync</span>
-                      <span className="text-foreground font-medium">{integration.lastSync}</span>
-                    </div>
-                    <div className="flex flex-wrap gap-2">
-                      <Button size="sm" variant="outline" className="gap-2">
-                        {integration.status === "connected" ? <RefreshCw className="w-4 h-4" /> : <Plug className="w-4 h-4" />}
-                        {integration.status === "connected" ? "Sync now" : "Connect"}
+                    <div className="flex flex-wrap items-center gap-2 text-[11px] uppercase text-muted-foreground">
+                      <RefreshCw className="w-3 h-3" />
+                      <span>Bulk actions</span>
+                      <Button variant="outline" size="sm" className="gap-2" onClick={handleSyncNow} disabled={!googleIntegrationId}>
+                        <RefreshCw className="w-4 h-4" /> Sync all
                       </Button>
-                      <Button size="sm" variant="ghost" className="text-xs">
-                        Configure access
+                      <Button variant="outline" size="sm" className="gap-1">
+                        <CheckCircle2 className="w-4 h-4" /> Show connected only
                       </Button>
                     </div>
-                  </Card>
-                ))}
+                  </div>
+                  <div className="grid gap-4 lg:grid-cols-2 xl:grid-cols-3">
+                    {integrations.map((integration) => {
+                      const meta = PROVIDER_META[integration.type] || {
+                        icon: <Plug className="w-5 h-5 text-primary" />,
+                        description: "Custom connector",
+                        scope: undefined,
+                      };
+                      const isGoogle = integration.id === googleIntegrationId;
+                      const syncing = isGoogle && syncingIntegrationId === integration.id;
+                      const buttonLabel = integration.status === "connected" ? "Sync now" : isGoogle ? "Connect" : "Configure";
+                      return (
+                        <Card
+                          key={integration.id}
+                          className={cn(
+                            "border border-border/60 bg-card/70 p-4 flex flex-col gap-4",
+                            integration.status === "disconnected" && "border-dashed border-primary/40",
+                          )}
+                        >
+                          <div className="flex items-start gap-3">
+                            <div className="h-10 w-10 rounded-full bg-primary/10 grid place-items-center">{meta.icon}</div>
+                            <div className="flex-1 space-y-1">
+                              <div className="flex items-center gap-2">
+                                <div className="text-sm font-semibold">{integration.name}</div>
+                                <Badge variant="secondary" className="capitalize">
+                                  {integration.status}
+                                </Badge>
+                              </div>
+                              <p className="text-xs text-muted-foreground leading-relaxed">{meta.description}</p>
+                              {meta.scope && (
+                                <div className="inline-flex items-center gap-1 rounded-full border border-border/60 bg-muted/60 px-2 py-1 text-[11px] text-muted-foreground">
+                                  <Layers className="w-3 h-3" /> {meta.scope}
+                                </div>
+                              )}
+                              {integration.account?.email && (
+                                <div className="text-[11px] text-muted-foreground">
+                                  Linked as {integration.account.email}
+                                </div>
+                              )}
+                            </div>
+                          </div>
+                          <div className="flex items-center justify-between text-xs text-muted-foreground">
+                            <span>Last sync</span>
+                            <span className="text-foreground font-medium">{formatIntegrationTime(integration.lastSyncedAt)}</span>
+                          </div>
+                          {integration.syncError && (
+                            <div className="flex flex-wrap items-center gap-2 rounded-md border border-destructive/40 bg-destructive/5 px-2 py-2 text-[11px] text-destructive">
+                              <AlertTriangle className="w-3 h-3" />
+                              <span className="flex-1">Sync failed: {integration.syncError}</span>
+                              {isGoogle && (
+                                <Button size="sm" variant="ghost" className="h-6 px-2" onClick={handleConnectGoogle}>
+                                  Reconnect
+                                </Button>
+                              )}
+                            </div>
+                          )}
+                          <div className="flex flex-wrap gap-2">
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              className="gap-2"
+                              onClick={isGoogle ? handleSyncNow : undefined}
+                              disabled={isGoogle && (!googleIntegrationId || syncing)}
+                            >
+                              {syncing ? <RefreshCw className="w-4 h-4 animate-spin" /> : integration.status === "connected" ? <RefreshCw className="w-4 h-4" /> : <Plug className="w-4 h-4" />}
+                              {syncing ? "Syncing…" : buttonLabel}
+                            </Button>
+                            <Button size="sm" variant="ghost" className="text-xs">
+                              Configure access
+                            </Button>
+                          </div>
+                        </Card>
+                      );
+                    })}
+                  </div>
                 </div>
+
+                <Card className="border border-border/60 bg-card/80 p-4 space-y-4">
+                  <div className="flex flex-col gap-1 md:flex-row md:items-center md:justify-between">
+                    <div>
+                      <div className="text-sm font-semibold">Google Sheets configuration</div>
+                      <p className="text-xs text-muted-foreground">
+                        Select which spreadsheets to sync and mark sensitive columns.
+                      </p>
+                    </div>
+                    <div className="flex gap-2">
+                      <Button variant="outline" size="sm" onClick={refreshGoogleResources} disabled={isLoadingSheets || !googleIntegrationId}>
+                        <RefreshCw className={cn("w-4 h-4", isLoadingSheets && "animate-spin")} />
+                        Refresh list
+                      </Button>
+                      <Button
+                        size="sm"
+                        onClick={handleSyncNow}
+                        disabled={!googleIntegrationId || syncingIntegrationId === googleIntegrationId}
+                        className="gap-2"
+                      >
+                        {syncingIntegrationId === googleIntegrationId ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Plug className="w-4 h-4" />}
+                        Sync now
+                      </Button>
+                    </div>
+                  </div>
+                  {sheetError && (
+                    <div className="text-xs text-destructive flex items-center gap-1">
+                      <AlertTriangle className="w-3 h-3" />
+                      <span>{sheetError}</span>
+                    </div>
+                  )}
+                  {sheetSuccess && (
+                    <div className="text-xs text-emerald-600 flex items-center gap-1">
+                      <CheckCircle2 className="w-3 h-3" />
+                      <span>{sheetSuccess}</span>
+                    </div>
+                  )}
+                  {syncNowError && (
+                    <div className="text-xs text-destructive flex items-center gap-1">
+                      <AlertTriangle className="w-3 h-3" />
+                      <span>{syncNowError}</span>
+                    </div>
+                  )}
+                  {syncNowMessage && (
+                    <div className="text-xs text-emerald-600 flex items-center gap-1">
+                      <CheckCircle2 className="w-3 h-3" />
+                      <span>{syncNowMessage}</span>
+                    </div>
+                  )}
+                  {!googleIntegrationId ? (
+                    <p className="text-xs text-muted-foreground">Connect Google Drive to configure sheet syncing.</p>
+                  ) : isLoadingSheets && !googleResources ? (
+                    <p className="text-xs text-muted-foreground">Loading Google Sheets…</p>
+                  ) : googleResources ? (
+                    <div className="space-y-4">
+                      {privacyWarnings.length > 0 && (
+                        <div className="flex gap-2 rounded-md border border-amber-300 bg-amber-50 p-3 text-[11px] text-amber-900">
+                          <AlertTriangle className="w-3 h-3" />
+                          <div>
+                            <div className="font-semibold">Review privacy controls</div>
+                            <p>
+                              {privacyWarningNames.join(", ") || "Selected sheets"} currently sync all columns. Mark sensitive fields as
+                              internal-only or excluded to avoid accidental sharing.
+                            </p>
+                          </div>
+                        </div>
+                      )}
+                      {missingSheetConfigs.length > 0 && (
+                        <div className="text-[11px] text-muted-foreground">
+                          {missingSheetConfigs.length} previously selected sheet{missingSheetConfigs.length > 1 ? "s" : ""} no longer appear in
+                          Drive. Confirm the file still exists or remove it from sync.
+                        </div>
+                      )}
+                      {googleResources.availableResources.length === 0 ? (
+                        <p className="text-xs text-muted-foreground">No spreadsheets detected for the connected Google account.</p>
+                      ) : (
+                        googleResources.availableResources.map((resource) => {
+                          const state = sheetForm[resource.resourceId] || {
+                            selected: false,
+                            visibility: googleResources.defaultVisibility,
+                            syncFrequency: googleResources.defaultSyncFrequency,
+                            internalOnlyColumns: "",
+                            excludedColumns: "",
+                          };
+                          return (
+                            <div key={resource.resourceId} className="rounded-lg border border-border/60 bg-background/60 p-3 space-y-3">
+                              <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
+                                <div>
+                                  <div className="text-sm font-semibold">{resource.driveFileName}</div>
+                                  <div className="text-xs text-muted-foreground">Tab · {resource.sheetName}</div>
+                                  <div className="text-[11px] text-muted-foreground mt-1">
+                                    {resource.rowCount ?? "?"} rows · {resource.columnCount ?? "?"} columns
+                                  </div>
+                                </div>
+                                <div className="flex items-center gap-2">
+                                  <Switch
+                                    checked={state.selected}
+                                    onCheckedChange={(checked) => updateSheetState(resource.resourceId, { selected: checked })}
+                                  />
+                                  <span className="text-xs text-muted-foreground">
+                                    {state.selected ? "Synced" : "Not synced"}
+                                  </span>
+                                </div>
+                              </div>
+                              <div className="grid gap-3 md:grid-cols-2">
+                                <div className="space-y-1">
+                                  <FieldLabel label="Visibility" tooltip="Controls the default knowledge visibility for this sheet." />
+                                  <Select
+                                    value={state.visibility}
+                                    onValueChange={(value) => updateSheetState(resource.resourceId, { visibility: value })}
+                                  >
+                                    <SelectTrigger className="h-9">
+                                      <SelectValue placeholder="Select visibility" />
+                                    </SelectTrigger>
+                                    <SelectContent>
+                                      {VISIBILITY_OPTIONS.map((option) => (
+                                        <SelectItem key={option.value} value={option.value}>
+                                          {option.label}
+                                        </SelectItem>
+                                      ))}
+                                    </SelectContent>
+                                  </Select>
+                                </div>
+                                <div className="space-y-1">
+                                  <FieldLabel
+                                    label="Internal-only columns"
+                                    tooltip="These columns stay visible to trusted teammates but are hidden from external users."
+                                  />
+                                  <Textarea
+                                    rows={2}
+                                    value={state.internalOnlyColumns}
+                                    onChange={(event) =>
+                                      updateSheetState(resource.resourceId, { internalOnlyColumns: event.target.value })
+                                    }
+                                    placeholder="Comma-separated column names"
+                                  />
+                                </div>
+                                <div className="space-y-1">
+                                  <FieldLabel
+                                    label="Exclude from sync"
+                                    tooltip="Columns listed here never leave the spreadsheet. Useful for PII or one-off notes."
+                                  />
+                                  <Textarea
+                                    rows={2}
+                                    value={state.excludedColumns}
+                                    onChange={(event) =>
+                                      updateSheetState(resource.resourceId, { excludedColumns: event.target.value })
+                                    }
+                                    placeholder="Comma-separated column names"
+                                  />
+                                </div>
+                                <div className="space-y-1">
+                                  <FieldLabel label="Last sync" />
+                                  <div className="text-xs text-muted-foreground">
+                                    {resource.lastSyncedAt ? (
+                                      <>
+                                        <Clock className="inline-block w-3 h-3 mr-1" />
+                                        {resource.lastSyncedAt}
+                                      </>
+                                    ) : (
+                                      "Not yet synced"
+                                    )}
+                                  </div>
+                                </div>
+                              </div>
+                            </div>
+                          );
+                        })
+                      )}
+                    </div>
+                  ) : (
+                    <div className="text-xs text-muted-foreground">Connect Google Drive to configure sheet syncing.</div>
+                  )}
+                  <div className="flex flex-wrap gap-2">
+                    <Button
+                      size="sm"
+                      className="gap-2"
+                      onClick={handleSaveSheetConfig}
+                      disabled={
+                        !googleIntegrationId || isSavingSheets || isLoadingSheets || !googleResources?.availableResources.length
+                      }
+                    >
+                      {isSavingSheets ? <RefreshCw className="w-4 h-4 animate-spin" /> : <CheckCircle2 className="w-4 h-4" />}
+                      {isSavingSheets ? "Saving…" : "Save sheet settings"}
+                    </Button>
+                  </div>
+                </Card>
               </div>
             </TabsContent>
 
@@ -796,4 +1586,3 @@ const Knowledge = () => {
 };
 
 export default Knowledge;
-

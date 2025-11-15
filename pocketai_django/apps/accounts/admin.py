@@ -5,6 +5,7 @@ from django.contrib import admin, messages
 from django.contrib.auth import logout
 from django.contrib.auth.admin import UserAdmin as DjangoUserAdmin
 from django.contrib.auth.models import AnonymousUser
+from django.utils.html import format_html
 
 from .models import (
     AgentProfile,
@@ -13,6 +14,7 @@ from .models import (
     KnowledgeAlias,
     KnowledgeEntity,
     KnowledgeFeedbackCase,
+    IntegrationCredentialEvent,
     KnowledgeIntegration,
     KnowledgeIngestionJob,
     KnowledgeUpload,
@@ -241,10 +243,10 @@ class KnowledgeIntegrationAdmin(admin.ModelAdmin):
     list_filter = ("integration_type", "status")
     search_fields = ("name", "business_profile__name", "external_account_id")
     ordering = ("name",)
-    readonly_fields = ("last_synced_at", "sync_error", "created_at", "updated_at")
+    readonly_fields = ("credential_state", "last_synced_at", "sync_error", "created_at", "updated_at")
     fieldsets = (
         (None, {"fields": ("business_profile", "created_by", "name", "slug", "integration_type", "status")}),
-        ("Connection", {"fields": ("external_account_id", "credentials", "metadata", "last_synced_at", "sync_error")}),
+        ("Connection", {"fields": ("external_account_id", "credential_state", "metadata", "last_synced_at", "sync_error")}),
         ("Sync Configuration", {"fields": ("default_sync_frequency", "default_visibility", "resource_configs")}),
         ("Timestamps", {"fields": ("created_at", "updated_at")}),
     )
@@ -252,6 +254,26 @@ class KnowledgeIntegrationAdmin(admin.ModelAdmin):
     @admin.display(description="Resources")
     def resource_total(self, obj: KnowledgeIntegration) -> int:
         return len(obj.resource_configs)
+
+    @admin.display(description="Credential state")
+    def credential_state(self, obj: KnowledgeIntegration) -> str:
+        last_rotated = obj.credentials_last_rotated_at.isoformat() if obj.credentials_last_rotated_at else "Never"
+        status = "Stored" if obj.has_credentials() else "Missing"
+        return format_html(
+            "Status: {}<br>Key version: {}<br>Last rotated: {}<br>Failures: {}",
+            status,
+            obj.credentials_key_version or "-",
+            last_rotated,
+            obj.credential_error_count,
+        )
+
+
+@admin.register(IntegrationCredentialEvent)
+class IntegrationCredentialEventAdmin(admin.ModelAdmin):
+    list_display = ("integration", "event_type", "triggered_by", "created_at")
+    list_filter = ("event_type", "created_at")
+    search_fields = ("integration__name", "integration__business_profile__name", "triggered_by__email")
+    ordering = ("-created_at",)
 
 
 @admin.register(KnowledgeUpload)
@@ -292,7 +314,7 @@ class KnowledgeIngestionJobAdmin(admin.ModelAdmin):
     list_filter = ("job_type", "status")
     search_fields = ("id", "upload__display_name", "upload__id", "business_profile__name")
     ordering = ("-created_at",)
-    readonly_fields = ("payload_pretty",)
+    readonly_fields = ("id", "created_at", "started_at", "finished_at", "updated_at", "payload_pretty")
     fieldsets = (
         (None, {"fields": ("id", "business_profile", "upload", "job_type", "status", "created_at", "started_at", "finished_at")}),
         ("Execution", {"fields": ("payload_pretty", "error_detail")}),

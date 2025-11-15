@@ -32,12 +32,15 @@
             </svg>
             Dump JSON
           </a>
-          <button type="button" class="inline-flex items-center gap-2 rounded-lg border border-input bg-background px-4 py-2 text-sm font-medium transition-all duration-300 hover:bg-accent hover:text-accent-foreground hover:border-primary/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2">
-            <svg class="h-4 w-4" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" aria-hidden="true">
-              <path stroke-linecap="round" stroke-linejoin="round" d="M6.75 3v2.25M3 6.75h2.25M17.25 3v2.25M21 6.75h-2.25M6.75 18.75V21M3 17.25h2.25m12-14.25L12 8.25m0 0L8.25 5.25M12 8.25v7.5m0 0L8.25 12.75M12 15.75l3.75-3" />
-            </svg>
-            Connect Integrations
-          </button>
+          <form method="post" action="{{ knowledge_integrations_connect_url }}">
+            {% csrf_token %}
+            <button type="submit" class="inline-flex items-center gap-2 rounded-lg border border-input bg-background px-4 py-2 text-sm font-medium transition-all duration-300 hover:bg-accent hover:text-accent-foreground hover:border-primary/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 {% if not knowledge_integrations_enabled %}opacity-40 cursor-not-allowed{% endif %}" {% if not knowledge_integrations_enabled %}disabled aria-disabled="true"{% endif %}>
+              <svg class="h-4 w-4" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" aria-hidden="true">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M6.75 3v2.25M3 6.75h2.25M17.25 3v2.25M21 6.75h-2.25M6.75 18.75V21M3 17.25h2.25m12-14.25L12 8.25m0 0L8.25 5.25M12 8.25v7.5m0 0L8.25 12.75M12 15.75l3.75-3" />
+              </svg>
+              Connect Integrations
+            </button>
+          </form>
         </div>
       </header>
 
@@ -393,18 +396,72 @@
           {% if knowledge_integrations %}
             <div class="grid gap-4 lg:grid-cols-2 xl:grid-cols-3">
               {% for integration in knowledge_integrations %}
-                <div class="rounded-lg border border-border/60 bg-card/70 p-4 space-y-3">
+                <div class="rounded-lg border border-border/60 bg-card/70 p-4 space-y-4">
                   <div class="flex items-start gap-3">
-                    <div class="h-10 w-10 rounded-full bg-primary/10"></div>
-                    <div class="space-y-1">
-                      <div class="text-sm font-semibold text-foreground">{{ integration.name }}</div>
+                    <div class="h-10 w-10 shrink-0 rounded-full bg-primary/10 flex items-center justify-center text-primary">
+                      <svg class="h-5 w-5" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" aria-hidden="true">
+                        <path stroke-linecap="round" stroke-linejoin="round" d="M4.5 12a7.5 7.5 0 0 1 13.35-4.35L21 8.25M19.5 3v5.25M19.5 12a7.5 7.5 0 0 1-13.35 4.35L3 15.75M4.5 21v-5.25" />
+                      </svg>
+                    </div>
+                    <div class="space-y-1 flex-1">
+                      <div class="flex flex-wrap items-center gap-2">
+                        <div class="text-sm font-semibold text-foreground">{{ integration.name }}</div>
+                        <span class="inline-flex items-center rounded-full px-2 py-0.5 text-[11px] font-semibold {{ integration.status_class }}">{{ integration.status_label }}</span>
+                      </div>
                       <p class="text-xs text-muted-foreground leading-relaxed">{{ integration.description }}</p>
                     </div>
                   </div>
-                  <div class="flex items-center justify-between text-xs text-muted-foreground">
-                    <span>Last sync</span>
-                    <span class="font-medium text-foreground">{{ integration.last_sync|default:"—" }}</span>
+                  <div class="grid gap-3 text-xs text-muted-foreground sm:grid-cols-2">
+                    <div class="space-y-1">
+                      <div class="text-[11px] uppercase tracking-wide">Last sync</div>
+                      <div class="text-sm font-medium text-foreground">{{ integration.last_sync|default_if_none:"—" }}</div>
+                    </div>
+                    <div class="space-y-1">
+                      <div class="text-[11px] uppercase tracking-wide">Next run</div>
+                      <div class="text-sm font-medium text-foreground">{{ integration.next_sync|default_if_none:"—" }}</div>
+                    </div>
+                    <div class="space-y-1">
+                      <div class="text-[11px] uppercase tracking-wide">Resources</div>
+                      <div class="text-sm font-medium text-foreground">{{ integration.resource_count }}</div>
+                    </div>
+                    <div class="space-y-1">
+                      <div class="text-[11px] uppercase tracking-wide">Rows last sync</div>
+                      <div class="text-sm font-medium text-foreground">{{ integration.rows_ingested|default_if_none:"—" }}</div>
+                    </div>
                   </div>
+                  {% if integration.sync_error %}
+                    <div class="rounded-md border border-rose-100 bg-rose-50 px-3 py-2 text-xs text-rose-700">
+                      {{ integration.sync_error }}
+                    </div>
+                  {% endif %}
+                  {% if integration.resource_count == 0 %}
+                    <div class="rounded-md border border-dashed border-amber-200 bg-amber-50/50 px-3 py-2 text-xs text-amber-800">
+                      No sheets have been selected yet. Use “Manage sheets” to choose which tabs should sync.
+                    </div>
+                  {% endif %}
+                  {% if integration.api.sheets and knowledge_business_id %}
+                    <div class="flex flex-wrap gap-2 pt-2">
+                      <button
+                        type="button"
+                        class="inline-flex items-center gap-2 rounded-md border border-input bg-background px-3 py-1.5 text-xs font-semibold text-foreground transition hover:border-primary/40 hover:text-primary"
+                        data-integration-configure
+                        data-integration-id="{{ integration.id }}"
+                        data-integration-name="{{ integration.name }}"
+                        data-sheets-url="{{ integration.api.sheets }}"
+                        data-sync-url="{{ integration.api.sync }}"
+                        data-business-id="{{ knowledge_business_id }}"
+                        data-default-visibility="{{ integration.default_visibility }}"
+                        data-default-frequency="{{ integration.default_sync_frequency }}"
+                      >
+                        Manage sheets
+                      </button>
+                    </div>
+                    <div class="rounded-md border border-border/50 bg-muted/40 px-3 py-2 text-xs text-muted-foreground">
+                      After saving your sheet selections, run the sync worker or launch it from the modal:
+                      <pre class="mt-1 overflow-x-auto rounded bg-background px-2 py-1 text-[11px] font-mono text-foreground">python manage.py sync_knowledge_integrations --integration-id {{ integration.id }} --ignore-schedule
+python manage.py process_knowledge_ingestion --watch</pre>
+                    </div>
+                  {% endif %}
                 </div>
               {% endfor %}
             </div>
@@ -465,6 +522,133 @@
     </div>
   </main>
 </div>
+
+{% if knowledge_business_id %}
+  <div class="hidden" data-sheets-modal aria-hidden="true">
+    <div class="fixed inset-0 z-40 bg-black/60 backdrop-blur-sm" data-sheets-overlay></div>
+    <div class="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto px-4 py-8 sm:px-6">
+      <div class="w-full max-w-5xl rounded-2xl border border-border/60 bg-background shadow-2xl" data-sheets-dialog role="dialog" aria-modal="true">
+        <div class="flex flex-col gap-3 border-b border-border/40 px-6 py-5 sm:flex-row sm:items-center sm:justify-between">
+          <div class="space-y-2">
+            <p class="text-xs font-semibold uppercase tracking-wide text-primary">Google Sheets</p>
+            <h2 class="text-xl font-semibold text-foreground" data-sheets-title>Manage sheets</h2>
+            <p class="text-sm text-muted-foreground">
+              Choose which spreadsheets and tabs to sync. Only selected sheets with saved privacy settings will be ingested.
+            </p>
+          </div>
+          <button
+            type="button"
+            class="inline-flex items-center gap-2 rounded-md border border-input bg-background px-3 py-1.5 text-xs font-semibold text-muted-foreground transition hover:text-foreground"
+            data-sheets-close
+          >
+            Close
+            <svg class="h-4 w-4" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" aria-hidden="true">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M6 18 18 6M6 6l12 12" />
+            </svg>
+          </button>
+        </div>
+        <div class="grid gap-6 px-6 py-5 lg:grid-cols-[2fr,1fr]">
+          <div class="space-y-4">
+            <form class="flex flex-col gap-3 sm:flex-row" data-sheets-search-form>
+              <label class="flex-1">
+                <span class="sr-only">Search sheets</span>
+                <input
+                  type="search"
+                  class="w-full rounded-md border border-input bg-background px-3 py-2 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-primary"
+                  placeholder="Search by file name"
+                  data-sheets-search
+                >
+              </label>
+              <button
+                type="submit"
+                class="inline-flex items-center justify-center rounded-md bg-primary px-4 py-2 text-sm font-semibold text-primary-foreground shadow-sm transition hover:bg-primary/90"
+              >
+                Search
+              </button>
+              <button
+                type="button"
+                class="inline-flex items-center justify-center rounded-md border border-input px-4 py-2 text-sm font-semibold text-foreground hover:border-primary/40"
+                data-sheets-refresh
+              >
+                Refresh
+              </button>
+            </form>
+            <p class="hidden text-sm" data-sheets-status></p>
+            <div class="max-h-[60vh] space-y-3 overflow-y-auto pr-1" data-sheets-list>
+              <div class="rounded-md border border-dashed border-border/60 bg-muted/30 px-3 py-4 text-sm text-muted-foreground" data-sheets-empty>
+                Use “Manage sheets” on an integration to load spreadsheets from Google Drive.
+              </div>
+            </div>
+          </div>
+          <div class="space-y-4">
+            <div class="rounded-lg border border-border/60 bg-card/70 p-4 space-y-4">
+              <div>
+                <label class="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Default visibility</label>
+                <select
+                  class="mt-1 w-full rounded-md border border-input bg-background px-3 py-2 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-primary"
+                  data-sheets-default-visibility
+                >
+                  <option value="private">Private (owner only)</option>
+                  <option value="internal">Internal (agents & admins)</option>
+                  <option value="shared">Shared (everyone with knowledge access)</option>
+                </select>
+              </div>
+              <div>
+                <label class="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Default sync frequency</label>
+                <select
+                  class="mt-1 w-full rounded-md border border-input bg-background px-3 py-2 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-primary"
+                  data-sheets-default-frequency
+                >
+                  <option value="manual">Manual</option>
+                  <option value="hourly">Hourly</option>
+                  <option value="daily">Daily</option>
+                  <option value="weekly">Weekly</option>
+                </select>
+              </div>
+              <div class="rounded-md border border-dashed border-border/50 bg-background/80 px-3 py-2 text-xs text-muted-foreground">
+                <div class="flex items-center justify-between">
+                  <span>Selected sheets</span>
+                  <strong class="text-foreground" data-sheets-selected-count>0</strong>
+                </div>
+              </div>
+            </div>
+            <div class="space-y-2">
+              <button
+                type="button"
+                class="w-full rounded-md bg-primary px-4 py-2 text-sm font-semibold text-primary-foreground shadow-sm transition hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-60"
+                data-sheets-save
+              >
+                Save selection
+              </button>
+              <button
+                type="button"
+                class="w-full rounded-md border border-input px-4 py-2 text-sm font-semibold text-foreground transition hover:border-primary/40 disabled:cursor-not-allowed disabled:opacity-60"
+                data-sheets-sync
+              >
+                Sync now
+              </button>
+              <button
+                type="button"
+                class="w-full rounded-md border border-input px-4 py-2 text-sm font-semibold text-muted-foreground transition hover:text-foreground"
+                data-sheets-close
+              >
+                Cancel
+              </button>
+            </div>
+            <div class="rounded-lg border border-dashed border-border/50 bg-muted/20 p-3 text-xs text-muted-foreground">
+              <p>Prefer the CLI? Run:</p>
+              <pre class="mt-2 overflow-x-auto rounded bg-background px-2 py-1 text-[11px] font-mono text-foreground" data-sheets-command>python manage.py sync_knowledge_integrations --integration-id … --ignore-schedule
+python manage.py process_knowledge_ingestion --watch</pre>
+              <p class="mt-2" data-sheets-instructions>
+                Keep <code>python manage.py process_knowledge_ingestion --watch</code> running so new CSV rows are embedded automatically.
+              </p>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+{% endif %}
 
 <div
   class="fixed inset-0 z-40 bg-background/60 backdrop-blur-sm opacity-0 pointer-events-none transition-opacity duration-300"
@@ -644,6 +828,35 @@
 {% block extra_js %}
 <script>
   document.addEventListener("DOMContentLoaded", function () {
+    const tabsRoot = document.querySelector("[data-knowledge-tabs]");
+    if (tabsRoot) {
+      const buttons = Array.from(tabsRoot.querySelectorAll("[data-tab-button]"));
+      const panels = Array.from(tabsRoot.querySelectorAll("[data-tab-panel]"));
+      const toolbars = Array.from(document.querySelectorAll("[data-tab-toolbar]"));
+
+      const setActive = (target) => {
+        buttons.forEach((btn) => {
+          const isActive = btn.dataset.tabButton === target;
+          btn.classList.toggle("bg-primary", isActive);
+          btn.classList.toggle("text-primary-foreground", isActive);
+          btn.classList.toggle("shadow-sm", isActive);
+          btn.classList.toggle("text-muted-foreground", !isActive);
+          btn.classList.toggle("hover:text-primary", !isActive);
+        });
+        panels.forEach((panel) => {
+          panel.classList.toggle("hidden", panel.dataset.tabPanel !== target);
+        });
+        toolbars.forEach((toolbar) => {
+          toolbar.classList.toggle("hidden", toolbar.dataset.tabToolbar !== target);
+        });
+      };
+
+      buttons.forEach((button) => {
+        button.addEventListener("click", () => setActive(button.dataset.tabButton));
+      });
+      setActive("documents");
+    }
+
     var uploadPanelCard = document.querySelector("[data-upload-panel]");
     var uploadToggle = document.querySelector("[data-upload-toggle]");
     var uploadCancelButtons = document.querySelectorAll("[data-upload-cancel]");
@@ -1132,6 +1345,581 @@
         });
     }
 
+    function getCookie(name) {
+      var cookies = document.cookie ? document.cookie.split(";") : [];
+      var prefix = name + "=";
+      for (var i = 0; i < cookies.length; i++) {
+        var cookie = cookies[i].trim();
+        if (cookie.substring(0, prefix.length) === prefix) {
+          return decodeURIComponent(cookie.substring(prefix.length) || "");
+        }
+      }
+      return null;
+    }
+
+    var isSheetsModalOpen = false;
+    var sheetsModal = document.querySelector("[data-sheets-modal]");
+    var configureButtons = Array.prototype.slice.call(document.querySelectorAll("[data-integration-configure]") || []);
+    if (sheetsModal && configureButtons.length) {
+      var sheetsOverlay = sheetsModal.querySelector("[data-sheets-overlay]");
+      var sheetsDialog = sheetsModal.querySelector("[data-sheets-dialog]");
+      var sheetsCloseButtons = Array.prototype.slice.call(sheetsModal.querySelectorAll("[data-sheets-close]") || []);
+      var sheetsStatus = sheetsModal.querySelector("[data-sheets-status]");
+      var sheetsList = sheetsModal.querySelector("[data-sheets-list]");
+      var searchForm = sheetsModal.querySelector("[data-sheets-search-form]");
+      var searchInput = sheetsModal.querySelector("[data-sheets-search]");
+      var refreshButton = sheetsModal.querySelector("[data-sheets-refresh]");
+      var defaultVisibilityField = sheetsModal.querySelector("[data-sheets-default-visibility]");
+      var defaultFrequencyField = sheetsModal.querySelector("[data-sheets-default-frequency]");
+      var selectedCountField = sheetsModal.querySelector("[data-sheets-selected-count]");
+      var saveSelectionButton = sheetsModal.querySelector("[data-sheets-save]");
+      var syncNowButton = sheetsModal.querySelector("[data-sheets-sync]");
+      var commandBlock = sheetsModal.querySelector("[data-sheets-command]");
+      var modalTitle = sheetsModal.querySelector("[data-sheets-title]");
+      var csrfToken = getCookie("csrftoken");
+      var sheetsState = {
+        available: [],
+        selected: {},
+        integrationId: "",
+        integrationName: "",
+        businessId: "",
+        sheetsUrl: "",
+        syncUrl: "",
+      };
+
+      function normalizeColumnList(value) {
+        if (!value) return [];
+        if (Array.isArray(value)) {
+          return value
+            .map(function (entry) {
+              return String(entry || "").trim();
+            })
+            .filter(Boolean);
+        }
+        if (typeof value === "string") {
+          return value
+            .split(",")
+            .map(function (entry) {
+              return entry.trim();
+            })
+            .filter(Boolean);
+        }
+        return [];
+      }
+
+      function cloneResourceConfig(resource) {
+        return {
+          resourceId: resource.resourceId,
+          driveFileId: resource.driveFileId,
+          driveFileName: resource.driveFileName,
+          sheetGid: resource.sheetGid,
+          sheetName: resource.sheetName,
+          visibility: resource.visibility || (defaultVisibilityField ? defaultVisibilityField.value : "private"),
+          syncFrequency: resource.syncFrequency || (defaultFrequencyField ? defaultFrequencyField.value : "daily"),
+          columnPrivacy: {
+            sharedColumns: normalizeColumnList(resource.columnPrivacy && resource.columnPrivacy.sharedColumns),
+            internalOnlyColumns: normalizeColumnList(resource.columnPrivacy && resource.columnPrivacy.internalOnlyColumns),
+            excludedColumns: normalizeColumnList(resource.columnPrivacy && resource.columnPrivacy.excludedColumns),
+          },
+        };
+      }
+
+      function normalizeResource(entry) {
+        return {
+          resourceId: entry.resourceId,
+          driveFileId: entry.driveFileId,
+          driveFileName: entry.driveFileName,
+          sheetGid: entry.sheetGid,
+          sheetName: entry.sheetName,
+          rowCount: entry.rowCount,
+          columnCount: entry.columnCount,
+          modifiedAt: entry.modifiedAt,
+          owner: entry.owner,
+          ownerEmail: entry.ownerEmail,
+          lastSyncedAt: entry.lastSyncedAt,
+          lastSyncStatus: entry.lastSyncStatus,
+          lastSyncError: entry.lastSyncError,
+          webViewLink: entry.webViewLink,
+          columnPrivacy: entry.columnPrivacy || {},
+          visibility: entry.visibility,
+          syncFrequency: entry.syncFrequency,
+        };
+      }
+
+      function setSheetsStatus(message, tone) {
+        if (!sheetsStatus) return;
+        sheetsStatus.classList.remove("hidden", "text-rose-600", "text-emerald-600", "text-muted-foreground");
+        if (!message) {
+          sheetsStatus.classList.add("hidden");
+          sheetsStatus.textContent = "";
+          return;
+        }
+        sheetsStatus.textContent = message;
+        var palette = { error: "text-rose-600", success: "text-emerald-600", info: "text-muted-foreground" };
+        sheetsStatus.classList.add(palette[tone] || "text-muted-foreground");
+      }
+
+      function updateSelectedSummary() {
+        if (!selectedCountField) {
+          return;
+        }
+        selectedCountField.textContent = Object.keys(sheetsState.selected).length;
+      }
+
+      function setSheetsModalVisible(state) {
+        if (!sheetsModal) return;
+        isSheetsModalOpen = state;
+        if (state) {
+          sheetsModal.classList.remove("hidden");
+          document.body.style.overflow = "hidden";
+          if (sheetsDialog) {
+            sheetsDialog.setAttribute("tabindex", "-1");
+            sheetsDialog.focus({ preventScroll: true });
+          }
+        } else {
+          sheetsModal.classList.add("hidden");
+          document.body.style.overflow = "";
+        }
+      }
+
+      function selectResource(resource) {
+        sheetsState.selected[resource.resourceId] = cloneResourceConfig(resource);
+        return sheetsState.selected[resource.resourceId];
+      }
+
+      function deselectResource(resourceId) {
+        delete sheetsState.selected[resourceId];
+      }
+
+      function syncPrivacyControls(card, resourceId, snapshot) {
+        var panel = card.querySelector("[data-privacy-panel]");
+        if (!panel) return;
+        var visibilitySelect = panel.querySelector("[data-resource-visibility]");
+        var frequencySelect = panel.querySelector("[data-resource-frequency]");
+        var sharedInput = panel.querySelector('[data-privacy-input="shared"]');
+        var internalInput = panel.querySelector('[data-privacy-input="internal"]');
+        var excludedInput = panel.querySelector('[data-privacy-input="excluded"]');
+        var active = sheetsState.selected[resourceId] || snapshot;
+        if (visibilitySelect) {
+          visibilitySelect.value =
+            (sheetsState.selected[resourceId] && sheetsState.selected[resourceId].visibility) ||
+            active.visibility ||
+            (defaultVisibilityField ? defaultVisibilityField.value : "private");
+          visibilitySelect.addEventListener("change", function () {
+            if (sheetsState.selected[resourceId]) {
+              sheetsState.selected[resourceId].visibility = visibilitySelect.value;
+            }
+          });
+        }
+        if (frequencySelect) {
+          frequencySelect.value =
+            (sheetsState.selected[resourceId] && sheetsState.selected[resourceId].syncFrequency) ||
+            active.syncFrequency ||
+            (defaultFrequencyField ? defaultFrequencyField.value : "daily");
+          frequencySelect.addEventListener("change", function () {
+            if (sheetsState.selected[resourceId]) {
+              sheetsState.selected[resourceId].syncFrequency = frequencySelect.value;
+            }
+          });
+        }
+        if (sharedInput) {
+          sharedInput.value =
+            active.columnPrivacy && active.columnPrivacy.sharedColumns ? active.columnPrivacy.sharedColumns.join(", ") : "";
+          sharedInput.addEventListener("input", function () {
+            if (sheetsState.selected[resourceId]) {
+              sheetsState.selected[resourceId].columnPrivacy.sharedColumns = normalizeColumnList(sharedInput.value);
+            }
+          });
+        }
+        if (internalInput) {
+          internalInput.value =
+            active.columnPrivacy && active.columnPrivacy.internalOnlyColumns
+              ? active.columnPrivacy.internalOnlyColumns.join(", ")
+              : "";
+          internalInput.addEventListener("input", function () {
+            if (sheetsState.selected[resourceId]) {
+              sheetsState.selected[resourceId].columnPrivacy.internalOnlyColumns = normalizeColumnList(internalInput.value);
+            }
+          });
+        }
+        if (excludedInput) {
+          excludedInput.value =
+            active.columnPrivacy && active.columnPrivacy.excludedColumns ? active.columnPrivacy.excludedColumns.join(", ") : "";
+          excludedInput.addEventListener("input", function () {
+            if (sheetsState.selected[resourceId]) {
+              sheetsState.selected[resourceId].columnPrivacy.excludedColumns = normalizeColumnList(excludedInput.value);
+            }
+          });
+        }
+      }
+
+      function renderResources() {
+        if (!sheetsList) return;
+        sheetsList.innerHTML = "";
+        if (!sheetsState.available.length) {
+          var empty = document.createElement("div");
+          empty.className = "rounded-md border border-dashed border-border/60 bg-muted/30 px-3 py-4 text-sm text-muted-foreground";
+          empty.textContent = "No spreadsheets found. Try refreshing or adjust your search.";
+          sheetsList.appendChild(empty);
+          updateSelectedSummary();
+          return;
+        }
+        sheetsState.available.forEach(function (resource) {
+          var card = document.createElement("div");
+          card.className = "rounded-lg border border-border/60 bg-card/80 p-4 space-y-3";
+          card.dataset.resourceId = resource.resourceId;
+          card.innerHTML = [
+            '<div class="flex items-start gap-3">',
+            '  <div class="pt-1">',
+            '    <input type="checkbox" class="h-4 w-4 rounded border border-border/60 text-primary focus:ring-primary" data-resource-toggle>',
+            "  </div>",
+            '  <div class="flex-1 min-w-0" data-resource-summary>',
+            '    <div class="text-sm font-semibold text-foreground" data-drive-name></div>',
+            '    <div class="text-xs text-muted-foreground">Sheet: <span data-sheet-name></span></div>',
+            "  </div>",
+            '  <div class="text-right text-[11px] text-muted-foreground" data-resource-meta></div>',
+            "</div>",
+            '<div class="text-[11px] text-muted-foreground" data-resource-info></div>',
+            '<div class="hidden rounded-md border border-border/50 bg-background/80 p-3 space-y-3" data-privacy-panel>',
+            '  <div class="grid gap-3 sm:grid-cols-2">',
+            '    <label class="text-xs font-semibold text-muted-foreground">Visibility',
+            '      <select class="mt-1 w-full rounded-md border border-input bg-background px-2 py-1 text-sm" data-resource-visibility>',
+            '        <option value="private">Private (owner only)</option>',
+            '        <option value="internal">Internal (agents & admins)</option>',
+            '        <option value="shared">Shared (everyone)</option>',
+            "      </select>",
+            "    </label>",
+            '    <label class="text-xs font-semibold text-muted-foreground">Sync frequency',
+            '      <select class="mt-1 w-full rounded-md border border-input bg-background px-2 py-1 text-sm" data-resource-frequency>',
+            '        <option value="manual">Manual</option>',
+            '        <option value="hourly">Hourly</option>',
+            '        <option value="daily">Daily</option>',
+            '        <option value="weekly">Weekly</option>',
+            "      </select>",
+            "    </label>",
+            "  </div>",
+            '  <div class="space-y-2 text-xs">',
+            '    <label class="block text-muted-foreground">Shared columns',
+            '      <textarea rows="2" class="mt-1 w-full rounded-md border border-input bg-background px-2 py-1 text-sm" placeholder="name, email" data-privacy-input="shared"></textarea>',
+            "    </label>",
+            '    <label class="block text-muted-foreground">Internal only columns',
+            '      <textarea rows="2" class="mt-1 w-full rounded-md border border-input bg-background px-2 py-1 text-sm" placeholder="ssn, account_number" data-privacy-input="internal"></textarea>',
+            "    </label>",
+            '    <label class="block text-muted-foreground">Exclude columns entirely',
+            '      <textarea rows="2" class="mt-1 w-full rounded-md border border-input bg-background px-2 py-1 text-sm" placeholder="notes" data-privacy-input="excluded"></textarea>',
+            "    </label>",
+            "  </div>",
+            "</div>",
+          ].join("");
+          var fileNameEl = card.querySelector("[data-drive-name]");
+          var sheetNameEl = card.querySelector("[data-sheet-name]");
+          var metaEl = card.querySelector("[data-resource-meta]");
+          var infoEl = card.querySelector("[data-resource-info]");
+          if (fileNameEl) fileNameEl.textContent = resource.driveFileName || "Untitled spreadsheet";
+          if (sheetNameEl) sheetNameEl.textContent = resource.sheetName || "Sheet";
+          if (metaEl) {
+            var parts = [];
+            if (resource.rowCount) parts.push(resource.rowCount + " rows");
+            if (resource.columnCount) parts.push(resource.columnCount + " columns");
+            metaEl.textContent = parts.join(" · ");
+          }
+          if (infoEl) {
+            var infoBits = [];
+            if (resource.owner) {
+              infoBits.push("Owner: " + resource.owner);
+            }
+            if (resource.lastSyncStatus) {
+              infoBits.push("Last sync: " + resource.lastSyncStatus);
+            }
+            infoEl.textContent = infoBits.join(" · ");
+          }
+          var checkbox = card.querySelector("[data-resource-toggle]");
+          var panel = card.querySelector("[data-privacy-panel]");
+          var isSelected = Boolean(sheetsState.selected[resource.resourceId]);
+          if (panel) {
+            panel.classList.toggle("hidden", !isSelected);
+          }
+          if (isSelected) {
+            syncPrivacyControls(card, resource.resourceId, sheetsState.selected[resource.resourceId]);
+          }
+          if (checkbox) {
+            checkbox.checked = isSelected;
+            checkbox.addEventListener("change", function () {
+              if (checkbox.checked) {
+                var selected = selectResource(resource);
+                if (panel) panel.classList.remove("hidden");
+                syncPrivacyControls(card, resource.resourceId, selected);
+              } else {
+                deselectResource(resource.resourceId);
+                if (panel) panel.classList.add("hidden");
+              }
+              updateSelectedSummary();
+            });
+          }
+          sheetsList.appendChild(card);
+        });
+        updateSelectedSummary();
+      }
+
+      function fetchResources(searchTerm) {
+        if (!sheetsState.sheetsUrl) {
+          return Promise.resolve();
+        }
+        setSheetsStatus("Loading resources…", "info");
+        sheetsList.innerHTML =
+          '<div class="rounded-md border border-dashed border-border/60 bg-muted/30 px-3 py-4 text-sm text-muted-foreground">Loading sheets from Google Drive…</div>';
+        var url = new URL(sheetsState.sheetsUrl, window.location.origin);
+        url.searchParams.set("business_id", sheetsState.businessId || "");
+        if (searchTerm) {
+          url.searchParams.set("q", searchTerm);
+        }
+        return fetch(url.toString(), {
+          method: "GET",
+          headers: { Accept: "application/json" },
+          credentials: "same-origin",
+        })
+          .then(function (response) {
+            if (!response.ok) {
+              return response
+                .json()
+                .catch(function () {
+                  return {};
+                })
+                .then(function (payload) {
+                  throw new Error(payload.message || "Unable to load Google resources.");
+                });
+            }
+            return response.json();
+          })
+          .then(function (payload) {
+            sheetsState.available = (payload.availableResources || []).map(normalizeResource);
+            sheetsState.selected = {};
+            (payload.selectedResources || []).forEach(function (resource) {
+              sheetsState.selected[resource.resourceId] = cloneResourceConfig({
+                resourceId: resource.resourceId,
+                driveFileId: resource.driveFileId,
+                driveFileName: resource.driveFileName,
+                sheetGid: resource.sheetGid,
+                sheetName: resource.sheetName,
+                columnPrivacy: resource.columnPrivacy,
+                visibility: resource.visibility,
+                syncFrequency: resource.syncFrequency,
+              });
+            });
+            if (defaultVisibilityField && payload.defaultVisibility) {
+              defaultVisibilityField.value = payload.defaultVisibility;
+            }
+            if (defaultFrequencyField && payload.defaultSyncFrequency) {
+              defaultFrequencyField.value = payload.defaultSyncFrequency;
+            }
+            renderResources();
+            setSheetsStatus("", "");
+          })
+          .catch(function (error) {
+            console.error("Failed to load Google sheets", error);
+            setSheetsStatus(error.message || "Unable to load sheets from Google Drive.", "error");
+          });
+      }
+
+      function buildPayload() {
+        var payload = {
+          businessId: sheetsState.businessId,
+          integrationId: sheetsState.integrationId,
+          defaultVisibility: defaultVisibilityField ? defaultVisibilityField.value : "private",
+          defaultSyncFrequency: defaultFrequencyField ? defaultFrequencyField.value : "daily",
+          resources: [],
+        };
+        Object.keys(sheetsState.selected).forEach(function (resourceId) {
+          var config = sheetsState.selected[resourceId];
+          payload.resources.push({
+            resourceId: config.resourceId,
+            driveFileId: config.driveFileId,
+            driveFileName: config.driveFileName,
+            sheetGid: config.sheetGid,
+            sheetName: config.sheetName,
+            visibility: config.visibility || payload.defaultVisibility,
+            syncFrequency: config.syncFrequency || payload.defaultSyncFrequency,
+            columnPrivacy: {
+              sharedColumns: config.columnPrivacy.sharedColumns || [],
+              internalOnlyColumns: config.columnPrivacy.internalOnlyColumns || [],
+              excludedColumns: config.columnPrivacy.excludedColumns || [],
+            },
+          });
+        });
+        return payload;
+      }
+
+      function setSheetsBusy(state) {
+        if (saveSelectionButton) saveSelectionButton.disabled = state;
+        if (syncNowButton) syncNowButton.disabled = state;
+      }
+
+      function persistSelection() {
+        if (!sheetsState.sheetsUrl) {
+          return;
+        }
+        setSheetsBusy(true);
+        setSheetsStatus("Saving sheet selection…", "info");
+        return fetch(sheetsState.sheetsUrl, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "X-CSRFToken": csrfToken || "",
+            Accept: "application/json",
+          },
+          body: JSON.stringify(buildPayload()),
+          credentials: "same-origin",
+        })
+          .then(function (response) {
+            if (!response.ok) {
+              return response
+                .json()
+                .catch(function () {
+                  return {};
+                })
+                .then(function (payload) {
+                  throw new Error(payload.message || "Unable to save sheet configuration.");
+                });
+            }
+            return response.json();
+          })
+          .then(function () {
+            setSheetsStatus("Saved sheet configuration. Refreshing resources…", "success");
+            return fetchResources(searchInput ? searchInput.value : "");
+          })
+          .catch(function (error) {
+            console.error("Failed to save sheet configuration", error);
+            setSheetsStatus(error.message || "Unable to save sheet configuration.", "error");
+          })
+          .finally(function () {
+            setSheetsBusy(false);
+          });
+      }
+
+      function triggerSync() {
+        if (!sheetsState.syncUrl) {
+          setSheetsStatus("Sync endpoint not available for this integration.", "error");
+          return;
+        }
+        setSheetsBusy(true);
+        setSheetsStatus("Starting sync…", "info");
+        fetch(sheetsState.syncUrl, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "X-CSRFToken": csrfToken || "",
+            Accept: "application/json",
+          },
+          body: JSON.stringify({
+            businessId: sheetsState.businessId,
+            integrationId: sheetsState.integrationId,
+          }),
+          credentials: "same-origin",
+        })
+          .then(function (response) {
+            if (!response.ok) {
+              return response
+                .json()
+                .catch(function () {
+                  return {};
+                })
+                .then(function (payload) {
+                  throw new Error(payload.message || "Unable to start sync.");
+                });
+            }
+            return response.json();
+          })
+          .then(function (payload) {
+            var summary = payload && payload.message ? payload.message : "Sync triggered.";
+            if (payload && typeof payload.rowsIngested === "number") {
+              summary += " Rows ingested: " + payload.rowsIngested;
+            }
+            setSheetsStatus(summary, payload && payload.status === "error" ? "error" : "success");
+            fetchResources(searchInput ? searchInput.value : "");
+          })
+          .catch(function (error) {
+            console.error("Sync failed", error);
+            setSheetsStatus(error.message || "Unable to start sync.", "error");
+          })
+          .finally(function () {
+            setSheetsBusy(false);
+          });
+      }
+
+      function closeSheetsModal() {
+        setSheetsModalVisible(false);
+        sheetsState.available = [];
+        sheetsState.selected = {};
+        if (sheetsList) {
+          sheetsList.innerHTML = "";
+        }
+        setSheetsStatus("", "");
+      }
+
+      function openSheetsModal(dataset) {
+        sheetsState.integrationId = dataset.integrationId || "";
+        sheetsState.integrationName = dataset.integrationName || "Google Drive";
+        sheetsState.businessId = dataset.businessId || "";
+        sheetsState.sheetsUrl = dataset.sheetsUrl || "";
+        sheetsState.syncUrl = dataset.syncUrl || "";
+        if (commandBlock) {
+          commandBlock.textContent =
+            "python manage.py sync_knowledge_integrations --integration-id " +
+            sheetsState.integrationId +
+            " --ignore-schedule\npython manage.py process_knowledge_ingestion --watch";
+        }
+        if (modalTitle) {
+          modalTitle.textContent = "Manage sheets · " + sheetsState.integrationName;
+        }
+        setSheetsModalVisible(true);
+        fetchResources(searchInput ? searchInput.value : "");
+      }
+
+      configureButtons.forEach(function (button) {
+        button.addEventListener("click", function () {
+          openSheetsModal(button.dataset);
+        });
+      });
+
+      if (sheetsOverlay) {
+        sheetsOverlay.addEventListener("click", function () {
+          closeSheetsModal();
+        });
+      }
+      sheetsCloseButtons.forEach(function (button) {
+        button.addEventListener("click", function () {
+          closeSheetsModal();
+        });
+      });
+      if (searchForm) {
+        searchForm.addEventListener("submit", function (event) {
+          event.preventDefault();
+          fetchResources(searchInput ? searchInput.value : "");
+        });
+      }
+      if (refreshButton) {
+        refreshButton.addEventListener("click", function () {
+          fetchResources(searchInput ? searchInput.value : "");
+        });
+      }
+      if (saveSelectionButton) {
+        saveSelectionButton.addEventListener("click", function () {
+          persistSelection();
+        });
+      }
+      if (syncNowButton) {
+        syncNowButton.addEventListener("click", function () {
+          triggerSync();
+        });
+      }
+      document.addEventListener("keydown", function (event) {
+        if (event.key === "Escape" && isSheetsModalOpen) {
+          event.preventDefault();
+          closeSheetsModal();
+        }
+      });
+    }
+
     var rows = Array.prototype.slice.call(document.querySelectorAll("[data-document-row]") || []);
     rows.forEach(function (row) {
       row.addEventListener("click", function (event) {
@@ -1173,9 +1961,14 @@
       });
     }
     document.addEventListener("keydown", function (event) {
-      if (event.key === "Escape" && isPanelOpen) {
-        event.preventDefault();
-        closePanel();
+      if (event.key === "Escape") {
+        if (isSheetsModalOpen) {
+          return;
+        }
+        if (isPanelOpen) {
+          event.preventDefault();
+          closePanel();
+        }
       }
     });
 

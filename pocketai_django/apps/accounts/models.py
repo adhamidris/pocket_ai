@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import logging
 import uuid
+from datetime import datetime, timedelta
 from typing import Any, TypedDict
 
 from django.contrib.auth.models import AbstractBaseUser, PermissionsMixin
@@ -8,6 +10,7 @@ from django.contrib.postgres.indexes import GinIndex
 from django.core.validators import MinValueValidator
 from django.db import models
 from django.utils import timezone
+from django.utils.dateparse import parse_datetime
 from django.utils.text import slugify
 
 from .managers import UserManager
@@ -16,6 +19,15 @@ from django.conf import settings
 from pgvector.django import VectorField
 
 from apps.accounts.constants import FEATURE_FLAG_METADATA_KEY, sanitize_feature_payload
+from apps.accounts.credential_secrets import (
+    IntegrationSecretError,
+    credential_policy,
+    credentials_are_stale,
+    get_secret_manager,
+)
+
+
+logger = logging.getLogger(__name__)
 
 
 class IntegrationColumnPrivacyConfig(TypedDict, total=False):
@@ -38,6 +50,24 @@ class IntegrationResourceConfig(TypedDict, total=False):
     visibility: str
     column_privacy: IntegrationColumnPrivacyConfig
     metadata: dict[str, Any]
+    last_synced_at: str
+    last_sync_status: str
+    last_sync_error: str
+    last_sync_bytes: int
+    stale_since: str
+    stale_reason: str
+
+
+class IntegrationSyncSchedule(TypedDict, total=False):
+    """Metadata stored per integration describing cadence and next run timestamps."""
+
+    frequency: str
+    timezone: str
+    next_run_at: str | None
+    last_run_at: str | None
+    last_status: str
+    last_duration_ms: int
+    paused: bool
 
 
 class User(AbstractBaseUser, PermissionsMixin):
@@ -210,6 +240,25 @@ class BusinessProfile(models.Model):
         if metadata_copy.get(FEATURE_FLAG_METADATA_KEY) != normalized:
             metadata_copy[FEATURE_FLAG_METADATA_KEY] = normalized
             self.metadata = metadata_copy
+
+    def table_privacy_policy(self) -> dict[str, Any]:
+        metadata_source = self.metadata if isinstance(self.metadata, dict) else {}
+        config = metadata_source.get("table_privacy") or metadata_source.get("sensitive_table_config") or {}
+        if not isinstance(config, dict):
+            config = {}
+        required = config.get("required_masking_columns")
+        if not isinstance(required, (list, tuple)):
+            required = config.get("sensitive_columns") or []
+        normalized_required = [str(value).strip() for value in required if str(value or "").strip()]
+        return {
+            "masking_required": bool(config.get("masking_required")),
+            "required_columns": normalized_required,
+            "policy_version": config.get("policy_version"),
+        }
+
+    def requires_column_masking(self) -> bool:
+        policy = self.table_privacy_policy()
+        return bool(policy.get("masking_required"))
 
     def save(self, *args, **kwargs):
         self.ensure_slug()
@@ -412,6 +461,14 @@ class IntegrationSyncFrequency(models.TextChoices):
     HOURLY = "hourly", "Hourly"
     DAILY = "daily", "Daily"
     WEEKLY = "weekly", "Weekly"
+
+
+class IntegrationCredentialEventType(models.TextChoices):
+    CREATED = "created", "Created"
+    REFRESHED = "refreshed", "Refreshed"
+    ERROR = "error", "Error"
+    CLEARED = "cleared", "Cleared"
+    ROTATION_REQUIRED = "rotation_required", "Rotation Required"
 
 
 def default_knowledge_integration_settings() -> dict[str, Any]:
@@ -1238,7 +1295,10 @@ class KnowledgeIntegration(models.Model):
     )
     status = models.CharField(max_length=32, choices=KnowledgeIntegrationStatus.choices, default=KnowledgeIntegrationStatus.CONNECTED)
     external_account_id = models.CharField(max_length=255, blank=True, default="")
-    credentials = models.JSONField(default=dict, blank=True)
+    credentials_encrypted = models.TextField(blank=True, default="")
+    credentials_key_version = models.PositiveSmallIntegerField(default=1)
+    credentials_last_rotated_at = models.DateTimeField(null=True, blank=True)
+    credential_error_count = models.PositiveSmallIntegerField(default=0)
     settings = models.JSONField(default=default_knowledge_integration_settings, blank=True)
     metadata = models.JSONField(default=dict, blank=True)
     last_synced_at = models.DateTimeField(null=True, blank=True)
@@ -1273,6 +1333,113 @@ class KnowledgeIntegration(models.Model):
             return [resource for resource in resources if isinstance(resource, dict)]
         return []
 
+    def _credential_tenant(self) -> str:
+        business_id = self.business_profile_id or getattr(self.business_profile, "id", None)
+        if not business_id:
+            raise ValueError("Business profile must be saved before storing credentials.")
+        return str(business_id)
+
+    def _cache_credentials(self, payload: dict[str, Any]) -> None:
+        self._cached_credentials = dict(payload)
+
+    def _get_cached_credentials(self) -> dict[str, Any] | None:
+        return getattr(self, "_cached_credentials", None)
+
+    def _clear_cached_credentials(self) -> None:
+        if hasattr(self, "_cached_credentials"):
+            delattr(self, "_cached_credentials")
+
+    @property
+    def credentials(self) -> dict[str, Any]:
+        cached = self._get_cached_credentials()
+        if cached is not None:
+            return dict(cached)
+        tenant = self.business_profile_id or getattr(self.business_profile, "id", None)
+        if not tenant or not self.credentials_encrypted:
+            self._cache_credentials({})
+            return {}
+        manager = get_secret_manager()
+        try:
+            payload = manager.decrypt(self.credentials_encrypted, tenant=str(tenant))
+        except IntegrationSecretError as exc:
+            logger.warning("integration_credentials_decrypt_failed integration=%s error=%s", self.id, exc)
+            payload = {}
+        self._cache_credentials(payload)
+        return dict(payload)
+
+    @credentials.setter
+    def credentials(self, value: dict[str, Any] | None) -> None:
+        payload = dict(value or {})
+        if not payload:
+            self.credentials_encrypted = ""
+            self.credentials_key_version = 1
+            self.credentials_last_rotated_at = None
+            self.credential_error_count = 0
+            self._cache_credentials({})
+            return
+        manager = get_secret_manager()
+        ciphertext = manager.encrypt(payload, tenant=self._credential_tenant())
+        self.credentials_encrypted = ciphertext
+        self.credentials_key_version = manager.key_version
+        self.credentials_last_rotated_at = timezone.now()
+        self.credential_error_count = 0
+        self._cache_credentials(payload)
+
+    def has_credentials(self) -> bool:
+        return bool(self.credentials_encrypted)
+
+    def credentials_need_rotation(self) -> bool:
+        return credentials_are_stale(self.credentials_last_rotated_at)
+
+    def clear_credentials(self, *, actor: "User" | None = None, reason: str | None = None) -> None:
+        self.credentials_encrypted = ""
+        self.credentials_key_version = 1
+        self.credentials_last_rotated_at = None
+        self.credential_error_count = 0
+        self._cache_credentials({})
+        self.log_credential_event(
+            IntegrationCredentialEventType.CLEARED,
+            actor=actor,
+            metadata={"reason": reason} if reason else None,
+        )
+
+    def log_credential_event(
+        self,
+        event_type: str,
+        *,
+        actor: "User" | None = None,
+        metadata: dict[str, Any] | None = None,
+    ) -> None:
+        IntegrationCredentialEvent.objects.create(
+            business_profile=self.business_profile,
+            integration=self,
+            triggered_by=actor,
+            event_type=event_type,
+            metadata=metadata or {},
+        )
+
+    def register_credential_failure(self, *, reason: str | None = None, actor: "User" | None = None) -> None:
+        policy = credential_policy()
+        self.credential_error_count = (self.credential_error_count or 0) + 1
+        metadata = {"reason": reason, "failureCount": self.credential_error_count}
+        self.log_credential_event(IntegrationCredentialEventType.ERROR, actor=actor, metadata=metadata)
+        if self.credential_error_count >= policy.error_threshold:
+            self.status = KnowledgeIntegrationStatus.DISCONNECTED
+            self.sync_error = reason or "Integration requires reconnection."
+            self.log_credential_event(
+                IntegrationCredentialEventType.ROTATION_REQUIRED,
+                actor=actor,
+                metadata={"reason": self.sync_error},
+            )
+
+    def reset_credential_failures(self) -> None:
+        if self.credential_error_count:
+            self.credential_error_count = 0
+
+    def refresh_from_db(self, *args: Any, **kwargs: Any) -> None:
+        super().refresh_from_db(*args, **kwargs)
+        self._clear_cached_credentials()
+
     def set_resource_configs(self, resources: list[IntegrationResourceConfig]) -> None:
         settings = self.settings or {}
         settings["resources"] = resources
@@ -1296,6 +1463,82 @@ class KnowledgeIntegration(models.Model):
         settings["default_sync_frequency"] = frequency
         self.settings = settings
 
+    def get_sync_schedule(self) -> IntegrationSyncSchedule:
+        metadata = self.metadata or {}
+        schedule = metadata.get("sync_schedule")
+        if not isinstance(schedule, dict):
+            schedule = {}
+        normalized: IntegrationSyncSchedule = {
+            "frequency": schedule.get("frequency") or self.get_default_sync_frequency(),
+            "timezone": schedule.get("timezone") or "UTC",
+            "next_run_at": schedule.get("next_run_at"),
+            "last_run_at": schedule.get("last_run_at"),
+            "last_status": schedule.get("last_status") or "",
+            "last_duration_ms": schedule.get("last_duration_ms") or 0,
+            "paused": bool(schedule.get("paused")),
+        }
+        return normalized
+
+    def set_sync_schedule(self, schedule: IntegrationSyncSchedule | dict[str, Any]) -> None:
+        metadata = dict(self.metadata or {})
+        metadata["sync_schedule"] = dict(schedule)
+        self.metadata = metadata
+
+    def due_for_sync(self, *, now: datetime | None = None) -> bool:
+        schedule = self.get_sync_schedule()
+        if schedule.get("paused"):
+            return False
+        frequency = schedule.get("frequency") or self.get_default_sync_frequency()
+        if frequency == IntegrationSyncFrequency.MANUAL:
+            return False
+        reference = now or timezone.now()
+        next_run_at = self._parse_schedule_timestamp(schedule.get("next_run_at"))
+        if next_run_at is None:
+            return True
+        return reference >= next_run_at
+
+    def calculate_next_sync_at(self, *, from_time: datetime | None = None, frequency: str | None = None) -> datetime | None:
+        freq = frequency or self.get_sync_schedule().get("frequency") or self.get_default_sync_frequency()
+        if freq == IntegrationSyncFrequency.MANUAL:
+            return None
+        start = from_time or timezone.now()
+        if freq == IntegrationSyncFrequency.HOURLY:
+            delta = timedelta(hours=1)
+        elif freq == IntegrationSyncFrequency.WEEKLY:
+            delta = timedelta(days=7)
+        else:
+            delta = timedelta(days=1)
+        return start + delta
+
+    def record_sync_schedule(
+        self,
+        *,
+        started_at: datetime,
+        duration_ms: int | None = None,
+        status: str = "success",
+    ) -> None:
+        schedule = self.get_sync_schedule()
+        next_run = self.calculate_next_sync_at(from_time=started_at, frequency=schedule.get("frequency"))
+        schedule.update(
+            {
+                "last_run_at": started_at.isoformat(),
+                "last_status": status,
+                "last_duration_ms": duration_ms or schedule.get("last_duration_ms") or 0,
+                "next_run_at": next_run.isoformat() if next_run else None,
+            }
+        )
+        self.set_sync_schedule(schedule)
+
+    def _parse_schedule_timestamp(self, value: str | None) -> datetime | None:
+        if not value:
+            return None
+        parsed = parse_datetime(value)
+        if parsed is None:
+            return None
+        if timezone.is_naive(parsed):
+            parsed = timezone.make_aware(parsed, timezone=timezone.utc)
+        return parsed
+
     def get_resource_by_id(self, resource_id: str) -> IntegrationResourceConfig | None:
         for resource in self.resource_configs:
             rid = resource.get("resource_id")
@@ -1317,6 +1560,40 @@ class KnowledgeIntegration(models.Model):
             self.slug = candidate
 
         super().save(*args, **kwargs)
+
+
+class IntegrationCredentialEvent(models.Model):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    business_profile = models.ForeignKey(
+        BusinessProfile,
+        related_name="integration_credential_events",
+        on_delete=models.CASCADE,
+    )
+    integration = models.ForeignKey(
+        KnowledgeIntegration,
+        related_name="credential_events",
+        on_delete=models.CASCADE,
+    )
+    triggered_by = models.ForeignKey(
+        User,
+        related_name="integration_credential_events",
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+    )
+    event_type = models.CharField(max_length=32, choices=IntegrationCredentialEventType.choices)
+    metadata = models.JSONField(default=dict, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = "accounts_integration_credential_event"
+        ordering = ("-created_at",)
+        indexes = [
+            models.Index(fields=["integration", "event_type"], name="integration_cred_evt_type_idx"),
+        ]
+
+    def __str__(self) -> str:  # pragma: no cover - human readable only
+        return f"{self.integration_id}:{self.event_type}"
 
 
 class KnowledgeIngestionJob(models.Model):

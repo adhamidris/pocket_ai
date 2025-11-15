@@ -2995,7 +2995,12 @@ class AiOrchestratorService:
             response_text = streamed_text
 
         response_text = self._maybe_prepend_not_found_notice(response_text, knowledge_status=knowledge_status)
-        response_text = self._maybe_append_ingestion_notice(response_text, knowledge_payload)
+        response_text = self._maybe_append_ingestion_notice(
+            response_text,
+            knowledge_payload,
+            knowledge_reads=knowledge_reads,
+            knowledge_status=knowledge_status,
+        )
 
         response_stream_text = response_text
 
@@ -3585,20 +3590,51 @@ class AiOrchestratorService:
         notice = "I couldn’t find that identifier in the knowledge base. "
         return f"{notice}{text}".strip() if text else notice.strip()
 
-    def _maybe_append_ingestion_notice(self, text: str, knowledge_payload: Sequence[Mapping[str, object]]) -> str:
-        if not self._has_ingestion_red_flags(knowledge_payload):
+    def _maybe_append_ingestion_notice(
+        self,
+        text: str,
+        knowledge_payload: Sequence[Mapping[str, object]],
+        knowledge_reads: Sequence[Mapping[str, object]] | None = None,
+        *,
+        knowledge_status: str | None = None,
+    ) -> str:
+        # Only surface ingestion warnings when we actually read documents this turn
+        # and the search itself succeeded. This avoids leaking historical or
+        # unrelated ingestion issues into otherwise confident answers.
+        if knowledge_status and knowledge_status != "ok":
+            return text
+        if not knowledge_reads:
+            return text
+        if not self._has_ingestion_red_flags(knowledge_payload, knowledge_reads=knowledge_reads):
             return text
         notice = " Some of the ingested files were truncated, so certain details may be missing."
         return (text or "") + notice if text else notice.strip()
 
     @staticmethod
-    def _has_ingestion_red_flags(knowledge_payload: Sequence[Mapping[str, object]]) -> bool:
+    def _has_ingestion_red_flags(
+        knowledge_payload: Sequence[Mapping[str, object]],
+        *,
+        knowledge_reads: Sequence[Mapping[str, object]] | None = None,
+    ) -> bool:
+        # Restrict checks to documents that were actually read this turn.
+        relevant_ids: set[str] = set()
+        if knowledge_reads:
+            for item in knowledge_reads:
+                identifier = item.get("id")
+                if identifier:
+                    relevant_ids.add(str(identifier))
+        if not relevant_ids:
+            return False
         for entry in knowledge_payload:
-            if entry.get("truncated"):
-                return True
+            entry_id = str(entry.get("id") or "")
+            if entry_id not in relevant_ids:
+                continue
             issues = entry.get("issues") or []
             for issue in issues:
-                code = str(issue.get("issue_code") or "").lower()
+                if not isinstance(issue, Mapping):
+                    continue
+                raw_code = issue.get("issue_code") or issue.get("code") or ""
+                code = str(raw_code).lower()
                 if "truncate" in code or "missing" in code:
                     return True
         return False

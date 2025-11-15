@@ -60,7 +60,7 @@ class ChatPortalClient {
 
   bindSendForm() {
     const form = this.elements.sendForm;
-    const textarea = form?.querySelector("textarea[name='message']");
+    const textarea = form ? form.querySelector("textarea[name='message']") : null;
     if (!form) return;
     form.addEventListener("submit", async (event) => {
       event.preventDefault();
@@ -86,7 +86,9 @@ class ChatPortalClient {
       }
       this.awaitingReply = false;
       stopButton.disabled = true;
-      this.elements.typingIndicator?.classList.add("hidden");
+      if (this.elements.typingIndicator) {
+        this.elements.typingIndicator.classList.add("hidden");
+      }
       this.resetStreamingState(true);
     });
   }
@@ -102,7 +104,9 @@ class ChatPortalClient {
       try {
         await this.submitCsat({ score });
         this.showToast("Thanks for your feedback", "Your rating has been recorded.");
-        this.elements.csatContainer?.classList.add("hidden");
+        if (this.elements.csatContainer) {
+          this.elements.csatContainer.classList.add("hidden");
+        }
       } catch (error) {
         this.showToast("Submission failed", error.message || "Could not submit feedback.", true);
       }
@@ -127,22 +131,27 @@ class ChatPortalClient {
     }
     const data = await response.json();
     this.bootstrapPayload = data;
-    const token = data?.session?.session_token;
+    const token = data && data.session && data.session.session_token ? data.session.session_token : null;
     if (!token) {
       throw new Error("Session token missing from bootstrap response");
     }
     this.persistSessionToken(token);
     this.renderTranscript(data.messages || []);
-    this.updateStatus(data?.session?.status);
-    this.updateCsatVisibility(data?.session?.status);
+    const sessionStatus = data && data.session ? data.session.status : null;
+    this.updateStatus(sessionStatus);
+    this.updateCsatVisibility(sessionStatus);
   }
 
   async sendMessage(message) {
     if (!this.sessionToken) return;
     this.resetStreamingState(true);
     this.awaitingReply = true;
-    this.elements.stopButton && (this.elements.stopButton.disabled = false);
-    this.elements.typingIndicator?.classList.remove("hidden");
+    if (this.elements.stopButton) {
+      this.elements.stopButton.disabled = false;
+    }
+    if (this.elements.typingIndicator) {
+      this.elements.typingIndicator.classList.remove("hidden");
+    }
     this.appendMessage({
       sender: "customer",
       body: message,
@@ -189,8 +198,12 @@ class ChatPortalClient {
       }
     } finally {
       this.awaitingReply = false;
-      this.elements.stopButton && (this.elements.stopButton.disabled = true);
-      this.elements.typingIndicator?.classList.add("hidden");
+      if (this.elements.stopButton) {
+        this.elements.stopButton.disabled = true;
+      }
+      if (this.elements.typingIndicator) {
+        this.elements.typingIndicator.classList.add("hidden");
+      }
       if (this.streamingMessageNode) {
         this.resetStreamingState(true);
       }
@@ -217,7 +230,7 @@ class ChatPortalClient {
       // Do NOT render a placeholder; only remember it for dedupe.
       try {
         const payload = data ? JSON.parse(data) : null;
-        const text = payload?.text || "";
+        const text = payload && payload.text ? payload.text : "";
         if (text) {
           this.lastPlaceholderText = text;
           this.streamingDedupDone = false;
@@ -226,7 +239,9 @@ class ChatPortalClient {
         // ignore malformed payloads
       }
       // Keep typing indicator visible while work continues.
-      this.elements.typingIndicator?.classList.remove("hidden");
+      if (this.elements.typingIndicator) {
+        this.elements.typingIndicator.classList.remove("hidden");
+      }
       return;
     }
     
@@ -236,7 +251,9 @@ class ChatPortalClient {
         const payload = data ? JSON.parse(data) : null;
         if (payload && payload.state) {
           // Keep the typing indicator visible during background work
-          this.elements.typingIndicator?.classList.remove("hidden");
+          if (this.elements.typingIndicator) {
+            this.elements.typingIndicator.classList.remove("hidden");
+          }
           if (payload.state === "reading_document") {
             this.ensureStreamingMessageNode();
             this.streamingRewritePending = true;
@@ -255,7 +272,7 @@ class ChatPortalClient {
     if (eventType === "delta") {
       try {
         const payload = data ? JSON.parse(data) : null;
-        if (payload?.text) {
+        if (payload && payload.text) {
           let chunk = payload.text;
 
           // --- DEDUPE: strip placeholder prefix from the very first streamed delta ---
@@ -293,7 +310,9 @@ class ChatPortalClient {
       } catch (error) {
         console.warn("Failed to parse stream delta", error);
       }
-      this.elements.typingIndicator?.classList.remove("hidden");
+      if (this.elements.typingIndicator) {
+        this.elements.typingIndicator.classList.remove("hidden");
+      }
       return;
     }
     
@@ -306,7 +325,7 @@ class ChatPortalClient {
     }
     try {
       const payload = JSON.parse(data);
-      if (payload?.text) {
+      if (payload && payload.text) {
         if (this.streamingMessageNode) {
           this.finalizeStreamingMessage(payload.text);
         } else {
@@ -319,16 +338,18 @@ class ChatPortalClient {
       } else if (this.streamingMessageNode) {
         this.finalizeStreamingMessage("");
       }
-      if (payload?.session_status) {
+      if (payload && payload.session_status) {
         this.updateStatus(payload.session_status);
         this.updateCsatVisibility(payload.session_status);
       }
     } catch (error) {
       console.warn("Failed to parse stream payload", error);
     } finally {
-      this.elements.typingIndicator?.classList.add("hidden");
+      if (this.elements.typingIndicator) {
+        this.elements.typingIndicator.classList.add("hidden");
+      }
     }
- }
+}
 
   connectEventStream() {
     if (!this.endpoints.events || !this.sessionToken) return;
@@ -341,7 +362,7 @@ class ChatPortalClient {
     this.eventSource.addEventListener("statusChanged", (event) => {
       try {
         const data = JSON.parse(event.data);
-        if (data?.status) {
+        if (data && data.status) {
           this.updateStatus(data.status);
           this.updateCsatVisibility(data.status);
         }
@@ -390,8 +411,10 @@ class ChatPortalClient {
     const sender = (raw.sender || "system").toLowerCase();
     const isAi = sender === "ai";
     const isCustomer = sender === "customer";
-    const authorName = raw.author?.name || (isAi ? this.agentName : isCustomer ? "You" : "System");
-    const authorInitials = raw.author?.initials || (isAi ? this.agentInitials : isCustomer ? "YOU" : "SYS");
+    const authorName =
+      raw.author && raw.author.name ? raw.author.name : (isAi ? this.agentName : isCustomer ? "You" : "System");
+    const authorInitials =
+      raw.author && raw.author.initials ? raw.author.initials : (isAi ? this.agentInitials : isCustomer ? "YOU" : "SYS");
     return {
       sender,
       body: raw.body || "",
@@ -617,7 +640,7 @@ class ChatPortalClient {
     if (!script) return null;
     try {
       const data = JSON.parse(script.textContent || "{}");
-      if (data?.session?.session_token) {
+      if (data && data.session && data.session.session_token) {
         return data.session.session_token;
       }
     } catch (error) {
@@ -647,17 +670,112 @@ class ChatPortalClient {
         .replace(/"/g, "&quot;")
         .replace(/'/g, "&#39;");
 
+    const decodeHtmlEntities = (value = "") =>
+      value
+        .replace(/&amp;/g, "&")
+        .replace(/&lt;/g, "<")
+        .replace(/&gt;/g, ">")
+        .replace(/&quot;/g, '"')
+        .replace(/&#39;/g, "'");
+
+    const truncateText = (value = "", limit = 60) => (value.length > limit ? `${value.slice(0, limit - 1)}…` : value);
+
+    const prettifyLinkLabel = (rawUrl = "") => {
+      const cleaned = decodeHtmlEntities(rawUrl || "").trim();
+      if (!cleaned) return "";
+      try {
+        const parsed = new URL(cleaned);
+        const host = (parsed.hostname || "").replace(/^www\./i, "") || parsed.hostname;
+        const segments = parsed.pathname.split("/").filter(Boolean);
+        let pathLabel = "";
+        for (const segment of segments) {
+          const safeSegment = segment.length > 32 ? `${segment.slice(0, 29)}…` : segment;
+          const tentative = pathLabel ? `${pathLabel}/${safeSegment}` : safeSegment;
+          if (`${host}/${tentative}`.length > 60) {
+            pathLabel = pathLabel ? `${pathLabel}/…` : "…";
+            break;
+          }
+          pathLabel = tentative;
+        }
+        let label = host || parsed.hostname || cleaned;
+        if (pathLabel) {
+          label = `${label}/${pathLabel}`;
+        }
+        return truncateText(label, 60);
+      } catch (_error) {
+        return truncateText(cleaned.replace(/^https?:\/\//i, ""), 60);
+      }
+    };
+
+    const createPlaceholderToken = (prefix, collection, html) => {
+      const token = `@@${prefix}_${collection.length}@@`;
+      collection.push(html);
+      return token;
+    };
+
+    const restorePlaceholders = (text, prefix, collection) => {
+      if (!collection.length) {
+        return text;
+      }
+      let output = text;
+      collection.forEach((html, index) => {
+        const token = `@@${prefix}_${index}@@`;
+        output = output.split(token).join(html);
+      });
+      return output;
+    };
+
+    const buildAnchor = (href, label) =>
+      `<a href="${href}" target="_blank" rel="nofollow noopener noreferrer" class="text-primary underline">${label}</a>`;
+
     const applyInlineFormatting = (value = "") => {
-      let output = escapeHtml(value);
-      output = output.replace(
-        /\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g,
-        (_, label, url) =>
-          `<a href="${url}" target="_blank" rel="nofollow noopener noreferrer" class="text-primary underline">${label}</a>`
+      if (!value) return "";
+      const codePlaceholders = [];
+      const markdownLinkPlaceholders = [];
+
+      let working = value;
+
+      working = working.replace(/`([^`]+)`/g, (_, code) =>
+        createPlaceholderToken(
+          "CODE",
+          codePlaceholders,
+          `<code class="bg-muted/60 px-1 py-0.5 rounded text-xs font-mono">${escapeHtml(code)}</code>`
+        )
       );
-      output = output.replace(/`([^`]+)`/g, '<code class="bg-muted/60 px-1 py-0.5 rounded text-xs font-mono">$1</code>');
+
+      working = working.replace(/\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g, (_, label, url) => {
+        const displayLabel = (label || "").trim() || prettifyLinkLabel(url) || url;
+        const safeHref = escapeHtml(url);
+        const safeLabel = escapeHtml(displayLabel);
+        return createPlaceholderToken("LINK", markdownLinkPlaceholders, buildAnchor(safeHref, safeLabel));
+      });
+
+      let output = escapeHtml(working);
+
       output = output.replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>");
       output = output.replace(/__(.+?)__/g, "<strong>$1</strong>");
       output = output.replace(/(\*|_)([^*_]+)\1/g, "<em>$2</em>");
+
+      output = output.replace(/(^|\s)(https?:\/\/[^\s<]+)/g, (match, prefix, url) => {
+        let normalizedUrl = url;
+        let trailing = "";
+        while (/[.,!?]$/.test(normalizedUrl)) {
+          trailing = normalizedUrl.slice(-1) + trailing;
+          normalizedUrl = normalizedUrl.slice(0, -1);
+        }
+        const decoded = decodeHtmlEntities(normalizedUrl);
+        if (!decoded) {
+          return match;
+        }
+        const safeHref = escapeHtml(decoded);
+        const safeLabel = escapeHtml(prettifyLinkLabel(decoded) || decoded);
+        const anchor = buildAnchor(safeHref, safeLabel);
+        return `${prefix || ""}${anchor}${trailing}`;
+      });
+
+      output = restorePlaceholders(output, "LINK", markdownLinkPlaceholders);
+      output = restorePlaceholders(output, "CODE", codePlaceholders);
+
       return output;
     };
 

@@ -90,7 +90,11 @@ class Command(BaseCommand):
     def _requeue_missing(self) -> int:
         uploads = (
             KnowledgeUpload.objects.filter(
-                source_type__in=[KnowledgeSourceType.FILE, KnowledgeSourceType.LINK],
+                source_type__in=[
+                    KnowledgeSourceType.FILE,
+                    KnowledgeSourceType.LINK,
+                    KnowledgeSourceType.INTEGRATION,
+                ],
                 text_detail__isnull=True,
             )
             .exclude(status=KnowledgeStatus.ARCHIVED)
