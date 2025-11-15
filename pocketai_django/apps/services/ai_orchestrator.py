@@ -1821,10 +1821,14 @@ class KnowledgeSearchService:
         )
         snippets: list[KnowledgeSnippet] = []
         for upload in qs:
+            trunc_metrics = self._truncation_metrics(upload)
             label = self._public_label(upload)
             structured = self._structured_exports(upload)
             table_count = len(structured["tables"])
             issue_count = len(structured["issues"])
+            source_diag: dict[str, object] = {"reason": "fallback"}
+            if trunc_metrics:
+                source_diag.update(trunc_metrics)
             snippets.append(
                 KnowledgeSnippet(
                     id=upload.id,
@@ -1846,7 +1850,7 @@ class KnowledgeSearchService:
                     search_stage="fallback",
                     confidence_score=0.0,
                     truncated=False,
-                    source_diagnostics={"reason": "fallback"},
+                    source_diagnostics=source_diag,
                     structured_table_count=table_count,
                     issue_count=issue_count,
                     structured_table_hint=None,
@@ -2023,6 +2027,7 @@ class KnowledgeSearchService:
         snippets: list[KnowledgeSnippet] = []
         limit = max_chars if max_chars is not None else MAX_INLINE_KNOWLEDGE_CHARS
         for upload in qs:
+            trunc_metrics = self._truncation_metrics(upload)
             label = self._public_label(upload)
             raw_content = self._extract_content(upload)
             if raw_content:
@@ -2042,6 +2047,9 @@ class KnowledgeSearchService:
                 supplemental_sections.append(issue_text)
             combined_content = "\n\n".join(section for section in supplemental_sections if section)
             doc_read_state = self._read_state_for_content(combined_content, {})
+            source_diag: dict[str, object] = {"load": "document"}
+            if trunc_metrics:
+                source_diag.update(trunc_metrics)
             snippets.append(
                 KnowledgeSnippet(
                     id=upload.id,
@@ -2064,7 +2072,7 @@ class KnowledgeSearchService:
                     search_stage="load_document",
                     confidence_score=1.0,
                     truncated=truncated,
-                    source_diagnostics={"load": "document"},
+                    source_diagnostics=source_diag,
                     structured_table_count=table_count,
                     issue_count=issue_count,
                     structured_table_hint=None,
@@ -2123,6 +2131,7 @@ class KnowledgeSearchService:
 
         for upload_id, requested in by_upload.items():
             upload = requested[0].upload  # same upload
+            trunc_metrics = self._truncation_metrics(upload)
             # Determine all chunk indices we need
             request_entries: list[tuple[KnowledgeUploadChunk, int]] = []
             for ch in requested:
@@ -2212,7 +2221,7 @@ class KnowledgeSearchService:
                     search_stage="load_chunk",
                     confidence_score=1.0,
                     truncated=truncated,
-                    source_diagnostics={"neighbor_window": span},
+                    source_diagnostics={"neighbor_window": span, **trunc_metrics} if trunc_metrics else {"neighbor_window": span},
                     structured_table_count=len(structured_tables),
                     issue_count=len(issues),
                     structured_table_hint=None,
@@ -2260,6 +2269,25 @@ class KnowledgeSearchService:
             if isinstance(issue, dict):
                 normalized.append(issue)
         return tuple(normalized)
+
+    @staticmethod
+    def _truncation_metrics(upload: KnowledgeUpload) -> dict[str, int]:
+        """
+        Extract high-level truncation metrics from ingestion metadata so the orchestrator
+        can reason about severe truncation when deciding whether to warn the user.
+        """
+        metadata = upload.ingestion_metadata if isinstance(upload.ingestion_metadata, dict) else {}
+        metrics: dict[str, int] = {}
+        truncated_entities = metadata.get("truncated_entities")
+        if isinstance(truncated_entities, int) and truncated_entities > 0:
+            metrics["truncated_entities"] = truncated_entities
+        table_trunc = metadata.get("table_truncation")
+        if isinstance(table_trunc, dict):
+            for key in ("truncated_tables", "truncated_rows", "truncated_columns"):
+                value = table_trunc.get(key)
+                if isinstance(value, int) and value > 0:
+                    metrics[key] = value
+        return metrics
 
     # apps/services/ai_orchestrator.py (inside KnowledgeSearchService)
     def _serialize_structured_tables_with_rows(self, upload, *, max_tables: int = 3, max_rows: int = 5):
@@ -3002,6 +3030,22 @@ class AiOrchestratorService:
             knowledge_status=knowledge_status,
         )
 
+        # Derive an answer-level confidence signal from citations and search metadata.
+        answer_confidence, confidence_reason = self._compute_answer_confidence(
+            resolved_citations,
+            knowledge_status=knowledge_status,
+            knowledge_diagnostics=knowledge_diagnostics,
+        )
+
+        # Optionally refine the surface form based on confidence and ingestion health.
+        response_text = self._refine_response_by_confidence(
+            response_text,
+            answer_confidence=answer_confidence,
+            knowledge_status=knowledge_status,
+            knowledge_payload=knowledge_payload,
+            knowledge_reads=knowledge_reads,
+        )
+
         response_stream_text = response_text
 
         diagnostics = {
@@ -3016,6 +3060,8 @@ class AiOrchestratorService:
             "response_stream_text": response_stream_text,
             "cached_snippets": len(cached_entries),
             "knowledge_status": knowledge_status,
+            "answer_confidence": answer_confidence,
+            "confidence_reason": confidence_reason,
             "tool_trace": tool_trace,
         }
         if placeholder_response:
@@ -3036,6 +3082,140 @@ class AiOrchestratorService:
             extractions=extractions,
             diagnostics=diagnostics,
         )
+
+    def _compute_answer_confidence(
+        self,
+        citations: Sequence[KnowledgeSnippet],
+        *,
+        knowledge_status: str | None,
+        knowledge_diagnostics: Mapping[str, object] | None,
+    ) -> tuple[float, str]:
+        """
+        Derive an answer-level confidence score from snippet scores and search metadata.
+        Returns (score in [0,1], reason string).
+        """
+        # Hard floor when knowledge lookup did not succeed.
+        if knowledge_status and knowledge_status != "ok":
+            return 0.1, f"status={knowledge_status}"
+
+        if not citations:
+            return 0.2, "no_citations"
+
+        scores: list[float] = []
+        for snippet in citations:
+            if snippet.confidence_score is None:
+                continue
+            try:
+                scores.append(float(snippet.confidence_score))
+            except (TypeError, ValueError):
+                continue
+
+        # If we have no usable scores, fall back to a neutral baseline.
+        if not scores:
+            base = 0.3
+            reason_parts: list[str] = ["no_snippet_scores"]
+        else:
+            scores.sort(reverse=True)
+            top1 = scores[0]
+            top_k = scores[:3]
+            mean_topk = sum(top_k) / len(top_k)
+            # Blend peak and average to reward both a strong best hit and a solid top set.
+            base = 0.5 * top1 + 0.5 * mean_topk
+            reason_parts = [f"top1={top1:.3f}", f"mean_topk={mean_topk:.3f}"]
+
+        path = ""
+        if knowledge_diagnostics:
+            raw_path = knowledge_diagnostics.get("path")
+            if isinstance(raw_path, str):
+                path = raw_path
+
+        reason_parts.append(f"path={path or 'unknown'}")
+        reason_parts.append(f"citations={len(citations)}")
+
+        # Route-based adjustments.
+        if path == "alias_exact":
+            base = min(1.0, base + 0.15)
+            reason_parts.append("alias_exact_bonus")
+        elif path == "fallback":
+            base *= 0.5
+            reason_parts.append("fallback_penalty")
+
+        # Snippet-count adjustments (thin context should reduce confidence).
+        if len(citations) == 1 and path not in {"alias_exact"}:
+            base *= 0.8
+            reason_parts.append("single_snippet_penalty")
+
+        base = max(0.0, min(1.0, base))
+        reason_parts.append(f"status={knowledge_status or 'unknown'}")
+        return round(base, 3), ", ".join(reason_parts)
+
+    def _refine_response_by_confidence(
+        self,
+        response_text: str,
+        *,
+        answer_confidence: float,
+        knowledge_status: str | None,
+        knowledge_payload: Sequence[Mapping[str, object]],
+        knowledge_reads: Sequence[Mapping[str, object]],
+    ) -> str:
+        """
+        Light-touch behavior based on confidence:
+        - For low confidence, append a clarifying prompt instead of overconfident answers.
+        - For high confidence with healthy ingestion, trim common hedging phrases.
+        """
+        text = (response_text or "").strip()
+        if not text:
+            return response_text
+
+        LOW_CONFIDENCE_THRESHOLD = 0.4
+        HIGH_CONFIDENCE_THRESHOLD = 0.75
+
+        has_ingestion_flags = self._has_ingestion_red_flags(knowledge_payload, knowledge_reads=knowledge_reads)
+
+        # Low confidence: explicitly invite the user to narrow or correct the query.
+        if answer_confidence < LOW_CONFIDENCE_THRESHOLD and knowledge_status == "ok":
+            clarifier = (
+                " If this doesn’t fully match what you expect, please tell me the exact document name, identifier, or date you’re asking about so I can check again more precisely."
+            )
+            if clarifier.strip() in text:
+                return text
+            return f"{text.rstrip()} {clarifier}".strip()
+
+        # High confidence and no ingestion warnings: strip obvious hedging phrases.
+        if answer_confidence >= HIGH_CONFIDENCE_THRESHOLD and not has_ingestion_flags:
+            return self._strip_hedging_language(text)
+
+        return text
+
+    def _strip_hedging_language(self, text: str) -> str:
+        sentences = self._split_sentences(text)
+        if not sentences:
+            return text
+        hedge_prefixes = (
+            "i think ",
+            "i believe ",
+            "it seems ",
+            "it looks like ",
+            "from what i can tell ",
+            "from what i can see ",
+        )
+        hedge_words = ("maybe ", "probably ")
+        cleaned: list[str] = []
+        for sentence in sentences:
+            s = sentence.lstrip()
+            lower = s.lower()
+            for prefix in hedge_prefixes:
+                if lower.startswith(prefix):
+                    s = s[len(prefix):].lstrip()
+                    lower = s.lower()
+                    break
+            for word in hedge_words:
+                if lower.startswith(word):
+                    s = s[len(word):].lstrip()
+                    break
+            cleaned.append(s)
+        joined = " ".join(cleaned).strip()
+        return joined or text
 
     def _cache_snippet(self, cache: dict[str, dict[str, object]], payload: Mapping[str, object]) -> bool:
         identifier = str(payload.get("id") or "")
@@ -3607,7 +3787,11 @@ class AiOrchestratorService:
             return text
         if not self._has_ingestion_red_flags(knowledge_payload, knowledge_reads=knowledge_reads):
             return text
-        notice = " Some of the ingested files were truncated, so certain details may be missing."
+        notice = self._summarize_ingestion_truncation(knowledge_payload, knowledge_reads=knowledge_reads)
+        if not notice:
+            notice = "Some of the ingested files were truncated, so certain details may be missing."
+        # Prepend a space when appending to an existing answer for readability.
+        notice = f" {notice}".rstrip()
         return (text or "") + notice if text else notice.strip()
 
     @staticmethod
@@ -3625,6 +3809,11 @@ class AiOrchestratorService:
                     relevant_ids.add(str(identifier))
         if not relevant_ids:
             return False
+        # Thresholds to treat truncation as user-visible red flags.
+        ENTITY_TRUNC_THRESHOLD = 20
+        ROW_TRUNC_THRESHOLD = 200
+        TABLE_TRUNC_THRESHOLD = 5
+        COL_TRUNC_THRESHOLD = 50
         for entry in knowledge_payload:
             entry_id = str(entry.get("id") or "")
             if entry_id not in relevant_ids:
@@ -3635,9 +3824,82 @@ class AiOrchestratorService:
                     continue
                 raw_code = issue.get("issue_code") or issue.get("code") or ""
                 code = str(raw_code).lower()
+                raw_severity = issue.get("severity")
+                severity = str(raw_severity).lower() if raw_severity is not None else ""
+                # Only treat truncate/missing issues as red flags when severity is warning/error.
+                # For legacy issues without severity, default to warning to avoid hiding serious problems.
                 if "truncate" in code or "missing" in code:
+                    if not severity or severity in {"warning", "error"}:
+                        return True
+            # Fall back to coarse truncation metrics for severe table/JSON truncation.
+            diagnostics = entry.get("source_diagnostics") or {}
+            if isinstance(diagnostics, Mapping):
+                def _coerce_int(value: object) -> int:
+                    try:
+                        return int(value) if value is not None else 0
+                    except (TypeError, ValueError):
+                        return 0
+
+                truncated_entities = _coerce_int(diagnostics.get("truncated_entities"))
+                truncated_rows = _coerce_int(diagnostics.get("truncated_rows"))
+                truncated_tables = _coerce_int(diagnostics.get("truncated_tables"))
+                truncated_columns = _coerce_int(diagnostics.get("truncated_columns"))
+
+                if truncated_entities >= ENTITY_TRUNC_THRESHOLD:
+                    return True
+                if truncated_rows >= ROW_TRUNC_THRESHOLD:
+                    return True
+                if truncated_tables >= TABLE_TRUNC_THRESHOLD:
+                    return True
+                if truncated_columns >= COL_TRUNC_THRESHOLD:
                     return True
         return False
+
+    @staticmethod
+    def _summarize_ingestion_truncation(
+        knowledge_payload: Sequence[Mapping[str, object]],
+        *,
+        knowledge_reads: Sequence[Mapping[str, object]] | None = None,
+    ) -> str:
+        """
+        Produce a more specific ingestion notice based on which truncation signals
+        are present for the documents actually read this turn.
+        """
+        if not knowledge_reads:
+            return ""
+        relevant_ids: set[str] = set()
+        for item in knowledge_reads:
+            identifier = item.get("id")
+            if identifier:
+                relevant_ids.add(str(identifier))
+        if not relevant_ids:
+            return ""
+
+        total_entities = total_rows = total_tables = total_columns = 0
+        for entry in knowledge_payload:
+            entry_id = str(entry.get("id") or "")
+            if entry_id not in relevant_ids:
+                continue
+            diagnostics = entry.get("source_diagnostics") or {}
+            if not isinstance(diagnostics, Mapping):
+                continue
+            def _coerce_int(value: object) -> int:
+                try:
+                    return int(value) if value is not None else 0
+                except (TypeError, ValueError):
+                    return 0
+            total_entities += _coerce_int(diagnostics.get("truncated_entities"))
+            total_rows += _coerce_int(diagnostics.get("truncated_rows"))
+            total_tables += _coerce_int(diagnostics.get("truncated_tables"))
+            total_columns += _coerce_int(diagnostics.get("truncated_columns"))
+
+        if total_rows or total_tables:
+            return "Some table rows in the referenced documents were truncated due to size limits, so details from later rows may be missing."
+        if total_entities:
+            return "Some structured records in the referenced documents were truncated due to size limits, so the answer may not reflect all records."
+        if total_columns:
+            return "Some table columns in the referenced documents were truncated due to size limits, so certain fields may be missing."
+        return ""
 
 
 
