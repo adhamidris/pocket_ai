@@ -1,5 +1,14 @@
 from __future__ import annotations
 
+# ---------------------------------------------------------------------------
+# Legacy Backup Notice
+# ---------------------------------------------------------------------------
+# This file was copied from apps/services/ai_orchestrator.py before the MCP
+# migration (phase 6). It preserves the ledger-based orchestrator logic. To
+# restore it, copy this file back over the original module and re-disable the
+# MCP feature flag in pocketai/settings.py.
+
+
 from collections import OrderedDict
 
 from django.conf import settings
@@ -58,13 +67,6 @@ except ImportError:  # pragma: no cover - dependency not installed by default
 
 
 logger = logging.getLogger(__name__)
-
-# NOTE (legacy orchestrator):
-# This module implements the original ledger-based orchestrator used before the
-# MCP-style tool-calling path was introduced. The MCP orchestrator lives in
-# apps.services.mcp.McpOrchestratorService and is now the primary path for new
-# traffic. This module is retained for backward compatibility and as a fallback
-# whenever MCP is disabled at the environment or business level.
 
 
 class ActionType(str, Enum):
@@ -2587,13 +2589,10 @@ class LlmPlan:
 
 class AiOrchestratorService:
     """
-    Legacy ledger-based orchestrator.
+    Coordinates knowledge retrieval, action planning, and future LLM interactions.
 
-    Coordinates knowledge retrieval, action planning, and LLM interactions using a
-    precomputed knowledge ledger stored in conversation metadata. The MCP-style
-    orchestrator (apps.services.mcp.McpOrchestratorService) is now the primary
-    implementation; this class is retained for backward compatibility and as a
-    fallback when MCP is disabled.
+    The current implementation uses heuristic planning to keep the pipeline testable
+    until the prompt builder + provider integration is ready.
     """
 
     def __init__(self, *, agent: AgentProfile, provider: BaseLLMProvider | None = None):
@@ -2645,8 +2644,6 @@ class AiOrchestratorService:
             query[:160],
         )
         metadata_snapshot = dict(conversation.metadata or {})
-        # Legacy ledger metadata: retained so existing conversations and analytics
-        # continue to work when this non-MCP orchestrator is used as a fallback.
         turn_index = int(metadata_snapshot.get("knowledge_turn_counter") or 0) + 1
         metadata_snapshot["knowledge_turn_counter"] = turn_index
         prompt_budget = self._business_override(

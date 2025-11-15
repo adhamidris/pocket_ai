@@ -8,11 +8,13 @@ import uuid
 from queue import Empty, Queue
 from typing import Iterable
 
+from django.conf import settings
 from django.db import close_old_connections
 from django.http import HttpRequest, HttpResponse, JsonResponse, StreamingHttpResponse
 from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_GET, require_http_methods, require_POST
 
+from apps.accounts.models import BusinessProfile
 from apps.conversations.models import ConversationSender
 from apps.services.ai_orchestrator import ActionDispatcher, AiOrchestratorPlan, AiOrchestratorService
 from apps.services.llm_provider import load_default_provider
@@ -44,6 +46,25 @@ def _parse_json_body(request: HttpRequest) -> dict:
         return json.loads(request.body.decode("utf-8") or "{}")
     except (json.JSONDecodeError, UnicodeDecodeError) as exc:
         raise PortalValidationError("Invalid JSON payload") from exc
+
+
+def _business_prefers_mcp(business: BusinessProfile | None) -> bool:
+    """
+    Evaluate whether a business should use the MCP orchestrator.
+
+    Business metadata can override the global setting via the key
+    `mcp_orchestrator_enabled`. When unset, the global
+    RAG_USE_MCP_ORCHESTRATOR flag is used.
+    """
+
+    global_default = getattr(settings, "RAG_USE_MCP_ORCHESTRATOR", False)
+    if business is None:
+        return global_default
+    metadata = business.metadata if isinstance(business.metadata, dict) else {}
+    override = metadata.get("mcp_orchestrator_enabled")
+    if override is None:
+        return global_default
+    return bool(override)
 
 
 def _business_to_dict(summary: PortalBusinessSummary) -> dict:
@@ -300,8 +321,16 @@ def stream_send(request: HttpRequest) -> StreamingHttpResponse:
     if not agent:
         return StreamingHttpResponse(status=500)
 
-    provider = load_default_provider()
-    orchestrator = AiOrchestratorService(agent=agent, provider=provider)
+    use_mcp = _business_prefers_mcp(conversation.business_profile)
+    if use_mcp:
+        from apps.services.llm_provider import load_mcp_provider
+        from apps.services.mcp import McpOrchestratorService
+
+        provider = load_mcp_provider()
+        orchestrator = McpOrchestratorService(agent=agent, provider=provider)
+    else:
+        provider = load_default_provider()
+        orchestrator = AiOrchestratorService(agent=agent, provider=provider)
     dispatcher = ActionDispatcher(agent=agent)
 
     def serialize_action_results(results):

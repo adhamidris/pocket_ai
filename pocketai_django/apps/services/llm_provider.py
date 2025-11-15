@@ -6,7 +6,7 @@ import json
 import logging
 import os
 from dataclasses import dataclass
-from typing import Any, Callable, Mapping, Protocol
+from typing import Any, Callable, Iterable, Mapping, Protocol
 
 from urllib import error as urllib_error
 from urllib import request as urllib_request
@@ -25,6 +25,25 @@ class BaseLLMProvider(Protocol):
     """Interface for future provider implementations (OpenAI, Azure, etc.)."""
 
     def generate(self, bundle: PromptBundle, *, on_stream_delta: Callable[[str], None] | None = None) -> Mapping[str, Any]:
+        ...
+
+
+class BaseMcpProvider(Protocol):
+    """
+    Tool-calling provider interface used by the MCP orchestrator.
+
+    Implementations should call the underlying chat-completions API with the
+    supplied messages and tool definitions, then return the parsed assistant
+    payload (content + tool_calls metadata).
+    """
+
+    def chat(
+        self,
+        messages: Iterable[Mapping[str, object]],
+        *,
+        tools: Iterable[Mapping[str, object]] | None = None,
+        on_stream_delta: Callable[[str], None] | None = None,
+    ) -> Mapping[str, Any]:  # pragma: no cover - interface only
         ...
 
 
@@ -123,6 +142,54 @@ class OpenAIChatProvider:
             return json.loads(content)
         except json.JSONDecodeError as exc:
             raise PromptGenerationError("OpenAI response did not return valid JSON output.") from exc
+
+    def _system_prompt(self, bundle: PromptBundle) -> str:
+        schema_hint = (
+            "You must reply with JSON matching the schema provided. "
+            "Never include Markdown or prose outside of the JSON object."
+        )
+        return f"{bundle.system_prompt}\n\n{schema_hint}"
+
+    def _user_payload(self, bundle: PromptBundle) -> str:
+        return bundle.user_prompt.strip()
+
+    @staticmethod
+    def _response_schema() -> Mapping[str, Any]:
+        return {
+            "type": "json_schema",
+            "json_schema": {
+                "name": "ai_orchestration_response",
+                "schema": {
+                    "type": "object",
+                    "properties": {
+                        "response_text": {"type": "string"},
+                        "actions": {
+                            "type": "array",
+                            "items": {
+                                "type": "object",
+                                "properties": {
+                                    "action": {"type": "string"},
+                                    "payload": {"type": "object"},
+                                },
+                                "required": ["action", "payload"],
+                            },
+                        },
+                        "extractions": {
+                            "type": "array",
+                            "items": {
+                                "type": "object",
+                                "properties": {
+                                    "type": {"type": "string"},
+                                    "payload": {"type": "object"},
+                                },
+                                "required": ["type", "payload"],
+                            },
+                        },
+                    },
+                    "required": ["response_text", "actions", "extractions"],
+                },
+            },
+        }
 
 
 class DeepSeekChatProvider(OpenAIChatProvider):
@@ -504,6 +571,297 @@ class _ResponseTextExtractor:
         if isinstance(content, list):
             return "".join(part.get("text", "") for part in content if isinstance(part, dict)).strip()
         return str(content or "").strip()
+
+
+class OpenAIToolsProvider(BaseMcpProvider):
+    """
+    Placeholder OpenAI provider for MCP tool-calling.
+
+    Later phases will implement the full chat-completions loop with tool
+    definitions, streaming, and structured response parsing.
+    """
+
+    def __init__(
+        self,
+        *,
+        api_key: str | None = None,
+        model: str | None = None,
+        base_url: str | None = None,
+        timeout: float = 60.0,
+        temperature: float = 0.3,
+        top_p: float = 0.9,
+    ) -> None:
+        self.api_key = api_key or os.getenv("OPENAI_API_KEY")
+        if not self.api_key:
+            raise PromptGenerationError("OPENAI_API_KEY is not configured for OpenAIToolsProvider.")
+        self.model = model or os.getenv("OPENAI_MODEL", "gpt-4o-mini")
+        self.base_url = (base_url or os.getenv("OPENAI_BASE_URL") or "https://api.openai.com").rstrip("/")
+        self.timeout = timeout
+        self.temperature = temperature
+        self.top_p = top_p
+
+    def chat(
+        self,
+        messages: Iterable[Mapping[str, object]],
+        *,
+        tools: Iterable[Mapping[str, object]] | None = None,
+        on_stream_delta: Callable[[str], None] | None = None,
+    ) -> Mapping[str, Any]:
+        headers = {
+            "Authorization": f"Bearer {self.api_key}",
+            "Content-Type": "application/json",
+        }
+        payload: dict[str, Any] = {
+            "model": self.model,
+            "messages": [dict(msg) for msg in messages],
+            "temperature": self.temperature,
+            "top_p": self.top_p,
+            # For MCP we still request structured JSON content for the final turn.
+            "response_format": OpenAIChatProvider._response_schema(),
+            "stream": False,
+        }
+        if tools:
+            payload["tools"] = list(tools)
+            payload["tool_choice"] = "auto"
+
+        # Log a compact summary at INFO and full payload only at DEBUG.
+        logger.info(
+            "MCP LLM request model=%s tools=%s messages=%s",
+            self.model,
+            [t.get("function", {}).get("name") for t in (tools or [])],
+            len(payload.get("messages") or []),
+        )
+        try:
+            logger.debug("MCP LLM request payload: %s", json.dumps(payload, ensure_ascii=False))
+        except Exception:  # pragma: no cover - log best effort
+            logger.debug("Failed to serialize MCP payload for logging.")
+
+        body = json.dumps(payload).encode("utf-8")
+        request = urllib_request.Request(
+            f"{self.base_url}/v1/chat/completions",
+            data=body,
+            headers=headers,
+            method="POST",
+        )
+
+        try:
+            with urllib_request.urlopen(request, timeout=self.timeout) as resp:
+                raw_body = resp.read().decode("utf-8")
+        except urllib_error.HTTPError as exc:
+            detail = exc.read().decode("utf-8", errors="ignore")
+            raise PromptGenerationError(
+                f"OpenAI tools error ({exc.code}): {detail.strip()[:200]}"
+            ) from exc
+        except urllib_error.URLError as exc:
+            raise PromptGenerationError(f"OpenAI tools request failed: {exc}") from exc
+
+        try:
+            data = json.loads(raw_body)
+        except ValueError as exc:
+            raise PromptGenerationError("OpenAI tools response was not valid JSON.") from exc
+
+        logger.debug("MCP LLM raw response: %s", raw_body)
+
+        choices = data.get("choices") or []
+        if not choices:
+            raise PromptGenerationError("OpenAI tools response did not include choices.")
+        message = choices[0].get("message") or {}
+        tool_calls = message.get("tool_calls") or []
+
+        # If the model is requesting tool invocations, return the raw
+        # Chat Completions envelope so the orchestrator can dispatch calls.
+        if tool_calls:
+            return data
+
+        # Final assistant turn: parse structured JSON from the message content.
+        content = message.get("content")
+        if isinstance(content, list):
+            text = "".join(part.get("text", "") for part in content if isinstance(part, dict)).strip()
+        else:
+            text = str(content or "").strip()
+        if not text:
+            return {"role": "assistant", "content": "", "actions": [], "extractions": []}
+
+        try:
+            parsed = json.loads(text)
+        except json.JSONDecodeError:
+            # Fallback: treat as plain text answer without actions/extractions.
+            if on_stream_delta:
+                on_stream_delta(text)
+            return {"role": "assistant", "content": text, "actions": [], "extractions": []}
+
+        response_text = str(parsed.get("response_text") or "").strip()
+        if on_stream_delta and response_text:
+            on_stream_delta(response_text)
+
+        return {
+            "role": "assistant",
+            "content": response_text,
+            "actions": parsed.get("actions") or [],
+            "extractions": parsed.get("extractions") or [],
+            "placeholder_response": parsed.get("placeholder_response"),
+        }
+
+
+class DeepSeekToolsProvider(BaseMcpProvider):
+    """
+    DeepSeek tools-capable provider for the MCP orchestrator.
+
+    Uses the HTTP Chat Completions API (OpenAI-compatible) with tool calling
+    enabled. Behavior mirrors OpenAIToolsProvider so the orchestrator can treat
+    providers interchangeably.
+    """
+
+    def __init__(
+        self,
+        *,
+        api_key: str | None = None,
+        model: str | None = None,
+        base_url: str | None = None,
+        timeout: float = 60.0,
+        temperature: float = 0.3,
+        top_p: float = 0.9,
+    ) -> None:
+        self.api_key = api_key or os.getenv("DEEPSEEK_API_KEY")
+        if not self.api_key:
+            raise PromptGenerationError("DEEPSEEK_API_KEY is not configured for DeepSeekToolsProvider.")
+        self.model = model or os.getenv("DEEPSEEK_MODEL", "deepseek-chat")
+        self.base_url = (base_url or os.getenv("DEEPSEEK_BASE_URL") or "https://api.deepseek.com").rstrip("/")
+        self.timeout = timeout
+        self.temperature = temperature
+        self.top_p = top_p
+
+    def chat(
+        self,
+        messages: Iterable[Mapping[str, object]],
+        *,
+        tools: Iterable[Mapping[str, object]] | None = None,
+        on_stream_delta: Callable[[str], None] | None = None,
+    ) -> Mapping[str, Any]:
+        headers = {
+            "Authorization": f"Bearer {self.api_key}",
+            "Content-Type": "application/json",
+        }
+        payload: dict[str, Any] = {
+            "model": self.model,
+            "messages": [dict(msg) for msg in messages],
+            "temperature": self.temperature,
+            "top_p": self.top_p,
+            "stream": False,
+        }
+        if tools:
+            payload["tools"] = list(tools)
+            payload["tool_choice"] = "auto"
+
+        # Compact summary at INFO; full payload at DEBUG for troubleshooting.
+        logger.info(
+            "DeepSeek MCP request model=%s tools=%s messages=%s",
+            self.model,
+            [t.get("function", {}).get("name") for t in (tools or [])],
+            len(payload.get("messages") or []),
+        )
+        try:
+            logger.debug("DeepSeek MCP request payload: %s", json.dumps(payload, ensure_ascii=False))
+        except Exception:  # pragma: no cover - log best effort
+            logger.debug("Failed to serialize DeepSeek MCP payload for logging.")
+
+        body = json.dumps(payload).encode("utf-8")
+        request = urllib_request.Request(
+            f"{self.base_url}/v1/chat/completions",
+            data=body,
+            headers=headers,
+            method="POST",
+        )
+
+        try:
+            with urllib_request.urlopen(request, timeout=self.timeout) as resp:
+                raw_body = resp.read().decode("utf-8")
+        except urllib_error.HTTPError as exc:
+            detail = exc.read().decode("utf-8", errors="ignore")
+            raise PromptGenerationError(
+                f"DeepSeek tools error ({exc.code}): {detail.strip()[:200]}"
+            ) from exc
+        except urllib_error.URLError as exc:
+            raise PromptGenerationError(f"DeepSeek tools request failed: {exc}") from exc
+
+        try:
+            data = json.loads(raw_body)
+        except ValueError as exc:
+            raise PromptGenerationError("DeepSeek tools response was not valid JSON.") from exc
+
+        logger.debug("DeepSeek MCP raw response: %s", raw_body)
+
+        choices = data.get("choices") or []
+        if not choices:
+            raise PromptGenerationError("DeepSeek tools response did not include choices.")
+        message = choices[0].get("message") or {}
+        tool_calls = message.get("tool_calls") or []
+
+        if tool_calls:
+            # Let the orchestrator inspect tool_calls directly.
+            return data
+
+        content = message.get("content")
+        if isinstance(content, list):
+            text = "".join(part.get("text", "") for part in content if isinstance(part, dict)).strip()
+        else:
+            text = str(content or "").strip()
+        if not text:
+            return {"role": "assistant", "content": "", "actions": [], "extractions": []}
+
+        try:
+            parsed = json.loads(text)
+        except json.JSONDecodeError:
+            if on_stream_delta:
+                on_stream_delta(text)
+            return {"role": "assistant", "content": text, "actions": [], "extractions": []}
+
+        response_text = str(parsed.get("response_text") or "").strip()
+        if on_stream_delta and response_text:
+            on_stream_delta(response_text)
+
+        return {
+            "role": "assistant",
+            "content": response_text,
+            "actions": parsed.get("actions") or [],
+            "extractions": parsed.get("extractions") or [],
+            "placeholder_response": parsed.get("placeholder_response"),
+        }
+
+
+def load_mcp_provider() -> BaseMcpProvider | None:
+    """
+    Instantiate the default MCP provider based on environment configuration.
+
+    Mirrors load_default_provider but targets tool-calling implementations.
+    """
+
+    preferred = (os.getenv("MCP_PROVIDER") or os.getenv("LLM_PROVIDER") or "").strip().lower()
+
+    def _try(cls):
+        try:
+            return cls()
+        except PromptGenerationError as exc:
+            logger.warning("%s provider disabled: %s", cls.__name__, exc)
+            return None
+
+    order: list[type[BaseMcpProvider]] = []
+    if preferred == "deepseek":
+        order = [DeepSeekToolsProvider, OpenAIToolsProvider]
+    elif preferred == "openai":
+        order = [OpenAIToolsProvider, DeepSeekToolsProvider]
+    else:
+        # Default preference: OpenAI if configured, else DeepSeek.
+        if os.getenv("OPENAI_API_KEY"):
+            order.append(OpenAIToolsProvider)
+        if os.getenv("DEEPSEEK_API_KEY"):
+            order.append(DeepSeekToolsProvider)
+
+    for provider_cls in order:
+        provider = _try(provider_cls)
+        if provider:
+            return provider
+    return None
 
 
 def load_default_provider() -> BaseLLMProvider | None:
