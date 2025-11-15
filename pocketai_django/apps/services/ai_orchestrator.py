@@ -215,6 +215,7 @@ class KnowledgeSnippet:
     confidence_score: float | None = None
     truncated: bool = False
     source_diagnostics: Mapping[str, object] = dataclasses.field(default_factory=dict)
+    partial_index: bool = False
     structured_table_count: int = 0
     issue_count: int = 0
     structured_table_hint: str | None = None
@@ -379,6 +380,7 @@ class AiOrchestratorPlan:
     planned_actions: Sequence[PlannedAction]
     extractions: Sequence[ExtractionPlan]
     diagnostics: dict
+    ingestion_warnings: Sequence[Mapping[str, object]] = dataclasses.field(default_factory=tuple)
 
 
 @dataclasses.dataclass(frozen=True)
@@ -1804,6 +1806,7 @@ class KnowledgeSearchService:
                         "column_key": diag.get("column_key"),
                         "similarity": diag.get("similarity"),
                     },
+                    partial_index=False,
                     structured_table_count=1,
                     issue_count=0,
                     structured_table_hint=diag.get("column_key"),
@@ -1851,6 +1854,7 @@ class KnowledgeSearchService:
                     confidence_score=0.0,
                     truncated=False,
                     source_diagnostics=source_diag,
+                    partial_index=bool(trunc_metrics.get("partial_index")) if trunc_metrics else False,
                     structured_table_count=table_count,
                     issue_count=issue_count,
                     structured_table_hint=None,
@@ -1896,6 +1900,10 @@ class KnowledgeSearchService:
             diagnostics.setdefault("vector_distance", result.vector_distance)
         diagnostics["structured_table_count"] = table_count
         diagnostics["issue_count"] = issue_count
+        trunc_metrics = self._truncation_metrics(upload)
+        if trunc_metrics:
+            diagnostics.update(trunc_metrics)
+        partial_flag = bool(trunc_metrics.get("partial_index")) if trunc_metrics else False
 
         return KnowledgeSnippet(
             id=chunk.id,
@@ -1922,6 +1930,7 @@ class KnowledgeSearchService:
             confidence_score=confidence,
             truncated=truncated,
             source_diagnostics=diagnostics,
+            partial_index=partial_flag,
             structured_table_count=table_count,
             issue_count=issue_count,
             structured_table_hint=table_hint,
@@ -2050,6 +2059,7 @@ class KnowledgeSearchService:
             source_diag: dict[str, object] = {"load": "document"}
             if trunc_metrics:
                 source_diag.update(trunc_metrics)
+            partial_flag = bool(trunc_metrics.get("partial_index")) if trunc_metrics else False
             snippets.append(
                 KnowledgeSnippet(
                     id=upload.id,
@@ -2073,6 +2083,7 @@ class KnowledgeSearchService:
                     confidence_score=1.0,
                     truncated=truncated,
                     source_diagnostics=source_diag,
+                    partial_index=partial_flag,
                     structured_table_count=table_count,
                     issue_count=issue_count,
                     structured_table_hint=None,
@@ -2197,6 +2208,7 @@ class KnowledgeSearchService:
                 read_state = self._read_state_for_content(trimmed, chunk_metadata)
                 structured_tables = structured_cache.get(upload.id) or tuple()
                 issues = issue_cache.get(upload.id) or tuple()
+                partial_flag = bool(trunc_metrics.get("partial_index")) if trunc_metrics else False
                 snippet = KnowledgeSnippet(
                     id=req.id,  # keep id = CHUNK id so the ledger continues to reference this chunk
                     title=f"{label} – chunk {req.chunk_index}",
@@ -2222,6 +2234,7 @@ class KnowledgeSearchService:
                     confidence_score=1.0,
                     truncated=truncated,
                     source_diagnostics={"neighbor_window": span, **trunc_metrics} if trunc_metrics else {"neighbor_window": span},
+                    partial_index=partial_flag,
                     structured_table_count=len(structured_tables),
                     issue_count=len(issues),
                     structured_table_hint=None,
@@ -2271,13 +2284,13 @@ class KnowledgeSearchService:
         return tuple(normalized)
 
     @staticmethod
-    def _truncation_metrics(upload: KnowledgeUpload) -> dict[str, int]:
+    def _truncation_metrics(upload: KnowledgeUpload) -> dict[str, object]:
         """
         Extract high-level truncation metrics from ingestion metadata so the orchestrator
         can reason about severe truncation when deciding whether to warn the user.
         """
         metadata = upload.ingestion_metadata if isinstance(upload.ingestion_metadata, dict) else {}
-        metrics: dict[str, int] = {}
+        metrics: dict[str, object] = {}
         truncated_entities = metadata.get("truncated_entities")
         if isinstance(truncated_entities, int) and truncated_entities > 0:
             metrics["truncated_entities"] = truncated_entities
@@ -2287,6 +2300,36 @@ class KnowledgeSearchService:
                 value = table_trunc.get(key)
                 if isinstance(value, int) and value > 0:
                     metrics[key] = value
+        table_stats = metadata.get("table_stats")
+        if isinstance(table_stats, dict):
+            def _coerce_int(value: object) -> int:
+                try:
+                    return int(value) if value is not None else 0
+                except (TypeError, ValueError):
+                    return 0
+
+            total_rows = _coerce_int(table_stats.get("total_rows"))
+            indexed_rows = _coerce_int(table_stats.get("indexed_rows"))
+            row_cap = _coerce_int(table_stats.get("row_cap"))
+            source_rows = _coerce_int(table_stats.get("source_row_count"))
+            partial_tables = _coerce_int(table_stats.get("partial_tables"))
+            if total_rows:
+                metrics["table_total_rows"] = total_rows
+            if indexed_rows:
+                metrics["table_indexed_rows"] = indexed_rows
+            if row_cap:
+                metrics["table_row_cap"] = row_cap
+            if source_rows:
+                metrics["table_source_rows"] = source_rows
+            if partial_tables:
+                metrics["table_partial_tables"] = partial_tables
+            row_tier = table_stats.get("row_tier")
+            if isinstance(row_tier, str) and row_tier:
+                metrics["table_row_tier"] = row_tier
+            if bool(table_stats.get("partial_index")) or (indexed_rows and total_rows and indexed_rows < total_rows):
+                metrics["partial_index"] = True
+        if metrics.get("truncated_rows") or metrics.get("table_partial_tables"):
+            metrics["partial_index"] = True
         return metrics
 
     # apps/services/ai_orchestrator.py (inside KnowledgeSearchService)
@@ -2370,6 +2413,11 @@ class KnowledgeSearchService:
     def _public_label(upload: KnowledgeUpload) -> str:
         metadata = upload.metadata or {}
         if isinstance(metadata, dict):
+            integration_resource = metadata.get("integration_resource") if isinstance(metadata.get("integration_resource"), Mapping) else None
+            if isinstance(integration_resource, Mapping):
+                sheet_label = integration_resource.get("sheet_label")
+                if isinstance(sheet_label, str) and sheet_label.strip():
+                    return sheet_label.strip()
             for key in ("public_label", "customer_label", "display_label"):
                 label = metadata.get(key)
                 if isinstance(label, str) and label.strip():
@@ -2795,6 +2843,15 @@ class AiOrchestratorService:
                 if kid not in loaded_content_ids and kid not in ready_ids_in_payload
             ]
 
+            forced_full_reads = self._forced_full_table_reads(
+                query=query,
+                knowledge_payload=knowledge_payload,
+                loaded_content_ids=loaded_content_ids,
+            )
+            for forced in forced_full_reads:
+                if forced not in pending_requests and forced not in ready_ids_in_payload:
+                    pending_requests.append(forced)
+
             if not pending_requests:
                 requested_again = bool(normalized_kids)
                 if requested_again:
@@ -3035,6 +3092,8 @@ class AiOrchestratorService:
             resolved_citations,
             knowledge_status=knowledge_status,
             knowledge_diagnostics=knowledge_diagnostics,
+            knowledge_payload=knowledge_payload,
+            knowledge_reads=knowledge_reads,
         )
 
         # Optionally refine the surface form based on confidence and ingestion health.
@@ -3043,6 +3102,11 @@ class AiOrchestratorService:
             answer_confidence=answer_confidence,
             knowledge_status=knowledge_status,
             knowledge_payload=knowledge_payload,
+            knowledge_reads=knowledge_reads,
+        )
+
+        ingestion_warnings = self._collect_ingestion_warnings(
+            knowledge_payload,
             knowledge_reads=knowledge_reads,
         )
 
@@ -3064,6 +3128,8 @@ class AiOrchestratorService:
             "confidence_reason": confidence_reason,
             "tool_trace": tool_trace,
         }
+        if ingestion_warnings:
+            diagnostics["ingestion_warnings"] = ingestion_warnings
         if placeholder_response:
             diagnostics["placeholder_response"] = placeholder_response.strip()
 
@@ -3081,6 +3147,7 @@ class AiOrchestratorService:
             planned_actions=planned_actions,
             extractions=extractions,
             diagnostics=diagnostics,
+            ingestion_warnings=tuple(ingestion_warnings),
         )
 
     def _compute_answer_confidence(
@@ -3089,6 +3156,8 @@ class AiOrchestratorService:
         *,
         knowledge_status: str | None,
         knowledge_diagnostics: Mapping[str, object] | None,
+        knowledge_payload: Sequence[Mapping[str, object]] | None = None,
+        knowledge_reads: Sequence[Mapping[str, object]] | None = None,
     ) -> tuple[float, str]:
         """
         Derive an answer-level confidence score from snippet scores and search metadata.
@@ -3145,6 +3214,44 @@ class AiOrchestratorService:
             base *= 0.8
             reason_parts.append("single_snippet_penalty")
 
+        ingestion_penalty_applied = False
+        if knowledge_payload:
+            if self._has_ingestion_red_flags(knowledge_payload, knowledge_reads=knowledge_reads):
+                base *= 0.6
+                ingestion_penalty_applied = True
+                reason_parts.append("truncation_penalty")
+
+        partial_penalty = False
+        fully_indexed_sources = 0
+        for snippet in citations:
+            diag = snippet.source_diagnostics if isinstance(snippet.source_diagnostics, Mapping) else None
+            partial_flag = bool(getattr(snippet, "partial_index", False))
+            truncated_rows = self._coerce_int((diag or {}).get("truncated_rows")) if diag else 0
+            total_rows = 0
+            indexed_rows = 0
+            if diag:
+                total_rows = self._coerce_int(diag.get("table_total_rows") or diag.get("table_source_rows"))
+                indexed_rows = self._coerce_int(diag.get("table_indexed_rows"))
+                if not indexed_rows:
+                    indexed_rows = self._coerce_int(diag.get("table_row_cap"))
+            row_ratio = 1.0
+            if total_rows > 0:
+                row_ratio = indexed_rows / total_rows if indexed_rows else 0.0
+            severe_truncation = truncated_rows >= 200 or (total_rows > 0 and row_ratio < 0.9)
+            if partial_flag or severe_truncation:
+                partial_penalty = True
+            elif (total_rows > 0 and row_ratio >= 0.99 and truncated_rows == 0 and not partial_flag) or (
+                not diag and not partial_flag
+            ):
+                fully_indexed_sources += 1
+
+        if partial_penalty:
+            base *= 0.75
+            reason_parts.append("partial_index_penalty")
+        elif fully_indexed_sources and not ingestion_penalty_applied:
+            base = min(1.0, base + 0.05)
+            reason_parts.append("full_index_bonus")
+
         base = max(0.0, min(1.0, base))
         reason_parts.append(f"status={knowledge_status or 'unknown'}")
         return round(base, 3), ", ".join(reason_parts)
@@ -3174,9 +3281,14 @@ class AiOrchestratorService:
 
         # Low confidence: explicitly invite the user to narrow or correct the query.
         if answer_confidence < LOW_CONFIDENCE_THRESHOLD and knowledge_status == "ok":
-            clarifier = (
-                " If this doesn’t fully match what you expect, please tell me the exact document name, identifier, or date you’re asking about so I can check again more precisely."
-            )
+            if has_ingestion_flags:
+                clarifier = (
+                    " I can only see part of the referenced tables right now, so tell me the exact row or details you need and I’ll flag a follow-up to pull the missing data."
+                )
+            else:
+                clarifier = (
+                    " If this doesn’t fully match what you expect, please tell me the exact document name, identifier, or date you’re asking about so I can check again more precisely."
+                )
             if clarifier.strip() in text:
                 return text
             return f"{text.rstrip()} {clarifier}".strip()
@@ -3343,6 +3455,65 @@ class AiOrchestratorService:
                 ids.append(sid)
         return should, ids[:3]  # safety: cap the count
 
+    def _forced_full_table_reads(
+        self,
+        *,
+        query: str,
+        knowledge_payload: Sequence[Mapping[str, object]],
+        loaded_content_ids: set[str],
+    ) -> list[str]:
+        normalized = (query or "").strip().lower()
+        if not normalized:
+            return []
+        aggregate_tokens = {"all", "overall", "entire", "whole", "total", "everything"}
+        aggregate_phrases = (
+            "how many",
+            "total number",
+            "entire sheet",
+            "whole sheet",
+            "all rows",
+            "overall count",
+        )
+        token_hit = any(token in aggregate_tokens for token in normalized.replace("/", " ").split())
+        phrase_hit = any(phrase in normalized for phrase in aggregate_phrases)
+        if not (token_hit or phrase_hit):
+            return []
+        token_set = {
+            token
+            for token in re.split(r"[^a-z0-9]+", normalized)
+            if token
+        }
+
+        forced: list[str] = []
+        seen: set[str] = set()
+        for entry in knowledge_payload:
+            upload_id = entry.get("upload_id")
+            chunk_id = entry.get("chunk_id")
+            if not upload_id:
+                continue
+            upload_str = str(upload_id)
+            if upload_str in loaded_content_ids:
+                continue
+            is_chunk = bool(chunk_id)
+            has_tables = bool(
+                entry.get("structuredTables")
+                or entry.get("structured_table_count")
+                or entry.get("structured_table_hint")
+            )
+            if not has_tables and not is_chunk:
+                continue
+            status = str(entry.get("status") or "").lower()
+            if status == "ready" and not is_chunk:
+                continue
+            keywords = self._extract_snippet_keywords(entry)
+            if keywords and token_set and keywords.isdisjoint(token_set):
+                continue
+            if upload_str in seen:
+                continue
+            seen.add(upload_str)
+            forced.append(upload_str)
+        return forced
+
 
     # REPLACE the entire _prepare_prompt_snippet function
     def _prepare_prompt_snippet(self, entry: Mapping[str, object]) -> dict[str, object]:
@@ -3351,6 +3522,16 @@ class AiOrchestratorService:
         # Normalize status/read_state, but DO NOT overwrite the explicit read_state
         payload["status"] = payload.get("status") or self._determine_snippet_status(payload)
         payload["read_state"] = (payload.get("read_state") or KNOWLEDGE_READ_STATE_SUMMARY)
+
+        if "truncation_note" not in payload:
+            diagnostics = payload.get("source_diagnostics") if isinstance(payload.get("source_diagnostics"), Mapping) else None
+            note = self._build_truncation_note_from_diagnostics(
+                diagnostics,
+                label=payload.get("public_label") or payload.get("title"),
+                partial_index=bool(payload.get("partial_index")),
+            )
+            if note:
+                payload["truncation_note"] = note
 
         # Ensure chunk metadata is preserved (pass-through if present)
         if "upload_id" in entry and entry["upload_id"]:
@@ -3611,9 +3792,9 @@ class AiOrchestratorService:
         qs = conversation.messages.all().order_by("-sent_at", "-created_at")[:limit]
         return tuple(reversed(tuple(qs)))
 
-    @staticmethod
+    @classmethod
     # REPLACE the entire _serialize_snippet function
-    def _serialize_snippet(snippet: KnowledgeSnippet) -> dict[str, object]:
+    def _serialize_snippet(cls, snippet: KnowledgeSnippet) -> dict[str, object]:
         """
         Turn a KnowledgeSnippet into a stable dict for the prompt ledger/cache.
         We preserve chunk metadata so the LLM can request chunk reads.
@@ -3638,7 +3819,16 @@ class AiOrchestratorService:
             payload["confidence_score"] = float(snippet.confidence_score)
         payload["truncated"] = bool(snippet.truncated)
         payload["source_diagnostics"] = dict(snippet.source_diagnostics or {})
+        partial_index = bool(snippet.partial_index)
+        payload["partial_index"] = partial_index
         payload["aliases"] = list(snippet.aliases or ())
+        truncation_note = cls._build_truncation_note_from_diagnostics(
+            payload["source_diagnostics"],
+            label=payload.get("public_label") or payload.get("title"),
+            partial_index=partial_index,
+        )
+        if truncation_note:
+            payload["truncation_note"] = truncation_note
         # NEW: carry chunk identity
         if snippet.upload_id:
             payload["upload_id"] = str(snippet.upload_id)
@@ -3655,6 +3845,216 @@ class AiOrchestratorService:
         payload["is_table_chunk"] = bool(snippet.is_table_chunk)
         # status will be normalized later by _determine_snippet_status
         return payload
+
+    @staticmethod
+    def _coerce_int(value: object) -> int:
+        try:
+            return int(value) if value is not None else 0
+        except (TypeError, ValueError):
+            return 0
+
+    @staticmethod
+    def _format_count(value: int) -> str:
+        if value <= 0:
+            return "0"
+        for threshold, suffix in ((1_000_000, "M"), (1_000, "k")):
+            if value >= threshold:
+                scaled = value / threshold
+                scaled_str = f"{scaled:.1f}" if scaled % 1 else str(int(scaled))
+                scaled_str = scaled_str.rstrip("0").rstrip(".")
+                return f"{scaled_str}{suffix}"
+        return f"{value:,}"
+
+    @classmethod
+    def _build_truncation_note_from_diagnostics(
+        cls,
+        diagnostics: Mapping[str, object] | None,
+        *,
+        label: str | None,
+        partial_index: bool = False,
+    ) -> str:
+        diag = diagnostics if isinstance(diagnostics, Mapping) else {}
+        label_text = (label or "This document").strip() or "This document"
+        truncated_rows = cls._coerce_int(diag.get("truncated_rows"))
+        truncated_tables = cls._coerce_int(diag.get("truncated_tables"))
+        truncated_columns = cls._coerce_int(diag.get("truncated_columns"))
+        truncated_entities = cls._coerce_int(diag.get("truncated_entities"))
+        total_rows = cls._coerce_int(diag.get("table_total_rows") or diag.get("table_source_rows"))
+        indexed_rows = cls._coerce_int(diag.get("table_indexed_rows"))
+        row_cap = cls._coerce_int(diag.get("table_row_cap"))
+        if not indexed_rows and row_cap:
+            indexed_rows = row_cap
+        partial_tables = cls._coerce_int(diag.get("table_partial_tables"))
+        partial_flag = partial_index or bool(diag.get("partial_index"))
+
+        note = ""
+        if indexed_rows and total_rows and indexed_rows < total_rows:
+            note = (
+                f"{label_text} only indexes the first {cls._format_count(indexed_rows)} of ~{cls._format_count(total_rows)} rows; "
+                "later rows are unknown"
+            )
+        elif truncated_rows and row_cap:
+            note = (
+                f"{label_text} stops after {cls._format_count(row_cap)} rows and skips at least "
+                f"{cls._format_count(truncated_rows)} later rows"
+            )
+        elif truncated_rows:
+            note = f"{label_text} dropped {cls._format_count(truncated_rows)} rows beyond the ingest cap"
+        elif partial_flag and indexed_rows:
+            note = (
+                f"{label_text} is partially indexed ({cls._format_count(indexed_rows)} rows captured); "
+                "request another source if you need the remaining rows"
+            )
+        elif partial_flag:
+            note = f"{label_text} is only partially indexed; some rows or records may be missing"
+        elif truncated_entities:
+            note = (
+                f"{label_text} only captured a subset of structured records; "
+                f"{cls._format_count(truncated_entities)} records were left out"
+            )
+        elif truncated_columns:
+            note = f"{label_text} omitted {cls._format_count(truncated_columns)} columns, so some fields are missing"
+        elif truncated_tables or partial_tables:
+            count = truncated_tables or partial_tables
+            note = f"{label_text} skipped {cls._format_count(count)} tables or sheets due to size limits"
+
+        note = note.strip()
+        if note and not note.endswith("."):
+            note = f"{note}."
+        return note
+
+    @staticmethod
+    def _normalize_issue_severity(issue: Mapping[str, object]) -> str | None:
+        severity = str(issue.get("severity") or "").strip().lower()
+        if severity and severity not in {"warning", "error"}:
+            return None
+        return severity or "warning"
+
+    @classmethod
+    def _issue_warning_payloads(
+        cls,
+        issues: Sequence[Mapping[str, object]] | None,
+        *,
+        label: str,
+        upload_id: str,
+    ) -> list[dict[str, object]]:
+        warnings: list[dict[str, object]] = []
+        if not isinstance(issues, Sequence) or isinstance(issues, (str, bytes)):
+            return warnings
+        for issue in issues:
+            if not isinstance(issue, Mapping):
+                continue
+            severity = cls._normalize_issue_severity(issue)
+            if not severity:
+                continue
+            raw_code = issue.get("issue_code") or issue.get("code") or "ingestion_issue"
+            code = str(raw_code).strip().lower()
+            if "truncate" not in code and "missing" not in code:
+                continue
+            details = (
+                issue.get("summary")
+                or issue.get("message")
+                or issue.get("details")
+                or issue.get("explanation")
+                or issue.get("label")
+            )
+            if not details:
+                details = f"{label} reported ingestion issue {raw_code}."
+            warnings.append(
+                {
+                    "upload_id": str(upload_id),
+                    "label": label,
+                    "type": str(raw_code) or "ingestion_issue",
+                    "severity": severity,
+                    "details": str(details),
+                }
+            )
+        return warnings
+
+    @classmethod
+    def _diagnostic_warning_payload(
+        cls,
+        *,
+        label: str,
+        upload_id: str,
+        diagnostics: Mapping[str, object] | None,
+        partial_index: bool,
+        truncation_note: str | None,
+    ) -> dict[str, object] | None:
+        diag = diagnostics if isinstance(diagnostics, Mapping) else {}
+        note = (truncation_note or cls._build_truncation_note_from_diagnostics(diag, label=label, partial_index=partial_index)).strip()
+        if not note:
+            return None
+        truncated_rows = cls._coerce_int(diag.get("truncated_rows"))
+        truncated_entities = cls._coerce_int(diag.get("truncated_entities"))
+        truncated_columns = cls._coerce_int(diag.get("truncated_columns"))
+        truncated_tables = cls._coerce_int(diag.get("truncated_tables"))
+        partial_tables = cls._coerce_int(diag.get("table_partial_tables"))
+        indexed_rows = cls._coerce_int(diag.get("table_indexed_rows")) or cls._coerce_int(diag.get("table_row_cap"))
+        total_rows = cls._coerce_int(diag.get("table_total_rows") or diag.get("table_source_rows"))
+
+        warning_type = "ingestion_truncation"
+        if truncated_rows or (indexed_rows and total_rows and indexed_rows < total_rows) or partial_index:
+            warning_type = "table_rows_truncated"
+        elif truncated_entities:
+            warning_type = "structured_records_truncated"
+        elif truncated_columns:
+            warning_type = "table_columns_truncated"
+        elif truncated_tables or partial_tables:
+            warning_type = "table_count_truncated"
+
+        return {
+            "upload_id": str(upload_id),
+            "label": label,
+            "type": warning_type,
+            "severity": "warning",
+            "details": note,
+        }
+
+    def _collect_ingestion_warnings(
+        self,
+        knowledge_payload: Sequence[Mapping[str, object]],
+        *,
+        knowledge_reads: Sequence[Mapping[str, object]] | None = None,
+    ) -> list[dict[str, object]]:
+        if not knowledge_reads:
+            return []
+        relevant_ids: set[str] = set()
+        for read in knowledge_reads:
+            identifier = read.get("id")
+            if identifier:
+                relevant_ids.add(str(identifier))
+        if not relevant_ids:
+            return []
+
+        warnings: list[dict[str, object]] = []
+        for entry in knowledge_payload:
+            entry_id = str(entry.get("id") or "")
+            if entry_id not in relevant_ids:
+                continue
+            label = entry.get("public_label") or entry.get("title") or "Knowledge source"
+            upload_id = str(entry.get("upload_id") or entry_id)
+            warnings.extend(
+                self._issue_warning_payloads(
+                    entry.get("issues"),
+                    label=label,
+                    upload_id=upload_id,
+                )
+            )
+            diagnostics = entry.get("source_diagnostics") if isinstance(entry.get("source_diagnostics"), Mapping) else None
+            partial_index = bool(entry.get("partial_index"))
+            trunc_note_val = entry.get("truncation_note")
+            trunc_note = trunc_note_val if isinstance(trunc_note_val, str) else None
+            diag_warning = self._diagnostic_warning_payload(
+                label=label,
+                upload_id=upload_id,
+                diagnostics=diagnostics,
+                partial_index=partial_index,
+                truncation_note=trunc_note if isinstance(trunc_note, str) else None,
+            )
+            if diag_warning:
+                warnings.append(diag_warning)
+        return warnings
 
 
     @staticmethod
@@ -3794,8 +4194,9 @@ class AiOrchestratorService:
         notice = f" {notice}".rstrip()
         return (text or "") + notice if text else notice.strip()
 
-    @staticmethod
+    @classmethod
     def _has_ingestion_red_flags(
+        cls,
         knowledge_payload: Sequence[Mapping[str, object]],
         *,
         knowledge_reads: Sequence[Mapping[str, object]] | None = None,
@@ -3834,16 +4235,10 @@ class AiOrchestratorService:
             # Fall back to coarse truncation metrics for severe table/JSON truncation.
             diagnostics = entry.get("source_diagnostics") or {}
             if isinstance(diagnostics, Mapping):
-                def _coerce_int(value: object) -> int:
-                    try:
-                        return int(value) if value is not None else 0
-                    except (TypeError, ValueError):
-                        return 0
-
-                truncated_entities = _coerce_int(diagnostics.get("truncated_entities"))
-                truncated_rows = _coerce_int(diagnostics.get("truncated_rows"))
-                truncated_tables = _coerce_int(diagnostics.get("truncated_tables"))
-                truncated_columns = _coerce_int(diagnostics.get("truncated_columns"))
+                truncated_entities = cls._coerce_int(diagnostics.get("truncated_entities"))
+                truncated_rows = cls._coerce_int(diagnostics.get("truncated_rows"))
+                truncated_tables = cls._coerce_int(diagnostics.get("truncated_tables"))
+                truncated_columns = cls._coerce_int(diagnostics.get("truncated_columns"))
 
                 if truncated_entities >= ENTITY_TRUNC_THRESHOLD:
                     return True
@@ -3855,8 +4250,9 @@ class AiOrchestratorService:
                     return True
         return False
 
-    @staticmethod
+    @classmethod
     def _summarize_ingestion_truncation(
+        cls,
         knowledge_payload: Sequence[Mapping[str, object]],
         *,
         knowledge_reads: Sequence[Mapping[str, object]] | None = None,
@@ -3875,30 +4271,54 @@ class AiOrchestratorService:
         if not relevant_ids:
             return ""
 
-        total_entities = total_rows = total_tables = total_columns = 0
+        entry_notes: list[str] = []
+        total_entities = total_columns = total_rows = total_tables = 0
         for entry in knowledge_payload:
             entry_id = str(entry.get("id") or "")
             if entry_id not in relevant_ids:
                 continue
-            diagnostics = entry.get("source_diagnostics") or {}
-            if not isinstance(diagnostics, Mapping):
-                continue
-            def _coerce_int(value: object) -> int:
-                try:
-                    return int(value) if value is not None else 0
-                except (TypeError, ValueError):
-                    return 0
-            total_entities += _coerce_int(diagnostics.get("truncated_entities"))
-            total_rows += _coerce_int(diagnostics.get("truncated_rows"))
-            total_tables += _coerce_int(diagnostics.get("truncated_tables"))
-            total_columns += _coerce_int(diagnostics.get("truncated_columns"))
+            diagnostics = entry.get("source_diagnostics") if isinstance(entry.get("source_diagnostics"), Mapping) else None
+            partial_index = bool(entry.get("partial_index"))
+            label = entry.get("public_label") or entry.get("title")
+            note_val = entry.get("truncation_note")
+            note = note_val if isinstance(note_val, str) else ""
+            if not note:
+                note = cls._build_truncation_note_from_diagnostics(
+                    diagnostics,
+                    label=label,
+                    partial_index=partial_index,
+                )
+                if note and isinstance(entry, dict):
+                    entry.setdefault("truncation_note", note)
+            if note:
+                entry_notes.append(note)
+            if diagnostics:
+                total_entities += cls._coerce_int(diagnostics.get("truncated_entities"))
+                total_columns += cls._coerce_int(diagnostics.get("truncated_columns"))
+                total_rows += cls._coerce_int(diagnostics.get("truncated_rows"))
+                total_tables += cls._coerce_int(diagnostics.get("truncated_tables"))
 
+        if entry_notes:
+            if len(entry_notes) == 1:
+                return entry_notes[0]
+            summary = " ".join(entry_notes[:2]).strip()
+            remaining = len(entry_notes) - 2
+            if remaining > 0:
+                plural = "sources" if remaining > 1 else "source"
+                summary = f"{summary} {remaining} more {plural} also have partial coverage."
+            return summary.strip()
         if total_rows or total_tables:
-            return "Some table rows in the referenced documents were truncated due to size limits, so details from later rows may be missing."
+            return (
+                "Some table rows in the referenced documents were truncated due to size limits, so details from later rows may be missing."
+            )
         if total_entities:
-            return "Some structured records in the referenced documents were truncated due to size limits, so the answer may not reflect all records."
+            return (
+                "Some structured records in the referenced documents were truncated due to size limits, so the answer may not reflect all records."
+            )
         if total_columns:
-            return "Some table columns in the referenced documents were truncated due to size limits, so certain fields may be missing."
+            return (
+                "Some table columns in the referenced documents were truncated due to size limits, so certain fields may be missing."
+            )
         return ""
 
 

@@ -2035,11 +2035,22 @@ class KnowledgeIngestionService:
 
 
 
-        tables, table_metrics = self._apply_table_limits(tables, upload=upload)
+        ingest_config = self._table_ingest_config(upload)
+        tables, table_metrics, limit_issues, table_summary = self._apply_table_limits(tables, upload=upload, config=ingest_config)
+        issues = issues + limit_issues
         table_entities = self._table_row_entities(
             tables,
             business_profile=getattr(upload, "business_profile", None),
             upload=upload,
+        )
+        table_stats = self._table_stats_summary(
+            total_rows=table_summary["total_rows"],
+            indexed_rows=table_summary["indexed_rows"],
+            row_cap=table_summary.get("row_cap_hint"),
+            source_row_count=self._integration_row_count(upload),
+            table_count=len(tables),
+            partial_tables=table_summary.get("partial_tables", 0),
+            row_tier=table_summary.get("row_tier_hint"),
         )
         metadata = {
             "format": format_hint,
@@ -2049,6 +2060,7 @@ class KnowledgeIngestionService:
             "page_count": len(layout_result.pages),
             "table_count": len(tables),
             "table_truncation": table_metrics,
+            "table_stats": table_stats,
         }
         return ExtractionResult(
             text=text,
@@ -3181,7 +3193,8 @@ class KnowledgeIngestionService:
             rows=table_rows,
         )
         rules = self._table_privacy_rules(upload)
-        tables, table_metrics = self._apply_table_limits([table], upload=upload)
+        ingest_config = self._table_ingest_config(upload)
+        tables, table_metrics, limit_issues, table_summary = self._apply_table_limits([table], upload=upload, config=ingest_config)
         if not tables:
             raise KnowledgeIngestionError("CSV document did not contain rows within configured limits.")
         table_entities = self._table_row_entities(
@@ -3190,6 +3203,16 @@ class KnowledgeIngestionService:
             upload=upload,
         )
         preview_text = self._table_preview_text(tables, rules=rules)
+        table_stats = self._table_stats_summary(
+            total_rows=table_summary["total_rows"],
+            indexed_rows=table_summary["indexed_rows"],
+            row_cap=table_summary.get("row_cap_hint"),
+            source_row_count=self._integration_row_count(upload),
+            table_count=len(tables),
+            partial_tables=table_summary.get("partial_tables", 0),
+            row_tier=table_summary.get("row_tier_hint"),
+        )
+        issues = limit_issues
         page = PageLayout(
             page_number=1,
             width=612,
@@ -3215,6 +3238,7 @@ class KnowledgeIngestionService:
             "storage_path": file_detail.storage_path,
             "table_count": len(tables),
             "table_truncation": table_metrics,
+            "table_stats": table_stats,
         }
         return ExtractionResult(
             text=preview_text or normalized,
@@ -3222,7 +3246,7 @@ class KnowledgeIngestionService:
             metadata=metadata,
             pages=[page],
             tables=tables,
-            issues=[],
+            issues=issues,
             entities=table_entities,
         )
 
@@ -3321,9 +3345,11 @@ class KnowledgeIngestionService:
                 )
             )
             order_index += 1
-        if not tables:
+        original_tables = list(tables)
+        if not original_tables:
             raise KnowledgeIngestionError("XLSX workbook did not contain any populated sheets.")
-        tables, table_metrics = self._apply_table_limits(tables, upload=upload)
+        ingest_config = self._table_ingest_config(upload)
+        tables, table_metrics, limit_issues, table_summary = self._apply_table_limits(original_tables, upload=upload, config=ingest_config)
         if not tables:
             raise KnowledgeIngestionError("XLSX workbook exceeded configured limits and no rows were indexed.")
         preview_text = self._table_preview_text(tables, rules=rules)
@@ -3332,6 +3358,15 @@ class KnowledgeIngestionService:
             business_profile=getattr(upload, "business_profile", None),
             upload=upload,
         )
+        table_stats = self._table_stats_summary(
+            total_rows=table_summary["total_rows"],
+            indexed_rows=table_summary["indexed_rows"],
+            row_cap=table_summary.get("row_cap_hint"),
+            source_row_count=self._integration_row_count(upload),
+            table_count=len(tables),
+            partial_tables=table_summary.get("partial_tables", 0),
+            row_tier=table_summary.get("row_tier_hint"),
+        )
         metadata = {
             "format": "xlsx",
             "filename": file_detail.filename,
@@ -3339,6 +3374,7 @@ class KnowledgeIngestionService:
             "storage_path": file_detail.storage_path,
             "table_count": len(tables),
             "table_truncation": table_metrics,
+            "table_stats": table_stats,
         }
         return ExtractionResult(
             text=preview_text,
@@ -3346,7 +3382,7 @@ class KnowledgeIngestionService:
             metadata=metadata,
             pages=pages,
             tables=tables,
-            issues=[],
+            issues=limit_issues,
             entities=table_entities,
         )
 
@@ -3699,6 +3735,10 @@ class KnowledgeIngestionService:
             "max_rows": self.default_table_max_rows,
             "max_columns": self.default_table_max_columns,
             "column_whitelist": set(),
+            "max_rows_source": "default",
+            "small_row_limit": int(getattr(settings, "RAG_TABLE_SMALL_ROW_LIMIT", 2000)),
+            "large_row_limit": int(getattr(settings, "RAG_TABLE_LARGE_ROW_LIMIT", 20000)),
+            "hard_row_cap": int(getattr(settings, "RAG_TABLE_MAX_HARD_CAP", 100000)),
         }
 
         def merge(source: Mapping[str, Any] | None) -> None:
@@ -3712,6 +3752,7 @@ class KnowledgeIngestionService:
                     value = int(rows)
                     if value > 0:
                         config["max_rows"] = value
+                        config["max_rows_source"] = "override"
             except (TypeError, ValueError):
                 pass
             try:
@@ -3736,28 +3777,163 @@ class KnowledgeIngestionService:
         merge(upload_meta.get("table_limits"))
         return config
 
+    @staticmethod
+    def _determine_table_row_cap(
+        row_count: int,
+        config: Mapping[str, Any],
+    ) -> tuple[int, str, str]:
+        """
+        Decide how many rows to keep for a given table based on tiering thresholds.
+        Returns (row_cap, tier, strategy).
+        """
+        base_cap = max(1, int(config.get("max_rows", 1)))
+        small_limit = max(1, int(config.get("small_row_limit", 2000)))
+        large_limit = max(small_limit, int(config.get("large_row_limit", 20000)))
+        hard_cap = max(1, int(config.get("hard_row_cap", 100000)))
+        override = config.get("max_rows_source") == "override"
+        if row_count <= 0:
+            return base_cap, "unknown", "default"
+        if not override and row_count <= large_limit:
+            tier = "small" if row_count <= small_limit else "medium"
+            return row_count, tier, "full"
+        tier = "large" if row_count > large_limit else "override"
+        effective_cap = min(base_cap, hard_cap)
+        strategy = "override" if override and tier != "large" else "capped"
+        return effective_cap, tier, strategy
+
+    @staticmethod
+    def _integration_row_count(upload: KnowledgeUpload | None) -> int | None:
+        """
+        Best-effort row count provided by integrations (if any). Returns None when unavailable.
+        """
+        if not upload:
+            return None
+        metadata = getattr(upload, "metadata", None)
+        if not isinstance(metadata, Mapping):
+            return None
+        resource = metadata.get("integration_resource")
+        if not isinstance(resource, Mapping):
+            return None
+        raw_value = resource.get("row_count")
+        try:
+            count = int(raw_value)
+        except (TypeError, ValueError):
+            return None
+        return count if count > 0 else None
+
+    @staticmethod
+    def _table_stats_summary(
+        *,
+        total_rows: int,
+        indexed_rows: int,
+        row_cap: int | None,
+        source_row_count: int | None,
+        table_count: int,
+        partial_tables: int = 0,
+        row_tier: str | None = None,
+    ) -> dict[str, Any]:
+        stats: dict[str, Any] = {
+            "total_rows": max(0, int(total_rows)),
+            "indexed_rows": max(0, int(indexed_rows)),
+            "table_count": max(0, int(table_count)),
+        }
+        if row_cap is not None:
+            stats["row_cap"] = max(0, int(row_cap))
+        if source_row_count is not None:
+            stats["source_row_count"] = max(0, int(source_row_count))
+        if partial_tables:
+            stats["partial_tables"] = max(0, int(partial_tables))
+        if row_tier:
+            stats["row_tier"] = row_tier
+        if stats["indexed_rows"] < stats["total_rows"] or stats.get("partial_tables"):
+            stats["partial_index"] = True
+        return stats
+
     def _apply_table_limits(
         self,
         tables: Sequence[TablePayload],
         *,
         upload: KnowledgeUpload | None,
-    ) -> tuple[list[TablePayload], dict[str, int]]:
+        config: Mapping[str, Any] | None = None,
+    ) -> tuple[list[TablePayload], dict[str, int], list[IssuePayload], dict[str, Any]]:
         if not tables:
-            return [], {"truncated_tables": 0, "truncated_rows": 0, "truncated_columns": 0}
-        config = self._table_ingest_config(upload)
+            empty_metrics = {"truncated_tables": 0, "truncated_rows": 0, "truncated_columns": 0}
+            empty_summary = {"total_rows": 0, "indexed_rows": 0, "partial_tables": 0, "row_cap_hint": 0, "row_tier_hint": "unknown"}
+            return [], empty_metrics, [], empty_summary
+        effective_config = dict(config) if isinstance(config, Mapping) else self._table_ingest_config(upload)
         limited: list[TablePayload] = []
         truncated_tables = 0
         truncated_rows = 0
         truncated_columns = 0
+        limit_issues: list[IssuePayload] = []
+        summary = {
+            "total_rows": 0,
+            "indexed_rows": 0,
+            "partial_tables": 0,
+            "row_cap_hint": 0,
+            "row_tier_hint": "unknown",
+        }
+        tier_rank = {"unknown": 0, "small": 1, "medium": 2, "override": 2, "large": 3}
         for table in tables:
+            original_row_count = len(table.rows or [])
+            summary["total_rows"] += original_row_count
+            table_row_cap, tier, strategy = self._determine_table_row_cap(original_row_count, effective_config)
+            summary["row_cap_hint"] = max(summary["row_cap_hint"], table_row_cap)
+            if tier_rank.get(tier, 0) > tier_rank.get(summary["row_tier_hint"], 0):
+                summary["row_tier_hint"] = tier
             limited_table, removed_columns, removed_rows, dropped_table = self._limit_table_payload(
                 table,
-                max_rows=config["max_rows"],
-                max_columns=config["max_columns"],
-                column_whitelist=config["column_whitelist"],
+                max_rows=table_row_cap,
+                max_columns=effective_config["max_columns"],
+                column_whitelist=effective_config["column_whitelist"],
             )
+            indexed_row_count = len(limited_table.rows or []) if limited_table else 0
+            summary["indexed_rows"] += indexed_row_count
+            if removed_rows or dropped_table:
+                summary["partial_tables"] += 1
             truncated_columns += removed_columns
             truncated_rows += removed_rows
+            if removed_rows or dropped_table:
+                truncated_amount = removed_rows if not dropped_table else original_row_count
+                description = (
+                    f"Only the first {indexed_row_count} of {original_row_count} rows were ingested; remaining rows are unavailable."
+                )
+                if dropped_table:
+                    description = (
+                        f"Table '{table.title}' exceeded row limits; no rows were indexed."
+                    )
+                limit_issues.append(
+                    IssuePayload(
+                        code="table_rows_truncated",
+                        severity=KnowledgeIssueSeverity.WARNING.value,
+                        description=description,
+                        page_number=table.page_number,
+                        table_order_index=table.order_index,
+                        details={
+                            "initial_rows": original_row_count,
+                            "indexed_rows": indexed_row_count,
+                            "truncated_rows": truncated_amount,
+                            "row_cap": table_row_cap,
+                            "row_tier": tier,
+                            "strategy": strategy,
+                        },
+                    )
+                )
+            if removed_columns:
+                limit_issues.append(
+                    IssuePayload(
+                        code="table_columns_truncated",
+                        severity=KnowledgeIssueSeverity.INFO.value,
+                        description=f"{removed_columns} columns were trimmed due to configured limits.",
+                        page_number=table.page_number,
+                        table_order_index=table.order_index,
+                        details={
+                            "removed_columns": removed_columns,
+                            "max_columns": effective_config["max_columns"],
+                            "row_tier": tier,
+                        },
+                    )
+                )
             if dropped_table:
                 truncated_tables += 1
                 continue
@@ -3774,9 +3950,9 @@ class KnowledgeIngestionService:
                 truncated_rows,
                 truncated_columns,
                 truncated_tables,
-                config,
+                effective_config,
             )
-        return limited, metrics
+        return limited, metrics, limit_issues, summary
 
     def _limit_table_payload(
         self,

@@ -462,11 +462,18 @@ def stream_send(request: HttpRequest) -> StreamingHttpResponse:
             )
 
         serialized_actions = serialize_action_results(action_results)
+        answer_confidence = None
+        if plan.diagnostics:
+            answer_confidence = plan.diagnostics.get("answer_confidence")
         message_metadata = {
             "citations": [snippet.title for snippet in plan.citations],
             "actions": serialized_actions,
             "diagnostics": plan.diagnostics,
         }
+        if answer_confidence is not None:
+            message_metadata["answer_confidence"] = answer_confidence
+        if plan.ingestion_warnings:
+            message_metadata["ingestion_warnings"] = [dict(item) for item in plan.ingestion_warnings]
         ai_message = service.append_message(
             session_token=session_token,
             sender=ConversationSender.AI,
@@ -480,6 +487,10 @@ def stream_send(request: HttpRequest) -> StreamingHttpResponse:
             "message_id": str(ai_message.id),
             "session_status": session_state.status,
         }
+        if answer_confidence is not None:
+            final_payload["answer_confidence"] = answer_confidence
+        if plan.ingestion_warnings:
+            final_payload["ingestion_warnings"] = [dict(item) for item in plan.ingestion_warnings]
         logger.info(
             "portal response finalized conversation=%s message_id=%s status=%s",
             conversation.id,

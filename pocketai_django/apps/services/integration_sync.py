@@ -427,6 +427,8 @@ class IntegrationSyncService:
             display_label = f"{drive_name_raw} – {sheet_name_raw}"
         else:
             display_label = sheet_name_raw or drive_name_raw or "Synced Sheet"
+        display_label_clean = display_label[:255]
+        resource["sheet_label"] = display_label_clean
 
         upload, created = KnowledgeUpload.objects.get_or_create(
             integration=integration,
@@ -434,7 +436,7 @@ class IntegrationSyncService:
             defaults={
                 "business_profile": integration.business_profile,
                 "user": owner,
-                "display_name": display_label[:255],
+                "display_name": display_label_clean,
                 "source_name": (drive_name_raw or "Google Sheet")[:255],
                 "source_type": KnowledgeSourceType.INTEGRATION,
                 "source_uid": self._resource_id(resource),
@@ -446,7 +448,7 @@ class IntegrationSyncService:
 
         upload.integration = integration
         upload.user = owner
-        upload.display_name = (display_label or upload.display_name or "Synced Sheet")[:255]
+        upload.display_name = display_label_clean
         upload.source_name = (drive_name_raw or upload.source_name or "Google Sheet")[:255]
         upload.source_type = KnowledgeSourceType.INTEGRATION
         upload.source_uid = self._resource_id(resource)
@@ -489,17 +491,15 @@ class IntegrationSyncService:
 
         metadata = dict(upload.metadata or {})
         # Ensure a stable, descriptive public label for RAG/LLM prompts.
-        existing_public = (metadata.get("public_label") or "").strip()
-        if not existing_public:
-            metadata["public_label"] = display_label[:255]
-            metadata.setdefault("display_label", display_label[:255])
+        metadata["public_label"] = display_label_clean
+        metadata["display_label"] = display_label_clean
         metadata["integration_resource"] = {
             "resource_id": self._resource_id(resource),
             "drive_file_id": resource.get("drive_file_id"),
             "drive_file_name": resource.get("drive_file_name"),
             "sheet_gid": resource.get("sheet_gid"),
             "sheet_name": resource.get("sheet_name"),
-            "sheet_label": display_label[:255],
+            "sheet_label": display_label_clean,
             "sync_frequency": resource.get("sync_frequency"),
             "visibility": resource.get("visibility"),
             "metadata": resource.get("metadata") or {},

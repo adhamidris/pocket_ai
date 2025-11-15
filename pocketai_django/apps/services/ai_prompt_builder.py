@@ -209,6 +209,8 @@ class PromptBuilder:
             "confidence_score": s.get("confidence_score"),
             "truncated": bool(s.get("truncated")),
             "source_diagnostics": s.get("source_diagnostics") or {},
+            "partial_index": bool(s.get("partial_index")),
+            "truncation_note": s.get("truncation_note") or "",
         }
         for s in knowledge_snippets
         ]
@@ -483,6 +485,8 @@ class PromptBuilder:
                 "truncated": bool(snippet.get("truncated")),
                 "aliases": snippet.get("aliases") or [],
                 "issues": snippet.get("issues") or [],
+                "partial_index": bool(snippet.get("partial_index")),
+                "truncation_note": snippet.get("truncation_note") or "",
             }
 
             documents.append(doc)

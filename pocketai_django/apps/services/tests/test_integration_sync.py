@@ -231,3 +231,41 @@ class IntegrationSyncServiceTests(TestCase):
         table_privacy = (upload.metadata or {}).get("table_privacy") or {}
         self.assertIn("SSN", table_privacy.get("sensitive_columns", []))
         self.assertIn("Notes", table_privacy.get("excluded_columns", []))
+
+    def test_save_and_queue_populates_sheet_labels_and_row_counts(self):
+        resource: IntegrationResourceConfig = {
+            "resource_id": "drive:sheet",
+            "drive_file_id": "drive-id",
+            "drive_file_name": "Playbook",
+            "sheet_gid": "0",
+            "sheet_name": "Main",
+            "visibility": "private",
+            "sync_frequency": "daily",
+        }
+        self.integration.set_resource_configs([resource])
+        self.integration.save(update_fields=["settings"])
+        exported = ExportedSheet(
+            content=b"col_a,col_b\n1,2\n",
+            filename="sheet",
+            content_type="text/csv",
+            extension="csv",
+        )
+        service = self._service()
+
+        upload, bytes_written, _, changed = service._save_and_queue(
+            self.integration,
+            resource,
+            exported,
+            synced_at=timezone.now(),
+        )
+
+        self.assertTrue(changed)
+        self.assertEqual(bytes_written, len(exported.content))
+        upload.refresh_from_db()
+        expected_label = "Playbook – Main"
+        self.assertEqual(upload.display_name, expected_label)
+        metadata = upload.metadata or {}
+        self.assertEqual(metadata.get("public_label"), expected_label)
+        integration_resource = metadata.get("integration_resource") or {}
+        self.assertEqual(integration_resource.get("sheet_label"), expected_label)
+        self.assertGreater(int(integration_resource.get("row_count") or 0), 0)
