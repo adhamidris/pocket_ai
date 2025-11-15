@@ -419,14 +419,23 @@ class IntegrationSyncService:
         synced_at: datetime,
     ) -> tuple[KnowledgeUpload, int, str | None, bool]:
         owner = integration.created_by or integration.business_profile.user
+        sheet_name_raw = (resource.get("sheet_name") or "").strip()
+        drive_name_raw = (resource.get("drive_file_name") or "").strip()
+        # Prefer a composite label so integrated sheets are uniquely identifiable
+        # (e.g., "Playbooks – Sheet1" instead of just "Sheet1").
+        if sheet_name_raw and drive_name_raw and sheet_name_raw.lower() not in {drive_name_raw.lower()}:
+            display_label = f"{drive_name_raw} – {sheet_name_raw}"
+        else:
+            display_label = sheet_name_raw or drive_name_raw or "Synced Sheet"
+
         upload, created = KnowledgeUpload.objects.get_or_create(
             integration=integration,
             source_uid=self._resource_id(resource),
             defaults={
                 "business_profile": integration.business_profile,
                 "user": owner,
-                "display_name": (resource.get("sheet_name") or "Synced Sheet")[:255],
-                "source_name": (resource.get("drive_file_name") or "Google Sheet")[:255],
+                "display_name": display_label[:255],
+                "source_name": (drive_name_raw or "Google Sheet")[:255],
                 "source_type": KnowledgeSourceType.INTEGRATION,
                 "source_uid": self._resource_id(resource),
                 "external_reference": resource.get("drive_file_id", ""),
@@ -437,8 +446,8 @@ class IntegrationSyncService:
 
         upload.integration = integration
         upload.user = owner
-        upload.display_name = (resource.get("sheet_name") or upload.display_name or "Synced Sheet")[:255]
-        upload.source_name = (resource.get("drive_file_name") or upload.source_name or "Google Sheet")[:255]
+        upload.display_name = (display_label or upload.display_name or "Synced Sheet")[:255]
+        upload.source_name = (drive_name_raw or upload.source_name or "Google Sheet")[:255]
         upload.source_type = KnowledgeSourceType.INTEGRATION
         upload.source_uid = self._resource_id(resource)
         upload.external_reference = resource.get("drive_file_id", "")
@@ -479,12 +488,18 @@ class IntegrationSyncService:
         )
 
         metadata = dict(upload.metadata or {})
+        # Ensure a stable, descriptive public label for RAG/LLM prompts.
+        existing_public = (metadata.get("public_label") or "").strip()
+        if not existing_public:
+            metadata["public_label"] = display_label[:255]
+            metadata.setdefault("display_label", display_label[:255])
         metadata["integration_resource"] = {
             "resource_id": self._resource_id(resource),
             "drive_file_id": resource.get("drive_file_id"),
             "drive_file_name": resource.get("drive_file_name"),
             "sheet_gid": resource.get("sheet_gid"),
             "sheet_name": resource.get("sheet_name"),
+            "sheet_label": display_label[:255],
             "sync_frequency": resource.get("sync_frequency"),
             "visibility": resource.get("visibility"),
             "metadata": resource.get("metadata") or {},
@@ -515,10 +530,18 @@ class IntegrationSyncService:
 
         upload.save()
 
+        # Derive a readable storage filename that carries both file and sheet names
+        # to aid downstream diagnostics and table titles.
+        base_for_filename = drive_name_raw
+        if sheet_name_raw and sheet_name_raw.lower() not in {drive_name_raw.lower()}:
+            base_for_filename = f"{drive_name_raw}-{sheet_name_raw}".strip("- ")
+        if not base_for_filename:
+            base_for_filename = upload.display_name or str(upload.id)
+
         KnowledgeUploadFile.objects.update_or_create(
             upload=upload,
             defaults={
-                "filename": f"{slugify(resource.get('sheet_name') or upload.display_name) or upload.id}.{exported.extension}",
+                "filename": f"{slugify(base_for_filename) or upload.id}.{exported.extension}",
                 "content_type": exported.content_type,
                 "storage_path": str(storage_path),
                 "size_bytes": size_bytes,
