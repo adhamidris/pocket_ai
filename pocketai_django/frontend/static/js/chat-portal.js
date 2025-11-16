@@ -23,7 +23,9 @@ class ChatPortalClient {
     this.elements = {
       messages: container.querySelector("[data-chat-messages]"),
       sendForm: container.querySelector("[data-chat-send-form]"),
-      stopButton: container.querySelector("[data-chat-stop]"),
+      sendButton: container.querySelector("[data-chat-send-button]"),
+      sendIcon: container.querySelector("[data-chat-send-icon]"),
+      stopIcon: container.querySelector("[data-chat-stop-icon]"),
       csatForm: container.querySelector("[data-chat-csat-form]"),
       csatContainer: container.querySelector("[data-chat-csat]"),
       toastRoot: document.getElementById("toast-root"),
@@ -50,7 +52,6 @@ class ChatPortalClient {
 
   async init() {
     this.bindSendForm();
-    this.bindStopButton();
     this.bindCsatForm();
     this.setComposerAvailability(false);
     try {
@@ -68,6 +69,10 @@ class ChatPortalClient {
     if (!form) return;
     form.addEventListener("submit", async (event) => {
       event.preventDefault();
+      if (this.awaitingReply) {
+        this.abortStreaming();
+        return;
+      }
       const data = new FormData(form);
       const message = (data.get("message") || "").toString().trim();
       if (!message || !this.sessionToken) {
@@ -78,25 +83,6 @@ class ChatPortalClient {
         textarea.value = "";
       }
       await this.sendMessage(message);
-    });
-  }
-
-  bindStopButton() {
-    const stopButton = this.elements.stopButton;
-    if (!stopButton) return;
-    stopButton.addEventListener("click", () => {
-      if (this.streamFinished) {
-        return;
-      }
-      if (this.streamController) {
-        this.streamController.abort();
-      }
-      this.awaitingReply = false;
-      stopButton.disabled = true;
-      this.workflowLocked = true;
-      this.clearStreamingStatus();
-      this.streamFinished = true;
-      this.resetStreamingState(true);
     });
   }
 
@@ -156,9 +142,9 @@ class ChatPortalClient {
     this.workflowLocked = false;
     this.streamFinished = false;
     this.awaitingReply = true;
-    if (this.elements.stopButton) {
-      this.elements.stopButton.disabled = false;
-    }
+    this.setComposerAvailability(false);
+    this.updateSendButtonState(true);
+    this.updateComposerNotice(true);
     this.appendMessage({
       sender: "customer",
       body: message,
@@ -205,8 +191,9 @@ class ChatPortalClient {
       }
     } finally {
       this.awaitingReply = false;
-      if (this.elements.stopButton) {
-        this.elements.stopButton.disabled = true;
+      this.updateSendButtonState(false);
+      if (!this.awaitingReply && !this.streamFinished) {
+        this.setComposerAvailability(true);
       }
       if (this.streamingMessageNode) {
         this.resetStreamingState(true);
@@ -712,9 +699,8 @@ class ChatPortalClient {
 
   markStreamFinished() {
     this.streamFinished = true;
-    if (this.elements.stopButton) {
-      this.elements.stopButton.disabled = true;
-    }
+    this.updateSendButtonState(false);
+    this.setComposerAvailability(true);
   }
 
   ensureStatusStyle() {
@@ -776,12 +762,46 @@ class ChatPortalClient {
     const form = this.elements.sendForm;
     if (!form) return;
     const textarea = form.querySelector("textarea[name='message']");
-    const submit = form.querySelector('button[type="submit"]');
-    [textarea, submit].forEach((el) => {
-      if (el) {
-        el.disabled = !enabled;
-      }
-    });
+    if (textarea) {
+      textarea.disabled = !enabled;
+    }
+  }
+
+  updateComposerNotice(waiting) {
+    const button = this.elements.sendButton;
+    if (!button) return;
+    button.classList.toggle("cursor-wait", waiting);
+  }
+
+  updateSendButtonState(isResponding) {
+    const button = this.elements.sendButton;
+    const sendIcon = this.elements.sendIcon;
+    const stopIcon = this.elements.stopIcon;
+    if (button) {
+      button.classList.toggle("opacity-80", isResponding);
+      button.classList.toggle("cursor-not-allowed", isResponding);
+    }
+    if (sendIcon) {
+      sendIcon.classList.toggle("hidden", isResponding);
+    }
+    if (stopIcon) {
+      stopIcon.classList.toggle("hidden", !isResponding);
+    }
+  }
+
+  abortStreaming() {
+    if (!this.awaitingReply) return;
+    if (this.streamController) {
+      this.streamController.abort();
+    }
+    this.awaitingReply = false;
+    this.streamFinished = true;
+    this.workflowLocked = true;
+    this.clearStreamingStatus();
+    this.updateSendButtonState(false);
+    this.setComposerAvailability(true);
+    this.updateComposerNotice(false);
+    this.resetStreamingState(true);
   }
 
   getStoredToken() {

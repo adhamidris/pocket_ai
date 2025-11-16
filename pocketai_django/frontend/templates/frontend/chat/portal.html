@@ -72,11 +72,19 @@
                 placeholder="Write your message…"
               ></textarea>
               <div class="flex items-center justify-between gap-3">
-                <button type="submit" class="inline-flex items-center gap-2 rounded-lg bg-gradient-primary px-4 py-2 text-sm font-semibold text-white shadow-soft hover:opacity-90 transition">
-                  Send message
-                </button>
-                <button type="button" class="text-xs text-muted-foreground hover:text-foreground transition disabled:opacity-50" data-chat-stop disabled>
-                  Stop response
+                <div></div>
+                <button type="submit" data-chat-send-button class="inline-flex items-center justify-center rounded-full bg-gradient-primary h-11 w-11 text-white shadow-soft hover:opacity-90 transition">
+                  <span data-chat-send-icon class="inline-flex">
+                    <svg class="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                      <path d="M5 12h14M12 5l7 7-7 7"/>
+                    </svg>
+                  </span>
+                  <span class="hidden inline-flex" data-chat-stop-icon>
+                    <svg class="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                      <rect x="6" y="5" width="4" height="14"></rect>
+                      <rect x="14" y="5" width="4" height="14"></rect>
+                    </svg>
+                  </span>
                 </button>
               </div>
             </form>
