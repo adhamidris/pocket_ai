@@ -578,6 +578,7 @@ class ChatPortalClient {
       const dot = document.createElement("span");
       dot.className = "inline-block h-2 w-2 rounded-full bg-primary animate-pulse";
       const text = document.createElement("span");
+      text.classList.add("status-premium-text");
       text.textContent = label;
       badge.appendChild(dot);
       badge.appendChild(text);
