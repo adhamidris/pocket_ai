@@ -42,6 +42,7 @@ class ChatPortalClient {
     this.workflowStatusTimer = null;
     this.workflowLocked = false;
     this.streamingActive = false;
+    this.streamFinished = false;
   }
 
   async init() {
@@ -81,6 +82,9 @@ class ChatPortalClient {
     const stopButton = this.elements.stopButton;
     if (!stopButton) return;
     stopButton.addEventListener("click", () => {
+      if (this.streamFinished) {
+        return;
+      }
       if (this.streamController) {
         this.streamController.abort();
       }
@@ -88,6 +92,7 @@ class ChatPortalClient {
       stopButton.disabled = true;
       this.workflowLocked = true;
       this.hideWorkflowStatus();
+      this.streamFinished = true;
       this.resetStreamingState(true);
     });
   }
@@ -146,6 +151,7 @@ class ChatPortalClient {
     this.hideWorkflowStatus();
     this.resetStreamingState(true, false);
     this.workflowLocked = false;
+    this.streamFinished = false;
     this.awaitingReply = true;
     if (this.elements.stopButton) {
       this.elements.stopButton.disabled = false;
@@ -386,6 +392,7 @@ class ChatPortalClient {
       this.workflowLocked = true;
       this.streamingActive = false;
       this.hideWorkflowStatus();
+      this.markStreamFinished();
     }
 }
 
@@ -604,6 +611,13 @@ class ChatPortalClient {
     this.streamingMessageBubbleEl = null;
     this.streamingBuffer = "";
     this.streamingRewritePending = false;
+  }
+
+  markStreamFinished() {
+    this.streamFinished = true;
+    if (this.elements.stopButton) {
+      this.elements.stopButton.disabled = true;
+    }
   }
 
   showWorkflowStatus(mode = "working", labelOverride) {
