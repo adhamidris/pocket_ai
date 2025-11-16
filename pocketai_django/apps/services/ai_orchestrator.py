@@ -2804,14 +2804,14 @@ class AiOrchestratorService:
             nonlocal placeholder_added_to_prompt, recent_messages
             if placeholder_added_to_prompt or not text:
                 return
-            # 1) Persist a separate placeholder message so it never disappears
-            placeholder_msg = ConversationMessage.objects.create(
+            placeholder_msg = ConversationMessage(
                 conversation=conversation,
                 sender=ConversationSender.AI,
                 body=text.strip(),
                 metadata={"placeholder": True},
+                sent_at=timezone.now(),
             )
-            # 2) Also inject into this turn's in-memory transcript so the next LLM pass "remembers" it
+            placeholder_msg.created_at = placeholder_msg.sent_at
             recent_messages.append(placeholder_msg)
             placeholder_added_to_prompt = True
 

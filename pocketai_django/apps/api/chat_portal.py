@@ -1,12 +1,13 @@
 from __future__ import annotations
 
+import copy
 import json
 import logging
 import threading
 import time
 import uuid
 from queue import Empty, Queue
-from typing import Iterable
+from typing import Any, Iterable
 
 from django.conf import settings
 from django.db import close_old_connections
@@ -346,6 +347,19 @@ def stream_send(request: HttpRequest) -> StreamingHttpResponse:
             )
         return payloads
 
+    def serialize_planned_actions(planned):
+        payloads = []
+        for action in planned:
+            payloads.append(
+                {
+                    "action": action.action.value,
+                    "status": "queued",
+                    "metadata": action.payload,
+                    "error": None,
+                }
+            )
+        return payloads
+
     def _response_chunks(text: str, chunk_size: int = 64) -> Iterable[str]:
         clean = (text or "").strip()
         if not clean:
@@ -374,6 +388,7 @@ def stream_send(request: HttpRequest) -> StreamingHttpResponse:
     stream_queue: Queue = Queue()
     stream_sentinel = object()
     plan_holder: dict[str, Any] = {}
+    streamed_text_chunks: list[str] = []
 
     def on_response_text_delta(chunk: str) -> None:
         if chunk:
@@ -431,10 +446,7 @@ def stream_send(request: HttpRequest) -> StreamingHttpResponse:
     worker = threading.Thread(target=orchestrate, daemon=True)
     worker.start()
 
-    placeholder_message = None
-
     def event_stream() -> Iterable[str]:
-        nonlocal placeholder_message
         streamed_from_provider = False
         while True:
             try:
@@ -463,21 +475,14 @@ def stream_send(request: HttpRequest) -> StreamingHttpResponse:
                     continue
                 if chunk.get("type") == "placeholder":
                     placeholder_text = chunk.get("text") or ""
-                    payload = {"text": placeholder_text}
-                    if placeholder_text and placeholder_message is None:
-                        placeholder_message = service.append_message(
-                            session_token=session_token,
-                            sender=ConversationSender.AI,
-                            body=placeholder_text,
-                            metadata={"placeholder": True},
-                        )
-                        payload["message_id"] = str(placeholder_message.id)
                     yield "event: placeholder\n"
-                    yield f"data: {json.dumps(payload)}\n\n"
+                    yield f"data: {json.dumps({'text': placeholder_text})}\n\n"
                     continue
             streamed_from_provider = True
+            chunk_text = str(chunk)
+            streamed_text_chunks.append(chunk_text)
             yield "event: delta\n"
-            yield f"data: {json.dumps({'text': chunk})}\n\n"
+            yield f"data: {json.dumps({'text': chunk_text})}\n\n"
         worker.join()
         plan: AiOrchestratorPlan | None = plan_holder.get("plan")
         if not plan:
@@ -496,40 +501,23 @@ def stream_send(request: HttpRequest) -> StreamingHttpResponse:
             stream_text = plan.diagnostics.get("response_stream_text") if plan and plan.diagnostics else None
             stream_text = stream_text or plan.response_text
             for chunk in _response_chunks(stream_text):
+                streamed_text_chunks.append(chunk)
                 yield "event: delta\n"
                 yield f"data: {json.dumps({'text': chunk})}\n\n"
 
-        action_results = dispatcher.execute(conversation=conversation, planned_actions=plan.planned_actions)
-        logger.info(
-            "portal action results conversation=%s results=%s",
-            conversation.id,
-            [
-                {
-                    "action": result.action.value,
-                    "status": result.status,
-                    "error": result.error,
-                }
-                for result in action_results
-            ],
-        )
-        if plan.extractions:
-            service.store_extractions(
-                session_token=session_token,
-                items=((extraction.extraction_type, extraction.payload) for extraction in plan.extractions),
-            )
-            logger.info(
-                "portal extractions stored conversation=%s count=%s",
-                conversation.id,
-                len(plan.extractions),
-            )
+        streamed_text = "".join(streamed_text_chunks)
+        normalized_streamed = streamed_text.strip()
+        response_text = plan.response_text or ""
+        if normalized_streamed:
+            response_text = streamed_text
 
-        serialized_actions = serialize_action_results(action_results)
         answer_confidence = None
         if plan.diagnostics:
             answer_confidence = plan.diagnostics.get("answer_confidence")
+        pending_actions = serialize_planned_actions(plan.planned_actions)
         message_metadata = {
             "citations": [snippet.title for snippet in plan.citations],
-            "actions": serialized_actions,
+            "actions": pending_actions,
             "diagnostics": plan.diagnostics,
         }
         if answer_confidence is not None:
@@ -539,13 +527,13 @@ def stream_send(request: HttpRequest) -> StreamingHttpResponse:
         ai_message = service.append_message(
             session_token=session_token,
             sender=ConversationSender.AI,
-            body=plan.response_text,
+            body=response_text,
             metadata=message_metadata,
         )
 
         session_state = service.get_session_state(session_token=session_token)
         final_payload = {
-            "text": plan.response_text,
+            "text": response_text,
             "message_id": str(ai_message.id),
             "session_status": session_state.status,
         }
@@ -561,6 +549,102 @@ def stream_send(request: HttpRequest) -> StreamingHttpResponse:
         )
         yield "event: final\n"
         yield f"data: {json.dumps(final_payload)}\n\n"
+
+        post_queue: Queue = Queue()
+        post_sentinel = object()
+
+        def run_post_actions() -> None:
+            close_old_connections()
+            try:
+                action_results = []
+                if plan.planned_actions:
+                    action_results = dispatcher.execute(conversation=conversation, planned_actions=plan.planned_actions)
+                    logger.info(
+                        "portal action results conversation=%s results=%s",
+                        conversation.id,
+                        [
+                            {
+                                "action": result.action.value,
+                                "status": result.status,
+                                "error": result.error,
+                            }
+                            for result in action_results
+                        ],
+                    )
+                if plan.extractions:
+                    service.store_extractions(
+                        session_token=session_token,
+                        items=((extraction.extraction_type, extraction.payload) for extraction in plan.extractions),
+                    )
+                    logger.info(
+                        "portal extractions stored conversation=%s count=%s",
+                        conversation.id,
+                        len(plan.extractions),
+                    )
+                if plan.planned_actions:
+                    serialized_actions = serialize_action_results(action_results)
+                    updated_metadata = copy.deepcopy(message_metadata)
+                    updated_metadata["actions"] = serialized_actions
+                    service.update_message(
+                        session_token=session_token,
+                        message_id=ai_message.id,
+                        metadata=updated_metadata,
+                    )
+                    post_queue.put(
+                        {
+                            "type": "actionsComplete",
+                            "message_id": str(ai_message.id),
+                            "actions": serialized_actions,
+                        }
+                    )
+                elif plan.extractions:
+                    post_queue.put(
+                        {
+                            "type": "actionsComplete",
+                            "message_id": str(ai_message.id),
+                            "actions": [],
+                        }
+                    )
+            except Exception as exc:  # pragma: no cover - defensive
+                logger.exception("portal post-processing failed: %s", exc)
+                post_queue.put(
+                    {
+                        "type": "actionsError",
+                        "message_id": str(ai_message.id),
+                        "error": str(exc),
+                    }
+                )
+            finally:
+                close_old_connections()
+                post_queue.put(post_sentinel)
+
+        if plan.planned_actions or plan.extractions:
+            threading.Thread(target=run_post_actions, daemon=True).start()
+        else:
+            post_queue.put(post_sentinel)
+
+        while True:
+            try:
+                post_event = post_queue.get(timeout=0.1)
+            except Empty:
+                continue
+            if post_event is post_sentinel:
+                break
+            if post_event.get("type") == "actionsComplete":
+                payload = {
+                    "message_id": post_event.get("message_id"),
+                    "actions": post_event.get("actions", []),
+                    "label": "Follow-up tasks completed.",
+                }
+                yield "event: actionsComplete\n"
+                yield f"data: {json.dumps(payload)}\n\n"
+            elif post_event.get("type") == "actionsError":
+                payload = {
+                    "message_id": post_event.get("message_id"),
+                    "error": post_event.get("error", "Background workflow failed."),
+                }
+                yield "event: actionsError\n"
+                yield f"data: {json.dumps(payload)}\n\n"
 
     return StreamingHttpResponse(event_stream(), content_type="text/event-stream")
 
