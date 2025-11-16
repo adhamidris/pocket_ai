@@ -76,6 +76,9 @@ class McpOrchestratorService:
         final_assistant_message: dict[str, object] | None = None
         placeholder_sent = False
 
+        if on_status_change:
+            on_status_change({"code": "thinking", "label": "Thinking…"})
+
         # Phase 1: streaming + tools to obtain the final assistant answer.
         for _ in range(self.max_tool_iterations):
             payload = self.provider.chat(
@@ -105,7 +108,18 @@ class McpOrchestratorService:
                 # Surface placeholder + status when we transition into a knowledge read.
                 if self._is_knowledge_tool(tool_name):
                     if on_status_change:
-                        on_status_change("reading_document")
+                        if tool_name == "search_knowledge":
+                            raw_query = arguments.get("query")
+                            query = str(raw_query).strip() if raw_query is not None else ""
+                            label = f"Searching: {query[:80]}" if query else "Searching knowledge…"
+                            on_status_change({"code": "searching_knowledge", "label": label})
+                        elif tool_name == "read_document":
+                            raw_id = arguments.get("document_id")
+                            doc_id = str(raw_id).strip() if raw_id is not None else ""
+                            short_id = f"{doc_id[:8]}…" if doc_id else ""
+                            base_label = "Reading document"
+                            label = f"Reading: {short_id}" if short_id else base_label
+                            on_status_change({"code": "reading_document", "label": label})
                     if on_placeholder_response and not placeholder_sent:
                         placeholder_text = str(assistant_message.get("content") or "").strip()
                         if placeholder_text:
@@ -127,6 +141,23 @@ class McpOrchestratorService:
                 )
                 if self._is_knowledge_tool(tool_name):
                     self._record_knowledge_outputs(tool_context, tool_result)
+                    if tool_name == "read_document" and on_status_change:
+                        snippets = tool_result.get("snippets") if isinstance(tool_result, Mapping) else None
+                        if isinstance(snippets, list) and snippets:
+                            first = snippets[0]
+                            if isinstance(first, Mapping):
+                                label_source = (
+                                    first.get("public_label")
+                                    or first.get("title")
+                                    or first.get("source")
+                                )
+                                if isinstance(label_source, str) and label_source.strip():
+                                    on_status_change(
+                                        {
+                                            "code": "reading_document",
+                                            "label": f"Reading: {label_source.strip()[:80]}",
+                                        }
+                                    )
                 transcript.append(
                     {
                         "role": "tool",
@@ -152,6 +183,7 @@ class McpOrchestratorService:
                     conversation=conversation,
                     user_message=user_message,
                     answer_text=answer_text,
+                    on_status_change=on_status_change,
                 )
             except PromptGenerationError:
                 planner_payload = None
@@ -271,6 +303,7 @@ class McpOrchestratorService:
         conversation: Conversation,
         user_message: str,
         answer_text: str,
+        on_status_change: Callable[[str], None] | None = None,
     ) -> dict[str, object] | None:
         """
         Second, non-streaming pass that asks the MCP provider to propose
@@ -281,6 +314,9 @@ class McpOrchestratorService:
 
         if not self.provider:
             raise PromptGenerationError("MCP provider is not configured for planning.")
+
+        if on_status_change:
+            on_status_change({"code": "planning_actions", "label": "Planning follow-up actions…" })
 
         planner_messages = prompts.build_planner_messages(
             conversation=conversation,

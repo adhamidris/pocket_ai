@@ -225,7 +225,6 @@ class ChatPortalClient {
   }
 
   handleStreamEvent(eventType, data) {
-    // **ADD THE NEW CODE HERE - FIRST**
     if (eventType === "placeholder") {
       // Do NOT render a placeholder; only remember it for dedupe.
       try {
@@ -245,21 +244,35 @@ class ChatPortalClient {
       return;
     }
     
-    // EXISTING CODE CONTINUES HERE
     if (eventType === "status") {
       try {
         const payload = data ? JSON.parse(data) : null;
-        if (payload && payload.state) {
-          // Keep the typing indicator visible during background work
+        if (payload) {
+          const state = (payload.state || "").toString().trim();
+          const label = (payload.label || "").toString().trim();
+
           if (this.elements.typingIndicator) {
             this.elements.typingIndicator.classList.remove("hidden");
           }
-          if (payload.state === "reading_document") {
+
+          // Ensure we have a streaming bubble to attach the badge to.
+          if (state && state !== "responding") {
             this.ensureStreamingMessageNode();
+          }
+
+          if (state === "reading_document") {
+            // Knowledge read: we expect content to be revised after doc load.
             this.streamingRewritePending = true;
-            this.setStreamingPendingState("reading");    // shows: "Retrieving documents…"
-          } else if (payload.state === "responding") {
-            this.setStreamingPendingState("updating");
+            this.setStreamingPendingState("reading", label || "Reading documents…");
+          } else if (state === "searching_knowledge") {
+            // Surface search-specific label (e.g. "Searching: billing policy").
+            this.setStreamingPendingState("drafting", label || "Searching knowledge…");
+          } else if (state === "planning_actions") {
+            this.setStreamingPendingState("drafting", label || "Planning follow-up actions…");
+          } else if (state && state !== "responding") {
+            // Generic fallback for other states; skip explicit "responding"/"writing".
+            const fallbackLabel = label || this.formatStatus(state);
+            this.setStreamingPendingState("drafting", fallbackLabel);
           }
         }
       } catch (_err) {
@@ -545,14 +558,17 @@ class ChatPortalClient {
     this.streamingStatusTextEl = null;
   }
 
-  setStreamingPendingState(mode = "drafting") {
+  setStreamingPendingState(mode = "drafting", labelOverride) {
     if (!this.streamingMessageBubbleEl) return;
     const labelMap = {
       drafting: "Processing..",
       reading:  "Reading documents…",
       updating: "Updating details…",
     };
-    const label = labelMap[mode] || labelMap.drafting;
+    const label =
+      (labelOverride && labelOverride.toString().trim()) ||
+      labelMap[mode] ||
+      labelMap.drafting;
     this.streamingMessageBubbleEl.classList.add("opacity-80", "relative");
     let badge = this.streamingStatusEl;
     if (!badge) {

@@ -379,9 +379,32 @@ def stream_send(request: HttpRequest) -> StreamingHttpResponse:
         if chunk:
             stream_queue.put(chunk)
 
-    def on_status_change(state: str) -> None:
-        if state:
-            stream_queue.put({"type": "status", "state": state})
+    def on_status_change(state) -> None:
+        if not state:
+            return
+        code: str | None = None
+        label: str | None = None
+        meta: dict | None = None
+        if isinstance(state, str):
+            code = state.strip()
+        elif isinstance(state, dict):
+            raw_code = state.get("code") or state.get("state")
+            if isinstance(raw_code, str):
+                code = raw_code.strip()
+            raw_label = state.get("label")
+            if isinstance(raw_label, str):
+                label = raw_label.strip()
+            raw_meta = state.get("meta")
+            if isinstance(raw_meta, dict):
+                meta = raw_meta
+        if not code:
+            return
+        if not label:
+            label = code.replace("_", " ").title()
+        payload: dict[str, object] = {"type": "status", "state": code, "label": label}
+        if meta:
+            payload["meta"] = meta
+        stream_queue.put(payload)
 
     def on_placeholder_response(text: str) -> None:
         clean = (text or "").strip()
@@ -425,8 +448,18 @@ def stream_send(request: HttpRequest) -> StreamingHttpResponse:
                 break
             if isinstance(chunk, dict):
                 if chunk.get("type") == "status":
+                    state_value = chunk.get("state")
+                    label_value = chunk.get("label")
+                    data: dict[str, object] = {}
+                    if isinstance(state_value, str):
+                        data["state"] = state_value
+                    if isinstance(label_value, str):
+                        data["label"] = label_value
+                    meta_value = chunk.get("meta")
+                    if isinstance(meta_value, dict):
+                        data["meta"] = meta_value
                     yield "event: status\n"
-                    yield f"data: {json.dumps({'state': chunk.get('state')})}\n\n"
+                    yield f"data: {json.dumps(data)}\n\n"
                     continue
                 if chunk.get("type") == "placeholder":
                     placeholder_text = chunk.get("text") or ""
