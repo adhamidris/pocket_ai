@@ -628,6 +628,7 @@ class ChatPortalClient {
     if (this.workflowLocked) return;
     this.ensureStreamingMessageNode();
     if (!this.streamingStatusEl || !this.streamingStatusTextEl) return;
+    const formattedLabel = this.formatStatusLabel(labelOverride);
     const labelMap = {
       working: "Assistant is working…",
       drafting: "Processing…",
@@ -637,11 +638,9 @@ class ChatPortalClient {
       refining: "Refining response…",
       error: "Workflow issue detected.",
     };
-    const label =
-      (labelOverride && labelOverride.toString().trim()) ||
-      labelMap[mode] ||
-      labelMap.working;
-    this.streamingStatusTextEl.textContent = label;
+    const baseLabel = labelMap[mode] || labelMap.working;
+    const label = formattedLabel || baseLabel;
+    this.streamingStatusTextEl.innerHTML = label;
     this.streamingStatusEl.classList.remove("hidden");
     const isError = mode === "error";
     if (this.streamingStatusDotEl) {
@@ -671,6 +670,44 @@ class ChatPortalClient {
       this.streamingStatusDotEl.classList.remove("bg-destructive");
       this.streamingStatusDotEl.classList.add("bg-primary");
     }
+  }
+
+  formatStatusLabel(rawLabel) {
+    const text = (rawLabel || "").toString();
+    if (!text) return "";
+    const escape = (value = "") =>
+      value
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;")
+        .replace(/'/g, "&#39;");
+    const bracketPattern = /\[(.+?)\]/g;
+    let result = "";
+    let lastIndex = 0;
+    let match;
+    let hasBracket = false;
+    while ((match = bracketPattern.exec(text))) {
+      hasBracket = true;
+      if (match.index > lastIndex) {
+        result += escape(text.slice(lastIndex, match.index));
+      }
+      result += `<strong>${escape(match[1].trim())}</strong>`;
+      lastIndex = bracketPattern.lastIndex;
+    }
+    if (lastIndex < text.length) {
+      result += escape(text.slice(lastIndex));
+    }
+    if (hasBracket) {
+      return result;
+    }
+    const colonIndex = text.indexOf(":");
+    if (colonIndex !== -1 && colonIndex < text.length - 1) {
+      const prefix = text.slice(0, colonIndex + 1);
+      const subject = text.slice(colonIndex + 1);
+      return `${escape(prefix)} <strong>${escape(subject.trim())}</strong>`;
+    }
+    return escape(text);
   }
 
   markStreamFinished() {
