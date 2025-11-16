@@ -24,7 +24,6 @@ class ChatPortalClient {
       messages: container.querySelector("[data-chat-messages]"),
       sendForm: container.querySelector("[data-chat-send-form]"),
       stopButton: container.querySelector("[data-chat-stop]"),
-      workflowStatus: container.querySelector("[data-chat-workflow]"),
       csatForm: container.querySelector("[data-chat-csat-form]"),
       csatContainer: container.querySelector("[data-chat-csat]"),
       toastRoot: document.getElementById("toast-root"),
@@ -36,10 +35,12 @@ class ChatPortalClient {
     this.streamingMessageNode = null;
     this.streamingMessageBodyEl = null;
     this.streamingMessageBubbleEl = null;
+    this.streamingStatusEl = null;
+    this.streamingStatusTextEl = null;
+    this.streamingStatusDotEl = null;
     this.streamingBuffer = "";
     this.streamingRewritePending = false;
     this.markdownRenderer = this.createMarkdownRenderer();
-    this.workflowStatusTimer = null;
     this.workflowLocked = false;
     this.streamingActive = false;
     this.streamFinished = false;
@@ -91,7 +92,7 @@ class ChatPortalClient {
       this.awaitingReply = false;
       stopButton.disabled = true;
       this.workflowLocked = true;
-      this.hideWorkflowStatus();
+      this.clearStreamingStatus();
       this.streamFinished = true;
       this.resetStreamingState(true);
     });
@@ -148,7 +149,7 @@ class ChatPortalClient {
 
   async sendMessage(message) {
     if (!this.sessionToken) return;
-    this.hideWorkflowStatus();
+    this.clearStreamingStatus();
     this.resetStreamingState(true, false);
     this.workflowLocked = false;
     this.streamFinished = false;
@@ -234,9 +235,7 @@ class ChatPortalClient {
         if (text) {
           this.lastPlaceholderText = text;
           this.streamingDedupDone = false;
-          if (!this.workflowLocked) {
-            this.showWorkflowStatus("reading", text);
-          }
+          this.setStreamingStatus("reading", text);
         }
       } catch (_err) {
         // ignore malformed payloads
@@ -257,23 +256,19 @@ class ChatPortalClient {
           if (state === "reading_document") {
             // Knowledge read: we expect content to be revised after doc load.
             this.streamingRewritePending = true;
-            this.showWorkflowStatus("reading", label || "Reading documents…");
+            this.setStreamingStatus("reading", label || "Reading documents…");
           } else if (state === "searching_knowledge") {
             // Surface search-specific label (e.g. "Searching: billing policy").
-          if (!this.workflowLocked) {
-            this.showWorkflowStatus("searching", label || "Searching knowledge…");
-          }
-        } else if (state === "planning_actions") {
-          // Keep this internal; do not surface to the visitor.
-          return;
-        } else if (state === "responding") {
-            this.hideWorkflowStatus();
+            this.setStreamingStatus("searching", label || "Searching knowledge…");
+          } else if (state === "planning_actions") {
+            // Keep this internal; do not surface to the visitor.
+            return;
+          } else if (state === "responding") {
+            this.clearStreamingStatus();
           } else if (state && state !== "responding") {
             // Generic fallback for other states; skip explicit "responding"/"writing".
             const fallbackLabel = label || this.formatStatus(state);
-            if (!this.workflowLocked) {
-              this.showWorkflowStatus("working", fallbackLabel);
-            }
+            this.setStreamingStatus("working", fallbackLabel);
           }
         }
       } catch (_err) {
@@ -322,9 +317,9 @@ class ChatPortalClient {
           if (!this.workflowLocked) {
             if (!this.streamingActive) {
               this.streamingActive = true;
-              this.showWorkflowStatus("updating", "Updating details…");
+              this.setStreamingStatus("updating", "Updating details…");
             } else {
-              this.showWorkflowStatus("drafting", "Refining answer…");
+              this.setStreamingStatus("refining", "Refining response…");
             }
           }
           this.appendStreamingChunk(chunk);
@@ -339,10 +334,9 @@ class ChatPortalClient {
       try {
         const payload = data ? JSON.parse(data) : null;
         const label = payload && payload.label ? payload.label : "Follow-up tasks completed.";
-        this.showWorkflowStatus("complete", label);
-        this.hideWorkflowStatus(4000);
+        this.showToast("Workflow update", label);
       } catch (_err) {
-        this.hideWorkflowStatus(3000);
+        // ignore
       }
       return;
     }
@@ -351,11 +345,9 @@ class ChatPortalClient {
       try {
         const payload = data ? JSON.parse(data) : null;
         const message = payload && payload.error ? payload.error : "Background workflow failed.";
-        this.showWorkflowStatus("error", message);
-        this.hideWorkflowStatus(6000);
         this.showToast("Workflow issue", message, true);
       } catch (_err) {
-        this.hideWorkflowStatus();
+        // ignore
       }
       return;
     }
@@ -391,7 +383,7 @@ class ChatPortalClient {
     } finally {
       this.workflowLocked = true;
       this.streamingActive = false;
-      this.hideWorkflowStatus();
+      this.clearStreamingStatus();
       this.markStreamFinished();
     }
 }
@@ -530,7 +522,7 @@ class ChatPortalClient {
         this.streamingFinalBodyEl.innerHTML = "";
       }
       this.streamingRewritePending = false;
-      this.showWorkflowStatus("updating");
+      this.setStreamingStatus("updating");
     }
     this.streamingBuffer += chunk;
     if (this.streamingFinalBodyEl) {
@@ -555,8 +547,21 @@ class ChatPortalClient {
     this.streamingMessageBubbleEl = node.querySelector("[data-message-bubble]");
   
     if (this.streamingMessageBodyEl) {
-      // Single zone only: final body (streaming deltas)
       this.streamingMessageBodyEl.innerHTML = "";
+      const statusRow = document.createElement("div");
+      statusRow.dataset.streamingStatus = "true";
+      statusRow.className = "flex items-center gap-2 text-xs text-muted-foreground mb-2 hidden";
+      const statusDot = document.createElement("span");
+      statusDot.className = "inline-block h-2 w-2 rounded-full bg-primary animate-pulse";
+      const statusText = document.createElement("span");
+      statusText.textContent = "";
+      statusRow.appendChild(statusDot);
+      statusRow.appendChild(statusText);
+      this.streamingMessageBodyEl.appendChild(statusRow);
+      this.streamingStatusEl = statusRow;
+      this.streamingStatusTextEl = statusText;
+      this.streamingStatusDotEl = statusDot;
+
       const finalEl = document.createElement("div");
       finalEl.dataset.messageFinalBody = "true";
       finalEl.className = "space-y-2 leading-relaxed";
@@ -600,7 +605,7 @@ class ChatPortalClient {
       this.workflowLocked = true;
     }
     this.streamingActive = false;
-    this.hideWorkflowStatus();
+    this.clearStreamingStatus();
     if (removeNode && this.streamingMessageNode && this.streamingMessageNode.parentNode) {
       this.streamingMessageNode.parentNode.removeChild(this.streamingMessageNode);
     }
@@ -609,8 +614,54 @@ class ChatPortalClient {
     this.streamingMessageNode = null;
     this.streamingMessageBodyEl = null;
     this.streamingMessageBubbleEl = null;
+    this.streamingStatusEl = null;
+    this.streamingStatusTextEl = null;
+    this.streamingStatusDotEl = null;
     this.streamingBuffer = "";
     this.streamingRewritePending = false;
+  }
+
+  setStreamingStatus(mode = "working", labelOverride) {
+    if (this.workflowLocked) return;
+    this.ensureStreamingMessageNode();
+    if (!this.streamingStatusEl || !this.streamingStatusTextEl) return;
+    const labelMap = {
+      working: "Assistant is working…",
+      drafting: "Processing…",
+      reading: "Reading documents…",
+      searching: "Searching knowledge…",
+      updating: "Updating details…",
+      refining: "Refining response…",
+      error: "Workflow issue detected.",
+    };
+    const label =
+      (labelOverride && labelOverride.toString().trim()) ||
+      labelMap[mode] ||
+      labelMap.working;
+    this.streamingStatusTextEl.textContent = label;
+    this.streamingStatusEl.classList.remove("hidden");
+    if (this.streamingStatusDotEl) {
+      if (mode === "error") {
+        this.streamingStatusDotEl.classList.remove("bg-primary");
+        this.streamingStatusDotEl.classList.add("bg-destructive");
+      } else {
+        this.streamingStatusDotEl.classList.remove("bg-destructive");
+        this.streamingStatusDotEl.classList.add("bg-primary");
+      }
+    }
+  }
+
+  clearStreamingStatus() {
+    if (this.streamingStatusEl) {
+      this.streamingStatusEl.classList.add("hidden");
+    }
+    if (this.streamingStatusTextEl) {
+      this.streamingStatusTextEl.textContent = "";
+    }
+    if (this.streamingStatusDotEl) {
+      this.streamingStatusDotEl.classList.remove("bg-destructive");
+      this.streamingStatusDotEl.classList.add("bg-primary");
+    }
   }
 
   markStreamFinished() {
@@ -618,60 +669,6 @@ class ChatPortalClient {
     if (this.elements.stopButton) {
       this.elements.stopButton.disabled = true;
     }
-  }
-
-  showWorkflowStatus(mode = "working", labelOverride) {
-    const indicator = this.elements.workflowStatus;
-    if (!indicator) return;
-    if (this.workflowStatusTimer) {
-      clearTimeout(this.workflowStatusTimer);
-      this.workflowStatusTimer = null;
-    }
-    const labelMap = {
-      working: "Assistant is working…",
-      drafting: "Processing…",
-      reading: "Reading documents…",
-      searching: "Searching knowledge…",
-      updating: "Updating details…",
-      complete: "Follow-up tasks completed.",
-      error: "Workflow issue detected.",
-    };
-    const label =
-      (labelOverride && labelOverride.toString().trim()) ||
-      labelMap[mode] ||
-      labelMap.working;
-    if (mode === "error") {
-      indicator.classList.add("text-destructive");
-      indicator.classList.remove("text-muted-foreground");
-    } else {
-      indicator.classList.remove("text-destructive");
-      indicator.classList.add("text-muted-foreground");
-    }
-    indicator.textContent = label;
-    indicator.classList.remove("hidden");
-  }
-
-  hideWorkflowStatus(delayMs = 0) {
-    const indicator = this.elements.workflowStatus;
-    if (!indicator) return;
-    if (this.workflowStatusTimer) {
-      clearTimeout(this.workflowStatusTimer);
-      this.workflowStatusTimer = null;
-    }
-    const hide = () => {
-      indicator.textContent = "";
-      indicator.classList.add("hidden");
-      indicator.classList.remove("text-destructive");
-      indicator.classList.add("text-muted-foreground");
-    };
-    if (delayMs > 0) {
-      this.workflowStatusTimer = window.setTimeout(() => {
-        hide();
-        this.workflowStatusTimer = null;
-      }, delayMs);
-      return;
-    }
-    hide();
   }
 
   updateStatus(status) {
