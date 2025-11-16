@@ -17,6 +17,7 @@ from django.conf import settings
 
 from apps.accounts.models import AgentProfile
 from apps.conversations.models import Conversation, ConversationExtractionType
+from apps.services.llm_provider import PromptGenerationError
 from apps.services.ai_orchestrator import (
     AiOrchestratorPlan,
     PlannedAction,
@@ -75,6 +76,7 @@ class McpOrchestratorService:
         final_assistant_message: dict[str, object] | None = None
         placeholder_sent = False
 
+        # Phase 1: streaming + tools to obtain the final assistant answer.
         for _ in range(self.max_tool_iterations):
             payload = self.provider.chat(
                 transcript,
@@ -139,9 +141,24 @@ class McpOrchestratorService:
         if on_status_change:
             on_status_change("responding")
 
+        answer_text = ""
+        if final_assistant_message is not None:
+            answer_text = str(final_assistant_message.get("content") or "").strip()
+
+        planner_payload: dict[str, object] | None = None
+        if answer_text:
+            try:
+                planner_payload = self._run_planner(
+                    conversation=conversation,
+                    user_message=user_message,
+                    answer_text=answer_text,
+                )
+            except PromptGenerationError:
+                planner_payload = None
+
         plan = self._build_plan_from_assistant(
             conversation=conversation,
-            assistant_message=final_assistant_message or {},
+            assistant_message=self._merge_planner_into_assistant(final_assistant_message or {}, planner_payload),
             tool_context=tool_context,
         )
         del on_status_change, on_placeholder_response
@@ -158,7 +175,7 @@ class McpOrchestratorService:
         planned_actions = self._extract_planned_actions(conversation, assistant_message)
         extractions = self._extract_extractions(assistant_message)
         diagnostics = {
-            "llm_strategy": "mcp_tools",
+            "llm_strategy": "mcp_tools_stream_planner",
             "knowledge_reads": getattr(tool_context, "knowledge_reads", []),
             "tool_trace": getattr(tool_context, "tool_trace", []),
             "placeholder_response": assistant_message.get("placeholder_response"),
@@ -247,6 +264,56 @@ class McpOrchestratorService:
                 continue
             citations.append(snippet)
         return tuple(citations)
+
+    def _run_planner(
+        self,
+        *,
+        conversation: Conversation,
+        user_message: str,
+        answer_text: str,
+    ) -> dict[str, object] | None:
+        """
+        Second, non-streaming pass that asks the MCP provider to propose
+        actions and extractions in structured JSON form. The streamed
+        `answer_text` is treated as the final assistant reply shown to the
+        visitor; the planner focuses on backend intents only.
+        """
+
+        if not self.provider:
+            raise PromptGenerationError("MCP provider is not configured for planning.")
+
+        planner_messages = prompts.build_planner_messages(
+            conversation=conversation,
+            user_message=user_message,
+            answer_text=answer_text,
+        )
+        payload = self.provider.chat(planner_messages, tools=None, on_stream_delta=None)
+        if not isinstance(payload, dict):
+            return None
+        return self._coerce_assistant_message(payload)
+
+    @staticmethod
+    def _merge_planner_into_assistant(
+        assistant_message: Mapping[str, object],
+        planner_message: Mapping[str, object] | None,
+    ) -> Mapping[str, object]:
+        """
+        Combine the streamed assistant content with planner-produced metadata.
+
+        The assistant `content` (answer text) comes from the streaming pass,
+        while `actions`/`extractions` are injected from the planner payload.
+        """
+
+        if not planner_message:
+            return assistant_message
+        merged: dict[str, object] = dict(assistant_message)
+        if isinstance(planner_message.get("actions"), list):
+            merged["actions"] = planner_message.get("actions")
+        if isinstance(planner_message.get("extractions"), list):
+            merged["extractions"] = planner_message.get("extractions")
+        if "placeholder_response" in planner_message:
+            merged["placeholder_response"] = planner_message.get("placeholder_response")
+        return merged
 
     @staticmethod
     def _is_knowledge_tool(name: str) -> bool:

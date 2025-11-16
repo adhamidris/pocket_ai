@@ -346,7 +346,7 @@ def stream_send(request: HttpRequest) -> StreamingHttpResponse:
             )
         return payloads
 
-    def _response_chunks(text: str, chunk_size: int = 240) -> Iterable[str]:
+    def _response_chunks(text: str, chunk_size: int = 64) -> Iterable[str]:
         clean = (text or "").strip()
         if not clean:
             return

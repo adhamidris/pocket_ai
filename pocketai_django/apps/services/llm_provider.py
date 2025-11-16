@@ -47,6 +47,39 @@ class BaseMcpProvider(Protocol):
         ...
 
 
+def _emit_stream_chunks(emit: Callable[[str], None], text: str, chunk_size: int = 64) -> None:
+    """
+    Helper to emit a long string in smaller chunks so the chat portal can
+    surface incremental deltas even when the underlying provider call is
+    non-streaming.
+    """
+
+    clean = (text or "").strip()
+    if not clean:
+        return
+    words = clean.split()
+    if not words:
+        emit(clean)
+        return
+    current: list[str] = []
+    current_len = 0
+    for word in words:
+        if not current:
+            current.append(word)
+            current_len = len(word)
+            continue
+        projected = current_len + 1 + len(word)
+        if projected <= chunk_size:
+            current.append(word)
+            current_len = projected
+        else:
+            emit(" ".join(current))
+            current = [word]
+            current_len = len(word)
+    if current:
+        emit(" ".join(current))
+
+
 @dataclass
 class StubLLMProvider:
     """
@@ -573,6 +606,204 @@ class _ResponseTextExtractor:
         return str(content or "").strip()
 
 
+def _emit_stream_chunks(callback: Callable[[str], None], text: str, *, chunk_size: int = 64) -> None:
+    """
+    Emit a text payload to a streaming callback in word-safe chunks.
+
+    Mirrors the SSE chunking strategy used by the chat portal so the MCP
+    providers can surface incremental deltas even when the underlying HTTP
+    response is non-streaming.
+    """
+
+    clean = (text or "").strip()
+    if not clean:
+        return
+    words = clean.split()
+    if not words:
+        return
+
+    current: list[str] = []
+    current_len = 0
+    for word in words:
+        if not current:
+            current.append(word)
+            current_len = len(word)
+            continue
+        projected = current_len + 1 + len(word)
+        if projected <= chunk_size:
+            current.append(word)
+            current_len = projected
+        else:
+            try:
+                callback(" ".join(current))
+            except Exception:  # pragma: no cover - safeguard user callbacks
+                logger.exception("Streaming callback failed while emitting chunk.")
+            current = [word]
+            current_len = len(word)
+
+    if current:
+        try:
+            callback(" ".join(current))
+        except Exception:  # pragma: no cover - safeguard user callbacks
+            logger.exception("Streaming callback failed while emitting final chunk.")
+
+
+def _iter_sse_events(stream) -> Iterable[str]:
+    """
+    Yield decoded payload strings from a server-sent events stream.
+
+    The OpenAI-compatible APIs send newline-delimited `data:` entries followed by
+    a blank line. Each yielded string corresponds to the bytes after `data:`
+    (with `[DONE]` filtered out).
+    """
+
+    buffer: list[str] = []
+    while True:
+        raw_line = stream.readline()
+        if not raw_line:
+            if buffer:
+                yield "\n".join(buffer)
+            break
+        try:
+            line = raw_line.decode("utf-8")
+        except UnicodeDecodeError:
+            continue
+        if line.startswith("data:"):
+            value = line[5:]
+            if value.startswith(" "):
+                value = value[1:]
+            value = value.rstrip("\r\n")
+            if value == "[DONE]":
+                if buffer:
+                    yield "\n".join(buffer)
+                    buffer.clear()
+                break
+            if value:
+                buffer.append(value)
+            continue
+        if not line.strip():
+            if buffer:
+                yield "\n".join(buffer)
+                buffer.clear()
+            continue
+
+
+def _merge_stream_tool_call(
+    store: dict[int, dict[str, object]],
+    delta: Mapping[str, object],
+) -> None:
+    try:
+        idx = int(delta.get("index", 0))
+    except (TypeError, ValueError):
+        idx = 0
+    state = store.setdefault(
+        idx,
+        {"id": None, "type": None, "function": {"name": None, "arguments": ""}},
+    )
+    identifier = delta.get("id")
+    if isinstance(identifier, str) and identifier:
+        state["id"] = identifier
+    tool_type = delta.get("type")
+    if isinstance(tool_type, str) and tool_type:
+        state["type"] = tool_type
+    function_block = state.setdefault("function", {"name": None, "arguments": ""})
+    func_delta = delta.get("function") if isinstance(delta.get("function"), Mapping) else {}
+    func_name = func_delta.get("name")
+    if isinstance(func_name, str) and func_name:
+        function_block["name"] = func_name
+    func_args = func_delta.get("arguments")
+    if isinstance(func_args, str) and func_args:
+        existing = function_block.get("arguments") or ""
+        function_block["arguments"] = f"{existing}{func_args}"
+
+
+def _collapse_stream_tool_calls(store: dict[int, dict[str, object]]) -> list[dict[str, object]]:
+    collapsed: list[dict[str, object]] = []
+    for idx in sorted(store.keys()):
+        entry = store[idx]
+        func = entry.get("function") if isinstance(entry.get("function"), Mapping) else {}
+        collapsed.append(
+            {
+                "id": entry.get("id"),
+                "type": entry.get("type") or "function",
+                "function": {
+                    "name": func.get("name"),
+                    "arguments": func.get("arguments") or "",
+                },
+            }
+        )
+    return collapsed
+
+
+def _consume_chat_completion_stream(stream, on_stream_delta: Callable[[str], None] | None) -> dict[str, object]:
+    """
+    Assemble a chat-completions style payload from a streaming HTTP response.
+
+    The returned structure mirrors the non-streaming API response so callers can
+    reuse the same parsing logic. When `on_stream_delta` is provided, partial
+    assistant content is emitted as soon as it is available.
+    """
+
+    text_parts: list[str] = []
+    tool_calls: dict[int, dict[str, object]] = {}
+    role: str | None = None
+    finish_reason: str | None = None
+
+    for payload in _iter_sse_events(stream):
+        if not payload:
+            continue
+        try:
+            data = json.loads(payload)
+        except ValueError:
+            continue
+        choices = data.get("choices") or []
+        if not choices:
+            continue
+        choice = choices[0]
+        delta = choice.get("delta") or {}
+        finish = choice.get("finish_reason")
+        if isinstance(finish, str):
+            finish_reason = finish
+        role = delta.get("role") or role
+
+        content_block = delta.get("content")
+        if isinstance(content_block, list):
+            for chunk in content_block:
+                if not isinstance(chunk, Mapping):
+                    continue
+                text = chunk.get("text")
+                if not text:
+                    continue
+                text_parts.append(text)
+                if on_stream_delta:
+                    try:
+                        on_stream_delta(text)
+                    except Exception:  # pragma: no cover - safeguard user callbacks
+                        logger.exception("Streaming callback failed while emitting delta chunk.")
+        elif isinstance(content_block, str) and content_block:
+            text_parts.append(content_block)
+            if on_stream_delta:
+                try:
+                    on_stream_delta(content_block)
+                except Exception:  # pragma: no cover - safeguard user callbacks
+                    logger.exception("Streaming callback failed while emitting delta chunk.")
+
+        for tool_delta in delta.get("tool_calls") or []:
+            if isinstance(tool_delta, Mapping):
+                _merge_stream_tool_call(tool_calls, tool_delta)
+
+    assembled_text = "".join(text_parts).strip()
+    if (finish_reason == "tool_calls" or (tool_calls and not assembled_text)) and tool_calls:
+        message = {
+            "role": role or "assistant",
+            "tool_calls": _collapse_stream_tool_calls(tool_calls),
+        }
+    else:
+        message = {"role": role or "assistant", "content": assembled_text}
+
+    return {"choices": [{"message": message}]}
+
+
 class OpenAIToolsProvider(BaseMcpProvider):
     """
     Placeholder OpenAI provider for MCP tool-calling.
@@ -611,15 +842,18 @@ class OpenAIToolsProvider(BaseMcpProvider):
             "Authorization": f"Bearer {self.api_key}",
             "Content-Type": "application/json",
         }
+        streaming = bool(on_stream_delta)
         payload: dict[str, Any] = {
             "model": self.model,
             "messages": [dict(msg) for msg in messages],
             "temperature": self.temperature,
             "top_p": self.top_p,
-            # For MCP we still request structured JSON content for the final turn.
-            "response_format": OpenAIChatProvider._response_schema(),
-            "stream": False,
+            "stream": streaming,
         }
+        if not streaming:
+            # For non-streaming planning calls we request structured JSON content
+            # so the provider can return actions/extractions alongside text.
+            payload["response_format"] = OpenAIChatProvider._response_schema()
         if tools:
             payload["tools"] = list(tools)
             payload["tool_choice"] = "auto"
@@ -644,9 +878,14 @@ class OpenAIToolsProvider(BaseMcpProvider):
             method="POST",
         )
 
+        data: dict[str, Any]
         try:
             with urllib_request.urlopen(request, timeout=self.timeout) as resp:
-                raw_body = resp.read().decode("utf-8")
+                if streaming:
+                    data = _consume_chat_completion_stream(resp, on_stream_delta)
+                    raw_body = None
+                else:
+                    raw_body = resp.read().decode("utf-8")
         except urllib_error.HTTPError as exc:
             detail = exc.read().decode("utf-8", errors="ignore")
             raise PromptGenerationError(
@@ -655,11 +894,19 @@ class OpenAIToolsProvider(BaseMcpProvider):
         except urllib_error.URLError as exc:
             raise PromptGenerationError(f"OpenAI tools request failed: {exc}") from exc
 
+        if streaming:
+            # In streaming mode we return the assembled assistant message so the
+            # orchestrator can inspect tool_calls or final content.
+            try:
+                logger.debug("MCP LLM stream assembled payload: %s", json.dumps(data, ensure_ascii=False))
+            except Exception:  # pragma: no cover - log best effort
+                logger.debug("Failed to serialize streamed MCP payload for logging.")
+            return data
+
         try:
             data = json.loads(raw_body)
         except ValueError as exc:
             raise PromptGenerationError("OpenAI tools response was not valid JSON.") from exc
-
         logger.debug("MCP LLM raw response: %s", raw_body)
 
         choices = data.get("choices") or []
@@ -686,13 +933,9 @@ class OpenAIToolsProvider(BaseMcpProvider):
             parsed = json.loads(text)
         except json.JSONDecodeError:
             # Fallback: treat as plain text answer without actions/extractions.
-            if on_stream_delta:
-                on_stream_delta(text)
             return {"role": "assistant", "content": text, "actions": [], "extractions": []}
 
         response_text = str(parsed.get("response_text") or "").strip()
-        if on_stream_delta and response_text:
-            on_stream_delta(response_text)
 
         return {
             "role": "assistant",
@@ -742,12 +985,13 @@ class DeepSeekToolsProvider(BaseMcpProvider):
             "Authorization": f"Bearer {self.api_key}",
             "Content-Type": "application/json",
         }
+        streaming = bool(on_stream_delta)
         payload: dict[str, Any] = {
             "model": self.model,
             "messages": [dict(msg) for msg in messages],
             "temperature": self.temperature,
             "top_p": self.top_p,
-            "stream": False,
+            "stream": streaming,
         }
         if tools:
             payload["tools"] = list(tools)
@@ -773,9 +1017,14 @@ class DeepSeekToolsProvider(BaseMcpProvider):
             method="POST",
         )
 
+        data: dict[str, Any]
         try:
             with urllib_request.urlopen(request, timeout=self.timeout) as resp:
-                raw_body = resp.read().decode("utf-8")
+                if streaming:
+                    data = _consume_chat_completion_stream(resp, on_stream_delta)
+                    raw_body = None
+                else:
+                    raw_body = resp.read().decode("utf-8")
         except urllib_error.HTTPError as exc:
             detail = exc.read().decode("utf-8", errors="ignore")
             raise PromptGenerationError(
@@ -784,11 +1033,19 @@ class DeepSeekToolsProvider(BaseMcpProvider):
         except urllib_error.URLError as exc:
             raise PromptGenerationError(f"DeepSeek tools request failed: {exc}") from exc
 
+        if streaming:
+            # In streaming mode we return the assembled assistant message so the
+            # orchestrator can inspect tool_calls or final content.
+            try:
+                logger.debug("DeepSeek MCP stream assembled payload: %s", json.dumps(data, ensure_ascii=False))
+            except Exception:  # pragma: no cover - log best effort
+                logger.debug("Failed to serialize streamed DeepSeek payload for logging.")
+            return data
+
         try:
             data = json.loads(raw_body)
         except ValueError as exc:
             raise PromptGenerationError("DeepSeek tools response was not valid JSON.") from exc
-
         logger.debug("DeepSeek MCP raw response: %s", raw_body)
 
         choices = data.get("choices") or []
@@ -812,13 +1069,9 @@ class DeepSeekToolsProvider(BaseMcpProvider):
         try:
             parsed = json.loads(text)
         except json.JSONDecodeError:
-            if on_stream_delta:
-                on_stream_delta(text)
             return {"role": "assistant", "content": text, "actions": [], "extractions": []}
 
         response_text = str(parsed.get("response_text") or "").strip()
-        if on_stream_delta and response_text:
-            on_stream_delta(response_text)
 
         return {
             "role": "assistant",
