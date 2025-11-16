@@ -44,6 +44,8 @@ class ChatPortalClient {
     this.workflowLocked = false;
     this.streamingActive = false;
     this.streamFinished = false;
+    this.statusStyleInjected = false;
+    this.ensureStatusStyle();
   }
 
   async init() {
@@ -554,6 +556,7 @@ class ChatPortalClient {
       const statusDot = document.createElement("span");
       statusDot.className = "inline-block h-2 w-2 rounded-full bg-primary animate-pulse";
       const statusText = document.createElement("span");
+      statusText.classList.add("chat-portal-status-shimmer");
       statusText.textContent = "";
       statusRow.appendChild(statusDot);
       statusRow.appendChild(statusText);
@@ -640,13 +643,17 @@ class ChatPortalClient {
       labelMap.working;
     this.streamingStatusTextEl.textContent = label;
     this.streamingStatusEl.classList.remove("hidden");
+    const isError = mode === "error";
     if (this.streamingStatusDotEl) {
-      if (mode === "error") {
-        this.streamingStatusDotEl.classList.remove("bg-primary");
-        this.streamingStatusDotEl.classList.add("bg-destructive");
+      this.streamingStatusDotEl.classList.toggle("bg-primary", !isError);
+      this.streamingStatusDotEl.classList.toggle("bg-destructive", isError);
+    }
+    if (this.streamingStatusTextEl) {
+      this.streamingStatusTextEl.classList.toggle("text-destructive", isError);
+      if (isError) {
+        this.streamingStatusTextEl.classList.remove("chat-portal-status-shimmer");
       } else {
-        this.streamingStatusDotEl.classList.remove("bg-destructive");
-        this.streamingStatusDotEl.classList.add("bg-primary");
+        this.streamingStatusTextEl.classList.add("chat-portal-status-shimmer");
       }
     }
   }
@@ -657,6 +664,8 @@ class ChatPortalClient {
     }
     if (this.streamingStatusTextEl) {
       this.streamingStatusTextEl.textContent = "";
+      this.streamingStatusTextEl.classList.remove("text-destructive");
+      this.streamingStatusTextEl.classList.add("chat-portal-status-shimmer");
     }
     if (this.streamingStatusDotEl) {
       this.streamingStatusDotEl.classList.remove("bg-destructive");
@@ -669,6 +678,33 @@ class ChatPortalClient {
     if (this.elements.stopButton) {
       this.elements.stopButton.disabled = true;
     }
+  }
+
+  ensureStatusStyle() {
+    if (this.statusStyleInjected) return;
+    const styleId = "chat-portal-status-style";
+    if (document.getElementById(styleId)) {
+      this.statusStyleInjected = true;
+      return;
+    }
+    const style = document.createElement("style");
+    style.id = styleId;
+    style.textContent = `
+      @keyframes chat-portal-status-shimmer {
+        0% { background-position: 0% 50%; }
+        100% { background-position: 200% 50%; }
+      }
+      .chat-portal-status-shimmer {
+        background-image: linear-gradient(90deg, rgba(255,255,255,0.1), rgba(255,255,255,0.7), rgba(255,255,255,0.1));
+        background-size: 200% auto;
+        animation: chat-portal-status-shimmer 2.2s linear infinite;
+        -webkit-background-clip: text;
+        background-clip: text;
+        color: transparent;
+      }
+    `;
+    document.head.appendChild(style);
+    this.statusStyleInjected = true;
   }
 
   updateStatus(status) {
