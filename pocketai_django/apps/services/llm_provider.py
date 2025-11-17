@@ -877,6 +877,12 @@ class OpenAIToolsProvider(BaseMcpProvider):
         if tools:
             payload["tools"] = list(tools)
             payload["tool_choice"] = "auto"
+        max_tokens_env = os.getenv("OPENAI_MAX_TOKENS")
+        if max_tokens_env:
+            try:
+                payload["max_tokens"] = max(1, int(max_tokens_env))
+            except (TypeError, ValueError):
+                logger.warning("Invalid OPENAI_MAX_TOKENS value: %s", max_tokens_env)
 
         # Log a compact summary at INFO and full payload only at DEBUG.
         char_count, token_est = _message_char_stats(payload.get("messages") or [])
