@@ -2784,6 +2784,12 @@ class KnowledgeIngestionService:
                 metadata=page_payload.metadata,
             )
             page_lookup[page_payload.page_number] = page_obj
+            synopsis = self._page_synopsis_from_blocks(page_payload.blocks)
+            headings = [
+                block.section_heading.strip()
+                for block in page_payload.blocks
+                if isinstance(block.section_heading, str) and block.section_heading.strip()
+            ]
             page_summaries.append(
                 {
                     "page_number": page_payload.page_number,
@@ -2791,6 +2797,8 @@ class KnowledgeIngestionService:
                     "has_ocr_content": page_payload.has_ocr_content,
                     "width": page_payload.width,
                     "height": page_payload.height,
+                    "synopsis": synopsis,
+                    "headings": headings[:3],
                 }
             )
             for block_payload in page_payload.blocks:
@@ -2990,6 +2998,25 @@ class KnowledgeIngestionService:
             start = max(0, end - overlap)
 
         return segments
+
+    @staticmethod
+    def _page_synopsis_from_blocks(blocks: Sequence[PageBlockPayload], *, max_chars: int = 480) -> str:
+        if not blocks:
+            return ""
+        snippets: list[str] = []
+        for block in blocks:
+            text = (block.text or "").strip()
+            if not text:
+                continue
+            snippets.append(text)
+            combined = " ".join(snippets)
+            if len(combined) >= max_chars:
+                break
+        synopsis = " ".join(snippets).strip()
+        if len(synopsis) > max_chars:
+            synopsis = synopsis[:max_chars].rsplit(" ", 1)[0].rstrip()
+            synopsis = f"{synopsis}…"
+        return synopsis
 
 
     def _mark_job_completed(self, job: KnowledgeIngestionJob, *, extra: dict[str, Any] | None = None) -> None:

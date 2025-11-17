@@ -404,7 +404,7 @@ class ActionExecutionError(Exception):
     """Raised when an action cannot be executed."""
 
 
-MAX_INLINE_KNOWLEDGE_CHARS = 60000
+MAX_INLINE_KNOWLEDGE_CHARS = 12000
 KNOWLEDGE_READ_STATE_SUMMARY = "summary"
 KNOWLEDGE_READ_STATE_PREVIEW = "preview"
 KNOWLEDGE_READ_STATE_FULL = "full"

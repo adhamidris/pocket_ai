@@ -27,6 +27,14 @@ class ChunkReadBudgetExceeded(ToolConstraintError):
     """Raised when a tool tries to exceed the configured chunk-read budget."""
 
 
+class ChunkPageBudgetExceeded(ToolConstraintError):
+    """Raised when a tool exhausts the per-turn page window budget."""
+
+
+class CharacterBudgetExceeded(ToolConstraintError):
+    """Raised when the character/token budget is exhausted."""
+
+
 @dataclasses.dataclass
 class ToolExecutionContext:
     """
@@ -39,6 +47,12 @@ class ToolExecutionContext:
 
     max_chunk_reads_per_turn: int | None = None
     chunk_reads_used: int = 0
+    max_chunk_pages_per_turn: int | None = None
+    chunk_pages_used: int = 0
+    char_budget_per_turn: int | None = None
+    characters_used: int = 0
+    char_budget_per_minute: int | None = None
+    minute_budget_reserver: Callable[[int], None] | None = None
     ingestion_warnings: list[JsonDict] = dataclasses.field(default_factory=list)
     knowledge_results: list[dict[str, object]] = dataclasses.field(default_factory=list)
     knowledge_reads: list[dict[str, object]] = dataclasses.field(default_factory=list)
@@ -58,6 +72,32 @@ class ToolExecutionContext:
                 f"Chunk read budget exceeded (requested {projected}, max {self.max_chunk_reads_per_turn})."
             )
         self.chunk_reads_used = projected
+
+    def reserve_chunk_pages(self, count: int) -> None:
+        if count <= 0:
+            return
+        if self.max_chunk_pages_per_turn is None:
+            self.chunk_pages_used += count
+            return
+        projected = self.chunk_pages_used + count
+        if projected > self.max_chunk_pages_per_turn:
+            raise ChunkPageBudgetExceeded(
+                f"Chunk page budget exceeded (requested {projected}, max {self.max_chunk_pages_per_turn})."
+            )
+        self.chunk_pages_used = projected
+
+    def reserve_characters(self, count: int) -> None:
+        if count <= 0:
+            return
+        if self.char_budget_per_turn is not None:
+            projected = self.characters_used + count
+            if projected > self.char_budget_per_turn:
+                raise CharacterBudgetExceeded(
+                    f"Character budget exceeded (requested {projected}, max {self.char_budget_per_turn})."
+                )
+            self.characters_used = projected
+        if self.char_budget_per_minute and self.minute_budget_reserver:
+            self.minute_budget_reserver(count)
 
     def add_ingestion_warning(self, warning: Mapping[str, object]) -> None:
         """Record an ingestion warning so the orchestrator can surface it later."""

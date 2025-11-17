@@ -17,6 +17,26 @@ from apps.services.ai_prompt_builder import PromptBundle
 logger = logging.getLogger(__name__)
 
 
+def _message_char_stats(messages: Iterable[Mapping[str, object]]) -> tuple[int, int]:
+    """
+    Rough estimate of prompt size so we can log the payload each provider sees.
+    """
+
+    total_chars = 0
+    for message in messages:
+        content = message.get("content")
+        if isinstance(content, list):
+            for part in content:
+                if isinstance(part, Mapping):
+                    text = part.get("text")
+                    if isinstance(text, str):
+                        total_chars += len(text)
+        elif isinstance(content, str):
+            total_chars += len(content)
+    token_estimate = max(1, total_chars // 4) if total_chars else 0
+    return total_chars, token_estimate
+
+
 class PromptGenerationError(RuntimeError):
     """Raised when the LLM provider fails to respond."""
 
@@ -859,11 +879,14 @@ class OpenAIToolsProvider(BaseMcpProvider):
             payload["tool_choice"] = "auto"
 
         # Log a compact summary at INFO and full payload only at DEBUG.
+        char_count, token_est = _message_char_stats(payload.get("messages") or [])
         logger.info(
-            "MCP LLM request model=%s tools=%s messages=%s",
+            "MCP LLM request model=%s tools=%s messages=%s chars=%s tokens≈%s",
             self.model,
             [t.get("function", {}).get("name") for t in (tools or [])],
             len(payload.get("messages") or []),
+            char_count,
+            token_est,
         )
         try:
             logger.debug("MCP LLM request payload: %s", json.dumps(payload, ensure_ascii=False))
@@ -998,11 +1021,14 @@ class DeepSeekToolsProvider(BaseMcpProvider):
             payload["tool_choice"] = "auto"
 
         # Compact summary at INFO; full payload at DEBUG for troubleshooting.
+        char_count, token_est = _message_char_stats(payload.get("messages") or [])
         logger.info(
-            "DeepSeek MCP request model=%s tools=%s messages=%s",
+            "DeepSeek MCP request model=%s tools=%s messages=%s chars=%s tokens≈%s",
             self.model,
             [t.get("function", {}).get("name") for t in (tools or [])],
             len(payload.get("messages") or []),
+            char_count,
+            token_est,
         )
         try:
             logger.debug("DeepSeek MCP request payload: %s", json.dumps(payload, ensure_ascii=False))

@@ -340,7 +340,12 @@ class ChatPortalClient {
       }
       return;
     }
-    
+
+    if (eventType === "turnPersisted") {
+      this.handleTurnPersistedEvent(data);
+      return;
+    }
+
     if (!data && eventType !== "final") return;
     if (eventType !== "final") {
       if (eventType === "error") {
@@ -367,6 +372,11 @@ class ChatPortalClient {
         this.updateStatus(payload.session_status);
         this.updateCsatVisibility(payload.session_status);
       }
+      this.awaitingReply = false;
+      this.streamFinished = true;
+      this.updateSendButtonState(false);
+      this.setComposerAvailability(true);
+      this.updateComposerNotice(false);
     } catch (error) {
       console.warn("Failed to parse stream payload", error);
     } finally {
@@ -376,6 +386,23 @@ class ChatPortalClient {
       this.markStreamFinished();
     }
 }
+
+  handleTurnPersistedEvent(data) {
+    try {
+      const payload = data ? JSON.parse(data) : null;
+      if (!payload) return;
+      const text = payload.text ? payload.text.toString() : "";
+      if (text) {
+        this.updateLatestAssistantMessage(text);
+      }
+      if (payload.session_status) {
+        this.updateStatus(payload.session_status);
+        this.updateCsatVisibility(payload.session_status);
+      }
+    } catch (error) {
+      console.warn("Failed to parse persisted turn", error);
+    }
+  }
 
   connectEventStream() {
     if (!this.endpoints.events || !this.sessionToken) return;
@@ -588,6 +615,25 @@ class ChatPortalClient {
       this.appendMessage({ sender: "ai", body: text, sent_at: new Date().toISOString() });
     }
     this.resetStreamingState(false);
+  }
+
+  updateLatestAssistantMessage(text) {
+    if (!text || !this.elements.messages) return;
+    const bodies = Array.from(this.elements.messages.querySelectorAll("[data-message-body]"));
+    for (let idx = bodies.length - 1; idx >= 0; idx -= 1) {
+      const body = bodies[idx];
+      const wrapper = body.closest(".flex");
+      if (!wrapper || wrapper.classList.contains("flex-row-reverse")) {
+        continue;
+      }
+      const finalBody = body.querySelector("[data-message-final-body]");
+      if (finalBody) {
+        finalBody.innerHTML = this.renderMarkdown(text);
+      } else {
+        body.innerHTML = this.renderMarkdown(text);
+      }
+      break;
+    }
   }
 
   resetStreamingState(removeNode = false, lockWorkflow = true) {

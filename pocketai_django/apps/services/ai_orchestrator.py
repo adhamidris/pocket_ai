@@ -201,6 +201,7 @@ class KnowledgeSnippet:
     summary: str
     source: str
     content: str | None = None
+    content_mode: str | None = None
     public_label: str | None = None
     structured_tables: Sequence[Mapping[str, object]] = dataclasses.field(default_factory=tuple)
     issues: Sequence[Mapping[str, object]] = dataclasses.field(default_factory=tuple)
@@ -208,6 +209,7 @@ class KnowledgeSnippet:
     read_state: str = "summary"
     topic_hints: Sequence[str] = dataclasses.field(default_factory=tuple)
     is_pinned: bool = False
+    supplemental_sections: Sequence[Mapping[str, object]] = dataclasses.field(default_factory=tuple)
 
     # NEW: carry chunk identity alongside upload
     upload_id: uuid.UUID | None = None
@@ -226,6 +228,8 @@ class KnowledgeSnippet:
     structured_table_count: int = 0
     issue_count: int = 0
     structured_table_hint: str | None = None
+    page_number: int | None = None
+    page_mode: str | None = None
 
 
 @dataclasses.dataclass(frozen=True)
@@ -391,6 +395,27 @@ class AiOrchestratorPlan:
 
 
 @dataclasses.dataclass(frozen=True)
+class StreamingTurnContext:
+    conversation: Conversation
+    response_text: str
+    planned_actions: Sequence[PlannedAction]
+    extractions: Sequence[ExtractionPlan]
+    resolved_citations: Sequence[KnowledgeSnippet]
+    knowledge_payload: Sequence[Mapping[str, object]]
+    knowledge_reads: Sequence[Mapping[str, object]]
+    knowledge_status: str | None
+    knowledge_diagnostics: Mapping[str, object]
+    knowledge_loading: bool
+    placeholder_response: str | None
+    prompt_bundle: PromptBundle | None
+    tool_trace: Sequence[Mapping[str, object]]
+    cached_snippet_count: int
+    llm_source: str
+    streamed_chunks: Sequence[str]
+    plan: AiOrchestratorPlan | None = None
+
+
+@dataclasses.dataclass(frozen=True)
 class ActionExecutionResult:
     action: ActionType
     status: str
@@ -402,7 +427,7 @@ class ActionExecutionError(Exception):
     """Raised when an action cannot be executed."""
 
 
-MAX_INLINE_KNOWLEDGE_CHARS = 60000
+MAX_INLINE_KNOWLEDGE_CHARS = 12000
 KNOWLEDGE_READ_STATE_SUMMARY = "summary"
 KNOWLEDGE_READ_STATE_PREVIEW = "preview"
 KNOWLEDGE_READ_STATE_FULL = "full"
@@ -456,6 +481,13 @@ class KnowledgeSearchService:
         self.alias_result_cap = max(1, int(getattr(settings, "RAG_ALIAS_RESULTS_LIMIT", 4)))
         self.alias_neighbor_window = max(1, int(getattr(settings, "RAG_ALIAS_NEIGHBOR_WINDOW", 1)))
         self.alias_cache_ttl = max(60, int(getattr(settings, "RAG_ALIAS_CACHE_TTL", 900)))
+        self.inline_char_limit_default = max(
+            200,
+            int(getattr(settings, "RAG_MAX_INLINE_KNOWLEDGE_CHARS", MAX_INLINE_KNOWLEDGE_CHARS)),
+        )
+        self.chunk_neighbor_window_default = max(0, int(getattr(settings, "RAG_CHUNK_NEIGHBOR_WINDOW", 1)))
+        self.page_char_limit_default = max(500, int(getattr(settings, "RAG_PAGE_CHAR_LIMIT", 6000)))
+        self.page_summary_cache_limit = max(32, int(getattr(settings, "RAG_PAGE_SUMMARY_CACHE_SIZE", 128)))
         self.alias_fts_limit = max(5, int(getattr(settings, "RAG_ALIAS_FTS_LIMIT", 20)))
         self.alias_fts_threshold = float(getattr(settings, "RAG_ALIAS_FTS_THRESHOLD", 0.35))
         self.query_vector_cache_ttl = max(60, int(getattr(settings, "RAG_QUERY_VECTOR_CACHE_TTL", 300)))
@@ -493,6 +525,7 @@ class KnowledgeSearchService:
             "grid",
         }
         logger.info("emb.provider %s model=%s", type(self.embedding_service).__name__ if self.embedding_service else None, getattr(self.embedding_service, "model", None))
+        self._page_summary_cache: OrderedDict[uuid.UUID, dict[int, Mapping[str, object]]] = OrderedDict()
 
     def _business_override(self, business_profile, key: str, default: int | float) -> int | float:
         metadata = getattr(business_profile, "metadata", None)
@@ -522,6 +555,31 @@ class KnowledgeSearchService:
         override = self._business_override(business_profile, key, default)
         return max(1, int(override))
 
+    def inline_char_limit_for_business(self, business_profile, requested: int | None = None) -> int:
+        """
+        Resolve the inline char budget for a business without changing legacy defaults.
+        """
+
+        base = requested if requested is not None else self.inline_char_limit_default
+        override = self._business_override(business_profile, "inline_knowledge_char_limit", base)
+        limit = max(200, int(override))
+        return limit
+
+    def _neighbor_window_for_business(self, business_profile, requested: int | None = None) -> int:
+        """
+        Resolve the neighbor span for chunk reads so we can tune per business later.
+        """
+
+        base = requested if requested is not None else self.chunk_neighbor_window_default
+        override = self._business_override(business_profile, "chunk_neighbor_window", base)
+        window = max(0, int(override))
+        return window
+
+    def page_char_limit_for_business(self, business_profile, requested: int | None = None) -> int:
+        base = requested if requested is not None else self.page_char_limit_default
+        override = self._business_override(business_profile, "page_char_limit", base)
+        return max(200, int(override))
+
     def _window_cache_get(self, upload_id: uuid.UUID, start: int, end: int) -> list[KnowledgeUploadChunk] | None:
         key = (upload_id, start, end)
         cached = self._window_cache.get(key)
@@ -535,6 +593,51 @@ class KnowledgeSearchService:
         self._window_cache.move_to_end(key)
         if len(self._window_cache) > self.window_cache_limit:
             self._window_cache.popitem(last=False)
+
+    def _page_summary_entries(self, upload: KnowledgeUpload) -> dict[int, Mapping[str, object]]:
+        cached = self._page_summary_cache.get(upload.id)
+        if cached is not None:
+            self._page_summary_cache.move_to_end(upload.id)
+            return cached
+        metadata = upload.ingestion_metadata if isinstance(upload.ingestion_metadata, dict) else {}
+        exports = metadata.get("structured_exports") if isinstance(metadata, dict) else None
+        pages = exports.get("pages") if isinstance(exports, dict) else []
+        entries: dict[int, Mapping[str, object]] = {}
+        if isinstance(pages, list):
+            for item in pages:
+                if not isinstance(item, Mapping):
+                    continue
+                page_number = item.get("page_number")
+                try:
+                    page_index = int(page_number)
+                except (TypeError, ValueError):
+                    continue
+                entries[page_index] = item
+        self._page_summary_cache[upload.id] = entries
+        self._page_summary_cache.move_to_end(upload.id)
+        if len(self._page_summary_cache) > self.page_summary_cache_limit:
+            self._page_summary_cache.popitem(last=False)
+        return entries
+
+    def _page_synopsis_text(self, upload: KnowledgeUpload | None, page_number: int | None, fallback: str | None = None) -> str:
+        if not upload or not page_number:
+            return (fallback or "").strip()
+        entries = self._page_summary_entries(upload)
+        entry = entries.get(page_number)
+        if not entry:
+            return (fallback or "").strip()
+        synopsis = entry.get("synopsis")
+        if isinstance(synopsis, str) and synopsis.strip():
+            return synopsis.strip()
+        heading = entry.get("heading") or entry.get("section_heading")
+        if isinstance(heading, str) and heading.strip():
+            return heading.strip()
+        headings = entry.get("headings")
+        if isinstance(headings, list):
+            for candidate in headings:
+                if isinstance(candidate, str) and candidate.strip():
+                    return candidate.strip()
+        return (fallback or "").strip()
 
     def _structured_counts(self, upload: KnowledgeUpload) -> tuple[int, int]:
         cached = self._structured_count_cache.get(upload.id)
@@ -1852,6 +1955,7 @@ class KnowledgeSearchService:
                     read_state=KNOWLEDGE_READ_STATE_SUMMARY,
                     topic_hints=self._topic_hints(upload),
                     is_pinned=self._is_pinned(upload),
+                    content_mode="abstract",
                     entity_type=None,
                     entity_name=None,
                     entity_business=None,
@@ -1877,15 +1981,21 @@ class KnowledgeSearchService:
         *,
         result: ChunkResult | None = None,
         search_stage: str | None = None,
+        content_mode: str = "abstract",
     ) -> KnowledgeSnippet:
         upload = chunk.upload
         label = self._public_label(upload)
         chunk_number = (chunk.chunk_index or 0) + 1 if chunk.chunk_index is not None else None
         title = f"{label} – chunk {chunk_number}" if chunk_number else label or "Document"
         summary = self._summarize_chunk(chunk)
-        content, truncated = self._trim_with_flag(chunk.content, max_chars=self.search_preview_char_limit)
         chunk_metadata = chunk.metadata if isinstance(chunk.metadata, dict) else {}
-        read_state = self._read_state_for_content(content, chunk_metadata)
+        truncated = False
+        if content_mode == "abstract":
+            content = summary
+            read_state = KNOWLEDGE_READ_STATE_SUMMARY
+        else:
+            content, truncated = self._trim_with_flag(chunk.content, max_chars=self.search_preview_char_limit)
+            read_state = KNOWLEDGE_READ_STATE_PREVIEW if truncated else self._read_state_for_content(content, chunk_metadata)
         entity_type = chunk_metadata.get("entity_type")
         entity_name = chunk_metadata.get("entity_name")
         entity_business = chunk_metadata.get("entity_business")
@@ -1918,6 +2028,7 @@ class KnowledgeSearchService:
             summary=summary,
             source=upload.get_source_type_display(),
             content=content,
+            content_mode=content_mode,
             public_label=label,
             structured_tables=structured_preview,
             issues=tuple(),
@@ -2041,7 +2152,7 @@ class KnowledgeSearchService:
             .order_by("-updated_at")
         )
         snippets: list[KnowledgeSnippet] = []
-        limit = max_chars if max_chars is not None else MAX_INLINE_KNOWLEDGE_CHARS
+        limit = self.inline_char_limit_for_business(business_profile, max_chars)
         for upload in qs:
             trunc_metrics = self._truncation_metrics(upload)
             label = self._public_label(upload)
@@ -2052,20 +2163,33 @@ class KnowledgeSearchService:
                 content, truncated = ("", False)
             structured = self._structured_exports(upload)
             enriched_tables = self._serialize_structured_tables_with_rows(upload, max_tables=3, max_rows=5)
-            table_text = self._render_structured_tables_text(upload)
-            issue_text = self._render_issue_text(upload)
             table_count = len(enriched_tables) or len(structured["tables"])
             issue_count = len(structured["issues"])
-            supplemental_sections = [content]
-            if table_text:
-                supplemental_sections.append(table_text)
-            if issue_text:
-                supplemental_sections.append(issue_text)
-            combined_content = "\n\n".join(section for section in supplemental_sections if section)
-            doc_read_state = self._read_state_for_content(combined_content, {})
-            source_diag: dict[str, object] = {"load": "document"}
+            supplemental_sections: list[dict[str, object]] = []
+            if table_count:
+                supplemental_sections.append(
+                    {
+                        "type": "table_preview",
+                        "label": f"{table_count} structured table{'s' if table_count != 1 else ''}",
+                        "reference": "structured_tables",
+                        "item_count": table_count,
+                    }
+                )
+            if issue_count:
+                supplemental_sections.append(
+                    {
+                        "type": "ingestion_issues",
+                        "label": f"{issue_count} ingestion issue{'s' if issue_count != 1 else ''}",
+                        "reference": "issues",
+                        "item_count": issue_count,
+                    }
+                )
+            doc_read_state = KNOWLEDGE_READ_STATE_PREVIEW if truncated else self._read_state_for_content(content, {})
+            source_diag: dict[str, object] = {"load": "document", "inline_char_limit": limit}
             if trunc_metrics:
                 source_diag.update(trunc_metrics)
+            if truncated:
+                source_diag["partial_content"] = True
             partial_flag = bool(trunc_metrics.get("partial_index")) if trunc_metrics else False
             snippets.append(
                 KnowledgeSnippet(
@@ -2073,7 +2197,8 @@ class KnowledgeSearchService:
                     title=label,
                     summary=self._summarize_upload(upload),
                     source=upload.source_name or upload.source_type,
-                    content=combined_content,
+                    content=content,
+                    content_mode="full_document",
                     public_label=label,
                     structured_tables=enriched_tables or structured["tables"],
                     issues=structured["issues"],
@@ -2081,6 +2206,7 @@ class KnowledgeSearchService:
                     read_state=doc_read_state,
                     topic_hints=self._topic_hints(upload),
                     is_pinned=self._is_pinned(upload),
+                    supplemental_sections=tuple(supplemental_sections),
                     entity_type=None,
                     entity_name=None,
                     entity_business=None,
@@ -2099,6 +2225,143 @@ class KnowledgeSearchService:
         return tuple(snippets)
 
     # ADD this method inside KnowledgeSearchService
+
+    def _resolve_upload_page_chunk(
+        self,
+        *,
+        business_profile,
+        upload_id: uuid.UUID,
+        page_index: int,
+    ) -> KnowledgeUploadChunk | None:
+        """
+        Locate a chunk for the requested page index (1-based) within an upload.
+        Falls back to the closest available chunk when the requested index is out
+        of range.
+        """
+
+        target_index = max(0, page_index - 1)
+        base_qs = KnowledgeUploadChunk.objects.filter(
+            upload__business_profile=business_profile,
+            upload__status=KnowledgeStatus.ACTIVE,
+            upload_id=upload_id,
+        ).select_related("upload")
+
+        try:
+            chunk = base_qs.get(chunk_index=target_index)
+            return chunk
+        except KnowledgeUploadChunk.DoesNotExist:
+            pass
+
+        chunk = base_qs.filter(chunk_index__gte=target_index).order_by("chunk_index").first()
+        if chunk:
+            return chunk
+        return base_qs.order_by("-chunk_index").first()
+
+    def load_page_window(
+        self,
+        *,
+        business_profile,
+        upload_id: uuid.UUID | None = None,
+        chunk_id: uuid.UUID | None = None,
+        page_index: int = 1,
+        neighbor: int = 1,
+        mode: str = "excerpt",
+        token_budget: int | None = None,
+    ) -> Sequence[KnowledgeSnippet]:
+        """
+        Fetch a single chunk "page" with a tighter char budget so the LLM can
+        request additional windows via repeated tool calls.
+        """
+
+        inline_cap = self.inline_char_limit_for_business(business_profile)
+        page_cap = self.page_char_limit_for_business(business_profile)
+        normalized_mode = (mode or "excerpt").strip().lower()
+        effective_limit = inline_cap if normalized_mode == "full_page" else min(page_cap, inline_cap)
+        if token_budget is not None:
+            try:
+                approx_chars = max(200, int(token_budget) * 4)
+                effective_limit = max(200, min(effective_limit, approx_chars))
+            except (TypeError, ValueError):
+                pass
+        effective_neighbor = self._neighbor_window_for_business(business_profile, neighbor)
+
+        target_chunk_id = chunk_id
+        fallback_upload_id: uuid.UUID | None = None
+        if target_chunk_id is None and upload_id is not None:
+            chunk = self._resolve_upload_page_chunk(
+                business_profile=business_profile,
+                upload_id=upload_id,
+                page_index=page_index,
+            )
+            if chunk:
+                target_chunk_id = chunk.id
+            else:
+                fallback_upload_id = upload_id
+
+        if target_chunk_id:
+            snippets = self.load_chunk_contents(
+                business_profile=business_profile,
+                chunk_ids=[str(target_chunk_id)],
+                neighbor=effective_neighbor,
+                max_chars=effective_limit,
+            )
+        elif fallback_upload_id:
+            snippets = self.load_contents(
+                business_profile=business_profile,
+                knowledge_ids=[str(fallback_upload_id)],
+                max_chars=effective_limit,
+            )
+        else:
+            return tuple()
+
+        annotated: list[KnowledgeSnippet] = []
+        upload_lookup: dict[uuid.UUID, KnowledgeUpload] = {}
+        if normalized_mode != "full_page":
+            upload_ids = {snippet.upload_id for snippet in snippets if snippet.upload_id}
+            if upload_ids:
+                upload_lookup = {
+                    obj.id: obj
+                    for obj in KnowledgeUpload.objects.filter(id__in=upload_ids).only("id", "ingestion_metadata")
+                }
+        for snippet in snippets:
+            actual_page = page_index
+            if snippet.chunk_index is not None:
+                actual_page = max(1, int(snippet.chunk_index) + 1)
+            diagnostics = dict(snippet.source_diagnostics or {})
+            diagnostics.update(
+                {
+                    "page_request": True,
+                    "page_number": actual_page,
+                    "page_mode": normalized_mode,
+                    "page_char_limit": effective_limit,
+                    "neighbor_window": effective_neighbor,
+                }
+            )
+            content_value = snippet.content
+            read_state = snippet.read_state
+            truncated_flag = snippet.truncated
+            content_mode_value = "full_page" if normalized_mode == "full_page" else "excerpt"
+            if normalized_mode != "full_page":
+                upload_obj = upload_lookup.get(snippet.upload_id) if snippet.upload_id else None
+                synopsis = self._page_synopsis_text(upload_obj, actual_page, snippet.summary)
+                content_value = synopsis or snippet.summary
+                read_state = KNOWLEDGE_READ_STATE_SUMMARY
+                truncated_flag = False
+            else:
+                read_state = KNOWLEDGE_READ_STATE_PREVIEW if snippet.truncated else KNOWLEDGE_READ_STATE_FULL
+            annotated.append(
+                dataclasses.replace(
+                    snippet,
+                    content=content_value,
+                    content_mode=content_mode_value,
+                    read_state=read_state,
+                    truncated=truncated_flag,
+                    source_diagnostics=diagnostics,
+                    page_number=actual_page,
+                    page_mode=normalized_mode,
+                )
+            )
+        return tuple(annotated)
 
     def load_chunk_contents(
         self,
@@ -2141,7 +2404,8 @@ class KnowledgeSearchService:
 
         # For each upload, fetch neighbors for the selected indices
         stitched_snippets: list[KnowledgeSnippet] = []
-        limit = max_chars if max_chars is not None else MAX_INLINE_KNOWLEDGE_CHARS
+        limit = self.inline_char_limit_for_business(business_profile, max_chars)
+        configured_neighbor = self._neighbor_window_for_business(business_profile, neighbor)
 
         entity_chunk_cache: dict[tuple[uuid.UUID, str], list[KnowledgeUploadChunk]] = {}
         structured_cache: dict[uuid.UUID, tuple[Mapping[str, object], ...]] = {}
@@ -2155,7 +2419,7 @@ class KnowledgeSearchService:
             for ch in requested:
                 if ch.chunk_index is None:
                     continue
-                effective_neighbor = self._effective_neighbor_window(ch, neighbor)
+                effective_neighbor = self._effective_neighbor_window(ch, configured_neighbor)
                 request_entries.append((ch, effective_neighbor))
             if not request_entries:
                 continue
@@ -2212,16 +2476,22 @@ class KnowledgeSearchService:
                 label = getattr(upload, "display_name", None) or "Document"
                 summary = (trimmed.splitlines()[0] if trimmed else req.content or "No summary available.").strip()
                 chunk_metadata = req.metadata if isinstance(req.metadata, dict) else {}
-                read_state = self._read_state_for_content(trimmed, chunk_metadata)
+                read_state = KNOWLEDGE_READ_STATE_PREVIEW if truncated else self._read_state_for_content(trimmed, chunk_metadata)
                 structured_tables = structured_cache.get(upload.id) or tuple()
                 issues = issue_cache.get(upload.id) or tuple()
                 partial_flag = bool(trunc_metrics.get("partial_index")) if trunc_metrics else False
+                source_diag: dict[str, object] = {"neighbor_window": span, "inline_char_limit": limit}
+                if trunc_metrics:
+                    source_diag.update(trunc_metrics)
+                if truncated:
+                    source_diag["partial_content"] = True
                 snippet = KnowledgeSnippet(
                     id=req.id,  # keep id = CHUNK id so the ledger continues to reference this chunk
                     title=f"{label} – chunk {req.chunk_index}",
                     summary=summary[:280],
                     source=upload.get_source_type_display(),
                     content=trimmed,
+                    content_mode="preview",
                     public_label=label,
                     structured_tables=structured_tables,
                     issues=issues,
@@ -2232,6 +2502,7 @@ class KnowledgeSearchService:
                     upload_id=upload.id,
                     chunk_id=req.id,
                     chunk_index=req.chunk_index,
+                    page_number=(req.chunk_index + 1) if req.chunk_index is not None else None,
                     entity_type=chunk_metadata.get("entity_type"),
                     entity_name=chunk_metadata.get("entity_name"),
                     entity_business=chunk_metadata.get("entity_business"),
@@ -2240,7 +2511,7 @@ class KnowledgeSearchService:
                     search_stage="load_chunk",
                     confidence_score=1.0,
                     truncated=truncated,
-                    source_diagnostics={"neighbor_window": span, **trunc_metrics} if trunc_metrics else {"neighbor_window": span},
+                    source_diagnostics=source_diag,
                     partial_index=partial_flag,
                     structured_table_count=len(structured_tables),
                     issue_count=len(issues),
@@ -2252,7 +2523,7 @@ class KnowledgeSearchService:
 
 
     @staticmethod
-    def _structured_exports(upload: KnowledgeUpload, *, max_tables: int = 3) -> dict[str, tuple[Mapping[str, object], ...]]:
+    def _structured_exports(upload: KnowledgeUpload, *, max_tables: int = 3, max_pages: int | None = 50) -> dict[str, tuple[Mapping[str, object], ...]]:
         metadata = upload.ingestion_metadata or {}
         exports = metadata.get("structured_exports") if isinstance(metadata, dict) else None
         if not isinstance(exports, dict):
@@ -2272,7 +2543,7 @@ class KnowledgeSearchService:
         return {
             "tables": _normalize_list(tables, max_tables),
             "issues": _normalize_list(issues, 10),
-            "pages": _normalize_list(pages, 10),
+            "pages": _normalize_list(pages, max_pages),
         }
 
     @staticmethod
@@ -2620,7 +2891,7 @@ class AiOrchestratorService:
     # ------------------------------------------------------------------
     # Public API
 
-    def run_turn(
+    def stream_turn(
         self,
         *,
         conversation: Conversation,
@@ -2628,12 +2899,13 @@ class AiOrchestratorService:
         on_response_text_delta: Callable[[str], None] | None = None,
         on_status_change: Callable[[str], None] | None = None,
         on_placeholder_response: Callable[[str], None] | None = None,
-    ) -> AiOrchestratorPlan:
+        on_stream_complete: Callable[[], None] | None = None,
+    ) -> StreamingTurnContext:
         """
-        Build the orchestration plan for the latest customer message.
+        Execute the streaming phase of an orchestration turn.
 
-        Returns the AI response text placeholder, citations, action plans, and any
-        extracted entities (lead, appointment, etc.) that should be persisted.
+        Returns the partial context required to finalize the turn after all
+        response deltas have been emitted.
         """
 
         query = user_message.strip()
@@ -2819,6 +3091,18 @@ class AiOrchestratorService:
         final_plan: LlmPlan | None = None
         plan_candidate: LlmPlan | None = None
         max_turns = 3
+        stream_complete_notified = False
+
+        def _notify_stream_complete_once() -> None:
+            nonlocal stream_complete_notified
+            if stream_complete_notified:
+                return
+            stream_complete_notified = True
+            if on_stream_complete:
+                try:
+                    on_stream_complete()
+                except Exception:  # pragma: no cover - defensive
+                    logger.exception("stream_complete callback failed")
 
         for _ in range(max_turns):
             active_iteration_chunks = []
@@ -2836,6 +3120,7 @@ class AiOrchestratorService:
             plan_candidate = self._invoke_llm(prompt_bundle, on_response_text_delta=stream_callback)
             if not plan_candidate:
                 final_plan = None
+                _notify_stream_complete_once()
                 break
             ready_ids_in_payload = {
                 str(s.get("id"))
@@ -2903,6 +3188,7 @@ class AiOrchestratorService:
                     continue
 
                 final_plan = plan_candidate
+                _notify_stream_complete_once()
                 break
 
 
@@ -2938,6 +3224,7 @@ class AiOrchestratorService:
                 upload_id_set = set(map(str, pending_requests))
 
             fetched_snippets: list[KnowledgeSnippet] = []
+            inline_limit = self.knowledge_service.inline_char_limit_for_business(conversation.business_profile)
 
             # 1) Load chunk-focused spans (with small neighbor context)
             if chunk_id_set:
@@ -2946,6 +3233,7 @@ class AiOrchestratorService:
                     business_profile=conversation.business_profile,
                     chunk_ids=sorted(chunk_id_set),
                     neighbor=1,  # tweakable
+                    max_chars=inline_limit,
                 )
                 fetched_snippets.extend(chunk_snippets)
                 chunk_duration = int((time.perf_counter() - chunk_start) * 1000)
@@ -2967,6 +3255,7 @@ class AiOrchestratorService:
                 doc_snippets = self.knowledge_service.load_contents(
                     business_profile=conversation.business_profile,
                     knowledge_ids=remaining_upload_ids,
+                    max_chars=inline_limit,
                 )
                 fetched_snippets.extend(doc_snippets)
                 doc_duration = int((time.perf_counter() - doc_start) * 1000)
@@ -3032,6 +3321,7 @@ class AiOrchestratorService:
         else:
             final_plan = plan_candidate
 
+        _notify_stream_complete_once()
         metadata_snapshot["knowledge_cache"] = cached_entries
         if tool_trace:
             tool_trace_history.extend(tool_trace)
@@ -3087,77 +3377,134 @@ class AiOrchestratorService:
             _emit_stream_chunk(response_text)
 
 
-        streamed_text = "".join(streamed_chunks).strip()
+        placeholder_clean = placeholder_response.strip() if placeholder_response else None
+
+        return StreamingTurnContext(
+            conversation=conversation,
+            response_text=response_text,
+            planned_actions=tuple(planned_actions),
+            extractions=tuple(extractions),
+            resolved_citations=resolved_citations,
+            knowledge_payload=tuple(knowledge_payload),
+            knowledge_reads=tuple(knowledge_reads),
+            knowledge_status=knowledge_status,
+            knowledge_diagnostics=dict(knowledge_diagnostics or {}),
+            knowledge_loading=knowledge_loading,
+            placeholder_response=placeholder_clean,
+            prompt_bundle=prompt_bundle,
+            tool_trace=tuple(tool_trace),
+            cached_snippet_count=len(cached_entries),
+            llm_source=llm_source,
+            streamed_chunks=tuple(streamed_chunks),
+        )
+
+    def run_turn(
+        self,
+        *,
+        conversation: Conversation,
+        user_message: str,
+        on_response_text_delta: Callable[[str], None] | None = None,
+        on_status_change: Callable[[str], None] | None = None,
+        on_placeholder_response: Callable[[str], None] | None = None,
+        on_stream_complete: Callable[[], None] | None = None,
+    ) -> AiOrchestratorPlan:
+        """
+        Build the orchestration plan for the latest customer message.
+
+        This method is currently a thin wrapper that executes the streaming
+        phase, captures the resulting context, and then finalizes the response
+        into an AiOrchestratorPlan.
+        """
+
+        context = self.stream_turn(
+            conversation=conversation,
+            user_message=user_message,
+            on_response_text_delta=on_response_text_delta,
+            on_status_change=on_status_change,
+            on_placeholder_response=on_placeholder_response,
+            on_stream_complete=on_stream_complete,
+        )
+        return self.finalize_turn(context)
+
+    def finalize_turn(self, context: StreamingTurnContext) -> AiOrchestratorPlan:
+        """Finalize a completed streaming turn into a persistable plan."""
+
+        return self._finalize_streaming_context(context)
+
+    def _finalize_streaming_context(self, context: StreamingTurnContext) -> AiOrchestratorPlan:
+        response_text = context.response_text or ""
+        streamed_text = "".join(context.streamed_chunks).strip()
         if streamed_text:
             response_text = streamed_text
 
-        response_text = self._maybe_prepend_not_found_notice(response_text, knowledge_status=knowledge_status)
+        response_text = self._maybe_prepend_not_found_notice(
+            response_text,
+            knowledge_status=context.knowledge_status,
+        )
         response_text = self._maybe_append_ingestion_notice(
             response_text,
-            knowledge_payload,
-            knowledge_reads=knowledge_reads,
-            knowledge_status=knowledge_status,
+            context.knowledge_payload,
+            knowledge_reads=context.knowledge_reads,
+            knowledge_status=context.knowledge_status,
         )
 
-        # Derive an answer-level confidence signal from citations and search metadata.
         answer_confidence, confidence_reason = self._compute_answer_confidence(
-            resolved_citations,
-            knowledge_status=knowledge_status,
-            knowledge_diagnostics=knowledge_diagnostics,
-            knowledge_payload=knowledge_payload,
-            knowledge_reads=knowledge_reads,
+            context.resolved_citations,
+            knowledge_status=context.knowledge_status,
+            knowledge_diagnostics=context.knowledge_diagnostics,
+            knowledge_payload=context.knowledge_payload,
+            knowledge_reads=context.knowledge_reads,
         )
 
-        # Optionally refine the surface form based on confidence and ingestion health.
         response_text = self._refine_response_by_confidence(
             response_text,
             answer_confidence=answer_confidence,
-            knowledge_status=knowledge_status,
-            knowledge_payload=knowledge_payload,
-            knowledge_reads=knowledge_reads,
+            knowledge_status=context.knowledge_status,
+            knowledge_payload=context.knowledge_payload,
+            knowledge_reads=context.knowledge_reads,
         )
 
         ingestion_warnings = self._collect_ingestion_warnings(
-            knowledge_payload,
-            knowledge_reads=knowledge_reads,
+            context.knowledge_payload,
+            knowledge_reads=context.knowledge_reads,
         )
 
         response_stream_text = response_text
 
         diagnostics = {
-            "planned_action_count": len(planned_actions),
-            "extraction_count": len(extractions),
-            "citations": [snippet.title for snippet in resolved_citations],
-            "llm_strategy": llm_source,
-            "prompt_preview": prompt_bundle.system_prompt[:160] if prompt_bundle else "",
-            "transcript_messages": len(prompt_bundle.transcript) if prompt_bundle else 0,
-            "knowledge_reads": knowledge_reads,
-            "knowledge_loading": knowledge_loading,
+            "planned_action_count": len(context.planned_actions),
+            "extraction_count": len(context.extractions),
+            "citations": [snippet.title for snippet in context.resolved_citations],
+            "llm_strategy": context.llm_source,
+            "prompt_preview": context.prompt_bundle.system_prompt[:160] if context.prompt_bundle else "",
+            "transcript_messages": len(context.prompt_bundle.transcript) if context.prompt_bundle else 0,
+            "knowledge_reads": list(context.knowledge_reads),
+            "knowledge_loading": context.knowledge_loading,
             "response_stream_text": response_stream_text,
-            "cached_snippets": len(cached_entries),
-            "knowledge_status": knowledge_status,
+            "cached_snippets": context.cached_snippet_count,
+            "knowledge_status": context.knowledge_status,
             "answer_confidence": answer_confidence,
             "confidence_reason": confidence_reason,
-            "tool_trace": tool_trace,
+            "tool_trace": list(context.tool_trace),
         }
         if ingestion_warnings:
             diagnostics["ingestion_warnings"] = ingestion_warnings
-        if placeholder_response:
-            diagnostics["placeholder_response"] = placeholder_response.strip()
+        if context.placeholder_response:
+            diagnostics["placeholder_response"] = context.placeholder_response
 
         self._log_plan_summary(
-            conversation=conversation,
-            source=llm_source,
-            planned_actions=planned_actions,
-            extractions=extractions,
+            conversation=context.conversation,
+            source=context.llm_source,
+            planned_actions=context.planned_actions,
+            extractions=context.extractions,
             diagnostics=diagnostics,
         )
 
         return AiOrchestratorPlan(
             response_text=response_text,
-            citations=resolved_citations,
-            planned_actions=planned_actions,
-            extractions=extractions,
+            citations=tuple(context.resolved_citations),
+            planned_actions=context.planned_actions,
+            extractions=context.extractions,
             diagnostics=diagnostics,
             ingestion_warnings=tuple(ingestion_warnings),
         )
@@ -3817,6 +4164,7 @@ class AiOrchestratorService:
             "summary": snippet.summary,
             "source": snippet.source,
             "content": snippet.content or "",
+            "content_mode": snippet.content_mode if snippet.content_mode else ("full" if snippet.content else None),
             "public_label": snippet.public_label or "",
             "structuredTables": list(snippet.structured_tables or ()),
             "issues": list(snippet.issues or ()),
@@ -3824,7 +4172,14 @@ class AiOrchestratorService:
             "read_state": snippet.read_state or KNOWLEDGE_READ_STATE_SUMMARY,
             "topic_hints": list(snippet.topic_hints or ()),
             "is_pinned": bool(snippet.is_pinned),
+            "structured_table_count": int(snippet.structured_table_count or 0),
+            "issue_count": int(snippet.issue_count or 0),
+            "supplemental_sections": list(snippet.supplemental_sections or ()),
+            "page_number": snippet.page_number,
+            "page_mode": snippet.page_mode,
         }
+        if snippet.structured_table_hint:
+            payload["structured_table_hint"] = snippet.structured_table_hint
         if snippet.search_stage:
             payload["search_stage"] = snippet.search_stage
         if snippet.confidence_score is not None:

@@ -258,5 +258,7 @@ LOGGING = {
         },
         "apps.services.knowledge_ingestion": {"handlers": ["console"], "level": "INFO", "propagate": False},
         "apps.services.ai_orchestrator": {"handlers": ["console"], "level": "INFO", "propagate": False},
+        "apps.services.mcp.tools": {"handlers": ["console"], "level": "INFO", "propagate": False},
+        "apps.services.mcp.orchestrator": {"handlers": ["console"], "level": "INFO", "propagate": False},
     },
 }

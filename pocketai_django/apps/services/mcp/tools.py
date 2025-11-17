@@ -12,7 +12,10 @@ touching unrelated parts of the codebase.
 from __future__ import annotations
 
 import uuid
+from collections import Counter
 from functools import lru_cache
+import logging
+import math
 from typing import Any, Callable, Mapping, Sequence
 
 from django.db import models
@@ -24,7 +27,11 @@ from apps.services.ai_orchestrator import (
     AiOrchestratorService,
     KnowledgeSearchService,
 )
+from core.metrics import latency_monitor
 from .types import ToolExecutionContext
+
+
+logger = logging.getLogger(__name__)
 
 
 def _function_schema(
@@ -76,6 +83,33 @@ TOOL_DEFINITIONS: tuple[Mapping[str, object], ...] = (
             "document_id": {
                 "type": "string",
                 "description": "UUID of the upload or chunk returned by search_knowledge.",
+            },
+            "page": {
+                "type": "integer",
+                "minimum": 1,
+                "description": "Page window to load (1 = first chunk).",
+                "default": 1,
+            },
+            "offset": {
+                "type": "integer",
+                "description": "Optional zero-based chunk index override when requesting specific spans.",
+            },
+            "mode": {
+                "type": "string",
+                "enum": ["excerpt", "full_page"],
+                "description": "excerpt keeps responses small; full_page returns the entire inline limit.",
+                "default": "excerpt",
+            },
+            "token_budget": {
+                "type": "integer",
+                "description": "Approximate token budget for this page window (used to lower the char cap).",
+            },
+            "chunk_neighbor": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 3,
+                "description": "Number of neighbor chunks to stitch around the requested page.",
+                "default": 1,
             },
         },
         required=("document_id",),
@@ -283,6 +317,128 @@ def _serialize_snippets(snippets: Sequence[object]) -> list[dict[str, object]]:
     return payloads
 
 
+def _estimate_tokens(characters: int) -> int:
+    """
+    Rough heuristic to approximate tokens for logging purposes.
+    """
+
+    if characters <= 0:
+        return 0
+    return max(1, math.ceil(characters / 4))
+
+
+def _snippet_payload_metrics(snippets: Sequence[Mapping[str, object]]) -> dict[str, object]:
+    """
+    Compute lightweight telemetry for snippet payloads so we can benchmark prompt costs.
+    """
+
+    total_chars = 0
+    chunk_count = 0
+    upload_count = 0
+    table_rich = 0
+    issue_rich = 0
+    read_state_counter: Counter[str] = Counter()
+
+    for entry in snippets:
+        content = entry.get("content")
+        if not isinstance(content, str):
+            content = entry.get("summary") if isinstance(entry.get("summary"), str) else ""
+        total_chars += len(content or "")
+        if entry.get("chunk_id"):
+            chunk_count += 1
+        else:
+            upload_count += 1
+        structured_table_count = 0
+        issue_count = 0
+        try:
+            structured_table_count = int(entry.get("structured_table_count") or 0)
+            issue_count = int(entry.get("issue_count") or 0)
+        except (TypeError, ValueError):
+            structured_table_count = 0
+            issue_count = 0
+        if structured_table_count:
+            table_rich += 1
+        if issue_count:
+            issue_rich += 1
+        read_state = str(entry.get("read_state") or "summary")
+        read_state_counter[read_state] += 1
+
+    metrics = {
+        "snippet_count": len(snippets),
+        "chunk_snippet_count": chunk_count,
+        "upload_snippet_count": upload_count,
+        "char_count": total_chars,
+        "token_estimate": _estimate_tokens(total_chars),
+        "table_snippet_count": table_rich,
+        "issue_snippet_count": issue_rich,
+        "read_state_breakdown": dict(read_state_counter),
+    }
+    return metrics
+
+
+def _log_tool_metrics(
+    *,
+    tool: str,
+    conversation: Conversation,
+    snippets: Sequence[Mapping[str, object]],
+    extra: Mapping[str, object] | None = None,
+) -> dict[str, object]:
+    """
+    Emit structured telemetry for MCP tools without changing runtime behavior.
+    """
+    metrics = _snippet_payload_metrics(snippets)
+    if extra:
+        merged_extra = dict(extra)
+    else:
+        merged_extra = {}
+    merged_extra.update(metrics)
+    logger.info(
+        "mcp.tool.%s business=%s metrics=%s",
+        tool,
+        conversation.business_profile_id,
+        merged_extra,
+    )
+    tags = {
+        "tool": tool,
+        "business": str(conversation.business_profile_id),
+    }
+    latency_monitor.observe("mcp.tool.char_count", metrics.get("char_count"), tags=tags)
+    latency_monitor.observe("mcp.tool.snippet_count", metrics.get("snippet_count"), tags=tags)
+    return metrics
+
+
+def _maybe_throttle_full_page(
+    context: ToolExecutionContext,
+    business_profile,
+    service: KnowledgeSearchService,
+) -> dict[str, object] | None:
+    """
+    Determine if a full-page request should be downgraded to an excerpt.
+    """
+
+    limit = context.char_budget_per_turn
+    if limit is not None and limit > 0:
+        remaining = max(0, limit - context.characters_used)
+        inline_cap = service.inline_char_limit_for_business(business_profile)
+        threshold = max(1000, int(inline_cap * 0.5))
+        if remaining < threshold:
+            return {
+                "reason": "char_budget_low",
+                "remaining_characters": remaining,
+                "threshold": threshold,
+            }
+    page_limit = context.max_chunk_pages_per_turn
+    if page_limit is not None and page_limit > 0:
+        throttle_floor = max(1, int(page_limit * 0.7))
+        if context.chunk_pages_used > throttle_floor:
+            return {
+                "reason": "page_window_throttle",
+                "used_pages": context.chunk_pages_used,
+                "page_limit": page_limit,
+            }
+    return None
+
+
 def _build_ingestion_warnings(
     snippet_payloads: Sequence[Mapping[str, object]],
     knowledge_reads: Sequence[Mapping[str, object]],
@@ -363,6 +519,18 @@ def _search_knowledge_handler(
     for payload in snippet_payloads:
         context.add_knowledge_result(payload)
 
+    metrics = _log_tool_metrics(
+        tool="search_knowledge",
+        conversation=conversation,
+        snippets=snippet_payloads,
+        extra={
+            "status": result.status,
+            "limit": limit,
+            "query_length": len(query),
+        },
+    )
+    context.reserve_characters(int(metrics.get("char_count", 0)))
+
     return {
         "tool": "search_knowledge",
         "query": query,
@@ -380,6 +548,7 @@ def _read_document_handler(
 ) -> Mapping[str, object]:
     # Enforce per-turn chunk budget. Each read_document call counts as one unit.
     context.reserve_chunk_reads(1)
+    context.reserve_chunk_pages(1)
 
     raw_id = arguments.get("document_id")
     document_id = _coerce_str(raw_id).strip()
@@ -400,8 +569,52 @@ def _read_document_handler(
             "snippets": [],
         }
 
+    def _coerce_page(value: object) -> int:
+        try:
+            page_value = int(value)
+        except (TypeError, ValueError):
+            page_value = 1
+        return max(1, page_value)
+
+    page_index = _coerce_page(arguments.get("page"))
+    offset_value = arguments.get("offset")
+    if offset_value is not None:
+        try:
+            offset_int = int(offset_value)
+            page_index = max(1, offset_int + 1)
+        except (TypeError, ValueError):
+            pass
+
+    raw_mode = _coerce_str(arguments.get("mode")).strip().lower()
+    mode = raw_mode if raw_mode in {"excerpt", "full_page"} else "excerpt"
+
+    token_budget: int | None = None
+    raw_budget = arguments.get("token_budget")
+    if raw_budget is not None:
+        try:
+            token_budget = max(0, int(raw_budget))
+        except (TypeError, ValueError):
+            token_budget = None
+
+    neighbor = arguments.get("chunk_neighbor")
+    try:
+        neighbor_window = int(neighbor)
+    except (TypeError, ValueError):
+        neighbor_window = 1
+    neighbor_window = max(0, min(3, neighbor_window))
+
     business = conversation.business_profile
     service = _knowledge_service()
+    throttle_notice: dict[str, object] | None = None
+    if mode == "full_page":
+        throttle_notice = _maybe_throttle_full_page(context, business, service)
+        if throttle_notice:
+            mode = "excerpt"
+            logger.info(
+                "mcp.read_document.throttle business=%s reason=%s",
+                business.id,
+                throttle_notice.get("reason"),
+            )
 
     # Decide whether this identifier refers to a chunk or an upload.
     # We prefer chunk-focused reads when possible.
@@ -414,10 +627,13 @@ def _read_document_handler(
     snippets: list[Any] = []
     if chunk_exists:
         snippets.extend(
-            service.load_chunk_contents(
+            service.load_page_window(
                 business_profile=business,
-                chunk_ids=[str(identifier)],
-                neighbor=1,
+                chunk_id=identifier,
+                page_index=page_index,
+                neighbor=neighbor_window,
+                mode=mode,
+                token_budget=token_budget,
             )
         )
     else:
@@ -434,9 +650,13 @@ def _read_document_handler(
                 "snippets": [],
             }
         snippets.extend(
-            service.load_contents(
+            service.load_page_window(
                 business_profile=business,
-                knowledge_ids=[str(identifier)],
+                upload_id=identifier,
+                page_index=page_index,
+                neighbor=neighbor_window,
+                mode=mode,
+                token_budget=token_budget,
             )
         )
 
@@ -447,6 +667,8 @@ def _read_document_handler(
         read_entry = {
             "id": payload.get("id"),
             "label": payload.get("public_label") or payload.get("title") or "Knowledge",
+            "page": payload.get("page_number"),
+            "mode": payload.get("page_mode"),
         }
         knowledge_reads.append(read_entry)
         context.add_knowledge_read(read_entry)
@@ -455,13 +677,33 @@ def _read_document_handler(
     for warning in ingestion_warnings:
         context.add_ingestion_warning(warning)
 
+    metrics = _log_tool_metrics(
+        tool="read_document",
+        conversation=conversation,
+        snippets=snippet_payloads,
+        extra={
+            "document_id": document_id,
+            "chunk_reads_used": context.chunk_reads_used,
+            "chunk_pages_used": context.chunk_pages_used,
+            "mode": mode,
+            "neighbor": neighbor_window,
+            "page_index": page_index,
+            "token_budget": token_budget,
+            "snippet_count": len(snippet_payloads),
+        },
+    )
+    context.reserve_characters(int(metrics.get("char_count", 0)))
+
     return {
         "tool": "read_document",
         "document_id": document_id,
+        "page": page_index,
+        "mode": mode,
         "status": "ok",
         "snippets": snippet_payloads,
         "knowledge_reads": knowledge_reads,
         "ingestion_warnings": ingestion_warnings,
+        "throttle_notice": throttle_notice,
     }
 
 

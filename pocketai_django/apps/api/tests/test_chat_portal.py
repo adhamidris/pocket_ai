@@ -9,7 +9,7 @@ from django.test import RequestFactory, TestCase
 
 from apps.api import chat_portal
 from apps.conversations.models import ConversationSender
-from apps.services.ai_orchestrator import AiOrchestratorPlan, KnowledgeSnippet
+from apps.services.ai_orchestrator import AiOrchestratorPlan, KnowledgeSnippet, StreamingTurnContext
 
 
 class StubPortalService:
@@ -112,14 +112,46 @@ class ChatPortalStreamingTests(TestCase):
         )
 
         class StubOrchestrator:
-            def __init__(self, *_, **__):
-                self.plan = None
+            def __init__(self, plan, conversation):
+                self.plan = plan
+                self.conversation = conversation
 
-            def run_turn(self, **_):
+            def stream_turn(
+                self,
+                *,
+                conversation,
+                user_message,
+                on_response_text_delta=None,
+                on_stream_complete=None,
+                **_,
+            ):
+                if on_response_text_delta:
+                    on_response_text_delta(self.plan.response_text)
+                if on_stream_complete:
+                    on_stream_complete()
+                return StreamingTurnContext(
+                    conversation=conversation,
+                    response_text=self.plan.response_text,
+                    planned_actions=self.plan.planned_actions,
+                    extractions=self.plan.extractions,
+                    resolved_citations=self.plan.citations,
+                    knowledge_payload=tuple(),
+                    knowledge_reads=tuple(),
+                    knowledge_status="ok",
+                    knowledge_diagnostics={},
+                    knowledge_loading=False,
+                    placeholder_response=None,
+                    prompt_bundle=None,
+                    tool_trace=tuple(),
+                    cached_snippet_count=0,
+                    llm_source="provider",
+                    streamed_chunks=(self.plan.response_text,),
+                )
+
+            def finalize_turn(self, *_):
                 return self.plan
 
-        stub_orchestrator = StubOrchestrator()
-        stub_orchestrator.plan = self.plan
+        stub_orchestrator = StubOrchestrator(self.plan, self.stub_service.conversation)
 
         class StubDispatcher:
             def __init__(self, *_, **__):
@@ -136,12 +168,27 @@ class ChatPortalStreamingTests(TestCase):
             response = chat_portal.stream_send(request)
 
         chunks = list(response.streaming_content)
-        final_payload = None
-        for idx, chunk in enumerate(chunks):
-            if chunk.startswith("event: final"):
-                final_payload = json.loads(chunks[idx + 1].split("data: ", 1)[1])
-                break
-        self.assertIsNotNone(final_payload)
-        self.assertIn("answer_confidence", final_payload)
-        self.assertIn("ingestion_warnings", final_payload)
-        self.assertAlmostEqual(final_payload["answer_confidence"], 0.62)
+        events: list[tuple[str | None, str]] = []
+        current_event: str | None = None
+        for chunk in chunks:
+            if chunk.startswith("event:"):
+                current_event = chunk.split("event:", 1)[1].strip()
+            elif chunk.startswith("data:"):
+                payload = chunk.split("data:", 1)[1].strip()
+                events.append((current_event, payload))
+
+        final_event = next((data for evt, data in events if evt == "final"), None)
+        persisted_event = next((data for evt, data in events if evt == "turnPersisted"), None)
+        self.assertIsNotNone(final_event)
+        self.assertIsNotNone(persisted_event)
+
+        final_payload = json.loads(final_event)
+        self.assertTrue(final_payload.get("pending"))
+        self.assertIsNone(final_payload.get("message_id"))
+        self.assertEqual(final_payload.get("text"), self.plan.response_text)
+
+        persisted_payload = json.loads(persisted_event)
+        self.assertFalse(persisted_payload.get("pending"))
+        self.assertIn("answer_confidence", persisted_payload)
+        self.assertIn("ingestion_warnings", persisted_payload)
+        self.assertAlmostEqual(persisted_payload["answer_confidence"], 0.62)

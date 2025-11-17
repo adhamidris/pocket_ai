@@ -10,6 +10,7 @@ tool dispatch, and plan construction logic.
 from __future__ import annotations
 
 import json
+import logging
 import uuid
 from typing import Callable, Mapping
 
@@ -24,10 +25,23 @@ from apps.services.ai_orchestrator import (
     ExtractionPlan,
     KnowledgeSnippet,
     ActionType,
+    StreamingTurnContext,
 )
 
 from . import prompts, tools
-from .types import BaseMcpProvider, ToolExecutionContext
+from django.core.cache import cache
+
+from .types import (
+    BaseMcpProvider,
+    ToolExecutionContext,
+    ToolConstraintError,
+    ChunkReadBudgetExceeded,
+    ChunkPageBudgetExceeded,
+    CharacterBudgetExceeded,
+)
+
+
+logger = logging.getLogger(__name__)
 
 
 class McpOrchestratorService:
@@ -50,8 +64,22 @@ class McpOrchestratorService:
             1,
             int(self._business_override(agent.business_profile, "max_chunk_reads_per_turn", default_chunk_reads)),
         )
+        default_page_windows = max(1, int(getattr(settings, "RAG_MAX_CHUNK_PAGES_PER_TURN", 3)))
+        self.max_chunk_pages_per_turn = max(
+            1,
+            int(self._business_override(agent.business_profile, "max_chunk_pages_per_turn", default_page_windows)),
+        )
+        self.default_char_budget_per_turn = max(
+            4000,
+            int(getattr(settings, "RAG_MAX_CHAR_BUDGET_PER_TURN", 48000)),
+        )
+        self.default_char_budget_per_minute = max(
+            4000,
+            int(getattr(settings, "RAG_MAX_CHAR_BUDGET_PER_MINUTE", 64000)),
+        )
+        self.char_budget_window_seconds = max(30, int(getattr(settings, "RAG_CHAR_BUDGET_WINDOW_SECONDS", 60)))
 
-    def run_turn(
+    def _execute_turn(
         self,
         *,
         conversation: Conversation,
@@ -67,7 +95,16 @@ class McpOrchestratorService:
         """
 
         messages = prompts.build_messages(conversation=conversation, user_message=user_message)
-        tool_context = ToolExecutionContext(max_chunk_reads_per_turn=self.max_chunk_reads_per_turn)
+        char_turn_limit = self._char_budget_per_turn(conversation.business_profile)
+        char_minute_limit = self._char_budget_per_minute(conversation.business_profile)
+        minute_reserver = self._build_minute_budget_reserver(conversation.business_profile, char_minute_limit)
+        tool_context = ToolExecutionContext(
+            max_chunk_reads_per_turn=self.max_chunk_reads_per_turn,
+            max_chunk_pages_per_turn=self.max_chunk_pages_per_turn,
+            char_budget_per_turn=char_turn_limit,
+            char_budget_per_minute=char_minute_limit,
+            minute_budget_reserver=minute_reserver,
+        )
 
         if not self.provider:
             raise RuntimeError("MCP provider is not configured.")
@@ -126,12 +163,21 @@ class McpOrchestratorService:
                             on_placeholder_response(placeholder_text)
                             placeholder_sent = True
 
-                tool_result = tools.execute_tool(
-                    tool_name,
-                    arguments,
-                    conversation=conversation,
-                    context=tool_context,
-                )
+                try:
+                    tool_result = tools.execute_tool(
+                        tool_name,
+                        arguments,
+                        conversation=conversation,
+                        context=tool_context,
+                    )
+                except ToolConstraintError as exc:
+                    logger.warning(
+                        "mcp.tool.constraint_violation tool=%s conversation=%s error=%s",
+                        tool_name,
+                        conversation.id,
+                        exc,
+                    )
+                    tool_result = self._constraint_error_payload(tool_name, exc)
                 tool_context.add_tool_trace(
                     {
                         "tool": tool_name,
@@ -193,8 +239,84 @@ class McpOrchestratorService:
             assistant_message=self._merge_planner_into_assistant(final_assistant_message or {}, planner_payload),
             tool_context=tool_context,
         )
+        self._log_turn_metrics(conversation, tool_context)
         del on_status_change, on_placeholder_response
         return plan
+
+    def stream_turn(
+        self,
+        *,
+        conversation: Conversation,
+        user_message: str,
+        on_response_text_delta: Callable[[str], None] | None = None,
+        on_status_change: Callable[[str], None] | None = None,
+        on_placeholder_response: Callable[[str], None] | None = None,
+        on_stream_complete: Callable[[], None] | None = None,
+    ) -> StreamingTurnContext:
+        plan = self._execute_turn(
+            conversation=conversation,
+            user_message=user_message,
+            on_response_text_delta=on_response_text_delta,
+            on_status_change=on_status_change,
+            on_placeholder_response=on_placeholder_response,
+        )
+        llm_source = "provider"
+        if plan.diagnostics and plan.diagnostics.get("llm_strategy"):
+            llm_source = str(plan.diagnostics.get("llm_strategy"))
+        if on_stream_complete:
+            try:
+                on_stream_complete()
+            except Exception:  # pragma: no cover - defensive
+                pass
+        return StreamingTurnContext(
+            conversation=conversation,
+            response_text=plan.response_text,
+            planned_actions=tuple(plan.planned_actions),
+            extractions=tuple(plan.extractions),
+            resolved_citations=tuple(plan.citations),
+            knowledge_payload=tuple(),
+            knowledge_reads=tuple(),
+            knowledge_status=None,
+            knowledge_diagnostics=plan.diagnostics or {},
+            knowledge_loading=False,
+            placeholder_response=None,
+            prompt_bundle=None,
+            tool_trace=tuple(),
+            cached_snippet_count=0,
+            llm_source=llm_source,
+            streamed_chunks=tuple(),
+            plan=plan,
+        )
+
+    def finalize_turn(self, context: StreamingTurnContext) -> AiOrchestratorPlan:
+        return context.plan or AiOrchestratorPlan(
+            response_text=context.response_text,
+            citations=tuple(context.resolved_citations),
+            planned_actions=tuple(context.planned_actions),
+            extractions=tuple(context.extractions),
+            diagnostics=dict(context.knowledge_diagnostics),
+            ingestion_warnings=tuple(),
+        )
+
+    def run_turn(
+        self,
+        *,
+        conversation: Conversation,
+        user_message: str,
+        on_response_text_delta: Callable[[str], None] | None = None,
+        on_status_change: Callable[[str], None] | None = None,
+        on_placeholder_response: Callable[[str], None] | None = None,
+        on_stream_complete: Callable[[], None] | None = None,
+    ) -> AiOrchestratorPlan:
+        context = self.stream_turn(
+            conversation=conversation,
+            user_message=user_message,
+            on_response_text_delta=on_response_text_delta,
+            on_status_change=on_status_change,
+            on_placeholder_response=on_placeholder_response,
+            on_stream_complete=on_stream_complete,
+        )
+        return self.finalize_turn(context)
 
     def _build_plan_from_assistant(
         self,
@@ -268,6 +390,7 @@ class McpOrchestratorService:
                     summary=entry.get("summary") or entry.get("content") or "",
                     source=entry.get("source") or "",
                     content=entry.get("content"),
+                    content_mode=entry.get("content_mode"),
                     public_label=entry.get("public_label"),
                     structured_tables=entry.get("structuredTables") or (),
                     issues=entry.get("issues") or (),
@@ -275,6 +398,7 @@ class McpOrchestratorService:
                     read_state=entry.get("read_state") or "summary",
                     topic_hints=entry.get("topic_hints") or (),
                     is_pinned=bool(entry.get("pin")),
+                    supplemental_sections=entry.get("supplemental_sections") or (),
                     upload_id=uuid.UUID(entry["upload_id"]) if entry.get("upload_id") else None,
                     chunk_id=uuid.UUID(entry["chunk_id"]) if entry.get("chunk_id") else None,
                     chunk_index=entry.get("chunk_index"),
@@ -291,6 +415,8 @@ class McpOrchestratorService:
                     structured_table_count=entry.get("structured_table_count") or 0,
                     issue_count=entry.get("issue_count") or 0,
                     structured_table_hint=entry.get("structured_table_hint"),
+                    page_number=entry.get("page_number"),
+                    page_mode=entry.get("page_mode"),
                 )
             except Exception:
                 continue
@@ -394,6 +520,19 @@ class McpOrchestratorService:
             return message
         return payload
 
+    @staticmethod
+    def _log_turn_metrics(conversation: Conversation, context: ToolExecutionContext) -> None:
+        logger.info(
+            "mcp.turn.metrics business=%s conversation=%s tools=%s knowledge_reads=%s chunk_reads=%s chunk_pages=%s characters=%s",
+            conversation.business_profile_id,
+            conversation.id,
+            len(context.tool_trace),
+            len(context.knowledge_reads),
+            context.chunk_reads_used,
+            context.chunk_pages_used,
+            context.characters_used,
+        )
+
     def _business_override(self, business_profile, key: str, default: int | float) -> int | float:
         metadata = getattr(business_profile, "metadata", None)
         overrides = metadata.get(self.business_override_key) if isinstance(metadata, dict) else None
@@ -406,6 +545,65 @@ class McpOrchestratorService:
             except (TypeError, ValueError):
                 return default
         return default
+
+    def _char_budget_per_turn(self, business_profile) -> int | None:
+        limit = int(self._business_override(business_profile, "char_budget_per_turn", self.default_char_budget_per_turn))
+        return limit if limit > 0 else None
+
+    def _char_budget_per_minute(self, business_profile) -> int | None:
+        limit = int(
+            self._business_override(business_profile, "char_budget_per_minute", self.default_char_budget_per_minute)
+        )
+        return limit if limit > 0 else None
+
+    def _build_minute_budget_reserver(self, business_profile, limit: int | None):
+        if not limit:
+            return None
+        window = self.char_budget_window_seconds
+        cache_key = f"rag:char_minute:{business_profile.id}"
+
+        def _reserve(count: int) -> None:
+            if count <= 0:
+                return
+            current = cache.get(cache_key)
+            if current is None:
+                if count > limit:
+                    raise CharacterBudgetExceeded(
+                        f"Per-minute character budget exceeded (requested {count}, max {limit})."
+                    )
+                cache.set(cache_key, count, timeout=window)
+                return
+            new_total = int(current) + count
+            if new_total > limit:
+                raise CharacterBudgetExceeded(
+                    f"Per-minute character budget exceeded (requested {new_total}, max {limit})."
+                )
+            cache.set(cache_key, new_total, timeout=window)
+
+        return _reserve
+
+    @staticmethod
+    def _constraint_error_payload(tool_name: str, exc: ToolConstraintError) -> Mapping[str, object]:
+        if isinstance(exc, CharacterBudgetExceeded):
+            code = "char_budget_exceeded"
+            hint = "Character budget exhausted; continue with existing excerpts or respond."
+        elif isinstance(exc, ChunkPageBudgetExceeded):
+            code = "page_budget_exceeded"
+            hint = "Page window budget exhausted; summarize what you already have."
+        elif isinstance(exc, ChunkReadBudgetExceeded):
+            code = "chunk_read_budget_exceeded"
+            hint = "Chunk read budget exhausted; proceed without additional reads."
+        else:
+            code = "constraint_violation"
+            hint = "Constraint violated."
+        return {
+            "tool": tool_name,
+            "status": "constraint_error",
+            "error": str(exc),
+            "error_code": code,
+            "hint": hint,
+            "snippets": [],
+        }
 
     @staticmethod
     def _tool_name(tool_call: Mapping[str, object]) -> str:

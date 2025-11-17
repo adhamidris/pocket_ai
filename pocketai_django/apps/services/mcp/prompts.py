@@ -28,8 +28,8 @@ def build_system_message(agent: AgentProfile) -> str:
     tool_section = textwrap.dedent(
         """
         ### Tool Usage Guidance
-        - `search_knowledge`: Run when you need fresh snippets tied to the visitor's request. Prefer concise queries referencing identifiers or product names the visitor provided.
-        - `read_document`: Use only for snippets still marked summary-only/preview or when you must cite precise numbers/examples not included in the snippet summary. Request the exact `document_id` returned by `search_knowledge`.
+        - `search_knowledge`: Run when you need fresh snippets tied to the visitor's request. It returns short abstracts + chunk IDs, so plan to follow up with `read_document` if you still need details.
+        - `read_document`: Default to `mode=\"excerpt\"` with a `page` number to fetch a per-page synopsis. Only escalate to `mode=\"full_page\"` when the excerpt still lacks the exact number/table you must cite.
         - Case + lead tools: Mirror the Case Management Mandate. Only create/update cases when business context exists and keep payloads aligned with the contract.
         - Customer tools: Whenever a visitor shares phone/email, capture it immediately via `create_customer`. Use `update_customer` only when the visitor explicitly confirms a profile change.
         - Escalation: Call `flag_escalation` when policies prohibit action, a document is missing, or the visitor explicitly requests human follow-up.
