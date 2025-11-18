@@ -57,7 +57,7 @@ class McpOrchestratorService:
         self.agent = agent
         self.provider = provider
         self.tool_definitions = tools.TOOL_DEFINITIONS
-        self.max_tool_iterations = 6
+        self.max_tool_iterations = int(getattr(settings, "MCP_MAX_TOOL_ITERATIONS", 10))
         self.business_override_key = getattr(settings, "RAG_BUSINESS_OVERRIDE_KEY", "rag_overrides")
         default_chunk_reads = max(1, int(getattr(settings, "RAG_MAX_CHUNK_READS_PER_TURN", 3)))
         self.max_chunk_reads_per_turn = max(
