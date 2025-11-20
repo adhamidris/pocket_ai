@@ -11,18 +11,37 @@ from typing import Any, Callable, Iterable, Mapping, Protocol
 from urllib import error as urllib_error
 from urllib import request as urllib_request
 
+try:  # optional dependency for accurate token estimates
+    import tiktoken  # type: ignore
+except Exception:  # pragma: no cover - optional
+    tiktoken = None
+
 from apps.services.ai_prompt_builder import PromptBundle
 
 
 logger = logging.getLogger(__name__)
 
 
-def _message_char_stats(messages: Iterable[Mapping[str, object]]) -> tuple[int, int]:
+def _select_encoder(model_name: str | None):
+    if not tiktoken:
+        return None
+    try:
+        return tiktoken.encoding_for_model(model_name) if model_name else tiktoken.get_encoding("cl100k_base")
+    except Exception:
+        try:
+            return tiktoken.get_encoding("cl100k_base")
+        except Exception:
+            return None
+
+
+def _message_char_stats(messages: Iterable[Mapping[str, object]], model: str | None = None) -> tuple[int, int]:
     """
-    Rough estimate of prompt size so we can log the payload each provider sees.
+    Estimate prompt size/tokens so we can log payloads. Falls back to chars/4 when tiktoken is unavailable.
     """
 
     total_chars = 0
+    total_tokens = 0
+    encoder = _select_encoder(model)
     for message in messages:
         content = message.get("content")
         if isinstance(content, list):
@@ -31,10 +50,42 @@ def _message_char_stats(messages: Iterable[Mapping[str, object]]) -> tuple[int, 
                     text = part.get("text")
                     if isinstance(text, str):
                         total_chars += len(text)
+                        if encoder:
+                            try:
+                                total_tokens += len(encoder.encode(text))
+                            except Exception:
+                                pass
         elif isinstance(content, str):
             total_chars += len(content)
-    token_estimate = max(1, total_chars // 4) if total_chars else 0
-    return total_chars, token_estimate
+            if encoder:
+                try:
+                    total_tokens += len(encoder.encode(content))
+                except Exception:
+                    pass
+    if not encoder:
+        total_tokens = max(1, total_chars // 4) if total_chars else 0
+    return total_chars, total_tokens
+
+
+def _estimate_text_tokens(text: str, model: str | None = None) -> int:
+    encoder = _select_encoder(model)
+    if not text:
+        return 0
+    if encoder:
+        try:
+            return len(encoder.encode(text))
+        except Exception:
+            pass
+    return max(1, len(text) // 4)
+
+
+def _log_usage(label: str, model: str | None, usage: Mapping[str, object] | None) -> None:
+    if not usage:
+        return
+    prompt = usage.get("prompt_tokens")
+    completion = usage.get("completion_tokens")
+    total = usage.get("total_tokens")
+    logger.info("%s usage model=%s prompt=%s completion=%s total=%s", label, model, prompt, completion, total)
 
 
 class PromptGenerationError(RuntimeError):
@@ -188,6 +239,7 @@ class OpenAIChatProvider:
         except ValueError as exc:
             raise PromptGenerationError("OpenAI response was not valid JSON.") from exc
 
+        _log_usage("OpenAIChat", self.model, data.get("usage") if isinstance(data, Mapping) else None)
         logger.info("LLM raw response: %s", raw_body)
 
         content = self._extract_content(data)
@@ -316,6 +368,10 @@ class DeepSeekChatProvider(OpenAIChatProvider):
             )
         except Exception as exc:
             raise PromptGenerationError(f"DeepSeek request failed: {exc}") from exc
+        try:
+            _log_usage("DeepSeekChat", self.model, getattr(response, "usage", None))
+        except Exception:
+            pass
         return self._stringify_message_content(getattr(response.choices[0], "message", None))
 
     def _generate_streaming(self, messages: list[Mapping[str, str]], on_stream_delta: Callable[[str], None]) -> str:
@@ -885,7 +941,7 @@ class OpenAIToolsProvider(BaseMcpProvider):
                 logger.warning("Invalid OPENAI_MAX_TOKENS value: %s", max_tokens_env)
 
         # Log a compact summary at INFO and full payload only at DEBUG.
-        char_count, token_est = _message_char_stats(payload.get("messages") or [])
+        char_count, token_est = _message_char_stats(payload.get("messages") or [], self.model)
         logger.info(
             "MCP LLM request model=%s tools=%s messages=%s chars=%s tokens≈%s",
             self.model,
@@ -930,6 +986,18 @@ class OpenAIToolsProvider(BaseMcpProvider):
                 logger.debug("MCP LLM stream assembled payload: %s", json.dumps(data, ensure_ascii=False))
             except Exception:  # pragma: no cover - log best effort
                 logger.debug("Failed to serialize streamed MCP payload for logging.")
+            try:
+                message = (data.get("choices") or [{}])[0].get("message") if isinstance(data, Mapping) else {}
+                content = ""
+                if isinstance(message, Mapping):
+                    raw_content = message.get("content")
+                    if isinstance(raw_content, str):
+                        content = raw_content
+                out_tokens = _estimate_text_tokens(content, self.model) if content else 0
+                if out_tokens:
+                    logger.info("MCP LLM stream response model=%s tokens≈%s", self.model, out_tokens)
+            except Exception:
+                logger.debug("Failed to log streaming token estimate.")
             return data
 
         try:
@@ -938,6 +1006,7 @@ class OpenAIToolsProvider(BaseMcpProvider):
             raise PromptGenerationError("OpenAI tools response was not valid JSON.") from exc
         logger.debug("MCP LLM raw response: %s", raw_body)
 
+        _log_usage("OpenAITools", self.model, data.get("usage") if isinstance(data, Mapping) else None)
         choices = data.get("choices") or []
         if not choices:
             raise PromptGenerationError("OpenAI tools response did not include choices.")
@@ -1027,7 +1096,7 @@ class DeepSeekToolsProvider(BaseMcpProvider):
             payload["tool_choice"] = "auto"
 
         # Compact summary at INFO; full payload at DEBUG for troubleshooting.
-        char_count, token_est = _message_char_stats(payload.get("messages") or [])
+        char_count, token_est = _message_char_stats(payload.get("messages") or [], self.model)
         logger.info(
             "DeepSeek MCP request model=%s tools=%s messages=%s chars=%s tokens≈%s",
             self.model,
@@ -1072,6 +1141,18 @@ class DeepSeekToolsProvider(BaseMcpProvider):
                 logger.debug("DeepSeek MCP stream assembled payload: %s", json.dumps(data, ensure_ascii=False))
             except Exception:  # pragma: no cover - log best effort
                 logger.debug("Failed to serialize streamed DeepSeek payload for logging.")
+            try:
+                message = (data.get("choices") or [{}])[0].get("message") if isinstance(data, Mapping) else {}
+                content = ""
+                if isinstance(message, Mapping):
+                    raw_content = message.get("content")
+                    if isinstance(raw_content, str):
+                        content = raw_content
+                out_tokens = _estimate_text_tokens(content, self.model) if content else 0
+                if out_tokens:
+                    logger.info("DeepSeek MCP stream response model=%s tokens≈%s", self.model, out_tokens)
+            except Exception:
+                logger.debug("Failed to log streaming token estimate.")
             return data
 
         try:
@@ -1080,6 +1161,7 @@ class DeepSeekToolsProvider(BaseMcpProvider):
             raise PromptGenerationError("DeepSeek tools response was not valid JSON.") from exc
         logger.debug("DeepSeek MCP raw response: %s", raw_body)
 
+        _log_usage("DeepSeekTools", self.model, data.get("usage") if isinstance(data, Mapping) else None)
         choices = data.get("choices") or []
         if not choices:
             raise PromptGenerationError("DeepSeek tools response did not include choices.")

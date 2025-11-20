@@ -183,6 +183,13 @@ class McpOrchestratorService:
                         "tool": tool_name,
                         "arguments": arguments,
                         "result_keys": sorted(tool_result.keys()),
+                        "status": tool_result.get("status"),
+                        "error_code": tool_result.get("error_code"),
+                        "hint": tool_result.get("hint"),
+                        "mode": tool_result.get("mode"),
+                        "page": tool_result.get("page"),
+                        "token_budget": tool_result.get("token_budget"),
+                        "throttle_notice": bool(tool_result.get("throttle_notice")),
                     }
                 )
                 if self._is_knowledge_tool(tool_name):
@@ -229,6 +236,7 @@ class McpOrchestratorService:
                     conversation=conversation,
                     user_message=user_message,
                     answer_text=answer_text,
+                    tool_context=tool_context,
                     on_status_change=on_status_change,
                 )
             except PromptGenerationError:
@@ -333,6 +341,7 @@ class McpOrchestratorService:
             "knowledge_reads": getattr(tool_context, "knowledge_reads", []),
             "tool_trace": getattr(tool_context, "tool_trace", []),
             "placeholder_response": assistant_message.get("placeholder_response"),
+            "coverage_ledger": getattr(tool_context, "coverage_ledger", []),
         }
         ingestion_warnings = tuple(tool_context.ingestion_warnings)
         return AiOrchestratorPlan(
@@ -429,6 +438,7 @@ class McpOrchestratorService:
         conversation: Conversation,
         user_message: str,
         answer_text: str,
+        tool_context: ToolExecutionContext | None = None,
         on_status_change: Callable[[str], None] | None = None,
     ) -> dict[str, object] | None:
         """
@@ -448,6 +458,9 @@ class McpOrchestratorService:
             conversation=conversation,
             user_message=user_message,
             answer_text=answer_text,
+            tool_context_note=self._planner_tool_note(tool_context),
+            tool_trace=tuple(tool_context.tool_trace),
+            coverage_ledger=tuple(tool_context.coverage_ledger),
         )
         payload = self.provider.chat(planner_messages, tools=None, on_stream_delta=None)
         if not isinstance(payload, dict):
@@ -488,6 +501,16 @@ class McpOrchestratorService:
             for entry in snippets:
                 if isinstance(entry, Mapping):
                     context.add_knowledge_result(entry)
+                    coverage_entry = {
+                        "id": entry.get("id"),
+                        "title": entry.get("title") or entry.get("public_label") or "Knowledge",
+                        "read_state": entry.get("read_state"),
+                        "coverage": entry.get("coverage") if isinstance(entry.get("coverage"), (list, tuple)) else (),
+                        "search_stage": entry.get("search_stage"),
+                        "chunk_id": entry.get("chunk_id"),
+                        "upload_id": entry.get("upload_id"),
+                    }
+                    context.add_coverage_entry(coverage_entry)
         reads = tool_result.get("knowledge_reads") if isinstance(tool_result, Mapping) else None
         if isinstance(reads, list):
             for read in reads:
@@ -519,6 +542,62 @@ class McpOrchestratorService:
         if isinstance(message, dict):
             return message
         return payload
+
+    @staticmethod
+    def _planner_tool_note(tool_context: ToolExecutionContext | None) -> str | None:
+        if not tool_context:
+            return None
+
+        lines: list[str] = []
+        reads = getattr(tool_context, "knowledge_reads", [])
+        if isinstance(reads, list) and reads:
+            display: list[str] = []
+            for entry in reads[:6]:
+                if not isinstance(entry, Mapping):
+                    continue
+                label = entry.get("label") or "Knowledge"
+                page = entry.get("page")
+                mode = entry.get("mode")
+                parts = [str(label)]
+                if page:
+                    parts.append(f"p{page}")
+                if mode:
+                    parts.append(str(mode))
+                display.append(" ".join(parts))
+            if display:
+                lines.append("Knowledge reads: " + "; ".join(display))
+
+        trace = getattr(tool_context, "tool_trace", [])
+        if isinstance(trace, list) and trace:
+            constraint = [t for t in trace if isinstance(t, Mapping) and t.get("status") == "constraint_error"]
+            throttled = [t for t in trace if isinstance(t, Mapping) and t.get("throttle_notice")]
+            if constraint:
+                lines.append("Constraint errors: %s (ask for a narrower page/identifier or continue with existing snippets)" % len(constraint))
+            if throttled:
+                lines.append("Throttled reads: %s (budget low; avoid wide reads and stick to precise pages)" % len(throttled))
+
+        warnings = getattr(tool_context, "ingestion_warnings", [])
+        if isinstance(warnings, list) and warnings:
+            lines.append(f"Ingestion warnings: {len(warnings)} (content may be partial; avoid guessing missing details)")
+
+        coverage = getattr(tool_context, "coverage_ledger", [])
+        if isinstance(coverage, list) and coverage:
+            display: list[str] = []
+            for entry in coverage[:6]:
+                if not isinstance(entry, Mapping):
+                    continue
+                label = entry.get("label") or entry.get("title") or "Knowledge"
+                state = entry.get("read_state") or "summary"
+                topics = entry.get("coverage") or ()
+                topics_display = ", ".join(topics[:3]) if isinstance(topics, (list, tuple)) else ""
+                parts = [str(label), f"state={state}"]
+                if topics_display:
+                    parts.append(f"topics={topics_display}")
+                display.append(" ".join(parts))
+            if display:
+                lines.append("Coverage ledger: " + "; ".join(display))
+
+        return "\n".join(lines) if lines else None
 
     @staticmethod
     def _log_turn_metrics(conversation: Conversation, context: ToolExecutionContext) -> None:
@@ -602,6 +681,7 @@ class McpOrchestratorService:
             "error": str(exc),
             "error_code": code,
             "hint": hint,
+            "llm_hint": hint,
             "snippets": [],
         }
 

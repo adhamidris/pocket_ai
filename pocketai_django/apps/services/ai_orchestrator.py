@@ -1067,7 +1067,8 @@ class KnowledgeSearchService:
             current = per_upload_counts.get(upload.id, 0)
             if current >= max_per_upload:
                 continue
-            snippets.append(self._chunk_to_snippet(chunk, result=hit))
+            table_sample: tuple[Mapping[str, object], ...] | None = self._table_row_sample(chunk, max_columns=4)
+            snippets.append(self._chunk_to_snippet(chunk, result=hit, table_row_sample=table_sample))
             per_upload_counts[upload.id] = current + 1
             if len(snippets) >= limit:
                 break
@@ -1982,12 +1983,26 @@ class KnowledgeSearchService:
         result: ChunkResult | None = None,
         search_stage: str | None = None,
         content_mode: str = "abstract",
+        table_row_sample: tuple[Mapping[str, object], ...] | None = None,
     ) -> KnowledgeSnippet:
         upload = chunk.upload
         label = self._public_label(upload)
         chunk_number = (chunk.chunk_index or 0) + 1 if chunk.chunk_index is not None else None
         title = f"{label} – chunk {chunk_number}" if chunk_number else label or "Document"
         summary = self._summarize_chunk(chunk)
+        sample_text = ""
+        if table_row_sample:
+            pairs = []
+            for entry in table_row_sample:
+                col = entry.get("column") or ""
+                val = entry.get("value") or ""
+                combined = f"{col}: {val}".strip(": ")
+                if combined:
+                    pairs.append(combined)
+            if pairs:
+                sample_text = "; ".join(pairs)[:500]
+        if sample_text:
+            summary = f"{sample_text}"[:500]
         chunk_metadata = chunk.metadata if isinstance(chunk.metadata, dict) else {}
         truncated = False
         if content_mode == "abstract":
@@ -2002,9 +2017,9 @@ class KnowledgeSearchService:
         is_table_chunk = bool(chunk_metadata.get("is_table_chunk"))
         aliases = tuple(chunk_metadata.get("aliases") or ())
         table_count, issue_count = self._structured_counts(upload)
-        structured_preview: tuple[Mapping[str, object], ...] = tuple()
+        structured_preview: tuple[Mapping[str, object], ...] = tuple(table_row_sample or ())
         table_hint = None
-        if table_count:
+        if table_count and not structured_preview:
             label_name = "tables" if table_count != 1 else "table"
             table_hint = f"{table_count} structured {label_name} available via load_document"
 
@@ -2636,6 +2651,46 @@ class KnowledgeSearchService:
                 "metadata": dict(table.metadata or {}),
             })
         return enriched
+
+    def _table_row_sample(self, chunk: KnowledgeUploadChunk, *, max_columns: int = 4) -> tuple[Mapping[str, object], ...]:
+        """
+        Build a compact key/value sample for table chunks so search snippets
+        carry identifiers without requiring a full read.
+        """
+        upload = chunk.upload
+        tables_manager = getattr(upload, "tables", None)
+        if not hasattr(tables_manager, "all"):
+            return tuple()
+        try:
+            table = tables_manager.order_by("order_index").first()
+            if not table:
+                return tuple()
+            row = (
+                table.rows.filter(row_index__isnull=False)
+                .order_by("row_index")
+                .prefetch_related(
+                    Prefetch(
+                        "cells",
+                        queryset=KnowledgeUploadTableCell.objects.order_by("column_index"),
+                    )
+                )
+                .first()
+            )
+            if not row:
+                return tuple()
+            cells = list(row.cells.all())
+            sample: list[Mapping[str, object]] = []
+            for cell in cells[:max_columns]:
+                sample.append(
+                    {
+                        "row": row.row_index,
+                        "column": cell.column_key or f"column_{(cell.column_index or 0) + 1}",
+                        "value": cell.raw_text,
+                    }
+                )
+            return tuple(sample)
+        except Exception:
+            return tuple()
 
 
 

@@ -57,6 +57,7 @@ class ToolExecutionContext:
     knowledge_results: list[dict[str, object]] = dataclasses.field(default_factory=list)
     knowledge_reads: list[dict[str, object]] = dataclasses.field(default_factory=list)
     tool_trace: list[dict[str, object]] = dataclasses.field(default_factory=list)
+    coverage_ledger: list[dict[str, object]] = dataclasses.field(default_factory=list)
 
     def reserve_chunk_reads(self, count: int) -> None:
         """Ensure the requested chunk reads do not exceed the per-turn budget."""
@@ -112,6 +113,9 @@ class ToolExecutionContext:
 
     def add_tool_trace(self, trace: Mapping[str, object]) -> None:
         self.tool_trace.append(dict(trace))
+
+    def add_coverage_entry(self, entry: Mapping[str, object]) -> None:
+        self.coverage_ledger.append(dict(entry))
 @dataclasses.dataclass
 class KnowledgeToolResult:
     """Structured record of knowledge snippets returned by tool calls."""

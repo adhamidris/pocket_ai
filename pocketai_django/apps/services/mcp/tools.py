@@ -12,6 +12,7 @@ touching unrelated parts of the codebase.
 from __future__ import annotations
 
 import uuid
+import re
 from collections import Counter
 from functools import lru_cache
 import logging
@@ -300,6 +301,93 @@ def _normalize_priority(raw: object) -> str | None:
     return None
 
 
+def _query_intent(query: str) -> dict[str, object]:
+    """
+    Lightweight heuristic to classify the query and suggest search/read defaults.
+    """
+    text = (query or "").strip()
+    lowered = text.lower()
+    tokens = [t for t in re.split(r"[^a-z0-9]+", lowered) if t]
+    has_digits = any(ch.isdigit() for ch in text)
+    identifier_like = has_digits or any(sym in text for sym in ("-", "_"))
+    table_hit = any(
+        kw in lowered
+        for kw in (
+            "table",
+            "sheet",
+            "csv",
+            "grid",
+            "column",
+            "row",
+            "spreadsheet",
+            "report",
+            "statement",
+        )
+    )
+    length = len(tokens)
+    if identifier_like and length <= 6:
+        intent = "identifier"
+    elif table_hit:
+        intent = "table"
+    elif length >= 14:
+        intent = "long"
+    else:
+        intent = "short"
+    return {
+        "intent": intent,
+        "tokens": length,
+        "has_digits": has_digits,
+        "table": table_hit,
+    }
+
+def _detect_full_page_intent(conversation: Conversation, requested_mode: str | None) -> bool:
+    """
+    Heuristic to decide whether to prefer a full-page read when no mode was specified.
+    Looks for numbers, rates, pricing, or table-like requests in the latest customer turn.
+    """
+    if requested_mode:
+        return requested_mode == "full_page"
+
+    latest = (
+        conversation.messages.order_by("-sent_at", "-created_at")
+        .first()
+    )
+    body = latest.body if latest else ""
+    text = (body or "").lower()
+    has_number = any(ch.isdigit() for ch in text) or "%" in text
+    has_currency = any(sym in text for sym in ("$", "€", "£", "sar", "aed"))
+    table_keywords = (
+        "table",
+        "sheet",
+        "spreadsheet",
+        "grid",
+        "csv",
+        "column",
+        "row",
+        "rate",
+        "interest",
+        "fee",
+        "limit",
+        "pricing",
+    )
+    table_hit = any(keyword in text for keyword in table_keywords)
+    return has_number or has_currency or table_hit
+
+
+def _budget_allows_full_page(
+    context: ToolExecutionContext,
+    *,
+    business_profile,
+    service: KnowledgeSearchService,
+) -> bool:
+    if context.char_budget_per_turn is None:
+        return True
+    inline_cap = service.inline_char_limit_for_business(business_profile)
+    remaining = max(0, context.char_budget_per_turn - context.characters_used)
+    threshold = max(800, int(inline_cap * 0.6))
+    return remaining >= threshold
+
+
 def _serialize_snippets(snippets: Sequence[object]) -> list[dict[str, object]]:
     """
     Convert KnowledgeSnippet instances into prompt/diagnostic-friendly dicts.
@@ -439,6 +527,24 @@ def _maybe_throttle_full_page(
     return None
 
 
+def _search_hint(
+    status: str,
+    intent: str | None,
+    snippets: Sequence[Mapping[str, object]],
+    diagnostics: Mapping[str, object] | None,
+) -> str | None:
+    if status != "ok" or not snippets:
+        if intent == "identifier":
+            return "No confident match; ask for the exact identifier or a page/section name instead of guessing."
+        return "No strong matches yet; ask the visitor for a clearer identifier, product name, or page reference."
+    diag = diagnostics or {}
+    if intent == "table" and len(snippets) <= 2:
+        return "If you still need exact rows/columns, request the specific page via read_document full_page."
+    if diag.get("path") == "fallback":
+        return "Fallback snippets in use; confirm details with the visitor or narrow the request before citing specifics."
+    return None
+
+
 def _build_ingestion_warnings(
     snippet_payloads: Sequence[Mapping[str, object]],
     knowledge_reads: Sequence[Mapping[str, object]],
@@ -502,12 +608,20 @@ def _search_knowledge_handler(
             "snippets": [],
         }
 
+    intent_info = _query_intent(query)
+    intent = intent_info.get("intent")
     raw_limit = arguments.get("limit")
     limit: int | None
     try:
         limit = int(raw_limit) if raw_limit is not None else None
     except (TypeError, ValueError):
         limit = None
+
+    # Tune limits based on intent to keep results targeted.
+    if intent == "identifier":
+        limit = min(limit or 5, 4)
+    elif intent == "table":
+        limit = min(8, max(limit or 5, 6))
 
     service = _knowledge_service()
     result = service.search(
@@ -516,6 +630,26 @@ def _search_knowledge_handler(
         limit=limit,
     )
     snippet_payloads = _serialize_snippets(result.snippets)
+    read_required = False
+    if intent in {"table", "identifier"}:
+        if len(snippet_payloads) <= 2:
+            read_required = True
+        elif all((p.get("read_state") or "summary") in {"summary", "preview"} for p in snippet_payloads):
+            read_required = True
+    # Attach read hints for table/identifier paths so the model can issue a precise read.
+    for payload in snippet_payloads:
+        chunk_id = payload.get("chunk_id") or payload.get("id")
+        upload_id = payload.get("upload_id")
+        chunk_index = payload.get("chunk_index")
+        hinted_page = (int(chunk_index) + 1) if isinstance(chunk_index, int) else None
+        mode_hint = "full_page" if intent in {"table", "identifier"} else "excerpt"
+        payload["read_hint"] = {
+            "document_id": str(chunk_id or upload_id or ""),
+            "page": hinted_page,
+            "mode": mode_hint,
+        }
+        if read_required:
+            payload["read_required"] = True
     for payload in snippet_payloads:
         context.add_knowledge_result(payload)
 
@@ -535,9 +669,12 @@ def _search_knowledge_handler(
         "tool": "search_knowledge",
         "query": query,
         "limit": limit,
+        "intent": intent,
+        "intent_signal": intent_info,
         "status": result.status,
         "diagnostics": dict(result.diagnostics or {}),
         "snippets": snippet_payloads,
+        "hint": _search_hint(result.status, intent, snippet_payloads, result.diagnostics),
     }
 
 
@@ -586,7 +723,7 @@ def _read_document_handler(
             pass
 
     raw_mode = _coerce_str(arguments.get("mode")).strip().lower()
-    mode = raw_mode if raw_mode in {"excerpt", "full_page"} else "excerpt"
+    mode = raw_mode if raw_mode in {"excerpt", "full_page"} else None
 
     token_budget: int | None = None
     raw_budget = arguments.get("token_budget")
@@ -606,10 +743,17 @@ def _read_document_handler(
     business = conversation.business_profile
     service = _knowledge_service()
     throttle_notice: dict[str, object] | None = None
+
+    if mode is None:
+        mode = "full_page" if (_detect_full_page_intent(conversation, None) and _budget_allows_full_page(context, business_profile=business, service=service)) else "excerpt"
+
+    downgraded = False
     if mode == "full_page":
         throttle_notice = _maybe_throttle_full_page(context, business, service)
         if throttle_notice:
             mode = "excerpt"
+            throttle_notice["downgraded_from"] = "full_page"
+            downgraded = True
             logger.info(
                 "mcp.read_document.throttle business=%s reason=%s",
                 business.id,
@@ -699,6 +843,8 @@ def _read_document_handler(
         "document_id": document_id,
         "page": page_index,
         "mode": mode,
+        "mode_downgraded": downgraded,
+        "token_budget": token_budget,
         "status": "ok",
         "snippets": snippet_payloads,
         "knowledge_reads": knowledge_reads,
