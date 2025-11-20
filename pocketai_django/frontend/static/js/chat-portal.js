@@ -41,7 +41,9 @@ class ChatPortalClient {
     this.streamingStatusTextEl = null;
     this.streamingStatusDotEl = null;
     this.streamingBuffer = "";
+    this.streamingRawBuffer = "";
     this.streamingRewritePending = false;
+    this.placeholderActive = false;
     this.markdownRenderer = this.createMarkdownRenderer();
     this.workflowLocked = false;
     this.streamingActive = false;
@@ -218,12 +220,16 @@ class ChatPortalClient {
   handleStreamEvent(eventType, data) {
     if (eventType === "placeholder") {
       // Do NOT render a placeholder; only remember it for dedupe.
+      if (this.placeholderActive) {
+        return;
+      }
       try {
         const payload = data ? JSON.parse(data) : null;
         const text = payload && payload.text ? payload.text : "";
         if (text) {
           this.lastPlaceholderText = text;
           this.streamingDedupDone = false;
+          this.placeholderActive = true;
           this.setStreamingStatus("reading", text);
         }
       } catch (_err) {
@@ -265,13 +271,19 @@ class ChatPortalClient {
       }
       return;
     }
-    
+
     // **REPLACE THE DELTA HANDLER WITH THIS NEW VERSION**
     if (eventType === "delta") {
       try {
         const payload = data ? JSON.parse(data) : null;
         if (payload && payload.text) {
           let chunk = payload.text;
+
+          // Clear placeholder state on first real delta.
+          if (this.placeholderActive) {
+            this.placeholderActive = false;
+            this.clearStreamingStatus();
+          }
 
           // --- DEDUPE: strip placeholder prefix from the very first streamed delta ---
           if (this.lastPlaceholderText && !this.streamingDedupDone) {
@@ -356,6 +368,25 @@ class ChatPortalClient {
     try {
       const payload = JSON.parse(data);
       if (payload && payload.text) {
+        const placeholder = (this.lastPlaceholderText || "").trim().toLowerCase();
+        const finalText = (payload.text || "").trim();
+        const isPlaceholderOnly = placeholder && finalText && finalText.toLowerCase() === placeholder;
+        const isPending = !!payload.pending;
+
+        // If the provisional final is just the placeholder, avoid rendering a transcript bubble.
+        if (isPending && isPlaceholderOnly) {
+          this.awaitingReply = false;
+          this.streamFinished = true;
+          this.updateSendButtonState(false);
+          this.setComposerAvailability(true);
+          this.updateComposerNotice(false);
+          this.streamingActive = false;
+          this.clearStreamingStatus();
+          this.resetStreamingState(true, false);
+          this.markStreamFinished();
+          return;
+        }
+
         if (this.streamingMessageNode) {
           this.finalizeStreamingMessage(payload.text);
         } else {
@@ -532,19 +563,75 @@ class ChatPortalClient {
   appendStreamingChunk(chunk) {
     if (!chunk || !this.elements.messages) return;
     this.ensureStreamingMessageNode();
+    const normalized = this.normalizeStreamingChunk(chunk);
+
+    // Clear placeholder state as soon as we show real content.
+    if (this.placeholderActive) {
+      this.placeholderActive = false;
+      this.clearStreamingStatus();
+    }
+
     if (this.streamingRewritePending) {
       this.streamingBuffer = "";
+      this.streamingRawBuffer = "";
       if (this.streamingFinalBodyEl) {
         this.streamingFinalBodyEl.innerHTML = "";
       }
       this.streamingRewritePending = false;
       this.setStreamingStatus("updating");
     }
-    this.streamingBuffer += chunk;
+    this.streamingRawBuffer += normalized;
+    const formatted = this.formatAssistantText(this.streamingRawBuffer);
+    this.streamingBuffer = formatted;
     if (this.streamingFinalBodyEl) {
-      this.streamingFinalBodyEl.innerHTML = this.renderMarkdown(this.streamingBuffer);
+      this.streamingFinalBodyEl.innerHTML = this.renderMarkdown(formatted);
     }
     this.elements.messages.scrollTo({ top: this.elements.messages.scrollHeight, behavior: "smooth" });
+  }
+
+  normalizeStreamingChunk(chunk) {
+    let text = chunk;
+    const buffer = this.streamingRawBuffer || "";
+    // If the previous buffer doesn't end with whitespace and the new chunk starts
+    // with alphanumeric text, prepend a space to avoid run-on sentences.
+    const lastChar = buffer ? buffer[buffer.length - 1] : "";
+    if (lastChar && /[.!?]/.test(lastChar) && /^[A-Za-z0-9]/.test(text)) {
+      text = ` ${text}`;
+    }
+
+    return text;
+  }
+
+  formatAssistantText(text) {
+    if (!text) return "";
+    let output = text;
+
+    // Insert paragraph breaks before audit/search phrases appearing mid-text.
+    const phrases = [
+      "i searched",
+      "i'll search",
+      "let me try a broader search",
+      "i tried a broader search",
+    ];
+    const regex = new RegExp(`(${phrases.map((p) => p.replace(/\s+/g, "\\s+")).join("|")})`, "ig");
+    let result = "";
+    let lastIndex = 0;
+    let match;
+    while ((match = regex.exec(output))) {
+      const start = match.index;
+      const before = output.slice(lastIndex, start);
+      const needsBreak = before && !before.trimEnd().endsWith("\n");
+      if (needsBreak) {
+        result += before + "\n\n";
+      } else {
+        result += before;
+      }
+      result += match[0].trimStart();
+      lastIndex = regex.lastIndex;
+    }
+    result += output.slice(lastIndex);
+
+    return result;
   }
 
   ensureStreamingMessageNode() {
@@ -601,8 +688,9 @@ class ChatPortalClient {
     } else if (finalMatchesPlaceholder) {
       text = trimmedBuffer ? this.streamingBuffer : finalText;
     } else {
-      text = finalText;
-      this.streamingBuffer = finalText;
+      this.streamingRawBuffer = finalText;
+      this.streamingBuffer = this.formatAssistantText(finalText);
+      text = this.streamingBuffer;
     }
 
     if (!text) {
@@ -619,6 +707,7 @@ class ChatPortalClient {
 
   updateLatestAssistantMessage(text) {
     if (!text || !this.elements.messages) return;
+    const normalized = this.formatAssistantText(text);
     const bodies = Array.from(this.elements.messages.querySelectorAll("[data-message-body]"));
     for (let idx = bodies.length - 1; idx >= 0; idx -= 1) {
       const body = bodies[idx];
@@ -628,9 +717,9 @@ class ChatPortalClient {
       }
       const finalBody = body.querySelector("[data-message-final-body]");
       if (finalBody) {
-        finalBody.innerHTML = this.renderMarkdown(text);
+        finalBody.innerHTML = this.renderMarkdown(normalized);
       } else {
-        body.innerHTML = this.renderMarkdown(text);
+        body.innerHTML = this.renderMarkdown(normalized);
       }
       break;
     }
@@ -654,7 +743,9 @@ class ChatPortalClient {
     this.streamingStatusTextEl = null;
     this.streamingStatusDotEl = null;
     this.streamingBuffer = "";
+    this.streamingRawBuffer = "";
     this.streamingRewritePending = false;
+    this.placeholderActive = false;
   }
 
   setStreamingStatus(mode = "working", labelOverride) {

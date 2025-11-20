@@ -848,6 +848,9 @@ def _consume_chat_completion_stream(stream, on_stream_delta: Callable[[str], Non
     role: str | None = None
     finish_reason: str | None = None
 
+    def _normalize_delta(chunk: str) -> str:
+        return chunk or ""
+
     for payload in _iter_sse_events(stream):
         if not payload:
             continue
@@ -870,7 +873,7 @@ def _consume_chat_completion_stream(stream, on_stream_delta: Callable[[str], Non
             for chunk in content_block:
                 if not isinstance(chunk, Mapping):
                     continue
-                text = chunk.get("text")
+                text = _normalize_delta(chunk.get("text") or "")
                 if not text:
                     continue
                 text_parts.append(text)
@@ -880,10 +883,11 @@ def _consume_chat_completion_stream(stream, on_stream_delta: Callable[[str], Non
                     except Exception:  # pragma: no cover - safeguard user callbacks
                         logger.exception("Streaming callback failed while emitting delta chunk.")
         elif isinstance(content_block, str) and content_block:
-            text_parts.append(content_block)
+            normalized = _normalize_delta(content_block)
+            text_parts.append(normalized)
             if on_stream_delta:
                 try:
-                    on_stream_delta(content_block)
+                    on_stream_delta(normalized)
                 except Exception:  # pragma: no cover - safeguard user callbacks
                     logger.exception("Streaming callback failed while emitting delta chunk.")
 
