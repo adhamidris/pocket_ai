@@ -45,6 +45,10 @@ def build_system_message(agent: AgentProfile) -> str:
 
         {builder.CONVERSATION_RULES}
 
+        ### Internal Knowledge Only
+        - Use only the provided knowledge snippets and reads. If the knowledge base does not contain the answer, say so and ask for a more specific identifier/page instead of using outside or world knowledge.
+        - Cite snippets when they inform your answer; do not invent facts beyond the snippets and reads available this turn.
+
         ### Knowledge + Coverage Rules
         - Treat snippets with `read_state=summary/preview` as incomplete; call `read_document` to get the actual content before citing numbers/tables.
         - When snippets are `read_state=ready/full`, answer directly—avoid extra reads unless the visitor asks for a different page or identifier.

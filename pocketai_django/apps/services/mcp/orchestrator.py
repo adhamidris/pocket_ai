@@ -229,6 +229,22 @@ class McpOrchestratorService:
         if final_assistant_message is not None:
             answer_text = str(final_assistant_message.get("content") or "").strip()
 
+        unmet_read_required = False
+        for entry in getattr(tool_context, "knowledge_results", []):
+            if isinstance(entry, Mapping) and entry.get("read_required"):
+                unmet_read_required = True
+                break
+        if unmet_read_required and not getattr(tool_context, "knowledge_reads", []):
+            # Enforce read-before-answer for table/identifier hits
+            final_assistant_message = {
+                "role": "assistant",
+                "content": "",
+                "actions": [],
+                "extractions": [],
+                "placeholder_response": "Need to read the recommended document/page before answering. Use read_hint (doc_id + page + mode).",
+            }
+            answer_text = ""
+
         planner_payload: dict[str, object] | None = None
         if answer_text:
             try:
