@@ -118,17 +118,24 @@ class McpOrchestratorService:
 
         # Phase 1: streaming + tools to obtain the final assistant answer.
         for _ in range(self.max_tool_iterations):
+            delta_buffer: list[str] = []
+
+            def _buffer_delta(chunk: str) -> None:
+                if chunk:
+                    delta_buffer.append(chunk)
+
             payload = self.provider.chat(
                 transcript,
                 tools=self.tool_definitions,
-                on_stream_delta=on_response_text_delta,
+                on_stream_delta=_buffer_delta if on_response_text_delta else None,
             )
             assistant_message = self._coerce_assistant_message(payload)
             tool_calls = list(assistant_message.get("tool_calls") or [])
 
             assistant_payload: dict[str, object] = {
                 "role": "assistant",
-                "content": assistant_message.get("content"),
+                # Suppress interim content when tool calls are present; spinner/status handles UX.
+                "content": "" if tool_calls else assistant_message.get("content"),
             }
             if tool_calls:
                 assistant_payload["tool_calls"] = tool_calls
@@ -136,6 +143,13 @@ class McpOrchestratorService:
 
             if not tool_calls:
                 final_assistant_message = assistant_message
+                # Flush buffered deltas only for final (no-tool) turn.
+                if on_response_text_delta and delta_buffer:
+                    for chunk in delta_buffer:
+                        try:
+                            on_response_text_delta(chunk)
+                        except Exception:  # pragma: no cover - safeguard
+                            pass
                 break
 
             for tool_call in tool_calls:
@@ -498,12 +512,11 @@ class McpOrchestratorService:
         if not planner_message:
             return assistant_message
         merged: dict[str, object] = dict(assistant_message)
+        merged.pop("placeholder_response", None)
         if isinstance(planner_message.get("actions"), list):
             merged["actions"] = planner_message.get("actions")
         if isinstance(planner_message.get("extractions"), list):
             merged["extractions"] = planner_message.get("extractions")
-        if "placeholder_response" in planner_message:
-            merged["placeholder_response"] = planner_message.get("placeholder_response")
         return merged
 
     @staticmethod
@@ -553,10 +566,14 @@ class McpOrchestratorService:
             if choices:
                 message = choices[0].get("message") or {}
                 if isinstance(message, dict):
-                    return message
+                    msg = dict(message)
+                    msg.pop("placeholder_response", None)
+                    return msg
         message = payload.get("message")
         if isinstance(message, dict):
-            return message
+            msg = dict(message)
+            msg.pop("placeholder_response", None)
+            return msg
         return payload
 
     @staticmethod

@@ -55,6 +55,7 @@ def build_system_message(agent: AgentProfile) -> str:
         - Respect chunk budgets; prefer the narrowest page/chunk that answers the question. Avoid rereading documents that are already covered.
         - Tool responses may include `constraint_error` or `throttle_notice`; never fabricate. Continue with existing snippets or ask the visitor for a narrower doc/page/identifier.
         - Knowledge file names and labels are internal; do not expose them in the customer-facing reply.
+        - Avoid investigative fillers like “I’ll check/looking now.” State the outcome or missing info directly. If you must include a status, keep it one short line, then put the answer/clarification on the next line for readability.
 
         {builder.CHUNK_READ_NUDGE}
 
