@@ -196,6 +196,7 @@ class OpenAIChatProvider:
             "Authorization": f"Bearer {self.api_key}",
             "Content-Type": "application/json",
         }
+        streaming = bool(on_stream_delta)
         payload = {
             "model": self.model,
             "messages": [
@@ -206,6 +207,8 @@ class OpenAIChatProvider:
             "top_p": self.top_p,
             "response_format": self._response_schema(),
         }
+        if streaming:
+            payload["stream"] = True
         try:
             logger.info("LLM request payload: %s", json.dumps(payload, ensure_ascii=False))
         except Exception:  # pragma: no cover - log best effort
@@ -222,7 +225,11 @@ class OpenAIChatProvider:
         try:
             with urllib_request.urlopen(request, timeout=self.timeout) as resp:
                 status_code = getattr(resp, "status", 200)
-                raw_body = resp.read().decode("utf-8")
+                if streaming:
+                    data = _consume_chat_completion_stream(resp, on_stream_delta)
+                    raw_body = None
+                else:
+                    raw_body = resp.read().decode("utf-8")
         except urllib_error.HTTPError as exc:
             detail = exc.read().decode("utf-8", errors="ignore")
             raise PromptGenerationError(
@@ -232,17 +239,33 @@ class OpenAIChatProvider:
             raise PromptGenerationError(f"OpenAI request failed: {exc}") from exc
 
         if status_code >= 400:
-            raise PromptGenerationError(f"OpenAI error ({status_code}): {raw_body[:200]}")
+            raise PromptGenerationError(f"OpenAI error ({status_code}): {raw_body[:200] if raw_body else status_code}")
 
-        try:
-            data = json.loads(raw_body)
-        except ValueError as exc:
-            raise PromptGenerationError("OpenAI response was not valid JSON.") from exc
+        if streaming:
+            try:
+                content = self._extract_content(data)
+            except Exception as exc:
+                raise PromptGenerationError("OpenAI streaming response missing content.") from exc
+            try:
+                logger.debug("OpenAI stream assembled payload: %s", json.dumps(data, ensure_ascii=False))
+            except Exception:  # pragma: no cover - log best effort
+                logger.debug("Failed to serialize OpenAI stream payload.")
+            try:
+                out_tokens = _estimate_text_tokens(content, self.model) if content else 0
+                if out_tokens:
+                    logger.info("OpenAI stream response model=%s tokens≈%s", self.model, out_tokens)
+            except Exception:
+                logger.debug("Failed to log streaming token estimate.")
+        else:
+            try:
+                data = json.loads(raw_body)
+            except ValueError as exc:
+                raise PromptGenerationError("OpenAI response was not valid JSON.") from exc
 
-        _log_usage("OpenAIChat", self.model, data.get("usage") if isinstance(data, Mapping) else None)
-        logger.info("LLM raw response: %s", raw_body)
+            _log_usage("OpenAIChat", self.model, data.get("usage") if isinstance(data, Mapping) else None)
+            logger.info("LLM raw response: %s", raw_body)
 
-        content = self._extract_content(data)
+            content = self._extract_content(data)
         try:
             return json.loads(content)
         except json.JSONDecodeError as exc:
