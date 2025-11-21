@@ -78,9 +78,9 @@ class PromptBuilder:
         - These actions are internal—acknowledge outcomes to the visitor only when it helps them (e.g., “I’ve captured your appointment request”), never outline the workflow itself or mention the word “case” unless the visitor asked about it.
         - Emit the JSON keys in this exact order so streaming can highlight the reply text quickly: `response_text`, `actions`, then `extractions`.
         ### Placeholder Output Rules
-        - When you include `read_knowledge`, `response_text` must be a short visitor-facing placeholder (e.g., "Reviewing Knowledge").
-        - Keep it <= 180 characters; do not invent numbers or policies; do not cite snippets yet. The final answer must follow after the read completes.
-        - Do NOT output a placeholder unless a `read_knowledge` action is included in the same turn; if no read is pending, respond with the real answer immediately.
+        - Do NOT emit placeholder replies. Provide the best directly useful answer you can with the knowledge already loaded.
+        - If a `read_knowledge` action is required, include the action but still return a concise, visitor-facing answer using the evidence you have now; never return filler like "Reviewing" or "Reading".
+        - Keep replies grounded in the current snippets and state what you can confirm. If something is pending a read, mention what you’ll verify next, but give the visitor a real answer immediately.
         """
     ).strip()
 

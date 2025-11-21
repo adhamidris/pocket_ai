@@ -3119,9 +3119,10 @@ class AiOrchestratorService:
                 on_response_text_delta(chunk)
 
         def _provider_stream_callback(chunk: str) -> None:
-            nonlocal active_iteration_chunks
+            nonlocal iteration_streamed, active_iteration_chunks
             if not chunk:
                 return
+            iteration_streamed = True
             active_iteration_chunks.append(chunk)
 
         prompt_bundle: PromptBundle | None = None
@@ -3186,14 +3187,6 @@ class AiOrchestratorService:
                 if forced not in pending_requests and forced not in ready_ids_in_payload:
                     pending_requests.append(forced)
 
-            should_flush_stream = not pending_requests
-            if should_flush_stream and active_iteration_chunks:
-                for chunk in active_iteration_chunks:
-                    _emit_stream_chunk(chunk)
-                iteration_streamed = True
-            else:
-                active_iteration_chunks = []
-
             if not pending_requests:
                 requested_again = bool(normalized_kids)
                 if requested_again:
@@ -3223,7 +3216,11 @@ class AiOrchestratorService:
 
                 # Preserve any streamed text from this iteration.
                 last_iteration_streamed = iteration_streamed
+                if iteration_streamed and active_iteration_chunks:
+                    for chunk in active_iteration_chunks:
+                        _emit_stream_chunk(chunk)
                 streamed_chunks = list(active_iteration_chunks) if iteration_streamed else []
+                active_iteration_chunks = []
 
                 # Give the model one more pass with the updated ledger if it re-requested a doc
                 if requested_again and not cache_satisfied_read:
@@ -3235,6 +3232,9 @@ class AiOrchestratorService:
                 final_plan = plan_candidate
                 _notify_stream_complete_once()
                 break
+
+            # Pending reads/actions: discard any provisional streamed text to avoid placeholders.
+            active_iteration_chunks = []
 
 
             # Suppress placeholder emission; rely on status updates only.
@@ -3378,31 +3378,14 @@ class AiOrchestratorService:
             ]
             extractions = list(llm_plan.extractions)
             response_text = (llm_plan.response_text or "").strip()
-            if knowledge_loading and not response_text and placeholder_response:
-                response_text = placeholder_response.strip()
             llm_source = "provider"
         else:
             planned_actions, extractions = self._plan_actions(conversation=conversation, user_message=query)
-            response_text = self._compose_placeholder_response(
-                user_message=query,
-                citations=resolved_citations,
-                planned_actions=planned_actions,
-            )
+            response_text = (llm_plan.response_text or "").strip() if llm_plan else ""
             llm_source = "heuristic"
 
         if response_text and not last_iteration_streamed:
             has_ready_context = any(bool(item.get("content")) for item in knowledge_payload)
-
-            # If the LLM left a placeholder but no document read actually happened, upgrade to a safe fallback now.
-            if self._is_placeholder_text(response_text) and not knowledge_loading:
-                response_text = self._compose_placeholder_response(
-                    user_message=query,
-                    citations=resolved_citations,
-                    planned_actions=planned_actions,
-                )
-
-            # Only strip overlap if a placeholder was actually committed earlier
-            response_text = self._strip_placeholder_overlap(placeholder_response, response_text)
 
             response_text = self._dedupe_response(
                 conversation,
@@ -3414,7 +3397,7 @@ class AiOrchestratorService:
             _emit_stream_chunk(response_text)
 
 
-        placeholder_clean = placeholder_response.strip() if placeholder_response else None
+        placeholder_clean = None
 
         return StreamingTurnContext(
             conversation=conversation,
@@ -3526,8 +3509,7 @@ class AiOrchestratorService:
         }
         if ingestion_warnings:
             diagnostics["ingestion_warnings"] = ingestion_warnings
-        if context.placeholder_response:
-            diagnostics["placeholder_response"] = context.placeholder_response
+        # placeholder_response intentionally suppressed to avoid duplicating transient messages
 
         self._log_plan_summary(
             conversation=context.conversation,
