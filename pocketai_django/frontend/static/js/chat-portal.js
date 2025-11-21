@@ -192,7 +192,7 @@ class ChatPortalClient {
     } finally {
       this.awaitingReply = false;
       this.updateSendButtonState(false);
-      if (!this.awaitingReply && !this.streamFinished) {
+      if (this.streamFinished) {
         this.setComposerAvailability(true);
       }
       if (this.streamingMessageNode) {
@@ -216,11 +216,6 @@ class ChatPortalClient {
   }
 
   handleStreamEvent(eventType, data) {
-    if (eventType === "placeholder") {
-      // Ignore placeholders; status spinner covers "thinking/reading".
-      return;
-    }
-    
     if (eventType === "status") {
       if (this.workflowLocked) {
         return;
@@ -230,6 +225,13 @@ class ChatPortalClient {
         if (payload) {
           const state = (payload.state || "").toString().trim();
           const label = (payload.label || "").toString().trim();
+
+          if (state === "stream_complete" || state === "complete" || state === "done") {
+            this.clearStreamingStatus();
+            this.streamFinished = true;
+            this.setComposerAvailability(true);
+            return;
+          }
 
           if (state === "reading_document") {
             // Knowledge read: we expect content to be revised after doc load.
@@ -255,7 +257,6 @@ class ChatPortalClient {
       return;
     }
 
-    // **REPLACE THE DELTA HANDLER WITH THIS NEW VERSION**
     if (eventType === "delta") {
       try {
         const payload = data ? JSON.parse(data) : null;
@@ -521,41 +522,7 @@ class ChatPortalClient {
 
   formatAssistantText(text) {
     if (!text) return "";
-    let output = this.stripLeadingPlaceholders(text);
-
-    // Insert paragraph breaks before audit/search phrases appearing mid-text.
-    const phrases = [
-      "i searched",
-      "i'll search",
-      "let me try a broader search",
-      "i tried a broader search",
-    ];
-    const regex = new RegExp(`(${phrases.map((p) => p.replace(/\s+/g, "\\s+")).join("|")})`, "ig");
-    let result = "";
-    let lastIndex = 0;
-    let match;
-    while ((match = regex.exec(output))) {
-      const start = match.index;
-      const before = output.slice(lastIndex, start);
-      const needsBreak = before && !before.trimEnd().endsWith("\n");
-      if (needsBreak) {
-        result += before + "\n\n";
-      } else {
-        result += before;
-      }
-      result += match[0].trimStart();
-      lastIndex = regex.lastIndex;
-    }
-    result += output.slice(lastIndex);
-
-    return result;
-  }
-
-  stripLeadingPlaceholders(text) {
-    if (!text) return "";
-    const pattern = /^(?:\s*(?:i['’]?ll|let me)\s+(?:search|look|read)[^.?!]*[.?!]\s*)+/i;
-    const stripped = text.replace(pattern, "").trimStart();
-    return stripped || text;
+    return text;
   }
 
   ensureStreamingMessageNode() {

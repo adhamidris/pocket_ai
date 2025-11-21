@@ -114,6 +114,7 @@ class BaseMcpProvider(Protocol):
         *,
         tools: Iterable[Mapping[str, object]] | None = None,
         on_stream_delta: Callable[[str], None] | None = None,
+        response_format: Mapping[str, object] | None = None,
     ) -> Mapping[str, Any]:  # pragma: no cover - interface only
         ...
 
@@ -940,6 +941,7 @@ class OpenAIToolsProvider(BaseMcpProvider):
         *,
         tools: Iterable[Mapping[str, object]] | None = None,
         on_stream_delta: Callable[[str], None] | None = None,
+        response_format: Mapping[str, object] | None = None,
     ) -> Mapping[str, Any]:
         headers = {
             "Authorization": f"Bearer {self.api_key}",
@@ -1105,6 +1107,7 @@ class DeepSeekToolsProvider(BaseMcpProvider):
         *,
         tools: Iterable[Mapping[str, object]] | None = None,
         on_stream_delta: Callable[[str], None] | None = None,
+        response_format: Mapping[str, object] | None = None,
     ) -> Mapping[str, Any]:
         headers = {
             "Authorization": f"Bearer {self.api_key}",
@@ -1121,6 +1124,8 @@ class DeepSeekToolsProvider(BaseMcpProvider):
         if tools:
             payload["tools"] = list(tools)
             payload["tool_choice"] = "auto"
+        if response_format:
+            payload["response_format"] = response_format
 
         # Compact summary at INFO; full payload at DEBUG for troubleshooting.
         char_count, token_est = _message_char_stats(payload.get("messages") or [], self.model)

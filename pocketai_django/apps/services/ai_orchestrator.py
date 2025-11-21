@@ -3103,8 +3103,8 @@ class AiOrchestratorService:
         knowledge_reads: list[dict[str, object]] = []
         placeholder_response: str | None = None
         knowledge_loading = False
+        # Accumulates all streamed response_text chunks across iterations.
         streamed_chunks: list[str] = []
-        active_iteration_chunks: list[str] = []
         last_iteration_streamed = False
         iteration_streamed = False
         cache_satisfied_read = False
@@ -3115,15 +3115,17 @@ class AiOrchestratorService:
         def _emit_stream_chunk(chunk: str) -> None:
             if not chunk:
                 return
+            # Track for finalization / fallback streaming.
+            streamed_chunks.append(chunk)
             if on_response_text_delta:
                 on_response_text_delta(chunk)
 
         def _provider_stream_callback(chunk: str) -> None:
-            nonlocal iteration_streamed, active_iteration_chunks
+            nonlocal iteration_streamed
             if not chunk:
                 return
             iteration_streamed = True
-            active_iteration_chunks.append(chunk)
+            _emit_stream_chunk(chunk)
 
         prompt_bundle: PromptBundle | None = None
         final_plan: LlmPlan | None = None
@@ -3143,7 +3145,6 @@ class AiOrchestratorService:
                     logger.exception("stream_complete callback failed")
 
         for _ in range(max_turns):
-            active_iteration_chunks = []
             self._enforce_snippet_budget(knowledge_payload, budget=prompt_budget)
             prompt_bundle = self.prompt_builder.build(
                 conversation=conversation,
@@ -3214,13 +3215,8 @@ class AiOrchestratorService:
                             }
                         )
 
-                # Preserve any streamed text from this iteration.
+                # Preserve whether the final iteration streamed any chunks.
                 last_iteration_streamed = iteration_streamed
-                if iteration_streamed and active_iteration_chunks:
-                    for chunk in active_iteration_chunks:
-                        _emit_stream_chunk(chunk)
-                streamed_chunks = list(active_iteration_chunks) if iteration_streamed else []
-                active_iteration_chunks = []
 
                 # Give the model one more pass with the updated ledger if it re-requested a doc
                 if requested_again and not cache_satisfied_read:
@@ -3232,10 +3228,6 @@ class AiOrchestratorService:
                 final_plan = plan_candidate
                 _notify_stream_complete_once()
                 break
-
-            # Pending reads/actions: discard any provisional streamed text to avoid placeholders.
-            active_iteration_chunks = []
-
 
             # Suppress placeholder emission; rely on status updates only.
             knowledge_loading = True
@@ -3393,7 +3385,8 @@ class AiOrchestratorService:
                 knowledge_reads,
                 has_ready_context=has_ready_context,
             )
-            streamed_chunks = [response_text]
+            # Provider didn't stream; emit a single synthesized chunk and record it.
+            streamed_chunks = []
             _emit_stream_chunk(response_text)
 
 

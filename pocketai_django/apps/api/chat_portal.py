@@ -23,6 +23,7 @@ from apps.services.ai_orchestrator import (
     AiOrchestratorService,
     StreamingTurnContext,
 )
+from apps.services.mcp.sanitizer import sanitize_text, sanitize_with_diagnostics
 from apps.services.llm_provider import load_default_provider
 from apps.services.chat_portal import (
     ChatPortalService,
@@ -328,6 +329,12 @@ def stream_send(request: HttpRequest) -> StreamingHttpResponse:
         return StreamingHttpResponse(status=500)
 
     use_mcp = _business_prefers_mcp(conversation.business_profile)
+    logger.info(
+        "chat_portal.stream_send orchestrator=%s conversation=%s business=%s",
+        "mcp" if use_mcp else "legacy",
+        conversation.id,
+        getattr(conversation.business_profile, "id", None),
+    )
     if use_mcp:
         from apps.services.llm_provider import load_mcp_provider
         from apps.services.mcp import McpOrchestratorService
@@ -435,6 +442,8 @@ def stream_send(request: HttpRequest) -> StreamingHttpResponse:
         if stream_complete.is_set():
             return
         stream_complete.set()
+        stream_queue.put({"type": "status", "state": "complete", "label": ""})
+        logger.debug("Stream completion signaled for conversation %s", conversation.id)
         stream_queue.put(stream_sentinel)
 
     def on_placeholder_response(text: str) -> None:
@@ -446,7 +455,11 @@ def stream_send(request: HttpRequest) -> StreamingHttpResponse:
         try:
             plan = orchestrator.finalize_turn(stream_context)
             plan_holder["plan"] = plan
-            response_text = plan.response_text or ""
+            response_text, dropped = sanitize_with_diagnostics(
+                plan.response_text or "",
+                conversation=conversation,
+                stage="persisted_message",
+            )
             answer_confidence = None
             if plan.diagnostics:
                 answer_confidence = plan.diagnostics.get("answer_confidence")

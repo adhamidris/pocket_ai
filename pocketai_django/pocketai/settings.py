@@ -260,5 +260,6 @@ LOGGING = {
         "apps.services.ai_orchestrator": {"handlers": ["console"], "level": "INFO", "propagate": False},
         "apps.services.mcp.tools": {"handlers": ["console"], "level": "INFO", "propagate": False},
         "apps.services.mcp.orchestrator": {"handlers": ["console"], "level": "INFO", "propagate": False},
+        "apps.api.chat_portal": {"handlers": ["console"], "level": "INFO", "propagate": False},
     },
 }

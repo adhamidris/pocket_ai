@@ -11,14 +11,15 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 import uuid
-from typing import Callable, Mapping
+from typing import Callable, Iterable, Mapping
 
 from django.conf import settings
 
 from apps.accounts.models import AgentProfile
 from apps.conversations.models import Conversation, ConversationExtractionType
-from apps.services.llm_provider import PromptGenerationError
+from apps.services.llm_provider import PromptGenerationError, _emit_stream_chunks
 from apps.services.ai_orchestrator import (
     AiOrchestratorPlan,
     PlannedAction,
@@ -29,6 +30,7 @@ from apps.services.ai_orchestrator import (
 )
 
 from . import prompts, tools
+from .sanitizer import extract_sentences, is_investigative_filler, sanitize_with_diagnostics
 from django.core.cache import cache
 
 from .types import (
@@ -87,11 +89,12 @@ class McpOrchestratorService:
         on_response_text_delta: Callable[[str], None] | None = None,
         on_status_change: Callable[[str], None] | None = None,
         on_placeholder_response: Callable[[str], None] | None = None,
-        ) -> AiOrchestratorPlan:
+    ) -> tuple[AiOrchestratorPlan, tuple[str, ...]]:
         """
         Build the orchestration plan for the latest customer message.
 
-        Not implemented yet – see later migration phases for the full MCP loop.
+        Splits the turn into an internal tool loop (no user-facing streaming)
+        followed by a final answer pass that streams only customer-facing text.
         """
 
         messages = prompts.build_messages(conversation=conversation, user_message=user_message)
@@ -110,25 +113,20 @@ class McpOrchestratorService:
             raise RuntimeError("MCP provider is not configured.")
 
         transcript = list(messages)
+        tool_phase_assistant_message: dict[str, object] | None = None
         final_assistant_message: dict[str, object] | None = None
         placeholder_sent = False
+        answer_streamed_chunks: list[str] = []
 
         if on_status_change:
             on_status_change({"code": "thinking", "label": "Thinking…"})
 
-        # Phase 1: streaming + tools to obtain the final assistant answer.
+        # Phase 1: internal tool loop without user-facing streaming.
         for _ in range(self.max_tool_iterations):
-            delta_buffer: list[str] = []
-
-            def _buffer_delta(chunk: str) -> None:
-                if not chunk:
-                    return
-                delta_buffer.append(chunk)
-
             payload = self.provider.chat(
                 transcript,
                 tools=self.tool_definitions,
-                on_stream_delta=_buffer_delta if on_response_text_delta else None,
+                on_stream_delta=None,
             )
             assistant_message = self._coerce_assistant_message(payload)
             tool_calls = list(assistant_message.get("tool_calls") or [])
@@ -143,14 +141,7 @@ class McpOrchestratorService:
             transcript.append(assistant_payload)
 
             if not tool_calls:
-                final_assistant_message = assistant_message
-                # Flush buffered deltas only for final (no-tool) turn.
-                if on_response_text_delta and delta_buffer:
-                    for chunk in delta_buffer:
-                        try:
-                            on_response_text_delta(chunk)
-                        except Exception:  # pragma: no cover - safeguard
-                            pass
+                tool_phase_assistant_message = assistant_message
                 break
 
             for tool_call in tool_calls:
@@ -240,9 +231,119 @@ class McpOrchestratorService:
         if on_status_change:
             on_status_change("responding")
 
-        answer_text = ""
+        stream_buffer = ""
+        stream_dropped: list[str] = []
+
+        def _emit_tokens(text: str) -> None:
+            if not text:
+                return
+            for token in re.findall(r"\S+\s*|\s+", text, flags=re.MULTILINE):
+                if not token:
+                    continue
+                answer_streamed_chunks.append(token)
+                if on_response_text_delta:
+                    try:
+                        on_response_text_delta(token)
+                    except Exception:  # pragma: no cover - defensive
+                        logger.exception("on_response_text_delta callback failed")
+
+        def _emit_sentence(text: str) -> None:
+            if not text:
+                return
+            _emit_tokens(text)
+
+        def _answer_stream_chunk(chunk: str) -> None:
+            nonlocal stream_buffer
+            if not chunk:
+                return
+            stream_buffer = f"{stream_buffer}{chunk}"
+            while True:
+                # If we have a full sentence, process it.
+                match = re.search(r"(.+?[.!?])([\s]|$)", stream_buffer)
+                if match:
+                    sentence = match.group(1)
+                    remainder = stream_buffer[match.end(1):]
+                    stripped = sentence.strip()
+                    if is_investigative_filler(stripped):
+                        stream_dropped.append(stripped)
+                        logger.info(
+                            "mcp.sanitizer.dropped_sentence stage=%s conversation=%s business=%s text=%s",
+                            "streaming_answer",
+                            conversation.id,
+                            conversation.business_profile_id,
+                            stripped[:200],
+                        )
+                    else:
+                        _emit_sentence(sentence + (match.group(2) or ""))
+                    stream_buffer = remainder
+                    continue
+
+                # No full sentence yet; stream word-by-word if it's not a filler prefix.
+                if is_investigative_filler(stream_buffer.strip()):
+                    break
+                words = stream_buffer.split(" ")
+                if len(words) > 1:
+                    emit_part = " ".join(words[:-1]) + " "
+                    stream_buffer = words[-1]
+                    _emit_tokens(emit_part)
+                    continue
+                break
+
+        final_messages = prompts.build_final_answer_messages(
+            conversation=conversation,
+            user_message=user_message,
+            tool_context_note=self._planner_tool_note(tool_context),
+            coverage_ledger=tuple(getattr(tool_context, "coverage_ledger", ())),
+            tool_trace=tuple(getattr(tool_context, "tool_trace", ())),
+            assistant_draft=tool_phase_assistant_message,
+        )
+        use_response_format = True
+        if self.provider.__class__.__name__ == "DeepSeekToolsProvider":
+            use_response_format = False
+        try:
+            final_payload = self.provider.chat(
+                final_messages,
+                tools=None,
+                on_stream_delta=_answer_stream_chunk,
+                response_format=self._final_response_schema() if use_response_format else None,
+            )
+        except PromptGenerationError as exc:
+            if "response_format" in str(exc).lower():
+                logger.warning(
+                    "mcp.final_answer.response_format_unsupported provider=%s conversation=%s",
+                    self.provider.__class__.__name__,
+                    conversation.id,
+                )
+                final_payload = self.provider.chat(
+                    final_messages,
+                    tools=None,
+                    on_stream_delta=_answer_stream_chunk,
+                    response_format=None,
+                )
+            else:
+                raise
+        final_assistant_message = self._coerce_assistant_message(final_payload)
+        trailing = stream_buffer
+        if trailing:
+            trailing_stripped = trailing.strip()
+            if trailing_stripped and is_investigative_filler(trailing_stripped):
+                stream_dropped.append(trailing_stripped)
+                logger.info(
+                    "mcp.sanitizer.dropped_sentence stage=%s conversation=%s business=%s text=%s",
+                    "streaming_answer",
+                    conversation.id,
+                    conversation.business_profile_id,
+                    trailing_stripped[:200],
+                )
+            else:
+                _emit_tokens(trailing)
+
+        answer_text_raw = ""
         if final_assistant_message is not None:
-            answer_text = str(final_assistant_message.get("content") or "").strip()
+            answer_text_raw = str(final_assistant_message.get("content") or "").strip()
+
+        if on_status_change:
+            on_status_change({"code": "stream_complete", "label": ""})
 
         unmet_read_required = False
         for entry in getattr(tool_context, "knowledge_results", []):
@@ -258,15 +359,37 @@ class McpOrchestratorService:
                 "extractions": [],
                 "placeholder_response": "Need to read the recommended document/page before answering. Use read_hint (doc_id + page + mode).",
             }
-            answer_text = ""
+            answer_text_raw = ""
+
+        clean_answer_text, dropped_sentences = sanitize_with_diagnostics(
+            answer_text_raw,
+            conversation=conversation,
+            stage="final_answer",
+        )
+        all_dropped = stream_dropped + dropped_sentences
+        normalized_assistant_msg = dict(final_assistant_message or {})
+        normalized_assistant_msg["content"] = clean_answer_text
+
+        def _record_chunk(chunk: str) -> None:
+            if not chunk:
+                return
+            answer_streamed_chunks.append(chunk)
+            if on_response_text_delta:
+                try:
+                    on_response_text_delta(chunk)
+                except Exception:  # pragma: no cover - defensive
+                    logger.exception("on_response_text_delta callback failed")
+
+        if not answer_streamed_chunks:
+            _emit_tokens(clean_answer_text)
 
         planner_payload: dict[str, object] | None = None
-        if answer_text:
+        if clean_answer_text:
             try:
                 planner_payload = self._run_planner(
                     conversation=conversation,
                     user_message=user_message,
-                    answer_text=answer_text,
+                    answer_text=clean_answer_text,
                     tool_context=tool_context,
                     on_status_change=on_status_change,
                 )
@@ -275,12 +398,13 @@ class McpOrchestratorService:
 
         plan = self._build_plan_from_assistant(
             conversation=conversation,
-            assistant_message=self._merge_planner_into_assistant(final_assistant_message or {}, planner_payload),
+            assistant_message=self._merge_planner_into_assistant(normalized_assistant_msg, planner_payload),
             tool_context=tool_context,
+            sanitized_dropped=all_dropped,
         )
         self._log_turn_metrics(conversation, tool_context)
         del on_status_change, on_placeholder_response
-        return plan
+        return plan, tuple(answer_streamed_chunks)
 
     def stream_turn(
         self,
@@ -292,13 +416,17 @@ class McpOrchestratorService:
         on_placeholder_response: Callable[[str], None] | None = None,
         on_stream_complete: Callable[[], None] | None = None,
     ) -> StreamingTurnContext:
-        plan = self._execute_turn(
+        plan, streamed_chunks = self._execute_turn(
             conversation=conversation,
             user_message=user_message,
             on_response_text_delta=on_response_text_delta,
             on_status_change=on_status_change,
             on_placeholder_response=on_placeholder_response,
         )
+        if not streamed_chunks and plan.response_text:
+            reconstructed: list[str] = []
+            _emit_stream_chunks(reconstructed.append, plan.response_text)
+            streamed_chunks = tuple(reconstructed)
         llm_source = "provider"
         if plan.diagnostics and plan.diagnostics.get("llm_strategy"):
             llm_source = str(plan.diagnostics.get("llm_strategy"))
@@ -323,7 +451,7 @@ class McpOrchestratorService:
             tool_trace=tuple(),
             cached_snippet_count=0,
             llm_source=llm_source,
-            streamed_chunks=tuple(),
+            streamed_chunks=streamed_chunks,
             plan=plan,
         )
 
@@ -363,16 +491,22 @@ class McpOrchestratorService:
         conversation: Conversation,
         assistant_message: Mapping[str, object],
         tool_context: ToolExecutionContext,
+        sanitized_dropped: Iterable[str] | None = None,
     ) -> AiOrchestratorPlan:
         response_text = str(assistant_message.get("content") or "").strip()
         planned_actions = self._extract_planned_actions(conversation, assistant_message)
         extractions = self._extract_extractions(assistant_message)
+        dropped_list = list(sanitized_dropped or [])
         diagnostics = {
             "llm_strategy": "mcp_tools_stream_planner",
             "knowledge_reads": getattr(tool_context, "knowledge_reads", []),
             "tool_trace": getattr(tool_context, "tool_trace", []),
             "placeholder_response": assistant_message.get("placeholder_response"),
             "coverage_ledger": getattr(tool_context, "coverage_ledger", []),
+            "sanitized_sentences": {
+                "count": len(dropped_list),
+                "examples": dropped_list[:3],
+            },
         }
         ingestion_warnings = tuple(tool_context.ingestion_warnings)
         return AiOrchestratorPlan(
@@ -519,6 +653,27 @@ class McpOrchestratorService:
         if isinstance(planner_message.get("extractions"), list):
             merged["extractions"] = planner_message.get("extractions")
         return merged
+
+    @staticmethod
+    def _final_response_schema() -> Mapping[str, object]:
+        return {
+            "type": "json_schema",
+            "json_schema": {
+                "name": "final_response",
+                "schema": {
+                    "type": "object",
+                    "properties": {
+                        "response_text": {"type": "string"},
+                        "actions": {"type": "array", "items": {"type": "object"}},
+                        "extractions": {"type": "array", "items": {"type": "object"}},
+                        "placeholder_response": {"type": "string"},
+                    },
+                    "required": ["response_text"],
+                    "additionalProperties": True,
+                },
+                "strict": False,
+            },
+        }
 
     @staticmethod
     def _is_knowledge_tool(name: str) -> bool:

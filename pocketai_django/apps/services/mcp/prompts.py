@@ -8,12 +8,16 @@ the system prompt and transcript assembly logic.
 
 from __future__ import annotations
 
+import os
 import textwrap
 from typing import Iterable, Mapping
+
+from django.conf import settings
 
 from apps.accounts.models import AgentProfile
 from apps.conversations.models import Conversation, ConversationSender
 from apps.services.ai_prompt_builder import PromptBuilder
+from apps.services.mcp.sanitizer import sanitize_text
 
 
 def build_system_message(agent: AgentProfile) -> str:
@@ -26,6 +30,14 @@ def build_system_message(agent: AgentProfile) -> str:
     """
 
     builder = PromptBuilder(agent)
+    provider_hint = (getattr(settings, "MCP_PROVIDER", None) or os.getenv("MCP_PROVIDER") or "").strip().lower()
+    provider_suffix = ""
+    if provider_hint == "deepseek":
+        provider_suffix = (
+            "\n- DeepSeek + tools: If you need to search or read, call tools only; "
+            "do not narrate searching/checking in the assistant content."
+        )
+
     tool_section = textwrap.dedent(
         """
         ### Tool Usage Guidance
@@ -41,9 +53,10 @@ def build_system_message(agent: AgentProfile) -> str:
         f"""
         You are {agent.name}, the {agent.role or "AI Customer Specialist"} for {{business_name}}.
 
-        {builder.CASE_MANDATE}
-
-        {builder.CONVERSATION_RULES}
+        ### Output Guardrails (Mandatory)
+        - Do not narrate internal steps like searching, checking, or reviewing. Never output placeholders such as “I’ll check”, “Let me search”, or “Reviewing…”.
+        - Tool calls and tool results are internal. When invoking tools, leave the assistant content empty; do not promise to search. Provide a real candidate answer only when ready to respond.
+        {provider_suffix}
 
         ### Internal Knowledge Only
         - Use only the provided knowledge snippets and reads. If the knowledge base does not contain the answer, say so and ask for a more specific identifier/page instead of using outside or world knowledge.
@@ -55,11 +68,15 @@ def build_system_message(agent: AgentProfile) -> str:
         - Respect chunk budgets; prefer the narrowest page/chunk that answers the question. Avoid rereading documents that are already covered.
         - Tool responses may include `constraint_error` or `throttle_notice`; never fabricate. Continue with existing snippets or ask the visitor for a narrower doc/page/identifier.
         - Knowledge file names and labels are internal; do not expose them in the customer-facing reply.
-        - Avoid investigative fillers like “I’ll check/looking now.” State the outcome or missing info directly. If you must include a status, keep it one short line, then put the answer/clarification on the next line for readability.
+        - Avoid investigative fillers or meta-status lines about searching or checking. Respond directly with the clearest answer or limitation you can based on the current snippets and reads, without narrating that you are searching, checking, or reviewing.
 
         {builder.CHUNK_READ_NUDGE}
 
         {builder.CUSTOMER_RULES}
+
+        {builder.CASE_MANDATE}
+
+        {builder.CONVERSATION_RULES}
 
         {tool_section}
         """
@@ -91,10 +108,13 @@ def build_messages(*, conversation: Conversation, user_message: str) -> list[Map
     transcript = conversation.messages.order_by("sent_at", "created_at")
     for entry in transcript:
         role = "assistant" if entry.sender == ConversationSender.AI else "user"
+        content = entry.body
+        if role == "assistant":
+            content = sanitize_text(content or "")
         messages.append(
             {
                 "role": role,
-                "content": entry.body,
+                "content": content,
                 "name": entry.sender if entry.sender in {ConversationSender.AI, ConversationSender.CUSTOMER} else None,
             }
         )
@@ -202,3 +222,92 @@ def build_planner_messages(
         {"role": "user", "content": user_payload},
     ]
     return messages
+
+
+def build_final_answer_messages(
+    *,
+    conversation: Conversation,
+    user_message: str,
+    tool_context_note: str | None = None,
+    coverage_ledger: tuple[Mapping[str, object], ...] | None = None,
+    tool_trace: tuple[Mapping[str, object], ...] | None = None,
+    assistant_draft: Mapping[str, object] | None = None,
+) -> list[Mapping[str, object]]:
+    """
+    Construct the final-answer prompt used after tools have completed.
+
+    Emphasizes: tools already run, respond directly without narrating searches,
+    and ground the reply in provided snippet summaries/reads.
+    """
+
+    business_name = conversation.business_profile.name
+    system_lines = [
+        f"You are now drafting the final customer-facing answer for {business_name}.",
+        "Tools have already been executed. Write the answer directly, grounded in the provided reads/snippets.",
+        "Do not narrate internal steps such as searching, checking, or reviewing. Never output placeholders like “I’ll check” or “Let me search”.",
+        "You may briefly attribute sources (e.g., “From the credit card fees guide…”), but do not mention that you searched or are checking.",
+        "Formatting: start with the direct answer in 1–2 sentences. If you have next steps or clarifying questions, put them on a new line as short bullets. Separate sections with a blank line so the reply is easy to scan. Keep the total reply concise (under ~6 sentences).",
+        "If information is missing, state that plainly first, then offer 1–2 specific follow-up questions.",
+    ]
+    system_message = "\n".join(system_lines)
+
+    user_sections: list[str] = [
+        f"Latest user message:\n{user_message.strip()}",
+    ]
+    history = conversation.messages.order_by("-sent_at", "-created_at")[:6]
+    history_lines: list[str] = []
+    for entry in reversed(history):
+        prefix = "Customer" if entry.sender == ConversationSender.CUSTOMER else "Assistant"
+        body = entry.body or ""
+        if entry.sender == ConversationSender.AI:
+            body = sanitize_text(body)
+        history_lines.append(f"{prefix}: {body}")
+    if history_lines:
+        user_sections.append("Recent conversation:\n" + "\n".join(history_lines))
+
+    if tool_context_note:
+        user_sections.append(f"Tooling summary:\n{tool_context_note.strip()}")
+
+    if coverage_ledger:
+        items: list[str] = []
+        for entry in coverage_ledger[:8]:
+            label = entry.get("title") or entry.get("label") or "Knowledge"
+            state = entry.get("read_state") or "summary"
+            topics = entry.get("coverage") if isinstance(entry.get("coverage"), (list, tuple)) else ()
+            topic_text = ", ".join(topics[:2]) if topics else ""
+            parts = [str(label), f"state={state}"]
+            if topic_text:
+                parts.append(f"topics={topic_text}")
+            items.append(" ".join(parts))
+        if items:
+            user_sections.append("Coverage ledger:\n" + " | ".join(items))
+
+    if tool_trace:
+        tools_run: list[str] = []
+        for entry in tool_trace[:10]:
+            name = entry.get("tool")
+            if not name:
+                continue
+            mode = entry.get("mode")
+            page = entry.get("page")
+            parts = [str(name)]
+            if mode:
+                parts.append(f"mode={mode}")
+            if page:
+                parts.append(f"page={page}")
+            tools_run.append(" ".join(parts))
+        if tools_run:
+            user_sections.append("Tools executed this turn:\n" + "; ".join(tools_run))
+
+    if assistant_draft:
+        raw_draft = assistant_draft.get("content")
+        draft_text = raw_draft if isinstance(raw_draft, str) else str(raw_draft or "")
+        draft_text = draft_text.strip()
+        if draft_text:
+            user_sections.append(f"Assistant draft (internal, refine as needed):\n{draft_text}")
+
+    payload = "\n\n".join(user_sections)
+    return [
+        {"role": "system", "content": system_message},
+        {"role": "user", "content": payload},
+    ]
