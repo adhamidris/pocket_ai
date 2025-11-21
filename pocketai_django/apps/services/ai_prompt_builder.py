@@ -303,7 +303,7 @@ class PromptBuilder:
             1. Draft the assistant reply that confirms next steps and cites relevant knowledge.
             2. Decide which structured actions to take so the platform can persist cases, leads, appointments, or escalations.
             3. Always produce at least one `create_case` or `update_case_status` action so the conversation is tracked.
-            4. If you include `read_knowledge`, set `response_text` to a brief placeholder that promises an update after reviewing the document (<= 180 characters; no invented facts; do not cite snippets yet).
+            4. If you include `read_knowledge`, still give the visitor the most helpful answer you can immediately. Mention what you will verify after the read, but never reply with placeholders like "Reviewing…" or "Searching…".
             """
         ).strip()
 
