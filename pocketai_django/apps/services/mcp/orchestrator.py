@@ -119,19 +119,11 @@ class McpOrchestratorService:
         # Phase 1: streaming + tools to obtain the final assistant answer.
         for _ in range(self.max_tool_iterations):
             delta_buffer: list[str] = []
-            delta_forwarded_live = False
 
             def _buffer_delta(chunk: str) -> None:
-                nonlocal delta_forwarded_live
                 if not chunk:
                     return
                 delta_buffer.append(chunk)
-                if on_response_text_delta:
-                    try:
-                        on_response_text_delta(chunk)
-                        delta_forwarded_live = True
-                    except Exception:  # pragma: no cover - defensive
-                        logger.exception("on_response_text_delta callback failed")
 
             payload = self.provider.chat(
                 transcript,
@@ -153,7 +145,7 @@ class McpOrchestratorService:
             if not tool_calls:
                 final_assistant_message = assistant_message
                 # Flush buffered deltas only for final (no-tool) turn.
-                if on_response_text_delta and delta_buffer and not delta_forwarded_live:
+                if on_response_text_delta and delta_buffer:
                     for chunk in delta_buffer:
                         try:
                             on_response_text_delta(chunk)

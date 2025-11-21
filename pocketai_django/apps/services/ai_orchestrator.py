@@ -3103,7 +3103,6 @@ class AiOrchestratorService:
         knowledge_reads: list[dict[str, object]] = []
         placeholder_response: str | None = None
         knowledge_loading = False
-        placeholder_added_to_prompt = False
         streamed_chunks: list[str] = []
         active_iteration_chunks: list[str] = []
         last_iteration_streamed = False
@@ -3120,27 +3119,10 @@ class AiOrchestratorService:
                 on_response_text_delta(chunk)
 
         def _provider_stream_callback(chunk: str) -> None:
-            nonlocal iteration_streamed, active_iteration_chunks
+            nonlocal active_iteration_chunks
             if not chunk:
                 return
-            iteration_streamed = True
             active_iteration_chunks.append(chunk)
-            _emit_stream_chunk(chunk)
-
-        def _remember_placeholder_for_prompt(text: str | None) -> None:
-            nonlocal placeholder_added_to_prompt, recent_messages
-            if placeholder_added_to_prompt or not text:
-                return
-            placeholder_msg = ConversationMessage(
-                conversation=conversation,
-                sender=ConversationSender.AI,
-                body=text.strip(),
-                metadata={"placeholder": True},
-                sent_at=timezone.now(),
-            )
-            placeholder_msg.created_at = placeholder_msg.sent_at
-            recent_messages.append(placeholder_msg)
-            placeholder_added_to_prompt = True
 
         prompt_bundle: PromptBundle | None = None
         final_plan: LlmPlan | None = None
@@ -3204,6 +3186,14 @@ class AiOrchestratorService:
                 if forced not in pending_requests and forced not in ready_ids_in_payload:
                     pending_requests.append(forced)
 
+            should_flush_stream = not pending_requests
+            if should_flush_stream and active_iteration_chunks:
+                for chunk in active_iteration_chunks:
+                    _emit_stream_chunk(chunk)
+                iteration_streamed = True
+            else:
+                active_iteration_chunks = []
+
             if not pending_requests:
                 requested_again = bool(normalized_kids)
                 if requested_again:
@@ -3247,15 +3237,7 @@ class AiOrchestratorService:
                 break
 
 
-            # Only commit a placeholder if we are actually going to read knowledge this turn
-            will_read = bool(pending_requests)
-            if will_read and plan_candidate.response_text:
-                placeholder_response = plan_candidate.response_text
-                _remember_placeholder_for_prompt(placeholder_response)
-            if on_placeholder_response and placeholder_response:
-                on_placeholder_response(placeholder_response.strip())
-
-
+            # Suppress placeholder emission; rely on status updates only.
             knowledge_loading = True
             if on_status_change:
                 on_status_change("reading_document")

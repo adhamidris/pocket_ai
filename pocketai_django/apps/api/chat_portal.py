@@ -438,9 +438,8 @@ def stream_send(request: HttpRequest) -> StreamingHttpResponse:
         stream_queue.put(stream_sentinel)
 
     def on_placeholder_response(text: str) -> None:
-        clean = (text or "").strip()
-        if clean:
-            stream_queue.put({"type": "placeholder", "text": clean})
+        # Placeholder responses are suppressed; status events handle UX.
+        return
 
     def finalize_stream_context(stream_context: StreamingTurnContext) -> None:
         close_old_connections()
@@ -617,11 +616,6 @@ def stream_send(request: HttpRequest) -> StreamingHttpResponse:
                         data["meta"] = meta_value
                     yield "event: status\n"
                     yield f"data: {json.dumps(data)}\n\n"
-                    continue
-                if chunk.get("type") == "placeholder":
-                    placeholder_text = chunk.get("text") or ""
-                    yield "event: placeholder\n"
-                    yield f"data: {json.dumps({'text': placeholder_text})}\n\n"
                     continue
             streamed_from_provider = True
             chunk_text = str(chunk)

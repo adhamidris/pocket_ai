@@ -31,7 +31,6 @@ class ChatPortalClient {
       toastRoot: document.getElementById("toast-root"),
       statusBadge: container.querySelector("[data-chat-status]"),
     };
-    this.lastPlaceholderText = "";
     this.streamingDedupDone = false;
     this.streamingFinalBodyEl = null;
     this.streamingMessageNode = null;
@@ -43,7 +42,6 @@ class ChatPortalClient {
     this.streamingBuffer = "";
     this.streamingRawBuffer = "";
     this.streamingRewritePending = false;
-    this.placeholderActive = false;
     this.markdownRenderer = this.createMarkdownRenderer();
     this.workflowLocked = false;
     this.streamingActive = false;
@@ -219,22 +217,7 @@ class ChatPortalClient {
 
   handleStreamEvent(eventType, data) {
     if (eventType === "placeholder") {
-      // Do NOT render a placeholder; only remember it for dedupe.
-      if (this.placeholderActive) {
-        return;
-      }
-      try {
-        const payload = data ? JSON.parse(data) : null;
-        const text = payload && payload.text ? payload.text : "";
-        if (text) {
-          this.lastPlaceholderText = text;
-          this.streamingDedupDone = false;
-          this.placeholderActive = true;
-          this.setStreamingStatus("reading", text);
-        }
-      } catch (_err) {
-        // ignore malformed payloads
-      }
+      // Ignore placeholders; status spinner covers "thinking/reading".
       return;
     }
     
@@ -251,15 +234,15 @@ class ChatPortalClient {
           if (state === "reading_document") {
             // Knowledge read: we expect content to be revised after doc load.
             this.streamingRewritePending = true;
-            this.setStreamingStatus("reading", label || "Reading documents…");
+            this.setStreamingStatus("reading", label || "Reading…");
           } else if (state === "searching_knowledge") {
             // Surface search-specific label (e.g. "Searching: billing policy").
-            this.setStreamingStatus("searching", label || "Searching knowledge…");
+            this.setStreamingStatus("searching", label || "Searching…");
           } else if (state === "planning_actions") {
             // Keep this internal; do not surface to the visitor.
             return;
           } else if (state === "responding") {
-            this.clearStreamingStatus();
+            this.setStreamingStatus("refining", "Refining answer…");
           } else if (state && state !== "responding") {
             // Generic fallback for other states; skip explicit "responding"/"writing".
             const fallbackLabel = label || this.formatStatus(state);
@@ -279,49 +262,9 @@ class ChatPortalClient {
         if (payload && payload.text) {
           let chunk = payload.text;
 
-          // Clear placeholder state on first real delta.
-          if (this.placeholderActive) {
-            this.placeholderActive = false;
-            this.clearStreamingStatus();
-          }
-
-          // --- DEDUPE: strip placeholder prefix from the very first streamed delta ---
-          if (this.lastPlaceholderText && !this.streamingDedupDone) {
-            const base = (this.lastPlaceholderText || "").trim();
-            const baseLower = base.toLowerCase();
-            let chunkLower = chunk.toLowerCase();
-
-            // Try a few strip candidates to be robust to punctuation/quotes
-            const stripCandidates = [
-              base,
-              base.replace(/[.?!:—-]+$/g, "").trim(),         // trailing punctuation
-              base.replace(/["""']+/g, "").trim(),           // smart quotes
-            ];
-
-            for (const cand of stripCandidates) {
-              const cLower = cand.toLowerCase();
-              if (cLower && chunkLower.startsWith(cLower)) {
-                // Remove the exact-length prefix from the ORIGINAL chunk (preserve case/markup)
-                chunk = chunk.slice(cand.length).replace(/^\s+/, "");
-                this.streamingDedupDone = true;
-                break;
-              }
-            }
-
-            // If the first chunk was only the placeholder, skip appending empty text.
-            if (!chunk) {
-              return;
-            }
-          }
-          // ---------------------------------------------------------------------------
-
           if (!this.workflowLocked) {
-            if (!this.streamingActive) {
-              this.streamingActive = true;
-              this.setStreamingStatus("updating", "Updating details…");
-            } else {
-              this.setStreamingStatus("refining", "Refining response…");
-            }
+            this.streamingActive = true;
+            this.setStreamingStatus("refining", "Refining answer…");
           }
           this.appendStreamingChunk(chunk);
         }
@@ -367,37 +310,17 @@ class ChatPortalClient {
     }
     try {
       const payload = JSON.parse(data);
-      if (payload && payload.text) {
-        const placeholder = (this.lastPlaceholderText || "").trim().toLowerCase();
-        const finalText = (payload.text || "").trim();
-        const isPlaceholderOnly = placeholder && finalText && finalText.toLowerCase() === placeholder;
-        const isPending = !!payload.pending;
-
-        // If the provisional final is just the placeholder, avoid rendering a transcript bubble.
-        if (isPending && isPlaceholderOnly) {
-          this.awaitingReply = false;
-          this.streamFinished = true;
-          this.updateSendButtonState(false);
-          this.setComposerAvailability(true);
-          this.updateComposerNotice(false);
-          this.streamingActive = false;
-          this.clearStreamingStatus();
-          this.resetStreamingState(true, false);
-          this.markStreamFinished();
-          return;
-        }
-
+      if (payload) {
+        const finalText = payload.text || "";
         if (this.streamingMessageNode) {
-          this.finalizeStreamingMessage(payload.text);
-        } else {
+          this.finalizeStreamingMessage(finalText);
+        } else if (finalText) {
           this.appendMessage({
             sender: "ai",
-            body: payload.text,
+            body: finalText,
             sent_at: new Date().toISOString(),
           });
         }
-      } else if (this.streamingMessageNode) {
-        this.finalizeStreamingMessage("");
       }
       if (payload && payload.session_status) {
         this.updateStatus(payload.session_status);
@@ -565,12 +488,6 @@ class ChatPortalClient {
     this.ensureStreamingMessageNode();
     const normalized = this.normalizeStreamingChunk(chunk);
 
-    // Clear placeholder state as soon as we show real content.
-    if (this.placeholderActive) {
-      this.placeholderActive = false;
-      this.clearStreamingStatus();
-    }
-
     if (this.streamingRewritePending) {
       this.streamingBuffer = "";
       this.streamingRawBuffer = "";
@@ -578,7 +495,7 @@ class ChatPortalClient {
         this.streamingFinalBodyEl.innerHTML = "";
       }
       this.streamingRewritePending = false;
-      this.setStreamingStatus("updating");
+      this.setStreamingStatus("refining", "Refining answer…");
     }
     this.streamingRawBuffer += normalized;
     const formatted = this.formatAssistantText(this.streamingRawBuffer);
@@ -604,7 +521,7 @@ class ChatPortalClient {
 
   formatAssistantText(text) {
     if (!text) return "";
-    let output = text;
+    let output = this.stripLeadingPlaceholders(text);
 
     // Insert paragraph breaks before audit/search phrases appearing mid-text.
     const phrases = [
@@ -632,6 +549,13 @@ class ChatPortalClient {
     result += output.slice(lastIndex);
 
     return result;
+  }
+
+  stripLeadingPlaceholders(text) {
+    if (!text) return "";
+    const pattern = /^(?:\s*(?:i['’]?ll|let me)\s+(?:search|look|read)[^.?!]*[.?!]\s*)+/i;
+    const stripped = text.replace(pattern, "").trimStart();
+    return stripped || text;
   }
 
   ensureStreamingMessageNode() {
@@ -677,29 +601,27 @@ class ChatPortalClient {
   }
 
   finalizeStreamingMessage(finalText) {
-    const trimmedBuffer = (this.streamingBuffer || "").trim();
-    const trimmedFinal = (finalText || "").trim();
-    const placeholder = (this.lastPlaceholderText || "").trim().toLowerCase();
-    const finalMatchesPlaceholder = trimmedFinal && placeholder && trimmedFinal.toLowerCase() === placeholder;
-
+    const incoming = (finalText || "").toString();
     let text = "";
-    if (!trimmedFinal) {
+
+    if (incoming) {
+      this.streamingRawBuffer = incoming;
+      this.streamingBuffer = this.formatAssistantText(incoming);
       text = this.streamingBuffer;
-    } else if (finalMatchesPlaceholder) {
-      text = trimmedBuffer ? this.streamingBuffer : finalText;
     } else {
-      this.streamingRawBuffer = finalText;
-      this.streamingBuffer = this.formatAssistantText(finalText);
-      text = this.streamingBuffer;
+      text = this.streamingBuffer || "";
     }
 
     if (!text) {
-      text = this.streamingBuffer || "";
+      if (this.streamingMessageNode) {
+        this.resetStreamingState(true);
+      }
+      return;
     }
 
     if (this.streamingFinalBodyEl) {
       this.streamingFinalBodyEl.innerHTML = this.renderMarkdown(text);
-    } else if (text) {
+    } else {
       this.appendMessage({ sender: "ai", body: text, sent_at: new Date().toISOString() });
     }
     this.resetStreamingState(false);
@@ -745,7 +667,6 @@ class ChatPortalClient {
     this.streamingBuffer = "";
     this.streamingRawBuffer = "";
     this.streamingRewritePending = false;
-    this.placeholderActive = false;
   }
 
   setStreamingStatus(mode = "working", labelOverride) {
@@ -755,11 +676,11 @@ class ChatPortalClient {
     const formattedLabel = this.formatStatusLabel(labelOverride);
     const labelMap = {
       working: "Assistant is working…",
-      drafting: "Processing…",
-      reading: "Reading documents…",
-      searching: "Searching knowledge…",
-      updating: "Updating details…",
-      refining: "Refining response…",
+      drafting: "Refining answer…",
+      reading: "Reading…",
+      searching: "Searching…",
+      updating: "Refining answer…",
+      refining: "Refining answer…",
       error: "Workflow issue detected.",
     };
     const baseLabel = labelMap[mode] || labelMap.working;
