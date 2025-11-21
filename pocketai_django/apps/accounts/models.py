@@ -623,6 +623,11 @@ class KnowledgeUpload(models.Model):
             models.Index(fields=["business_profile", "source_type"], name="upload_business_source_idx"),
             models.Index(fields=["business_profile", "slug"], name="upload_business_slug_idx"),
             models.Index(fields=["integration", "status"], name="upload_integration_status_idx"),
+            GinIndex(
+                fields=["display_name"],
+                name="upload_display_name_trgm",
+                opclasses=["gin_trgm_ops"],
+            ),
         ]
         constraints = [
             models.UniqueConstraint(

@@ -1254,6 +1254,10 @@ class KnowledgeSearchService:
     def _alias_cache_key(business_id: uuid.UUID, alias_value: str, version: int) -> str:
         return f"rag:alias:{business_id}:{version}:{alias_value}"
 
+    @staticmethod
+    def _query_cache_version_key(business_id: uuid.UUID) -> str:
+        return f"rag:qvec:ver:{business_id}"
+
     @classmethod
     def invalidate_alias_cache(cls, business_id: uuid.UUID) -> None:
         version_key = cls._alias_cache_version_key(business_id)
@@ -1262,8 +1266,24 @@ class KnowledgeSearchService:
         except ValueError:
             cache.set(version_key, 1, None)
 
+    @classmethod
+    def invalidate_query_cache(cls, business_id: uuid.UUID) -> None:
+        version_key = cls._query_cache_version_key(business_id)
+        try:
+            cache.incr(version_key)
+        except ValueError:
+            cache.set(version_key, 1, None)
+
     def _get_alias_cache_version(self, business_id: uuid.UUID) -> int:
         version_key = self._alias_cache_version_key(business_id)
+        version = cache.get(version_key)
+        if version is None:
+            cache.set(version_key, 0, None)
+            return 0
+        return int(version)
+
+    def _get_query_cache_version(self, business_id: uuid.UUID) -> int:
+        version_key = self._query_cache_version_key(business_id)
         version = cache.get(version_key)
         if version is None:
             cache.set(version_key, 0, None)
@@ -1431,8 +1451,9 @@ class KnowledgeSearchService:
         if not self.embedding_service:
             return None, diagnostics
         model_name = getattr(self.embedding_service, "model", "local")
+        qvec_version = self._get_query_cache_version(business_profile.id)
         digest_source = f"{business_profile.id}:{model_name}:{query_text}".encode("utf-8")
-        cache_key = f"rag:qvec:{hashlib.sha256(digest_source).hexdigest()[:32]}"
+        cache_key = f"rag:qvec:{qvec_version}:{hashlib.sha256(digest_source).hexdigest()[:32]}"
         query_vector: list[float] | None = cache.get(cache_key)
         diagnostics["vector_cache_hit"] = query_vector is not None
         if query_vector is None:
@@ -3024,6 +3045,10 @@ class AiOrchestratorService:
             )
         else:
             alias_result = AliasSearchResult(tuple(), {})
+
+        if on_status_change:
+            label = f"Searching: {query[:80]}" if query else "Searching knowledge…"
+            on_status_change({"code": "searching_knowledge", "label": label})
 
         search_start = time.perf_counter()
         search_result = self.knowledge_service.search(

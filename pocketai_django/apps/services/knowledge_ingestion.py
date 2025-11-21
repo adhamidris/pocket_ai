@@ -2670,6 +2670,7 @@ class KnowledgeIngestionService:
         except ImportError:  # pragma: no cover - defensive import
             return
         KnowledgeSearchService.invalidate_alias_cache(business_id)
+        KnowledgeSearchService.invalidate_query_cache(business_id)
 
     def _embedding_backlog_count(self, business_id: uuid.UUID) -> int:
         return KnowledgeIngestionJob.objects.filter(
@@ -3029,6 +3030,7 @@ class KnowledgeIngestionService:
             finished_at=finished,
             payload=payload,
         )
+        self._invalidate_alias_cache(job.business_profile_id)
         self._release_deferred_jobs(job.business_profile_id)
 
     def _handle_failure(self, job: KnowledgeIngestionJob, message: str) -> None:
@@ -3091,6 +3093,8 @@ class KnowledgeIngestionService:
             return "pdf"
         if suffix in {".docx", ".dotx"} or "word" in content_type or "officedocument.wordprocessingml" in content_type:
             return "docx"
+        if suffix in {".json", ".jsonl", ".ndjson"} or "json" in content_type or "json" in (guessed or ""):
+            return "json"
         if suffix in {".txt", ".md", ".rtf"} or "text" in content_type:
             return "txt"
         if suffix in {".csv", ".tsv"} or "csv" in content_type:
@@ -3101,8 +3105,6 @@ class KnowledgeIngestionService:
             or "vnd.google-apps.spreadsheet" in content_type
         ):
             return "xlsx"
-        if suffix == ".json" or "json" in content_type:
-            return "json"
         return suffix.strip(".") if suffix else None
 
     @staticmethod

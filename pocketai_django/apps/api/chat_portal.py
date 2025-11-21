@@ -36,6 +36,39 @@ from apps.services.chat_portal import (
     PortalValidationError,
 )
 
+logger = logging.getLogger(__name__)
+
+CONTEXT_STATUS_CODES = {
+    "searching_knowledge",
+    "reading_document",
+    "planning_actions",
+    "responding",
+}
+
+
+def _queue_put(queue, item):
+    put = getattr(queue, "put", None)
+    if callable(put):
+        put(item)
+    else:
+        queue.append(item)
+
+
+def _enqueue_status_events(queue, *, code: str, label: str | None = None, meta: dict | None = None) -> None:
+    code_value = (code or "").strip()
+    if not code_value:
+        return
+    label_value = label or code_value.replace("_", " ").title()
+    payload: dict[str, object] = {"type": "status", "state": code_value, "label": label_value}
+    if meta:
+        payload["meta"] = meta
+    if code_value in CONTEXT_STATUS_CODES:
+        ctx_payload = {"type": "context_progress", "state": code_value, "label": label_value}
+        if meta:
+            ctx_payload["meta"] = meta
+        _queue_put(queue, ctx_payload)
+    _queue_put(queue, payload)
+
 
 def _service() -> ChatPortalService:
     return ChatPortalService()
@@ -431,12 +464,7 @@ def stream_send(request: HttpRequest) -> StreamingHttpResponse:
                 meta = raw_meta
         if not code:
             return
-        if not label:
-            label = code.replace("_", " ").title()
-        payload: dict[str, object] = {"type": "status", "state": code, "label": label}
-        if meta:
-            payload["meta"] = meta
-        stream_queue.put(payload)
+        _enqueue_status_events(stream_queue, code=code, label=label, meta=meta)
 
     def signal_stream_complete() -> None:
         if stream_complete.is_set():
@@ -616,6 +644,20 @@ def stream_send(request: HttpRequest) -> StreamingHttpResponse:
             if chunk is stream_sentinel:
                 break
             if isinstance(chunk, dict):
+                if chunk.get("type") == "context_progress":
+                    state_value = chunk.get("state")
+                    label_value = chunk.get("label")
+                    data: dict[str, object] = {}
+                    if isinstance(state_value, str):
+                        data["state"] = state_value
+                    if isinstance(label_value, str):
+                        data["label"] = label_value
+                    meta_value = chunk.get("meta")
+                    if isinstance(meta_value, dict):
+                        data["meta"] = meta_value
+                    yield "event: context_progress\n"
+                    yield f"data: {json.dumps(data)}\n\n"
+                    continue
                 if chunk.get("type") == "status":
                     state_value = chunk.get("state")
                     label_value = chunk.get("label")
@@ -768,4 +810,3 @@ def events(request: HttpRequest) -> StreamingHttpResponse:
     response["Cache-Control"] = "no-cache"
     response["X-Accel-Buffering"] = "no"
     return response
-logger = logging.getLogger(__name__)
