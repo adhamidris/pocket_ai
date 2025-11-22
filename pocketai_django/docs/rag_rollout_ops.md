@@ -75,6 +75,43 @@ power admin views. Each snapshot includes:
 Because snapshots are pure queries, you can expose them over an admin API, send
 them to Grafana, or run them in scheduled reports.
 
+## Phase 1 Recall Knobs (Config-Only)
+
+- Defaults now favor recall: `RAG_ALIAS_FTS_THRESHOLD=0.25` and `RAG_VECTOR_DISTANCE_CEILING=0.5`.
+- Per-business overrides live under `BusinessProfile.metadata['rag_overrides']`:
+  - `alias_fts_threshold` (float)
+  - `vector_distance_ceiling` (float)
+  - `max_snippets_per_search` (int)
+  - `alias_chunks_per_upload` / `ann_chunks_per_upload` (int)
+- Phase 2 lexical controls:
+  - `alias_filler_tokens` (list) to extend the generic filler set (no vertical words baked in)
+  - `fts_token_min_length` (int, default 4) for significant token gating
+  - `fts_condense_max_tokens` (int, default 5) for the condensed FTS query
+  - `lexical_threshold_short|medium|long` (floats) to tune trigram thresholds by query length
+- Phase 3 table controls:
+  - Table search now falls back automatically when chunk hits are empty/weak and tables exist.
+  - `table_column_hints` (list) to augment the semantic column hints (defaults: name/title/plan/brand/company/product/clinic/doctor/provider/program/category).
+  - Diagnostics log `tables_available`, `tabular_columns_hint`, and `table_reason` when table search runs.
+- Phase 4 alias/name separation:
+  - Alias short-circuit now only triggers for identifier-like queries; natural-name queries flow to hybrid/table instead.
+  - Alias fuzzy search only runs when identifier-like tokens are present.
+  - Ingestion already limits aliases to identifier-shaped values; keep free-text names in attributes/content.
+- Retrieval diagnostics log the effective values (`alias_fts_threshold`, `vector_distance_ceiling`, `snippet_limit`, per-upload caps) so you can audit changes post-run.
+- Example override:
+  ```json
+  {
+    "rag_overrides": {
+      "alias_fts_threshold": 0.24,
+      "vector_distance_ceiling": 0.55,
+      "max_snippets_per_search": 5,
+      "ann_chunks_per_upload": 4,
+      "fts_token_min_length": 3,
+      "fts_condense_max_tokens": 6,
+      "lexical_threshold_long": 0.12
+    }
+  }
+  ```
+
 ## Alerts & Runbooks
 
 QualityMonitor now emits alerts for:

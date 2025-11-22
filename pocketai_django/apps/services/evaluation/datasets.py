@@ -189,11 +189,59 @@ CARDS_SET = GoldenSet(
     queries=CARDS_QUERIES,
 )
 
+JOBS_FIXTURE = GoldenFixture(
+    name="jobs_sheet",
+    filename="jobs_sheet.csv",
+    description="Job listings table with mixed identifiers and company names.",
+    source_type="csv",
+)
+
+JOBS_QUERIES: tuple[GoldenQuery, ...] = (
+    GoldenQuery(
+        query_id="jobs_company_michael_page",
+        text="Michael Page job opportunities",
+        query_type="natural",
+        expected_behavior="hybrid",
+        target_entities=("Michael Page",),
+    ),
+    GoldenQuery(
+        query_id="jobs_company_helio",
+        text="roles at Helio Health Clinic",
+        query_type="natural",
+        expected_behavior="hybrid",
+        target_entities=("Helio Health Clinic",),
+    ),
+    GoldenQuery(
+        query_id="jobs_identifier_primary",
+        text="JOB-001",
+        query_type="identifier",
+        expected_behavior="alias_exact",
+        target_entities=("Michael Page",),
+        target_aliases=("job-001", "JOB-001"),
+    ),
+    GoldenQuery(
+        query_id="jobs_not_found",
+        text="open roles for Lunar Labs",
+        query_type="not_found",
+        expected_behavior="not_found",
+        notes="Intentional miss to validate fallback flow on table-heavy tenants.",
+    ),
+)
+
+JOBS_SET = GoldenSet(
+    slug="jobs",
+    industry="recruiting",
+    business_slug="eval-jobs",
+    fixtures=(JOBS_FIXTURE,),
+    queries=JOBS_QUERIES,
+)
+
 
 GOLDEN_SETS: dict[str, GoldenSet] = {
     TRAVEL_SET.slug: TRAVEL_SET,
     INSURANCE_SET.slug: INSURANCE_SET,
     CARDS_SET.slug: CARDS_SET,
+    JOBS_SET.slug: JOBS_SET,
 }
 
 

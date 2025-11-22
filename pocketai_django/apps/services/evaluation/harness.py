@@ -226,6 +226,7 @@ class RAGEvaluationHarness:
         business: BusinessProfile,
         user: User,
     ) -> KnowledgeUpload:
+        content_type = self._fixture_content_type(fixture)
         source_uid = f"rag-eval::{business.slug}::{fixture.name}"
         relative_path = Path("rag_eval") / business.slug / fixture.filename
         absolute = self.media_root / relative_path
@@ -256,13 +257,13 @@ class RAGEvaluationHarness:
             upload=upload,
             defaults={
                 "filename": fixture.filename,
-                "content_type": "application/json",
+                "content_type": content_type,
                 "storage_path": str(relative_path),
                 "size_bytes": absolute.stat().st_size,
             },
         )
         file_detail.filename = fixture.filename
-        file_detail.content_type = "application/json"
+        file_detail.content_type = content_type
         file_detail.storage_path = str(relative_path)
         file_detail.size_bytes = absolute.stat().st_size
         file_detail.save(update_fields=["filename", "content_type", "storage_path", "size_bytes", "updated_at"])
@@ -530,6 +531,14 @@ class RAGEvaluationHarness:
         destination.parent.mkdir(parents=True, exist_ok=True)
         destination.write_text(json.dumps(payload, indent=2))
         logger.info("rag.eval.export path=%s", destination)
+
+    @staticmethod
+    def _fixture_content_type(fixture: GoldenFixture) -> str:
+        if fixture.source_type == "csv" or fixture.filename.lower().endswith(".csv"):
+            return "text/csv"
+        if fixture.source_type == "tsv" or fixture.filename.lower().endswith(".tsv"):
+            return "text/tab-separated-values"
+        return "application/json"
 
 
 __all__ = [

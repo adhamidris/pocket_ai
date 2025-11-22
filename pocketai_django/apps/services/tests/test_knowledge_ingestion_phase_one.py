@@ -160,6 +160,25 @@ class KnowledgeIngestionSpreadsheetTests(TestCase):
         self.assertFalse(table_stats.get("partial_index"))
         self.assertFalse(KnowledgeUploadIssue.objects.filter(upload=upload).exists())
 
+    def test_detect_format_prefers_csv_over_text_content_type(self):
+        upload = KnowledgeUpload.objects.create(
+            business_profile=self.business,
+            user=self.user,
+            source_type=KnowledgeSourceType.FILE,
+            status=KnowledgeStatus.PENDING,
+            display_name="Plans CSV",
+        )
+        KnowledgeUploadFile.objects.create(
+            upload=upload,
+            filename="plans.csv",
+            storage_path="uploads/plans.csv",
+            content_type="text/csv",
+            size_bytes=123,
+        )
+        service = KnowledgeIngestionService(media_root=Path(self._media_root))
+        file_detail = upload.file_detail
+        self.assertEqual(service._detect_format(file_detail), "csv")
+
     @mock.patch("apps.services.knowledge_ingestion.build_embedding_service", return_value=None)
     @override_settings(
         TABLE_MAX_ROWS_DEFAULT=3,

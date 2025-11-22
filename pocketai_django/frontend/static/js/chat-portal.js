@@ -46,6 +46,10 @@ class ChatPortalClient {
     this.workflowLocked = false;
     this.streamingActive = false;
     this.streamFinished = false;
+    this.isSending = false;
+    this.isStreaming = false;
+    this.flushQueueAfterTurn = false;
+    this.pendingMessages = [];
     this.statusStyleInjected = false;
     this.ensureStatusStyle();
   }
@@ -69,10 +73,6 @@ class ChatPortalClient {
     if (!form) return;
     form.addEventListener("submit", async (event) => {
       event.preventDefault();
-      if (this.awaitingReply) {
-        this.abortStreaming();
-        return;
-      }
       const data = new FormData(form);
       const message = (data.get("message") || "").toString().trim();
       if (!message || !this.sessionToken) {
@@ -81,6 +81,10 @@ class ChatPortalClient {
       }
       if (textarea) {
         textarea.value = "";
+      }
+      if (this.isSending || this.isStreaming) {
+        this.enqueueMessage(message);
+        return;
       }
       await this.sendMessage(message);
     });
@@ -142,7 +146,8 @@ class ChatPortalClient {
     this.workflowLocked = false;
     this.streamFinished = false;
     this.awaitingReply = true;
-    this.setComposerAvailability(false);
+    this.isSending = true;
+    this.isStreaming = true;
     this.updateSendButtonState(true);
     this.updateComposerNotice(true);
     this.appendMessage({
@@ -189,14 +194,22 @@ class ChatPortalClient {
       if (error.name !== "AbortError") {
         this.showToast("Send failed", error.message || "Message could not be delivered.", true);
       }
+      this.isStreaming = false;
+      this.flushQueueAfterTurn = true;
     } finally {
       this.awaitingReply = false;
+      this.isSending = false;
       this.updateSendButtonState(false);
-      if (this.streamFinished) {
-        this.setComposerAvailability(true);
-      }
+      // Composer availability is controlled by stream finalization; do not lock here.
       if (this.streamingMessageNode) {
-        this.resetStreamingState(true);
+        this.resetStreamingState(true, false);
+      }
+      if (!this.isStreaming && this.flushQueueAfterTurn) {
+        this.flushQueueAfterTurn = false;
+        const next = this.pendingMessages.shift();
+        if (next) {
+          this.sendMessage(next);
+        }
       }
     }
   }
@@ -226,14 +239,11 @@ class ChatPortalClient {
           const state = (payload.state || "").toString().trim();
           const label = (payload.label || "").toString().trim();
 
-          if (state === "stream_complete" || state === "complete" || state === "done") {
-            this.clearStreamingStatus();
-            this.streamFinished = true;
-            this.setComposerAvailability(true);
-            return;
-          }
+      if (state === "stream_complete" || state === "complete" || state === "done") {
+        return;
+      }
 
-          if (state === "reading_document") {
+      if (state === "reading_document") {
             // Knowledge read: we expect content to be revised after doc load.
             this.streamingRewritePending = true;
             this.setStreamingStatus("reading", label || "Reading…");
@@ -329,6 +339,7 @@ class ChatPortalClient {
       }
       this.awaitingReply = false;
       this.streamFinished = true;
+      this.isStreaming = false;
       this.updateSendButtonState(false);
       this.setComposerAvailability(true);
       this.updateComposerNotice(false);
@@ -337,6 +348,7 @@ class ChatPortalClient {
     } finally {
       this.workflowLocked = true;
       this.streamingActive = false;
+      this.flushQueueAfterTurn = true;
       this.clearStreamingStatus();
       this.markStreamFinished();
     }
@@ -619,6 +631,7 @@ class ChatPortalClient {
       this.workflowLocked = true;
     }
     this.streamingActive = false;
+    this.isStreaming = false;
     this.clearStreamingStatus();
     if (removeNode && this.streamingMessageNode && this.streamingMessageNode.parentNode) {
       this.streamingMessageNode.parentNode.removeChild(this.streamingMessageNode);
@@ -684,6 +697,17 @@ class ChatPortalClient {
     }
   }
 
+  enqueueMessage(message) {
+    if (!message) return;
+    if (this.pendingMessages.length >= 1) {
+      this.pendingMessages[0] = message;
+      this.showToast("Queued", "Updated your next message.");
+      return;
+    }
+    this.pendingMessages.push(message);
+    this.showToast("Queued", "I'll send this after the current reply finishes.");
+  }
+
   formatStatusLabel(rawLabel) {
     const text = (rawLabel || "").toString();
     if (!text) return "";
@@ -724,8 +748,10 @@ class ChatPortalClient {
 
   markStreamFinished() {
     this.streamFinished = true;
+    this.isStreaming = false;
     this.updateSendButtonState(false);
     this.setComposerAvailability(true);
+    this.flushQueueAfterTurn = true;
   }
 
   ensureStatusStyle() {
@@ -803,8 +829,8 @@ class ChatPortalClient {
     const sendIcon = this.elements.sendIcon;
     const stopIcon = this.elements.stopIcon;
     if (button) {
-      button.classList.toggle("opacity-80", isResponding);
-      button.classList.toggle("cursor-not-allowed", isResponding);
+      button.disabled = false;
+      button.classList.toggle("cursor-wait", isResponding);
     }
     if (sendIcon) {
       sendIcon.classList.toggle("hidden", isResponding);
@@ -822,11 +848,13 @@ class ChatPortalClient {
     this.awaitingReply = false;
     this.streamFinished = true;
     this.workflowLocked = true;
+    this.isStreaming = false;
     this.clearStreamingStatus();
     this.updateSendButtonState(false);
     this.setComposerAvailability(true);
     this.updateComposerNotice(false);
-    this.resetStreamingState(true);
+    this.resetStreamingState(true, false);
+    this.flushQueuedMessageIfReady();
   }
 
   getStoredToken() {
@@ -836,6 +864,14 @@ class ChatPortalClient {
     } catch (error) {
       console.warn("Unable to access localStorage", error);
       return null;
+    }
+  }
+
+  flushQueuedMessageIfReady() {
+    if (this.isSending || this.isStreaming) return;
+    const next = this.pendingMessages.shift();
+    if (next) {
+      this.sendMessage(next);
     }
   }
 

@@ -4,6 +4,7 @@
 - Curated JSON fixtures live in `apps/services/evaluation/fixtures/` and are registered in `apps/services/evaluation/datasets.py`.
 - Each dataset declares fixtures + `GoldenQuery` definitions (identifier, natural, and not-found cases) with expected behaviors and entity targets.
 - `KnowledgeFeedbackCase` rows (auto-created from portal feedback) are appended to the active golden set so flagged production misses are replayed automatically.
+- Available sets: `travel`, `insurance`, `cards`, and the new table-heavy `jobs` sheet fixture for proper-noun questions that should resolve from CSV uploads.
 
 ## Running the Harness
 - Execute `python manage.py run_rag_eval` to ingest fixtures, run alias + hybrid retrieval, compute metrics, and export `var/logs/rag_eval_latest.json`.

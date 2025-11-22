@@ -65,6 +65,14 @@ class QualityMonitor:
         diagnostics: Mapping[str, object] | None = None,
         result_status: str | None = None,
     ) -> None:
+        def _clamp_text(value: object, limit: int = 256) -> str | None:
+            if value is None:
+                return None
+            text = str(value).replace("\n", " ").strip()
+            if not text:
+                return None
+            return f"{text[:limit]}..." if len(text) > limit else text
+
         metrics = {
             "query_type": query_type,
             "alias_hit": bool(alias_hit),
@@ -73,6 +81,14 @@ class QualityMonitor:
             "stage": stage or "",
             "status": result_status or "",
         }
+        snippet_count = diagnostics.get("snippet_count") if diagnostics else None
+        if snippet_count is not None:
+            metrics["snippet_count"] = snippet_count
+        if diagnostics:
+            for key in ("token_count", "identifier_like", "alias_stage", "tabular_intent"):
+                value = diagnostics.get(key)
+                if value is not None:
+                    metrics[key] = value
         metadata_payload: dict[str, object] = {}
         if feature_flags:
             metadata_payload["features"] = dict(feature_flags)
@@ -81,19 +97,48 @@ class QualityMonitor:
                 "alias_cache_hit",
                 "alias_cache_miss",
                 "vector_candidates",
+                "vector_candidates_post_threshold",
                 "fts_candidates",
                 "vector_distance_mean",
                 "vector_distance_min",
                 "vector_distance_max",
+                "vector_distance_ceiling",
                 "alias_candidates",
+                "fts_threshold",
+                "fts_condensed_query",
+                "fts_token_filter_min_length",
+                "fts_tokens_used",
                 "hybrid_enabled",
                 "reason",
+                "alias_fts_threshold",
+                "normalized_query",
+                "original_query",
+                "alias_stage",
+                "alias_hits",
+                "chunk_candidate_count",
+                "tables_available",
+                "table_reason",
+                "tabular_columns_hint",
+                "snippet_limit",
+                "alias_chunks_per_upload",
+                "ann_chunks_per_upload",
+                "snippet_count",
+                "request_id",
+                "tabular_columns_matched",
+                "tabular_intent",
             )
             metadata_payload["diagnostics"] = {
                 key: diagnostics.get(key)
                 for key in interesting_keys
                 if diagnostics.get(key) is not None
             }
+            query_info = {
+                "original": _clamp_text(diagnostics.get("original_query")),
+                "normalized": _clamp_text(diagnostics.get("normalized_query")),
+                "token_count": diagnostics.get("token_count"),
+                "identifier_like": diagnostics.get("identifier_like"),
+            }
+            metadata_payload["query"] = {key: value for key, value in query_info.items() if value is not None}
         KnowledgeDriftSample.objects.create(
             business_profile=business_profile,
             sample_kind=KnowledgeDriftSample.SampleKind.RETRIEVAL,

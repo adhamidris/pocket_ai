@@ -1577,6 +1577,7 @@ class KnowledgeIngestionService:
         self.embedding_job_payload_size = max(self.embedding_batch_size * 4, 256)
         self.ingest_concurrency_limit = max(0, int(getattr(settings, "INGEST_MAX_ACTIVE_JOBS_PER_BUSINESS", 0)))
         self.embedding_backlog_threshold = max(0, int(getattr(settings, "INGEST_EMBEDDING_BACKLOG_THRESHOLD", 500)))
+        self.embedding_prewarm_limit = max(0, int(getattr(settings, "INGEST_EMBED_PREWARM_CHUNK_LIMIT", 32)))
         self._fallback_embedding_attempted = False
         
         # NEW: Create OCR reconciler with Tesseract support
@@ -2392,6 +2393,7 @@ class KnowledgeIngestionService:
                         base_metadata: dict[str, Any] = {
                             "strategy": "table_extract",
                             "is_table_chunk": True,
+                            "is_table_preview": True,
                             "table_title": title,
                             "visibility": getattr(upload, "visibility", KnowledgeVisibility.PRIVATE),
                         }
@@ -2481,6 +2483,29 @@ class KnowledgeIngestionService:
             if chunk.embedding is None:
                 fallback_targets.append(chunk)
             chunk_objects.append(chunk)
+
+        prewarmed = 0
+        if (
+            self.embedding_prewarm_limit
+            and fallback_targets
+            and len(fallback_targets) <= self.embedding_prewarm_limit
+            and self.embedding_service
+        ):
+            try:
+                vectors = self.embedding_service.embed_texts([chunk.content or "" for chunk in fallback_targets])
+                for chunk, vector in zip(fallback_targets, vectors):
+                    normalized = self._normalize_embedding(vector)
+                    if normalized:
+                        chunk.embedding = normalized
+                        prewarmed += 1
+            except EmbeddingProviderError as exc:
+                logger.warning("Embedding prewarm failed upload=%s error=%s", upload.id, exc)
+            except Exception:  # pragma: no cover - defensive
+                logger.exception("Embedding prewarm unexpected failure upload=%s", upload.id)
+            if prewarmed:
+                logger.info("embed.prewarm upload=%s chunks=%s", upload.id, prewarmed)
+        if prewarmed:
+            fallback_targets = [chunk for chunk in fallback_targets if chunk.embedding is None]
 
         backfilled = 0
         if fallback_targets:
@@ -2671,6 +2696,7 @@ class KnowledgeIngestionService:
             return
         KnowledgeSearchService.invalidate_alias_cache(business_id)
         KnowledgeSearchService.invalidate_query_cache(business_id)
+        KnowledgeSearchService.invalidate_result_cache(business_id)
 
     def _embedding_backlog_count(self, business_id: uuid.UUID) -> int:
         return KnowledgeIngestionJob.objects.filter(
@@ -3095,16 +3121,16 @@ class KnowledgeIngestionService:
             return "docx"
         if suffix in {".json", ".jsonl", ".ndjson"} or "json" in content_type or "json" in (guessed or ""):
             return "json"
-        if suffix in {".txt", ".md", ".rtf"} or "text" in content_type:
-            return "txt"
-        if suffix in {".csv", ".tsv"} or "csv" in content_type:
-            return "tsv" if suffix == ".tsv" or "tsv" in content_type else "csv"
+        if suffix in {".csv", ".tsv"} or "csv" in content_type or "csv" in (guessed or ""):
+            return "tsv" if suffix == ".tsv" or "tsv" in content_type or "tsv" in (guessed or "") else "csv"
         if (
             suffix in {".xlsx", ".xlsm"}
             or "officedocument.spreadsheetml" in content_type
             or "vnd.google-apps.spreadsheet" in content_type
         ):
             return "xlsx"
+        if suffix in {".txt", ".md", ".rtf"} or "text" in content_type:
+            return "txt"
         return suffix.strip(".") if suffix else None
 
     @staticmethod
