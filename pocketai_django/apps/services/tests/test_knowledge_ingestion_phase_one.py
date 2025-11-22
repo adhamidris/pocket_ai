@@ -160,6 +160,38 @@ class KnowledgeIngestionSpreadsheetTests(TestCase):
         self.assertFalse(table_stats.get("partial_index"))
         self.assertFalse(KnowledgeUploadIssue.objects.filter(upload=upload).exists())
 
+    @mock.patch("apps.services.knowledge_ingestion.build_embedding_service", return_value=None)
+    def test_table_entities_persist_when_entity_chunking_disabled(self, _build_embeddings):
+        self.business.metadata = {"features": {"entity_chunking": False}}
+        self.business.save(update_fields=["metadata"])
+
+        upload = KnowledgeUpload.objects.create(
+            business_profile=self.business,
+            user=self.user,
+            source_type=KnowledgeSourceType.FILE,
+            status=KnowledgeStatus.PENDING,
+            display_name="Plans CSV",
+        )
+        storage_path = Path("uploads/plans.csv")
+        target_path = Path(self._media_root) / storage_path
+        target_path.parent.mkdir(parents=True, exist_ok=True)
+        target_path.write_text("plan,price\nBasic,10\nPro,25\n", encoding="utf-8")
+        KnowledgeUploadFile.objects.create(
+            upload=upload,
+            filename="plans.csv",
+            storage_path=str(storage_path),
+            content_type="text/csv",
+            size_bytes=target_path.stat().st_size,
+        )
+
+        service = KnowledgeIngestionService(media_root=Path(self._media_root))
+        extraction = service._extract_upload(upload)
+        service._persist_extraction(upload, extraction)
+        upload.refresh_from_db()
+
+        self.assertGreater(KnowledgeEntity.objects.filter(upload=upload).count(), 0)
+        self.assertGreater(KnowledgeAlias.objects.filter(entity__upload=upload).count(), 0)
+
     def test_detect_format_prefers_csv_over_text_content_type(self):
         upload = KnowledgeUpload.objects.create(
             business_profile=self.business,

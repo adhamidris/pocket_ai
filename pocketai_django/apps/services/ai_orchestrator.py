@@ -562,6 +562,11 @@ class KnowledgeSearchService:
             "entity": float(getattr(settings, "RAG_WEIGHT_ENTITY", 0.4)),
             "recency": float(getattr(settings, "RAG_WEIGHT_RECENCY", 0.25)),
         }
+        self.recency_decay_days = float(getattr(settings, "RAG_RECENCY_DECAY_DAYS", 90))
+        self.recency_min_floor = float(getattr(settings, "RAG_RECENCY_MIN_FLOOR", 0.05))
+        self.recency_bonus_fresh = float(getattr(settings, "RAG_RECENCY_BONUS_FRESH", 0.15))
+        self.snippet_rerank_enabled = bool(getattr(settings, "RAG_SNIPPET_RERANK_ENABLED", True))
+        self.snippet_rerank_pool = max(5, int(getattr(settings, "RAG_SNIPPET_RERANK_POOL", 20)))
         self.business_override_key = getattr(settings, "RAG_BUSINESS_OVERRIDE_KEY", "rag_overrides")
         self.window_cache_limit = max(32, int(getattr(settings, "RAG_NEIGHBOR_WINDOW_CACHE_SIZE", 128)))
         self._window_cache: OrderedDict[tuple[uuid.UUID, int, int], list[KnowledgeUploadChunk]] = OrderedDict()
@@ -922,8 +927,14 @@ class KnowledgeSearchService:
                     neighbor=neighbor,
             )
             )[:limit]
+            snippets, snippet_ms = self._snippet_rerank(
+                snippets,
+                query_text=traits.normalized or traits.original or query,
+                tokens=traits.tokens,
+            )
             diagnostics["path"] = "alias_exact"
             diagnostics["alias_stage"] = diagnostics.get("alias_stage") or alias_result.diagnostics.get("stage")
+            diagnostics["snippet_rerank_ms"] = snippet_ms
             logger.info(
                 "rag.alias.short_circuit business=%s query=%s hits=%s neighbor=%s request=%s",
                 business_profile.id,
@@ -973,6 +984,7 @@ class KnowledgeSearchService:
         table_snippets: tuple[KnowledgeSnippet, ...] = tuple()
         table_reason: str | None = None
         should_run_table = False
+        has_header_match = bool(table_context.get("matched_columns"))
         if tables_available:
             if not chunk_hits:
                 should_run_table = True
@@ -983,6 +995,9 @@ class KnowledgeSearchService:
             elif self._query_has_entity_tokens(business_profile, traits):
                 should_run_table = True
                 table_reason = "entity_query_parallel"
+            elif has_header_match:
+                should_run_table = True
+                table_reason = "header_match"
 
         if should_run_table:
             logger.info(
@@ -1016,6 +1031,12 @@ class KnowledgeSearchService:
                         pathway="hybrid",
                     )
                 )
+            blended, snippet_ms = self._snippet_rerank(
+                tuple(blended),
+                query_text=traits.normalized or traits.original or query,
+                tokens=traits.tokens,
+            )
+            diagnostics["snippet_rerank_ms"] = snippet_ms
             status = "ok" if blended else "not_found"
             diagnostics["snippet_count"] = len(blended)
             result_obj = KnowledgeSearchResult(snippets=tuple(blended), status=status, diagnostics=diagnostics)
@@ -1035,16 +1056,22 @@ class KnowledgeSearchService:
             )
             return result_obj
 
-        if not chunk_hits:
-            diagnostics.setdefault("reason", "no_candidates")
-            diagnostics["path"] = diagnostics.get("path") or "not_found"
-            diagnostics.setdefault("table_reason", table_reason)
-            fallback = tuple(self._fallback_snippets(business_profile=business_profile, limit=limit))
-            status = "ok" if fallback else "not_found"
-            diagnostics["reason"] = diagnostics.get("reason") or ("fallback_used" if fallback else "no_candidates")
-            logger.info(
-                "rag.search.empty business=%s query=%s fallback=%s reason=%s request=%s",
-                business_profile.id,
+            if not chunk_hits:
+                diagnostics.setdefault("reason", "no_candidates")
+                diagnostics["path"] = diagnostics.get("path") or "not_found"
+                diagnostics.setdefault("table_reason", table_reason)
+                fallback = tuple(self._fallback_snippets(business_profile=business_profile, limit=limit))
+                fallback, snippet_ms = self._snippet_rerank(
+                    fallback,
+                    query_text=traits.normalized or traits.original or query,
+                    tokens=traits.tokens,
+                )
+                diagnostics["snippet_rerank_ms"] = snippet_ms
+                status = "ok" if fallback else "not_found"
+                diagnostics["reason"] = diagnostics.get("reason") or ("fallback_used" if fallback else "no_candidates")
+                logger.info(
+                    "rag.search.empty business=%s query=%s fallback=%s reason=%s request=%s",
+                    business_profile.id,
                 traits.normalized,
                 len(fallback),
                 diagnostics["reason"],
@@ -1277,7 +1304,14 @@ class KnowledgeSearchService:
             query_vector if self.embedding_service else None,
             traits=traits,
         )
-        latency_monitor.observe("rag.rerank", rerank_ms, tags={"business": str(business_profile.id)})
+        latency_monitor.observe(
+            "rag.rerank",
+            rerank_ms,
+            tags={
+                "business": str(business_profile.id),
+                "cross_encoder": bool(self.cross_encoder),
+            },
+        )
         diagnostics = {
             "vector_candidates": len(vector_hits),
             "vector_duration_ms": vector_ms,
@@ -2020,13 +2054,14 @@ class KnowledgeSearchService:
         updated = getattr(upload, "updated_at", None)
         if not updated:
             return 0.0
-        delta = timezone.now() - updated
-        days = delta.days + delta.seconds / 86400
-        if days <= 1:
-            return 1.0
-        if days >= 90:
-            return 0.0
-        return max(0.0, 1.0 - (days / 90.0))
+        age_days = max(0.0, (timezone.now() - updated).total_seconds() / 86400.0)
+        half_life = max(1.0, float(getattr(settings, "RAG_RECENCY_DECAY_DAYS", 90)))
+        floor = float(getattr(settings, "RAG_RECENCY_MIN_FLOOR", 0.05))
+        boost = float(getattr(settings, "RAG_RECENCY_BONUS_FRESH", 0.15))
+        recency = 0.5 ** (age_days / half_life)
+        if age_days <= 7:
+            recency += boost
+        return max(floor, min(1.0, recency))
 
     @staticmethod
     def _lexical_threshold(traits: QueryTraits) -> float:
@@ -2263,6 +2298,55 @@ class KnowledgeSearchService:
             bonus += 0.2
         return min(bonus, 0.6)
 
+    @staticmethod
+    def _lexical_score_text(text: str, tokens: tuple[str, ...]) -> float:
+        if not text or not tokens:
+            return 0.0
+        lowered = text.lower()
+        matches = sum(1 for token in tokens if token and token.lower() in lowered)
+        if not matches:
+            return 0.0
+        return matches / len(tokens)
+
+    def _snippet_rerank(
+        self,
+        snippets: Sequence[KnowledgeSnippet],
+        *,
+        query_text: str,
+        tokens: tuple[str, ...],
+    ) -> tuple[tuple[KnowledgeSnippet, ...], int]:
+        if not self.snippet_rerank_enabled or len(snippets) <= 1:
+            return tuple(snippets), 0
+        start = time.perf_counter()
+        normalized_query = (query_text or "").strip()
+        head = list(snippets[: self.snippet_rerank_pool])
+        scores: list[tuple[float, int, KnowledgeSnippet]] = []
+        ce_scores: list[float] | None = None
+        if self.cross_encoder and normalized_query:
+            pairs = [
+                [normalized_query, "\n".join(filter(None, [snip.summary, snip.content]))]
+                for snip in head
+            ]
+            try:  # pragma: no cover - optional dependency
+                raw = self.cross_encoder.predict(pairs)
+                ce_scores = [float(val) for val in raw]
+            except Exception as exc:  # pragma: no cover - optional dependency
+                logger.warning("Cross-encoder snippet rerank failed: %s", exc)
+                ce_scores = None
+        for idx, snip in enumerate(head):
+            text = "\n".join(filter(None, [snip.summary, snip.content]))
+            lexical = self._lexical_score_text(text, tokens)
+            ce_score = ce_scores[idx] if ce_scores and idx < len(ce_scores) else 0.0
+            score = ce_score if ce_scores else 0.0
+            score += 0.25 * lexical
+            scores.append((score, -idx, snip))
+        scores.sort(key=lambda item: item[0], reverse=True)
+        reranked = [item[2] for item in scores]
+        if len(snippets) > len(head):
+            reranked.extend(snippets[len(head) :])
+        duration_ms = int((time.perf_counter() - start) * 1000)
+        return tuple(reranked), duration_ms
+
     def _table_query_context(self, business_profile, traits: QueryTraits) -> Mapping[str, object]:
         query_text = (traits.normalized or traits.original or "").lower()
         tokens = set(token.lower() for token in traits.tokens)
@@ -2278,6 +2362,7 @@ class KnowledgeSearchService:
             "matched_columns": matched_columns,
             "available_columns": columns,
             "semantic_columns": semantic_columns,
+            "matched_column_count": len(matched_columns),
         }
 
     def _table_columns_for_business(self, business_profile) -> set[str]:
@@ -2442,13 +2527,15 @@ class KnowledgeSearchService:
                 continue
             business_name = getattr(upload.business_profile, "name", None)
             cells = sorted(row.cells.all(), key=lambda c: c.column_index)
-            structured = [
-                {
-                    "column": cell.column_key or f"column_{cell.column_index + 1}",
-                    "value": cell.raw_text,
-                }
-                for cell in cells
-            ]
+            structured = []
+            for cell in cells:
+                column_label = cell.column_key or f"column_{cell.column_index + 1}"
+                structured.append(
+                    {
+                        "column": column_label,
+                        "value": cell.raw_text,
+                    }
+                )
             summary_parts = [
                 f"{entry['column']}: {entry['value']}"
                 for entry in structured
@@ -2467,6 +2554,7 @@ class KnowledgeSearchService:
                 },
             }
             diag = cell_diag.get(row_id, {})
+            entity_hint = diag.get("value") or diag.get("column_key") or structured_table["title"]
             snippets.append(
                 KnowledgeSnippet(
                     id=uuid.uuid4(),
@@ -2485,7 +2573,7 @@ class KnowledgeSearchService:
                     chunk_id=None,
                     chunk_index=None,
                     entity_type=table.section_heading or "table_row",
-                    entity_name=diag.get("column_key") or structured_table["title"],
+                    entity_name=entity_hint,
                     entity_business=business_name,
                     is_table_chunk=True,
                     aliases=tuple(),
@@ -2507,52 +2595,124 @@ class KnowledgeSearchService:
         return tuple(snippets)
 
     def _fallback_snippets(self, *, business_profile, limit: int) -> Sequence[KnowledgeSnippet]:
-        qs = (
-            KnowledgeUpload.objects.filter(
-                business_profile=business_profile,
-                status=KnowledgeStatus.ACTIVE,
+        # Prefer top table rows as factual fallback; if none, fall back to recent uploads.
+        table_rows = list(
+            KnowledgeUploadTableRow.objects.filter(
+                table__upload__business_profile=business_profile,
+                table__upload__status=KnowledgeStatus.ACTIVE,
             )
-            .order_by("-updated_at")[:limit]
+            .order_by("-created_at")[: limit * 3]
+            .select_related("table__upload__business_profile")
+            .prefetch_related("cells")
         )
         snippets: list[KnowledgeSnippet] = []
-        for upload in qs:
-            trunc_metrics = self._truncation_metrics(upload)
-            label = self._public_label(upload)
-            structured = self._structured_exports(upload)
-            table_count = len(structured["tables"])
-            issue_count = len(structured["issues"])
-            source_diag: dict[str, object] = {"reason": "fallback"}
-            if trunc_metrics:
-                source_diag.update(trunc_metrics)
+        for row in table_rows:
+            table = row.table
+            upload = getattr(table, "upload", None)
+            if not upload or upload.visibility == KnowledgeVisibility.INTERNAL:
+                continue
+            cells = sorted(row.cells.all(), key=lambda c: c.column_index)
+            structured = []
+            for cell in cells:
+                structured.append(
+                    {"column": cell.column_key or f"column_{cell.column_index + 1}", "value": cell.raw_text}
+                )
+            summary_parts = [f"{entry['column']}: {entry['value']}" for entry in structured if entry["value"]]
+            summary = "; ".join(summary_parts[:8]) or (row.raw_text or "")
+            content = "\n".join(summary_parts) or summary
+            structured_table = {
+                "title": table.title or table.section_heading or "Table",
+                "columns": [entry["column"] for entry in structured],
+                "rows": [[entry["value"] for entry in structured]],
+                "metadata": {
+                    "sheet_name": (table.metadata or {}).get("sheet_name"),
+                    "row_index": row.row_index,
+                    "table_order_index": table.order_index,
+                },
+            }
             snippets.append(
                 KnowledgeSnippet(
-                    id=upload.id,
-                    title=label,
-                    summary=self._summarize_upload(upload),
-                    source=upload.source_name or upload.source_type,
-                    public_label=label,
-                    structured_tables=structured["tables"],
-                    issues=structured["issues"],
-                    page_summaries=structured["pages"],
+                    id=uuid.uuid4(),
+                    title=structured_table["title"],
+                    summary=summary or structured_table["title"],
+                    source="table_fallback",
+                    public_label=structured_table["title"],
+                    structured_tables=(structured_table,),
+                    issues=tuple(),
+                    page_summaries=tuple(),
                     read_state=KNOWLEDGE_READ_STATE_SUMMARY,
-                    topic_hints=self._topic_hints(upload),
-                    is_pinned=self._is_pinned(upload),
+                    topic_hints=tuple(),
+                    is_pinned=False,
+                    content=content,
                     content_mode="abstract",
-                    entity_type=None,
-                    entity_name=None,
-                    entity_business=None,
-                    is_table_chunk=False,
+                    entity_type=table.section_heading or "table_row",
+                    entity_name=summary_parts[0] if summary_parts else structured_table["title"],
+                    entity_business=getattr(upload.business_profile, "name", None),
+                    is_table_chunk=True,
                     aliases=tuple(),
                     search_stage="fallback",
                     confidence_score=0.0,
                     truncated=False,
-                    source_diagnostics=source_diag,
-                    partial_index=bool(trunc_metrics.get("partial_index")) if trunc_metrics else False,
-                    structured_table_count=table_count,
-                    issue_count=issue_count,
-                    structured_table_hint=None,
+                    source_diagnostics={
+                        "reason": "fallback",
+                        "table_id": str(table.id),
+                        "row_index": row.row_index,
+                    },
+                    partial_index=False,
+                    structured_table_count=1,
+                    issue_count=0,
+                    structured_table_hint=structured_table["title"],
                 )
             )
+            if len(snippets) >= limit:
+                break
+        if len(snippets) < limit:
+            remaining = limit - len(snippets)
+            uploads = (
+                KnowledgeUpload.objects.filter(
+                    business_profile=business_profile,
+                    status=KnowledgeStatus.ACTIVE,
+                )
+                .order_by("-updated_at")[:remaining]
+            )
+            for upload in uploads:
+                trunc_metrics = self._truncation_metrics(upload)
+                label = self._public_label(upload)
+                structured = self._structured_exports(upload)
+                table_count = len(structured["tables"])
+                issue_count = len(structured["issues"])
+                source_diag: dict[str, object] = {"reason": "fallback"}
+                if trunc_metrics:
+                    source_diag.update(trunc_metrics)
+                snippets.append(
+                    KnowledgeSnippet(
+                        id=upload.id,
+                        title=label,
+                        summary=self._summarize_upload(upload),
+                        source=upload.source_name or upload.source_type,
+                        public_label=label,
+                        structured_tables=structured["tables"],
+                        issues=structured["issues"],
+                        page_summaries=structured["pages"],
+                        read_state=KNOWLEDGE_READ_STATE_SUMMARY,
+                        topic_hints=self._topic_hints(upload),
+                        is_pinned=self._is_pinned(upload),
+                        content_mode="abstract",
+                        entity_type=None,
+                        entity_name=None,
+                        entity_business=None,
+                        is_table_chunk=False,
+                        aliases=tuple(),
+                        search_stage="fallback",
+                        confidence_score=0.0,
+                        truncated=False,
+                        source_diagnostics=source_diag,
+                        partial_index=bool(trunc_metrics.get("partial_index")) if trunc_metrics else False,
+                        structured_table_count=table_count,
+                        issue_count=issue_count,
+                        structured_table_hint=None,
+                    )
+                )
         if not snippets:
             logger.warning("Knowledge load returned no snippets for business=%s", business_profile.id)
         return tuple(snippets)

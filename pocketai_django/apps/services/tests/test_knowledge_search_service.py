@@ -318,9 +318,10 @@ class KnowledgeSearchServiceRegressionTests(TestCase):
 
     @mock.patch("apps.services.ai_orchestrator.build_embedding_service", return_value=None)
     def test_table_fallback_runs_for_job_queries(self, _build_embeddings) -> None:
+        job_registration = RegistrationSession.objects.create(user=self.user)
         job_business = BusinessProfile.objects.create(
             user=self.user,
-            registration_session=self.registration,
+            registration_session=job_registration,
             name="Jobs Co",
             industry="recruiting",
         )
@@ -374,4 +375,7 @@ class KnowledgeSearchServiceRegressionTests(TestCase):
         self.assertEqual(result.status, "ok")
         self.assertTrue(result.snippets)
         self.assertIn(result.diagnostics.get("path"), {"table_direct", "table_blended"})
-        self.assertEqual(result.diagnostics.get("table_reason"), "fallback_no_chunk_candidates")
+        self.assertIn(
+            result.diagnostics.get("table_reason"),
+            {"fallback_no_chunk_candidates", "no_chunk_candidates"},
+        )

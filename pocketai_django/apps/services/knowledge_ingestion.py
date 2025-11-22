@@ -2211,13 +2211,22 @@ class KnowledgeIngestionService:
 
         entity_payloads = list(extraction.entities or [])
         if entity_payloads and not feature_state.entity_chunking:
-            logger.info(
-                "json.entities.disabled upload=%s business=%s entities=%s",
-                upload.id,
-                upload.business_profile_id,
-                len(entity_payloads),
-            )
-            entity_payloads = []
+            table_entities = [e for e in entity_payloads if e.get("alias_source_type") == "table"]
+            if table_entities:
+                logger.info(
+                    "table.entities.persist upload=%s business=%s entities=%s",
+                    upload.id,
+                    upload.business_profile_id,
+                    len(table_entities),
+                )
+            else:
+                logger.info(
+                    "json.entities.disabled upload=%s business=%s entities=%s",
+                    upload.id,
+                    upload.business_profile_id,
+                    len(entity_payloads),
+                )
+            entity_payloads = table_entities
         entity_stats: dict[str, Any] = {}
         with transaction.atomic():
             structured_summary = self._persist_structured_artifacts(upload, extraction)
