@@ -67,4 +67,12 @@ urlpatterns = [
     path("cases/<uuid:case_id>/messages/", views.case_messages_view, name="cases-messages"),
     path("cases/<uuid:case_id>/notes/", views.case_notes_view, name="cases-notes"),
     path("customers/<uuid:customer_id>/", views.customer_detail_view, name="customers-detail"),
+    path("businesses/<uuid:business_id>/identifiers/", views.identifier_registry, name="identifier-registry"),
+    path("businesses/<uuid:business_id>/identifiers/<uuid:schema_id>/approve/", views.identifier_schema_approve, name="identifier-registry-approve"),
+    path("businesses/<uuid:business_id>/identifiers/<uuid:schema_id>/reject/", views.identifier_schema_reject, name="identifier-registry-reject"),
+    path("businesses/<uuid:business_id>/identifiers/<uuid:schema_id>/columns/", views.identifier_schema_columns, name="identifier-registry-columns"),
+    path("businesses/<uuid:business_id>/identifiers/propose/", views.identifier_propose_headers, name="identifier-registry-propose"),
+    path("businesses/<uuid:business_id>/identifier-guardrails/", views.identifier_guardrails_overview, name="identifier-guardrails"),
+    path("businesses/<uuid:business_id>/identifier-eval/", views.identifier_eval, name="identifier-eval"),
+    path("businesses/<uuid:business_id>/identifier-events/", views.identifier_events, name="identifier-events"),
 ]

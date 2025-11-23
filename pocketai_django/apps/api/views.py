@@ -15,7 +15,7 @@ from django.core.exceptions import ImproperlyConfigured
 from django.http import FileResponse, HttpRequest, HttpResponseRedirect, JsonResponse
 from django.urls import reverse
 from django.utils import timezone
-from django.views.decorators.csrf import csrf_protect
+from django.views.decorators.csrf import csrf_exempt, csrf_protect
 from django.views.decorators.http import require_http_methods
 
 from apps.accounts.models import (
@@ -30,6 +30,7 @@ from apps.accounts.models import (
     KnowledgeUpload,
     KnowledgeVisibility,
 )
+from apps.conversations.models import IdentifierEvent
 from apps.cases.models import Case, CaseMessage, CasePriority, CaseStatus
 from apps.customers.models import Customer, CustomerNoteAuthor
 from apps.services.action_controls import list_action_settings, set_action_setting
@@ -90,6 +91,8 @@ from apps.services.registration import (
     start_registration as start_registration_service,
     upsert_business_profile,
 )
+from apps.services.mcp.identifier_eval import IdentifierEvalCase, IdentifierEvalHarness
+from apps.services.mcp.identifier_registry import IdentifierRegistryError, IdentifierRegistryService
 
 logger = logging.getLogger(__name__)
 
@@ -253,6 +256,412 @@ def update_business_profile(request: HttpRequest, session_id: str) -> JsonRespon
         "nextStep": "agent",
     }
     return JsonResponse(response, status=HTTPStatus.OK)
+
+
+@csrf_exempt
+@require_http_methods(["GET", "POST"])
+def identifier_registry(request: HttpRequest, business_id: uuid.UUID) -> JsonResponse:
+    business, error = _resolve_business_profile(request, str(business_id))
+    if error:
+        return error
+
+    if request.method == "GET":
+        registry = IdentifierRegistryService.list_registry(business_profile=business)
+        match_policy = IdentifierRegistryService.get_match_policy(business)
+        return JsonResponse({"items": registry, "match_policy": match_policy}, status=HTTPStatus.OK)
+
+    try:
+        payload = json.loads(request.body.decode("utf-8") or "{}")
+    except (json.JSONDecodeError, UnicodeDecodeError):
+        return JsonResponse(
+            {"error": "INVALID_JSON", "message": "Request body must be valid JSON."},
+            status=HTTPStatus.BAD_REQUEST,
+        )
+
+    key = str(payload.get("key") or payload.get("identifier") or "").strip()
+    display_name = str(payload.get("display_name") or payload.get("displayName") or key).strip()
+    status_value = (payload.get("status") or "").strip() or None
+    source_value = (payload.get("source") or "").strip() or None
+    description = str(payload.get("description") or "").strip()
+    is_required_raw = payload.get("is_required", payload.get("isRequired", True))
+    if isinstance(is_required_raw, str):
+        is_required = is_required_raw.strip().lower() not in {"false", "0", "no", "off"}
+    else:
+        is_required = bool(is_required_raw)
+    metadata = payload.get("metadata") if isinstance(payload.get("metadata"), dict) else {}
+    match_policy_raw = payload.get("match_policy") or payload.get("matchPolicy")
+    if match_policy_raw:
+        IdentifierRegistryService.set_match_policy(business_profile=business, policy=match_policy_raw)
+    columns = payload.get("columns") if isinstance(payload.get("columns"), list) else None
+
+    if not key:
+        return JsonResponse(
+            {"error": "VALIDATION_ERROR", "message": "key is required."},
+            status=HTTPStatus.BAD_REQUEST,
+        )
+
+    try:
+        schema = IdentifierRegistryService.create_schema(
+            business_profile=business,
+            key=key,
+            display_name=display_name or key,
+            source=source_value,
+            status=status_value,
+            is_required=is_required,
+            description=description,
+            metadata=metadata,
+            columns=columns,
+        )
+    except IdentifierRegistryError as exc:
+        return JsonResponse(
+            {"error": "VALIDATION_ERROR", "message": str(exc)},
+            status=HTTPStatus.BAD_REQUEST,
+        )
+    except Exception:  # pragma: no cover - defensive logging
+        logger.exception("identifier_registry.create failed business=%s", business.id)
+        return JsonResponse(
+            {"error": "SERVER_ERROR", "message": "Unable to save identifier schema right now."},
+            status=HTTPStatus.INTERNAL_SERVER_ERROR,
+        )
+
+    logger.info(
+        "identifier_registry.create business=%s key=%s source=%s status=%s",
+        business.id,
+        key,
+        source_value or "user",
+        status_value or "proposed",
+    )
+    return JsonResponse(IdentifierRegistryService.serialize_schema(schema), status=HTTPStatus.CREATED)
+
+
+@csrf_exempt
+@require_http_methods(["POST"])
+def identifier_schema_approve(request: HttpRequest, business_id: uuid.UUID, schema_id: uuid.UUID) -> JsonResponse:
+    business, error = _resolve_business_profile(request, str(business_id))
+    if error:
+        return error
+    schema = IdentifierRegistryService.get_schema(business_profile=business, schema_id=schema_id)
+    if not schema:
+        return JsonResponse(
+            {"error": "NOT_FOUND", "message": "Identifier schema not found for this business."},
+            status=HTTPStatus.NOT_FOUND,
+        )
+    try:
+        schema = IdentifierRegistryService.approve_schema(schema)
+    except Exception:  # pragma: no cover - defensive logging
+        logger.exception("identifier_registry.approve failed business=%s schema=%s", business.id, schema_id)
+        return JsonResponse(
+            {"error": "SERVER_ERROR", "message": "Unable to approve identifier schema right now."},
+            status=HTTPStatus.INTERNAL_SERVER_ERROR,
+        )
+    return JsonResponse(IdentifierRegistryService.serialize_schema(schema), status=HTTPStatus.OK)
+
+
+@csrf_exempt
+@require_http_methods(["POST"])
+def identifier_schema_columns(request: HttpRequest, business_id: uuid.UUID, schema_id: uuid.UUID) -> JsonResponse:
+    business, error = _resolve_business_profile(request, str(business_id))
+    if error:
+        return error
+    schema = IdentifierRegistryService.get_schema(business_profile=business, schema_id=schema_id)
+    if not schema:
+        return JsonResponse(
+            {"error": "NOT_FOUND", "message": "Identifier schema not found for this business."},
+            status=HTTPStatus.NOT_FOUND,
+        )
+
+    try:
+        payload = json.loads(request.body.decode("utf-8") or "{}")
+    except (json.JSONDecodeError, UnicodeDecodeError):
+        return JsonResponse(
+            {"error": "INVALID_JSON", "message": "Request body must be valid JSON."},
+            status=HTTPStatus.BAD_REQUEST,
+        )
+    columns = payload.get("columns") or payload.get("items")
+    if not isinstance(columns, list):
+        return JsonResponse(
+            {"error": "VALIDATION_ERROR", "message": "columns must be a list of column definitions."},
+            status=HTTPStatus.BAD_REQUEST,
+        )
+    try:
+        schema = IdentifierRegistryService.add_columns(schema=schema, columns=columns)
+    except IdentifierRegistryError as exc:
+        return JsonResponse(
+            {"error": "VALIDATION_ERROR", "message": str(exc)},
+            status=HTTPStatus.BAD_REQUEST,
+        )
+    except Exception:  # pragma: no cover - defensive logging
+        logger.exception("identifier_registry.add_columns failed business=%s schema=%s", business.id, schema_id)
+        return JsonResponse(
+            {"error": "SERVER_ERROR", "message": "Unable to save identifier columns right now."},
+            status=HTTPStatus.INTERNAL_SERVER_ERROR,
+        )
+    return JsonResponse(IdentifierRegistryService.serialize_schema(schema), status=HTTPStatus.OK)
+
+
+@csrf_exempt
+@require_http_methods(["POST"])
+def identifier_propose_headers(request: HttpRequest, business_id: uuid.UUID) -> JsonResponse:
+    business, error = _resolve_business_profile(request, str(business_id))
+    if error:
+        return error
+    try:
+        payload = json.loads(request.body.decode("utf-8") or "{}")
+    except (json.JSONDecodeError, UnicodeDecodeError):
+        return JsonResponse(
+            {"error": "INVALID_JSON", "message": "Request body must be valid JSON."},
+            status=HTTPStatus.BAD_REQUEST,
+        )
+
+    headers = payload.get("headers") or payload.get("columns")
+    upload_id = payload.get("upload_id") or payload.get("uploadId")
+    auto_promote = bool(payload.get("auto_promote", payload.get("autoPromote", False)))
+    model_assist = bool(payload.get("model_assist", payload.get("modelAssist", False)))
+    match_policy_raw = payload.get("match_policy") or payload.get("matchPolicy")
+
+    upload_obj = None
+    if upload_id:
+        try:
+            upload_uuid = upload_id if isinstance(upload_id, uuid.UUID) else uuid.UUID(str(upload_id))
+        except (TypeError, ValueError):
+            return JsonResponse(
+                {"error": "VALIDATION_ERROR", "message": "upload_id must be a valid UUID."},
+                status=HTTPStatus.BAD_REQUEST,
+            )
+        upload_obj = KnowledgeUpload.objects.filter(id=upload_uuid, business_profile=business).first()
+        if not upload_obj:
+            return JsonResponse(
+                {"error": "NOT_FOUND", "message": "Upload not found for this business."},
+                status=HTTPStatus.NOT_FOUND,
+            )
+    try:
+        schemas = IdentifierRegistryService.propose_from_headers(
+            business_profile=business,
+            headers=headers if isinstance(headers, list) else None,
+            upload=upload_obj,
+            auto_promote=auto_promote,
+            match_policy=match_policy_raw,
+            model_assist=model_assist,
+        )
+    except IdentifierRegistryError as exc:
+        return JsonResponse(
+            {"error": "VALIDATION_ERROR", "message": str(exc)},
+            status=HTTPStatus.BAD_REQUEST,
+        )
+    except Exception:  # pragma: no cover - defensive logging
+        logger.exception("identifier_registry.propose failed business=%s", business.id)
+        return JsonResponse(
+            {"error": "SERVER_ERROR", "message": "Unable to propose identifiers right now."},
+            status=HTTPStatus.INTERNAL_SERVER_ERROR,
+        )
+
+    match_policy = IdentifierRegistryService.get_match_policy(business)
+    return JsonResponse(
+        {
+            "items": [IdentifierRegistryService.serialize_schema(schema) for schema in schemas],
+            "match_policy": match_policy,
+        },
+        status=HTTPStatus.OK,
+    )
+
+
+@require_http_methods(["GET"])
+def identifier_guardrails_overview(request: HttpRequest, business_id: uuid.UUID) -> JsonResponse:
+    business, error = _resolve_business_profile(request, str(business_id))
+    if error:
+        return error
+
+    registry = IdentifierRegistryService.list_registry(business_profile=business)
+    match_policy = IdentifierRegistryService.get_match_policy(business)
+
+    uploads_qs = (
+        KnowledgeUpload.objects.filter(business_profile=business)
+        .select_related("integration")
+        .order_by("-updated_at")[:120]
+    )
+    uploads = [
+        {
+            "id": str(upload.id),
+            "display_name": upload.display_name,
+            "source_type": upload.source_type,
+            "status": upload.status,
+            "integration_name": upload.integration.name if upload.integration else "",
+            "last_ingested_at": upload.last_ingested_at.isoformat() if upload.last_ingested_at else None,
+            "updated_at": upload.updated_at.isoformat() if upload.updated_at else None,
+            "chunk_count": upload.chunk_count,
+            "token_count": upload.token_count,
+        }
+        for upload in uploads_qs
+    ]
+
+    events_qs = IdentifierEvent.objects.filter(business_profile=business).order_by("-created_at")
+    events = list(
+        events_qs[:200].values(
+            "id",
+            "status",
+            "tool",
+            "match_policy",
+            "upload_id",
+            "required_keys",
+            "provided_keys",
+            "provided_hashes",
+            "blocked_uploads",
+            "missing_by_upload",
+            "created_at",
+        )
+    )
+    summary = {
+        "total": events_qs.count(),
+        "required": events_qs.filter(status="identifier_required").count(),
+        "ok": events_qs.filter(status="ok").count(),
+    }
+
+    payload = {
+        "match_policy": match_policy,
+        "registry": registry,
+        "uploads": uploads,
+        "events": {
+            "items": events,
+            "summary": summary,
+        },
+    }
+    return JsonResponse(payload, status=HTTPStatus.OK)
+
+
+@require_http_methods(["GET"])
+def identifier_events(request: HttpRequest, business_id: uuid.UUID) -> JsonResponse:
+    business, error = _resolve_business_profile(request, str(business_id))
+    if error:
+        return error
+    status_filter = (request.GET.get("status") or "").strip().lower() or None
+    qs = IdentifierEvent.objects.filter(business_profile=business)
+    if status_filter:
+        qs = qs.filter(status=status_filter)
+    qs = qs.order_by("-created_at")[:200]
+    events = list(qs.values("id", "status", "tool", "match_policy", "upload_id", "required_keys", "provided_keys", "provided_hashes", "blocked_uploads", "missing_by_upload", "created_at"))
+    summary = {
+        "total": qs.count(),
+        "required": qs.filter(status="identifier_required").count(),
+        "ok": qs.filter(status="ok").count(),
+    }
+    return JsonResponse({"items": events, "summary": summary}, status=HTTPStatus.OK, safe=False)
+
+
+@csrf_exempt
+@require_http_methods(["POST"])
+def identifier_eval(request: HttpRequest, business_id: uuid.UUID) -> JsonResponse:
+    business, error = _resolve_business_profile(request, str(business_id))
+    if error:
+        return error
+    try:
+        payload = json.loads(request.body.decode("utf-8") or "{}")
+    except (json.JSONDecodeError, UnicodeDecodeError):
+        return JsonResponse(
+            {"error": "INVALID_JSON", "message": "Request body must be valid JSON."},
+            status=HTTPStatus.BAD_REQUEST,
+        )
+
+    upload_id_raw = payload.get("upload_id") or payload.get("uploadId")
+    provided_identifiers = (
+        payload.get("identifiers")
+        or payload.get("provided_identifiers")
+        or payload.get("providedIdentifiers")
+        or {}
+    )
+    match_policy_raw = payload.get("match_policy") or payload.get("matchPolicy")
+    expected_status_raw = payload.get("expected_status") or payload.get("expectedStatus") or "ok"
+
+    if not upload_id_raw:
+        return JsonResponse(
+            {"error": "VALIDATION_ERROR", "message": "upload_id is required."},
+            status=HTTPStatus.BAD_REQUEST,
+        )
+
+    try:
+        upload_uuid = upload_id_raw if isinstance(upload_id_raw, uuid.UUID) else uuid.UUID(str(upload_id_raw))
+    except (TypeError, ValueError):
+        return JsonResponse(
+            {"error": "VALIDATION_ERROR", "message": "upload_id must be a valid UUID."},
+            status=HTTPStatus.BAD_REQUEST,
+        )
+
+    upload = KnowledgeUpload.objects.filter(id=upload_uuid, business_profile=business).first()
+    if not upload:
+        return JsonResponse(
+            {"error": "NOT_FOUND", "message": "Upload not found for this business."},
+            status=HTTPStatus.NOT_FOUND,
+        )
+
+    if provided_identifiers is None:
+        provided_identifiers = {}
+    if not isinstance(provided_identifiers, dict):
+        return JsonResponse(
+            {"error": "VALIDATION_ERROR", "message": "identifiers must be an object of key/value pairs."},
+            status=HTTPStatus.BAD_REQUEST,
+        )
+
+    expected_status = str(expected_status_raw or "ok").strip().lower() or "ok"
+    if expected_status not in {"ok", "identifier_required"}:
+        return JsonResponse(
+            {"error": "VALIDATION_ERROR", "message": "expected_status must be ok or identifier_required."},
+            status=HTTPStatus.BAD_REQUEST,
+        )
+
+    normalized_policy = (
+        IdentifierRegistryService.normalize_match_policy(match_policy_raw) if match_policy_raw else None
+    )
+
+    case = IdentifierEvalCase(
+        name="inline",
+        upload_id=upload.id,
+        provided_identifiers=provided_identifiers,
+        expected_status=expected_status,
+        match_policy=normalized_policy,
+        notes="dashboard-eval",
+    )
+    harness = IdentifierEvalHarness(business_profile=business, enforce=False)
+    try:
+        result = harness.run([case])[0]
+    except Exception:  # pragma: no cover - defensive logging
+        logger.exception("identifier_eval failed business=%s upload=%s", business.id, upload.id)
+        return JsonResponse(
+            {"error": "SERVER_ERROR", "message": "Unable to evaluate identifier gating right now."},
+            status=HTTPStatus.INTERNAL_SERVER_ERROR,
+        )
+
+    response = {
+        "upload_id": str(upload.id),
+        "status": result.status,
+        "expected_status": expected_status,
+        "match_policy": result.match_policy,
+        "required_keys": result.required_keys,
+        "provided_keys": result.provided_keys,
+        "passed": result.passed,
+    }
+    return JsonResponse(response, status=HTTPStatus.OK)
+
+
+@csrf_exempt
+@require_http_methods(["POST"])
+def identifier_schema_reject(request: HttpRequest, business_id: uuid.UUID, schema_id: uuid.UUID) -> JsonResponse:
+    business, error = _resolve_business_profile(request, str(business_id))
+    if error:
+        return error
+    schema = IdentifierRegistryService.get_schema(business_profile=business, schema_id=schema_id)
+    if not schema:
+        return JsonResponse(
+            {"error": "NOT_FOUND", "message": "Identifier schema not found for this business."},
+            status=HTTPStatus.NOT_FOUND,
+        )
+    try:
+        schema = IdentifierRegistryService.reject_schema(schema)
+    except Exception:  # pragma: no cover - defensive logging
+        logger.exception("identifier_registry.reject failed business=%s schema=%s", business.id, schema_id)
+        return JsonResponse(
+            {"error": "SERVER_ERROR", "message": "Unable to reject identifier schema right now."},
+            status=HTTPStatus.INTERNAL_SERVER_ERROR,
+        )
+    return JsonResponse(IdentifierRegistryService.serialize_schema(schema), status=HTTPStatus.OK)
 
 
 @csrf_protect

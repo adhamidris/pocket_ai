@@ -29,6 +29,7 @@ from apps.services.ai_orchestrator import (
     KnowledgeSearchService,
 )
 from core.metrics import latency_monitor
+from .identifier_registry import IdentifierGuardrail, IdentifierRegistryService
 from .types import ToolExecutionContext
 
 
@@ -301,6 +302,34 @@ def _normalize_priority(raw: object) -> str | None:
     return None
 
 
+def _identifier_guard(context: ToolExecutionContext, conversation: Conversation):
+    guard = getattr(context, "identifier_gate", None)
+    if isinstance(guard, IdentifierGuardrail):
+        return guard
+    try:
+        guard = IdentifierGuardrail.from_conversation(conversation)
+    except Exception:
+        return None
+    context.identifier_gate = guard
+    return guard
+
+
+def _record_identifier_check(context: ToolExecutionContext, decision) -> None:
+    if decision is None:
+        return
+    payload = getattr(decision, "as_dict", lambda: None)()
+    if payload is None:
+        return
+    if payload.get("status") == "ok" and not payload.get("required_keys") and not payload.get("blocked_uploads"):
+        return
+    context.identifier_checks.append(payload)
+    context.identifier_filters.append(payload)
+    if not context.identifier_hashes and isinstance(payload, dict):
+        hashes = payload.get("provided_hashes")
+        if isinstance(hashes, Mapping):
+            context.identifier_hashes = dict(hashes)
+
+
 def _query_intent(query: str) -> dict[str, object]:
     """
     Lightweight heuristic to classify the query and suggest search/read defaults.
@@ -402,7 +431,17 @@ def _serialize_snippets(snippets: Sequence[object]) -> list[dict[str, object]]:
             payloads.append(AiOrchestratorService._serialize_snippet(snippet))  # type: ignore[arg-type]
         except Exception:
             continue
-    return payloads
+    seen: set[tuple[str | None, str | None]] = set()
+    deduped: list[dict[str, object]] = []
+    for entry in payloads:
+        chunk_id = str(entry.get("chunk_id") or "") or None
+        upload_id = str(entry.get("upload_id") or "") or None
+        key = (chunk_id, upload_id)
+        if key in seen:
+            continue
+        seen.add(key)
+        deduped.append(entry)
+    return deduped[:8]
 
 
 def _estimate_tokens(characters: int) -> int:
@@ -624,12 +663,94 @@ def _search_knowledge_handler(
         limit = min(8, max(limit or 5, 6))
 
     service = _knowledge_service()
+    # Apply identifier value filter when an email is locked/provided to prevent cross-identifier leakage.
+    identifier_filter: dict[str, object] | None = None
+    allowed_uploads: set[str] | None = None
+    guard = _identifier_guard(context, conversation)
+    if guard and guard.provided_identifiers:
+        # Derive filter from active mappings for provided identifiers (dynamic, not email-only).
+        from apps.accounts.models import IdentifierColumnMapping, IdentifierColumnStatus, IdentifierSchemaStatus
+
+        mappings = IdentifierColumnMapping.objects.select_related("identifier").filter(
+            business_profile=conversation.business_profile,
+            status=IdentifierColumnStatus.ACTIVE,
+            identifier__status=IdentifierSchemaStatus.ACTIVE,
+            identifier__key__in=list(guard.provided_identifiers.keys()),
+        )
+        if mappings:
+            allowed_uploads = {str(m.upload_id) for m in mappings if m.upload_id}
+            # Use first mapping for value filter hint.
+            first = mappings[0]
+            identifier_filter = {
+                "column": first.column_normalized or first.column_name,
+                "value": guard.provided_identifiers.get(first.identifier.key),
+                "upload_ids": list(allowed_uploads),
+            }
+
     result = service.search(
         business_profile=conversation.business_profile,
         query=query,
         limit=limit,
+        identifier_filter=identifier_filter,
     )
     snippet_payloads = _serialize_snippets(result.snippets)
+    decision = None
+    if guard:
+        decision = guard.evaluate_snippets(snippet_payloads)
+        _record_identifier_check(context, decision)
+        if decision.status == "identifier_conflict":
+            return {
+                "tool": "search_knowledge",
+                "query": query,
+                "limit": limit,
+                "intent": intent,
+                "status": decision.status,
+                "error": "identifier_conflict",
+                "error_code": "identifier_conflict",
+                "snippets": [],
+                "identifier_gate": decision.as_dict(),
+                "required_identifiers": list(decision.required_keys),
+                "provided_identifiers": list(decision.provided_keys),
+                "hint": decision.hint,
+                "llm_hint": decision.hint,
+            }
+        if decision.status != "ok":
+            logger.warning(
+                "mcp.identifier.denied tool=search_knowledge business=%s uploads=%s required=%s provided=%s",
+                conversation.business_profile_id,
+                list(decision.blocked_uploads),
+                list(decision.required_keys),
+                list(decision.provided_keys),
+            )
+            return {
+                "tool": "search_knowledge",
+                "query": query,
+                "limit": limit,
+                "intent": intent,
+                "status": decision.status,
+                "error": "identifier_required",
+                "error_code": "identifier_required",
+                "diagnostics": dict(result.diagnostics or {}),
+                "snippets": [],
+                "identifier_gate": decision.as_dict(),
+                "required_identifiers": list(decision.required_keys),
+                "provided_identifiers": list(decision.provided_keys),
+                "hint": decision.hint,
+                "llm_hint": decision.hint,
+            }
+    if allowed_uploads is not None:
+        snippet_payloads = [p for p in snippet_payloads if str(p.get("upload_id") or "") in allowed_uploads]
+        if not snippet_payloads:
+            return {
+                "tool": "search_knowledge",
+                "query": query,
+                "limit": limit,
+                "intent": intent,
+                "status": "ok",
+                "snippets": [],
+                "identifier_gate": decision.as_dict() if decision else None,
+                "hint": "No records found for this identifier.",
+            }
     read_required = False
     if intent in {"table", "identifier"}:
         if len(snippet_payloads) <= 2:
@@ -652,6 +773,25 @@ def _search_knowledge_handler(
             payload["read_required"] = True
     for payload in snippet_payloads:
         context.add_knowledge_result(payload)
+    if guard and decision and decision.status == "ok":
+        applied_filter = decision.as_dict()
+        applied_filter["tool"] = "search_knowledge"
+        context.identifier_filters.append(applied_filter)
+        IdentifierRegistryService.record_event(
+            business_profile=conversation.business_profile,
+            decision=decision,
+            tool="search_knowledge",
+            conversation=conversation,
+            upload_ids=[str(p.get("upload_id") or "") for p in snippet_payloads if p.get("upload_id")],
+        )
+    elif guard and decision:
+        IdentifierRegistryService.record_event(
+            business_profile=conversation.business_profile,
+            decision=decision,
+            tool="search_knowledge",
+            conversation=conversation,
+            upload_ids=list(decision.blocked_uploads or ()),
+        )
 
     metrics = _log_tool_metrics(
         tool="search_knowledge",
@@ -683,10 +823,6 @@ def _read_document_handler(
     conversation: Conversation,
     context: ToolExecutionContext,
 ) -> Mapping[str, object]:
-    # Enforce per-turn chunk budget. Each read_document call counts as one unit.
-    context.reserve_chunk_reads(1)
-    context.reserve_chunk_pages(1)
-
     raw_id = arguments.get("document_id")
     document_id = _coerce_str(raw_id).strip()
     if not document_id:
@@ -705,6 +841,70 @@ def _read_document_handler(
             "error": "document_id must be a valid UUID",
             "snippets": [],
         }
+    business = conversation.business_profile
+
+    chunk_record = KnowledgeUploadChunk.objects.filter(
+        id=identifier,
+        business_profile=business,
+        upload__status=KnowledgeStatus.ACTIVE,
+    ).first()
+    upload_record = None
+    gating_upload_id = None
+    if chunk_record:
+        gating_upload_id = chunk_record.upload_id
+    else:
+        upload_record = KnowledgeUpload.objects.filter(
+            id=identifier,
+            business_profile=business,
+            status=KnowledgeStatus.ACTIVE,
+        ).first()
+        if not upload_record:
+            return {
+                "tool": "read_document",
+                "status": "not_found",
+                "error": "document not found for this business",
+                "snippets": [],
+            }
+        gating_upload_id = upload_record.id
+
+    guard = _identifier_guard(context, conversation)
+    decision = None
+    if guard and gating_upload_id:
+        decision = guard.require_for_upload(str(gating_upload_id))
+        _record_identifier_check(context, decision)
+        if decision.status != "ok":
+            logger.warning(
+                "mcp.identifier.denied tool=read_document business=%s upload=%s required=%s provided=%s",
+                conversation.business_profile_id,
+                gating_upload_id,
+                list(decision.required_keys),
+                list(decision.provided_keys),
+            )
+            IdentifierRegistryService.record_event(
+                business_profile=conversation.business_profile,
+                decision=decision,
+                tool="read_document",
+                conversation=conversation,
+                upload_ids=[str(gating_upload_id)],
+            )
+            error_code = "identifier_conflict" if decision.status == "identifier_conflict" else "identifier_required"
+            return {
+                "tool": "read_document",
+                "document_id": document_id,
+                "status": decision.status,
+                "error": error_code,
+                "error_code": error_code,
+                "snippets": [],
+                "identifier_gate": decision.as_dict(),
+                "required_identifiers": list(decision.required_keys),
+                "provided_identifiers": list(decision.provided_keys),
+                "hint": decision.hint,
+                "llm_hint": decision.hint,
+            }
+
+    # Enforce per-turn chunk budget. Each read_document call counts as one unit.
+    context.reserve_chunk_reads(1)
+    context.reserve_chunk_pages(1)
 
     def _coerce_page(value: object) -> int:
         try:
@@ -740,7 +940,6 @@ def _read_document_handler(
         neighbor_window = 1
     neighbor_window = max(0, min(3, neighbor_window))
 
-    business = conversation.business_profile
     service = _knowledge_service()
     throttle_notice: dict[str, object] | None = None
 
@@ -760,16 +959,8 @@ def _read_document_handler(
                 throttle_notice.get("reason"),
             )
 
-    # Decide whether this identifier refers to a chunk or an upload.
-    # We prefer chunk-focused reads when possible.
-    chunk_exists = KnowledgeUploadChunk.objects.filter(
-        id=identifier,
-        business_profile=business,
-        upload__status=KnowledgeStatus.ACTIVE,
-    ).exists()
-
     snippets: list[Any] = []
-    if chunk_exists:
+    if chunk_record:
         snippets.extend(
             service.load_page_window(
                 business_profile=business,
@@ -781,18 +972,6 @@ def _read_document_handler(
             )
         )
     else:
-        upload_exists = KnowledgeUpload.objects.filter(
-            id=identifier,
-            business_profile=business,
-            status=KnowledgeStatus.ACTIVE,
-        ).exists()
-        if not upload_exists:
-            return {
-                "tool": "read_document",
-                "status": "not_found",
-                "error": "document not found for this business",
-                "snippets": [],
-            }
         snippets.extend(
             service.load_page_window(
                 business_profile=business,
@@ -816,6 +995,17 @@ def _read_document_handler(
         }
         knowledge_reads.append(read_entry)
         context.add_knowledge_read(read_entry)
+    if guard and decision and decision.status == "ok":
+        applied_filter = decision.as_dict()
+        applied_filter["tool"] = "read_document"
+        context.identifier_filters.append(applied_filter)
+        IdentifierRegistryService.record_event(
+            business_profile=conversation.business_profile,
+            decision=decision,
+            tool="read_document",
+            conversation=conversation,
+            upload_ids=[str(gating_upload_id)] if gating_upload_id else None,
+        )
 
     ingestion_warnings = _build_ingestion_warnings(snippet_payloads, knowledge_reads)
     for warning in ingestion_warnings:

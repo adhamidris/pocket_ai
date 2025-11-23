@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import re
 import uuid
 from datetime import datetime, timedelta
 from typing import Any, TypedDict
@@ -28,6 +29,19 @@ from apps.accounts.credential_secrets import (
 
 
 logger = logging.getLogger(__name__)
+
+def _normalize_identifier_token(value: str) -> str:
+    """
+    Lowercase + collapse non-alphanumerics for identifier keys/columns.
+
+    Keeps the representation stable across user/AI-sourced values.
+    """
+
+    text = (value or "").strip().lower()
+    if not text:
+        return ""
+    normalized = re.sub(r"[^a-z0-9]+", "_", text)
+    return normalized.strip("_")
 
 
 class IntegrationColumnPrivacyConfig(TypedDict, total=False):
@@ -877,6 +891,198 @@ class KnowledgeAlias(models.Model):
 
     def __str__(self) -> str:
         return self.alias_raw
+
+
+class IdentifierSchemaStatus(models.TextChoices):
+    PROPOSED = "proposed", "Proposed"
+    ACTIVE = "active", "Active"
+    DISABLED = "disabled", "Disabled"
+
+
+class IdentifierSchemaSource(models.TextChoices):
+    USER = "user", "User"
+    AI = "ai", "AI"
+
+
+class IdentifierColumnStatus(models.TextChoices):
+    PROPOSED = "proposed", "Proposed"
+    ACTIVE = "active", "Active"
+    DISABLED = "disabled", "Disabled"
+
+
+class IdentifierSchema(models.Model):
+    """
+    Canonical identifier definition (email, phone, customer_id) scoped to a business.
+
+    Schemas can be user-defined or AI-proposed; activation gates MCP retrieval.
+    """
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    business_profile = models.ForeignKey(
+        BusinessProfile,
+        related_name="identifier_schemas",
+        on_delete=models.CASCADE,
+    )
+    key = models.CharField(max_length=80, help_text="Machine-friendly identifier key (e.g., email, phone, customer_id).")
+    display_name = models.CharField(
+        max_length=160,
+        help_text="Human-readable label shown in admin surfaces.",
+    )
+    status = models.CharField(
+        max_length=24,
+        choices=IdentifierSchemaStatus.choices,
+        default=IdentifierSchemaStatus.PROPOSED,
+        help_text="Activation status for retrieval guardrails.",
+    )
+    source = models.CharField(
+        max_length=16,
+        choices=IdentifierSchemaSource.choices,
+        default=IdentifierSchemaSource.USER,
+        help_text="Whether this identifier was user-defined or proposed by AI.",
+    )
+    is_required = models.BooleanField(default=True, help_text="If true, retrieval must be scoped by this identifier when present.")
+    description = models.TextField(blank=True, default="")
+    metadata = models.JSONField(default=dict, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = "accounts_identifier_schema"
+        ordering = ("-updated_at",)
+        indexes = [
+            models.Index(fields=["business_profile", "status"], name="identifier_schema_status_idx"),
+        ]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["business_profile", "key"],
+                name="identifier_schema_unique_key",
+            )
+        ]
+
+    def save(self, *args, **kwargs):
+        self.key = _normalize_identifier_token(self.key) or self.key
+        if not self.display_name:
+            self.display_name = self.key
+        super().save(*args, **kwargs)
+
+    def __str__(self) -> str:
+        return f"{self.key} ({self.business_profile_id})"
+
+
+class IdentifierColumnMapping(models.Model):
+    """
+    Maps upload/sheet columns to identifier schemas for guardrails and reuse.
+    """
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    business_profile = models.ForeignKey(
+        BusinessProfile,
+        related_name="identifier_columns",
+        on_delete=models.CASCADE,
+    )
+    identifier = models.ForeignKey(
+        IdentifierSchema,
+        related_name="column_mappings",
+        on_delete=models.CASCADE,
+    )
+    upload = models.ForeignKey(
+        KnowledgeUpload,
+        related_name="identifier_columns",
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+    )
+    sheet_name = models.CharField(max_length=255, blank=True, default="")
+    column_name = models.CharField(max_length=255)
+    column_normalized = models.CharField(max_length=255, db_index=True)
+    status = models.CharField(
+        max_length=24,
+        choices=IdentifierColumnStatus.choices,
+        default=IdentifierColumnStatus.PROPOSED,
+    )
+    source = models.CharField(
+        max_length=16,
+        choices=IdentifierSchemaSource.choices,
+        default=IdentifierSchemaSource.USER,
+    )
+    confidence = models.FloatField(null=True, blank=True)
+    metadata = models.JSONField(default=dict, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = "accounts_identifier_column"
+        ordering = ("-updated_at",)
+        indexes = [
+            models.Index(
+                fields=["business_profile", "column_normalized"],
+                name="identifier_column_norm_idx",
+            ),
+            models.Index(
+                fields=["business_profile", "upload"],
+                name="identifier_column_upload_idx",
+            ),
+        ]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["identifier", "upload", "column_normalized", "sheet_name"],
+                name="identifier_column_unique_scope",
+            )
+        ]
+
+    def save(self, *args, **kwargs):
+        self.column_normalized = _normalize_identifier_token(self.column_name) or self.column_name
+        super().save(*args, **kwargs)
+
+    def __str__(self) -> str:
+        label = self.column_name or self.column_normalized
+        return f"{label} -> {self.identifier.key}"
+
+
+class IdentifierColumnMemory(models.Model):
+    """
+    Remembers approved identifier mappings per business to bias future proposals.
+    """
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    business_profile = models.ForeignKey(
+        BusinessProfile,
+        related_name="identifier_memories",
+        on_delete=models.CASCADE,
+    )
+    identifier_schema = models.ForeignKey(
+        IdentifierSchema,
+        related_name="identifier_memories",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+    )
+    identifier_key = models.CharField(max_length=80)
+    normalized_column = models.CharField(max_length=255, db_index=True)
+    pattern_signature = models.CharField(max_length=255, blank=True, default="")
+    last_confidence = models.FloatField(null=True, blank=True)
+    metadata = models.JSONField(default=dict, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = "accounts_identifier_memory"
+        ordering = ("-updated_at",)
+        indexes = [
+            models.Index(
+                fields=["business_profile", "normalized_column"],
+                name="identifier_memory_column_idx",
+            ),
+        ]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["business_profile", "normalized_column", "pattern_signature"],
+                name="identifier_memory_unique_signature",
+            )
+        ]
+
+    def __str__(self) -> str:
+        return f"{self.normalized_column} -> {self.identifier_key}"
 
 
 class KnowledgeUploadPage(models.Model):

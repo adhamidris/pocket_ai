@@ -41,6 +41,7 @@ from .types import (
     ChunkPageBudgetExceeded,
     CharacterBudgetExceeded,
 )
+from .identifier_registry import IdentifierGuardrail
 
 
 logger = logging.getLogger(__name__)
@@ -108,6 +109,7 @@ class McpOrchestratorService:
             char_budget_per_minute=char_minute_limit,
             minute_budget_reserver=minute_reserver,
         )
+        tool_context.identifier_gate = IdentifierGuardrail.from_conversation(conversation)
 
         if not self.provider:
             raise RuntimeError("MCP provider is not configured.")
@@ -289,6 +291,36 @@ class McpOrchestratorService:
                     continue
                 break
 
+        # If identifier gating blocked retrieval and nothing was read, respond deterministically.
+        identifier_filters = getattr(tool_context, "identifier_filters", []) or []
+        identifier_blocks = [f for f in identifier_filters if isinstance(f, Mapping) and f.get("status") == "identifier_required"]
+        if identifier_blocks and not getattr(tool_context, "knowledge_reads", []):
+            requirement = identifier_blocks[0]
+            required_keys = requirement.get("required_keys") or ()
+            match_policy = requirement.get("match_policy") or "or"
+            hint = requirement.get("hint")
+            requirement_text = self._identifier_requirement_message(required_keys, match_policy, hint)
+            _emit_tokens(requirement_text)
+            final_assistant_message = {
+                "role": "assistant",
+                "content": requirement_text,
+                "actions": [],
+                "extractions": [],
+                "placeholder_response": None,
+            }
+            if on_status_change:
+                on_status_change({"code": "stream_complete", "label": ""})
+            clean_answer_text = requirement_text
+            plan = self._build_plan_from_assistant(
+                conversation=conversation,
+                assistant_message=final_assistant_message,
+                tool_context=tool_context,
+                sanitized_dropped=(),
+            )
+            self._log_turn_metrics(conversation, tool_context)
+            del on_status_change, on_placeholder_response
+            return plan, tuple(answer_streamed_chunks)
+
         final_messages = prompts.build_final_answer_messages(
             conversation=conversation,
             user_message=user_message,
@@ -296,6 +328,7 @@ class McpOrchestratorService:
             coverage_ledger=tuple(getattr(tool_context, "coverage_ledger", ())),
             tool_trace=tuple(getattr(tool_context, "tool_trace", ())),
             assistant_draft=tool_phase_assistant_message,
+            identifier_filters=tuple(getattr(tool_context, "identifier_filters", ())),
         )
         use_response_format = True
         if self.provider.__class__.__name__ == "DeepSeekToolsProvider":
@@ -508,6 +541,22 @@ class McpOrchestratorService:
                 "examples": dropped_list[:3],
             },
         }
+        if getattr(tool_context, "identifier_gate", None):
+            snapshot = None
+            try:
+                snapshot = tool_context.identifier_gate.snapshot()  # type: ignore[attr-defined]
+            except Exception:
+                snapshot = None
+            if snapshot:
+                diagnostics["identifier_gate"] = snapshot
+        identifier_checks = getattr(tool_context, "identifier_checks", None)
+        if identifier_checks:
+            diagnostics["identifier_checks"] = list(identifier_checks)
+        identifier_filters = getattr(tool_context, "identifier_filters", None)
+        if identifier_filters:
+            diagnostics["identifier_filters"] = list(identifier_filters)
+        if getattr(tool_context, "identifier_hashes", None):
+            diagnostics["identifier_hashes"] = dict(tool_context.identifier_hashes)
         ingestion_warnings = tuple(tool_context.ingestion_warnings)
         return AiOrchestratorPlan(
             response_text=response_text,
@@ -873,6 +922,20 @@ class McpOrchestratorService:
             "llm_hint": hint,
             "snippets": [],
         }
+
+    @staticmethod
+    def _identifier_requirement_message(required_keys: Iterable[str], match_policy: str, hint: str | None) -> str:
+        keys = [str(k).strip() for k in required_keys if str(k).strip()]
+        if not keys:
+            return hint or "I need a verified identifier to continue. Please share the identifier requested for this record."
+        keys_text = ", ".join(keys)
+        if match_policy == "and" and len(keys) > 1:
+            base = f"I need all of these identifiers to continue: {keys_text}."
+        else:
+            base = f"I need one of these identifiers to continue: {keys_text}."
+        if hint:
+            return f"{base} {hint}"
+        return base
 
     @staticmethod
     def _tool_name(tool_call: Mapping[str, object]) -> str:

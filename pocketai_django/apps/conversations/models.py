@@ -218,3 +218,51 @@ class ConversationFeedback(models.Model):
 
     def __str__(self) -> str:
         return f"{self.conversation_id}:{self.feedback_type}"
+
+
+class IdentifierEvent(models.Model):
+    """
+    Observability record for identifier gating decisions during retrieval.
+    Stores hashed identifiers only; raw values are never persisted.
+    """
+
+    STATUS_CHOICES = (
+        ("ok", "OK"),
+        ("identifier_required", "Identifier Required"),
+    )
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    business_profile = models.ForeignKey(
+        "accounts.BusinessProfile",
+        related_name="identifier_events",
+        on_delete=models.CASCADE,
+    )
+    conversation = models.ForeignKey(
+        Conversation,
+        related_name="identifier_events",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+    )
+    upload_id = models.UUIDField(null=True, blank=True)
+    tool = models.CharField(max_length=64, blank=True, default="")
+    status = models.CharField(max_length=32, choices=STATUS_CHOICES, default="ok")
+    match_policy = models.CharField(max_length=8, default="or")
+    required_keys = models.JSONField(default=list, blank=True)
+    provided_keys = models.JSONField(default=list, blank=True)
+    provided_hashes = models.JSONField(default=dict, blank=True)
+    blocked_uploads = models.JSONField(default=list, blank=True)
+    missing_by_upload = models.JSONField(default=dict, blank=True)
+    metadata = models.JSONField(default=dict, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = "conversations_identifier_event"
+        ordering = ("-created_at",)
+        indexes = [
+            models.Index(fields=["business_profile", "status"], name="identifier_event_status_idx"),
+            models.Index(fields=["business_profile", "created_at"], name="identifier_event_created_idx"),
+        ]
+
+    def __str__(self) -> str:
+        return f"{self.business_profile_id}:{self.status}:{self.tool}"

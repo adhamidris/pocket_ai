@@ -121,6 +121,9 @@
             <button type="button" class="rounded-md px-3 py-1.5 text-xs font-semibold uppercase tracking-wide text-muted-foreground transition-colors hover:text-primary" data-tab-button="collections">
               Collections
             </button>
+            <button type="button" class="rounded-md px-3 py-1.5 text-xs font-semibold uppercase tracking-wide text-muted-foreground transition-colors hover:text-primary" data-tab-button="guardrails">
+              Data Guardrails
+            </button>
           </div>
           <div class="flex flex-wrap items-center gap-2 md:ml-auto" data-tab-toolbar="documents">
             <button type="button" class="inline-flex items-center gap-2 rounded-lg border border-input bg-background px-3 py-2 text-sm font-medium transition-all hover:bg-accent hover:text-accent-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2">
@@ -515,6 +518,424 @@ python manage.py process_knowledge_ingestion --watch</pre>
           {% else %}
             <div class="rounded-xl border border-dashed border-border/60 bg-muted/30 p-6 text-sm text-muted-foreground">
               {{ knowledge_collections_empty_message }}
+            </div>
+          {% endif %}
+        </div>
+
+        <div class="hidden space-y-5" data-tab-panel="guardrails" data-guardrails>
+          <div class="flex items-start gap-3 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+            <svg class="h-3.5 w-3.5 text-primary" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" aria-hidden="true">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M12 9v3.75m0 3.75h.007v.007H12v-.007Z" />
+              <path stroke-linecap="round" stroke-linejoin="round" d="M4.5 19.5h15a1.5 1.5 0 0 0 1.5-1.5V6a1.5 1.5 0 0 0-1.5-1.5h-15A1.5 1.5 0 0 0 3 6v12a1.5 1.5 0 0 0 1.5 1.5Z" />
+            </svg>
+            <div class="space-y-1">
+              <div class="text-xs text-foreground">Data Guardrails</div>
+              <p class="text-[11px] text-muted-foreground normal-case">Control identifier requirements for knowledge retrieval. Admin-only; end-users stay guided by prompts.</p>
+            </div>
+          </div>
+
+          {% if guardrails.enabled %}
+            <div class="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+              <div class="rounded-xl border border-border/60 bg-card/80 p-4 space-y-2">
+                <div class="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Match policy</div>
+                <div class="text-lg font-semibold text-foreground">
+                  {% if guardrails.match_policy == "and" %}
+                    Require all identifiers
+                  {% else %}
+                    Require any identifier
+                  {% endif %}
+                </div>
+                <p class="text-xs text-muted-foreground">Applies to all uploads with active mappings.</p>
+              </div>
+              <div class="rounded-xl border border-border/60 bg-card/80 p-4 space-y-2">
+                <div class="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Identifiers</div>
+                <div class="text-lg font-semibold text-foreground">{{ guardrails.registry_count }}</div>
+                <p class="text-xs text-muted-foreground">Active + proposed keys for this business.</p>
+              </div>
+              <div class="rounded-xl border border-border/60 bg-card/80 p-4 space-y-2">
+                <div class="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Uploads covered</div>
+                <div class="text-lg font-semibold text-foreground">{{ guardrails.upload_count }}</div>
+                <p class="text-xs text-muted-foreground">Recent uploads with column mappings.</p>
+              </div>
+              <div class="rounded-xl border border-border/60 bg-card/80 p-4 space-y-2">
+                <div class="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Recent decisions</div>
+                <div class="text-lg font-semibold text-foreground">{{ guardrails.events.summary.total }}</div>
+                <p class="text-xs text-muted-foreground">
+                  OK: {{ guardrails.events.summary.ok }} · Required: {{ guardrails.events.summary.required }}
+                </p>
+              </div>
+            </div>
+
+            <div class="grid gap-4 lg:grid-cols-3">
+              <div class="rounded-xl border border-border/60 bg-card/80 p-4 space-y-3 lg:col-span-2">
+              <div class="flex items-start justify-between gap-3">
+                <div>
+                  <div class="text-sm font-semibold text-foreground">Match policy</div>
+                  <p class="text-xs text-muted-foreground">Choose whether uploads require all identifiers (AND) or any (OR).</p>
+                </div>
+              </div>
+              <form class="space-y-3" data-guardrail-form="match-policy" data-endpoint="{% url 'api:identifier-registry' guardrails.business_id %}">
+                {% csrf_token %}
+                <div class="inline-flex rounded-lg border border-border/60 bg-muted/50 p-1 text-xs font-semibold uppercase tracking-wide">
+                  <button type="button" class="rounded-md px-3 py-1.5 transition-colors {% if guardrails.match_policy != 'and' %}bg-primary text-primary-foreground shadow-sm{% else %}text-muted-foreground hover:text-primary{% endif %}" data-match-policy="or" aria-pressed="{% if guardrails.match_policy != 'and' %}true{% else %}false{% endif %}">
+                    OR
+                  </button>
+                    <button type="button" class="rounded-md px-3 py-1.5 transition-colors {% if guardrails.match_policy == 'and' %}bg-primary text-primary-foreground shadow-sm{% else %}text-muted-foreground hover:text-primary{% endif %}" data-match-policy="and" aria-pressed="{% if guardrails.match_policy == 'and' %}true{% else %}false{% endif %}">
+                      AND
+                    </button>
+                  </div>
+                  <p class="text-[11px] text-muted-foreground">Buttons submit via API in the next step; CSRF token included for POST wiring.</p>
+                </form>
+              </div>
+
+              <div class="rounded-xl border border-border/60 bg-card/80 p-4 space-y-3">
+                <div>
+                  <div class="text-sm font-semibold text-foreground">Detection toggles</div>
+                  <p class="text-xs text-muted-foreground">Auto-detect headers during uploads and auto-promote matches.</p>
+                </div>
+                <form class="space-y-2" data-guardrail-form="detection-toggles" data-endpoint="{% url 'api:identifier-registry' guardrails.business_id %}">
+                  {% csrf_token %}
+                  <label class="flex items-start gap-2 text-sm">
+                    <input type="checkbox" name="auto_detect" class="mt-1 h-4 w-4 rounded border-input text-primary focus:ring-primary" {% if guardrails.auto_detect %}checked{% endif %}>
+                    <span>
+                      <span class="font-semibold text-foreground">Auto-detect headers</span>
+                      <span class="block text-xs text-muted-foreground">Propose identifier mappings from CSV or sheet headers.</span>
+                    </span>
+                  </label>
+                  <label class="flex items-start gap-2 text-sm">
+                    <input type="checkbox" name="auto_promote" class="mt-1 h-4 w-4 rounded border-input text-primary focus:ring-primary" {% if guardrails.auto_promote %}checked{% endif %}>
+                    <span>
+                      <span class="font-semibold text-foreground">Auto-promote matches</span>
+                      <span class="block text-xs text-muted-foreground">Activate high-confidence identifiers automatically.</span>
+                    </span>
+                  </label>
+                  <p class="text-[11px] text-muted-foreground">Controls are applied when proposing from headers below.</p>
+                </form>
+              </div>
+            </div>
+
+            <div class="rounded-xl border border-border/60 bg-card/80 p-4 space-y-3">
+              <div class="flex items-start justify-between gap-3">
+                <div>
+                  <div class="text-sm font-semibold text-foreground">Recent guardrail decisions</div>
+                  <p class="text-xs text-muted-foreground">Latest identifier checks across tools. Filter to focus on denials.</p>
+                </div>
+              </div>
+              {% if guardrails.events.items %}
+                <div class="flex flex-wrap items-center gap-2 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+                  <span class="rounded-md border border-border/60 bg-muted/40 px-2 py-1">Total {{ guardrails.events.summary.total }}</span>
+                  <span class="rounded-md border border-emerald-200 bg-emerald-50 px-2 py-1 text-emerald-800">OK {{ guardrails.events.summary.ok }}</span>
+                  <span class="rounded-md border border-amber-200 bg-amber-50 px-2 py-1 text-amber-800">Required {{ guardrails.events.summary.required }}</span>
+                </div>
+                <div class="overflow-x-auto rounded-lg border border-border/60">
+                  <table class="min-w-full divide-y divide-border/60 text-sm">
+                    <thead class="bg-muted/50 text-[11px] uppercase tracking-wide text-muted-foreground">
+                      <tr>
+                        <th scope="col" class="px-3 py-2 text-left">Tool</th>
+                        <th scope="col" class="px-3 py-2 text-left">Upload</th>
+                        <th scope="col" class="px-3 py-2 text-left">Required</th>
+                        <th scope="col" class="px-3 py-2 text-left">Provided</th>
+                        <th scope="col" class="px-3 py-2 text-left">Policy</th>
+                        <th scope="col" class="px-3 py-2 text-left">Status</th>
+                        <th scope="col" class="px-3 py-2 text-left">When</th>
+                      </tr>
+                    </thead>
+                    <tbody class="divide-y divide-border/60 bg-card/60">
+                      {% for event in guardrails.events.items %}
+                        <tr>
+                          <td class="px-3 py-2 text-xs font-semibold text-foreground">{{ event.tool|default:"mcp" }}</td>
+                          <td class="px-3 py-2 text-xs text-muted-foreground">
+                            {% if event.upload_id %}
+                              {{ event.upload_id|slice:":8" }}
+                            {% else %}
+                              —
+                            {% endif %}
+                          </td>
+                          <td class="px-3 py-2 text-xs text-muted-foreground">{{ event.required_keys|join:", " }}</td>
+                          <td class="px-3 py-2 text-xs text-muted-foreground">{{ event.provided_keys|join:", " }}</td>
+                          <td class="px-3 py-2 text-xs text-muted-foreground">{{ event.match_policy|upper }}</td>
+                          <td class="px-3 py-2 text-xs">
+                            <span class="inline-flex items-center rounded-full px-2 py-0.5 text-[11px] font-semibold {% if event.status == 'identifier_required' %}border border-amber-200 bg-amber-50 text-amber-800{% else %}border border-emerald-200 bg-emerald-50 text-emerald-800{% endif %}">
+                              {{ event.status|default:"ok" }}
+                            </span>
+                          </td>
+                          <td class="px-3 py-2 text-xs text-muted-foreground">
+                            {{ event.created_at|default:"—" }}
+                          </td>
+                        </tr>
+                      {% endfor %}
+                    </tbody>
+                  </table>
+                </div>
+              {% else %}
+                <div class="rounded-lg border border-dashed border-border/60 bg-muted/40 px-4 py-3 text-sm text-muted-foreground">
+                  No guardrail events yet. Recent checks will appear here once retrieval runs.
+                </div>
+              {% endif %}
+            </div>
+
+            <div class="rounded-xl border border-border/60 bg-card/80 p-4 space-y-4">
+              <div class="flex items-start justify-between gap-3">
+                <div>
+                  <div class="text-sm font-semibold text-foreground">Identifier registry</div>
+                  <p class="text-xs text-muted-foreground">Approve schemas and map columns to enforce identifier checks.</p>
+                </div>
+              </div>
+
+              {% if guardrails.registry %}
+                <div class="space-y-3">
+                  {% for identifier in guardrails.registry %}
+                    <div class="rounded-lg border border-border/60 bg-muted/40 p-4 space-y-3">
+                      <div class="flex flex-wrap items-start gap-3 justify-between">
+                        <div class="space-y-1">
+                          <div class="flex items-center gap-2">
+                            <div class="text-sm font-semibold text-foreground">{{ identifier.display_name|default:identifier.key }}</div>
+                            <span class="inline-flex items-center rounded-full px-2 py-0.5 text-[11px] font-semibold {% if identifier.status == 'active' %}border border-emerald-200 bg-emerald-50 text-emerald-800{% elif identifier.status == 'proposed' %}border border-amber-200 bg-amber-50 text-amber-800{% else %}border border-border/60 bg-muted/60 text-muted-foreground{% endif %}">
+                              {{ identifier.status|default:"proposed" }}
+                            </span>
+                            <span class="inline-flex items-center rounded-full border border-border/60 bg-background px-2 py-0.5 text-[11px] font-semibold text-muted-foreground">
+                              {{ identifier.source|default:"user" }}
+                            </span>
+                            {% if identifier.is_required %}
+                              <span class="inline-flex items-center gap-1 rounded-full border border-primary/30 bg-primary/10 px-2 py-0.5 text-[11px] font-semibold text-primary">
+                                <svg class="h-3 w-3" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor">
+                                  <path stroke-linecap="round" stroke-linejoin="round" d="M12 9v6m0 0 3-3m-3 3-3-3m9 1.5a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z" />
+                                </svg>
+                                Required
+                              </span>
+                            {% endif %}
+                          </div>
+                          <div class="text-xs text-muted-foreground">Key: {{ identifier.key }}</div>
+                          {% if identifier.description %}
+                            <p class="text-xs text-muted-foreground leading-relaxed">{{ identifier.description }}</p>
+                          {% endif %}
+                        </div>
+                        <div class="flex items-center gap-2">
+                          {% if identifier.status == "proposed" or identifier.has_proposed_columns %}
+                            <form data-guardrail-action="approve" data-endpoint="{% url 'api:identifier-registry-approve' guardrails.business_id identifier.id %}">
+                              {% csrf_token %}
+                              <button type="submit" class="inline-flex items-center gap-2 rounded-md bg-primary px-3 py-1.5 text-xs font-semibold text-primary-foreground shadow-sm hover:bg-primary/90">
+                                <svg class="h-4 w-4" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor">
+                                  <path stroke-linecap="round" stroke-linejoin="round" d="m4.5 12.75 6 6 9-13.5" />
+                                </svg>
+                                {% if identifier.status == "proposed" %}Approve{% else %}Activate mappings{% endif %}
+                              </button>
+                            </form>
+                          {% endif %}
+                          {% if identifier.status != "disabled" %}
+                            <form data-guardrail-action="reject" data-endpoint="{% url 'api:identifier-registry-reject' guardrails.business_id identifier.id %}">
+                              {% csrf_token %}
+                              <button type="submit" class="inline-flex items-center gap-2 rounded-md border border-rose-200 bg-rose-50 px-3 py-1.5 text-xs font-semibold text-rose-800 hover:bg-rose-100">
+                                <svg class="h-4 w-4" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor">
+                                  <path stroke-linecap="round" stroke-linejoin="round" d="M6 18 18 6M6 6l12 12" />
+                                </svg>
+                                Reject
+                              </button>
+                            </form>
+                          {% endif %}
+                        </div>
+                      </div>
+
+                      <div class="space-y-2">
+                        <div class="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">Column mappings</div>
+                        {% if identifier.columns %}
+                          <div class="flex flex-wrap gap-2 text-xs">
+                            {% for col in identifier.columns %}
+                              <span class="inline-flex items-center gap-2 rounded-md border border-border/60 bg-background px-2.5 py-1" title="{% if col.metadata.diagnostics %}Diagnostics available{% endif %}">
+                                <span class="font-semibold text-foreground">{{ col.column_name }}</span>
+                                {% if col.upload_id %}
+                                  <span class="text-muted-foreground">·</span>
+                                  <span class="text-muted-foreground">
+                                    {% if col.upload_label %}
+                                      {{ col.upload_label }}
+                                    {% else %}
+                                      Upload {{ col.upload_id|slice:":8" }}
+                                    {% endif %}
+                                  </span>
+                                {% endif %}
+                                {% if col.confidence %}
+                                  <span class="inline-flex items-center gap-1 rounded-full border border-border/50 bg-muted/40 px-2 py-0.5 text-[10px] font-semibold text-foreground" title="Confidence">
+                                    <svg class="h-3 w-3 text-primary" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor">
+                                      <path stroke-linecap="round" stroke-linejoin="round" d="M12 6v6l4 2" />
+                                    </svg>
+                                    {{ col.confidence|floatformat:2 }}
+                                  </span>
+                                {% endif %}
+                                {% if col.metadata.detection_source %}
+                                  <span class="inline-flex items-center rounded-full border border-border/60 bg-muted/30 px-2 py-0.5 text-[10px] font-semibold text-muted-foreground" title="Detected from {{ col.metadata.detection_source }}">
+                                    {{ col.metadata.detection_source }}
+                                  </span>
+                                {% endif %}
+                                {% if col.metadata.diagnostics %}
+                                  {% with diag_id="diag_"|add:col.id %}
+                                    {{ col.metadata.diagnostics|json_script:diag_id }}
+                                    <button type="button" class="inline-flex items-center gap-1 rounded-full border border-border/50 bg-muted/30 px-2 py-0.5 text-[10px] font-semibold text-primary" data-diagnostics-toggle data-diagnostics="{{ diag_id }}">
+                                      Details
+                                    </button>
+                                  {% endwith %}
+                                {% endif %}
+                                <span class="inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-semibold {% if col.status == 'active' %}border border-emerald-200 bg-emerald-50 text-emerald-700{% elif col.status == 'proposed' %}border border-amber-200 bg-amber-50 text-amber-700{% else %}border border-border/60 bg-muted/50 text-muted-foreground{% endif %}">
+                                  {{ col.status }}
+                                </span>
+                              </span>
+                            {% endfor %}
+                          </div>
+                        {% else %}
+                          <div class="text-xs text-muted-foreground">No mappings yet.</div>
+                        {% endif %}
+                      </div>
+
+                      <form class="grid gap-3 md:grid-cols-3 md:items-end" data-guardrail-form="add-mapping" data-endpoint="{% url 'api:identifier-registry-columns' guardrails.business_id identifier.id %}">
+                        {% csrf_token %}
+                        <label class="space-y-1 text-sm md:col-span-1">
+                          <span class="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Upload</span>
+                          <select name="upload_id" class="w-full rounded-md border border-input bg-background px-3 py-2 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
+                            <option value="">Select upload</option>
+                            {% for upload in guardrails.uploads %}
+                              <option value="{{ upload.id }}">{{ upload.display_name }} ({{ upload.status }})</option>
+                            {% endfor %}
+                          </select>
+                        </label>
+                        <label class="space-y-1 text-sm">
+                          <span class="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Column name</span>
+                          <input type="text" name="column_name" placeholder="e.g. Email" class="w-full rounded-md border border-input bg-background px-3 py-2 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" required />
+                        </label>
+                        <label class="space-y-1 text-sm">
+                          <span class="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Status</span>
+                          <select name="status" class="w-full rounded-md border border-input bg-background px-3 py-2 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
+                            <option value="active">Active</option>
+                            <option value="proposed">Proposed</option>
+                            <option value="disabled">Disabled</option>
+                          </select>
+                        </label>
+                        <div class="md:col-span-3 flex items-center justify-end">
+                          <button type="submit" class="inline-flex items-center gap-2 rounded-md border border-input bg-background px-3 py-1.5 text-xs font-semibold text-foreground hover:border-primary/40 hover:text-primary">
+                            <svg class="h-4 w-4" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor">
+                              <path stroke-linecap="round" stroke-linejoin="round" d="M12 4.5v15m7.5-7.5h-15" />
+                            </svg>
+                            Add mapping
+                          </button>
+                        </div>
+                      </form>
+                    </div>
+                  {% endfor %}
+                </div>
+              {% else %}
+                <div class="rounded-lg border border-dashed border-border/60 bg-muted/40 px-4 py-3 text-sm text-muted-foreground">
+                  No identifiers yet. Use “Propose from headers” in the next step to seed suggestions.
+                </div>
+              {% endif %}
+            </div>
+
+            <div class="rounded-xl border border-border/60 bg-card/80 p-4 space-y-4">
+              <div class="flex items-start justify-between gap-3">
+                <div>
+                  <div class="text-sm font-semibold text-foreground">Propose from headers</div>
+                  <p class="text-xs text-muted-foreground">Send upload headers to auto-create identifier schemas and mappings.</p>
+                </div>
+                <div class="flex flex-wrap gap-2">
+                  <button type="button" class="inline-flex items-center gap-1 rounded-md border border-input bg-background px-3 py-1.5 text-xs font-semibold text-foreground hover:border-primary/40 hover:text-primary" data-guardrail-bulk="approve-high">
+                    Approve high-confidence
+                  </button>
+                  <button type="button" class="inline-flex items-center gap-1 rounded-md border border-input bg-background px-3 py-1.5 text-xs font-semibold text-muted-foreground hover:border-border hover:text-foreground" data-guardrail-bulk="reject-all">
+                    Reject all
+                  </button>
+                </div>
+              </div>
+              {% if guardrails.uploads %}
+                <div class="space-y-3">
+                  {% for upload in guardrails.uploads %}
+                    <form class="rounded-lg border border-border/60 bg-muted/40 p-4 space-y-3" data-guardrail-form="propose" data-endpoint="{% url 'api:identifier-registry-propose' guardrails.business_id %}">
+                      {% csrf_token %}
+                      <input type="hidden" name="upload_id" value="{{ upload.id }}">
+                      <div class="flex items-start justify-between gap-3">
+                        <div>
+                          <div class="text-sm font-semibold text-foreground">{{ upload.display_name }}</div>
+                          <p class="text-xs text-muted-foreground">Status: {{ upload.status }}{% if upload.last_ingested_at %} · Last ingested {{ upload.last_ingested_at }}{% endif %}</p>
+                        </div>
+                        <div class="flex flex-col items-end gap-2 text-xs font-semibold">
+                          <label class="inline-flex items-center gap-2">
+                            <input type="checkbox" name="auto_promote" class="h-4 w-4 rounded border-input text-primary focus:ring-primary" {% if guardrails.auto_promote %}checked{% endif %}>
+                            <span class="text-foreground">Auto-promote</span>
+                          </label>
+                          <label class="inline-flex items-center gap-2">
+                            <input type="checkbox" name="model_assist" class="h-4 w-4 rounded border-input text-primary focus:ring-primary">
+                            <span class="text-foreground">Model assist (semantic)</span>
+                          </label>
+                        </div>
+                      </div>
+                      <label class="block space-y-1 text-sm">
+                        <span class="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Headers</span>
+                        <textarea name="headers" rows="2" placeholder="Email, Phone, Customer ID" class="w-full rounded-md border border-input bg-background px-3 py-2 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"></textarea>
+                        <p class="text-[11px] text-muted-foreground">Optional: paste comma or newline separated headers. Leave blank to auto-try common identifiers (email, phone, customer_id, external_id).</p>
+                      </label>
+                      <div class="flex flex-wrap items-center justify-end gap-2">
+                        <span class="inline-flex items-center gap-2 rounded-md border border-border/60 bg-background px-2 py-1 text-[11px] font-semibold">
+                          Match policy: {{ guardrails.match_policy|upper }}
+                        </span>
+                        <button type="submit" class="inline-flex items-center gap-2 rounded-md bg-primary px-3 py-1.5 text-xs font-semibold text-primary-foreground shadow-sm hover:bg-primary/90">
+                          <svg class="h-4 w-4" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor">
+                            <path stroke-linecap="round" stroke-linejoin="round" d="M12 4.5v15m7.5-7.5h-15" />
+                          </svg>
+                          Propose identifiers
+                        </button>
+                      </div>
+                    </form>
+                  {% endfor %}
+                </div>
+              {% else %}
+                <div class="rounded-lg border border-dashed border-border/60 bg-muted/40 px-4 py-3 text-sm text-muted-foreground">
+                  No uploads yet. Add knowledge to start proposing identifiers.
+                </div>
+              {% endif %}
+            </div>
+
+            <div class="rounded-xl border border-border/60 bg-card/80 p-4 space-y-4">
+              <div class="flex items-start justify-between gap-3">
+                <div>
+                  <div class="text-sm font-semibold text-foreground">Run identifier check</div>
+                  <p class="text-xs text-muted-foreground">Test gating for a specific upload with synthetic identifiers. Use key:value pairs (e.g., email: user@example.com).</p>
+                </div>
+              </div>
+              {% if guardrails.uploads %}
+                <form class="grid gap-4 md:grid-cols-2 lg:grid-cols-3" data-guardrail-form="eval" data-endpoint="{% url 'api:identifier-eval' guardrails.business_id %}">
+                  {% csrf_token %}
+                  <label class="space-y-1 text-sm">
+                    <span class="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Upload</span>
+                    <select name="upload_id" class="w-full rounded-md border border-input bg-background px-3 py-2 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" required>
+                      <option value="">Select upload</option>
+                      {% for upload in guardrails.uploads %}
+                        <option value="{{ upload.id }}">{{ upload.display_name }} ({{ upload.status }})</option>
+                      {% endfor %}
+                    </select>
+                  </label>
+                  <label class="space-y-1 text-sm lg:col-span-2">
+                    <span class="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Identifiers (key:value per line)</span>
+                    <textarea name="identifiers" rows="3" placeholder="email: user@example.com&#10;customer_id: 12345" class="w-full rounded-md border border-input bg-background px-3 py-2 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"></textarea>
+                  </label>
+                  <div class="md:col-span-2 lg:col-span-3 flex flex-wrap items-center justify-between gap-2 text-xs text-muted-foreground">
+                    <span>Expected result compares against configured match policy ({{ guardrails.match_policy|upper }}).</span>
+                    <div class="inline-flex items-center gap-2">
+                      <span class="rounded-md border border-border/60 bg-muted/40 px-2 py-1 text-[11px] font-semibold" data-eval-result>Not run</span>
+                      <button type="submit" class="inline-flex items-center gap-2 rounded-md bg-primary px-3 py-1.5 text-xs font-semibold text-primary-foreground shadow-sm hover:bg-primary/90">
+                        <svg class="h-4 w-4" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor">
+                          <path stroke-linecap="round" stroke-linejoin="round" d="M8.25 4.5 15.75 12 8.25 19.5" />
+                        </svg>
+                        Run check
+                      </button>
+                    </div>
+                  </div>
+                  <div class="md:col-span-2 lg:col-span-3 hidden rounded-lg border border-dashed border-border/60 bg-muted/30 px-3 py-2 text-xs" data-eval-details></div>
+                </form>
+              {% else %}
+                <div class="rounded-lg border border-dashed border-border/60 bg-muted/40 px-4 py-3 text-sm text-muted-foreground">
+                  No uploads yet. Add knowledge to run eval checks.
+                </div>
+              {% endif %}
+            </div>
+          {% else %}
+            <div class="rounded-xl border border-dashed border-border/60 bg-muted/30 p-6 text-sm text-muted-foreground">
+              Link a business profile to configure identifier guardrails.
             </div>
           {% endif %}
         </div>
@@ -929,6 +1350,317 @@ python manage.py process_knowledge_ingestion --watch</pre>
     if (uploadTypeSelect) {
       uploadTypeSelect.addEventListener("change", refreshUploadFields);
       refreshUploadFields();
+    }
+
+    // Guardrails actions (match policy, approve schema, add mapping)
+    const guardrailsRoot = document.querySelector("[data-guardrails]");
+    if (guardrailsRoot) {
+      const csrfTokenInput = guardrailsRoot.querySelector("input[name='csrfmiddlewaretoken']");
+      const csrfToken =
+        (csrfTokenInput && csrfTokenInput.value) ||
+        ((document.querySelector("input[name='csrfmiddlewaretoken']") || {}).value || "");
+
+      async function submitGuardrail(endpoint, payload) {
+        const response = await fetch(endpoint, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            ...(csrfToken ? { "X-CSRFToken": csrfToken } : {}),
+          },
+          body: JSON.stringify(payload || {}),
+        });
+        if (!response.ok) {
+          let message = "Unable to save changes right now.";
+          try {
+            const data = await response.json();
+            message = data.message || data.error || message;
+          } catch (_err) {
+            // ignore parse errors
+          }
+          throw new Error(message);
+        }
+      }
+
+      const matchPolicyForm = guardrailsRoot.querySelector("[data-guardrail-form='match-policy']");
+      if (matchPolicyForm) {
+        const buttons = matchPolicyForm.querySelectorAll("[data-match-policy]");
+        buttons.forEach((button) => {
+          button.addEventListener("click", async (event) => {
+            event.preventDefault();
+            const policy = button.dataset.matchPolicy;
+            const endpoint = matchPolicyForm.dataset.endpoint;
+            if (!policy || !endpoint) return;
+            buttons.forEach((btn) => btn.setAttribute("disabled", "disabled"));
+            try {
+              await submitGuardrail(endpoint, { match_policy: policy });
+              window.location.reload();
+            } catch (err) {
+              alert(err.message || "Unable to update match policy.");
+            } finally {
+              buttons.forEach((btn) => btn.removeAttribute("disabled"));
+            }
+          });
+        });
+      }
+
+      const approveForms = guardrailsRoot.querySelectorAll("form[data-guardrail-action='approve']");
+      approveForms.forEach((form) => {
+        form.addEventListener("submit", async (event) => {
+          event.preventDefault();
+          const endpoint = form.dataset.endpoint;
+          if (!endpoint) return;
+          const button = form.querySelector("button[type='submit']");
+          if (button) button.setAttribute("disabled", "disabled");
+          try {
+            await submitGuardrail(endpoint, {});
+            window.location.reload();
+          } catch (err) {
+            alert(err.message || "Unable to approve identifier.");
+          } finally {
+            if (button) button.removeAttribute("disabled");
+          }
+        });
+      });
+
+      const rejectForms = guardrailsRoot.querySelectorAll("form[data-guardrail-action='reject']");
+      rejectForms.forEach((form) => {
+        form.addEventListener("submit", async (event) => {
+          event.preventDefault();
+          const endpoint = form.dataset.endpoint;
+          if (!endpoint) return;
+          const button = form.querySelector("button[type='submit']");
+          if (button) button.setAttribute("disabled", "disabled");
+          try {
+            await submitGuardrail(endpoint, {});
+            window.location.reload();
+          } catch (err) {
+            alert(err.message || "Unable to reject identifier.");
+          } finally {
+            if (button) button.removeAttribute("disabled");
+          }
+        });
+      });
+
+      const proposeForms = guardrailsRoot.querySelectorAll("form[data-guardrail-form='propose']");
+      proposeForms.forEach((form) => {
+        form.addEventListener("submit", async (event) => {
+          event.preventDefault();
+          const endpoint = form.dataset.endpoint;
+          if (!endpoint) return;
+          const uploadInput = form.querySelector("input[name='upload_id']");
+          const headersField = form.querySelector("textarea[name='headers']");
+          const autoPromoteField = form.querySelector("input[name='auto_promote']");
+          const modelAssistField = form.querySelector("input[name='model_assist']");
+          const uploadId = uploadInput ? uploadInput.value : "";
+          const rawHeaders = headersField ? headersField.value || "" : "";
+          const headers = rawHeaders
+            .split(/[\n,]/)
+            .map((h) => h.trim())
+            .filter(Boolean);
+          if (!uploadId) {
+            alert("Upload id missing.");
+            return;
+          }
+          const button = form.querySelector("button[type='submit']");
+          if (button) button.setAttribute("disabled", "disabled");
+          try {
+            await submitGuardrail(endpoint, {
+              upload_id: uploadId,
+              headers: headers,
+              auto_promote: autoPromoteField ? autoPromoteField.checked : false,
+              model_assist: modelAssistField ? modelAssistField.checked : false,
+            });
+            window.location.reload();
+          } catch (err) {
+            alert(err.message || "Unable to propose identifiers.");
+          } finally {
+            if (button) button.removeAttribute("disabled");
+          }
+        });
+      });
+
+      const bulkApproveBtn = guardrailsRoot.querySelector("[data-guardrail-bulk='approve-high']");
+      if (bulkApproveBtn) {
+        bulkApproveBtn.addEventListener("click", (event) => {
+          event.preventDefault();
+          const approveButtons = guardrailsRoot.querySelectorAll("form[data-guardrail-action='approve'] button[type='submit']");
+          approveButtons.forEach((btn) => btn.click());
+        });
+      }
+
+      const bulkRejectBtn = guardrailsRoot.querySelector("[data-guardrail-bulk='reject-all']");
+      if (bulkRejectBtn) {
+        bulkRejectBtn.addEventListener("click", (event) => {
+          event.preventDefault();
+          const rejectButtons = guardrailsRoot.querySelectorAll("form[data-guardrail-action='reject'] button[type='submit']");
+          rejectButtons.forEach((btn) => btn.click());
+        });
+      }
+
+      const diagButtons = guardrailsRoot.querySelectorAll("[data-diagnostics-toggle]");
+      diagButtons.forEach((btn) => {
+        btn.addEventListener("click", () => {
+          const diagScriptId = btn.dataset.diagnostics;
+          if (!diagScriptId) return;
+          const scriptEl = document.getElementById(diagScriptId);
+          if (!scriptEl || !scriptEl.textContent) return;
+          try {
+            const data = JSON.parse(scriptEl.textContent);
+            alert(JSON.stringify(data, null, 2));
+          } catch (_err) {
+            alert("Diagnostics unavailable.");
+          }
+        });
+      });
+
+      const mappingForms = guardrailsRoot.querySelectorAll("form[data-guardrail-form='add-mapping']");
+      mappingForms.forEach((form) => {
+        form.addEventListener("submit", async (event) => {
+          event.preventDefault();
+          const endpoint = form.dataset.endpoint;
+          if (!endpoint) return;
+          const uploadField = form.querySelector("select[name='upload_id']");
+          const columnField = form.querySelector("input[name='column_name']");
+          const statusField = form.querySelector("select[name='status']");
+          const upload = uploadField ? uploadField.value : "";
+          const columnName = columnField ? columnField.value.trim() : "";
+          const status = statusField ? statusField.value : "proposed";
+          if (!upload || !columnName) {
+            alert("Select an upload and column name before adding a mapping.");
+            return;
+          }
+          const button = form.querySelector("button[type='submit']");
+          if (button) button.setAttribute("disabled", "disabled");
+          try {
+            await submitGuardrail(endpoint, {
+              columns: [
+                {
+                  upload_id: upload,
+                  column_name: columnName,
+                  status: status,
+                },
+              ],
+            });
+            window.location.reload();
+          } catch (err) {
+            alert(err.message || "Unable to add mapping.");
+          } finally {
+            if (button) button.removeAttribute("disabled");
+          }
+        });
+      });
+
+      const evalForm = guardrailsRoot.querySelector("form[data-guardrail-form='eval']");
+      if (evalForm) {
+        const resultBadge = evalForm.querySelector("[data-eval-result]");
+        const details = evalForm.querySelector("[data-eval-details]");
+        evalForm.addEventListener("submit", async (event) => {
+          event.preventDefault();
+          const endpoint = evalForm.dataset.endpoint;
+          if (!endpoint) return;
+          const uploadField = evalForm.querySelector("select[name='upload_id']");
+          const identifiersField = evalForm.querySelector("textarea[name='identifiers']");
+          const uploadId = uploadField ? uploadField.value : "";
+          const rawIdentifiers = identifiersField ? identifiersField.value || "" : "";
+          if (!uploadId) {
+            alert("Select an upload to evaluate.");
+            return;
+          }
+          const identifiers = {};
+          const invalidLines = [];
+          const inferred = [];
+          rawIdentifiers
+            .split("\n")
+            .map((line) => line.trim())
+            .filter(Boolean)
+            .forEach((line) => {
+              const [key, ...rest] = line.split(":");
+              const value = rest.join(":").trim();
+              if (key && value) {
+                identifiers[key.trim()] = value;
+                return;
+              }
+              if (line.includes("@")) {
+                identifiers.email = line;
+                inferred.push(`Interpreted "${line}" as email`);
+                return;
+              }
+              if (/^\d+$/.test(line)) {
+                identifiers.customer_id = line;
+                inferred.push(`Interpreted "${line}" as customer_id`);
+                return;
+              }
+              invalidLines.push(line);
+            });
+          if (Object.keys(identifiers).length === 0) {
+            alert("Add identifiers in key:value format, e.g., email: user@example.com");
+            return;
+          }
+          if (invalidLines.length) {
+            alert("These lines are missing a key:value pair:\n" + invalidLines.join("\n"));
+            return;
+          }
+          const button = evalForm.querySelector("button[type='submit']");
+          if (button) button.setAttribute("disabled", "disabled");
+          if (resultBadge) {
+            resultBadge.textContent = "Running…";
+            resultBadge.className = "rounded-md border border-border/60 bg-muted/40 px-2 py-1 text-[11px] font-semibold";
+          }
+          if (details) {
+            details.classList.add("hidden");
+            details.textContent = "";
+          }
+          try {
+            const response = await fetch(endpoint, {
+              method: "POST",
+              headers: {
+                "Content-Type": "application/json",
+                ...(csrfToken ? { "X-CSRFToken": csrfToken } : {}),
+              },
+              body: JSON.stringify({
+                upload_id: uploadId,
+                identifiers: identifiers,
+              }),
+            });
+            const data = await response.json();
+            if (!response.ok) {
+              throw new Error(data.message || data.error || "Unable to run eval.");
+            }
+            const passed = Boolean(data.passed);
+            if (resultBadge) {
+              resultBadge.textContent = passed ? "Pass" : "Requires identifiers";
+              resultBadge.className = passed
+                ? "rounded-md border border-emerald-200 bg-emerald-50 px-2 py-1 text-[11px] font-semibold text-emerald-800"
+                : "rounded-md border border-amber-200 bg-amber-50 px-2 py-1 text-[11px] font-semibold text-amber-800";
+            }
+            if (details) {
+              const requiredKeys = (data.required_keys || []).join(", ") || "None";
+              const providedKeys = (data.provided_keys || []).join(", ") || "None";
+              const policy = (data.match_policy || "").toUpperCase() || "N/A";
+              const inferredNote = inferred.length ? " · " + inferred.join(" · ") : "";
+              details.textContent =
+                "Status: " +
+                (data.status || "unknown") +
+                " · Required: " +
+                requiredKeys +
+                " · Provided: " +
+                providedKeys +
+                " · Policy: " +
+                policy +
+                inferredNote;
+              details.classList.remove("hidden");
+            }
+          } catch (err) {
+            alert(err.message || "Unable to run eval.");
+            if (resultBadge) {
+              resultBadge.textContent = "Error";
+              resultBadge.className = "rounded-md border border-rose-200 bg-rose-50 px-2 py-1 text-[11px] font-semibold text-rose-800";
+            }
+          } finally {
+            if (button) button.removeAttribute("disabled");
+          }
+        });
+      }
     }
 
     var table = document.querySelector("[data-documents-table]");

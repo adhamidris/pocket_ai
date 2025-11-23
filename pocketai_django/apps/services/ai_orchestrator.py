@@ -799,6 +799,7 @@ class KnowledgeSearchService:
         traits: QueryTraits | None = None,
         alias_result: AliasSearchResult | None = None,
         session_cache: MutableMapping[str, object] | None = None,
+        identifier_filter: Mapping[str, str] | None = None,
     ) -> KnowledgeSearchResult:
         traits = traits or self.analyze_query(query, business_profile=business_profile)
         overall_start = time.perf_counter()
@@ -859,6 +860,7 @@ class KnowledgeSearchService:
             alias_result=alias_result,
             table_context=table_context,
             feature_state=feature_state,
+            identifier_filter=identifier_filter,
         )
         cached_result = None
         if session_cache is not None:
@@ -1678,6 +1680,7 @@ class KnowledgeSearchService:
         alias_result: AliasSearchResult | None,
         table_context: Mapping[str, object],
         feature_state: FeatureState,
+        identifier_filter: Mapping[str, str] | None = None,
     ) -> str:
         version = self._get_result_cache_version(business_profile.id)
         qvec_version = self._get_query_cache_version(business_profile.id)
@@ -1699,6 +1702,7 @@ class KnowledgeSearchService:
                 "alias_on" if feature_state.alias_lookup else "alias_off",
                 "alias_short" if alias_result and alias_result.short_circuit else "alias_none",
                 alias_stage,
+                str(identifier_filter or {}),
             ]
         )
         digest = hashlib.sha256(fingerprint.encode("utf-8")).hexdigest()[:32]

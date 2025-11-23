@@ -58,6 +58,10 @@ class ToolExecutionContext:
     knowledge_reads: list[dict[str, object]] = dataclasses.field(default_factory=list)
     tool_trace: list[dict[str, object]] = dataclasses.field(default_factory=list)
     coverage_ledger: list[dict[str, object]] = dataclasses.field(default_factory=list)
+    identifier_gate: object | None = None
+    identifier_checks: list[dict[str, object]] = dataclasses.field(default_factory=list)
+    identifier_filters: list[dict[str, object]] = dataclasses.field(default_factory=list)
+    identifier_hashes: dict[str, str] = dataclasses.field(default_factory=dict)
 
     def reserve_chunk_reads(self, count: int) -> None:
         """Ensure the requested chunk reads do not exceed the per-turn budget."""

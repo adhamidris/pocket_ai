@@ -12,6 +12,11 @@ from apps.accounts.models import (
     KnowledgeUploadChunk,
     RegistrationSession,
     User,
+    IdentifierColumnMapping,
+    IdentifierColumnStatus,
+    IdentifierSchema,
+    IdentifierSchemaSource,
+    IdentifierSchemaStatus,
 )
 from apps.conversations.models import Conversation
 from apps.services.mcp import tools
@@ -91,7 +96,6 @@ class McpReadDocumentHandlerTests(TestCase):
             max_chunk_pages_per_turn=5,
             char_budget_per_turn=120,
         )
-        context.characters_used = 110
         payload = {"document_id": str(self.chunk.id), "mode": "full_page"}
         result = tools._read_document_handler(payload, self.conversation, context)
 
@@ -101,3 +105,64 @@ class McpReadDocumentHandlerTests(TestCase):
         self.assertEqual(result["mode"], "excerpt")
         snippet = result["snippets"][0]
         self.assertEqual(snippet["page_mode"], "excerpt")
+
+    def test_read_document_requires_identifier_when_mapping_active(self) -> None:
+        schema = IdentifierSchema.objects.create(
+            business_profile=self.business,
+            key="email",
+            display_name="Email",
+            status=IdentifierSchemaStatus.ACTIVE,
+            source=IdentifierSchemaSource.USER,
+            is_required=True,
+        )
+        IdentifierColumnMapping.objects.create(
+            business_profile=self.business,
+            identifier=schema,
+            upload=self.upload,
+            column_name="Email",
+            status=IdentifierColumnStatus.ACTIVE,
+            source=IdentifierSchemaSource.USER,
+        )
+        context = ToolExecutionContext(
+            max_chunk_reads_per_turn=3,
+            max_chunk_pages_per_turn=3,
+            char_budget_per_turn=5000,
+        )
+        payload = {"document_id": str(self.upload.id), "mode": "excerpt"}
+        result = tools._read_document_handler(payload, self.conversation, context)
+
+        self.assertEqual(result["status"], "identifier_required")
+        self.assertEqual(result["snippets"], [])
+        self.assertIn("email", result.get("required_identifiers", []))
+        self.assertTrue(context.identifier_checks)
+
+    def test_read_document_allows_when_identifier_present(self) -> None:
+        schema = IdentifierSchema.objects.create(
+            business_profile=self.business,
+            key="email",
+            display_name="Email",
+            status=IdentifierSchemaStatus.ACTIVE,
+            source=IdentifierSchemaSource.USER,
+            is_required=True,
+        )
+        IdentifierColumnMapping.objects.create(
+            business_profile=self.business,
+            identifier=schema,
+            upload=self.upload,
+            column_name="Email",
+            status=IdentifierColumnStatus.ACTIVE,
+            source=IdentifierSchemaSource.USER,
+        )
+        self.conversation.metadata = {"customer_identifiers": {"email": "visitor@example.com"}}
+        self.conversation.save(update_fields=["metadata"])
+        context = ToolExecutionContext(
+            max_chunk_reads_per_turn=3,
+            max_chunk_pages_per_turn=3,
+            char_budget_per_turn=5000,
+        )
+        payload = {"document_id": str(self.chunk.id), "mode": "excerpt"}
+        result = tools._read_document_handler(payload, self.conversation, context)
+
+        self.assertEqual(result["status"], "ok")
+        self.assertTrue(result["snippets"])
+        self.assertEqual(result["snippets"][0]["read_state"], "summary")

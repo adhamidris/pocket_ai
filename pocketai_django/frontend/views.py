@@ -30,6 +30,8 @@ from django.views.decorators.http import require_http_methods
 from apps.accounts.models import (
     AgentProfile,
     BusinessProfile,
+    IdentifierColumnStatus,
+    IdentifierSchemaStatus,
     KnowledgeIntegration,
     KnowledgeIntegrationStatus,
     KnowledgeIntegrationType,
@@ -41,7 +43,7 @@ from apps.accounts.models import (
     KnowledgeUploadUrl,
 )
 from apps.cases.models import Case, CaseStatus
-from apps.conversations.models import Conversation, ConversationSender
+from apps.conversations.models import Conversation, ConversationSender, IdentifierEvent
 from apps.customers.models import Customer
 from apps.services.agents import (
     AgentListValidationError,
@@ -55,6 +57,7 @@ from apps.services.cases import list_cases
 from apps.services.customers import list_customers
 from apps.services.documents import DocumentListValidationError, list_documents
 from apps.services.knowledge_ingestion import queue_ingestion_job
+from apps.services.mcp.identifier_registry import IdentifierRegistryService
 from apps.api.chat_portal import bootstrap_session as bootstrap_session_view
 from apps.api.views import start_google_drive_oauth as start_google_drive_oauth_view
 
@@ -1913,6 +1916,92 @@ def _document_identifier(doc_id: uuid.UUID) -> str:
     return f"KN-{str(doc_id).split('-')[0].upper()}"
 
 
+def _build_guardrails_snapshot(business: BusinessProfile | None) -> dict[str, object]:
+    if not business:
+        return {
+            "enabled": False,
+            "match_policy": "or",
+            "registry": [],
+            "registry_count": 0,
+            "uploads": [],
+            "upload_count": 0,
+            "events": {"items": [], "summary": {"total": 0, "required": 0, "ok": 0}},
+            "auto_detect": False,
+            "auto_promote": False,
+            "business_id": "",
+        }
+
+    registry = IdentifierRegistryService.list_registry(business_profile=business)
+    match_policy = IdentifierRegistryService.get_match_policy(business)
+    uploads_qs = KnowledgeUpload.objects.filter(business_profile=business).order_by("-updated_at")[:50]
+    uploads = [
+        {
+            "id": str(upload.id),
+            "display_name": upload.display_name,
+            "status": upload.status,
+            "source_type": upload.source_type,
+            "last_ingested_at": upload.last_ingested_at.isoformat() if upload.last_ingested_at else "",
+            "updated_at": upload.updated_at.isoformat() if upload.updated_at else "",
+        }
+        for upload in uploads_qs
+    ]
+    upload_lookup = {item["id"]: item["display_name"] for item in uploads}
+
+    events_qs = IdentifierEvent.objects.filter(business_profile=business).order_by("-created_at")
+    summary = {
+        "total": events_qs.count(),
+        "required": events_qs.filter(status="identifier_required").count(),
+        "ok": events_qs.filter(status="ok").count(),
+    }
+    events = [
+        {
+            "id": str(event.id),
+            "status": event.status,
+            "tool": event.tool,
+            "match_policy": event.match_policy,
+            "upload_id": str(event.upload_id) if event.upload_id else None,
+            "required_keys": event.required_keys,
+            "provided_keys": event.provided_keys,
+            "blocked_uploads": event.blocked_uploads,
+            "created_at": event.created_at.isoformat() if event.created_at else "",
+        }
+        for event in events_qs[:50]
+    ]
+
+    enriched_registry: list[dict[str, object]] = []
+    for schema in registry:
+        col_items = []
+        has_proposed_columns = False
+        for col in schema.get("columns", []):
+            col_copy = dict(col)
+            upload_id = col_copy.get("upload_id")
+            if upload_id and upload_lookup.get(str(upload_id)):
+                col_copy["upload_label"] = upload_lookup[str(upload_id)]
+            if col_copy.get("status") == IdentifierColumnStatus.PROPOSED:
+                has_proposed_columns = True
+            col_items.append(col_copy)
+        schema_copy = dict(schema)
+        schema_copy["columns"] = col_items
+        schema_copy["has_proposed_columns"] = has_proposed_columns
+        # Hide disabled identifiers from the dashboard list after rejection.
+        if schema_copy.get("status") != IdentifierSchemaStatus.DISABLED:
+            enriched_registry.append(schema_copy)
+
+    return {
+        "enabled": True,
+        "match_policy": match_policy,
+        "registry": enriched_registry,
+        "registry_count": len(enriched_registry),
+        "uploads": uploads,
+        "upload_count": len(uploads),
+        "upload_lookup": upload_lookup,
+        "events": {"items": events, "summary": summary},
+        "auto_detect": False,
+        "auto_promote": False,
+        "business_id": str(business.id),
+    }
+
+
 def _primary_business_for_user(user) -> BusinessProfile | None:
     if not getattr(user, "is_authenticated", False):
         return None
@@ -2054,6 +2143,7 @@ def dashboard_knowledge(request: HttpRequest) -> HttpResponse:
     total_documents = 0
     has_error = False
     business = _primary_business_for_user(request.user)
+    guardrails = _build_guardrails_snapshot(business)
 
     if business:
         try:
@@ -2153,6 +2243,7 @@ def dashboard_knowledge(request: HttpRequest) -> HttpResponse:
         ],
         "knowledge_upload_enabled": bool(business),
         "knowledge_dump_enabled": bool(business),
+        "guardrails": guardrails,
     }
     return render(request, "frontend/knowledge.html", context)
 
