@@ -90,7 +90,7 @@ class McpOrchestratorService:
         on_response_text_delta: Callable[[str], None] | None = None,
         on_status_change: Callable[[str], None] | None = None,
         on_placeholder_response: Callable[[str], None] | None = None,
-    ) -> tuple[AiOrchestratorPlan, tuple[str, ...]]:
+    ) -> dict[str, object]:
         """
         Build the orchestration plan for the latest customer message.
 
@@ -310,16 +310,15 @@ class McpOrchestratorService:
             }
             if on_status_change:
                 on_status_change({"code": "stream_complete", "label": ""})
-            clean_answer_text = requirement_text
-            plan = self._build_plan_from_assistant(
-                conversation=conversation,
-                assistant_message=final_assistant_message,
-                tool_context=tool_context,
-                sanitized_dropped=(),
-            )
             self._log_turn_metrics(conversation, tool_context)
             del on_status_change, on_placeholder_response
-            return plan, tuple(answer_streamed_chunks)
+            return {
+                "assistant_message": final_assistant_message,
+                "tool_context": tool_context,
+                "streamed_chunks": tuple(answer_streamed_chunks),
+                "clean_answer_text": requirement_text,
+                "dropped_sentences": tuple(),
+            }
 
         final_messages = prompts.build_final_answer_messages(
             conversation=conversation,
@@ -416,28 +415,15 @@ class McpOrchestratorService:
         if not answer_streamed_chunks:
             _emit_tokens(clean_answer_text)
 
-        planner_payload: dict[str, object] | None = None
-        if clean_answer_text:
-            try:
-                planner_payload = self._run_planner(
-                    conversation=conversation,
-                    user_message=user_message,
-                    answer_text=clean_answer_text,
-                    tool_context=tool_context,
-                    on_status_change=on_status_change,
-                )
-            except PromptGenerationError:
-                planner_payload = None
-
-        plan = self._build_plan_from_assistant(
-            conversation=conversation,
-            assistant_message=self._merge_planner_into_assistant(normalized_assistant_msg, planner_payload),
-            tool_context=tool_context,
-            sanitized_dropped=all_dropped,
-        )
         self._log_turn_metrics(conversation, tool_context)
         del on_status_change, on_placeholder_response
-        return plan, tuple(answer_streamed_chunks)
+        return {
+            "assistant_message": normalized_assistant_msg,
+            "tool_context": tool_context,
+            "streamed_chunks": tuple(answer_streamed_chunks),
+            "clean_answer_text": clean_answer_text,
+            "dropped_sentences": tuple(all_dropped),
+        }
 
     def stream_turn(
         self,
@@ -449,20 +435,46 @@ class McpOrchestratorService:
         on_placeholder_response: Callable[[str], None] | None = None,
         on_stream_complete: Callable[[], None] | None = None,
     ) -> StreamingTurnContext:
-        plan, streamed_chunks = self._execute_turn(
+        result = self._execute_turn(
             conversation=conversation,
             user_message=user_message,
             on_response_text_delta=on_response_text_delta,
             on_status_change=on_status_change,
             on_placeholder_response=on_placeholder_response,
         )
-        if not streamed_chunks and plan.response_text:
+        streamed_chunks = tuple(result.get("streamed_chunks") or ())
+        clean_answer_text = str(result.get("clean_answer_text") or "")
+        tool_context = result.get("tool_context")
+        assistant_message = result.get("assistant_message") or {}
+        if not streamed_chunks and clean_answer_text:
             reconstructed: list[str] = []
-            _emit_stream_chunks(reconstructed.append, plan.response_text)
+            _emit_stream_chunks(reconstructed.append, clean_answer_text)
             streamed_chunks = tuple(reconstructed)
+        diagnostics: dict[str, object] = {
+            "llm_strategy": "mcp_tools_stream_only",
+            "sanitized_sentences": {
+                "count": len(result.get("dropped_sentences") or ()),
+                "examples": list(result.get("dropped_sentences") or ())[:3],
+            },
+        }
+        if tool_context:
+            diagnostics["tool_trace"] = list(getattr(tool_context, "tool_trace", ()))
+            diagnostics["coverage_ledger"] = list(getattr(tool_context, "coverage_ledger", ()))
+            diagnostics["knowledge_reads"] = list(getattr(tool_context, "knowledge_reads", ()))
+            diagnostics["knowledge_results"] = list(getattr(tool_context, "knowledge_results", ()))
+            diagnostics["identifier_checks"] = list(getattr(tool_context, "identifier_checks", ()))
+            diagnostics["identifier_filters"] = list(getattr(tool_context, "identifier_filters", ()))
+            if getattr(tool_context, "identifier_hashes", None):
+                diagnostics["identifier_hashes"] = dict(getattr(tool_context, "identifier_hashes"))
+            gate = getattr(tool_context, "identifier_gate", None)
+            if gate:
+                try:
+                    diagnostics["identifier_gate"] = gate.snapshot()  # type: ignore[attr-defined]
+                except Exception:
+                    diagnostics["identifier_gate"] = None
         llm_source = "provider"
-        if plan.diagnostics and plan.diagnostics.get("llm_strategy"):
-            llm_source = str(plan.diagnostics.get("llm_strategy"))
+        if diagnostics.get("llm_strategy"):
+            llm_source = str(diagnostics.get("llm_strategy"))
         if on_stream_complete:
             try:
                 on_stream_complete()
@@ -470,22 +482,23 @@ class McpOrchestratorService:
                 pass
         return StreamingTurnContext(
             conversation=conversation,
-            response_text=plan.response_text,
-            planned_actions=tuple(plan.planned_actions),
-            extractions=tuple(plan.extractions),
-            resolved_citations=tuple(plan.citations),
+            response_text=clean_answer_text,
+            planned_actions=tuple(),
+            extractions=tuple(),
+            resolved_citations=tuple(self._build_citations(tool_context)) if tool_context else tuple(),
             knowledge_payload=tuple(),
-            knowledge_reads=tuple(),
+            knowledge_reads=tuple(getattr(tool_context, "knowledge_reads", ())) if tool_context else tuple(),
             knowledge_status=None,
-            knowledge_diagnostics=plan.diagnostics or {},
+            knowledge_diagnostics=diagnostics,
             knowledge_loading=False,
             placeholder_response=None,
             prompt_bundle=None,
-            tool_trace=tuple(),
-            cached_snippet_count=0,
+            tool_trace=tuple(getattr(tool_context, "tool_trace", ())) if tool_context else tuple(),
+            cached_snippet_count=len(getattr(tool_context, "knowledge_results", ()) or []) if tool_context else 0,
             llm_source=llm_source,
             streamed_chunks=streamed_chunks,
-            plan=plan,
+            plan=None,
+            tool_context=tool_context,
         )
 
     def finalize_turn(self, context: StreamingTurnContext) -> AiOrchestratorPlan:
@@ -702,6 +715,43 @@ class McpOrchestratorService:
         if isinstance(planner_message.get("extractions"), list):
             merged["extractions"] = planner_message.get("extractions")
         return merged
+
+    def run_planner_only(
+        self,
+        *,
+        conversation: Conversation,
+        user_message: str,
+        answer_text: str,
+        tool_context: ToolExecutionContext | None = None,
+        on_status_change: Callable[[str], None] | None = None,
+    ) -> AiOrchestratorPlan | None:
+        """
+        Run planner-only pass using the already streamed answer and tool context.
+        """
+        if not self.provider:
+            return None
+        planner_payload: dict[str, object] | None = None
+        try:
+            planner_payload = self._run_planner(
+                conversation=conversation,
+                user_message=user_message,
+                answer_text=answer_text,
+                tool_context=tool_context,
+                on_status_change=on_status_change,
+            )
+        except PromptGenerationError:
+            planner_payload = None
+        assistant_message = {
+            "role": "assistant",
+            "content": answer_text,
+        }
+        merged_assistant = self._merge_planner_into_assistant(assistant_message, planner_payload)
+        return self._build_plan_from_assistant(
+            conversation=conversation,
+            assistant_message=merged_assistant,
+            tool_context=tool_context or ToolExecutionContext(),
+            sanitized_dropped=(),
+        )
 
     @staticmethod
     def _final_response_schema() -> Mapping[str, object]:

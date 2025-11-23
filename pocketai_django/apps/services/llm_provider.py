@@ -18,6 +18,9 @@ except Exception:  # pragma: no cover - optional
 
 from apps.services.ai_prompt_builder import PromptBundle
 
+# Optional flag to enable token estimation logs (guarded by DEBUG level as well).
+LOG_TOKEN_ESTIMATE = os.getenv("LLM_LOG_TOKEN_ESTIMATE", "").strip().lower() in {"1", "true", "yes"}
+
 
 logger = logging.getLogger(__name__)
 
@@ -210,10 +213,17 @@ class OpenAIChatProvider:
         }
         if streaming:
             payload["stream"] = True
-        try:
-            logger.info("LLM request payload: %s", json.dumps(payload, ensure_ascii=False))
-        except Exception:  # pragma: no cover - log best effort
-            logger.warning("Failed to serialize LLM payload for logging.")
+        if LOG_TOKEN_ESTIMATE and logger.isEnabledFor(logging.DEBUG):
+            try:
+                char_count, token_est = _message_char_stats(payload.get("messages") or [], self.model)
+                logger.debug("LLM request model=%s chars=%s tokens≈%s", self.model, char_count, token_est)
+            except Exception:  # pragma: no cover - best effort
+                logger.debug("Failed to estimate tokens for LLM request.")
+        if logger.isEnabledFor(logging.DEBUG):
+            try:
+                logger.debug("LLM request payload: %s", json.dumps(payload, ensure_ascii=False))
+            except Exception:  # pragma: no cover - log best effort
+                logger.debug("Failed to serialize LLM payload for logging.")
 
         body = json.dumps(payload).encode("utf-8")
         request = urllib_request.Request(
@@ -247,16 +257,18 @@ class OpenAIChatProvider:
                 content = self._extract_content(data)
             except Exception as exc:
                 raise PromptGenerationError("OpenAI streaming response missing content.") from exc
-            try:
-                logger.debug("OpenAI stream assembled payload: %s", json.dumps(data, ensure_ascii=False))
-            except Exception:  # pragma: no cover - log best effort
-                logger.debug("Failed to serialize OpenAI stream payload.")
-            try:
-                out_tokens = _estimate_text_tokens(content, self.model) if content else 0
-                if out_tokens:
-                    logger.info("OpenAI stream response model=%s tokens≈%s", self.model, out_tokens)
-            except Exception:
-                logger.debug("Failed to log streaming token estimate.")
+            if logger.isEnabledFor(logging.DEBUG):
+                try:
+                    logger.debug("OpenAI stream assembled payload: %s", json.dumps(data, ensure_ascii=False))
+                except Exception:  # pragma: no cover - log best effort
+                    logger.debug("Failed to serialize OpenAI stream payload.")
+            if LOG_TOKEN_ESTIMATE and logger.isEnabledFor(logging.DEBUG):
+                try:
+                    out_tokens = _estimate_text_tokens(content, self.model) if content else 0
+                    if out_tokens:
+                        logger.debug("OpenAI stream tokens≈%s model=%s", out_tokens, self.model)
+                except Exception:
+                    logger.debug("Failed to log streaming token estimate.")
         else:
             try:
                 data = json.loads(raw_body)
@@ -1169,22 +1181,24 @@ class DeepSeekToolsProvider(BaseMcpProvider):
         if streaming:
             # In streaming mode we return the assembled assistant message so the
             # orchestrator can inspect tool_calls or final content.
-            try:
-                logger.debug("DeepSeek MCP stream assembled payload: %s", json.dumps(data, ensure_ascii=False))
-            except Exception:  # pragma: no cover - log best effort
-                logger.debug("Failed to serialize streamed DeepSeek payload for logging.")
-            try:
-                message = (data.get("choices") or [{}])[0].get("message") if isinstance(data, Mapping) else {}
-                content = ""
-                if isinstance(message, Mapping):
-                    raw_content = message.get("content")
-                    if isinstance(raw_content, str):
-                        content = raw_content
-                out_tokens = _estimate_text_tokens(content, self.model) if content else 0
-                if out_tokens:
-                    logger.info("DeepSeek MCP stream response model=%s tokens≈%s", self.model, out_tokens)
-            except Exception:
-                logger.debug("Failed to log streaming token estimate.")
+            if logger.isEnabledFor(logging.DEBUG):
+                try:
+                    logger.debug("DeepSeek MCP stream assembled payload: %s", json.dumps(data, ensure_ascii=False))
+                except Exception:  # pragma: no cover - log best effort
+                    logger.debug("Failed to serialize streamed DeepSeek payload for logging.")
+            if LOG_TOKEN_ESTIMATE and logger.isEnabledFor(logging.DEBUG):
+                try:
+                    message = (data.get("choices") or [{}])[0].get("message") if isinstance(data, Mapping) else {}
+                    content = ""
+                    if isinstance(message, Mapping):
+                        raw_content = message.get("content")
+                        if isinstance(raw_content, str):
+                            content = raw_content
+                    out_tokens = _estimate_text_tokens(content, self.model) if content else 0
+                    if out_tokens:
+                        logger.debug("DeepSeek MCP stream tokens≈%s model=%s", out_tokens, self.model)
+                except Exception:
+                    logger.debug("Failed to log streaming token estimate.")
             return data
 
         try:

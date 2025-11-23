@@ -472,6 +472,7 @@ class StreamingTurnContext:
     llm_source: str
     streamed_chunks: Sequence[str]
     plan: AiOrchestratorPlan | None = None
+    tool_context: object | None = None
 
 
 @dataclasses.dataclass(frozen=True)

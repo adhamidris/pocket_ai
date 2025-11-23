@@ -481,7 +481,16 @@ def stream_send(request: HttpRequest) -> StreamingHttpResponse:
     def finalize_stream_context(stream_context: StreamingTurnContext) -> None:
         close_old_connections()
         try:
-            plan = orchestrator.finalize_turn(stream_context)
+            # Planner now runs asynchronously using the streamed answer/context.
+            plan = orchestrator.run_planner_only(
+                conversation=conversation,
+                user_message=body,
+                answer_text=stream_context.response_text,
+                tool_context=getattr(stream_context, "tool_context", None),
+            )
+            if plan is None:
+                # Fallback to the streamed response without actions/extractions.
+                plan = orchestrator.finalize_turn(stream_context)
             plan_holder["plan"] = plan
             response_text, dropped = sanitize_with_diagnostics(
                 plan.response_text or "",
@@ -618,6 +627,8 @@ def stream_send(request: HttpRequest) -> StreamingHttpResponse:
             )
             plan_holder["context"] = context
             threading.Thread(target=finalize_stream_context, args=(context,), daemon=True).start()
+            # Streaming is complete; signal immediately so SSE can finish without waiting for planner/actions.
+            signal_stream_complete()
         except Exception as exc:  # pragma: no cover - defensive
             logger.exception("Orchestrator turn failed: %s", exc)
             plan_holder["error"] = str(exc)
@@ -626,7 +637,6 @@ def stream_send(request: HttpRequest) -> StreamingHttpResponse:
             actions_queue.put(actions_sentinel)
         finally:
             close_old_connections()
-            signal_stream_complete()
 
     worker = threading.Thread(target=orchestrate, daemon=True)
     worker.start()
