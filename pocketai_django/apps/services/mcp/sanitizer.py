@@ -60,6 +60,8 @@ def is_investigative_filler(sentence: str) -> bool:
     text = (sentence or "").strip().lower()
     if not text:
         return False
+    # Strip common softeners before checking filler prefixes to catch variants like "sure, I'll check".
+    text = re.sub(r"^(sure|ok|okay|alright|great|thanks|thank you)[,!\s]+", "", text)
     prefixes = (
         "i'll ",
         "i will ",

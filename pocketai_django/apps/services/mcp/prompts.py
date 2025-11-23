@@ -39,20 +39,34 @@ def build_system_message(agent: AgentProfile) -> str:
             "do not narrate searching/checking in the assistant content."
         )
 
+    behavior_contract = textwrap.dedent(
+        """
+        ### Behavior Contract
+        - Human tone; default to 2–3 sentences unless the visitor asks for more.
+        - No tool narration or fillers (never start with “I’ll…/Let me…/Searching…/Reviewing…”); leave assistant content empty during tool calls.
+        - Use ONLY provided snippets/reads; no outside knowledge; no citations/attribution/file names.
+        - Safety: for sensitive domains (health/finance/legal), share policy/process only; no personal advice.
+        - If identifier guardrails show missing required identifiers, start by asking only for those keys in one short sentence (no extra identifiers); then proceed once provided.
+        - When an email or other required identifier is present and the visitor asks to check a ticket/case/order, call `search_knowledge` immediately using that identifier before asking for any other details. Ask for extra identifiers only if the search is empty or ambiguous.
+        """
+    ).strip()
+
     tool_section = textwrap.dedent(
         """
         ### Tool Usage Guidance
-        - `search_knowledge`: Run when you need fresh snippets tied to the visitor's request. It returns abstracts + chunk IDs; follow with `read_document` if you still need details.
-        - `read_document`: Prefer `mode=\"full_page\"` when you need exact numbers/tables; use `page` to stay focused. Use `mode=\"excerpt\"` only when the budget is low or you just need a quick skim. If a `throttle_notice` or `constraint_error` arrives, do not guess—continue with what you have or ask for a more precise identifier/page. When snippets are summary/preview or table-like, use the provided `read_hint` (doc_id + page + mode) to issue `read_document` once before answering. Do not answer from summaries alone.
-        - Case + lead tools: Mirror the Case Management Mandate. Only create/update cases when business context exists and keep payloads aligned with the contract.
-        - Customer tools: Whenever a visitor shares phone/email, capture it immediately via `create_customer`. Use `update_customer` only when the visitor explicitly confirms a profile change.
-        - Escalation: Call `flag_escalation` when policies prohibit action, a document is missing, or the visitor explicitly requests human follow-up.
+        - If snippets are summary/preview or table hints, call `read_document` once with the provided hint (doc_id + page + mode) before citing details.
+        - If snippets are ready/full, answer directly—do not reread unless the visitor asks for a different page/id.
+        - If you hit a throttle_notice or constraint_error, answer with the evidence you have and ask for the precise identifier/page you need; do not guess.
+        - Prefer the narrowest scope: page/chunk reads before whole-document reads.
+        - Case/lead/customer tools: follow the Case Management and Customer Identity rules; use `flag_escalation` when policy blocks action or a document is missing.
         """
     ).strip()
 
     return textwrap.dedent(
         f"""
         You are {agent.name}, the {agent.role or "AI Customer Specialist"} for {{business_name}}.
+
+        {behavior_contract}
 
         ### Output Guardrails (Mandatory)
         - Do not narrate internal steps like searching, checking, or reviewing. Never output placeholders such as “I’ll check”, “Let me search”, or “Reviewing…”.
@@ -61,7 +75,7 @@ def build_system_message(agent: AgentProfile) -> str:
 
         ### Internal Knowledge Only
         - Use only the provided knowledge snippets and reads. If the knowledge base does not contain the answer, say so and ask for a more specific identifier/page instead of using outside or world knowledge.
-        - Cite snippets when they inform your answer; do not invent facts beyond the snippets and reads available this turn.
+        - Ground answers in the provided snippets/reads without exposing source names or file details; do not invent facts beyond what is available this turn.
 
         ### Knowledge + Coverage Rules
         - Treat snippets with `read_state=summary/preview` as incomplete; call `read_document` to get the actual content before citing numbers/tables.
@@ -72,12 +86,6 @@ def build_system_message(agent: AgentProfile) -> str:
         - Avoid investigative fillers or meta-status lines about searching or checking. Respond directly with the clearest answer or limitation you can based on the current snippets and reads, without narrating that you are searching, checking, or reviewing.
 
         {builder.CHUNK_READ_NUDGE}
-
-        {builder.CUSTOMER_RULES}
-
-        {builder.CASE_MANDATE}
-
-        {builder.CONVERSATION_RULES}
 
         {tool_section}
         """
@@ -94,6 +102,9 @@ def build_messages(*, conversation: Conversation, user_message: str) -> list[Map
     - Final entry: the latest user message
     """
     messages: list[Mapping[str, object]] = []
+    guard_summary = _identifier_requirements_note(conversation)
+    if guard_summary:
+        messages.append({"role": "system", "content": guard_summary})
     agent = conversation.agent_profile
     if agent:
         messages.append(
@@ -106,7 +117,8 @@ def build_messages(*, conversation: Conversation, user_message: str) -> list[Map
             }
         )
 
-    transcript = conversation.messages.order_by("sent_at", "created_at")
+    transcript = conversation.messages.order_by("-sent_at", "-created_at")[:8]
+    transcript = reversed(transcript)
     for entry in transcript:
         role = "assistant" if entry.sender == ConversationSender.AI else "user"
         content = entry.body
@@ -120,13 +132,7 @@ def build_messages(*, conversation: Conversation, user_message: str) -> list[Map
             }
         )
 
-    guard_summary = _identifier_requirements_note(conversation)
-    if guard_summary:
-        user_payload = f"{user_message}\n\n{guard_summary}"
-    else:
-        user_payload = user_message
-
-    messages.append({"role": "user", "content": user_payload})
+    messages.append({"role": "user", "content": user_message})
     return messages
 
 
@@ -161,6 +167,10 @@ def build_planner_messages(
         system_sections.append(builder.CASE_MANDATE)
         system_sections.append(builder.CUSTOMER_RULES)
 
+    guard_summary = _identifier_requirements_note(conversation)
+    if guard_summary:
+        system_sections.append(guard_summary)
+
     system_sections.append(
         (
             "You must reply with JSON matching the schema provided via "
@@ -170,9 +180,15 @@ def build_planner_messages(
         )
     )
 
-    system_message = "\n\n".join(section for section in system_sections if section).strip()
+    system_sections.append(
+        (
+            "Planner guardrails: honor identifier gate status; do not request identifiers beyond the required set; "
+            "do not propose tools already executed this turn; respect coverage ledger readiness (no rereads for ready/full snippets). "
+            "Keep the reply strictly in JSON (response_text/actions/extractions) with no narration."
+        )
+    )
 
-    guard_summary = _identifier_requirements_note(conversation)
+    system_message = "\n\n".join(section for section in system_sections if section).strip()
 
     user_payload = (
         "Use the latest user message and assistant answer below to decide "
@@ -180,8 +196,6 @@ def build_planner_messages(
         f"Latest user message:\n{user_message.strip()}\n\n"
         f"Assistant final answer (already shown to the visitor):\n{answer_text.strip()}\n"
     )
-    if guard_summary:
-        user_payload = f"{user_payload}\n{guard_summary}\n"
     if tool_context_note:
         user_payload = f"{user_payload}\nTool diagnostics this turn:\n{tool_context_note.strip()}\n"
 
@@ -255,15 +269,14 @@ def build_final_answer_messages(
     business_name = conversation.business_profile.name
     system_lines = [
         f"You are now drafting the final customer-facing answer for {business_name}.",
-        "Tools have already been executed. Write the answer directly, grounded in the provided reads/snippets.",
-        "Do not narrate internal steps such as searching, checking, or reviewing. Never output placeholders like “I’ll check” or “Let me search”.",
-        "You may briefly attribute sources (e.g., “From the credit card fees guide…”), but do not mention that you searched or are checking.",
-        "Formatting: start with the direct answer in 1–2 sentences. If you have next steps or clarifying questions, put them on a new line as short bullets. Separate sections with a blank line so the reply is easy to scan. Keep the total reply concise (under ~6 sentences).",
-        "If information is missing, state that plainly first, then offer 1–2 specific follow-up questions.",
-        "Offer only follow-ups you can actually fulfill with the knowledge you have or a concrete tool call. If you’ve already surfaced the only details available from this turn’s snippets/reads, do not ask generic “any more details?”; instead, state this is the current status and optionally offer one actionable next step (e.g., “I can notify you when there’s an update”).",
+        "Tools have already been executed. Write the answer directly, grounded only in the provided reads/snippets—no outside knowledge and no citations/attribution.",
+        "Do not narrate internal steps such as searching, checking, or reviewing. Never output fillers like “I’ll check”, “Let me search”, or “Reviewing…”.",
+        "Use a human tone matching the agent profile; keep replies concise by default (2–3 sentences). If the visitor asks for more detail, expand briefly.",
+        "Formatting: start with the direct answer. If you have next steps or clarifying questions, put them on a new line as short bullets. Separate sections with a blank line.",
+        "If information is missing, state that plainly first, then ask for the specific identifier/page/detail needed. Offer only follow-ups you can fulfill with current snippets/reads.",
         "If filtered knowledge does not match the provided identifiers, say so plainly and ask for the exact identifier/page needed. Do not answer from unfiltered or unmatched data.",
-        "When identifier guardrails are present, collect only the listed required identifiers. Do NOT ask for extra identifiers (name/phone/id/ticket) beyond those required keys. If the required identifiers are already provided, proceed without re-asking.",
-        "If a different identifier is requested than the one locked for this session, politely refuse the switch and continue only with the locked identifier. Do NOT suggest starting a new session or any workaround.",
+        "When identifier guardrails are present, collect only the listed required identifiers. Do NOT ask for extra identifiers beyond those required. If the required identifiers are already provided, proceed without re-asking. If a different identifier is requested than the one locked for this session, politely refuse the switch and continue only with the locked identifier.",
+        "Safety: for sensitive domains (health/finance/legal), share policy/process info only; do not provide personal advice or diagnostics.",
     ]
     system_message = "\n".join(system_lines)
 
@@ -380,14 +393,18 @@ def _identifier_requirements_note(conversation: Conversation) -> str | None:
         action_note = "Session is locked to the first identifier. Decline switching identifiers and do not suggest starting a new session or any workaround."
     elif not missing:
         action_note = (
-            "All required identifiers are present. Session is locked to the first identifier; do not switch. Call `search_knowledge` now using this identifier and then `read_document` if needed."
+            "All required identifiers are present. Proceed without re-asking for identifiers. Session is locked to the first identifier; do not switch."
         )
     else:
-        action_note = "Ask ONLY for the missing required identifiers and then proceed to `search_knowledge`. Do not request extra identifiers beyond the required set."
+        keys_text = ", ".join(missing or required)
+        action_note = (
+            "Ask ONLY for the missing required identifiers (no extras). Your first reply this session should be one short sentence clearly asking for: "
+            f"{keys_text}. Once provided, proceed without re-asking."
+        )
     if locked.get("key") and locked.get("value"):
         action_note += f"\nLocked identifier: {locked.get('key')}={locked.get('value')}."
     return (
-        "Identifier guardrails:\n"
+        "Identifier guardrails (system-only):\n"
         f"Match policy: {policy.upper()}\n"
         f"Required identifiers: {', '.join(required)}\n"
         f"Provided identifiers: {', '.join(provided) or 'none'}\n"
