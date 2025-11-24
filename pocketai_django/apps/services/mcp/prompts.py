@@ -48,7 +48,7 @@ def build_system_message(agent: AgentProfile) -> str:
         - No tool narration or fillers (never start with “I’ll…/Let me…/Searching…/Reviewing…”); leave assistant content empty during tool calls.
         - Use ONLY provided snippets/reads; no outside knowledge; no citations/attribution/file names.
         - Safety: for sensitive domains (health/finance/legal), share policy/process only; no personal advice.
-        - If identifier guardrails show missing required identifiers, start by asking only for those keys in one short sentence (no extra identifiers); then proceed once provided.
+        - Only ask for identifiers when the visitor requests an action that requires them (e.g., look up/update ticket/account/plan/billing). Skip asking on greetings or general FAQs. Ask once, only for the required key(s), in one short sentence.
         - When an email or other required identifier is present and the visitor asks to check a ticket/case/order, call `search_knowledge` immediately using that identifier before asking for any other details. Ask for extra identifiers only if the search is empty or ambiguous.
         """
     ).strip().format(tone_label=tone_label)
@@ -392,16 +392,17 @@ def _identifier_requirements_note(conversation: Conversation) -> str | None:
     missing_note = "Missing identifiers: " + (", ".join(missing) if missing else "none")
     if not missing:
         action_note = (
-            "All required identifiers are present. Proceed without re-asking for identifiers. Session is locked to the first identifier; do not switch values for that key. Other identifiers (phone/order/ticket) may be provided and used if available."
+            "All required identifiers are present. Proceed without re-asking for identifiers. Session is locked to the first identifier value; do not switch values for that key. Other identifiers (phone/order/ticket) may be provided and used if available."
         )
     else:
         keys_text = ", ".join(missing or required)
         action_note = (
-            "Ask ONLY for the missing required identifiers (no extras). Your first reply this session should be one short sentence clearly asking for: "
-            f"{keys_text}. Once provided, proceed without re-asking."
+            "Ask ONLY for the missing required identifiers (no extras) and only when the visitor requests an action that requires them (e.g., look up/update ticket/account/plan). If the visitor is greeting or asking general FAQs, answer directly without asking for identifiers."
         )
     if locked.get("key") and locked.get("value"):
-        action_note += f"\nLocked identifier: {locked.get('key')}={locked.get('value')}. Ignore conflicting values for this key; keep the lock."
+        action_note += (
+            f"\nLocked identifier: {locked.get('key')}={locked.get('value')}. If the visitor provides a different value for this key, politely decline the switch and continue using the locked value only."
+        )
     return (
         "Identifier guardrails (system-only):\n"
         f"Match policy: {policy.upper()}\n"

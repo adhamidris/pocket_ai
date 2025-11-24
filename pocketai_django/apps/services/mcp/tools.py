@@ -667,6 +667,12 @@ def _search_knowledge_handler(
     identifier_filter: dict[str, object] | None = None
     allowed_uploads: set[str] | None = None
     guard = _identifier_guard(context, conversation)
+    locked = getattr(guard, "locked_identifier", None) if guard else None
+    locked_key = None
+    locked_value = None
+    if isinstance(locked, Mapping):
+        locked_key = locked.get("key")
+        locked_value = locked.get("value")
     if guard and guard.provided_identifiers:
         # Derive filter from active mappings for provided identifiers (dynamic, not email-only).
         from apps.accounts.models import IdentifierColumnMapping, IdentifierColumnStatus, IdentifierSchemaStatus
@@ -681,9 +687,13 @@ def _search_knowledge_handler(
             allowed_uploads = {str(m.upload_id) for m in mappings if m.upload_id}
             # Use first mapping for value filter hint.
             first = mappings[0]
+            value_for_filter = guard.provided_identifiers.get(first.identifier.key)
+            # If locked value exists for this key, force it.
+            if locked_key and first.identifier.key == locked_key and locked_value:
+                value_for_filter = locked_value
             identifier_filter = {
                 "column": first.column_normalized or first.column_name,
-                "value": guard.provided_identifiers.get(first.identifier.key),
+                "value": value_for_filter,
                 "upload_ids": list(allowed_uploads),
             }
 
@@ -694,6 +704,18 @@ def _search_knowledge_handler(
         identifier_filter=identifier_filter,
     )
     snippet_payloads = _serialize_snippets(result.snippets)
+    # If locked identifier exists, drop snippets whose identifier hash/value does not match locked value.
+    if locked_key and locked_value:
+        locked_val_norm = str(locked_value).strip()
+        filtered_snippets = []
+        for p in snippet_payloads:
+            identifiers = p.get("identifiers") if isinstance(p, Mapping) else None
+            if identifiers and isinstance(identifiers, Mapping):
+                candidate = identifiers.get(locked_key)
+                if candidate and str(candidate).strip().lower() != locked_val_norm.lower():
+                    continue
+            filtered_snippets.append(p)
+        snippet_payloads = filtered_snippets
     decision = None
     if guard:
         decision = guard.evaluate_snippets(snippet_payloads)
@@ -870,6 +892,12 @@ def _read_document_handler(
         gating_upload_id = upload_record.id
 
     guard = _identifier_guard(context, conversation)
+    locked = getattr(guard, "locked_identifier", None) if guard else None
+    locked_key = None
+    locked_value = None
+    if isinstance(locked, Mapping):
+        locked_key = locked.get("key")
+        locked_value = locked.get("value")
     decision = None
     if guard and gating_upload_id:
         decision = guard.require_for_upload(str(gating_upload_id))
