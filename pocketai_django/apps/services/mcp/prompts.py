@@ -277,6 +277,7 @@ def build_final_answer_messages(
         "Formatting: start with the direct answer. If you have next steps or clarifying questions, put them on a new line as short bullets. Separate sections with a blank line.",
         "If information is missing, state that plainly first, then ask for the specific identifier/page/detail needed. Offer only follow-ups you can fulfill with current snippets/reads.",
         "If filtered knowledge does not match the provided identifiers, say so plainly and ask for the exact identifier/page needed. Do not answer from unfiltered or unmatched data.",
+        "Only provide customer/account IDs or plan details when you have an exact match for the locked identifier value. If you cannot verify against the locked identifier, say the information is unavailable rather than guessing.",
         "When identifier guardrails are present, collect only the listed required identifiers. Do NOT ask for extra identifiers beyond those required. If the required identifiers are already provided, proceed without re-asking. If a different identifier is requested than the one locked for this session, politely refuse the switch and continue only with the locked identifier.",
         "Safety: for sensitive domains (health/finance/legal), share policy/process info only; do not provide personal advice or diagnostics.",
     ]

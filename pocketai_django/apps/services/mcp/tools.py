@@ -1014,6 +1014,18 @@ def _read_document_handler(
         )
 
     snippet_payloads = _serialize_snippets(snippets)
+    # Enforce locked identifier match for identity-bound fields; drop snippets that don't match.
+    if locked_key and locked_value:
+        locked_val_norm = str(locked_value).strip().lower()
+        filtered = []
+        for payload in snippet_payloads:
+            identifiers = payload.get("identifiers") if isinstance(payload, Mapping) else None
+            if identifiers and isinstance(identifiers, Mapping):
+                candidate = identifiers.get(locked_key)
+                if candidate and str(candidate).strip().lower() != locked_val_norm:
+                    continue
+            filtered.append(payload)
+        snippet_payloads = filtered
     knowledge_reads: list[dict[str, object]] = []
     for payload in snippet_payloads:
         context.add_knowledge_result(payload)
