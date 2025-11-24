@@ -119,122 +119,14 @@ class McpOrchestratorService:
         final_assistant_message: dict[str, object] | None = None
         placeholder_sent = False
         answer_streamed_chunks: list[str] = []
+        single_pass_candidate: str | None = None
+        first_stream_tool_calls: list[Mapping[str, object]] = []
+        first_stream_message: dict[str, object] | None = None
+        stream_buffer = ""
+        stream_dropped: list[str] = []
 
         if on_status_change:
             on_status_change({"code": "thinking", "label": "Thinking…"})
-
-        # Phase 1: internal tool loop without user-facing streaming.
-        for _ in range(self.max_tool_iterations):
-            payload = self.provider.chat(
-                transcript,
-                tools=self.tool_definitions,
-                on_stream_delta=None,
-            )
-            assistant_message = self._coerce_assistant_message(payload)
-            tool_calls = list(assistant_message.get("tool_calls") or [])
-
-            assistant_payload: dict[str, object] = {
-                "role": "assistant",
-                # Suppress interim content when tool calls are present; spinner/status handles UX.
-                "content": "" if tool_calls else assistant_message.get("content"),
-            }
-            if tool_calls:
-                assistant_payload["tool_calls"] = tool_calls
-            transcript.append(assistant_payload)
-
-            if not tool_calls:
-                tool_phase_assistant_message = assistant_message
-                break
-
-            for tool_call in tool_calls:
-                tool_name = self._tool_name(tool_call)
-                arguments = self._tool_arguments(tool_call)
-
-                # Surface placeholder + status when we transition into a knowledge read.
-                if self._is_knowledge_tool(tool_name):
-                    if on_status_change:
-                        if tool_name == "search_knowledge":
-                            raw_query = arguments.get("query")
-                            query = str(raw_query).strip() if raw_query is not None else ""
-                            label = f"Searching: {query[:80]}" if query else "Searching knowledge…"
-                            on_status_change({"code": "searching_knowledge", "label": label})
-                        elif tool_name == "read_document":
-                            raw_id = arguments.get("document_id")
-                            doc_id = str(raw_id).strip() if raw_id is not None else ""
-                            short_id = f"{doc_id[:8]}…" if doc_id else ""
-                            base_label = "Reading document"
-                            label = f"Reading: {short_id}" if short_id else base_label
-                            on_status_change({"code": "reading_document", "label": label})
-                    if on_placeholder_response and not placeholder_sent:
-                        placeholder_text = str(assistant_message.get("content") or "").strip()
-                        if placeholder_text:
-                            on_placeholder_response(placeholder_text)
-                            placeholder_sent = True
-
-                try:
-                    tool_result = tools.execute_tool(
-                        tool_name,
-                        arguments,
-                        conversation=conversation,
-                        context=tool_context,
-                    )
-                except ToolConstraintError as exc:
-                    logger.warning(
-                        "mcp.tool.constraint_violation tool=%s conversation=%s error=%s",
-                        tool_name,
-                        conversation.id,
-                        exc,
-                    )
-                    tool_result = self._constraint_error_payload(tool_name, exc)
-                tool_context.add_tool_trace(
-                    {
-                        "tool": tool_name,
-                        "arguments": arguments,
-                        "result_keys": sorted(tool_result.keys()),
-                        "status": tool_result.get("status"),
-                        "error_code": tool_result.get("error_code"),
-                        "hint": tool_result.get("hint"),
-                        "mode": tool_result.get("mode"),
-                        "page": tool_result.get("page"),
-                        "token_budget": tool_result.get("token_budget"),
-                        "throttle_notice": bool(tool_result.get("throttle_notice")),
-                    }
-                )
-                if self._is_knowledge_tool(tool_name):
-                    self._record_knowledge_outputs(tool_context, tool_result)
-                    if tool_name == "read_document" and on_status_change:
-                        snippets = tool_result.get("snippets") if isinstance(tool_result, Mapping) else None
-                        if isinstance(snippets, list) and snippets:
-                            first = snippets[0]
-                            if isinstance(first, Mapping):
-                                label_source = (
-                                    first.get("public_label")
-                                    or first.get("title")
-                                    or first.get("source")
-                                )
-                                if isinstance(label_source, str) and label_source.strip():
-                                    on_status_change(
-                                        {
-                                            "code": "reading_document",
-                                            "label": f"Reading: {label_source.strip()[:80]}",
-                                        }
-                                    )
-                transcript.append(
-                    {
-                        "role": "tool",
-                        "tool_call_id": tool_call.get("id"),
-                        "name": tool_name,
-                        "content": json.dumps(tool_result, ensure_ascii=False),
-                    }
-                )
-        else:
-            raise RuntimeError("MCP tool loop exceeded iteration limit.")
-
-        if on_status_change:
-            on_status_change("responding")
-
-        stream_buffer = ""
-        stream_dropped: list[str] = []
 
         def _emit_tokens(text: str) -> None:
             if not text:
@@ -253,6 +145,234 @@ class McpOrchestratorService:
             if not text:
                 return
             _emit_tokens(text)
+
+        # Phase 1: streaming tool-enabled call. If tool_calls appear, we will
+        # fall back to the full tool loop + final-answer path. If no tool_calls
+        # and we have content, we can keep this streamed text and skip the
+        # second content call.
+        def _first_stream_chunk(chunk: str) -> None:
+            nonlocal stream_buffer
+            if not chunk:
+                return
+            stream_buffer = f"{stream_buffer}{chunk}"
+            while True:
+                match = re.search(r"(.+?[.!?])([\\s]|$)", stream_buffer)
+                if match:
+                    sentence = match.group(1)
+                    remainder = stream_buffer[match.end(1):]
+                    stripped = sentence.strip()
+                    if is_investigative_filler(stripped):
+                        stream_dropped.append(stripped)
+                        logger.info(
+                            "mcp.sanitizer.dropped_sentence stage=%s conversation=%s business=%s text=%s",
+                            "streaming_tools",
+                            conversation.id,
+                            conversation.business_profile_id,
+                            stripped[:200],
+                        )
+                    else:
+                        _emit_sentence(sentence + (match.group(2) or ""))
+                    stream_buffer = remainder
+                    continue
+                if is_investigative_filler(stream_buffer.strip()):
+                    break
+                words = stream_buffer.split(" ")
+                if len(words) > 1:
+                    emit_part = " ".join(words[:-1]) + " "
+                    stream_buffer = words[-1]
+                    _emit_tokens(emit_part)
+                    continue
+                break
+
+        first_payload = self.provider.chat(
+            transcript,
+            tools=self.tool_definitions,
+            on_stream_delta=_first_stream_chunk,
+        )
+        first_message = self._coerce_assistant_message(first_payload)
+        first_stream_message = dict(first_message or {})
+        first_stream_tool_calls = list(first_stream_message.get("tool_calls") or [])
+        first_content_raw = ""
+        if first_stream_message:
+            first_content_raw = str(first_stream_message.get("content") or "").strip()
+        pending_assistant = None
+        if first_stream_tool_calls:
+            # Defer appending until we process the tool call in the loop.
+            pending_assistant = first_stream_message
+            # We don't want to surface the streamed text from the tool-call turn.
+            answer_streamed_chunks.clear()
+        else:
+            # No tools; keep streamed assistant content in transcript.
+            transcript.append(
+                {
+                    "role": "assistant",
+                    "content": first_content_raw,
+                }
+            )
+
+        # If we got tool calls, execute them and allow an iterative tool loop
+        # (including additional model turns with tools) before the final-answer pass.
+        if first_stream_tool_calls:
+            assistant_message = pending_assistant or {}
+            # Seed transcript with the assistant message containing tool_calls.
+            transcript.append(
+                {
+                    "role": "assistant",
+                    "content": "",
+                    "tool_calls": first_stream_tool_calls,
+                }
+            )
+            pending_assistant = None
+
+            for _ in range(self.max_tool_iterations):
+                # Execute each tool_call and append tool results.
+                current_tool_calls = list(assistant_message.get("tool_calls") or [])
+                if not current_tool_calls:
+                    break
+                for tool_call in current_tool_calls:
+                    tool_name = self._tool_name(tool_call)
+                    arguments = self._tool_arguments(tool_call)
+                    if self._is_knowledge_tool(tool_name):
+                        if on_status_change:
+                            if tool_name == "search_knowledge":
+                                raw_query = arguments.get("query")
+                                query = str(raw_query).strip() if raw_query is not None else ""
+                                label = f"Searching: {query[:80]}" if query else "Searching knowledge…"
+                                on_status_change({"code": "searching_knowledge", "label": label})
+                            elif tool_name == "read_document":
+                                raw_id = arguments.get("document_id")
+                                doc_id = str(raw_id).strip() if raw_id is not None else ""
+                                short_id = f"{doc_id[:8]}…" if doc_id else ""
+                                base_label = "Reading document"
+                                label = f"Reading: {short_id}" if short_id else base_label
+                                on_status_change({"code": "reading_document", "label": label})
+                    if on_placeholder_response and not placeholder_sent:
+                        placeholder_text = str(assistant_message.get("content") or "").strip()
+                        if placeholder_text:
+                            on_placeholder_response(placeholder_text)
+                            placeholder_sent = True
+
+                    try:
+                        tool_result = tools.execute_tool(
+                            tool_name,
+                            arguments,
+                            conversation=conversation,
+                            context=tool_context,
+                        )
+                    except ToolConstraintError as exc:
+                        logger.warning(
+                            "mcp.tool.constraint_violation tool=%s conversation=%s error=%s",
+                            tool_name,
+                            conversation.id,
+                            exc,
+                        )
+                        tool_result = self._constraint_error_payload(tool_name, exc)
+                    tool_context.add_tool_trace(
+                        {
+                            "tool": tool_name,
+                            "arguments": arguments,
+                            "result_keys": sorted(tool_result.keys()),
+                            "status": tool_result.get("status"),
+                            "error_code": tool_result.get("error_code"),
+                            "hint": tool_result.get("hint"),
+                            "mode": tool_result.get("mode"),
+                            "page": tool_result.get("page"),
+                            "token_budget": tool_result.get("token_budget"),
+                            "throttle_notice": bool(tool_result.get("throttle_notice")),
+                        }
+                    )
+                    if self._is_knowledge_tool(tool_name):
+                        self._record_knowledge_outputs(tool_context, tool_result)
+                        if tool_name == "read_document" and on_status_change:
+                            snippets = tool_result.get("snippets") if isinstance(tool_result, Mapping) else None
+                            if isinstance(snippets, list) and snippets:
+                                first = snippets[0]
+                                if isinstance(first, Mapping):
+                                    label_source = (
+                                        first.get("public_label")
+                                        or first.get("title")
+                                        or first.get("source")
+                                    )
+                                    if isinstance(label_source, str) and label_source.strip():
+                                        on_status_change(
+                                            {
+                                                "code": "reading_document",
+                                                "label": f"Reading: {label_source.strip()[:80]}",
+                                            }
+                                        )
+                    transcript.append(
+                        {
+                            "role": "tool",
+                            "tool_call_id": tool_call.get("id"),
+                            "name": tool_name,
+                            "content": json.dumps(tool_result, ensure_ascii=False),
+                        }
+                    )
+
+                # Ask the model again with tools enabled to see if more tool_calls are needed.
+                payload = self.provider.chat(
+                    transcript,
+                    tools=self.tool_definitions,
+                    on_stream_delta=None,
+                )
+                assistant_message = self._coerce_assistant_message(payload)
+                next_tool_calls = list(assistant_message.get("tool_calls") or [])
+                # Append the assistant turn (empty content if tools present).
+                transcript.append(
+                    {
+                        "role": "assistant",
+                        "content": "" if next_tool_calls else assistant_message.get("content"),
+                        **({"tool_calls": next_tool_calls} if next_tool_calls else {}),
+                    }
+                )
+                if not next_tool_calls:
+                    tool_phase_assistant_message = assistant_message
+                    raw_content = assistant_message.get("content")
+                    if isinstance(raw_content, str) and raw_content.strip():
+                        single_pass_candidate = raw_content.strip()
+                    break
+                first_stream_tool_calls = next_tool_calls
+            else:
+                raise RuntimeError("MCP tool loop exceeded iteration limit.")
+            # Reset streaming buffers for the final-answer pass.
+            answer_streamed_chunks.clear()
+            stream_buffer = ""
+            stream_dropped = []
+        # No tool calls from the first streaming pass: take single-pass fast path.
+        else:
+            tool_phase_assistant_message = first_stream_message
+            single_pass_text = "".join(answer_streamed_chunks).strip() or first_content_raw
+            if on_status_change:
+                on_status_change({"code": "responding", "label": "Responding…"})
+            clean_single, dropped_single = sanitize_with_diagnostics(
+                single_pass_text,
+                conversation=conversation,
+                stage="single_pass_stream",
+            )
+            if not clean_single:
+                clean_single = single_pass_text
+
+            logger.info(
+                "mcp.turn.single_pass conversation=%s business=%s strategy=%s content_chars=%s",
+                conversation.id,
+                conversation.business_profile_id,
+                "mcp_tools_stream_single_pass",
+                len(clean_single),
+            )
+            if on_status_change:
+                on_status_change({"code": "stream_complete", "label": ""})
+            self._log_turn_metrics(conversation, tool_context)
+            del on_status_change, on_placeholder_response
+            normalized_assistant = dict(tool_phase_assistant_message or {"role": "assistant"})
+            normalized_assistant["content"] = clean_single
+            return {
+                "assistant_message": normalized_assistant,
+                "tool_context": tool_context,
+                "streamed_chunks": tuple(answer_streamed_chunks),
+                "clean_answer_text": clean_single,
+                "dropped_sentences": tuple(dropped_single),
+                "llm_strategy": "mcp_tools_stream_single_pass",
+            }
 
         def _answer_stream_chunk(chunk: str) -> None:
             nonlocal stream_buffer
@@ -318,7 +438,17 @@ class McpOrchestratorService:
                 "streamed_chunks": tuple(answer_streamed_chunks),
                 "clean_answer_text": requirement_text,
                 "dropped_sentences": tuple(),
+                "llm_strategy": "mcp_tools_stream_only",
             }
+
+        single_pass_detected = bool(single_pass_candidate and (not tool_phase_assistant_message or not tool_phase_assistant_message.get("tool_calls")))
+        if single_pass_detected:
+            logger.info(
+                "mcp.turn.single_pass candidate conversation=%s business=%s content_chars=%s",
+                conversation.id,
+                conversation.business_profile_id,
+                len(single_pass_candidate),
+            )
 
         final_messages = prompts.build_final_answer_messages(
             conversation=conversation,
@@ -452,8 +582,9 @@ class McpOrchestratorService:
             reconstructed: list[str] = []
             _emit_stream_chunks(reconstructed.append, clean_answer_text)
             streamed_chunks = tuple(reconstructed)
+        strategy = str(result.get("llm_strategy") or "mcp_tools_stream_only")
         diagnostics: dict[str, object] = {
-            "llm_strategy": "mcp_tools_stream_only",
+            "llm_strategy": strategy,
             "sanitized_sentences": {
                 "count": len(result.get("dropped_sentences") or ()),
                 "examples": list(result.get("dropped_sentences") or ())[:3],
