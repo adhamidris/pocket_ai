@@ -398,6 +398,8 @@ class McpOrchestratorService:
             conversation=conversation,
             stage="final_answer",
         )
+        if not clean_answer_text and answer_text_raw:
+            clean_answer_text = answer_text_raw.strip()
         all_dropped = stream_dropped + dropped_sentences
         normalized_assistant_msg = dict(final_assistant_message or {})
         normalized_assistant_msg["content"] = clean_answer_text

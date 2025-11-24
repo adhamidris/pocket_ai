@@ -25,6 +25,9 @@ def sanitize_with_diagnostics(
     """
 
     cleaned, dropped = _sanitize(text)
+    # If everything was dropped as filler, fall back to the original text to avoid empty replies.
+    if not cleaned and text and text.strip():
+        cleaned = text.strip()
     if dropped:
         business_id = getattr(getattr(conversation, "business_profile", None), "id", None) if conversation else None
         conversation_id = getattr(conversation, "id", None) if conversation else None

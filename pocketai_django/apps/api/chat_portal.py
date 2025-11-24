@@ -492,8 +492,15 @@ def stream_send(request: HttpRequest) -> StreamingHttpResponse:
                 # Fallback to the streamed response without actions/extractions.
                 plan = orchestrator.finalize_turn(stream_context)
             plan_holder["plan"] = plan
+            persist_text = plan.response_text or ""
+            if not persist_text:
+                streamed_text = "".join(stream_context.streamed_chunks).strip() if stream_context.streamed_chunks else ""
+                if streamed_text:
+                    persist_text = streamed_text
+            if not persist_text:
+                persist_text = "(no content)"
             response_text, dropped = sanitize_with_diagnostics(
-                plan.response_text or "",
+                persist_text,
                 conversation=conversation,
                 stage="persisted_message",
             )
