@@ -19,6 +19,7 @@ from apps.conversations.models import Conversation, ConversationSender
 from apps.services.ai_prompt_builder import PromptBuilder
 from apps.services.mcp.identifier_registry import IdentifierGuardrail
 from apps.services.mcp.sanitizer import sanitize_text
+from apps.services import display_tone_label
 
 
 def build_system_message(agent: AgentProfile) -> str:
@@ -39,17 +40,18 @@ def build_system_message(agent: AgentProfile) -> str:
             "do not narrate searching/checking in the assistant content."
         )
 
+    tone_label = display_tone_label(agent.tone) or "friendly"
     behavior_contract = textwrap.dedent(
         """
         ### Behavior Contract
-        - Human tone; default to 2–3 sentences unless the visitor asks for more.
+        - Maintain a {tone_label} tone; default to 2–3 sentences unless the visitor asks for more.
         - No tool narration or fillers (never start with “I’ll…/Let me…/Searching…/Reviewing…”); leave assistant content empty during tool calls.
         - Use ONLY provided snippets/reads; no outside knowledge; no citations/attribution/file names.
         - Safety: for sensitive domains (health/finance/legal), share policy/process only; no personal advice.
         - If identifier guardrails show missing required identifiers, start by asking only for those keys in one short sentence (no extra identifiers); then proceed once provided.
         - When an email or other required identifier is present and the visitor asks to check a ticket/case/order, call `search_knowledge` immediately using that identifier before asking for any other details. Ask for extra identifiers only if the search is empty or ambiguous.
         """
-    ).strip()
+    ).strip().format(tone_label=tone_label)
 
     tool_section = textwrap.dedent(
         """
@@ -64,7 +66,7 @@ def build_system_message(agent: AgentProfile) -> str:
 
     return textwrap.dedent(
         f"""
-        You are {agent.name}, the {agent.role or "AI Customer Specialist"} for {{business_name}}.
+        You are {agent.name}, the {agent.role or "AI Customer Specialist"} for {{business_name}}. Maintain a {tone_label} tone aligned to the agent profile.
 
         {behavior_contract}
 

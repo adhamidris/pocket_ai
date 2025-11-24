@@ -19,12 +19,13 @@ def sanitize_with_diagnostics(
     *,
     conversation=None,
     stage: str = "final",
+    filter_level: str = "friendly",
 ) -> tuple[str, list[str]]:
     """
     Sanitize text and log any dropped investigative filler sentences.
     """
 
-    cleaned, dropped = _sanitize(text)
+    cleaned, dropped = _sanitize(text, filter_level=filter_level)
     # If everything was dropped as filler, fall back to the original text to avoid empty replies.
     if not cleaned and text and text.strip():
         cleaned = text.strip()
@@ -60,10 +61,36 @@ def extract_sentences(buffer: str) -> Tuple[list[Tuple[str, str]], str]:
 
 
 def is_investigative_filler(sentence: str) -> bool:
+    # Maintains compatibility for existing callers expecting the default filter level.
+    return is_investigative_filler_with_level(sentence, filter_level="friendly")
+
+
+def is_investigative_filler_with_level(sentence: str, *, filter_level: str = "friendly") -> bool:
     text = (sentence or "").strip().lower()
     if not text:
         return False
-    # Strip common softeners before checking filler prefixes to catch variants like "sure, I'll check".
+    # Only treat phrases that risk leaking internal mechanics as filler; allow human-style chatter.
+    hard_patterns = (
+        r"\bsearch_knowledge\b",
+        r"\bread_document\b",
+        r"\bupdate_case\b",
+        r"\bcreate_case\b",
+        r"\btool[_\s-]?call\b",
+        r"\bfunction call\b",
+        r"\bexecuting\b.*\btool\b",
+        r"\binvoking\b.*\btool\b",
+        r"\bcalling\b.*\btool\b",
+        r"\bchain[-\s]?of[-\s]?thought\b",
+        r"\bstep[-\s]?by[-\s]?step\b",
+        r"\breasoning\b[:\-]",
+        r"\banalysis\b[:\-]",
+    )
+    for pattern in hard_patterns:
+        if re.search(pattern, text):
+            return True
+    if filter_level not in {"professional"}:
+        return False
+    # Professional tone: also treat investigative narration as filler.
     text = re.sub(r"^(sure|ok|okay|alright|great|thanks|thank you)[,!\s]+", "", text)
     prefixes = (
         "i'll ",
@@ -98,10 +125,10 @@ def is_investigative_filler(sentence: str) -> bool:
 
 
 def sanitize_text(text: str) -> str:
-    return _sanitize(text)[0]
+    return _sanitize(text, filter_level="friendly")[0]
 
 
-def _sanitize(text: str) -> tuple[str, list[str]]:
+def _sanitize(text: str, filter_level: str = "friendly") -> tuple[str, list[str]]:
     sentences, remainder = extract_sentences(text)
     keep_parts: list[str] = []
     dropped: list[str] = []
@@ -110,7 +137,7 @@ def _sanitize(text: str) -> tuple[str, list[str]]:
         if not stripped:
             keep_parts.append(sep)
             continue
-        if is_investigative_filler(stripped):
+        if is_investigative_filler_with_level(stripped, filter_level=filter_level):
             dropped.append(stripped)
             # Preserve line breaks in the separator to avoid run-ons
             if "\n" in sep:
@@ -121,7 +148,7 @@ def _sanitize(text: str) -> tuple[str, list[str]]:
     rem = remainder
     rem_stripped = rem.strip()
     if rem_stripped:
-        if is_investigative_filler(rem_stripped):
+        if is_investigative_filler_with_level(rem_stripped, filter_level=filter_level):
             dropped.append(rem_stripped)
             if "\n" in rem:
                 keep_parts.append("\n")

@@ -30,7 +30,7 @@ from apps.services.ai_orchestrator import (
 )
 
 from . import prompts, tools
-from .sanitizer import extract_sentences, is_investigative_filler, sanitize_with_diagnostics
+from .sanitizer import extract_sentences, is_investigative_filler_with_level, sanitize_with_diagnostics
 from django.core.cache import cache
 
 from .types import (
@@ -99,6 +99,7 @@ class McpOrchestratorService:
         """
 
         messages = prompts.build_messages(conversation=conversation, user_message=user_message)
+        filter_level = self._filter_level_for_conversation(conversation)
         char_turn_limit = self._char_budget_per_turn(conversation.business_profile)
         char_minute_limit = self._char_budget_per_minute(conversation.business_profile)
         minute_reserver = self._build_minute_budget_reserver(conversation.business_profile, char_minute_limit)
@@ -146,6 +147,25 @@ class McpOrchestratorService:
                 return
             _emit_tokens(text)
 
+        def _flush_stream_buffer(stage: str) -> None:
+            nonlocal stream_buffer
+            trailing = stream_buffer
+            if not trailing:
+                return
+            trailing_stripped = trailing.strip()
+            if trailing_stripped and is_investigative_filler_with_level(trailing_stripped, filter_level=filter_level):
+                stream_dropped.append(trailing_stripped)
+                logger.info(
+                    "mcp.sanitizer.dropped_sentence stage=%s conversation=%s business=%s text=%s",
+                    stage,
+                    conversation.id,
+                    conversation.business_profile_id,
+                    trailing_stripped[:200],
+                )
+            else:
+                _emit_tokens(trailing)
+            stream_buffer = ""
+
         # Phase 1: streaming tool-enabled call. If tool_calls appear, we will
         # fall back to the full tool loop + final-answer path. If no tool_calls
         # and we have content, we can keep this streamed text and skip the
@@ -161,7 +181,7 @@ class McpOrchestratorService:
                     sentence = match.group(1)
                     remainder = stream_buffer[match.end(1):]
                     stripped = sentence.strip()
-                    if is_investigative_filler(stripped):
+                    if is_investigative_filler_with_level(stripped, filter_level=filter_level):
                         stream_dropped.append(stripped)
                         logger.info(
                             "mcp.sanitizer.dropped_sentence stage=%s conversation=%s business=%s text=%s",
@@ -174,7 +194,7 @@ class McpOrchestratorService:
                         _emit_sentence(sentence + (match.group(2) or ""))
                     stream_buffer = remainder
                     continue
-                if is_investigative_filler(stream_buffer.strip()):
+                if is_investigative_filler_with_level(stream_buffer.strip(), filter_level=filter_level):
                     break
                 words = stream_buffer.split(" ")
                 if len(words) > 1:
@@ -341,6 +361,7 @@ class McpOrchestratorService:
         # No tool calls from the first streaming pass: take single-pass fast path.
         else:
             tool_phase_assistant_message = first_stream_message
+            _flush_stream_buffer("streaming_tools")
             single_pass_text = "".join(answer_streamed_chunks).strip() or first_content_raw
             if on_status_change:
                 on_status_change({"code": "responding", "label": "Responding…"})
@@ -348,6 +369,7 @@ class McpOrchestratorService:
                 single_pass_text,
                 conversation=conversation,
                 stage="single_pass_stream",
+                filter_level=filter_level,
             )
             if not clean_single:
                 clean_single = single_pass_text
@@ -386,7 +408,7 @@ class McpOrchestratorService:
                     sentence = match.group(1)
                     remainder = stream_buffer[match.end(1):]
                     stripped = sentence.strip()
-                    if is_investigative_filler(stripped):
+                    if is_investigative_filler_with_level(stripped, filter_level=filter_level):
                         stream_dropped.append(stripped)
                         logger.info(
                             "mcp.sanitizer.dropped_sentence stage=%s conversation=%s business=%s text=%s",
@@ -401,7 +423,7 @@ class McpOrchestratorService:
                     continue
 
                 # No full sentence yet; stream word-by-word if it's not a filler prefix.
-                if is_investigative_filler(stream_buffer.strip()):
+                if is_investigative_filler_with_level(stream_buffer.strip(), filter_level=filter_level):
                     break
                 words = stream_buffer.split(" ")
                 if len(words) > 1:
@@ -527,6 +549,7 @@ class McpOrchestratorService:
             answer_text_raw,
             conversation=conversation,
             stage="final_answer",
+            filter_level=filter_level,
         )
         if not clean_answer_text and answer_text_raw:
             clean_answer_text = answer_text_raw.strip()
@@ -556,6 +579,25 @@ class McpOrchestratorService:
             "clean_answer_text": clean_answer_text,
             "dropped_sentences": tuple(all_dropped),
         }
+
+    @staticmethod
+    def _filter_level_for_conversation(conversation) -> str:
+        """
+        Map agent tone to a filter level for filler suppression.
+
+        - professional/formal: stricter (drops investigative narration)
+        - friendly (default): light (drops only hard guardrails)
+        - free/casual: same as friendly for now; still enforces hard guardrails
+        """
+        tone = getattr(getattr(conversation, "agent_profile", None), "tone", None)
+        if not tone:
+            return "friendly"
+        tone_norm = str(tone).strip().lower()
+        if tone_norm in {"professional", "formal"}:
+            return "professional"
+        if tone_norm in {"free", "freeflow", "freeflowing", "free-flowing", "casual"}:
+            return "friendly"
+        return "friendly"
 
     def stream_turn(
         self,
