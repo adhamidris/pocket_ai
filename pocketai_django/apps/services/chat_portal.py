@@ -402,12 +402,10 @@ class ChatPortalService:
             existing_identifiers = {}
         identifiers = dict(existing_identifiers)
         locked_identifier = convo_meta.get("locked_identifier") if isinstance(convo_meta, dict) else None
-        conflict = None
         captured_new: list[tuple[str, str]] = []
 
         def _set_identifier(key: str, value: str) -> None:
             nonlocal identifiers
-            nonlocal conflict
             normalized_key = _normalize_identifier_token(key) or key
             clean_value = (value or "").strip()
             if not normalized_key or not clean_value:
@@ -416,12 +414,7 @@ class ChatPortalService:
                 locked_key = locked_identifier.get("key")
                 locked_value = locked_identifier.get("value")
                 if locked_key == normalized_key and locked_value and locked_value != clean_value:
-                    conflict = {
-                        "key": normalized_key,
-                        "value": clean_value,
-                        "locked_value": locked_value,
-                        "seen_at": timezone.now().isoformat(),
-                    }
+                    # Ignore conflicting values for the locked key; keep the original lock.
                     return
             if normalized_key not in identifiers:
                 identifiers[normalized_key] = clean_value
@@ -457,13 +450,11 @@ class ChatPortalService:
             elif label in {"customer", "account", "user"}:
                 _set_identifier("customer_id", value)
 
-        if identifiers == existing_identifiers and not conflict:
+        if identifiers == existing_identifiers:
             return False
 
         updated_meta = dict(convo_meta)
         updated_meta["customer_identifiers"] = identifiers
-        if conflict:
-            updated_meta["identifier_conflict"] = conflict
         if not locked_identifier and captured_new:
             lock_key, lock_value = captured_new[0]
             updated_meta["locked_identifier"] = {

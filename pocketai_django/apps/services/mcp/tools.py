@@ -699,14 +699,16 @@ def _search_knowledge_handler(
         decision = guard.evaluate_snippets(snippet_payloads)
         _record_identifier_check(context, decision)
         if decision.status == "identifier_conflict":
+            # Treat conflicts as missing/required identifiers; do not poison the session.
             return {
                 "tool": "search_knowledge",
                 "query": query,
                 "limit": limit,
                 "intent": intent,
-                "status": decision.status,
-                "error": "identifier_conflict",
-                "error_code": "identifier_conflict",
+                "status": "identifier_required",
+                "error": "identifier_required",
+                "error_code": "identifier_required",
+                "diagnostics": dict(result.diagnostics or {}),
                 "snippets": [],
                 "identifier_gate": decision.as_dict(),
                 "required_identifiers": list(decision.required_keys),
@@ -887,7 +889,7 @@ def _read_document_handler(
                 conversation=conversation,
                 upload_ids=[str(gating_upload_id)],
             )
-            error_code = "identifier_conflict" if decision.status == "identifier_conflict" else "identifier_required"
+            error_code = "identifier_required"
             return {
                 "tool": "read_document",
                 "document_id": document_id,

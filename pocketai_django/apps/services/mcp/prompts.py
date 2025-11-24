@@ -387,13 +387,10 @@ def _identifier_requirements_note(conversation: Conversation) -> str | None:
     missing = snapshot.get("missing") or ()
     policy = snapshot.get("match_policy") or "or"
     locked = snapshot.get("locked_identifier") or {}
-    conflict = snapshot.get("identifier_conflict") or {}
     missing_note = "Missing identifiers: " + (", ".join(missing) if missing else "none")
-    if conflict:
-        action_note = "Session is locked to the first identifier. Decline switching identifiers and do not suggest starting a new session or any workaround."
-    elif not missing:
+    if not missing:
         action_note = (
-            "All required identifiers are present. Proceed without re-asking for identifiers. Session is locked to the first identifier; do not switch."
+            "All required identifiers are present. Proceed without re-asking for identifiers. Session is locked to the first identifier; do not switch values for that key. Other identifiers (phone/order/ticket) may be provided and used if available."
         )
     else:
         keys_text = ", ".join(missing or required)
@@ -402,7 +399,7 @@ def _identifier_requirements_note(conversation: Conversation) -> str | None:
             f"{keys_text}. Once provided, proceed without re-asking."
         )
     if locked.get("key") and locked.get("value"):
-        action_note += f"\nLocked identifier: {locked.get('key')}={locked.get('value')}."
+        action_note += f"\nLocked identifier: {locked.get('key')}={locked.get('value')}. Ignore conflicting values for this key; keep the lock."
     return (
         "Identifier guardrails (system-only):\n"
         f"Match policy: {policy.upper()}\n"

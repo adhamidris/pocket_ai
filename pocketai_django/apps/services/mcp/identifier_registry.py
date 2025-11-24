@@ -174,6 +174,11 @@ class IdentifierGuardrail:
             lock = provided_identifiers.get("locked_identifier") if isinstance(provided_identifiers.get("locked_identifier"), dict) else None
         if isinstance(provided_identifiers, Mapping):
             conflict = provided_identifiers.get("identifier_conflict") if isinstance(provided_identifiers.get("identifier_conflict"), dict) else None
+        locked_key = None
+        locked_value = None
+        if lock and isinstance(lock, Mapping):
+            locked_key = _normalize_identifier_token(lock.get("key") or lock.get("name") or "") or None
+            locked_value = str(lock.get("value") or "").strip() or None
         for key, value in (provided_identifiers or {}).items():
             if key in {"locked_identifier", "identifier_conflict"}:
                 continue
@@ -181,20 +186,15 @@ class IdentifierGuardrail:
             if not text:
                 continue
             normalized = _normalize_identifier_token(key) or key
-            if lock and isinstance(lock, Mapping):
-                locked_key = _normalize_identifier_token(lock.get("key") or lock.get("name") or "")
-                locked_value = str(lock.get("value") or "").strip()
-                if locked_key and normalized == locked_key:
-                    values[locked_key] = locked_value
-                    continue
+            if locked_key and normalized == locked_key and locked_value:
+                # Keep the locked value; ignore conflicting inputs for the locked key.
+                values[locked_key] = locked_value
+                continue
             if normalized not in values:
                 values[normalized] = text
-        if lock and isinstance(lock, Mapping):
-            locked_key = _normalize_identifier_token(lock.get("key") or lock.get("name") or "")
-            locked_value = str(lock.get("value") or "").strip()
-            if locked_key and locked_value:
-                # Enforce lock: override provided set to locked only.
-                values = {locked_key: locked_value}
+        if locked_key and locked_value:
+            # Enforce lock value but allow other non-conflicting identifiers to remain.
+            values[locked_key] = locked_value
         return values, lock, conflict
 
     @property
@@ -283,22 +283,6 @@ class IdentifierGuardrail:
         return self.require_for_uploads(upload_ids)
 
     def require_for_uploads(self, upload_ids: Iterable[str]) -> IdentifierGateDecision:
-        if self.identifier_conflict and self.locked_identifier:
-            locked_key = _normalize_identifier_token(self.locked_identifier.get("key") or "") or "identifier"
-            hint = (
-                f"Session is locked to the first {locked_key}. This session cannot switch identifiers."
-            )
-            upload_list = list(upload_ids)
-            return IdentifierGateDecision(
-                status="identifier_conflict",
-                required_keys=tuple(sorted(self._all_required_keys())),
-                provided_keys=tuple(sorted(self.provided_identifiers.keys())),
-                provided_hashes=self.provided_hashes,
-                blocked_uploads=tuple(sorted(upload_list)),
-                missing_by_upload={uid: tuple(sorted(self._required_keys_for_upload(uid))) for uid in upload_list},
-                hint=hint,
-                match_policy=self.match_policy,
-            )
         blocked: set[str] = set()
         missing_by_upload: dict[str, tuple[str, ...]] = {}
         required: set[str] = set()
