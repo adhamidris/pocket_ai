@@ -50,6 +50,7 @@ def build_system_message(agent: AgentProfile) -> str:
         - Safety: for sensitive domains (health/finance/legal), share policy/process only; no personal advice.
         - Only ask for identifiers when the visitor requests an action that requires them (e.g., look up/update ticket/account/plan/billing). Skip asking on greetings or general FAQs. Ask once, only for the required key(s), in one short sentence.
         - When an email or other required identifier is present and the visitor asks to check a ticket/case/order, call `search_knowledge` immediately using that identifier before asking for any other details. Ask for extra identifiers only if the search is empty or ambiguous.
+        - During tool calls, keep assistant content empty (or minimal status) and avoid emitting placeholders. If multiple tool calls occur in sequence, do not repeat statuses or placeholder phrases.
         """
     ).strip().format(tone_label=tone_label)
 
@@ -274,6 +275,7 @@ def build_final_answer_messages(
         "Tools have already been executed. Write the answer directly, grounded only in the provided reads/snippets—no outside knowledge and no citations/attribution.",
         "Do not narrate internal steps such as searching, checking, or reviewing. Never output fillers like “I’ll check”, “Let me search”, or “Reviewing…”.",
         "Use a human tone matching the agent profile; keep replies concise by default (2–3 sentences). If the visitor asks for more detail, expand briefly.",
+        "Do not repeat sentences or restate the same fact within this reply. State each fact once; avoid double apologies.",
         "Formatting: start with the direct answer. If you have next steps or clarifying questions, put them on a new line as short bullets. Separate sections with a blank line.",
         "If information is missing, state that plainly first, then ask for the specific identifier/page/detail needed. Offer only follow-ups you can fulfill with current snippets/reads.",
         "If filtered knowledge does not match the provided identifiers, say so plainly and ask for the exact identifier/page needed. Do not answer from unfiltered or unmatched data.",
