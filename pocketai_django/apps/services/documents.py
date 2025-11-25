@@ -2,15 +2,19 @@ from __future__ import annotations
 
 import csv
 import io
+import logging
 import re
 import time
 import uuid
 from dataclasses import dataclass
 from datetime import datetime
+from pathlib import Path
 from typing import Any, BinaryIO, Iterable, Sequence
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlparse
 from urllib.request import Request, urlopen
+
+from django.conf import settings
 from django.db.models import Prefetch, Q
 
 from apps.accounts.models import (
@@ -29,6 +33,8 @@ from apps.accounts.models import (
     KnowledgeUploadText,
     KnowledgeUploadUrl,
 )
+
+logger = logging.getLogger(__name__)
 
 
 class DocumentListValidationError(ValueError):
@@ -575,6 +581,59 @@ def get_document_detail(*, business_profile: BusinessProfile, document_id: uuid.
         issues=tuple(issue_details),
         chunks=tuple(chunk_details),
     )
+
+
+def delete_document(*, business_profile: BusinessProfile, document_id: uuid.UUID) -> None:
+    """
+    Delete a knowledge upload and any stored artifacts on disk.
+    """
+
+    upload = (
+        KnowledgeUpload.objects.filter(business_profile=business_profile, id=document_id)
+        .select_related("file_detail")
+        .first()
+    )
+    if upload is None:
+        raise KnowledgeUpload.DoesNotExist
+
+    storage_path = ""
+    file_detail = getattr(upload, "file_detail", None)
+    if file_detail and file_detail.storage_path:
+        storage_path = file_detail.storage_path
+
+    upload.delete()
+    logger.info("knowledge_document_delete business=%s document=%s", business_profile.id, document_id)
+
+    if not storage_path:
+        return
+
+    media_root = getattr(settings, "MEDIA_ROOT", "")
+    if not media_root:
+        return
+
+    try:
+        root = Path(media_root).resolve()
+        candidate = (root / Path(storage_path)).resolve()
+        candidate.relative_to(root)
+    except (OSError, ValueError):
+        logger.warning(
+            "knowledge_document_delete_invalid_path business=%s document=%s storage_path=%s",
+            business_profile.id,
+            document_id,
+            storage_path,
+        )
+        return
+
+    try:
+        if candidate.exists():
+            candidate.unlink()
+    except OSError as exc:
+        logger.warning(
+            "knowledge_document_file_delete_failed business=%s document=%s error=%s",
+            business_profile.id,
+            document_id,
+            exc,
+        )
 
 
 def scrape_document_source(

@@ -45,8 +45,36 @@ from apps.services.documents import DocumentScrapeError, scrape_document_source
 from apps.services.embeddings import LocalEmbeddingService, build_embedding_service, EmbeddingProviderError
 from apps.services.feature_flags import FeatureFlagService
 from apps.services.quality_monitor import QualityMonitor
+from apps.services.table_normalization import (
+    NormalizedSheet,
+    SheetNormalizationDiagnostics,
+    normalize_sheet_rows,
+    resolve_normalization_policy,
+    sheet_is_allowed,
+    summarize_normalization,
+)
 
 logger = logging.getLogger(__name__)
+
+
+def _log_normalization_summary(upload: KnowledgeUpload | None, source: str, summary: Mapping[str, Any] | None) -> None:
+    if not summary or not summary.get("enabled"):
+        return
+    rows = int((summary.get("rows_dropped") or {}).get("total", 0))
+    columns = int((summary.get("columns_trimmed") or {}).get("total", 0))
+    tokens = int(summary.get("tokens_replaced") or 0)
+    skipped = len(summary.get("empty_sheets_skipped") or []) + len(summary.get("policy_skipped") or [])
+    if not any([rows, columns, tokens, skipped]):
+        return
+    logger.info(
+        "ingest.normalization upload=%s source=%s rows_dropped=%s columns_trimmed=%s tokens_replaced=%s sheets_skipped=%s",
+        getattr(upload, "id", None),
+        source,
+        rows,
+        columns,
+        tokens,
+        skipped,
+    )
 
 try:  # pragma: no cover - dependency failure should be surfaced at runtime
     import fitz  # type: ignore[attr-defined]  # PyMuPDF
@@ -67,6 +95,11 @@ try:  # pragma: no cover - dependency failure should be surfaced at runtime
     from openpyxl import load_workbook
 except ImportError:  # pragma: no cover - fallback handled via runtime check
     load_workbook = None  # type: ignore
+
+try:  # pragma: no cover - dependency failure should be surfaced at runtime
+    import xlrd
+except ImportError:  # pragma: no cover - fallback handled via runtime check
+    xlrd = None  # type: ignore
 
 
 # THESE ARE STANDALONE FUNCTIONS - NOT INSIDE ANY CLASS
@@ -398,7 +431,7 @@ class PageRenderer:
             return self._render_pdf(path, ocr=ocr)
         if format_hint == "docx":
             return self._render_docx(path)
-        text = path.read_text(encoding="utf-8", errors="ignore")
+        text = path.read_text(encoding="utf-8", errors="ignore").replace("\x00", " ")
         page = PageLayout(
             page_number=1,
             width=612,
@@ -1594,7 +1627,7 @@ class KnowledgeIngestionService:
         )
         self.max_json_entity_candidates = max(self.default_json_entity_limit, candidate_cap)
         self.default_table_max_rows = max(1, int(getattr(settings, "TABLE_MAX_ROWS_DEFAULT", 5000)))
-        self.default_table_max_columns = max(1, int(getattr(settings, "TABLE_MAX_COLUMNS_DEFAULT", 80)))
+        self.default_table_max_columns = max(0, int(getattr(settings, "TABLE_MAX_COLUMNS_DEFAULT", 0) or 0))
         self.alias_warning_threshold = int(getattr(settings, "INGEST_ALIAS_WARNING_THRESHOLD", 2000))
 
     # ------------------------------------------------------------------
@@ -1949,6 +1982,12 @@ class KnowledgeIngestionService:
             )
         if format_hint == "xlsx":
             return self._extract_xlsx(
+                absolute,
+                file_detail=file_detail,
+                upload=upload,
+            )
+        if format_hint == "xls":
+            return self._extract_xls(
                 absolute,
                 file_detail=file_detail,
                 upload=upload,
@@ -2820,12 +2859,14 @@ class KnowledgeIngestionService:
                 metadata=page_payload.metadata,
             )
             page_lookup[page_payload.page_number] = page_obj
-            synopsis = self._page_synopsis_from_blocks(page_payload.blocks)
-            headings = [
-                block.section_heading.strip()
-                for block in page_payload.blocks
-                if isinstance(block.section_heading, str) and block.section_heading.strip()
-            ]
+            synopsis = self._sanitize_text(self._page_synopsis_from_blocks(page_payload.blocks))
+            headings: list[str] = []
+            for block in page_payload.blocks:
+                if not isinstance(block.section_heading, str):
+                    continue
+                normalized_heading = self._sanitize_text(block.section_heading).strip()
+                if normalized_heading:
+                    headings.append(normalized_heading)
             page_summaries.append(
                 {
                     "page_number": page_payload.page_number,
@@ -2844,10 +2885,13 @@ class KnowledgeIngestionService:
                         page=page_obj,
                         block_type=block_payload.block_type,
                         order_index=block_payload.order_index,
-                        text=block_payload.text,
+                        text=self._sanitize_text(block_payload.text),
                         bbox=block_payload.bbox,
-                        section_heading=block_payload.section_heading,
-                        heading_path=block_payload.heading_path,
+                        section_heading=self._sanitize_text(block_payload.section_heading),
+                        heading_path=[
+                            self._sanitize_text(item)
+                            for item in (block_payload.heading_path or [])
+                        ],
                         detected_language=block_payload.detected_language,
                         confidence=block_payload.confidence,
                         metadata=block_payload.metadata,
@@ -3138,6 +3182,12 @@ class KnowledgeIngestionService:
             or "vnd.google-apps.spreadsheet" in content_type
         ):
             return "xlsx"
+        if (
+            suffix == ".xls"
+            or "ms-excel" in content_type
+            or "vnd.ms-excel" in (guessed or "")
+        ):
+            return "xls"
         if suffix in {".txt", ".md", ".rtf"} or "text" in content_type:
             return "txt"
         return suffix.strip(".") if suffix else None
@@ -3205,32 +3255,30 @@ class KnowledgeIngestionService:
             # Keep default delimiter
             pass
         reader = csv.reader(io.StringIO(normalized), delimiter=delimiter)
-        parsed_rows = [
-            [cell.strip() for cell in row]
-            for row in reader
-            if any((cell or "").strip() for cell in row)
-        ]
+        parsed_rows = [list(row) for row in reader]
         if not parsed_rows:
             raise KnowledgeIngestionError("CSV document did not contain any usable rows.")
-        header = parsed_rows[0]
-        data_rows = parsed_rows[1:]
-        max_columns = max(len(row) for row in parsed_rows)
-        column_schema: list[str] = []
-        for idx in range(max_columns):
-            label = header[idx].strip() if idx < len(header) else ""
-            column_schema.append(label or f"column_{idx + 1}")
+
+        policy = resolve_normalization_policy(upload)
+        sheet_label = (file_detail.filename or "CSV").strip() or "CSV"
+        normalized_sheet = normalize_sheet_rows(parsed_rows, sheet_name=sheet_label, policy=policy)
+        diagnostics = [normalized_sheet.diagnostics]
+        if normalized_sheet.diagnostics.skipped:
+            raise KnowledgeIngestionError("CSV document did not contain any usable rows.")
+
+        column_schema = normalized_sheet.column_schema
         table_rows: list[TableRowPayload] = []
-        for row_idx, row in enumerate(data_rows, start=1):
+        for row_idx, values in enumerate(normalized_sheet.rows, start=1):
             cells: list[TableCellPayload] = []
             formatted_cells: list[str] = []
-            for col_idx in range(max_columns):
-                value = row[col_idx] if col_idx < len(row) else ""
+            for col_idx, column_key in enumerate(column_schema):
+                value = values[col_idx] if col_idx < len(values) else ""
                 formatted_cells.append(value)
                 cells.append(
                     TableCellPayload(
                         row_index=row_idx,
                         column_index=col_idx,
-                        column_key=column_schema[col_idx],
+                        column_key=column_key,
                         raw_text=value,
                     )
                 )
@@ -3239,7 +3287,7 @@ class KnowledgeIngestionService:
                     row_index=row_idx,
                     page_number=None,
                     raw_text="\t".join(formatted_cells),
-                    metadata={"source": "csv", "line_number": row_idx + 1},
+                    metadata={"source": format_hint or "csv", "line_number": row_idx + 1},
                     cells=cells,
                 )
             )
@@ -3276,6 +3324,7 @@ class KnowledgeIngestionService:
             partial_tables=table_summary.get("partial_tables", 0),
             row_tier=table_summary.get("row_tier_hint"),
         )
+        normalization_summary = summarize_normalization(policy, diagnostics)
         issues = limit_issues
         page = PageLayout(
             page_number=1,
@@ -3304,6 +3353,9 @@ class KnowledgeIngestionService:
             "table_truncation": table_metrics,
             "table_stats": table_stats,
         }
+        if normalization_summary:
+            metadata["normalization"] = normalization_summary
+        _log_normalization_summary(upload, "csv", normalization_summary)
         return ExtractionResult(
             text=preview_text or normalized,
             format_hint=format_hint,
@@ -3313,6 +3365,77 @@ class KnowledgeIngestionService:
             issues=issues,
             entities=table_entities,
         )
+
+    def _build_table_from_normalized_sheet(
+        self,
+        normalized: NormalizedSheet,
+        *,
+        order_index: int,
+        sheet_name: str,
+        sheet_index: int | None,
+        file_detail: KnowledgeUploadFile,
+        source_label: str,
+        content_type: str,
+        rules: Mapping[str, Any] | None,
+    ) -> tuple[TablePayload, PageLayout]:
+        column_schema = normalized.column_schema
+        table_rows: list[TableRowPayload] = []
+        for row_idx, values in enumerate(normalized.rows, start=1):
+            cells: list[TableCellPayload] = []
+            formatted: list[str] = []
+            for col_idx, column_key in enumerate(column_schema):
+                value = values[col_idx] if col_idx < len(values) else ""
+                formatted.append(value)
+                cells.append(
+                    TableCellPayload(
+                        row_index=row_idx,
+                        column_index=col_idx,
+                        column_key=column_key,
+                        raw_text=value,
+                    )
+                )
+            table_rows.append(
+                TableRowPayload(
+                    row_index=row_idx,
+                    page_number=sheet_index,
+                    raw_text="\t".join(formatted),
+                    metadata={"source": source_label, "sheet": sheet_name},
+                    cells=cells,
+                )
+            )
+        table = TablePayload(
+            order_index=order_index,
+            title=sheet_name,
+            section_heading=sheet_name,
+            page_number=sheet_index,
+            column_schema=column_schema,
+            metadata={
+                "source": source_label,
+                "sheet_name": sheet_name,
+                "filename": file_detail.filename,
+            },
+            rows=table_rows,
+        )
+        preview = self._table_preview_text([table], rules=rules)
+        page_layout = PageLayout(
+            page_number=sheet_index or order_index,
+            width=612,
+            height=792,
+            rotation=0,
+            text_density=len(preview.strip()) / float(612 * 792),
+            has_ocr_content=False,
+            content_type=content_type,
+            blocks=[
+                PageBlockPayload(
+                    block_type=KnowledgeBlockType.TABLE,
+                    order_index=order_index,
+                    text=preview,
+                    metadata={"source": source_label, "sheet": sheet_name},
+                )
+            ],
+            metadata={"sheet_name": sheet_name},
+        )
+        return table, page_layout
 
     def _extract_xlsx(
         self,
@@ -3327,88 +3450,42 @@ class KnowledgeIngestionService:
             workbook = load_workbook(filename=path, read_only=True, data_only=True)
         except Exception as exc:
             raise KnowledgeIngestionError(f"Unable to open XLSX file: {exc}") from exc
+
+        policy = resolve_normalization_policy(upload)
+        diagnostics: list[SheetNormalizationDiagnostics] = []
         tables: list[TablePayload] = []
         pages: list[PageLayout] = []
         order_index = 1
         rules = self._table_privacy_rules(upload)
         for sheet_idx, sheet in enumerate(workbook.worksheets, start=1):
-            rows: list[list[str]] = []
-            for raw_row in sheet.iter_rows(values_only=True):
-                values = [
-                    "" if cell is None else str(cell).strip()
-                    for cell in raw_row
-                ]
-                if any(values):
-                    rows.append(values)
-            if not rows:
-                continue
-            header = rows[0]
-            data_rows = rows[1:]
-            max_columns = max(len(row) for row in rows)
-            column_schema: list[str] = []
-            for idx in range(max_columns):
-                label = header[idx].strip() if idx < len(header) else ""
-                column_schema.append(label or f"column_{idx + 1}")
-            table_rows: list[TableRowPayload] = []
-            for row_idx, row in enumerate(data_rows, start=1):
-                cells: list[TableCellPayload] = []
-                values: list[str] = []
-                for col_idx in range(max_columns):
-                    value = row[col_idx] if col_idx < len(row) else ""
-                    values.append(value)
-                    cells.append(
-                        TableCellPayload(
-                            row_index=row_idx,
-                            column_index=col_idx,
-                            column_key=column_schema[col_idx],
-                            raw_text=value,
-                        )
-                    )
-                table_rows.append(
-                    TableRowPayload(
-                        row_index=row_idx,
-                        page_number=sheet_idx,
-                        raw_text="\t".join(values),
-                        metadata={"source": "xlsx", "sheet": sheet.title},
-                        cells=cells,
-                    )
+            sheet_name = sheet.title or f"Sheet {sheet_idx}"
+            if not sheet_is_allowed(sheet_name, policy):
+                diagnostics.append(
+                    SheetNormalizationDiagnostics(sheet_name=sheet_name, skipped=True, skip_reason="policy")
                 )
-            table = TablePayload(
+                continue
+            normalized = normalize_sheet_rows(
+                sheet.iter_rows(values_only=True),
+                sheet_name=sheet_name,
+                policy=policy,
+            )
+            diagnostics.append(normalized.diagnostics)
+            if normalized.diagnostics.skipped:
+                continue
+            table, page_layout = self._build_table_from_normalized_sheet(
+                normalized,
                 order_index=order_index,
-                title=sheet.title or f"Sheet {sheet_idx}",
-                section_heading=sheet.title or "",
-                page_number=sheet_idx,
-                column_schema=column_schema,
-                metadata={
-                    "source": "xlsx",
-                    "sheet_name": sheet.title,
-                    "filename": file_detail.filename,
-                },
-                rows=table_rows,
+                sheet_name=sheet_name,
+                sheet_index=sheet_idx,
+                file_detail=file_detail,
+                source_label="xlsx",
+                content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                rules=rules,
             )
             tables.append(table)
-            preview = self._table_preview_text([table], rules=rules)
-            pages.append(
-                PageLayout(
-                    page_number=sheet_idx,
-                    width=612,
-                    height=792,
-                    rotation=0,
-                    text_density=len(preview.strip()) / float(612 * 792),
-                    has_ocr_content=False,
-                    content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                    blocks=[
-                        PageBlockPayload(
-                            block_type=KnowledgeBlockType.TABLE,
-                            order_index=order_index,
-                            text=preview,
-                            metadata={"source": "xlsx", "sheet": sheet.title},
-                        )
-                    ],
-                    metadata={"sheet_name": sheet.title},
-                )
-            )
+            pages.append(page_layout)
             order_index += 1
+
         original_tables = list(tables)
         if not original_tables:
             raise KnowledgeIngestionError("XLSX workbook did not contain any populated sheets.")
@@ -3431,6 +3508,7 @@ class KnowledgeIngestionService:
             partial_tables=table_summary.get("partial_tables", 0),
             row_tier=table_summary.get("row_tier_hint"),
         )
+        normalization_summary = summarize_normalization(policy, diagnostics)
         metadata = {
             "format": "xlsx",
             "filename": file_detail.filename,
@@ -3440,9 +3518,130 @@ class KnowledgeIngestionService:
             "table_truncation": table_metrics,
             "table_stats": table_stats,
         }
+        if normalization_summary:
+            metadata["normalization"] = normalization_summary
+        _log_normalization_summary(upload, "xlsx", normalization_summary)
         return ExtractionResult(
             text=preview_text,
             format_hint="xlsx",
+            metadata=metadata,
+            pages=pages,
+            tables=tables,
+            issues=limit_issues,
+            entities=table_entities,
+        )
+
+    def _extract_xls(
+        self,
+        path: Path,
+        *,
+        file_detail: KnowledgeUploadFile,
+        upload: KnowledgeUpload | None = None,
+    ) -> ExtractionResult:
+        if xlrd is None:
+            raise KnowledgeIngestionError("XLS ingestion requires the xlrd package.")
+        try:
+            workbook = xlrd.open_workbook(filename=str(path))
+        except Exception as exc:
+            raise KnowledgeIngestionError(f"Unable to open XLS file: {exc}") from exc
+
+        policy = resolve_normalization_policy(upload)
+        diagnostics: list[SheetNormalizationDiagnostics] = []
+        tables: list[TablePayload] = []
+        pages: list[PageLayout] = []
+        order_index = 1
+        rules = self._table_privacy_rules(upload)
+        for sheet_idx in range(1, workbook.nsheets + 1):
+            sheet = workbook.sheet_by_index(sheet_idx - 1)
+            sheet_name = getattr(sheet, "name", None) or f"Sheet {sheet_idx}"
+            if not sheet_is_allowed(sheet_name, policy):
+                diagnostics.append(
+                    SheetNormalizationDiagnostics(sheet_name=sheet_name, skipped=True, skip_reason="policy")
+                )
+                continue
+            raw_rows: list[list[Any]] = []
+            nrows = getattr(sheet, "nrows", 0) or 0
+            ncols = getattr(sheet, "ncols", 0) or 0
+            for row_idx in range(nrows):
+                row_values: list[Any] = []
+                for col_idx in range(ncols):
+                    cell_value = sheet.cell_value(row_idx, col_idx)
+                    cell_type = sheet.cell_type(row_idx, col_idx)
+                    if cell_type == xlrd.XL_CELL_DATE:
+                        try:
+                            cell_value = xlrd.xldate_as_datetime(cell_value, workbook.datemode)
+                        except Exception:
+                            cell_value = ""
+                    elif cell_type == xlrd.XL_CELL_BOOLEAN:
+                        cell_value = bool(cell_value)
+                    elif cell_type == xlrd.XL_CELL_ERROR:
+                        cell_value = ""
+                    row_values.append(cell_value)
+                raw_rows.append(row_values)
+            normalized = normalize_sheet_rows(
+                raw_rows,
+                sheet_name=sheet_name,
+                policy=policy,
+            )
+            diagnostics.append(normalized.diagnostics)
+            if normalized.diagnostics.skipped:
+                continue
+            table, page_layout = self._build_table_from_normalized_sheet(
+                normalized,
+                order_index=order_index,
+                sheet_name=sheet_name,
+                sheet_index=sheet_idx,
+                file_detail=file_detail,
+                source_label="xls",
+                content_type="application/vnd.ms-excel",
+                rules=rules,
+            )
+            tables.append(table)
+            pages.append(page_layout)
+            order_index += 1
+
+        original_tables = list(tables)
+        if not original_tables:
+            raise KnowledgeIngestionError("XLS workbook did not contain any populated sheets.")
+        ingest_config = self._table_ingest_config(upload)
+        tables, table_metrics, limit_issues, table_summary = self._apply_table_limits(
+            original_tables,
+            upload=upload,
+            config=ingest_config,
+        )
+        if not tables:
+            raise KnowledgeIngestionError("XLS workbook exceeded configured limits and no rows were indexed.")
+        preview_text = self._table_preview_text(tables, rules=rules)
+        table_entities = self._table_row_entities(
+            tables,
+            business_profile=getattr(upload, "business_profile", None),
+            upload=upload,
+        )
+        table_stats = self._table_stats_summary(
+            total_rows=table_summary["total_rows"],
+            indexed_rows=table_summary["indexed_rows"],
+            row_cap=table_summary.get("row_cap_hint"),
+            source_row_count=self._integration_row_count(upload),
+            table_count=len(tables),
+            partial_tables=table_summary.get("partial_tables", 0),
+            row_tier=table_summary.get("row_tier_hint"),
+        )
+        normalization_summary = summarize_normalization(policy, diagnostics)
+        metadata = {
+            "format": "xls",
+            "filename": file_detail.filename,
+            "content_type": file_detail.content_type or "",
+            "storage_path": file_detail.storage_path,
+            "table_count": len(tables),
+            "table_truncation": table_metrics,
+            "table_stats": table_stats,
+        }
+        if normalization_summary:
+            metadata["normalization"] = normalization_summary
+        _log_normalization_summary(upload, "xls", normalization_summary)
+        return ExtractionResult(
+            text=preview_text,
+            format_hint="xls",
             metadata=metadata,
             pages=pages,
             tables=tables,
@@ -3579,7 +3778,7 @@ class KnowledgeIngestionService:
             )
             columns = self._select_entity_columns(flattened)
             if not columns:
-                columns = list(flattened.keys())[:12]
+                columns = list(flattened.keys())
             attributes = {column: flattened.get(column, "") for column in columns}
             aliases, alias_sources = self._collect_aliases_from_record(
                 record=record,
@@ -3797,7 +3996,7 @@ class KnowledgeIngestionService:
     def _table_ingest_config(self, upload: KnowledgeUpload | None) -> dict[str, Any]:
         config = {
             "max_rows": self.default_table_max_rows,
-            "max_columns": self.default_table_max_columns,
+            "max_columns": self.default_table_max_columns if self.default_table_max_columns > 0 else None,
             "column_whitelist": set(),
             "max_rows_source": "default",
             "small_row_limit": int(getattr(settings, "RAG_TABLE_SMALL_ROW_LIMIT", 2000)),
@@ -3822,8 +4021,7 @@ class KnowledgeIngestionService:
             try:
                 if columns is not None:
                     value = int(columns)
-                    if value > 0:
-                        config["max_columns"] = value
+                    config["max_columns"] = value if value > 0 else None
             except (TypeError, ValueError):
                 pass
             if isinstance(whitelist, (list, tuple, set)):
@@ -4023,12 +4221,13 @@ class KnowledgeIngestionService:
         table: TablePayload,
         *,
         max_rows: int,
-        max_columns: int,
+        max_columns: int | None,
         column_whitelist: set[str],
     ) -> tuple[TablePayload | None, int, int, bool]:
         schema = list(table.column_schema or [])
         plan: list[tuple[int, str]] = []
         removed_columns = 0
+        column_limit = max_columns if isinstance(max_columns, int) and max_columns > 0 else None
         canonical_whitelist = set(column_whitelist or set())
         for idx, column in enumerate(schema):
             label = column or f"column_{idx + 1}"
@@ -4036,7 +4235,7 @@ class KnowledgeIngestionService:
             if canonical_whitelist and canonical not in canonical_whitelist:
                 removed_columns += 1
                 continue
-            if len(plan) >= max_columns:
+            if column_limit is not None and len(plan) >= column_limit:
                 removed_columns += 1
                 continue
             plan.append((idx, label))
@@ -4203,9 +4402,7 @@ class KnowledgeIngestionService:
                 ]
                 if not visible_columns:
                     continue
-                limited_attributes = {column: attributes.get(column, "") for column in visible_columns if attributes.get(column)}
-                if not limited_attributes:
-                    continue
+                limited_attributes = {column: attributes.get(column, "") for column in visible_columns}
                 entity_name = self._infer_table_row_entity_name(
                     entity_type,
                     table,
@@ -4218,7 +4415,7 @@ class KnowledgeIngestionService:
                 flattened["table_order_index"] = str(table.order_index)
                 columns = self._select_entity_columns(limited_attributes)
                 if not columns:
-                    columns = list(limited_attributes.keys())[:12]
+                    columns = list(limited_attributes.keys())
                 limited_attributes = {column: limited_attributes.get(column, "") for column in columns}
                 aliases, alias_sources = self._collect_aliases_from_record(
                     record=flattened,
@@ -4376,13 +4573,20 @@ class KnowledgeIngestionService:
             "duration_days",
         ]
         columns: list[str] = []
+        seen: set[str] = set()
         for key in preferred:
-            if key in flattened and flattened[key]:
+            if key in flattened and key not in seen and flattened[key]:
                 columns.append(key)
-        for key in flattened.keys():
-            if key not in columns and flattened[key]:
+                seen.add(key)
+        for key, value in flattened.items():
+            if key in seen:
+                continue
+            if value:
                 columns.append(key)
-        return columns[:12]
+                seen.add(key)
+        if not columns:
+            columns = list(flattened.keys())
+        return columns
 
     @staticmethod
     def _render_json_entity_summary(
@@ -4578,6 +4782,14 @@ class KnowledgeIngestionService:
         text = re.sub(r"\n{3,}", "\n\n", text)
         return text.strip()
 
+    @staticmethod
+    def _sanitize_text(value: Any) -> str:
+        if value is None:
+            return ""
+        text = str(value)
+        if "\x00" in text:
+            return text.replace("\x00", " ")
+        return text
 
     @staticmethod
     def _build_summary(content: str, limit: int = 500) -> str:

@@ -28,6 +28,8 @@ from apps.services.ai_orchestrator import (
     AiOrchestratorService,
     KnowledgeSearchService,
 )
+from apps.services.rag_logging import structured_log
+from apps.services.rag_logging import structured_log
 from core.metrics import latency_monitor
 from .identifier_registry import IdentifierGuardrail, IdentifierRegistryService
 from .types import ToolExecutionContext
@@ -519,11 +521,11 @@ def _log_tool_metrics(
     else:
         merged_extra = {}
     merged_extra.update(metrics)
-    logger.info(
-        "mcp.tool.%s business=%s metrics=%s",
-        tool,
-        conversation.business_profile_id,
+    structured_log(
+        "mcp",
+        f"tool.{tool}",
         merged_extra,
+        context={"business": conversation.business_profile_id, "conversation": conversation.id},
     )
     tags = {
         "tool": tool,
@@ -532,6 +534,69 @@ def _log_tool_metrics(
     latency_monitor.observe("mcp.tool.char_count", metrics.get("char_count"), tags=tags)
     latency_monitor.observe("mcp.tool.snippet_count", metrics.get("snippet_count"), tags=tags)
     return metrics
+
+
+def _snippet_preview_text(payload: Mapping[str, object]) -> str:
+    candidates = [
+        payload.get("raw_text"),
+        payload.get("text"),
+        payload.get("preview"),
+        payload.get("content"),
+        payload.get("summary"),
+        payload.get("snippet"),
+    ]
+    for value in candidates:
+        if isinstance(value, str):
+            trimmed = value.strip()
+            if trimmed:
+                return trimmed[:200]
+    rows = payload.get("rows")
+    if isinstance(rows, list) and rows:
+        first_row = rows[0]
+        if isinstance(first_row, Mapping):
+            cells = first_row.get("cells")
+            if isinstance(cells, list):
+                values: list[str] = []
+                for cell in cells[:6]:
+                    if isinstance(cell, Mapping):
+                        text = cell.get("text") or cell.get("value")
+                        if isinstance(text, str) and text.strip():
+                            values.append(text.strip())
+                if values:
+                    return " | ".join(values)[:200]
+    return ""
+
+
+def _log_snippet_payloads(
+    *,
+    tool: str,
+    conversation: Conversation,
+    snippet_payloads: Sequence[Mapping[str, object]],
+    meta: Mapping[str, object] | None = None,
+) -> None:
+    preview_items: list[dict[str, object]] = []
+    for payload in snippet_payloads[:5]:
+        preview_items.append(
+            {
+                "label": payload.get("public_label") or payload.get("title") or payload.get("label"),
+                "read_state": payload.get("read_state"),
+                "score": payload.get("score"),
+                "preview": _snippet_preview_text(payload),
+            }
+        )
+    detail = dict(meta or {})
+    detail["snippet_count"] = len(snippet_payloads)
+    if preview_items:
+        detail["snippets"] = preview_items
+    structured_log(
+        "mcp",
+        f"{tool}.snippets",
+        detail,
+        context={
+            "conversation": conversation.id,
+            "business": conversation.business_profile_id,
+        },
+    )
 
 
 def _maybe_throttle_full_page(
@@ -739,12 +804,17 @@ def _search_knowledge_handler(
                 "llm_hint": decision.hint,
             }
         if decision.status != "ok":
-            logger.warning(
-                "mcp.identifier.denied tool=search_knowledge business=%s uploads=%s required=%s provided=%s",
-                conversation.business_profile_id,
-                list(decision.blocked_uploads),
-                list(decision.required_keys),
-                list(decision.provided_keys),
+            structured_log(
+                "mcp",
+                "identifier.denied",
+                {
+                    "tool": "search_knowledge",
+                    "uploads": list(decision.blocked_uploads),
+                    "required": list(decision.required_keys),
+                    "provided": list(decision.provided_keys),
+                },
+                context={"business": conversation.business_profile_id},
+                level=logging.WARNING,
             )
             return {
                 "tool": "search_knowledge",
@@ -765,6 +835,12 @@ def _search_knowledge_handler(
     if allowed_uploads is not None:
         snippet_payloads = [p for p in snippet_payloads if str(p.get("upload_id") or "") in allowed_uploads]
         if not snippet_payloads:
+            _log_snippet_payloads(
+                tool="search_knowledge",
+                conversation=conversation,
+                snippet_payloads=snippet_payloads,
+                meta={"query": query, "intent": intent, "read_required": read_required, "filtered": True},
+            )
             return {
                 "tool": "search_knowledge",
                 "query": query,
@@ -903,12 +979,17 @@ def _read_document_handler(
         decision = guard.require_for_upload(str(gating_upload_id))
         _record_identifier_check(context, decision)
         if decision.status != "ok":
-            logger.warning(
-                "mcp.identifier.denied tool=read_document business=%s upload=%s required=%s provided=%s",
-                conversation.business_profile_id,
-                gating_upload_id,
-                list(decision.required_keys),
-                list(decision.provided_keys),
+            structured_log(
+                "mcp",
+                "identifier.denied",
+                {
+                    "tool": "read_document",
+                    "upload": gating_upload_id,
+                    "required": list(decision.required_keys),
+                    "provided": list(decision.provided_keys),
+                },
+                context={"business": conversation.business_profile_id},
+                level=logging.WARNING,
             )
             IdentifierRegistryService.record_event(
                 business_profile=conversation.business_profile,
@@ -983,10 +1064,11 @@ def _read_document_handler(
             mode = "excerpt"
             throttle_notice["downgraded_from"] = "full_page"
             downgraded = True
-            logger.info(
-                "mcp.read_document.throttle business=%s reason=%s",
-                business.id,
-                throttle_notice.get("reason"),
+            structured_log(
+                "mcp",
+                "read_document.throttle",
+                {"reason": throttle_notice.get("reason")},
+                context={"business": business.id},
             )
 
     snippets: list[Any] = []
@@ -1069,6 +1151,18 @@ def _read_document_handler(
         },
     )
     context.reserve_characters(int(metrics.get("char_count", 0)))
+    _log_snippet_payloads(
+        tool="read_document",
+        conversation=conversation,
+        snippet_payloads=snippet_payloads,
+        meta={
+            "document_id": document_id,
+            "mode": mode,
+            "page_index": page_index,
+            "neighbor": neighbor_window,
+            "token_budget": token_budget,
+        },
+    )
 
     return {
         "tool": "read_document",

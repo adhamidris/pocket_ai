@@ -13,10 +13,13 @@ import hashlib
 import dataclasses
 import logging
 import uuid
+from datetime import datetime
 from enum import Enum
 from types import SimpleNamespace
 import re
+from contextvars import ContextVar
 from typing import Any, Callable, Iterable, Mapping, MutableMapping, Sequence
+from zoneinfo import ZoneInfo
 
 from django.db import connection, transaction
 from django.db.models import Prefetch, Q
@@ -49,6 +52,7 @@ from apps.services.embeddings import build_embedding_service, EmbeddingProviderE
 from apps.services.feature_flags import FeatureFlagService, FeatureState
 from apps.services.llm_provider import BaseLLMProvider, PromptGenerationError
 from apps.services.quality_monitor import QualityMonitor
+from apps.services.rag_logging import rag_log
 from core.metrics import latency_monitor
 
 try:  # optional dependency
@@ -58,6 +62,16 @@ except ImportError:  # pragma: no cover - dependency not installed by default
 
 
 logger = logging.getLogger(__name__)
+
+
+def _rag_log(
+    stage: str,
+    detail: Any | None = None,
+    *,
+    indent: int = 0,
+    context: Mapping[str, Any] | None = None,
+) -> None:
+    rag_log(stage, detail=detail, indent=indent, context=context)
 
 # NOTE (legacy orchestrator):
 # This module implements the original ledger-based orchestrator used before the
@@ -938,13 +952,18 @@ class KnowledgeSearchService:
             diagnostics["path"] = "alias_exact"
             diagnostics["alias_stage"] = diagnostics.get("alias_stage") or alias_result.diagnostics.get("stage")
             diagnostics["snippet_rerank_ms"] = snippet_ms
-            logger.info(
-                "rag.alias.short_circuit business=%s query=%s hits=%s neighbor=%s request=%s",
-                business_profile.id,
-                traits.normalized,
-                len(snippets),
-                neighbor,
-                diagnostics["request_id"],
+            _rag_log(
+                "alias.short_circuit",
+                {
+                    "query": traits.normalized,
+                    "hits": len(snippets),
+                    "neighbor": neighbor,
+                },
+                indent=1,
+                context={
+                    "business": business_profile.id,
+                    "request": diagnostics.get("request_id"),
+                },
             )
             status = "ok" if snippets else "not_found"
             diagnostics["total_duration_ms"] = self._duration_ms(overall_start)
@@ -975,13 +994,19 @@ class KnowledgeSearchService:
             diagnostics=diagnostics,
             vector_ceiling=vector_ceiling,
         )
-        logger.info(
-            "rag.table_search_decision business=%s query=%s tables_available=%s has_intent=%s chunk_hits=%s",
-            business_profile.id,
-            traits.normalized,
-            tables_available,
-            table_context["has_intent"],
-            len(chunk_hits),
+        _rag_log(
+            "table.search_decision",
+            {
+                "query": traits.normalized,
+                "tables_available": tables_available,
+                "has_intent": table_context["has_intent"],
+                "chunk_hits": len(chunk_hits),
+            },
+            indent=1,
+            context={
+                "business": business_profile.id,
+                "request": diagnostics.get("request_id"),
+            },
         )
         diagnostics["chunk_candidate_count"] = len(chunk_hits)
         table_snippets: tuple[KnowledgeSnippet, ...] = tuple()
@@ -1003,11 +1028,17 @@ class KnowledgeSearchService:
                 table_reason = "header_match"
 
         if should_run_table:
-            logger.info(
-                "rag.table_search.run business=%s query=%s reason=%s",
-                business_profile.id,
-                traits.normalized,
-                table_reason,
+            _rag_log(
+                "table.search_run",
+                {
+                    "query": traits.normalized,
+                    "reason": table_reason,
+                },
+                indent=2,
+                context={
+                    "business": business_profile.id,
+                    "request": diagnostics.get("request_id"),
+                },
             )
             table_snippets = self._table_search_snippets(
                 business_profile=business_profile,
@@ -1072,14 +1103,19 @@ class KnowledgeSearchService:
                 diagnostics["snippet_rerank_ms"] = snippet_ms
                 status = "ok" if fallback else "not_found"
                 diagnostics["reason"] = diagnostics.get("reason") or ("fallback_used" if fallback else "no_candidates")
-                logger.info(
-                    "rag.search.empty business=%s query=%s fallback=%s reason=%s request=%s",
-                    business_profile.id,
-                traits.normalized,
-                len(fallback),
-                diagnostics["reason"],
-                diagnostics["request_id"],
-            )
+                _rag_log(
+                    "search.empty",
+                    {
+                        "query": traits.normalized,
+                        "fallback": len(fallback),
+                        "reason": diagnostics.get("reason"),
+                    },
+                    indent=1,
+                    context={
+                        "business": business_profile.id,
+                        "request": diagnostics.get("request_id"),
+                    },
+                )
             diagnostics["total_duration_ms"] = self._duration_ms(overall_start)
             diagnostics["snippet_count"] = len(fallback)
             result_obj = KnowledgeSearchResult(snippets=fallback, status=status, diagnostics=diagnostics)
@@ -1218,13 +1254,16 @@ class KnowledgeSearchService:
             diagnostics["stage"] = "alias_exact"
             diagnostics["duration_ms"] = int((time.perf_counter() - start) * 1000)
             latency_monitor.observe("rag.alias", diagnostics["duration_ms"], tags={"stage": diagnostics["stage"]})
-            logger.info(
-                "rag.alias.exact business=%s aliases=%s hits=%s cache_hit=%s cache_miss=%s",
-                business_profile.id,
-                normalized_aliases,
-                len(hits),
-                diagnostics["alias_cache_hit"],
-                diagnostics["alias_cache_miss"],
+            _rag_log(
+                "alias.exact",
+                {
+                    "aliases": normalized_aliases,
+                    "hits": len(hits),
+                    "cache_hit": diagnostics["alias_cache_hit"],
+                    "cache_miss": diagnostics["alias_cache_miss"],
+                },
+                indent=1,
+                context={"business": business_profile.id},
             )
             return AliasSearchResult(
                 hits=tuple(hits[:limit]),
@@ -1243,12 +1282,15 @@ class KnowledgeSearchService:
         diagnostics["alias_fts_hits"] = len(fuzzy_hits)
         diagnostics["duration_ms"] = int((time.perf_counter() - start) * 1000)
         latency_monitor.observe("rag.alias", diagnostics["duration_ms"], tags={"stage": diagnostics["stage"]})
-        logger.info(
-            "rag.alias.fts business=%s query=%s hits=%s threshold=%.2f",
-            business_profile.id,
-            traits.normalized,
-            len(fuzzy_hits),
-            alias_threshold,
+        _rag_log(
+            "alias.fts",
+            {
+                "query": traits.normalized,
+                "hits": len(fuzzy_hits),
+                "threshold": f"{alias_threshold:.2f}",
+            },
+            indent=1,
+            context={"business": business_profile.id},
         )
         return AliasSearchResult(
             hits=tuple(fuzzy_hits[: self.alias_fts_limit]),
@@ -1327,13 +1369,16 @@ class KnowledgeSearchService:
         diagnostics.update(vector_diag)
         diagnostics.update(self._vector_distance_stats(vector_hits))
         diagnostics["stage"] = "hybrid"
-        logger.info(
-            "rag.hybrid business=%s alias_stage=%s vector=%s fts=%s hybrid=%s",
-            business_profile.id,
-            len(alias_candidates or ()),
-            len(vector_hits),
-            len(lexical_hits),
-            feature_state.hybrid_search,
+        _rag_log(
+            "hybrid.summary",
+            {
+                "alias_stage": len(alias_candidates or ()),
+                "vector_candidates": len(vector_hits),
+                "fts_candidates": len(lexical_hits),
+                "hybrid_enabled": feature_state.hybrid_search,
+            },
+            indent=1,
+            context={"business": business_profile.id},
         )
         return HybridSearchResult(
             hits=tuple(reranked),
@@ -1887,14 +1932,17 @@ class KnowledgeSearchService:
         distance_min = min(distances) if distances else None
         distance_max = max(distances) if distances else None
         distance_avg = (sum(distances) / len(distances)) if distances else None
-        logger.info(
-            "rag.vector business=%s query_tokens=%s candidates=%s d_min=%s d_max=%s d_avg=%s",
-            business_id,
-            traits.token_count,
-            len(hits),
-            f"{distance_min:.4f}" if distance_min is not None else None,
-            f"{distance_max:.4f}" if distance_max is not None else None,
-            f"{distance_avg:.4f}" if distance_avg is not None else None,
+        _rag_log(
+            "vector.candidates",
+            {
+                "query_tokens": traits.token_count,
+                "candidates": len(hits),
+                "d_min": f"{distance_min:.4f}" if distance_min is not None else None,
+                "d_max": f"{distance_max:.4f}" if distance_max is not None else None,
+                "d_avg": f"{distance_avg:.4f}" if distance_avg is not None else None,
+            },
+            indent=1,
+            context={"business": business_id},
         )
         return hits, duration_ms
 
@@ -2864,25 +2912,30 @@ class KnowledgeSearchService:
         )
         if len(query_preview) > 200:
             query_preview = f"{query_preview[:200]}..."
-        logger.info(
-            "rag.search.summary business=%s request=%s stage=%s status=%s snippets=%s reason=%s features=%s tokens=%s identifier=%s alias_stage=%s chunk_candidates=%s tabular_intent=%s tables_available=%s table_reason=%s vector_ceiling=%s alias_threshold=%s query=%s",
-            business_profile.id,
-            request_id,
-            diagnostics.get("path") or "unknown",
-            result.status,
-            diagnostics.get("snippet_count") or len(result.snippets),
-            diagnostics.get("reason"),
-            diagnostics.get("feature_flags"),
-            diagnostics.get("token_count"),
-            diagnostics.get("identifier_like"),
-            diagnostics.get("alias_stage"),
-            diagnostics.get("chunk_candidate_count"),
-            diagnostics.get("tabular_intent"),
-            diagnostics.get("tables_available"),
-            diagnostics.get("table_reason"),
-            diagnostics.get("vector_distance_ceiling"),
-            diagnostics.get("alias_fts_threshold"),
-            query_preview,
+        _rag_log(
+            "search.summary",
+            {
+                "stage": diagnostics.get("path") or "unknown",
+                "status": result.status,
+                "snippets": diagnostics.get("snippet_count") or len(result.snippets),
+                "reason": diagnostics.get("reason"),
+                "features": diagnostics.get("feature_flags"),
+                "tokens": diagnostics.get("token_count"),
+                "identifier": diagnostics.get("identifier_like"),
+                "alias_stage": diagnostics.get("alias_stage"),
+                "chunk_candidates": diagnostics.get("chunk_candidate_count"),
+                "tabular_intent": diagnostics.get("tabular_intent"),
+                "tables_available": diagnostics.get("tables_available"),
+                "table_reason": diagnostics.get("table_reason"),
+                "vector_ceiling": diagnostics.get("vector_distance_ceiling"),
+                "alias_threshold": diagnostics.get("alias_fts_threshold"),
+                "query": query_preview,
+            },
+            indent=1,
+            context={
+                "business": business_profile.id,
+                "request": request_id,
+            },
         )
 
     def load_contents(

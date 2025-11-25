@@ -7,6 +7,7 @@ from typing import Mapping, Sequence
 from django.conf import settings
 
 from apps.accounts.models import BusinessProfile, KnowledgeDriftSample, RAGEvaluationRun
+from apps.services.rag_logging import rag_log
 
 logger = logging.getLogger(__name__)
 
@@ -45,11 +46,14 @@ class QualityMonitor:
         )
         trunc_threshold = float(getattr(settings, "RAG_DRIFT_TRUNCATION_THRESHOLD", 0.15))
         if trunc_rate > trunc_threshold:
-            logger.warning(
-                "rag.drift.truncation business=%s rate=%.3f threshold=%.3f",
-                business_profile.id,
-                trunc_rate,
-                trunc_threshold,
+            rag_log(
+                "drift.truncation",
+                {
+                    "rate": f"{trunc_rate:.3f}",
+                    "threshold": f"{trunc_threshold:.3f}",
+                },
+                context={"business": business_profile.id},
+                indent=1,
             )
 
     @staticmethod
@@ -233,12 +237,15 @@ class QualityMonitor:
         hits = sum(1 for metrics in identifier_samples if metrics.get("alias_hit"))
         rate = hits / max(1, len(identifier_samples))
         if rate < threshold:
-            logger.warning(
-                "rag.drift.alias_hit business=%s rate=%.3f threshold=%.3f samples=%s",
-                business_profile.id,
-                rate,
-                threshold,
-                len(identifier_samples),
+            rag_log(
+                "drift.alias_hit",
+                {
+                    "rate": f"{rate:.3f}",
+                    "threshold": f"{threshold:.3f}",
+                    "samples": len(identifier_samples),
+                },
+                context={"business": business_profile.id},
+                indent=1,
             )
 
     @staticmethod
@@ -259,10 +266,13 @@ class QualityMonitor:
         )
         rate = not_found / max(1, len(recent))
         if rate > threshold:
-            logger.warning(
-                "rag.drift.not_found business=%s rate=%.3f threshold=%.3f samples=%s",
-                business_profile.id,
-                rate,
-                threshold,
-                len(recent),
+            rag_log(
+                "drift.not_found",
+                {
+                    "rate": f"{rate:.3f}",
+                    "threshold": f"{threshold:.3f}",
+                    "samples": len(recent),
+                },
+                context={"business": business_profile.id},
+                indent=1,
             )

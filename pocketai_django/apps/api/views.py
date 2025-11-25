@@ -12,7 +12,7 @@ from urllib.parse import urlencode
 from django.conf import settings
 from django.contrib.auth import login as auth_login
 from django.core.exceptions import ImproperlyConfigured
-from django.http import FileResponse, HttpRequest, HttpResponseRedirect, JsonResponse
+from django.http import FileResponse, HttpRequest, HttpResponse, HttpResponseRedirect, JsonResponse
 from django.urls import reverse
 from django.utils import timezone
 from django.views.decorators.csrf import csrf_exempt, csrf_protect
@@ -58,6 +58,7 @@ from apps.services.cases import (
 from apps.services.customers import CustomerDetail as CustomerDetailData, CustomerSummary, get_customer_detail
 from apps.services.documents import (
     CsvPreviewError,
+    delete_document as delete_knowledge_document,
     DocumentDetail,
     DocumentListItem,
     DocumentListValidationError as KnowledgeDocumentListValidationError,
@@ -1657,13 +1658,36 @@ def knowledge_documents_collection(request: HttpRequest) -> JsonResponse:
     return JsonResponse(response, status=HTTPStatus.OK)
 
 
-@require_http_methods(["GET"])
-def knowledge_document_detail(request: HttpRequest, document_id: uuid.UUID) -> JsonResponse:
+@require_http_methods(["GET", "DELETE"])
+def knowledge_document_detail(request: HttpRequest, document_id: uuid.UUID):
     business_id = request.GET.get("business_id")
     business, error = _resolve_business_profile(request, business_id)
     if error:
         return error
     assert business is not None
+
+    if request.method == "DELETE":
+        try:
+            delete_knowledge_document(business_profile=business, document_id=document_id)
+        except KnowledgeUpload.DoesNotExist:
+            logger.warning(
+                "knowledge_document_delete_not_found user=%s business=%s document=%s",
+                getattr(request.user, "id", None),
+                business.id,
+                document_id,
+            )
+            return JsonResponse(
+                {"error": "DOCUMENT_NOT_FOUND", "message": "Document not found."},
+                status=HTTPStatus.NOT_FOUND,
+            )
+
+        logger.info(
+            "knowledge_document_delete user=%s business=%s document=%s",
+            getattr(request.user, "id", None),
+            business.id,
+            document_id,
+        )
+        return HttpResponse(status=HTTPStatus.NO_CONTENT)
 
     try:
         detail = get_knowledge_document_detail(business_profile=business, document_id=document_id)

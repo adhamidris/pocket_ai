@@ -13,7 +13,7 @@ import json
 import logging
 import re
 import uuid
-from typing import Callable, Iterable, Mapping
+from typing import Callable, Iterable, Mapping, Sequence
 
 from django.conf import settings
 
@@ -28,6 +28,7 @@ from apps.services.ai_orchestrator import (
     ActionType,
     StreamingTurnContext,
 )
+from apps.services.rag_logging import structured_log
 
 from . import prompts, tools
 from .sanitizer import extract_sentences, is_investigative_filler_with_level, sanitize_with_diagnostics
@@ -155,12 +156,18 @@ class McpOrchestratorService:
             trailing_stripped = trailing.strip()
             if trailing_stripped and is_investigative_filler_with_level(trailing_stripped, filter_level=filter_level):
                 stream_dropped.append(trailing_stripped)
-                logger.info(
-                    "mcp.sanitizer.dropped_sentence stage=%s conversation=%s business=%s text=%s",
-                    stage,
-                    conversation.id,
-                    conversation.business_profile_id,
-                    trailing_stripped[:200],
+                structured_log(
+                    "mcp",
+                    "sanitizer.dropped_sentence",
+                    {
+                        "stage": stage,
+                        "text": trailing_stripped[:200],
+                    },
+                    indent=1,
+                    context={
+                        "conversation": conversation.id,
+                        "business": conversation.business_profile_id,
+                    },
                 )
             else:
                 _emit_tokens(trailing)
@@ -183,12 +190,18 @@ class McpOrchestratorService:
                     stripped = sentence.strip()
                     if is_investigative_filler_with_level(stripped, filter_level=filter_level):
                         stream_dropped.append(stripped)
-                        logger.info(
-                            "mcp.sanitizer.dropped_sentence stage=%s conversation=%s business=%s text=%s",
-                            "streaming_tools",
-                            conversation.id,
-                            conversation.business_profile_id,
-                            stripped[:200],
+                        structured_log(
+                            "mcp",
+                            "sanitizer.dropped_sentence",
+                            {
+                                "stage": "streaming_tools",
+                                "text": stripped[:200],
+                            },
+                            indent=1,
+                            context={
+                                "conversation": conversation.id,
+                                "business": conversation.business_profile_id,
+                            },
                         )
                     else:
                         _emit_sentence(sentence + (match.group(2) or ""))
@@ -204,6 +217,7 @@ class McpOrchestratorService:
                     continue
                 break
 
+        self._log_prompt("primary", conversation=conversation, messages=transcript)
         first_payload = self.provider.chat(
             transcript,
             tools=self.tool_definitions,
@@ -280,11 +294,16 @@ class McpOrchestratorService:
                             context=tool_context,
                         )
                     except ToolConstraintError as exc:
-                        logger.warning(
-                            "mcp.tool.constraint_violation tool=%s conversation=%s error=%s",
-                            tool_name,
-                            conversation.id,
-                            exc,
+                        structured_log(
+                            "mcp",
+                            "tool.constraint_violation",
+                            {
+                                "tool": tool_name,
+                                "error": str(exc),
+                            },
+                            indent=1,
+                            context={"conversation": conversation.id},
+                            level=logging.WARNING,
                         )
                         tool_result = self._constraint_error_payload(tool_name, exc)
                     tool_context.add_tool_trace(
@@ -374,12 +393,17 @@ class McpOrchestratorService:
             if not clean_single:
                 clean_single = single_pass_text
 
-            logger.info(
-                "mcp.turn.single_pass conversation=%s business=%s strategy=%s content_chars=%s",
-                conversation.id,
-                conversation.business_profile_id,
-                "mcp_tools_stream_single_pass",
-                len(clean_single),
+            structured_log(
+                "mcp",
+                "turn.single_pass",
+                {
+                    "strategy": "mcp_tools_stream_single_pass",
+                    "content_chars": len(clean_single),
+                },
+                    context={
+                    "conversation": conversation.id,
+                    "business": conversation.business_profile_id,
+                },
             )
             if on_status_change:
                 on_status_change({"code": "stream_complete", "label": ""})
@@ -410,12 +434,18 @@ class McpOrchestratorService:
                     stripped = sentence.strip()
                     if is_investigative_filler_with_level(stripped, filter_level=filter_level):
                         stream_dropped.append(stripped)
-                        logger.info(
-                            "mcp.sanitizer.dropped_sentence stage=%s conversation=%s business=%s text=%s",
-                            "streaming_answer",
-                            conversation.id,
-                            conversation.business_profile_id,
-                            stripped[:200],
+                        structured_log(
+                            "mcp",
+                            "sanitizer.dropped_sentence",
+                            {
+                                "stage": "streaming_answer",
+                                "text": stripped[:200],
+                            },
+                            indent=1,
+                            context={
+                                "conversation": conversation.id,
+                                "business": conversation.business_profile_id,
+                            },
                         )
                     else:
                         _emit_sentence(sentence + (match.group(2) or ""))
@@ -465,11 +495,14 @@ class McpOrchestratorService:
 
         single_pass_detected = bool(single_pass_candidate and (not tool_phase_assistant_message or not tool_phase_assistant_message.get("tool_calls")))
         if single_pass_detected:
-            logger.info(
-                "mcp.turn.single_pass candidate conversation=%s business=%s content_chars=%s",
-                conversation.id,
-                conversation.business_profile_id,
-                len(single_pass_candidate),
+            structured_log(
+                "mcp",
+                "turn.single_pass_candidate",
+                {"content_chars": len(single_pass_candidate)},
+                context={
+                    "conversation": conversation.id,
+                    "business": conversation.business_profile_id,
+                },
             )
 
         final_messages = prompts.build_final_answer_messages(
@@ -484,6 +517,7 @@ class McpOrchestratorService:
         use_response_format = True
         if self.provider.__class__.__name__ == "DeepSeekToolsProvider":
             use_response_format = False
+        self._log_prompt("final", conversation=conversation, messages=final_messages)
         try:
             final_payload = self.provider.chat(
                 final_messages,
@@ -493,10 +527,12 @@ class McpOrchestratorService:
             )
         except PromptGenerationError as exc:
             if "response_format" in str(exc).lower():
-                logger.warning(
-                    "mcp.final_answer.response_format_unsupported provider=%s conversation=%s",
-                    self.provider.__class__.__name__,
-                    conversation.id,
+                structured_log(
+                    "mcp",
+                    "final_response_format_unsupported",
+                    {"provider": self.provider.__class__.__name__, "error": str(exc)},
+                    context={"conversation": conversation.id},
+                    level=logging.WARNING,
                 )
                 final_payload = self.provider.chat(
                     final_messages,
@@ -512,12 +548,18 @@ class McpOrchestratorService:
             trailing_stripped = trailing.strip()
             if trailing_stripped and is_investigative_filler(trailing_stripped):
                 stream_dropped.append(trailing_stripped)
-                logger.info(
-                    "mcp.sanitizer.dropped_sentence stage=%s conversation=%s business=%s text=%s",
-                    "streaming_answer",
-                    conversation.id,
-                    conversation.business_profile_id,
-                    trailing_stripped[:200],
+                structured_log(
+                    "mcp",
+                    "sanitizer.dropped_sentence",
+                    {
+                        "stage": "streaming_answer",
+                        "text": trailing_stripped[:200],
+                    },
+                    indent=1,
+                    context={
+                        "conversation": conversation.id,
+                        "business": conversation.business_profile_id,
+                    },
                 )
             else:
                 _emit_tokens(trailing)
@@ -864,6 +906,7 @@ class McpOrchestratorService:
             tool_trace=tuple(tool_context.tool_trace),
             coverage_ledger=tuple(tool_context.coverage_ledger),
         )
+        self._log_prompt("planner", conversation=conversation, messages=planner_messages)
         payload = self.provider.chat(planner_messages, tools=None, on_stream_delta=None)
         if not isinstance(payload, dict):
             return None
@@ -1064,15 +1107,63 @@ class McpOrchestratorService:
 
     @staticmethod
     def _log_turn_metrics(conversation: Conversation, context: ToolExecutionContext) -> None:
-        logger.info(
-            "mcp.turn.metrics business=%s conversation=%s tools=%s knowledge_reads=%s chunk_reads=%s chunk_pages=%s characters=%s",
-            conversation.business_profile_id,
-            conversation.id,
-            len(context.tool_trace),
-            len(context.knowledge_reads),
-            context.chunk_reads_used,
-            context.chunk_pages_used,
-            context.characters_used,
+        structured_log(
+            "mcp",
+            "turn.metrics",
+            {
+                "tools": len(context.tool_trace),
+                "knowledge_reads": len(context.knowledge_reads),
+                "chunk_reads": context.chunk_reads_used,
+                "chunk_pages": context.chunk_pages_used,
+                "characters": context.characters_used,
+            },
+            context={
+                "business": conversation.business_profile_id,
+                "conversation": conversation.id,
+            },
+        )
+
+    @staticmethod
+    def _message_previews(messages: Sequence[Mapping[str, object]], limit: int = 10) -> list[dict[str, object]]:
+        previews: list[dict[str, object]] = []
+        for entry in list(messages)[:limit]:
+            role = entry.get("role") or "system"
+            content = entry.get("content")
+            text = ""
+            if isinstance(content, list):
+                fragments: list[str] = []
+                for part in content:
+                    if isinstance(part, Mapping):
+                        snippet = part.get("text")
+                        if isinstance(snippet, str) and snippet.strip():
+                            fragments.append(snippet.strip())
+                text = " ".join(fragments)
+            elif isinstance(content, str):
+                text = content
+            previews.append(
+                {
+                    "role": role,
+                    "chars": len(text),
+                    "preview": text[:200],
+                }
+            )
+        return previews
+
+    def _log_prompt(
+        self,
+        stage: str,
+        *,
+        conversation: Conversation,
+        messages: Sequence[Mapping[str, object]],
+    ) -> None:
+        structured_log(
+            "mcp",
+            f"prompt.{stage}",
+            {"messages": self._message_previews(messages)},
+            context={
+                "conversation": conversation.id,
+                "business": conversation.business_profile_id,
+            },
         )
 
     def _business_override(self, business_profile, key: str, default: int | float) -> int | float:

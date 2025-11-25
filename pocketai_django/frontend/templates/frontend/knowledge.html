@@ -1155,6 +1155,21 @@ python manage.py process_knowledge_ingestion --watch</pre>
               <span aria-hidden="true">•</span>
               <span data-document-last-synced>Last synced —</span>
             </div>
+            {% if knowledge_business_id %}
+              <div class="mt-4 flex flex-wrap items-center gap-3">
+                <button
+                  type="button"
+                  class="inline-flex items-center gap-1 rounded-md border border-destructive/30 bg-destructive/10 px-3 py-1.5 text-xs font-semibold text-destructive transition hover:bg-destructive/15 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-destructive/40"
+                  data-document-delete
+                  disabled
+                  aria-disabled="true"
+                >
+                  Delete document
+                </button>
+                <p class="text-[11px] text-muted-foreground">Deleting removes this document from search immediately.</p>
+              </div>
+              <div class="hidden rounded-md border border-border/60 bg-muted/40 px-3 py-2 text-xs text-muted-foreground" data-document-delete-notice></div>
+            {% endif %}
           </section>
 
           <section class="px-6">
@@ -1669,6 +1684,9 @@ python manage.py process_knowledge_ingestion --watch</pre>
       return;
     }
 
+    var knowledgeBusinessId = "{{ knowledge_business_id|default:''|escapejs }}";
+    var csrfToken = getCookie("csrftoken");
+
     var overlay = document.querySelector("[data-document-overlay]");
     var closeTrigger = panel.querySelector("[data-document-close]");
     var retryButton = panel.querySelector("[data-document-retry]");
@@ -1705,6 +1723,39 @@ python manage.py process_knowledge_ingestion --watch</pre>
     var textSection = panel.querySelector("[data-document-text-section]");
     var textPreviewField = panel.querySelector("[data-document-text-preview]");
     var body = document.body;
+    var deleteButton = panel.querySelector("[data-document-delete]");
+    var deleteNotice = panel.querySelector("[data-document-delete-notice]");
+    var deleteButtonLabel = deleteButton ? (deleteButton.textContent || "Delete document").trim() || "Delete document" : "Delete document";
+
+    function clearDeleteNotice() {
+      if (!deleteNotice) return;
+      deleteNotice.classList.add("hidden");
+      deleteNotice.classList.remove("border-destructive/60", "bg-destructive/10", "text-destructive");
+      deleteNotice.textContent = "";
+    }
+
+    function showDeleteNotice(message) {
+      if (!deleteNotice) return;
+      deleteNotice.textContent = message;
+      deleteNotice.classList.remove("hidden");
+      deleteNotice.classList.add("border-destructive/60", "bg-destructive/10", "text-destructive");
+    }
+
+    function setDeleteButtonState(documentId) {
+      if (!deleteButton) return;
+      deleteButton.dataset.documentId = documentId || "";
+      clearDeleteNotice();
+      deleteButton.textContent = deleteButtonLabel;
+      if (!documentId || !knowledgeBusinessId) {
+        deleteButton.disabled = true;
+        deleteButton.setAttribute("aria-disabled", "true");
+      } else {
+        deleteButton.disabled = false;
+        deleteButton.removeAttribute("aria-disabled");
+      }
+    }
+
+    setDeleteButtonState("");
 
     var selectedClasses = ["ring-1", "ring-primary/60", "bg-primary/5"];
     var statusClassMap = {
@@ -1824,6 +1875,7 @@ python manage.py process_knowledge_ingestion --watch</pre>
         activeRow.setAttribute("aria-expanded", "false");
       }
       activeRow = null;
+      setDeleteButtonState("");
     }
 
     function closePanel(options) {
@@ -1887,6 +1939,7 @@ python manage.py process_knowledge_ingestion --watch</pre>
 
     function prefillFromRow(row) {
       var dataset = row.dataset || {};
+      setDeleteButtonState(dataset.documentId || "");
       currentDocumentTitle = dataset.documentName || "Document";
       if (fieldName) fieldName.textContent = currentDocumentTitle;
       if (fieldIdentifier) fieldIdentifier.textContent = dataset.documentIdentifier || "";
@@ -2108,7 +2161,6 @@ python manage.py process_knowledge_ingestion --watch</pre>
       var syncNowButton = sheetsModal.querySelector("[data-sheets-sync]");
       var commandBlock = sheetsModal.querySelector("[data-sheets-command]");
       var modalTitle = sheetsModal.querySelector("[data-sheets-title]");
-      var csrfToken = getCookie("csrftoken");
       var sheetsState = {
         available: [],
         selected: {},
@@ -2674,6 +2726,56 @@ python manage.py process_knowledge_ingestion --watch</pre>
         });
       }
     });
+
+    if (deleteButton) {
+      deleteButton.addEventListener("click", function () {
+        var documentId = deleteButton.dataset.documentId;
+        if (!documentId || !knowledgeBusinessId || deleteButton.disabled) {
+          return;
+        }
+        if (!window.confirm("Delete this document? This cannot be undone.")) {
+          return;
+        }
+        clearDeleteNotice();
+        deleteButton.disabled = true;
+        deleteButton.setAttribute("aria-disabled", "true");
+        deleteButton.textContent = "Deleting…";
+        var targetId = documentId;
+        var deleteUrl = "/api/knowledge/documents/" + encodeURIComponent(targetId) + "/";
+        if (knowledgeBusinessId) {
+          deleteUrl += "?business_id=" + encodeURIComponent(knowledgeBusinessId);
+        }
+        var headers = { Accept: "application/json" };
+        if (csrfToken) {
+          headers["X-CSRFToken"] = csrfToken;
+        }
+        fetch(deleteUrl, {
+          method: "DELETE",
+          headers: headers,
+          credentials: "same-origin",
+        })
+          .then(function (response) {
+            if (!response.ok) {
+              throw new Error("Failed to delete");
+            }
+            var rowToRemove = null;
+            if (activeRow && activeRow.getAttribute("data-document-id") === targetId) {
+              rowToRemove = activeRow;
+              clearSelection();
+            }
+            if (rowToRemove && rowToRemove.parentNode) {
+              rowToRemove.parentNode.removeChild(rowToRemove);
+            }
+            closePanel();
+            setDeleteButtonState("");
+          })
+          .catch(function (error) {
+            console.error("Failed to delete document", error);
+            showDeleteNotice("Unable to delete this document. Please try again.");
+            setDeleteButtonState(targetId);
+          });
+      });
+    }
 
     if (overlay) {
       overlay.addEventListener("click", function () {

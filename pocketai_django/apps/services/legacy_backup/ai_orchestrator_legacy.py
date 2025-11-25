@@ -58,6 +58,7 @@ from apps.services.embeddings import build_embedding_service, EmbeddingProviderE
 from apps.services.feature_flags import FeatureFlagService, FeatureState
 from apps.services.llm_provider import BaseLLMProvider, PromptGenerationError
 from apps.services.quality_monitor import QualityMonitor
+from apps.services.rag_logging import rag_log
 from core.metrics import latency_monitor
 
 try:  # optional dependency
@@ -67,6 +68,16 @@ except ImportError:  # pragma: no cover - dependency not installed by default
 
 
 logger = logging.getLogger(__name__)
+
+
+def _legacy_rag_log(
+    stage: str,
+    detail: Mapping | None = None,
+    *,
+    indent: int = 0,
+    context: Mapping[str, object] | None = None,
+) -> None:
+    rag_log(stage, detail=detail, indent=indent, context=context)
 
 
 class ActionType(str, Enum):
@@ -613,13 +624,15 @@ class KnowledgeSearchService:
             )
             )[:limit]
             diagnostics["path"] = "alias_exact"
-            logger.info(
-                "rag.alias.short_circuit business=%s query=%s hits=%s neighbor=%s request=%s",
-                business_profile.id,
-                traits.normalized,
-                len(snippets),
-                neighbor,
-                diagnostics["request_id"],
+            _legacy_rag_log(
+                "alias.short_circuit",
+                {
+                    "query": traits.normalized,
+                    "hits": len(snippets),
+                    "neighbor": neighbor,
+                },
+                indent=1,
+                context={"business": business_profile.id, "request": diagnostics["request_id"]},
             )
             status = "ok" if snippets else "not_found"
             diagnostics["total_duration_ms"] = self._duration_ms(overall_start)
@@ -700,13 +713,15 @@ class KnowledgeSearchService:
             fallback = tuple(self._fallback_snippets(business_profile=business_profile, limit=limit))
             status = "ok" if fallback else "not_found"
             diagnostics["reason"] = diagnostics.get("reason") or ("fallback_used" if fallback else "no_candidates")
-            logger.info(
-                "rag.search.empty business=%s query=%s fallback=%s reason=%s request=%s",
-                business_profile.id,
-                traits.normalized,
-                len(fallback),
-                diagnostics["reason"],
-                diagnostics["request_id"],
+            _legacy_rag_log(
+                "search.empty",
+                {
+                    "query": traits.normalized,
+                    "fallback": len(fallback),
+                    "reason": diagnostics.get("reason"),
+                },
+                indent=1,
+                context={"business": business_profile.id, "request": diagnostics.get("request_id")},
             )
             diagnostics["total_duration_ms"] = self._duration_ms(overall_start)
             result_obj = KnowledgeSearchResult(snippets=fallback, status=status, diagnostics=diagnostics)
@@ -833,13 +848,16 @@ class KnowledgeSearchService:
             diagnostics["stage"] = "alias_exact"
             diagnostics["duration_ms"] = int((time.perf_counter() - start) * 1000)
             latency_monitor.observe("rag.alias", diagnostics["duration_ms"], tags={"stage": diagnostics["stage"]})
-            logger.info(
-                "rag.alias.exact business=%s aliases=%s hits=%s cache_hit=%s cache_miss=%s",
-                business_profile.id,
-                normalized_aliases,
-                len(hits),
-                diagnostics["alias_cache_hit"],
-                diagnostics["alias_cache_miss"],
+            _legacy_rag_log(
+                "alias.exact",
+                {
+                    "aliases": normalized_aliases,
+                    "hits": len(hits),
+                    "cache_hit": diagnostics["alias_cache_hit"],
+                    "cache_miss": diagnostics["alias_cache_miss"],
+                },
+                indent=1,
+                context={"business": business_profile.id},
             )
             return AliasSearchResult(
                 hits=tuple(hits[:limit]),
@@ -856,12 +874,15 @@ class KnowledgeSearchService:
         diagnostics["alias_fts_hits"] = len(fuzzy_hits)
         diagnostics["duration_ms"] = int((time.perf_counter() - start) * 1000)
         latency_monitor.observe("rag.alias", diagnostics["duration_ms"], tags={"stage": diagnostics["stage"]})
-        logger.info(
-            "rag.alias.fts business=%s query=%s hits=%s threshold=%.2f",
-            business_profile.id,
-            traits.normalized,
-            len(fuzzy_hits),
-            self.alias_fts_threshold,
+        _legacy_rag_log(
+            "alias.fts",
+            {
+                "query": traits.normalized,
+                "hits": len(fuzzy_hits),
+                "threshold": f"{self.alias_fts_threshold:.2f}",
+            },
+            indent=1,
+            context={"business": business_profile.id},
         )
         return AliasSearchResult(
             hits=tuple(fuzzy_hits[: self.alias_fts_limit]),
@@ -932,13 +953,16 @@ class KnowledgeSearchService:
         diagnostics.update(vector_diag)
         diagnostics.update(self._vector_distance_stats(vector_hits))
         diagnostics["stage"] = "hybrid"
-        logger.info(
-            "rag.hybrid business=%s alias_stage=%s vector=%s fts=%s hybrid=%s",
-            business_profile.id,
-            len(alias_candidates or ()),
-            len(vector_hits),
-            len(lexical_hits),
-            feature_state.hybrid_search,
+        _legacy_rag_log(
+            "hybrid.summary",
+            {
+                "alias_stage": len(alias_candidates or ()),
+                "vector_candidates": len(vector_hits),
+                "fts_candidates": len(lexical_hits),
+                "hybrid_enabled": feature_state.hybrid_search,
+            },
+            indent=1,
+            context={"business": business_profile.id},
         )
         return HybridSearchResult(
             hits=tuple(reranked),
@@ -1259,14 +1283,17 @@ class KnowledgeSearchService:
             )
         duration_ms = int((time.perf_counter() - start) * 1000)
         if distances:
-            logger.info(
-                "rag.vector business=%s query_tokens=%s candidates=%s d_min=%.4f d_max=%.4f d_avg=%.4f",
-                business_id,
-                traits.token_count,
-                len(hits),
-                min(distances),
-                max(distances),
-                (sum(distances) / len(distances)) if distances else -1,
+            _legacy_rag_log(
+                "vector.candidates",
+                {
+                    "query_tokens": traits.token_count,
+                    "candidates": len(hits),
+                    "d_min": f"{min(distances):.4f}",
+                    "d_max": f"{max(distances):.4f}",
+                    "d_avg": f"{(sum(distances) / len(distances)):.4f}",
+                },
+                indent=1,
+                context={"business": business_id},
             )
         return hits, duration_ms
 
@@ -1988,15 +2015,17 @@ class KnowledgeSearchService:
         result: KnowledgeSearchResult,
     ) -> None:
         diagnostics = dict(result.diagnostics or {})
-        logger.info(
-            "rag.search.summary business=%s request=%s stage=%s status=%s snippets=%s reason=%s features=%s",
-            business_profile.id,
-            request_id,
-            diagnostics.get("path") or "unknown",
-            result.status,
-            len(result.snippets),
-            diagnostics.get("reason"),
-            diagnostics.get("feature_flags"),
+        _legacy_rag_log(
+            "search.summary",
+            {
+                "stage": diagnostics.get("path") or "unknown",
+                "status": result.status,
+                "snippets": len(result.snippets),
+                "reason": diagnostics.get("reason"),
+                "features": diagnostics.get("feature_flags"),
+            },
+            indent=1,
+            context={"business": business_profile.id, "request": request_id},
         )
 
     def load_contents(

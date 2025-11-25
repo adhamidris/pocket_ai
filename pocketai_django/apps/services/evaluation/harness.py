@@ -29,6 +29,7 @@ from apps.services.ai_orchestrator import KnowledgeSearchService, KnowledgeSnipp
 from apps.services.evaluation.datasets import GOLDEN_SETS, GoldenQuery, GoldenSet, GoldenFixture
 from apps.services.knowledge_ingestion import KnowledgeIngestionService, queue_ingestion_job
 from apps.services.quality_monitor import QualityMonitor
+from apps.services.rag_logging import rag_log
 
 logger = logging.getLogger(__name__)
 
@@ -209,7 +210,12 @@ class RAGEvaluationHarness:
             if job:
                 queued += 1
         if queued:
-            logger.info("rag.eval.ingest queued=%s business=%s", queued, business.id)
+            rag_log(
+                "eval.ingest",
+                {"queued": queued},
+                context={"business": business.id},
+                indent=1,
+            )
         processed = 0
         while True:
             result = self.ingestion_service.process_next_job()
@@ -217,7 +223,12 @@ class RAGEvaluationHarness:
                 break
             processed += 1
         if processed:
-            logger.info("rag.eval.ingest completed=%s business=%s", processed, business.id)
+            rag_log(
+                "eval.ingest_completed",
+                {"completed": processed},
+                context={"business": business.id},
+                indent=1,
+            )
 
     def _stage_fixture_upload(
         self,
@@ -530,7 +541,11 @@ class RAGEvaluationHarness:
         }
         destination.parent.mkdir(parents=True, exist_ok=True)
         destination.write_text(json.dumps(payload, indent=2))
-        logger.info("rag.eval.export path=%s", destination)
+        rag_log(
+            "eval.export",
+            {"path": destination},
+            indent=1,
+        )
 
     @staticmethod
     def _fixture_content_type(fixture: GoldenFixture) -> str:

@@ -6,8 +6,10 @@ import logging
 import threading
 import time
 import uuid
+from datetime import datetime
 from queue import Empty, Queue
 from typing import Any, Iterable
+from zoneinfo import ZoneInfo
 
 from django.conf import settings
 from django.db import close_old_connections
@@ -68,6 +70,81 @@ def _enqueue_status_events(queue, *, code: str, label: str | None = None, meta: 
             ctx_payload["meta"] = meta
         _queue_put(queue, ctx_payload)
     _queue_put(queue, payload)
+
+
+class PortalTraceLogger:
+    """Structured trace logger for portal LLM turns."""
+
+    def __init__(
+        self,
+        *,
+        conversation,
+        agent,
+        session_token: str,
+        orchestrator_mode: str,
+    ) -> None:
+        self.conversation_id = getattr(conversation, "id", None)
+        self.business_id = getattr(getattr(conversation, "business_profile", None), "id", None)
+        self.business_slug = getattr(getattr(conversation, "business_profile", None), "slug", None)
+        self.agent_slug = getattr(agent, "slug", None)
+        self.session_token = session_token
+        self.orchestrator_mode = orchestrator_mode
+        tz_name = getattr(settings, "PORTAL_TRACE_TIMEZONE", "Africa/Cairo")
+        try:
+            self._timezone = ZoneInfo(tz_name)
+        except Exception:  # pragma: no cover - fallback for missing tz database
+            self._timezone = ZoneInfo("UTC")
+            tz_name = "UTC"
+        self._timezone_label = tz_name
+
+    def _timestamp(self) -> str:
+        return datetime.now(self._timezone).strftime("%Y-%m-%d %H:%M:%S %Z")
+
+    def _stringify(self, value: Any) -> str:
+        if value is None:
+            return ""
+        if isinstance(value, str):
+            return value
+        try:
+            return json.dumps(value, ensure_ascii=False)
+        except Exception:
+            return str(value)
+
+    def format_data(self, value: Any) -> str:
+        return self._stringify(value)
+
+    def log(self, title: str, detail: str | dict | None = None, *, indent: int = 0, extra: Any | None = None) -> None:
+        base_parts = [
+            f"[{self._timestamp()}]",
+            f"conversation={self.conversation_id}",
+            f"business={self.business_id}",
+            f"agent={self.agent_slug}",
+            f"orchestrator={self.orchestrator_mode}",
+        ]
+        header = "portal.trace " + " ".join(part for part in base_parts if part)
+        indent_prefix = "    " * max(indent, 0)
+        lines: list[str] = []
+        lines.append(f"{indent_prefix}• {title}")
+        if detail:
+            detail_text = self._stringify(detail)
+            for payload_line in detail_text.splitlines():
+                lines.append(f"{indent_prefix}    {payload_line}")
+        if extra:
+            extra_text = self._stringify(extra)
+            for payload_line in extra_text.splitlines():
+                lines.append(f"{indent_prefix}    extra: {payload_line}")
+        logger.info("%s\n%s", header, "\n".join(lines))
+
+    def log_status(self, code: str, *, label: str | None = None, meta: dict | None = None, indent: int = 2) -> None:
+        payload: dict[str, Any] = {"code": code}
+        if label:
+            payload["label"] = label
+        if meta:
+            payload["meta"] = meta
+        self.log("status", payload, indent=indent)
+
+    def log_error(self, title: str, error: Exception | str, *, indent: int = 1) -> None:
+        self.log(f"error.{title}", str(error), indent=indent)
 
 
 def _service() -> ChatPortalService:
@@ -340,8 +417,9 @@ def stream_send(request: HttpRequest) -> StreamingHttpResponse:
     body = (payload.get("body") or "").strip()
     metadata = payload.get("metadata") or {}
 
+    customer_message: PortalMessage | None = None
     try:
-        service.append_message(
+        customer_message = service.append_message(
             session_token=session_token,
             sender=ConversationSender.CUSTOMER,
             body=body,
@@ -362,21 +440,45 @@ def stream_send(request: HttpRequest) -> StreamingHttpResponse:
         return StreamingHttpResponse(status=500)
 
     use_mcp = _business_prefers_mcp(conversation.business_profile)
-    logger.info(
-        "chat_portal.stream_send orchestrator=%s conversation=%s business=%s",
-        "mcp" if use_mcp else "legacy",
-        conversation.id,
-        getattr(conversation.business_profile, "id", None),
+    trace_logger = PortalTraceLogger(
+        conversation=conversation,
+        agent=agent,
+        session_token=session_token,
+        orchestrator_mode="mcp" if use_mcp else "legacy",
     )
+    trace_logger.log("request.received", detail=f"body={body}")
+    if metadata:
+        trace_logger.log("request.metadata", detail=trace_logger.format_data(metadata), indent=1)
+    if customer_message:
+        trace_logger.log("customer.message_recorded", detail=f"id={customer_message.id}", indent=1)
+    def _provider_label(provider_obj: Any) -> str:
+        if provider_obj is None:
+            return "unknown"
+        for attr in ("name", "label", "model_name"):
+            value = getattr(provider_obj, attr, None)
+            if isinstance(value, str) and value:
+                return value
+        return provider_obj.__class__.__name__
+
     if use_mcp:
         from apps.services.llm_provider import load_mcp_provider
         from apps.services.mcp import McpOrchestratorService
 
         provider = load_mcp_provider()
         orchestrator = McpOrchestratorService(agent=agent, provider=provider)
+        trace_logger.log(
+            "orchestrator.selected",
+            detail=f"mode=mcp provider={_provider_label(provider)}",
+            indent=1,
+        )
     else:
         provider = load_default_provider()
         orchestrator = AiOrchestratorService(agent=agent, provider=provider)
+        trace_logger.log(
+            "orchestrator.selected",
+            detail=f"mode=legacy provider={_provider_label(provider)}",
+            indent=1,
+        )
     dispatcher = ActionDispatcher(agent=agent)
 
     def serialize_action_results(results):
@@ -464,12 +566,14 @@ def stream_send(request: HttpRequest) -> StreamingHttpResponse:
                 meta = raw_meta
         if not code:
             return
+        trace_logger.log_status(code, label=label, meta=meta)
         _enqueue_status_events(stream_queue, code=code, label=label, meta=meta)
 
     def signal_stream_complete() -> None:
         if stream_complete.is_set():
             return
         stream_complete.set()
+        trace_logger.log("stream.completed", indent=1)
         stream_queue.put({"type": "status", "state": "complete", "label": ""})
         logger.debug("Stream completion signaled for conversation %s", conversation.id)
         stream_queue.put(stream_sentinel)
@@ -480,6 +584,7 @@ def stream_send(request: HttpRequest) -> StreamingHttpResponse:
 
     def finalize_stream_context(stream_context: StreamingTurnContext) -> None:
         close_old_connections()
+        trace_logger.log("finalize.started", indent=1)
         try:
             # Planner now runs asynchronously using the streamed answer/context.
             plan = orchestrator.run_planner_only(
@@ -492,6 +597,11 @@ def stream_send(request: HttpRequest) -> StreamingHttpResponse:
                 # Fallback to the streamed response without actions/extractions.
                 plan = orchestrator.finalize_turn(stream_context)
             plan_holder["plan"] = plan
+            trace_logger.log(
+                "planner.completed",
+                detail=f"planned_actions={len(plan.planned_actions)} extractions={len(plan.extractions)}",
+                indent=1,
+            )
             persist_text = plan.response_text or ""
             if not persist_text:
                 streamed_text = "".join(stream_context.streamed_chunks).strip() if stream_context.streamed_chunks else ""
@@ -540,12 +650,25 @@ def stream_send(request: HttpRequest) -> StreamingHttpResponse:
                 ai_message.id,
                 session_state.status,
             )
+            extra_payload: dict[str, Any] = {
+                "citations": [snippet.title for snippet in plan.citations],
+                "pending_actions": len(plan.planned_actions),
+            }
+            if answer_confidence is not None:
+                extra_payload["answer_confidence"] = answer_confidence
+            trace_logger.log(
+                "response.persisted",
+                detail=f"message_id={ai_message.id}",
+                indent=1,
+                extra=extra_payload,
+            )
             plan_holder["message_metadata"] = message_metadata
             plan_holder["final_payload"] = final_payload
             plan_holder["ai_message_id"] = ai_message.id
 
             def run_post_actions() -> None:
                 close_old_connections()
+                trace_logger.log("post_actions.started", indent=2)
                 try:
                     action_results = []
                     if plan.planned_actions:
@@ -554,6 +677,19 @@ def stream_send(request: HttpRequest) -> StreamingHttpResponse:
                             "portal action results conversation=%s results=%s",
                             conversation.id,
                             [
+                                {
+                                    "action": result.action.value,
+                                    "status": result.status,
+                                    "error": result.error,
+                                }
+                                for result in action_results
+                            ],
+                        )
+                        trace_logger.log(
+                            "actions.executed",
+                            detail=f"count={len(action_results)}",
+                            indent=2,
+                            extra=[
                                 {
                                     "action": result.action.value,
                                     "status": result.status,
@@ -571,6 +707,11 @@ def stream_send(request: HttpRequest) -> StreamingHttpResponse:
                             "portal extractions stored conversation=%s count=%s",
                             conversation.id,
                             len(plan.extractions),
+                        )
+                        trace_logger.log(
+                            "extractions.stored",
+                            detail=f"count={len(plan.extractions)}",
+                            indent=2,
                         )
                     if plan.planned_actions:
                         serialized_actions = serialize_action_results(action_results)
@@ -595,9 +736,10 @@ def stream_send(request: HttpRequest) -> StreamingHttpResponse:
                                 "message_id": str(ai_message.id),
                                 "actions": [],
                             }
-                        )
+                    )
                 except Exception as exc:  # pragma: no cover - defensive
                     logger.exception("portal post-processing failed: %s", exc)
+                    trace_logger.log_error("post_actions", exc, indent=2)
                     actions_queue.put(
                         {
                             "type": "actionsError",
@@ -615,6 +757,7 @@ def stream_send(request: HttpRequest) -> StreamingHttpResponse:
                 actions_queue.put(actions_sentinel)
         except Exception as exc:  # pragma: no cover - defensive
             logger.exception("Orchestrator finalize failed: %s", exc)
+            trace_logger.log_error("finalize", exc, indent=1)
             plan_holder["final_error"] = str(exc)
             actions_queue.put(actions_sentinel)
         finally:
@@ -624,6 +767,7 @@ def stream_send(request: HttpRequest) -> StreamingHttpResponse:
     def orchestrate() -> None:
         close_old_connections()
         try:
+            trace_logger.log("orchestrator.turn.start", indent=1)
             context = orchestrator.stream_turn(
                 conversation=conversation,
                 user_message=body,
@@ -636,9 +780,11 @@ def stream_send(request: HttpRequest) -> StreamingHttpResponse:
             threading.Thread(target=finalize_stream_context, args=(context,), daemon=True).start()
             # Streaming is complete; signal immediately so SSE can finish without waiting for planner/actions.
             signal_stream_complete()
+            trace_logger.log("orchestrator.turn.complete", indent=1)
         except Exception as exc:  # pragma: no cover - defensive
             logger.exception("Orchestrator turn failed: %s", exc)
             plan_holder["error"] = str(exc)
+            trace_logger.log_error("orchestrator.turn", exc, indent=1)
             signal_stream_complete()
             finalize_queue.put(finalize_sentinel)
             actions_queue.put(actions_sentinel)
@@ -752,6 +898,11 @@ def stream_send(request: HttpRequest) -> StreamingHttpResponse:
             [action.action.value for action in plan.planned_actions],
             [extraction.extraction_type.value for extraction in plan.extractions],
         )
+        trace_logger.log(
+            "plan.ready",
+            detail=f"actions={len(plan.planned_actions)} extractions={len(plan.extractions)}",
+            indent=1,
+        )
 
         final_payload = plan_holder.get("final_payload")
         if not final_payload:
@@ -778,6 +929,11 @@ def stream_send(request: HttpRequest) -> StreamingHttpResponse:
                 final_payload["text"] = effective_text
 
         final_payload["pending"] = False
+        trace_logger.log(
+            "response.dispatched",
+            detail=f"message_id={final_payload.get('message_id')}",
+            indent=1,
+        )
         yield "event: turnPersisted\n"
         yield f"data: {json.dumps(final_payload)}\n\n"
 
@@ -791,6 +947,11 @@ def stream_send(request: HttpRequest) -> StreamingHttpResponse:
                     "actions": post_event.get("actions", []),
                     "label": "Follow-up tasks completed.",
                 }
+                trace_logger.log(
+                    "actions.completed",
+                    detail=f"message_id={payload['message_id']} count={len(payload['actions'])}",
+                    indent=2,
+                )
                 yield "event: actionsComplete\n"
                 yield f"data: {json.dumps(payload)}\n\n"
             elif post_event.get("type") == "actionsError":
@@ -798,6 +959,11 @@ def stream_send(request: HttpRequest) -> StreamingHttpResponse:
                     "message_id": post_event.get("message_id"),
                     "error": post_event.get("error", "Background workflow failed."),
                 }
+                trace_logger.log_error(
+                    "actions",
+                    payload.get("error") or "actions failed",
+                    indent=2,
+                )
                 yield "event: actionsError\n"
                 yield f"data: {json.dumps(payload)}\n\n"
 

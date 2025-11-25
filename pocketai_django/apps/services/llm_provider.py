@@ -23,6 +23,7 @@ except Exception:  # pragma: no cover - optional
     tiktoken = None
 
 from apps.services.ai_prompt_builder import PromptBundle
+from apps.services.rag_logging import structured_log
 
 # Optional flag to enable token estimation logs (guarded by DEBUG level as well).
 LOG_TOKEN_ESTIMATE = os.getenv("LLM_LOG_TOKEN_ESTIMATE", "").strip().lower() in {"1", "true", "yes"}
@@ -99,7 +100,17 @@ def _log_usage(label: str, model: str | None, usage: Mapping[str, object] | None
     prompt = usage.get("prompt_tokens")
     completion = usage.get("completion_tokens")
     total = usage.get("total_tokens")
-    logger.info("%s usage model=%s prompt=%s completion=%s total=%s", label, model, prompt, completion, total)
+    structured_log(
+        "llm",
+        "usage",
+        {
+            "provider": label,
+            "model": model,
+            "prompt_tokens": prompt,
+            "completion_tokens": completion,
+            "total_tokens": total,
+        },
+    )
 
 
 class PromptGenerationError(RuntimeError):
@@ -287,7 +298,12 @@ class OpenAIChatProvider:
                 raise PromptGenerationError("OpenAI response was not valid JSON.") from exc
 
             _log_usage("OpenAIChat", self.model, data.get("usage") if isinstance(data, Mapping) else None)
-            logger.info("LLM raw response: %s", raw_body)
+            structured_log(
+                "llm",
+                "raw_response",
+                raw_body,
+                context={"provider": "OpenAIChat", "model": self.model},
+            )
 
             content = self._extract_content(data)
         try:
@@ -470,7 +486,12 @@ class DeepSeekChatProvider(OpenAIChatProvider):
         try:
             return json.loads(content)
         except json.JSONDecodeError:
-            logger.warning("DeepSeek returned non-JSON content; using text fallback.")
+            structured_log(
+                "llm",
+                "warning",
+                "DeepSeek returned non-JSON content; using text fallback.",
+                level=logging.WARNING,
+            )
             return {
                 "response_text": content,
                 "actions": [],
@@ -495,7 +516,8 @@ class DeepSeekChatProvider(OpenAIChatProvider):
                 formatted = json.dumps(payload, indent=2, ensure_ascii=False)
         except (TypeError, ValueError):
             formatted = str(payload)
-        logger.info("%s:\n%s", label, formatted)
+        stage = label.lower().replace(" ", "_")
+        structured_log("llm", stage, formatted)
 
     def _system_prompt(self, bundle: PromptBundle) -> str:
         schema_hint = (
@@ -985,13 +1007,15 @@ def _consume_chat_completion_stream(stream, on_stream_delta: Callable[[str], Non
 
     elapsed_ms = int((time.monotonic() - start_first) * 1000)
     first_ms = int((first_delta_at - start_first) * 1000) if first_delta_at else None
-    if logger.isEnabledFor(logging.INFO):
-        logger.info(
-            "llm.stream assembled finish_reason=%s elapsed_ms=%s first_delta_ms=%s",
-            finish_reason,
-            elapsed_ms,
-            first_ms,
-        )
+    structured_log(
+        "llm",
+        "stream.assembled",
+        {
+            "finish_reason": finish_reason,
+            "elapsed_ms": elapsed_ms,
+            "first_delta_ms": first_ms,
+        },
+    )
 
     return {"choices": [{"message": message}]}
 
@@ -1065,7 +1089,12 @@ class OpenAIToolsProvider(BaseMcpProvider):
             try:
                 payload["max_tokens"] = max(1, int(max_tokens_env))
             except (TypeError, ValueError):
-                logger.warning("Invalid OPENAI_MAX_TOKENS value: %s", max_tokens_env)
+                structured_log(
+                    "llm",
+                    "warning",
+                    f"Invalid OPENAI_MAX_TOKENS value: {max_tokens_env}",
+                    level=logging.WARNING,
+                )
 
         # Log a compact summary at INFO; heavy details only when enabled.
         if LOG_TOKEN_ESTIMATE and logger.isEnabledFor(logging.DEBUG):
@@ -1082,11 +1111,16 @@ class OpenAIToolsProvider(BaseMcpProvider):
             except Exception:  # pragma: no cover - best effort
                 logger.debug("Failed to estimate tokens for MCP request.")
         else:
-            logger.info(
-                "MCP LLM request model=%s tools=%s messages=%s",
-                self.model,
-                [t.get("function", {}).get("name") for t in (tools or [])],
-                len(payload.get("messages") or []),
+            structured_log(
+                "llm",
+                "request",
+                {
+                    "provider": "OpenAITools",
+                    "model": self.model,
+                    "tools": [t.get("function", {}).get("name") for t in (tools or [])],
+                    "message_count": len(payload.get("messages") or []),
+                    "streaming": streaming,
+                },
             )
         if LOG_DEBUG_PAYLOADS or logger.isEnabledFor(logging.DEBUG):
             try:
@@ -1171,7 +1205,11 @@ class OpenAIToolsProvider(BaseMcpProvider):
                         content = raw_content
                 out_tokens = _estimate_text_tokens(content, self.model) if content else 0
                 if out_tokens:
-                    logger.info("MCP LLM stream response model=%s tokens≈%s", self.model, out_tokens)
+                    structured_log(
+                        "llm",
+                        "stream.tokens",
+                        {"model": self.model, "tokens": out_tokens},
+                    )
             except Exception:
                 logger.debug("Failed to log streaming token estimate.")
             return data
@@ -1211,12 +1249,16 @@ class OpenAIToolsProvider(BaseMcpProvider):
 
         response_text = str(parsed.get("response_text") or "").strip()
 
-        if elapsed_ms is not None and logger.isEnabledFor(logging.INFO):
-            logger.info(
-                "llm.latency provider=openai_tools model=%s streaming=%s elapsed_ms=%s",
-                self.model,
-                streaming,
-                elapsed_ms,
+        if elapsed_ms is not None:
+            structured_log(
+                "llm",
+                "latency",
+                {
+                    "provider": "openai_tools",
+                    "model": self.model,
+                    "streaming": streaming,
+                    "elapsed_ms": elapsed_ms,
+                },
             )
 
         return {
@@ -1306,11 +1348,16 @@ class DeepSeekToolsProvider(BaseMcpProvider):
             except Exception:  # pragma: no cover - best effort
                 logger.debug("Failed to estimate tokens for DeepSeek MCP request.")
         else:
-            logger.info(
-                "DeepSeek MCP request model=%s tools=%s messages=%s",
-                self.model,
-                [t.get("function", {}).get("name") for t in (tools or [])],
-                len(payload.get("messages") or []),
+            structured_log(
+                "llm",
+                "request",
+                {
+                    "provider": "DeepSeekTools",
+                    "model": self.model,
+                    "tools": [t.get("function", {}).get("name") for t in (tools or [])],
+                    "message_count": len(payload.get("messages") or []),
+                    "streaming": streaming,
+                },
             )
         if LOG_DEBUG_PAYLOADS or logger.isEnabledFor(logging.DEBUG):
             try:
@@ -1395,8 +1442,11 @@ class DeepSeekToolsProvider(BaseMcpProvider):
                             content = message.get("content")
                             has_text = isinstance(content, str) and bool(content.strip())
                             if not has_text and not tool_calls:
-                                logger.warning(
-                                    "DeepSeek MCP stream produced empty content; retrying once with non-stream completion."
+                                structured_log(
+                                    "llm",
+                                    "warning",
+                                    "DeepSeek MCP stream produced empty content; retrying once with non-stream completion.",
+                                    level=logging.WARNING,
                                 )
                                 # Build a non-streaming payload copy.
                                 retry_payload = dict(payload)
@@ -1511,12 +1561,16 @@ class DeepSeekToolsProvider(BaseMcpProvider):
 
         response_text = str(parsed.get("response_text") or "").strip()
 
-        if elapsed_ms is not None and logger.isEnabledFor(logging.INFO):
-            logger.info(
-                "llm.latency provider=deepseek_tools model=%s streaming=%s elapsed_ms=%s",
-                self.model,
-                streaming,
-                elapsed_ms,
+        if elapsed_ms is not None:
+            structured_log(
+                "llm",
+                "latency",
+                {
+                    "provider": "deepseek_tools",
+                    "model": self.model,
+                    "streaming": streaming,
+                    "elapsed_ms": elapsed_ms,
+                },
             )
 
         return {
@@ -1541,7 +1595,12 @@ def load_mcp_provider() -> BaseMcpProvider | None:
         try:
             return cls()
         except PromptGenerationError as exc:
-            logger.warning("%s provider disabled: %s", cls.__name__, exc)
+            structured_log(
+                "llm",
+                "provider.disabled",
+                {"provider": cls.__name__, "error": str(exc)},
+                level=logging.WARNING,
+            )
             return None
 
     order: list[type[BaseMcpProvider]] = []
@@ -1572,7 +1631,12 @@ def load_default_provider() -> BaseLLMProvider | None:
         try:
             return cls()
         except PromptGenerationError as exc:
-            logger.warning("%s provider disabled: %s", cls.__name__, exc)
+            structured_log(
+                "llm",
+                "provider.disabled",
+                {"provider": cls.__name__, "error": str(exc)},
+                level=logging.WARNING,
+            )
             return None
 
     order: list[type] = []

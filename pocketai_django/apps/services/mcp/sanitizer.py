@@ -11,6 +11,8 @@ import re
 import logging
 from typing import Iterable, Tuple
 
+from apps.services.rag_logging import structured_log
+
 logger = logging.getLogger(__name__)
 
 
@@ -33,12 +35,14 @@ def sanitize_with_diagnostics(
         business_id = getattr(getattr(conversation, "business_profile", None), "id", None) if conversation else None
         conversation_id = getattr(conversation, "id", None) if conversation else None
         for sentence in dropped:
-            logger.info(
-                "mcp.sanitizer.dropped_sentence stage=%s conversation=%s business=%s text=%s",
-                stage,
-                conversation_id,
-                business_id,
-                sentence[:200],
+            structured_log(
+                "mcp",
+                "sanitizer.dropped_sentence",
+                {
+                    "stage": stage,
+                    "text": sentence[:200],
+                },
+                context={"conversation": conversation_id, "business": business_id},
             )
     return cleaned, dropped
 
