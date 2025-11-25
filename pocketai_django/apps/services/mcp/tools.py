@@ -21,7 +21,7 @@ from typing import Any, Callable, Mapping, Sequence
 
 from django.db import models
 
-from apps.accounts.models import KnowledgeStatus, KnowledgeUpload, KnowledgeUploadChunk
+from apps.accounts.models import KnowledgeStatus, KnowledgeUpload, KnowledgeUploadChunk, KnowledgeUploadTableRow
 from apps.conversations.models import Conversation
 from apps.services.ai_orchestrator import (
     ActionType,
@@ -114,6 +114,54 @@ TOOL_DEFINITIONS: tuple[Mapping[str, object], ...] = (
                 "maximum": 3,
                 "description": "Number of neighbor chunks to stitch around the requested page.",
                 "default": 1,
+            },
+        },
+        required=("document_id",),
+    ),
+    _function_schema(
+        name="table_aggregate",
+        description="Aggregate numeric values from a structured table (e.g., sum all vendor units for a product).",
+        properties={
+            "document_id": {
+                "type": "string",
+                "description": "UUID of the upload returned by search_knowledge/read_document.",
+            },
+            "query": {
+                "type": "string",
+                "description": "Optional text snippet to match rows (case-insensitive substring).",
+            },
+            "match_column": {
+                "type": "string",
+                "description": "Column name to check when filtering rows (normalized, case-insensitive).",
+            },
+            "match_value": {
+                "type": "string",
+                "description": "Expected value for match_column (substring match).",
+            },
+            "value_column": {
+                "type": "string",
+                "description": "Column to sum when mode=column_sum. Defaults to row totals.",
+            },
+            "mode": {
+                "type": "string",
+                "enum": ["row_total", "column_sum"],
+                "description": "row_total sums every numeric cell in the row; column_sum sums a single column.",
+                "default": "row_total",
+            },
+            "table_order_index": {
+                "type": "integer",
+                "description": "Optional table index within the upload (1-based).",
+            },
+            "sheet_name": {
+                "type": "string",
+                "description": "Optional sheet name/section heading to scope the aggregation.",
+            },
+            "max_rows": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 200,
+                "description": "Maximum number of matching rows to include in the response.",
+                "default": 50,
             },
         },
         required=("document_id",),
@@ -371,13 +419,54 @@ def _query_intent(query: str) -> dict[str, object]:
         "table": table_hit,
     }
 
-def _detect_full_page_intent(conversation: Conversation, requested_mode: str | None) -> bool:
+
+def _match_knowledge_entry(
+    context: ToolExecutionContext | None,
+    identifiers: Sequence[str],
+) -> Mapping[str, object] | None:
     """
-    Heuristic to decide whether to prefer a full-page read when no mode was specified.
-    Looks for numbers, rates, pricing, or table-like requests in the latest customer turn.
+    Locate snippet metadata associated with the requested chunk/upload.
     """
+
+    if not context or not identifiers:
+        return None
+    normalized = {str(value).strip().lower() for value in identifiers if value}
+    if not normalized:
+        return None
+    for entry in getattr(context, "knowledge_results", []):
+        if not isinstance(entry, Mapping):
+            continue
+        candidate_ids = {
+            str(entry.get("chunk_id") or "").strip().lower(),
+            str(entry.get("upload_id") or "").strip().lower(),
+            str(entry.get("id") or "").strip().lower(),
+        }
+        if normalized & {cid for cid in candidate_ids if cid}:
+            return entry
+    return None
+
+
+def _detect_full_page_intent(
+    conversation: Conversation,
+    requested_mode: str | None,
+    *,
+    document_entry: Mapping[str, object] | None = None,
+    upload: KnowledgeUpload | None = None,
+) -> bool:
+    """
+    Decide whether to allow a full-page read. Prefers excerpts unless:
+    - The visitor explicitly asks for a page/section.
+    - The referenced table is small (few rows/columns) and not truncated.
+    """
+
+    def _coerce_int(value: object) -> int:
+        try:
+            return int(value)
+        except (TypeError, ValueError):
+            return 0
+
     if requested_mode:
-        return requested_mode == "full_page"
+        return requested_mode.strip().lower() == "full_page"
 
     latest = (
         conversation.messages.order_by("-sent_at", "-created_at")
@@ -385,24 +474,33 @@ def _detect_full_page_intent(conversation: Conversation, requested_mode: str | N
     )
     body = latest.body if latest else ""
     text = (body or "").lower()
-    has_number = any(ch.isdigit() for ch in text) or "%" in text
-    has_currency = any(sym in text for sym in ("$", "€", "£", "sar", "aed"))
-    table_keywords = (
-        "table",
+    explicit_keywords = (
+        "full page",
+        "entire page",
+        "whole page",
+        "page ",
+        "صفحة",
         "sheet",
-        "spreadsheet",
-        "grid",
-        "csv",
-        "column",
-        "row",
-        "rate",
-        "interest",
-        "fee",
-        "limit",
-        "pricing",
+        "section",
+        "document",
+        "pdf",
     )
-    table_hit = any(keyword in text for keyword in table_keywords)
-    return has_number or has_currency or table_hit
+    if any(keyword in text for keyword in explicit_keywords):
+        return True
+
+    diag = document_entry.get("source_diagnostics") if isinstance(document_entry, Mapping) else {}
+    truncated = bool(diag.get("table_truncated"))
+    total_rows = _coerce_int(diag.get("table_total_rows") or diag.get("table_indexed_rows"))
+    if not total_rows and upload:
+        metadata = upload.ingestion_metadata if isinstance(getattr(upload, "ingestion_metadata", None), Mapping) else {}
+        table_stats = metadata.get("table_stats") if isinstance(metadata, Mapping) else {}
+        total_rows = _coerce_int(table_stats.get("total_rows"))
+        truncated = truncated or bool(table_stats.get("partial_index"))
+
+    if total_rows and total_rows <= 20 and not truncated:
+        return True
+
+    return False
 
 
 def _budget_allows_full_page(
@@ -456,6 +554,57 @@ def _estimate_tokens(characters: int) -> int:
     return max(1, math.ceil(characters / 4))
 
 
+TOTAL_COLUMN_KEYWORDS = (
+    "total",
+    "sum",
+    "overall",
+    "اجمالي",
+    "إجمالي",
+    "الاجمالي",
+    "المجموع",
+)
+
+
+def _normalize_column_name(value: object) -> str:
+    if not isinstance(value, str):
+        return ""
+    return re.sub(r"\s+", " ", value.strip().lower())
+
+
+def _parse_numeric_value(value: str | None) -> float | None:
+    if not isinstance(value, str):
+        return None
+    text = value.strip()
+    if not text:
+        return None
+    cleaned = re.sub(r"[^\d\-,\.]", "", text)
+    cleaned = cleaned.replace(",", "")
+    if not cleaned or cleaned in {"-", ".", "-.", "-"}:
+        return None
+    try:
+        return float(cleaned)
+    except ValueError:
+        return None
+
+
+def _format_numeric_display(value: float | None, raw: str | None = None) -> str | None:
+    if isinstance(raw, str) and raw.strip():
+        return raw.strip()
+    if value is None:
+        return None
+    rounded = round(value)
+    if abs(value - rounded) < 1e-6:
+        return f"{rounded:,}"
+    return f"{value:,.2f}".rstrip("0").rstrip(".")
+
+
+def _is_total_column_label(value: object) -> bool:
+    normalized = _normalize_column_name(value)
+    if not normalized:
+        return False
+    return any(keyword in normalized for keyword in TOTAL_COLUMN_KEYWORDS)
+
+
 def _snippet_payload_metrics(snippets: Sequence[Mapping[str, object]]) -> dict[str, object]:
     """
     Compute lightweight telemetry for snippet payloads so we can benchmark prompt costs.
@@ -466,6 +615,7 @@ def _snippet_payload_metrics(snippets: Sequence[Mapping[str, object]]) -> dict[s
     upload_count = 0
     table_rich = 0
     issue_rich = 0
+    truncated_tables = 0
     read_state_counter: Counter[str] = Counter()
 
     for entry in snippets:
@@ -489,6 +639,9 @@ def _snippet_payload_metrics(snippets: Sequence[Mapping[str, object]]) -> dict[s
             table_rich += 1
         if issue_count:
             issue_rich += 1
+        diag = entry.get("source_diagnostics") if isinstance(entry.get("source_diagnostics"), Mapping) else None
+        if diag and diag.get("table_truncated"):
+            truncated_tables += 1
         read_state = str(entry.get("read_state") or "summary")
         read_state_counter[read_state] += 1
 
@@ -500,6 +653,7 @@ def _snippet_payload_metrics(snippets: Sequence[Mapping[str, object]]) -> dict[s
         "token_estimate": _estimate_tokens(total_chars),
         "table_snippet_count": table_rich,
         "issue_snippet_count": issue_rich,
+        "table_truncated_count": truncated_tables,
         "read_state_breakdown": dict(read_state_counter),
     }
     return metrics
@@ -613,7 +767,7 @@ def _maybe_throttle_full_page(
     if limit is not None and limit > 0:
         remaining = max(0, limit - context.characters_used)
         inline_cap = service.inline_char_limit_for_business(business_profile)
-        threshold = max(1000, int(inline_cap * 0.5))
+        threshold = max(1200, int(inline_cap * 0.75))
         if remaining < threshold:
             return {
                 "reason": "char_budget_low",
@@ -622,7 +776,7 @@ def _maybe_throttle_full_page(
             }
     page_limit = context.max_chunk_pages_per_turn
     if page_limit is not None and page_limit > 0:
-        throttle_floor = max(1, int(page_limit * 0.7))
+        throttle_floor = max(1, int(page_limit * 0.5))
         if context.chunk_pages_used > throttle_floor:
             return {
                 "reason": "page_window_throttle",
@@ -715,6 +869,18 @@ def _search_knowledge_handler(
 
     intent_info = _query_intent(query)
     intent = intent_info.get("intent")
+    normalized_query = query.lower()
+    aggregation_keywords = (
+        "total",
+        "sum",
+        "overall",
+        "aggregate",
+        "اجمالي",
+        "إجمالي",
+        "الاجمالي",
+        "المجموع",
+    )
+    aggregation_query = any(keyword in normalized_query for keyword in aggregation_keywords)
     raw_limit = arguments.get("limit")
     limit: int | None
     try:
@@ -859,6 +1025,8 @@ def _search_knowledge_handler(
             read_required = True
         elif all((p.get("read_state") or "summary") in {"summary", "preview"} for p in snippet_payloads):
             read_required = True
+    if intent == "table" and aggregation_query:
+        read_required = True
     # Attach read hints for table/identifier paths so the model can issue a precise read.
     for payload in snippet_payloads:
         chunk_id = payload.get("chunk_id") or payload.get("id")
@@ -949,7 +1117,7 @@ def _read_document_handler(
         id=identifier,
         business_profile=business,
         upload__status=KnowledgeStatus.ACTIVE,
-    ).first()
+    ).select_related("upload").first()
     upload_record = None
     gating_upload_id = None
     if chunk_record:
@@ -1057,8 +1225,16 @@ def _read_document_handler(
     service = _knowledge_service()
     throttle_notice: dict[str, object] | None = None
 
+    upload_source = chunk_record.upload if chunk_record else upload_record
+    knowledge_entry = _match_knowledge_entry(context, [str(identifier), str(gating_upload_id)])
     if mode is None:
-        mode = "full_page" if (_detect_full_page_intent(conversation, None) and _budget_allows_full_page(context, business_profile=business, service=service)) else "excerpt"
+        prefer_full_page = _detect_full_page_intent(
+            conversation,
+            None,
+            document_entry=knowledge_entry,
+            upload=upload_source,
+        )
+        mode = "full_page" if (prefer_full_page and _budget_allows_full_page(context, business_profile=business, service=service)) else "excerpt"
 
     downgraded = False
     if mode == "full_page":
@@ -1181,6 +1357,219 @@ def _read_document_handler(
         "knowledge_reads": knowledge_reads,
         "ingestion_warnings": ingestion_warnings,
         "throttle_notice": throttle_notice,
+    }
+
+
+def _table_aggregate_handler(
+    arguments: Mapping[str, object],
+    conversation: Conversation,
+    context: ToolExecutionContext,
+) -> Mapping[str, object]:
+    del context  # aggregation is read-only
+    raw_id = _coerce_str(arguments.get("document_id")).strip()
+    if not raw_id:
+        return {
+            "tool": "table_aggregate",
+            "status": "error",
+            "error": "document_id is required",
+        }
+    try:
+        identifier = uuid.UUID(raw_id)
+    except (TypeError, ValueError):
+        return {
+            "tool": "table_aggregate",
+            "status": "error",
+            "error": "document_id must be a valid UUID",
+        }
+    upload = KnowledgeUpload.objects.filter(
+        id=identifier,
+        business_profile=conversation.business_profile,
+        status=KnowledgeStatus.ACTIVE,
+    ).first()
+    if not upload:
+        chunk = KnowledgeUploadChunk.objects.filter(
+            id=identifier,
+            business_profile=conversation.business_profile,
+            upload__status=KnowledgeStatus.ACTIVE,
+        ).select_related("upload").first()
+        upload = chunk.upload if chunk else None
+    if not upload:
+        return {
+            "tool": "table_aggregate",
+            "status": "not_found",
+            "error": "document not found for this business",
+        }
+
+    mode_raw = _coerce_str(arguments.get("mode")).strip().lower()
+    value_column_input = _coerce_str(arguments.get("value_column")).strip()
+    value_column_raw = _normalize_column_name(value_column_input)
+    mode = mode_raw or ("column_sum" if value_column_raw else "row_total")
+    if mode not in {"row_total", "column_sum"}:
+        mode = "row_total"
+    if mode == "column_sum" and not value_column_raw:
+        return {
+            "tool": "table_aggregate",
+            "status": "error",
+            "error": "value_column is required when mode=column_sum",
+        }
+    match_column_input = _coerce_str(arguments.get("match_column")).strip()
+    match_value_input = _coerce_str(arguments.get("match_value")).strip()
+    match_column = _normalize_column_name(match_column_input)
+    match_value = _normalize_column_name(match_value_input)
+    query_input = _coerce_str(arguments.get("query")).strip()
+    query = _normalize_column_name(query_input)
+    if not query and not match_column:
+        query = ""
+    try:
+        table_index = int(arguments.get("table_order_index"))
+    except (TypeError, ValueError):
+        table_index = None
+    sheet_name = _normalize_column_name(arguments.get("sheet_name"))
+    sheet_name_input = _coerce_str(arguments.get("sheet_name")).strip()
+    sheet_name = sheet_name_input.lower()
+    try:
+        row_limit = int(arguments.get("max_rows") or 50)
+    except (TypeError, ValueError):
+        row_limit = 50
+    row_limit = max(1, min(200, row_limit))
+
+    rows_qs = KnowledgeUploadTableRow.objects.filter(
+        table__upload=upload,
+        table__upload__business_profile=conversation.business_profile,
+    ).select_related("table").prefetch_related("cells").order_by("table__order_index", "row_index")
+    if table_index is not None:
+        rows_qs = rows_qs.filter(table__order_index=table_index)
+    elif sheet_name:
+        rows_qs = rows_qs.filter(
+            models.Q(table__title__iexact=sheet_name_input)
+            | models.Q(table__section_heading__iexact=sheet_name_input)
+            | models.Q(table__metadata__sheet_name__iexact=sheet_name_input)
+        )
+
+    total_value = 0.0
+    matched_rows: list[dict[str, object]] = []
+    evaluated_rows = 0
+
+    for row in rows_qs:
+        evaluated_rows += 1
+        table = row.table
+        if not table:
+            continue
+        cells = sorted(row.cells.all(), key=lambda c: c.column_index)
+        column_map = {
+            _normalize_column_name(cell.column_key or f"column_{cell.column_index + 1}"): cell
+            for cell in cells
+        }
+        row_matches = True
+        if match_column and match_value:
+            candidate = column_map.get(match_column)
+            candidate_value = _normalize_column_name(getattr(candidate, "raw_text", ""))
+            if not candidate_value or match_value not in candidate_value:
+                row_matches = False
+        elif query:
+            haystack_parts = [
+                (row.raw_text or "").lower(),
+                " ".join((cell.raw_text or "").lower() for cell in cells),
+            ]
+            if query not in " ".join(haystack_parts):
+                row_matches = False
+        if not row_matches:
+            continue
+
+        preview_cells: list[dict[str, object]] = []
+        contributions: list[dict[str, object]] = []
+        total_column_value: float | None = None
+        total_column_display: str | None = None
+        for cell in cells:
+            column_label = cell.column_key or f"column_{cell.column_index + 1}"
+            cell_value = cell.raw_text or ""
+            if len(preview_cells) < 12:
+                preview_cells.append({"column": column_label, "value": cell_value})
+            normalized_label = _normalize_column_name(column_label)
+            numeric_candidate = _parse_numeric_value(cell_value)
+            is_total_col = _is_total_column_label(normalized_label)
+            if numeric_candidate is not None:
+                contributions.append(
+                    {
+                        "column": column_label,
+                        "value": numeric_candidate,
+                        "display": cell_value.strip() or _format_numeric_display(numeric_candidate),
+                        "is_total_column": is_total_col,
+                    }
+                )
+                if is_total_col:
+                    total_column_value = numeric_candidate
+                    total_column_display = cell_value.strip() or _format_numeric_display(numeric_candidate)
+
+        numeric_value: float | None = None
+        display_value: str | None = None
+        if mode == "row_total":
+            non_total_values = [entry["value"] for entry in contributions if not entry["is_total_column"]]
+            if non_total_values:
+                numeric_value = float(sum(non_total_values))
+                display_value = _format_numeric_display(numeric_value)
+            elif total_column_value is not None:
+                numeric_value = float(total_column_value)
+                display_value = total_column_display or _format_numeric_display(total_column_value)
+            else:
+                continue
+        else:
+            if not value_column_raw:
+                continue
+            candidate = column_map.get(value_column_raw)
+            candidate_text = candidate.raw_text if candidate else ""
+            numeric_value = _parse_numeric_value(candidate_text)
+            if numeric_value is None:
+                continue
+            display_value = _format_numeric_display(numeric_value, candidate_text)
+        total_value += numeric_value or 0.0
+        contributions_sorted = sorted(contributions, key=lambda entry: abs(entry["value"]), reverse=True)
+        matched_rows.append(
+            {
+                "row_index": row.row_index,
+                "table_order_index": table.order_index,
+                "sheet_name": (table.metadata or {}).get("sheet_name") if isinstance(table.metadata, Mapping) else None,
+                "row_total": numeric_value,
+                "row_total_display": display_value,
+                "cells": preview_cells,
+                "contributions": contributions_sorted[:200],
+                "contribution_count": len(contributions_sorted),
+                "total_column_value": total_column_display,
+            }
+        )
+        if len(matched_rows) >= row_limit:
+            break
+
+    status = "ok" if matched_rows else "not_found"
+    structured_log(
+        "mcp",
+        "table.aggregate",
+        {
+            "document_id": str(upload.id),
+            "mode": mode,
+            "match_count": len(matched_rows),
+            "evaluated_rows": evaluated_rows,
+            "contribution_rows": sum(row.get("contribution_count", 0) for row in matched_rows),
+        },
+        context={"business": conversation.business_profile_id},
+        logger_obj=logger,
+    )
+
+    return {
+        "tool": "table_aggregate",
+        "status": status,
+        "document_id": str(upload.id),
+        "mode": mode,
+        "query": query_input or None,
+        "match_column": match_column_input or None,
+        "match_value": match_value_input or None,
+        "value_column": value_column_input or None,
+        "sheet_name": sheet_name_input or None,
+        "match_count": len(matched_rows),
+        "total": total_value if matched_rows else None,
+        "display_total": _format_numeric_display(total_value) if matched_rows else None,
+        "rows": matched_rows,
+        "hint": "No matching rows found." if not matched_rows else None,
     }
 
 
@@ -1396,6 +1785,7 @@ def _enforce_single_chunk_read(context: ToolExecutionContext) -> None:
 _TOOL_HANDLERS: dict[str, ToolHandler] = {
     "search_knowledge": _search_knowledge_handler,
     "read_document": _read_document_handler,
+    "table_aggregate": _table_aggregate_handler,
     "create_case": _create_case_handler,
     "update_case_status": _update_case_status_handler,
     "update_case_details": _update_case_details_handler,

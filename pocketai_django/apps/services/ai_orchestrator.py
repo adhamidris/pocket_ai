@@ -587,7 +587,7 @@ class KnowledgeSearchService:
         self._window_cache: OrderedDict[tuple[uuid.UUID, int, int], list[KnowledgeUploadChunk]] = OrderedDict()
         self.structured_count_cache_limit = 256
         self._structured_count_cache: OrderedDict[uuid.UUID, tuple[int, int]] = OrderedDict()
-        self.table_result_cap = max(1, int(getattr(settings, "RAG_TABLE_RESULT_LIMIT", 3)))
+        self.table_result_cap = max(3, int(getattr(settings, "RAG_TABLE_RESULT_LIMIT", 12)))
         self.table_similarity_threshold = float(getattr(settings, "RAG_TABLE_SIMILARITY_THRESHOLD", 0.3))
         self.table_column_cache_limit = max(8, int(getattr(settings, "RAG_TABLE_COLUMN_CACHE_SIZE", 32)))
         self.table_column_sample_limit = max(25, int(getattr(settings, "RAG_TABLE_COLUMN_SAMPLE", 200)))
@@ -2449,6 +2449,61 @@ class KnowledgeSearchService:
             self._table_column_cache.popitem(last=False)
         return columns
 
+    def _table_row_result_cap_for_business(self, business_profile, requested: int | None = None) -> int:
+        """
+        Resolve how many table rows we should surface for a business.
+        """
+
+        base = requested if requested is not None else self.table_result_cap
+        if not business_profile:
+            return base
+        override = self._business_override(business_profile, "table_results_limit", base)
+        return max(3, int(override))
+
+    def _table_ingestion_diagnostics(self, upload: KnowledgeUpload | None) -> dict[str, object]:
+        diagnostics: dict[str, object] = {
+            "table_truncated": False,
+            "total_rows": None,
+            "indexed_rows": None,
+            "row_cap": None,
+            "partial_tables": None,
+            "partial_index": False,
+            "truncated_rows": None,
+            "truncated_columns": None,
+            "truncated_tables": None,
+        }
+        if not upload:
+            return diagnostics
+        metadata = getattr(upload, "ingestion_metadata", None)
+        if isinstance(metadata, Mapping):
+            table_stats = metadata.get("table_stats")
+            if isinstance(table_stats, Mapping):
+                diagnostics["total_rows"] = table_stats.get("total_rows")
+                diagnostics["indexed_rows"] = table_stats.get("indexed_rows")
+                diagnostics["row_cap"] = table_stats.get("row_cap")
+                diagnostics["partial_tables"] = table_stats.get("partial_tables")
+                diagnostics["partial_index"] = bool(table_stats.get("partial_index"))
+            table_truncation = metadata.get("table_truncation")
+            if isinstance(table_truncation, Mapping):
+                diagnostics["truncated_rows"] = table_truncation.get("truncated_rows")
+                diagnostics["truncated_columns"] = table_truncation.get("truncated_columns")
+                diagnostics["truncated_tables"] = table_truncation.get("truncated_tables")
+        indexed_rows = self._coerce_int(diagnostics.get("indexed_rows"))
+        total_rows = self._coerce_int(diagnostics.get("total_rows"))
+        truncated_rows = self._coerce_int(diagnostics.get("truncated_rows"))
+        truncated_tables = self._coerce_int(diagnostics.get("truncated_tables"))
+        partial_tables = self._coerce_int(diagnostics.get("partial_tables"))
+        partial_index = bool(diagnostics.get("partial_index"))
+        table_truncated = (
+            truncated_rows > 0
+            or truncated_tables > 0
+            or partial_tables > 0
+            or partial_index
+            or (indexed_rows and total_rows and indexed_rows < total_rows)
+        )
+        diagnostics["table_truncated"] = table_truncated
+        return diagnostics
+
     def _table_column_hints(self, business_profile) -> set[str]:
         hints = set(self.table_column_hint_base)
         metadata = getattr(business_profile, "metadata", None)
@@ -2516,6 +2571,53 @@ class KnowledgeSearchService:
         normalized_query = (query_text or "").strip()
         if not normalized_query:
             return tuple()
+        row_cap = self._table_row_result_cap_for_business(business_profile)
+        total_keywords = (
+            "total",
+            "sum",
+            "overall",
+            "اجمالي",
+            "إجمالي",
+            "الاجمالي",
+            "المجموع",
+        )
+
+        def _normalize_label(value: str | None) -> str:
+            return re.sub(r"\s+", " ", (value or "").strip().lower())
+
+        def _is_total_column(label: str | None) -> bool:
+            normalized = _normalize_label(label)
+            if not normalized:
+                return False
+            return any(keyword in normalized for keyword in total_keywords)
+
+        def _parse_numeric(value: str | None) -> float | None:
+            if not isinstance(value, str):
+                return None
+            text = value.strip()
+            if not text:
+                return None
+            cleaned = re.sub(r"[^\d\-,\.]", "", text)
+            cleaned = cleaned.replace(",", "")
+            if not cleaned or cleaned in {"-", "."}:
+                return None
+            try:
+                return float(cleaned)
+            except ValueError:
+                return None
+
+        def _format_total(value: float | None, raw: str | None = None) -> str | None:
+            if isinstance(raw, str) and raw.strip():
+                return raw.strip()
+            if value is None:
+                return None
+            rounded = round(value)
+            if abs(value - rounded) < 1e-6:
+                return f"{rounded:,}"
+            return f"{value:,.2f}".rstrip("0").rstrip(".")
+
+        def _is_numeric_value(value: str | None) -> bool:
+            return _parse_numeric(value) is not None
         cell_qs = KnowledgeUploadTableCell.objects.filter(
             table__upload__business_profile=business_profile
         )
@@ -2534,7 +2636,7 @@ class KnowledgeSearchService:
             .order_by("-sim")
             .select_related("row__table__upload")
         )
-        top_cells = list(cell_qs[: self.table_result_cap * 3])
+        top_cells = list(cell_qs[: row_cap * 3])
         if not top_cells:
             return tuple()
         row_priority: list[uuid.UUID] = []
@@ -2554,7 +2656,7 @@ class KnowledgeSearchService:
                 "similarity": similarity,
             }
             row_priority.append(row.id)
-            if len(row_priority) >= self.table_result_cap:
+            if len(row_priority) >= row_cap:
                 break
         if not row_priority:
             return tuple()
@@ -2564,6 +2666,7 @@ class KnowledgeSearchService:
             .prefetch_related("cells")
         )
         row_map = {row.id: row for row in rows}
+        ingestion_diag_cache: dict[uuid.UUID, dict[str, object]] = {}
         snippets: list[KnowledgeSnippet] = []
         for row_id in row_priority:
             row = row_map.get(row_id)
@@ -2580,22 +2683,62 @@ class KnowledgeSearchService:
                 continue
             business_name = getattr(upload.business_profile, "name", None)
             cells = sorted(row.cells.all(), key=lambda c: c.column_index)
-            structured = []
+            structured: list[dict[str, str]] = []
+            numeric_cells: list[float] = []
+            total_value_raw: str | None = None
             for cell in cells:
                 column_label = cell.column_key or f"column_{cell.column_index + 1}"
+                cell_value = cell.raw_text or ""
                 structured.append(
                     {
                         "column": column_label,
-                        "value": cell.raw_text,
+                        "value": cell_value,
                     }
                 )
-            summary_parts = [
-                f"{entry['column']}: {entry['value']}"
+                parsed_numeric = _parse_numeric(cell_value)
+                if parsed_numeric is not None:
+                    numeric_cells.append(parsed_numeric)
+                if total_value_raw is None and _is_total_column(column_label):
+                    total_value_raw = cell_value
+            summary_candidates = [
+                (entry["column"], entry["value"])
                 for entry in structured
                 if entry["value"]
             ]
-            summary = "; ".join(summary_parts[:8]) or (row.raw_text or "")
-            content = "\n".join(summary_parts) or (row.raw_text or summary)
+            base_candidates = summary_candidates[:8]
+            highlight_candidates = [
+                item
+                for item in summary_candidates[8:]
+                if _is_total_column(item[0]) or _is_numeric_value(item[1])
+            ]
+            display_parts: list[str] = []
+            seen_parts: set[str] = set()
+            for column, value in base_candidates + highlight_candidates:
+                if not value:
+                    continue
+                text = f"{column}: {value}"
+                if text in seen_parts:
+                    continue
+                seen_parts.add(text)
+                display_parts.append(text)
+            row_total_numeric = None
+            row_total_display = None
+            if total_value_raw and total_value_raw.strip():
+                row_total_numeric = _parse_numeric(total_value_raw)
+                row_total_display = _format_total(row_total_numeric, total_value_raw)
+            elif numeric_cells:
+                row_total_numeric = sum(numeric_cells)
+                row_total_display = _format_total(row_total_numeric)
+            if row_total_display:
+                row_total_text = f"Row total: {row_total_display}"
+                if row_total_text not in seen_parts:
+                    display_parts.append(row_total_text)
+                    seen_parts.add(row_total_text)
+            summary = "; ".join(display_parts) or (row.raw_text or "")
+            content_parts = [f"{column}: {value}" for column, value in summary_candidates]
+            if row_total_display:
+                content_parts.append(f"Row total: {row_total_display}")
+            content = "\n".join(content_parts) or (row.raw_text or summary)
             structured_table = {
                 "title": table.title or table.section_heading or "Table",
                 "columns": [entry["column"] for entry in structured],
@@ -2606,7 +2749,36 @@ class KnowledgeSearchService:
                     "table_order_index": table.order_index,
                 },
             }
-            diag = cell_diag.get(row_id, {})
+            if row_total_display:
+                structured_table["metadata"]["row_total"] = row_total_display
+            if row_total_numeric is not None:
+                structured_table["metadata"]["row_total_numeric"] = row_total_numeric
+            if total_value_raw:
+                structured_table["metadata"]["total_column_present"] = True
+            ingestion_diag = ingestion_diag_cache.get(upload.id)
+            if ingestion_diag is None:
+                ingestion_diag = self._table_ingestion_diagnostics(upload)
+                ingestion_diag_cache[upload.id] = ingestion_diag
+            table_truncated = bool(ingestion_diag.get("table_truncated"))
+            structured_table["metadata"]["table_truncated"] = table_truncated
+            diag = dict(cell_diag.get(row_id, {}))
+            diag.update(
+                {
+                    "row_total_display": row_total_display,
+                    "row_total_numeric": row_total_numeric,
+                    "total_column_present": bool(total_value_raw),
+                    "table_id": str(table.id),
+                    "row_index": row.row_index,
+                    "table_truncated": table_truncated,
+                    "table_total_rows": ingestion_diag.get("total_rows"),
+                    "table_indexed_rows": ingestion_diag.get("indexed_rows"),
+                    "table_row_cap": ingestion_diag.get("row_cap"),
+                    "table_partial_tables": ingestion_diag.get("partial_tables"),
+                    "truncated_rows": ingestion_diag.get("truncated_rows"),
+                    "truncated_columns": ingestion_diag.get("truncated_columns"),
+                    "truncated_tables": ingestion_diag.get("truncated_tables"),
+                }
+            )
             entity_hint = diag.get("value") or diag.get("column_key") or structured_table["title"]
             snippets.append(
                 KnowledgeSnippet(
@@ -2633,13 +2805,8 @@ class KnowledgeSearchService:
                     search_stage="table_direct",
                     confidence_score=diag.get("similarity"),
                     truncated=False,
-                    source_diagnostics={
-                        "table_id": str(table.id),
-                        "row_index": row.row_index,
-                        "column_key": diag.get("column_key"),
-                        "similarity": diag.get("similarity"),
-                    },
-                    partial_index=False,
+                    source_diagnostics=diag,
+                    partial_index=table_truncated,
                     structured_table_count=1,
                     issue_count=0,
                     structured_table_hint=diag.get("column_key"),

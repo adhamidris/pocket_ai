@@ -551,7 +551,7 @@ class McpOrchestratorService:
         trailing = stream_buffer
         if trailing:
             trailing_stripped = trailing.strip()
-            if trailing_stripped and is_investigative_filler(trailing_stripped):
+            if trailing_stripped and is_investigative_filler_with_level(trailing_stripped, filter_level=filter_level):
                 stream_dropped.append(trailing_stripped)
                 structured_log(
                     "mcp",
@@ -577,11 +577,18 @@ class McpOrchestratorService:
             on_status_change({"code": "stream_complete", "label": ""})
 
         unmet_read_required = False
+        table_results_present = False
         for entry in getattr(tool_context, "knowledge_results", []):
-            if isinstance(entry, Mapping) and entry.get("read_required"):
+            if not isinstance(entry, Mapping):
+                continue
+            if entry.get("read_required"):
                 unmet_read_required = True
+            if entry.get("search_stage") in {"table_direct", "table_blended"}:
+                table_results_present = True
+            if unmet_read_required and table_results_present:
                 break
-        if unmet_read_required and not getattr(tool_context, "knowledge_reads", []):
+        no_reads = not getattr(tool_context, "knowledge_reads", [])
+        if no_reads and (unmet_read_required or table_results_present):
             # Enforce read-before-answer for table/identifier hits
             final_assistant_message = {
                 "role": "assistant",
