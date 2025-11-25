@@ -9,6 +9,11 @@ from zoneinfo import ZoneInfo
 from django.conf import settings
 
 logger = logging.getLogger(__name__)
+NAMESPACE_LOGGERS = {
+    "rag": logger,
+    "mcp": logging.getLogger("apps.services.mcp.orchestrator"),
+    "llm": logging.getLogger("apps.services.llm_provider"),
+}
 
 
 def _timestamp() -> str:
@@ -47,6 +52,7 @@ def structured_log(
     indent: int = 0,
     context: Mapping[str, Any] | None = None,
     level: int = logging.INFO,
+    logger_obj: logging.Logger | None = None,
 ) -> None:
     timestamp = _timestamp()
     header_parts: list[str] = [f"[{timestamp}]", f"stage={stage}"]
@@ -65,7 +71,8 @@ def structured_log(
             lines.append(f"{indent_prefix}• {payload_line}")
     else:
         lines.append(f"{indent_prefix}• (no detail)")
-    logger.log(level, "%s\n%s", header.strip(), "\n".join(lines))
+    target_logger = logger_obj or NAMESPACE_LOGGERS.get(namespace) or logger
+    target_logger.log(level, "%s\n%s", header.strip(), "\n".join(lines))
 
 
 def rag_log(
@@ -75,4 +82,4 @@ def rag_log(
     indent: int = 0,
     context: Mapping[str, Any] | None = None,
 ) -> None:
-    structured_log("rag", stage, detail, indent=indent, context=context)
+    structured_log("rag", stage, detail, indent=indent, context=context, logger_obj=logger)

@@ -110,6 +110,7 @@ def _log_usage(label: str, model: str | None, usage: Mapping[str, object] | None
             "completion_tokens": completion,
             "total_tokens": total,
         },
+        logger_obj=logger,
     )
 
 
@@ -303,6 +304,7 @@ class OpenAIChatProvider:
                 "raw_response",
                 raw_body,
                 context={"provider": "OpenAIChat", "model": self.model},
+                logger_obj=logger,
             )
 
             content = self._extract_content(data)
@@ -517,7 +519,7 @@ class DeepSeekChatProvider(OpenAIChatProvider):
         except (TypeError, ValueError):
             formatted = str(payload)
         stage = label.lower().replace(" ", "_")
-        structured_log("llm", stage, formatted)
+        structured_log("llm", stage, formatted, logger_obj=logger)
 
     def _system_prompt(self, bundle: PromptBundle) -> str:
         schema_hint = (
@@ -1015,6 +1017,7 @@ def _consume_chat_completion_stream(stream, on_stream_delta: Callable[[str], Non
             "elapsed_ms": elapsed_ms,
             "first_delta_ms": first_ms,
         },
+        logger_obj=logger,
     )
 
     return {"choices": [{"message": message}]}
@@ -1348,12 +1351,12 @@ class DeepSeekToolsProvider(BaseMcpProvider):
             except Exception:  # pragma: no cover - best effort
                 logger.debug("Failed to estimate tokens for DeepSeek MCP request.")
         else:
-            structured_log(
-                "llm",
-                "request",
-                {
-                    "provider": "DeepSeekTools",
-                    "model": self.model,
+                structured_log(
+                    "llm",
+                    "request",
+                    {
+                        "provider": "DeepSeekTools",
+                        "model": self.model,
                     "tools": [t.get("function", {}).get("name") for t in (tools or [])],
                     "message_count": len(payload.get("messages") or []),
                     "streaming": streaming,
@@ -1446,6 +1449,7 @@ class DeepSeekToolsProvider(BaseMcpProvider):
                                     "llm",
                                     "warning",
                                     "DeepSeek MCP stream produced empty content; retrying once with non-stream completion.",
+                                    logger_obj=logger,
                                     level=logging.WARNING,
                                 )
                                 # Build a non-streaming payload copy.

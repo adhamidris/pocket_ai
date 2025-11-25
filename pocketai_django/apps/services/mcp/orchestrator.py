@@ -168,6 +168,7 @@ class McpOrchestratorService:
                         "conversation": conversation.id,
                         "business": conversation.business_profile_id,
                     },
+                    logger_obj=logger,
                 )
             else:
                 _emit_tokens(trailing)
@@ -202,6 +203,7 @@ class McpOrchestratorService:
                                 "conversation": conversation.id,
                                 "business": conversation.business_profile_id,
                             },
+                            logger_obj=logger,
                         )
                     else:
                         _emit_sentence(sentence + (match.group(2) or ""))
@@ -303,6 +305,7 @@ class McpOrchestratorService:
                             },
                             indent=1,
                             context={"conversation": conversation.id},
+                            logger_obj=logger,
                             level=logging.WARNING,
                         )
                         tool_result = self._constraint_error_payload(tool_name, exc)
@@ -446,6 +449,7 @@ class McpOrchestratorService:
                                 "conversation": conversation.id,
                                 "business": conversation.business_profile_id,
                             },
+                            logger_obj=logger,
                         )
                     else:
                         _emit_sentence(sentence + (match.group(2) or ""))
@@ -503,6 +507,7 @@ class McpOrchestratorService:
                     "conversation": conversation.id,
                     "business": conversation.business_profile_id,
                 },
+                logger_obj=logger,
             )
 
         final_messages = prompts.build_final_answer_messages(
@@ -1121,6 +1126,7 @@ class McpOrchestratorService:
                 "business": conversation.business_profile_id,
                 "conversation": conversation.id,
             },
+            logger_obj=logger,
         )
 
     @staticmethod
@@ -1164,6 +1170,7 @@ class McpOrchestratorService:
                 "conversation": conversation.id,
                 "business": conversation.business_profile_id,
             },
+            logger_obj=logger,
         )
 
     def _business_override(self, business_profile, key: str, default: int | float) -> int | float:

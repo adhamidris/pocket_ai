@@ -596,6 +596,7 @@ def _log_snippet_payloads(
             "conversation": conversation.id,
             "business": conversation.business_profile_id,
         },
+        logger_obj=logger,
     )
 
 
@@ -814,6 +815,7 @@ def _search_knowledge_handler(
                     "provided": list(decision.provided_keys),
                 },
                 context={"business": conversation.business_profile_id},
+                logger_obj=logger,
                 level=logging.WARNING,
             )
             return {
@@ -989,6 +991,7 @@ def _read_document_handler(
                     "provided": list(decision.provided_keys),
                 },
                 context={"business": conversation.business_profile_id},
+                logger_obj=logger,
                 level=logging.WARNING,
             )
             IdentifierRegistryService.record_event(
@@ -1064,12 +1067,14 @@ def _read_document_handler(
             mode = "excerpt"
             throttle_notice["downgraded_from"] = "full_page"
             downgraded = True
-            structured_log(
-                "mcp",
-                "read_document.throttle",
-                {"reason": throttle_notice.get("reason")},
-                context={"business": business.id},
-            )
+    throttle_reason = throttle_notice.get("reason") if throttle_notice else None
+    structured_log(
+        "mcp",
+        "read_document.throttle",
+        {"reason": throttle_reason, "notice": throttle_notice} if throttle_notice else {"reason": throttle_reason},
+        context={"business": business.id},
+        logger_obj=logger,
+    )
 
     snippets: list[Any] = []
     if chunk_record:
