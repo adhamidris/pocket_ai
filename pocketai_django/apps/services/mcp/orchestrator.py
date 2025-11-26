@@ -16,6 +16,7 @@ import uuid
 from typing import Callable, Iterable, Mapping, Sequence
 
 from django.conf import settings
+from django.utils import timezone
 
 from apps.accounts.models import AgentProfile
 from apps.conversations.models import Conversation, ConversationExtractionType
@@ -112,11 +113,60 @@ class McpOrchestratorService:
             minute_budget_reserver=minute_reserver,
         )
         tool_context.identifier_gate = IdentifierGuardrail.from_conversation(conversation)
+        self._hydrate_table_cache(conversation, tool_context)
+        cached_table_messages = prompts.build_cached_table_messages(
+            knowledge_results=tuple(tool_context.knowledge_results)
+        )
 
         if not self.provider:
             raise RuntimeError("MCP provider is not configured.")
 
         transcript = list(messages)
+        if cached_table_messages:
+            cached_row_count = 0
+            cached_uploads: set[str] = set()
+            for entry in cached_table_messages:
+                if entry.get("role") != "tool" or entry.get("name") != "table_aggregate":
+                    continue
+                cached_row_count += 1
+                payload = entry.get("content")
+                payload_data = None
+                if isinstance(payload, str):
+                    try:
+                        payload_data = json.loads(payload)
+                    except json.JSONDecodeError:
+                        payload_data = None
+                elif isinstance(payload, Mapping):
+                    payload_data = payload
+                if isinstance(payload_data, Mapping):
+                    snippets = payload_data.get("snippets")
+                    if isinstance(snippets, Sequence):
+                        for snippet in snippets:
+                            if isinstance(snippet, Mapping):
+                                upload_id = snippet.get("upload_id")
+                                if upload_id:
+                                    cached_uploads.add(str(upload_id))
+            structured_log(
+                "mcp",
+                "cache.table_injected",
+                {
+                    "cached_rows": cached_row_count,
+                    "message_count": len(cached_table_messages),
+                    "upload_ids": sorted(cached_uploads),
+                },
+                indent=1,
+                context={
+                    "conversation": conversation.id,
+                    "business": conversation.business_profile_id,
+                },
+                logger_obj=logger,
+            )
+            if transcript:
+                latest_user = transcript.pop()
+                transcript.extend(cached_table_messages)
+                transcript.append(latest_user)
+            else:
+                transcript = list(cached_table_messages)
         tool_phase_assistant_message: dict[str, object] | None = None
         final_assistant_message: dict[str, object] | None = None
         placeholder_sent = False
@@ -625,6 +675,7 @@ class McpOrchestratorService:
             _emit_tokens(clean_answer_text)
 
         self._log_turn_metrics(conversation, tool_context)
+        self._persist_table_cache(conversation, tool_context)
         del on_status_change, on_placeholder_response
         return {
             "assistant_message": normalized_assistant_msg,
@@ -691,6 +742,8 @@ class McpOrchestratorService:
             diagnostics["coverage_ledger"] = list(getattr(tool_context, "coverage_ledger", ()))
             diagnostics["knowledge_reads"] = list(getattr(tool_context, "knowledge_reads", ()))
             diagnostics["knowledge_results"] = list(getattr(tool_context, "knowledge_results", ()))
+            if getattr(tool_context, "table_aggregate_rows", None):
+                diagnostics["table_aggregate_rows"] = list(getattr(tool_context, "table_aggregate_rows"))
             diagnostics["identifier_checks"] = list(getattr(tool_context, "identifier_checks", ()))
             diagnostics["identifier_filters"] = list(getattr(tool_context, "identifier_filters", ()))
             if getattr(tool_context, "identifier_hashes", None):
@@ -709,13 +762,24 @@ class McpOrchestratorService:
                 on_stream_complete()
             except Exception:  # pragma: no cover - defensive
                 pass
+        visible_knowledge: tuple[dict[str, object], ...] = tuple()
+        if tool_context:
+            entries = []
+            for item in getattr(tool_context, "knowledge_results", []):
+                if not isinstance(item, Mapping):
+                    continue
+                if item.get("suppress_in_prompt"):
+                    continue
+                entries.append(dict(item))
+            visible_knowledge = tuple(entries)
+
         return StreamingTurnContext(
             conversation=conversation,
             response_text=clean_answer_text,
             planned_actions=tuple(),
             extractions=tuple(),
             resolved_citations=tuple(self._build_citations(tool_context)) if tool_context else tuple(),
-            knowledge_payload=tuple(),
+            knowledge_payload=visible_knowledge,
             knowledge_reads=tuple(getattr(tool_context, "knowledge_reads", ())) if tool_context else tuple(),
             knowledge_status=None,
             knowledge_diagnostics=diagnostics,
@@ -848,6 +912,8 @@ class McpOrchestratorService:
     def _build_citations(self, tool_context: ToolExecutionContext) -> tuple[KnowledgeSnippet, ...]:
         citations: list[KnowledgeSnippet] = []
         for entry in getattr(tool_context, "knowledge_results", []):
+            if entry.get("suppress_in_prompt"):
+                continue
             try:
                 snippet = KnowledgeSnippet(
                     id=uuid.UUID(entry.get("id")) if entry.get("id") else uuid.uuid4(),
@@ -1006,7 +1072,7 @@ class McpOrchestratorService:
 
     @staticmethod
     def _is_knowledge_tool(name: str) -> bool:
-        return name in {"search_knowledge", "read_document"}
+        return name in {"search_knowledge", "read_document", "table_aggregate"}
 
     @staticmethod
     def _record_knowledge_outputs(context: ToolExecutionContext, tool_result: Mapping[str, object]) -> None:
@@ -1018,13 +1084,41 @@ class McpOrchestratorService:
                     coverage_entry = {
                         "id": entry.get("id"),
                         "title": entry.get("title") or entry.get("public_label") or "Knowledge",
+                        "label": entry.get("public_label") or entry.get("title") or "Knowledge",
                         "read_state": entry.get("read_state"),
                         "coverage": entry.get("coverage") if isinstance(entry.get("coverage"), (list, tuple)) else (),
                         "search_stage": entry.get("search_stage"),
                         "chunk_id": entry.get("chunk_id"),
                         "upload_id": entry.get("upload_id"),
+                        "page_mode": entry.get("page_mode"),
+                        "is_table_chunk": entry.get("is_table_chunk"),
+                        "suppress_in_prompt": bool(entry.get("suppress_in_prompt")),
                     }
                     context.add_coverage_entry(coverage_entry)
+                    diagnostics = entry.get("source_diagnostics") if isinstance(entry.get("source_diagnostics"), Mapping) else None
+                    if diagnostics and diagnostics.get("table_aggregate") and entry.get("upload_id"):
+                        structured_tables = entry.get("structured_tables") or entry.get("structuredTables") or ()
+                        first_table = None
+                        if isinstance(structured_tables, Sequence) and structured_tables:
+                            first_candidate = structured_tables[0]
+                            if isinstance(first_candidate, Mapping):
+                                first_table = first_candidate
+                        table_details = {
+                            "snippet_id": entry.get("id"),
+                            "upload_id": entry.get("upload_id"),
+                            "table_order_index": diagnostics.get("table_order_index"),
+                            "row_index": diagnostics.get("table_row_index"),
+                            "sheet_name": diagnostics.get("table_sheet_name"),
+                            "columns": first_table.get("columns") if isinstance(first_table, Mapping) else None,
+                            "row_total": diagnostics.get("table_row_total") or entry.get("row_total"),
+                            "row_total_display": diagnostics.get("table_row_total_display") or entry.get("row_total_display"),
+                            "snippet": McpOrchestratorService._snapshot_snippet(entry),
+                        }
+                        context.table_aggregate_rows.append({k: v for k, v in table_details.items() if v is not None})
+                        McpOrchestratorService._suppress_table_previews(
+                            context,
+                            upload_id=str(entry.get("upload_id")),
+                        )
         reads = tool_result.get("knowledge_reads") if isinstance(tool_result, Mapping) else None
         if isinstance(reads, list):
             for read in reads:
@@ -1035,6 +1129,117 @@ class McpOrchestratorService:
             for warning in warnings:
                 if isinstance(warning, Mapping):
                     context.add_ingestion_warning(warning)
+
+    @staticmethod
+    def _suppress_table_previews(context: ToolExecutionContext, upload_id: str) -> None:
+        if not upload_id:
+            return
+        for entry in context.knowledge_results:
+            if not isinstance(entry, Mapping):
+                continue
+            if str(entry.get("upload_id") or "").strip() != upload_id:
+                continue
+            if entry.get("page_mode") == "structured_table":
+                continue
+            if entry.get("is_table_chunk"):
+                entry["suppress_in_prompt"] = True
+        for coverage in context.coverage_ledger:
+            if str(coverage.get("upload_id") or "").strip() != upload_id:
+                continue
+            if coverage.get("page_mode") == "structured_table":
+                continue
+            if coverage.get("is_table_chunk"):
+                coverage["suppress_in_prompt"] = True
+
+    @staticmethod
+    def _table_cache_entries(conversation: Conversation) -> list[dict[str, object]]:
+        metadata = conversation.metadata or {}
+        cache_entries = metadata.get("mcp_table_cache") if isinstance(metadata, Mapping) else None
+        if isinstance(cache_entries, list):
+            return [entry for entry in cache_entries if isinstance(entry, Mapping)]
+        return []
+
+    def _hydrate_table_cache(self, conversation: Conversation, context: ToolExecutionContext) -> None:
+        cached_entries = self._table_cache_entries(conversation)
+        if not cached_entries:
+            return
+        hydrated = 0
+        upload_ids: set[str] = set()
+        for entry in cached_entries[:8]:
+            snippet = entry.get("snippet")
+            if not isinstance(snippet, Mapping):
+                continue
+            normalized = dict(snippet)
+            normalized.setdefault("read_state", "full")
+            normalized.setdefault("page_mode", "structured_table")
+            normalized.setdefault("search_stage", normalized.get("search_stage") or "table_cached")
+            normalized["suppress_in_prompt"] = False
+            self._record_knowledge_outputs(context, {"snippets": [normalized]})
+            hydrated += 1
+            snippet_upload = normalized.get("upload_id") or entry.get("upload_id")
+            if snippet_upload:
+                upload_ids.add(str(snippet_upload))
+        if hydrated:
+            structured_log(
+                "mcp",
+                "cache.table_hydrate",
+                {
+                    "total_cached": len(cached_entries),
+                    "hydrated_rows": hydrated,
+                    "upload_ids": sorted(upload_ids),
+                },
+                indent=1,
+                context={
+                    "conversation": conversation.id,
+                    "business": conversation.business_profile_id,
+                },
+                logger_obj=logger,
+            )
+
+    def _persist_table_cache(self, conversation: Conversation, context: ToolExecutionContext) -> None:
+        rows = getattr(context, "table_aggregate_rows", [])
+        if not rows:
+            return
+        metadata = conversation.metadata or {}
+        cache_entries = self._table_cache_entries(conversation)
+        cache_map: dict[tuple[str, int], dict[str, object]] = {}
+        for existing in cache_entries:
+            upload_id = str(existing.get("upload_id") or "").strip()
+            row_index = existing.get("row_index")
+            if not upload_id or row_index is None:
+                continue
+            cache_map[(upload_id, int(row_index))] = dict(existing)
+        changed = False
+        for row in rows:
+            upload_id = str(row.get("upload_id") or "").strip()
+            row_index = row.get("row_index")
+            snippet = row.get("snippet")
+            if not upload_id or row_index is None or not isinstance(snippet, Mapping):
+                continue
+            snapshot = self._snapshot_snippet(snippet)
+            cache_map[(upload_id, int(row_index))] = {
+                "upload_id": upload_id,
+                "row_index": int(row_index),
+                "table_order_index": row.get("table_order_index"),
+                "sheet_name": row.get("sheet_name"),
+                "snippet": snapshot,
+                "updated_at": timezone.now().isoformat(),
+            }
+            changed = True
+        if not changed:
+            return
+        ordered = sorted(cache_map.values(), key=lambda item: item.get("updated_at") or "", reverse=True)[:20]
+        new_metadata = dict(metadata)
+        new_metadata["mcp_table_cache"] = ordered
+        conversation.metadata = new_metadata
+        conversation.save(update_fields=["metadata"])
+
+    @staticmethod
+    def _snapshot_snippet(snippet: Mapping[str, object]) -> dict[str, object]:
+        try:
+            return json.loads(json.dumps(snippet, default=str))
+        except Exception:
+            return dict(snippet)
 
     @staticmethod
     def _coerce_assistant_message(payload: dict | None) -> dict[str, object]:
@@ -1103,6 +1308,8 @@ class McpOrchestratorService:
             display: list[str] = []
             for entry in coverage[:6]:
                 if not isinstance(entry, Mapping):
+                    continue
+                if entry.get("suppress_in_prompt"):
                     continue
                 label = entry.get("label") or entry.get("title") or "Knowledge"
                 state = entry.get("read_state") or "summary"

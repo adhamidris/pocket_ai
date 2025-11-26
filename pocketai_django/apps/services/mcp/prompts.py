@@ -8,9 +8,11 @@ the system prompt and transcript assembly logic.
 
 from __future__ import annotations
 
+import json
 import os
 import textwrap
-from typing import Iterable, Mapping
+import uuid
+from typing import Iterable, Mapping, Sequence
 
 from django.conf import settings
 
@@ -61,6 +63,7 @@ def build_system_message(agent: AgentProfile) -> str:
         - If snippets are ready/full, answer directly—do not reread unless the visitor asks for a different page/id.
         - If you hit a throttle_notice or constraint_error, answer with the evidence you have and ask for the precise identifier/page you need; do not guess.
         - Prefer the narrowest scope: page/chunk reads before whole-document reads.
+        - Table aggregation: `table_aggregate` returns deterministic row totals plus `rows[].contributions` (every numeric column/vendor). Call it whenever the visitor needs totals or asks who/which customers/regions contributed so you cite the complete list instead of truncated previews.
         - Case/lead/customer tools: follow the Case Management and Customer Identity rules; use `flag_escalation` when policy blocks action or a document is missing.
         """
     ).strip()
@@ -137,6 +140,85 @@ def build_messages(*, conversation: Conversation, user_message: str) -> list[Map
 
     messages.append({"role": "user", "content": user_message})
     return messages
+
+
+def build_cached_table_messages(
+    *, knowledge_results: Sequence[Mapping[str, object]], limit: int = 8
+) -> list[Mapping[str, object]]:
+    """
+    Render hydrated table cache snippets as synthetic tool traffic so the provider
+    can see deterministic contributor lists before planning tools.
+    """
+
+    if not knowledge_results:
+        return []
+
+    tool_calls: list[Mapping[str, object]] = []
+    tool_messages: list[Mapping[str, object]] = []
+    seen: set[str] = set()
+    injected = 0
+    for entry in knowledge_results:
+        if not isinstance(entry, Mapping):
+            continue
+        if entry.get("search_stage") != "table_cached":
+            continue
+        if injected >= limit:
+            break
+        snippet = dict(entry)
+        snippet.setdefault("read_state", "full")
+        snippet.setdefault("page_mode", "structured_table")
+        snippet.setdefault("search_stage", "table_cached")
+        snippet["suppress_in_prompt"] = False
+        snippet_id = str(snippet.get("id") or f"{snippet.get('upload_id')}:{snippet.get('chunk_id')}")
+        dedupe_key = f"{snippet.get('upload_id')}:{snippet.get('chunk_id')}:{snippet_id}"
+        if dedupe_key in seen:
+            continue
+        seen.add(dedupe_key)
+        call_id = f"cached_table_{uuid.uuid4().hex[:8]}"
+        arguments_payload = {
+            "cache_hit": True,
+            "upload_id": snippet.get("upload_id"),
+            "chunk_id": snippet.get("chunk_id"),
+            "row_index": snippet.get("source_diagnostics", {}).get("table_row_index")
+            if isinstance(snippet.get("source_diagnostics"), Mapping)
+            else None,
+        }
+        tool_calls.append(
+            {
+                "id": call_id,
+                "type": "function",
+                "function": {
+                    "name": "table_aggregate",
+                    "arguments": json.dumps({k: v for k, v in arguments_payload.items() if v is not None}, ensure_ascii=False),
+                },
+            }
+        )
+        tool_messages.append(
+            {
+                "role": "tool",
+                "tool_call_id": call_id,
+                "name": "table_aggregate",
+                "content": json.dumps(
+                    {
+                        "status": "ok",
+                        "mode": "cached",
+                        "snippets": [snippet],
+                    },
+                    ensure_ascii=False,
+                ),
+            }
+        )
+        injected += 1
+
+    if not tool_calls:
+        return []
+
+    assistant_message = {
+        "role": "assistant",
+        "content": "",
+        "tool_calls": tool_calls,
+    }
+    return [assistant_message, *tool_messages]
 
 
 def build_planner_messages(
@@ -230,6 +312,8 @@ def build_planner_messages(
     if coverage_ledger:
         items: list[str] = []
         for entry in coverage_ledger[:8]:
+            if entry.get("suppress_in_prompt"):
+                continue
             label = entry.get("title") or entry.get("label") or "Knowledge"
             state = entry.get("read_state") or "summary"
             topics = entry.get("coverage") if isinstance(entry.get("coverage"), (list, tuple)) else ()
@@ -310,6 +394,8 @@ def build_final_answer_messages(
     if coverage_ledger:
         items: list[str] = []
         for entry in coverage_ledger[:8]:
+            if entry.get("suppress_in_prompt"):
+                continue
             label = entry.get("title") or entry.get("label") or "Knowledge"
             state = entry.get("read_state") or "summary"
             topics = entry.get("coverage") if isinstance(entry.get("coverage"), (list, tuple)) else ()

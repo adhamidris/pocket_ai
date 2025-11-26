@@ -120,7 +120,10 @@ TOOL_DEFINITIONS: tuple[Mapping[str, object], ...] = (
     ),
     _function_schema(
         name="table_aggregate",
-        description="Aggregate numeric values from a structured table (e.g., sum all vendor units for a product).",
+        description=(
+            "Aggregate numeric values from a structured table (totals + per-column contributions). "
+            "Use it to sum wide sheets and to retrieve contributor lists via rows[].contributions."
+        ),
         properties={
             "document_id": {
                 "type": "string",
@@ -1541,6 +1544,18 @@ def _table_aggregate_handler(
             break
 
     status = "ok" if matched_rows else "not_found"
+    snippet_payloads: list[dict[str, object]] = []
+    if matched_rows:
+        snippet_payloads = [
+            _build_table_aggregate_snippet(
+                upload=upload,
+                row=row,
+                query=query_input,
+                match_column=match_column_input,
+                match_value=match_value_input,
+            )
+            for row in matched_rows
+        ]
     structured_log(
         "mcp",
         "table.aggregate",
@@ -1554,6 +1569,23 @@ def _table_aggregate_handler(
         context={"business": conversation.business_profile_id},
         logger_obj=logger,
     )
+    if matched_rows:
+        structured_log(
+            "mcp",
+            "table.aggregate.payload",
+            {
+                "document_id": str(upload.id),
+                "mode": mode,
+                "match_count": len(matched_rows),
+                "total": total_value,
+                "rows": matched_rows,
+            },
+            context={
+                "business": conversation.business_profile_id,
+                "conversation": conversation.id,
+            },
+            logger_obj=logger,
+        )
 
     return {
         "tool": "table_aggregate",
@@ -1569,8 +1601,92 @@ def _table_aggregate_handler(
         "total": total_value if matched_rows else None,
         "display_total": _format_numeric_display(total_value) if matched_rows else None,
         "rows": matched_rows,
+        "snippets": snippet_payloads,
         "hint": "No matching rows found." if not matched_rows else None,
     }
+
+
+def _build_table_aggregate_snippet(
+    *,
+    upload: KnowledgeUpload,
+    row: Mapping[str, object],
+    query: str | None,
+    match_column: str | None,
+    match_value: str | None,
+) -> dict[str, object]:
+    row_index = row.get("row_index")
+    table_idx = row.get("table_order_index")
+    sheet_name = row.get("sheet_name")
+    row_total = row.get("row_total")
+    row_total_display = row.get("row_total_display") or _format_numeric_display(row_total if isinstance(row_total, (int, float)) else None)
+    cells = row.get("cells") if isinstance(row.get("cells"), list) else []
+    contributions = row.get("contributions") if isinstance(row.get("contributions"), list) else []
+    primary_label = _table_row_label(cells, query)
+    snippet_id = f"table-aggregate:{upload.id}:{table_idx}:{row_index}"
+    summary = f"{primary_label or 'Table row'} – total {row_total_display or 'unknown'}"
+    contribution_lines: list[str] = []
+    for entry in contributions[:25]:
+        column = entry.get("column") or "Column"
+        display = entry.get("display") or _format_numeric_display(entry.get("value"))
+        contribution_lines.append(f"- {column}: {display or '—'}")
+    if len(contributions) > 25:
+        contribution_lines.append(f"...+{len(contributions) - 25} more columns")
+    structured_table = {
+        "row_index": row_index,
+        "table_order_index": table_idx,
+        "sheet_name": sheet_name,
+        "row_total": row_total,
+        "row_total_display": row_total_display,
+        "columns": [dict(entry) for entry in contributions],
+    }
+    diagnostics = {
+        "table_aggregate": True,
+        "table_row_index": row_index,
+        "table_order_index": table_idx,
+        "table_sheet_name": sheet_name,
+        "table_contribution_count": len(contributions),
+        "table_aggregate_query": query or None,
+        "table_match_column": match_column or None,
+        "table_match_value": match_value or None,
+        "table_row_total": row_total,
+        "table_row_total_display": row_total_display,
+    }
+    label_suffix = f" (sheet {sheet_name})" if sheet_name else ""
+    return {
+        "id": snippet_id,
+        "title": f"Table aggregate{label_suffix}".strip(),
+        "public_label": primary_label or f"Row {row_index}",
+        "summary": summary,
+        "content": "\n".join([summary, "", "Contributors:", *contribution_lines]) if contribution_lines else summary,
+        "content_mode": "structured_table",
+        "read_state": "full",
+        "page_mode": "structured_table",
+        "structured_table_count": 1,
+        "is_table_chunk": True,
+        "structured_tables": [structured_table],
+        "source_diagnostics": diagnostics,
+        "upload_id": str(upload.id),
+        "chunk_id": None,
+        "status": "table_aggregate",
+        "entities": (),
+        "issues": (),
+        "topic_hints": (),
+        "coverage": (),
+        "row_index": row_index,
+    }
+
+
+def _table_row_label(cells: Sequence[Mapping[str, object]] | object, fallback: str | None) -> str | None:
+    if isinstance(cells, Sequence):
+        for cell in cells:
+            if not isinstance(cell, Mapping):
+                continue
+            value = cell.get("value")
+            if isinstance(value, str):
+                trimmed = value.strip()
+                if trimmed:
+                    return trimmed
+    return (fallback or "").strip() or None
 
 
 def _action_tool_result(action: ActionType, payload: Mapping[str, object]) -> Mapping[str, object]:
