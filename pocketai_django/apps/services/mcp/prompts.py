@@ -24,6 +24,29 @@ from apps.services.mcp.sanitizer import sanitize_text
 from apps.services import display_tone_label
 
 
+TONE_STYLE_HINTS: Mapping[str, str] = {
+    "friendly": "Keep a {tone_label} voice—warm, conversational, and encouraging. Adjust length naturally so detailed questions receive detailed answers.",
+    "professional": "Use a {tone_label} tone: clear, confident, and thorough. Provide as much detail as the visitor needs, even if it takes multiple sentences.",
+    "empathetic": "Maintain an {tone_label} tone that acknowledges the visitor's concerns before explaining facts or next steps with care.",
+    "casual": "Stay {tone_label} with relaxed phrasing, contractions, and natural flow; mirror the visitor's energy while remaining factual.",
+    "playful": "Adopt a {tone_label} tone with upbeat language, but keep policy and data accurate—fun but trustworthy.",
+    "formal": "Use a {tone_label} tone with precise language and full sentences; deliver complete explanations without sounding stiff.",
+}
+
+
+def _tone_instruction(agent: AgentProfile | None) -> str:
+    tone_key = (agent.tone or "").strip().lower() if agent and agent.tone else ""
+    tone_label = display_tone_label(agent.tone) if agent else None
+    resolved_label = tone_label or "friendly"
+    hint = TONE_STYLE_HINTS.get(tone_key)
+    if hint:
+        return hint.format(tone_label=resolved_label)
+    return (
+        f"Maintain a {resolved_label} tone that matches the visitor's request—stay concise when they only need a quick fact, "
+        "and expand fully when they ask for details or complete lists."
+    )
+
+
 def build_system_message(agent: AgentProfile) -> str:
     """
     Construct the MCP system prompt for the supplied agent profile.
@@ -43,10 +66,11 @@ def build_system_message(agent: AgentProfile) -> str:
         )
 
     tone_label = display_tone_label(agent.tone) or "friendly"
+    tone_instruction = _tone_instruction(agent)
     behavior_contract = textwrap.dedent(
         """
         ### Behavior Contract
-        - Maintain a {tone_label} tone; default to 2–3 sentences unless the visitor asks for more.
+        - {tone_instruction}
         - No tool narration or fillers (never start with “I’ll…/Let me…/Searching…/Reviewing…”); leave assistant content empty during tool calls.
         - Use ONLY provided snippets/reads; no outside knowledge; no citations/attribution/file names.
         - Safety: for sensitive domains (health/finance/legal), share policy/process only; no personal advice.
@@ -54,7 +78,7 @@ def build_system_message(agent: AgentProfile) -> str:
         - When an email or other required identifier is present and the visitor asks to check a ticket/case/order, call `search_knowledge` immediately using that identifier before asking for any other details. Ask for extra identifiers only if the search is empty or ambiguous.
         - During tool calls, keep assistant content empty (or minimal status) and avoid emitting placeholders. If multiple tool calls occur in sequence, do not repeat statuses or placeholder phrases.
         """
-    ).strip().format(tone_label=tone_label)
+    ).strip().format(tone_instruction=tone_instruction, tone_label=tone_label)
 
     tool_section = textwrap.dedent(
         """
@@ -64,6 +88,7 @@ def build_system_message(agent: AgentProfile) -> str:
         - If you hit a throttle_notice or constraint_error, answer with the evidence you have and ask for the precise identifier/page you need; do not guess.
         - Prefer the narrowest scope: page/chunk reads before whole-document reads.
         - Table aggregation: `table_aggregate` returns deterministic row totals plus `rows[].contributions` (every numeric column/vendor). Call it whenever the visitor needs totals or asks who/which customers/regions contributed so you cite the complete list instead of truncated previews.
+        - Contributor lists: when the visitor says “all” (contributors/customers/regions/etc.), enumerate every entry from the latest `table_aggregate` snippet (including cached ones) with its value; do not summarize or cap the list unless they explicitly ask for highlights.
         - Case/lead/customer tools: follow the Case Management and Customer Identity rules; use `flag_escalation` when policy blocks action or a document is missing.
         """
     ).strip()
