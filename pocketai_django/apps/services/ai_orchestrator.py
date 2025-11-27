@@ -868,6 +868,14 @@ class KnowledgeSearchService:
             diagnostics.update(dict(alias_result.diagnostics))
         diagnostics["alias_stage"] = diagnostics.get("stage")
         diagnostics["alias_hits"] = len(alias_result.hits)
+        alias_duration_ms = None
+        if alias_result and alias_result.diagnostics:
+            try:
+                alias_duration_ms = int(alias_result.diagnostics.get("duration_ms"))  # type: ignore[arg-type]
+            except (TypeError, ValueError):
+                alias_duration_ms = None
+        if alias_duration_ms is not None:
+            diagnostics["alias_duration_ms"] = alias_duration_ms
         cache_key = self._result_cache_key(
             business_profile=business_profile,
             traits=traits,
@@ -1012,6 +1020,7 @@ class KnowledgeSearchService:
         table_snippets: tuple[KnowledgeSnippet, ...] = tuple()
         table_reason: str | None = None
         should_run_table = False
+        table_duration_ms: int | None = None
         has_header_match = bool(table_context.get("matched_columns"))
         if tables_available:
             if not chunk_hits:
@@ -1040,12 +1049,15 @@ class KnowledgeSearchService:
                     "request": diagnostics.get("request_id"),
                 },
             )
+            table_start = time.perf_counter()
             table_snippets = self._table_search_snippets(
                 business_profile=business_profile,
                 query_text=traits.normalized or traits.original,
                 limit=limit,
                 matched_columns=table_context["matched_columns"],
             )
+            table_duration_ms = int((time.perf_counter() - table_start) * 1000)
+            diagnostics["table_duration_ms"] = table_duration_ms
 
         if table_snippets:
             diagnostics["path"] = "table_direct" if not chunk_hits else "table_blended"
@@ -1444,6 +1456,9 @@ class KnowledgeSearchService:
             diagnostics["vector_distance_ceiling"] = ceiling
             diagnostics["vector_candidates"] = hybrid.diagnostics.get("vector_candidates")
             diagnostics["fts_candidates"] = hybrid.diagnostics.get("fts_candidates")
+            diagnostics["vector_duration_ms"] = hybrid.diagnostics.get("vector_duration_ms")
+            diagnostics["fts_duration_ms"] = hybrid.diagnostics.get("fts_duration_ms")
+            diagnostics["rerank_duration_ms"] = hybrid.diagnostics.get("rerank_duration_ms")
             diagnostics["vector_distance_mean"] = hybrid.diagnostics.get("vector_distance_mean")
             diagnostics["vector_distance_min"] = hybrid.diagnostics.get("vector_distance_min")
             diagnostics["vector_distance_max"] = hybrid.diagnostics.get("vector_distance_max")
@@ -3088,6 +3103,13 @@ class KnowledgeSearchService:
                 "reason": diagnostics.get("reason"),
                 "features": diagnostics.get("feature_flags"),
                 "tokens": diagnostics.get("token_count"),
+                "total_ms": diagnostics.get("total_duration_ms"),
+                "alias_ms": diagnostics.get("alias_duration_ms"),
+                "vector_ms": diagnostics.get("vector_duration_ms"),
+                "lexical_ms": diagnostics.get("fts_duration_ms"),
+                "rerank_ms": diagnostics.get("rerank_duration_ms"),
+                "table_ms": diagnostics.get("table_duration_ms"),
+                "snippet_rerank_ms": diagnostics.get("snippet_rerank_ms"),
                 "identifier": diagnostics.get("identifier_like"),
                 "alias_stage": diagnostics.get("alias_stage"),
                 "chunk_candidates": diagnostics.get("chunk_candidate_count"),

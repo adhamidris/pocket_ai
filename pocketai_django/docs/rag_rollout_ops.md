@@ -50,6 +50,12 @@ part of `BusinessProfile.save` keeps it versioned alongside the tenant record.
 - Multi-product/store sales queries now prioritize `table_aggregate` before
   `read_document`, so the model fetches deterministic row totals in one call
   instead of reading many spreadsheet pages.
+- A new `list_tables` tool lets the model enumerate active spreadsheet uploads (names + sheet hints) per tenant, so it can grab the correct `document_id` once and reuse it across every aggregation instead of running another `search_knowledge`.
+- The `table_aggregate` tool accepts a `columns` array so the agent can request
+  only the stores/customers the visitor named, keeping payloads and latency
+  low while reusing cached rows for follow-up questions in the same turn.
+- `table_aggregate` now supports a `match_values` array so the LLM can batch multiple products/stores in one call instead of issuing sequential aggregations for each item.
+- Table scans are cached per upload for the rest of the turn, so once the model looks at a sheet it can reuse the hydrated rows for subsequent `table_aggregate` calls without hitting the ORM again.
 
 ## Backfill Workflow
 

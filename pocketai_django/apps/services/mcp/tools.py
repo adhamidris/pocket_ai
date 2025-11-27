@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import uuid
 import re
+import time
 from collections import Counter
 from functools import lru_cache
 import logging
@@ -20,15 +21,21 @@ import math
 from typing import Any, Callable, Mapping, Sequence
 
 from django.db import models
+from django.db.models import Prefetch
 
-from apps.accounts.models import KnowledgeStatus, KnowledgeUpload, KnowledgeUploadChunk, KnowledgeUploadTableRow
+from apps.accounts.models import (
+    KnowledgeStatus,
+    KnowledgeUpload,
+    KnowledgeUploadChunk,
+    KnowledgeUploadTable,
+    KnowledgeUploadTableRow,
+)
 from apps.conversations.models import Conversation
 from apps.services.ai_orchestrator import (
     ActionType,
     AiOrchestratorService,
     KnowledgeSearchService,
 )
-from apps.services.rag_logging import structured_log
 from apps.services.rag_logging import structured_log
 from core.metrics import latency_monitor
 from .identifier_registry import IdentifierGuardrail, IdentifierRegistryService
@@ -79,6 +86,23 @@ TOOL_DEFINITIONS: tuple[Mapping[str, object], ...] = (
             },
         },
         required=("query",),
+    ),
+    _function_schema(
+        name="list_tables",
+        description="List uploads that contain structured tables so you can grab their document IDs before aggregations.",
+        properties={
+            "query": {
+                "type": "string",
+                "description": "Optional filter for upload name, sheet name, or table title.",
+            },
+            "limit": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 10,
+                "default": 5,
+                "description": "Maximum number of uploads to return (1-10).",
+            },
+        },
     ),
     _function_schema(
         name="read_document",
@@ -141,6 +165,12 @@ TOOL_DEFINITIONS: tuple[Mapping[str, object], ...] = (
                 "type": "string",
                 "description": "Expected value for match_column (substring match).",
             },
+            "match_values": {
+                "type": "array",
+                "items": {"type": "string"},
+                "description": "Batch version of match_value; pass multiple row identifiers to retrieve them in one call.",
+                "minItems": 1,
+            },
             "value_column": {
                 "type": "string",
                 "description": "Column to sum when mode=column_sum. Defaults to row totals.",
@@ -165,6 +195,11 @@ TOOL_DEFINITIONS: tuple[Mapping[str, object], ...] = (
                 "maximum": 200,
                 "description": "Maximum number of matching rows to include in the response.",
                 "default": 50,
+            },
+            "columns": {
+                "type": "array",
+                "items": {"type": "string"},
+                "description": "Optional list of column/store names to include in the response.",
             },
         },
         required=("document_id",),
@@ -958,6 +993,49 @@ def _search_knowledge_handler(
         limit=limit,
         identifier_filter=identifier_filter,
     )
+
+    def _log_search_performance(
+        snippets: Sequence[Mapping[str, object]],
+        *,
+        status_override: str | None = None,
+        note: str | None = None,
+    ) -> None:
+        diagnostics = dict(result.diagnostics or {})
+        snippet_count = len(snippets)
+        diagnostics.setdefault("snippet_count", snippet_count)
+        detail = {
+            "status": status_override or result.status,
+            "intent": intent,
+            "path": diagnostics.get("path"),
+            "snippet_count": snippet_count,
+            "limit": limit,
+            "total_ms": diagnostics.get("total_duration_ms"),
+            "alias_ms": diagnostics.get("alias_duration_ms"),
+            "vector_ms": diagnostics.get("vector_duration_ms"),
+            "lexical_ms": diagnostics.get("fts_duration_ms"),
+            "rerank_ms": diagnostics.get("rerank_duration_ms"),
+            "table_ms": diagnostics.get("table_duration_ms"),
+            "snippet_rerank_ms": diagnostics.get("snippet_rerank_ms"),
+            "chunk_candidates": diagnostics.get("chunk_candidate_count"),
+            "alias_hits": diagnostics.get("alias_hits"),
+            "table_reason": diagnostics.get("table_reason"),
+            "cache_hit": diagnostics.get("cache_hit"),
+            "cache_scope": diagnostics.get("cache_scope"),
+            "read_required": sum(
+                1 for payload in snippets if isinstance(payload, Mapping) and payload.get("read_required")
+            ),
+        }
+        if note:
+            detail["note"] = note
+        structured_log(
+            "mcp",
+            "search.performance",
+            detail,
+            context={
+                "business": conversation.business_profile_id,
+                "conversation": conversation.id,
+            },
+        )
     snippet_payloads = _serialize_snippets(result.snippets)
     # If locked identifier exists, drop snippets whose identifier hash/value does not match locked value.
     if locked_key and locked_value:
@@ -977,6 +1055,11 @@ def _search_knowledge_handler(
         _record_identifier_check(context, decision)
         if decision.status == "identifier_conflict":
             # Treat conflicts as missing/required identifiers; do not poison the session.
+            _log_search_performance(
+                snippet_payloads,
+                status_override="identifier_required",
+                note="identifier_conflict",
+            )
             return {
                 "tool": "search_knowledge",
                 "query": query,
@@ -1007,6 +1090,11 @@ def _search_knowledge_handler(
                 logger_obj=logger,
                 level=logging.WARNING,
             )
+            _log_search_performance(
+                snippet_payloads,
+                status_override=decision.status,
+                note="identifier_gate_blocked",
+            )
             return {
                 "tool": "search_knowledge",
                 "query": query,
@@ -1023,6 +1111,7 @@ def _search_knowledge_handler(
                 "hint": decision.hint,
                 "llm_hint": decision.hint,
             }
+    read_required = False
     if allowed_uploads is not None:
         snippet_payloads = [p for p in snippet_payloads if str(p.get("upload_id") or "") in allowed_uploads]
         if not snippet_payloads:
@@ -1031,6 +1120,11 @@ def _search_knowledge_handler(
                 conversation=conversation,
                 snippet_payloads=snippet_payloads,
                 meta={"query": query, "intent": intent, "read_required": read_required, "filtered": True},
+            )
+            _log_search_performance(
+                snippet_payloads,
+                status_override="ok",
+                note="identifier_scope_filtered",
             )
             return {
                 "tool": "search_knowledge",
@@ -1042,7 +1136,6 @@ def _search_knowledge_handler(
                 "identifier_gate": decision.as_dict() if decision else None,
                 "hint": "No records found for this identifier.",
             }
-    read_required = False
     if intent in {"table", "identifier"}:
         if len(snippet_payloads) <= 2:
             read_required = True
@@ -1097,6 +1190,7 @@ def _search_knowledge_handler(
         },
     )
     context.reserve_characters(int(metrics.get("char_count", 0)))
+    _log_search_performance(snippet_payloads)
 
     return {
         "tool": "search_knowledge",
@@ -1383,12 +1477,200 @@ def _read_document_handler(
     }
 
 
+def _list_tables_handler(
+    arguments: Mapping[str, object],
+    conversation: Conversation,
+    context: ToolExecutionContext,
+) -> Mapping[str, object]:
+    del context
+    query_input = _coerce_str(arguments.get("query")).strip()
+    raw_limit = arguments.get("limit")
+    try:
+        limit = int(raw_limit) if raw_limit is not None else 5
+    except (TypeError, ValueError):
+        limit = 5
+    limit = max(1, min(10, limit))
+
+    uploads_qs = (
+        KnowledgeUpload.objects.filter(
+            business_profile=conversation.business_profile,
+            status=KnowledgeStatus.ACTIVE,
+            tables__isnull=False,
+        )
+        .select_related(None)
+        .order_by("-updated_at")
+        .distinct()
+    )
+    if query_input:
+        uploads_qs = uploads_qs.filter(
+            models.Q(display_name__icontains=query_input)
+            | models.Q(source_name__icontains=query_input)
+            | models.Q(description__icontains=query_input)
+            | models.Q(tables__title__icontains=query_input)
+            | models.Q(tables__section_heading__icontains=query_input)
+            | models.Q(tables__metadata__sheet_name__icontains=query_input)
+        )
+
+    table_prefetch = Prefetch(
+        "tables",
+        queryset=KnowledgeUploadTable.objects.order_by("order_index"),
+    )
+    uploads = list(uploads_qs.prefetch_related(table_prefetch)[:limit])
+    results: list[dict[str, object]] = []
+    for upload in uploads:
+        tables = list(upload.tables.all())
+        if not tables:
+            continue
+        seen_sheet_names: set[str] = set()
+        sheet_names: list[str] = []
+        preview_tables: list[dict[str, object]] = []
+        for table in tables[:TABLE_LIST_PREVIEW_LIMIT]:
+            metadata = table.metadata if isinstance(table.metadata, Mapping) else {}
+            sheet_name_raw = metadata.get("sheet_name") if isinstance(metadata, Mapping) else None
+            normalized_sheet = None
+            if isinstance(sheet_name_raw, str) and sheet_name_raw.strip():
+                normalized_sheet = sheet_name_raw.strip()
+                if normalized_sheet not in seen_sheet_names:
+                    sheet_names.append(normalized_sheet)
+                    seen_sheet_names.add(normalized_sheet)
+            column_schema = table.column_schema if isinstance(table.column_schema, (list, tuple)) else []
+            title = table.title or table.section_heading
+            preview_tables.append(
+                {
+                    "table_id": str(table.id),
+                    "order_index": table.order_index,
+                    "title": title or f"Table {table.order_index or 1}",
+                    "sheet_name": normalized_sheet,
+                    "column_count": len(column_schema),
+                }
+            )
+        display_label = (
+            upload.display_name
+            or upload.source_name
+            or upload.external_reference
+            or upload.slug
+            or str(upload.id)
+        )
+        results.append(
+            {
+                "upload_id": str(upload.id),
+                "document_id": str(upload.id),
+                "display_name": display_label,
+                "table_count": len(tables),
+                "sheet_names": sheet_names,
+                "tables": preview_tables,
+                "updated_at": upload.updated_at.isoformat() if upload.updated_at else None,
+            }
+        )
+    structured_log(
+        "mcp",
+        "table.list",
+        {
+            "query": query_input or None,
+            "limit": limit,
+            "matched_uploads": len(results),
+        },
+        context={
+            "business": conversation.business_profile_id,
+            "conversation": conversation.id,
+        },
+        logger_obj=logger,
+    )
+    status = "ok" if results else "not_found"
+    return {
+        "tool": "list_tables",
+        "status": status,
+        "query": query_input or None,
+        "limit": limit,
+        "results": results,
+        "hint": None if results else "No table uploads match this query.",
+    }
+
+
+TABLE_LIST_PREVIEW_LIMIT = 8
+
+
+def _table_row_cache_key(upload: KnowledgeUpload) -> str:
+    return str(upload.id)
+
+
+def _load_table_rows_for_cache(
+    *,
+    conversation: Conversation,
+    upload: KnowledgeUpload,
+) -> list[dict[str, object]]:
+    rows_qs = (
+        KnowledgeUploadTableRow.objects.filter(
+            table__upload=upload,
+            table__upload__business_profile=conversation.business_profile,
+        )
+        .select_related("table")
+        .prefetch_related("cells")
+        .order_by("table__order_index", "row_index")
+    )
+    payloads: list[dict[str, object]] = []
+    for row in rows_qs:
+        payloads.append(_serialize_table_row_for_cache(row))
+    return payloads
+
+
+def _serialize_table_row_for_cache(row: KnowledgeUploadTableRow) -> dict[str, object]:
+    table = getattr(row, "table", None)
+    table_metadata = getattr(table, "metadata", {}) if table else {}
+    if not isinstance(table_metadata, Mapping):
+        table_metadata = {}
+    sheet_name = table_metadata.get("sheet_name") if isinstance(table_metadata, Mapping) else None
+    cells = sorted(row.cells.all(), key=lambda c: c.column_index)
+    cell_payloads: list[dict[str, object]] = []
+    for cell in cells:
+        column_label = cell.column_key or f"column_{cell.column_index + 1}"
+        normalized_label = _normalize_column_name(column_label)
+        raw_text = cell.raw_text or ""
+        numeric_value = _parse_numeric_value(raw_text)
+        total_priority = _total_column_priority(column_label)
+        cell_payloads.append(
+            {
+                "column": column_label,
+                "column_index": cell.column_index,
+                "normalized": normalized_label,
+                "raw_text": raw_text,
+                "normalized_value": _normalize_column_name(raw_text),
+                "numeric": numeric_value,
+                "total_priority": total_priority,
+                "is_total_column": total_priority > 0,
+            }
+        )
+    return {
+        "row_index": row.row_index,
+        "table_order_index": table.order_index if table else None,
+        "table_title": table.title if table else None,
+        "table_section_heading": table.section_heading if table else None,
+        "sheet_name": sheet_name,
+        "row_text": row.raw_text or "",
+        "cells": cell_payloads,
+    }
+
+
+def _row_matches_sheet_hint(row_payload: Mapping[str, object], sheet_name_input: str) -> bool:
+    if not sheet_name_input:
+        return True
+    target = sheet_name_input.strip().lower()
+    for candidate in (
+        row_payload.get("sheet_name"),
+        row_payload.get("table_title"),
+        row_payload.get("table_section_heading"),
+    ):
+        if isinstance(candidate, str) and candidate.strip().lower() == target:
+            return True
+    return False
+
+
 def _table_aggregate_handler(
     arguments: Mapping[str, object],
     conversation: Conversation,
     context: ToolExecutionContext,
 ) -> Mapping[str, object]:
-    del context  # aggregation is read-only
+    start = time.perf_counter()
     raw_id = _coerce_str(arguments.get("document_id")).strip()
     if not raw_id:
         return {
@@ -1437,8 +1719,17 @@ def _table_aggregate_handler(
         }
     match_column_input = _coerce_str(arguments.get("match_column")).strip()
     match_value_input = _coerce_str(arguments.get("match_value")).strip()
+    raw_match_values = arguments.get("match_values")
     match_column = _normalize_column_name(match_column_input)
+    normalized_match_values: list[str] = []
+    if isinstance(raw_match_values, (list, tuple)):
+        for candidate in raw_match_values:
+            normalized = _normalize_column_name(candidate)
+            if normalized:
+                normalized_match_values.append(normalized)
     match_value = _normalize_column_name(match_value_input)
+    if match_value and match_value not in normalized_match_values:
+        normalized_match_values.append(match_value)
     query_input = _coerce_str(arguments.get("query")).strip()
     query = _normalize_column_name(query_input)
     if not query and not match_column:
@@ -1447,54 +1738,64 @@ def _table_aggregate_handler(
         table_index = int(arguments.get("table_order_index"))
     except (TypeError, ValueError):
         table_index = None
-    sheet_name = _normalize_column_name(arguments.get("sheet_name"))
     sheet_name_input = _coerce_str(arguments.get("sheet_name")).strip()
-    sheet_name = sheet_name_input.lower()
     try:
         row_limit = int(arguments.get("max_rows") or 50)
     except (TypeError, ValueError):
         row_limit = 50
     row_limit = max(1, min(200, row_limit))
-
-    rows_qs = KnowledgeUploadTableRow.objects.filter(
-        table__upload=upload,
-        table__upload__business_profile=conversation.business_profile,
-    ).select_related("table").prefetch_related("cells").order_by("table__order_index", "row_index")
-    if table_index is not None:
-        rows_qs = rows_qs.filter(table__order_index=table_index)
-    elif sheet_name:
-        rows_qs = rows_qs.filter(
-            models.Q(table__title__iexact=sheet_name_input)
-            | models.Q(table__section_heading__iexact=sheet_name_input)
-            | models.Q(table__metadata__sheet_name__iexact=sheet_name_input)
-        )
+    raw_columns = arguments.get("columns")
+    column_filters: list[str] = []
+    if isinstance(raw_columns, (list, tuple)):
+        for entry in raw_columns:
+            candidate = _coerce_str(entry).strip()
+            if candidate:
+                column_filters.append(candidate)
+    normalized_column_filters = { _normalize_column_name(value) for value in column_filters if _normalize_column_name(value) }
 
     total_value = 0.0
     matched_rows: list[dict[str, object]] = []
-    evaluated_rows = 0
+    cache = getattr(context, "table_row_cache", None)
+    if cache is None:
+        cache = {}
+        context.table_row_cache = cache
+    cache_key = _table_row_cache_key(upload)
+    cached_rows = cache.get(cache_key)
+    cache_hit = cached_rows is not None
+    if cached_rows is None:
+        cached_rows = _load_table_rows_for_cache(conversation=conversation, upload=upload)
+        cache[cache_key] = cached_rows
+    evaluated_rows = len(cached_rows)
 
-    for row in rows_qs:
-        evaluated_rows += 1
-        table = row.table
-        if not table:
-            continue
-        cells = sorted(row.cells.all(), key=lambda c: c.column_index)
+    for row_payload in cached_rows:
+        if table_index is not None:
+            row_table_index = row_payload.get("table_order_index")
+            try:
+                row_table_idx_int = int(row_table_index)
+            except (TypeError, ValueError):
+                continue
+            if row_table_idx_int != table_index:
+                continue
+        if sheet_name_input:
+            if not _row_matches_sheet_hint(row_payload, sheet_name_input):
+                continue
+        cells = list(row_payload.get("cells") or ())
         column_map = {
-            _normalize_column_name(cell.column_key or f"column_{cell.column_index + 1}"): cell
+            cell.get("normalized"): cell
             for cell in cells
+            if cell.get("normalized")
         }
         row_matches = True
-        if match_column and match_value:
+        if match_column and normalized_match_values:
             candidate = column_map.get(match_column)
-            candidate_value = _normalize_column_name(getattr(candidate, "raw_text", ""))
-            if not candidate_value or match_value not in candidate_value:
+            candidate_value = candidate.get("normalized_value") if isinstance(candidate, Mapping) else None
+            if not candidate_value or not any(value and value in candidate_value for value in normalized_match_values):
                 row_matches = False
         elif query:
-            haystack_parts = [
-                (row.raw_text or "").lower(),
-                " ".join((cell.raw_text or "").lower() for cell in cells),
-            ]
-            if query not in " ".join(haystack_parts):
+            row_text = str(row_payload.get("row_text") or "")
+            cell_text = " ".join(str(cell.get("raw_text") or "") for cell in cells)
+            haystack = f"{row_text} {cell_text}".lower()
+            if query not in haystack:
                 row_matches = False
         if not row_matches:
             continue
@@ -1505,27 +1806,32 @@ def _table_aggregate_handler(
         total_column_display: str | None = None
         total_column_priority = -1
         for cell in cells:
-            column_label = cell.column_key or f"column_{cell.column_index + 1}"
-            cell_value = cell.raw_text or ""
-            if len(preview_cells) < 12:
+            column_label = cell.get("column") or f"column_{(cell.get('column_index') or 0) + 1}"
+            cell_value = cell.get("raw_text") or ""
+            normalized_label = cell.get("normalized") or _normalize_column_name(column_label)
+            include_in_preview = True
+            if normalized_column_filters and normalized_label not in normalized_column_filters:
+                include_in_preview = False
+            if include_in_preview and len(preview_cells) < 12:
                 preview_cells.append({"column": column_label, "value": cell_value})
-            normalized_label = _normalize_column_name(column_label)
-            numeric_candidate = _parse_numeric_value(cell_value)
-            total_priority = _total_column_priority(column_label)
-            is_total_col = total_priority > 0
+            numeric_candidate = cell.get("numeric")
+            total_priority = int(cell.get("total_priority") or 0)
+            is_total_col = bool(cell.get("is_total_column"))
             if numeric_candidate is not None:
-                contributions.append(
-                    {
-                        "column": column_label,
-                        "value": numeric_candidate,
-                        "display": cell_value.strip() or _format_numeric_display(numeric_candidate),
-                        "is_total_column": is_total_col,
-                    }
-                )
+                numeric_float = float(numeric_candidate)
+                if not normalized_column_filters or normalized_label in normalized_column_filters or is_total_col:
+                    contributions.append(
+                        {
+                            "column": column_label,
+                            "value": numeric_float,
+                            "display": cell_value.strip() or _format_numeric_display(numeric_float),
+                            "is_total_column": is_total_col,
+                        }
+                    )
                 if is_total_col:
                     if total_priority > total_column_priority:
-                        total_column_value = numeric_candidate
-                        total_column_display = cell_value.strip() or _format_numeric_display(numeric_candidate)
+                        total_column_value = numeric_float
+                        total_column_display = cell_value.strip() or _format_numeric_display(numeric_float)
                         total_column_priority = total_priority
 
         numeric_value: float | None = None
@@ -1545,7 +1851,7 @@ def _table_aggregate_handler(
             if not value_column_raw:
                 continue
             candidate = column_map.get(value_column_raw)
-            candidate_text = candidate.raw_text if candidate else ""
+            candidate_text = candidate.get("raw_text") if isinstance(candidate, Mapping) else ""
             numeric_value = _parse_numeric_value(candidate_text)
             if numeric_value is None:
                 continue
@@ -1554,9 +1860,9 @@ def _table_aggregate_handler(
         contributions_sorted = sorted(contributions, key=lambda entry: abs(entry["value"]), reverse=True)
         matched_rows.append(
             {
-                "row_index": row.row_index,
-                "table_order_index": table.order_index,
-                "sheet_name": (table.metadata or {}).get("sheet_name") if isinstance(table.metadata, Mapping) else None,
+                "row_index": row_payload.get("row_index"),
+                "table_order_index": row_payload.get("table_order_index"),
+                "sheet_name": row_payload.get("sheet_name"),
                 "row_total": numeric_value,
                 "row_total_display": display_value,
                 "cells": preview_cells,
@@ -1578,9 +1884,11 @@ def _table_aggregate_handler(
                 query=query_input,
                 match_column=match_column_input,
                 match_value=match_value_input,
+                columns=column_filters,
             )
             for row in matched_rows
         ]
+    duration_ms = int((time.perf_counter() - start) * 1000)
     structured_log(
         "mcp",
         "table.aggregate",
@@ -1590,6 +1898,14 @@ def _table_aggregate_handler(
             "match_count": len(matched_rows),
             "evaluated_rows": evaluated_rows,
             "contribution_rows": sum(row.get("contribution_count", 0) for row in matched_rows),
+            "requested_columns": column_filters,
+            "duration_ms": duration_ms,
+            "row_limit": row_limit,
+            "match_column": match_column_input or None,
+            "match_value": match_value_input or None,
+            "query": query_input or None,
+            "sheet_name": sheet_name_input or None,
+            "cache_hit": cache_hit,
         },
         context={"business": conversation.business_profile_id},
         logger_obj=logger,
@@ -1604,6 +1920,15 @@ def _table_aggregate_handler(
                 "match_count": len(matched_rows),
                 "total": total_value,
                 "rows": matched_rows,
+                "requested_columns": column_filters,
+                "duration_ms": duration_ms,
+                "row_limit": row_limit,
+                "match_column": match_column_input or None,
+                "match_value": match_value_input or None,
+                "match_values": normalized_match_values or None,
+                "query": query_input or None,
+                "sheet_name": sheet_name_input or None,
+                "cache_hit": cache_hit,
             },
             context={
                 "business": conversation.business_profile_id,
@@ -1620,13 +1945,19 @@ def _table_aggregate_handler(
         "query": query_input or None,
         "match_column": match_column_input or None,
         "match_value": match_value_input or None,
+        "match_values": normalized_match_values or None,
         "value_column": value_column_input or None,
         "sheet_name": sheet_name_input or None,
+        "columns": column_filters or None,
         "match_count": len(matched_rows),
         "total": total_value if matched_rows else None,
         "display_total": _format_numeric_display(total_value) if matched_rows else None,
         "rows": matched_rows,
         "snippets": snippet_payloads,
+        "duration_ms": duration_ms,
+        "evaluated_rows": evaluated_rows,
+        "row_limit": row_limit,
+        "cache_hit": cache_hit,
         "hint": "No matching rows found." if not matched_rows else None,
     }
 
@@ -1638,6 +1969,7 @@ def _build_table_aggregate_snippet(
     query: str | None,
     match_column: str | None,
     match_value: str | None,
+    columns: Sequence[str] | None = None,
 ) -> dict[str, object]:
     row_index = row.get("row_index")
     table_idx = row.get("table_order_index")
@@ -1683,6 +2015,7 @@ def _build_table_aggregate_snippet(
         "table_match_value": match_value or None,
         "table_row_total": row_total,
         "table_row_total_display": row_total_display,
+        "table_requested_columns": list(columns or ()),
     }
     if total_entries:
         diagnostics["table_total_columns"] = [
@@ -1948,6 +2281,7 @@ def _enforce_single_chunk_read(context: ToolExecutionContext) -> None:
 _TOOL_HANDLERS: dict[str, ToolHandler] = {
     "search_knowledge": _search_knowledge_handler,
     "read_document": _read_document_handler,
+    "list_tables": _list_tables_handler,
     "table_aggregate": _table_aggregate_handler,
     "create_case": _create_case_handler,
     "update_case_status": _update_case_status_handler,
