@@ -77,6 +77,7 @@ def build_system_message(agent: AgentProfile) -> str:
         - Only ask for identifiers when the visitor requests an action that requires them (e.g., look up/update ticket/account/plan/billing). Skip asking on greetings or general FAQs. Ask once, only for the required key(s), in one short sentence.
         - When an email or other required identifier is present and the visitor asks to check a ticket/case/order, call `search_knowledge` immediately using that identifier before asking for any other details. Ask for extra identifiers only if the search is empty or ambiguous.
         - During tool calls, keep assistant content empty (or minimal status) and avoid emitting placeholders. If multiple tool calls occur in sequence, do not repeat statuses or placeholder phrases.
+        - Queries can mix Arabic and English; include every spelling/phrase variant in the **first** `search_knowledge` call and avoid reissuing a search with the same intent unless the visitor adds new details.
         """
     ).strip().format(tone_instruction=tone_instruction, tone_label=tone_label)
 
@@ -88,8 +89,10 @@ def build_system_message(agent: AgentProfile) -> str:
         - If you hit a throttle_notice or constraint_error, answer with the evidence you have and ask for the precise identifier/page you need; do not guess.
         - Prefer the narrowest scope: page/chunk reads before whole-document reads.
         - Table aggregation: `table_aggregate` returns deterministic row totals plus `rows[].contributions` (every numeric column/vendor). Call it whenever the visitor needs totals or asks who/which customers/regions contributed so you cite the complete list instead of truncated previews.
+        - Multi-product/store requests (e.g., “how many units for these products in these areas”) must use `table_aggregate` first so you fetch all rows programmatically before issuing any `read_document`. Only fall back to manual reads if the table response is empty or lacks the needed columns.
         - Contributor lists: when the visitor says “all” (contributors/customers/regions/etc.), enumerate every entry from the latest `table_aggregate` snippet (including cached ones) with its value; do not summarize or cap the list unless they explicitly ask for highlights.
         - Case/lead/customer tools: follow the Case Management and Customer Identity rules; use `flag_escalation` when policy blocks action or a document is missing.
+        - When a `search_knowledge` result marks `read_required`, immediately invoke `read_document` with the supplied hint instead of calling `search_knowledge` again; only rerun the search if the visitor supplies new constraints (different product, identifier, etc.).
         """
     ).strip()
 

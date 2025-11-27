@@ -66,7 +66,13 @@ def build_embedding_service(preferred_provider: str | None = None):
         return build_embedding_service("local")
 
 
-__all__ = ["EmbeddingService", "EmbeddingProviderError", "LocalEmbeddingService", "build_embedding_service"]
+__all__ = [
+    "EmbeddingService",
+    "EmbeddingProviderError",
+    "LocalEmbeddingService",
+    "build_embedding_service",
+    "warm_rag_embeddings",
+]
 
 
 class EmbeddingProviderError(RuntimeError):
@@ -128,3 +134,32 @@ class EmbeddingService:
     def embed_text(self, text: str) -> list[float]:
         vectors = self.embed_texts([text])
         return vectors[0] if vectors else []
+
+
+def warm_rag_embeddings(*, log: logging.Logger | None = None) -> None:
+    """Eagerly construct the knowledge service and warm its embedder."""
+
+    logger_obj = log or logger
+    try:
+        from apps.services.mcp import tools as mcp_tools  # Imported lazily to avoid cycles
+    except Exception as exc:  # pragma: no cover - defensive
+        logger_obj.warning("RAG warmup skipped; MCP tools unavailable: %s", exc)
+        return
+
+    try:
+        knowledge_service = mcp_tools._knowledge_service()
+    except Exception as exc:  # pragma: no cover - defensive
+        logger_obj.warning("RAG warmup skipped; knowledge service init failed: %s", exc)
+        return
+
+    embedder = getattr(knowledge_service, "embedding_service", None)
+    if not embedder:
+        logger_obj.info("RAG warmup skipped; no embedding service configured.")
+        return
+
+    try:
+        embedder.embed_text("pocketai-warmup")
+    except EmbeddingProviderError as exc:
+        logger_obj.warning("Embedding warmup failed: %s", exc)
+    except Exception as exc:  # pragma: no cover - defensive
+        logger_obj.warning("Unexpected error during embedding warmup: %s", exc)

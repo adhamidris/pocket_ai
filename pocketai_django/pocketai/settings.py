@@ -77,6 +77,7 @@ INSTALLED_APPS = [
     "apps.cases",
     "apps.customers",
     "apps.conversations",
+    "apps.services",
     "frontend",
     #Vectorizing
     "pgvector.django",

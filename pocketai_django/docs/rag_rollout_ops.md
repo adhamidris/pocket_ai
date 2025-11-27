@@ -28,6 +28,29 @@ database but still show the future state.
 New tenants inherit all three flags as `True`; storing the state in metadata as
 part of `BusinessProfile.save` keeps it versioned alongside the tenant record.
 
+## RAG Warmup & Embedding Cache
+
+- Django now preloads `_knowledge_service()` via `apps.services.apps.ServicesConfig`
+  whenever `RAG_USE_MCP_ORCHESTRATOR` is `True`, so workers download or
+  initialize the embedding backend before serving traffic.
+- Run `python manage.py warm_embeddings` during deploy/build steps to populate
+  the FastEmbed cache (or trigger the remote provider) and bake the resulting
+  `~/.cache/fastembed/BAAI-bge-small-en-v1.5` directory into your container
+  image or shared volume.
+- This warmup path is provider-agnostic; when `EMBED_PROVIDER=openai`, the
+  command simply instantiates the OpenAI client and exits, while local
+  FastEmbed backends reuse the cached weights at runtime.
+- MCP now short-circuits duplicate `search_knowledge` calls when a prior
+  search already produced read-required snippets, prompting the model to issue
+  `read_document` instead of re-running the same query.
+- Prompt guidance now instructs the agent to pack bilingual (Arabic/English)
+  variants into the first `search_knowledge` call and to go straight to
+  `read_document` whenever snippets set `read_required`, so redundant searches
+  are avoided unless the visitor provides new constraints.
+- Multi-product/store sales queries now prioritize `table_aggregate` before
+  `read_document`, so the model fetches deterministic row totals in one call
+  instead of reading many spreadsheet pages.
+
 ## Backfill Workflow
 
 `python manage.py backfill_knowledge_aliases` replays ingestion so entity chunks

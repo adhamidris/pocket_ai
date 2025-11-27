@@ -1,5 +1,7 @@
 from importlib import import_module
 
+default_app_config = "apps.services.apps.ServicesConfig"
+
 __all__ = [
     "CaseDetail",
     "CaseListResult",
@@ -49,6 +51,7 @@ __all__ = [
     "EmbeddingService",
     "EmbeddingProviderError",
     "build_embedding_service",
+    "warm_rag_embeddings",
     "IntegrationSyncService",
     "KnowledgeIngestionService",
     "KnowledgeIngestionError",
@@ -136,6 +139,7 @@ _register(
         "EmbeddingProviderError",
         "EmbeddingService",
         "build_embedding_service",
+        "warm_rag_embeddings",
     ],
 )
 _register(

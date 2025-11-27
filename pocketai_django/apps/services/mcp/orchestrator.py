@@ -338,27 +338,40 @@ class McpOrchestratorService:
                             on_placeholder_response(placeholder_text)
                             placeholder_sent = True
 
-                    try:
-                        tool_result = tools.execute_tool(
-                            tool_name,
+                    duplicate_result = None
+                    if tool_name == "search_knowledge":
+                        duplicate_result = self._short_circuit_duplicate_search(
                             arguments,
-                            conversation=conversation,
-                            context=tool_context,
+                            tool_context,
+                            conversation,
                         )
-                    except ToolConstraintError as exc:
-                        structured_log(
-                            "mcp",
-                            "tool.constraint_violation",
-                            {
-                                "tool": tool_name,
-                                "error": str(exc),
-                            },
-                            indent=1,
-                            context={"conversation": conversation.id},
-                            logger_obj=logger,
-                            level=logging.WARNING,
-                        )
-                        tool_result = self._constraint_error_payload(tool_name, exc)
+
+                    if duplicate_result:
+                        tool_result = duplicate_result
+                    else:
+                        try:
+                            tool_result = tools.execute_tool(
+                                tool_name,
+                                arguments,
+                                conversation=conversation,
+                                context=tool_context,
+                            )
+                        except ToolConstraintError as exc:
+                            structured_log(
+                                "mcp",
+                                "tool.constraint_violation",
+                                {
+                                    "tool": tool_name,
+                                    "error": str(exc),
+                                },
+                                indent=1,
+                                context={"conversation": conversation.id},
+                                logger_obj=logger,
+                                level=logging.WARNING,
+                            )
+                            tool_result = self._constraint_error_payload(tool_name, exc)
+                    if tool_name == "search_knowledge" and not duplicate_result:
+                        self._record_search_history(tool_context, arguments, tool_result)
                     tool_context.add_tool_trace(
                         {
                             "tool": tool_name,
@@ -1195,6 +1208,111 @@ class McpOrchestratorService:
                 },
                 logger_obj=logger,
             )
+
+    @staticmethod
+    def _record_search_history(context: ToolExecutionContext, arguments: Mapping[str, object], tool_result: Mapping[str, object]) -> None:
+        history = getattr(context, "search_history", None)
+        if history is None:
+            return
+        raw_query = arguments.get("query")
+        query = str(raw_query).strip() if raw_query is not None else ""
+        if not query:
+            return
+        normalized = query.lower()
+        snippets = tool_result.get("snippets") if isinstance(tool_result, Mapping) else None
+        if not isinstance(snippets, list) or not snippets:
+            return
+        snippet_ids: list[str] = []
+        read_required = False
+        hint_text = None
+        for snippet in snippets:
+            if not isinstance(snippet, Mapping):
+                continue
+            identifier = snippet.get("chunk_id") or snippet.get("id") or snippet.get("upload_id")
+            if identifier:
+                snippet_ids.append(str(identifier))
+            if snippet.get("read_required"):
+                read_required = True
+            if hint_text is None:
+                read_hint = snippet.get("read_hint")
+                if isinstance(read_hint, Mapping):
+                    doc_id = read_hint.get("document_id")
+                    page = read_hint.get("page")
+                    mode = read_hint.get("mode")
+                    pieces = []
+                    if doc_id:
+                        pieces.append(f"document_id={doc_id}")
+                    if page:
+                        pieces.append(f"page={page}")
+                    if mode:
+                        pieces.append(f"mode={mode}")
+                    if pieces:
+                        hint_text = "Read with " + ", ".join(pieces)
+        history.append(
+            {
+                "query": normalized,
+                "snippet_count": len(snippets),
+                "read_required": read_required,
+                "snippet_ids": snippet_ids,
+                "hint": hint_text or "Existing snippets already require read_document; use the provided read_hint.",
+            }
+        )
+
+    def _short_circuit_duplicate_search(
+        self,
+        arguments: Mapping[str, object],
+        context: ToolExecutionContext,
+        conversation: Conversation,
+    ) -> Mapping[str, object] | None:
+        history = getattr(context, "search_history", None) or []
+        if not history:
+            return None
+        raw_query = arguments.get("query")
+        query = str(raw_query).strip() if raw_query is not None else ""
+        if not query:
+            return None
+        normalized = query.lower()
+        if not normalized:
+            return None
+        if getattr(context, "knowledge_reads", None):
+            return None
+        for entry in reversed(history):
+            if entry.get("query") != normalized:
+                continue
+            if not entry.get("read_required"):
+                continue
+            if not entry.get("snippet_count"):
+                continue
+            snippet_ids = entry.get("snippet_ids") or []
+            hint = entry.get("hint") or "Use read_document with the existing read_hint from the earlier search."
+            structured_log(
+                "mcp",
+                "search.duplicate_short_circuit",
+                {
+                    "query": normalized,
+                    "snippet_ids": snippet_ids,
+                },
+                indent=1,
+                context={
+                    "conversation": conversation.id,
+                    "business": conversation.business_profile_id,
+                },
+                logger_obj=logger,
+            )
+            diagnostics = {
+                "duplicate_query": normalized,
+                "snippet_ids": snippet_ids,
+            }
+            return {
+                "tool": "search_knowledge",
+                "status": "duplicate",
+                "error": "duplicate_query",
+                "snippets": [],
+                "hint": hint,
+                "llm_hint": hint,
+                "diagnostics": diagnostics,
+            }
+        return None
 
     def _persist_table_cache(self, conversation: Conversation, context: ToolExecutionContext) -> None:
         rows = getattr(context, "table_aggregate_rows", [])
