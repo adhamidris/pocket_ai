@@ -4,6 +4,7 @@ import os
 import sys
 
 from pocketai.env import load_project_env
+from core.tracing import configure_tracing
 
 load_project_env()
 
@@ -11,6 +12,7 @@ load_project_env()
 def main() -> None:
     """Entrypoint for management commands."""
     os.environ.setdefault("DJANGO_SETTINGS_MODULE", "pocketai.settings")
+    configure_tracing()
     try:
         from django.core.management import execute_from_command_line
     except ImportError as exc:  # pragma: no cover - generated scaffold

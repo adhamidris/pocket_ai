@@ -24,6 +24,8 @@ except Exception:  # pragma: no cover - optional
 
 from apps.services.ai_prompt_builder import PromptBundle
 from apps.services.rag_logging import structured_log
+from opentelemetry import trace as otel_trace
+from opentelemetry.trace import Span, Status, StatusCode
 
 # Optional flag to enable token estimation logs (guarded by DEBUG level as well).
 LOG_TOKEN_ESTIMATE = os.getenv("LLM_LOG_TOKEN_ESTIMATE", "").strip().lower() in {"1", "true", "yes"}
@@ -35,6 +37,38 @@ HTTP_TIMEOUT_READ = os.getenv("LLM_HTTP_TIMEOUT_READ")
 
 
 logger = logging.getLogger(__name__)
+TRACER = otel_trace.get_tracer(__name__)
+
+
+def _format_trace_id(value: int) -> str:
+    """Return a hex-encoded trace id for debug logs."""
+
+    return f"{value:032x}"
+
+
+def _format_span_id(value: int) -> str:
+    """Return a hex-encoded span id for debug logs."""
+
+    return f"{value:016x}"
+
+
+def _log_span_debug(label: str, span: Span | None) -> None:
+    """
+    Emit a lightweight debug log with the active span identifiers.
+
+    Useful when confirming that instrumentation blocks are running and that
+    spans are parented correctly without having to open Jaeger for every test.
+    """
+
+    if not span or not logger.isEnabledFor(logging.DEBUG):
+        return
+    ctx = span.get_span_context()
+    logger.debug(
+        "%s trace_id=%s span_id=%s",
+        label,
+        _format_trace_id(ctx.trace_id),
+        _format_span_id(ctx.span_id),
+    )
 
 
 def _select_encoder(model_name: str | None):
@@ -219,99 +253,118 @@ class OpenAIChatProvider:
         self.top_p = top_p
 
     def generate(self, bundle: PromptBundle, *, on_stream_delta: Callable[[str], None] | None = None) -> Mapping[str, Any]:
-        headers = {
-            "Authorization": f"Bearer {self.api_key}",
-            "Content-Type": "application/json",
-        }
         streaming = bool(on_stream_delta)
-        payload = {
-            "model": self.model,
-            "messages": [
-                {"role": "system", "content": self._system_prompt(bundle)},
-                {"role": "user", "content": self._user_payload(bundle)},
-            ],
-            "temperature": self.temperature,
-            "top_p": self.top_p,
-            "response_format": self._response_schema(),
-        }
-        if streaming:
-            payload["stream"] = True
-        if LOG_TOKEN_ESTIMATE and logger.isEnabledFor(logging.DEBUG):
-            try:
-                char_count, token_est = _message_char_stats(payload.get("messages") or [], self.model)
-                logger.debug("LLM request model=%s chars=%s tokens≈%s", self.model, char_count, token_est)
-            except Exception:  # pragma: no cover - best effort
-                logger.debug("Failed to estimate tokens for LLM request.")
-        if LOG_DEBUG_PAYLOADS or logger.isEnabledFor(logging.DEBUG):
-            try:
-                logger.debug("LLM request payload: %s", json.dumps(payload, ensure_ascii=False))
-            except Exception:  # pragma: no cover - log best effort
-                logger.debug("Failed to serialize LLM payload for logging.")
-
-        body = json.dumps(payload).encode("utf-8")
-        request = urllib_request.Request(
-            f"{self.base_url}/v1/chat/completions",
-            data=body,
-            headers=headers,
-            method="POST",
-        )
-
-        try:
-            with urllib_request.urlopen(request, timeout=self.timeout) as resp:
-                status_code = getattr(resp, "status", 200)
-                if streaming:
-                    data = _consume_chat_completion_stream(resp, on_stream_delta)
-                    raw_body = None
-                else:
-                    raw_body = resp.read().decode("utf-8")
-        except urllib_error.HTTPError as exc:
-            detail = exc.read().decode("utf-8", errors="ignore")
-            raise PromptGenerationError(
-                f"OpenAI error ({exc.code}): {detail.strip()[:200]}"
-            ) from exc
-        except urllib_error.URLError as exc:
-            raise PromptGenerationError(f"OpenAI request failed: {exc}") from exc
-
-        if status_code >= 400:
-            raise PromptGenerationError(f"OpenAI error ({status_code}): {raw_body[:200] if raw_body else status_code}")
-
-        if streaming:
-            try:
-                content = self._extract_content(data)
-            except Exception as exc:
-                raise PromptGenerationError("OpenAI streaming response missing content.") from exc
-            if logger.isEnabledFor(logging.DEBUG):
-                try:
-                    logger.debug("OpenAI stream assembled payload: %s", json.dumps(data, ensure_ascii=False))
-                except Exception:  # pragma: no cover - log best effort
-                    logger.debug("Failed to serialize OpenAI stream payload.")
+        with TRACER.start_as_current_span("llm.openai.chat") as span:
+            if span.is_recording():
+                span.set_attribute("llm.provider", "OpenAIChat")
+                span.set_attribute("llm.model", self.model)
+                span.set_attribute("llm.streaming", streaming)
+            headers = {
+                "Authorization": f"Bearer {self.api_key}",
+                "Content-Type": "application/json",
+            }
+            payload = {
+                "model": self.model,
+                "messages": [
+                    {"role": "system", "content": self._system_prompt(bundle)},
+                    {"role": "user", "content": self._user_payload(bundle)},
+                ],
+                "temperature": self.temperature,
+                "top_p": self.top_p,
+                "response_format": self._response_schema(),
+            }
+            if streaming:
+                payload["stream"] = True
             if LOG_TOKEN_ESTIMATE and logger.isEnabledFor(logging.DEBUG):
                 try:
-                    out_tokens = _estimate_text_tokens(content, self.model) if content else 0
-                    if out_tokens:
-                        logger.debug("OpenAI stream tokens≈%s model=%s", out_tokens, self.model)
-                except Exception:
-                    logger.debug("Failed to log streaming token estimate.")
-        else:
-            try:
-                data = json.loads(raw_body)
-            except ValueError as exc:
-                raise PromptGenerationError("OpenAI response was not valid JSON.") from exc
+                    char_count, token_est = _message_char_stats(payload.get("messages") or [], self.model)
+                    logger.debug("LLM request model=%s chars=%s tokens≈%s", self.model, char_count, token_est)
+                except Exception:  # pragma: no cover - best effort
+                    logger.debug("Failed to estimate tokens for LLM request.")
+            if LOG_DEBUG_PAYLOADS or logger.isEnabledFor(logging.DEBUG):
+                try:
+                    logger.debug("LLM request payload: %s", json.dumps(payload, ensure_ascii=False))
+                except Exception:  # pragma: no cover - log best effort
+                    logger.debug("Failed to serialize LLM payload for logging.")
 
-            _log_usage("OpenAIChat", self.model, data.get("usage") if isinstance(data, Mapping) else None)
-            structured_log(
-                "llm",
-                "raw_response",
-                raw_body,
-                context={"provider": "OpenAIChat", "model": self.model},
-                logger_obj=logger,
+            body = json.dumps(payload).encode("utf-8")
+            request = urllib_request.Request(
+                f"{self.base_url}/v1/chat/completions",
+                data=body,
+                headers=headers,
+                method="POST",
             )
 
-            content = self._extract_content(data)
-        try:
-            return json.loads(content)
-        except json.JSONDecodeError as exc:
-            raise PromptGenerationError("OpenAI response did not return valid JSON output.") from exc
+            try:
+                with urllib_request.urlopen(request, timeout=self.timeout) as resp:
+                    status_code = getattr(resp, "status", 200)
+                    if streaming:
+                        data = _consume_chat_completion_stream(resp, on_stream_delta)
+                        raw_body = None
+                    else:
+                        raw_body = resp.read().decode("utf-8")
+            except urllib_error.HTTPError as exc:
+                detail = exc.read().decode("utf-8", errors="ignore")
+                span.record_exception(exc)
+                span.set_status(Status(StatusCode.ERROR, detail))
+                raise PromptGenerationError(
+                    f"OpenAI error ({exc.code}): {detail.strip()[:200]}"
+                ) from exc
+            except urllib_error.URLError as exc:
+                span.record_exception(exc)
+                span.set_status(Status(StatusCode.ERROR, str(exc)))
+                raise PromptGenerationError(f"OpenAI request failed: {exc}") from exc
+
+            if status_code >= 400:
+                span.set_status(Status(StatusCode.ERROR, str(status_code)))
+                raise PromptGenerationError(f"OpenAI error ({status_code}): {raw_body[:200] if raw_body else status_code}")
+
+            if streaming:
+                try:
+                    content = self._extract_content(data)
+                except Exception as exc:
+                    span.record_exception(exc)
+                    span.set_status(Status(StatusCode.ERROR, "stream_missing_content"))
+                    raise PromptGenerationError("OpenAI streaming response missing content.") from exc
+                if logger.isEnabledFor(logging.DEBUG):
+                    try:
+                        logger.debug("OpenAI stream assembled payload: %s", json.dumps(data, ensure_ascii=False))
+                    except Exception:  # pragma: no cover - log best effort
+                        logger.debug("Failed to serialize OpenAI stream payload.")
+                if LOG_TOKEN_ESTIMATE and logger.isEnabledFor(logging.DEBUG):
+                    try:
+                        out_tokens = _estimate_text_tokens(content, self.model) if content else 0
+                        if out_tokens:
+                            logger.debug("OpenAI stream tokens≈%s model=%s", out_tokens, self.model)
+                    except Exception:
+                        logger.debug("Failed to log streaming token estimate.")
+            else:
+                try:
+                    data = json.loads(raw_body)
+                except ValueError as exc:
+                    span.record_exception(exc)
+                    span.set_status(Status(StatusCode.ERROR, "invalid_json"))
+                    raise PromptGenerationError("OpenAI response was not valid JSON.") from exc
+
+                _log_usage("OpenAIChat", self.model, data.get("usage") if isinstance(data, Mapping) else None)
+                structured_log(
+                    "llm",
+                    "raw_response",
+                    raw_body,
+                    context={"provider": "OpenAIChat", "model": self.model},
+                    logger_obj=logger,
+                )
+
+                content = self._extract_content(data)
+            try:
+                parsed = json.loads(content)
+                if span.is_recording() and isinstance(parsed, Mapping):
+                    span.set_attribute("llm.response_chars", len(content or ""))
+                return parsed
+            except json.JSONDecodeError as exc:
+                span.record_exception(exc)
+                span.set_status(Status(StatusCode.ERROR, "invalid_response_json"))
+                raise PromptGenerationError("OpenAI response did not return valid JSON output.") from exc
 
     def _system_prompt(self, bundle: PromptBundle) -> str:
         schema_hint = (
@@ -401,26 +454,34 @@ class DeepSeekChatProvider(OpenAIChatProvider):
         self._client = OpenAI(api_key=self.api_key, base_url=self.base_url, timeout=self.timeout)
 
     def generate(self, bundle: PromptBundle, *, on_stream_delta: Callable[[str], None] | None = None) -> Mapping[str, Any]:
-        messages = [
-            {"role": "system", "content": self._system_prompt(bundle)},
-            {"role": "user", "content": self._user_payload(bundle)},
-        ]
-        request_payload = {
-            "model": self.model,
-            "temperature": self.temperature,
-            "top_p": self.top_p,
-            "stream": bool(on_stream_delta),
-            "messages": messages,
-        }
-        self._log_pretty("DeepSeek request payload", request_payload)
-        if on_stream_delta:
-            content = self._generate_streaming(messages, on_stream_delta)
-        else:
-            content = self._generate_blocking(messages)
-        self._log_pretty("DeepSeek raw response", content)
-        parsed = self._parse_payload(content)
-        self._log_pretty("DeepSeek parsed payload", parsed)
-        return parsed
+        streaming = bool(on_stream_delta)
+        with TRACER.start_as_current_span("llm.deepseek.chat") as span:
+            if span.is_recording():
+                span.set_attribute("llm.provider", "DeepSeekChat")
+                span.set_attribute("llm.model", self.model)
+                span.set_attribute("llm.streaming", streaming)
+            messages = [
+                {"role": "system", "content": self._system_prompt(bundle)},
+                {"role": "user", "content": self._user_payload(bundle)},
+            ]
+            request_payload = {
+                "model": self.model,
+                "temperature": self.temperature,
+                "top_p": self.top_p,
+                "stream": streaming,
+                "messages": messages,
+            }
+            self._log_pretty("DeepSeek request payload", request_payload)
+            if streaming:
+                content = self._generate_streaming(messages, on_stream_delta)
+            else:
+                content = self._generate_blocking(messages)
+            self._log_pretty("DeepSeek raw response", content)
+            parsed = self._parse_payload(content)
+            self._log_pretty("DeepSeek parsed payload", parsed)
+            if span.is_recording():
+                span.set_attribute("llm.response_chars", len(content or ""))
+            return parsed
 
     def _generate_blocking(self, messages: list[Mapping[str, str]]) -> str:
         try:
@@ -1067,210 +1128,233 @@ class OpenAIToolsProvider(BaseMcpProvider):
         on_stream_delta: Callable[[str], None] | None = None,
         response_format: Mapping[str, object] | None = None,
     ) -> Mapping[str, Any]:
-        start_time = time.monotonic()
-        headers = {
-            "Authorization": f"Bearer {self.api_key}",
-            "Content-Type": "application/json",
-        }
         streaming = bool(on_stream_delta)
-        payload: dict[str, Any] = {
-            "model": self.model,
-            "messages": [dict(msg) for msg in messages],
-            "temperature": self.temperature,
-            "top_p": self.top_p,
-            "stream": streaming,
-        }
-        if not streaming:
-            # For non-streaming planning calls we request structured JSON content
-            # so the provider can return actions/extractions alongside text.
-            payload["response_format"] = OpenAIChatProvider._response_schema()
-        if tools:
-            payload["tools"] = list(tools)
-            payload["tool_choice"] = "auto"
-        max_tokens_env = os.getenv("OPENAI_MAX_TOKENS")
-        if max_tokens_env:
-            try:
-                payload["max_tokens"] = max(1, int(max_tokens_env))
-            except (TypeError, ValueError):
-                structured_log(
-                    "llm",
-                    "warning",
-                    f"Invalid OPENAI_MAX_TOKENS value: {max_tokens_env}",
-                    level=logging.WARNING,
-                )
+        with TRACER.start_as_current_span("llm.openai.tools") as span:
+            if span.is_recording():
+                span.set_attribute("llm.provider", "OpenAITools")
+                span.set_attribute("llm.model", self.model)
+                span.set_attribute("llm.streaming", streaming)
+            _log_span_debug("OpenAIToolsProvider.chat", span)
 
-        # Log a compact summary at INFO; heavy details only when enabled.
-        if LOG_TOKEN_ESTIMATE and logger.isEnabledFor(logging.DEBUG):
+            elapsed_ms: int | None = None
+
+            def _record_latency() -> None:
+                if span and span.is_recording() and elapsed_ms is not None:
+                    span.set_attribute("llm.duration_ms", elapsed_ms)
+
             try:
-                char_count, token_est = _message_char_stats(payload.get("messages") or [], self.model)
-                logger.debug(
-                    "MCP LLM request model=%s tools=%s messages=%s chars=%s tokens≈%s",
-                    self.model,
-                    [t.get("function", {}).get("name") for t in (tools or [])],
-                    len(payload.get("messages") or []),
-                    char_count,
-                    token_est,
-                )
-            except Exception:  # pragma: no cover - best effort
-                logger.debug("Failed to estimate tokens for MCP request.")
-        else:
-            structured_log(
-                "llm",
-                "request",
-                {
-                    "provider": "OpenAITools",
+                headers = {
+                    "Authorization": f"Bearer {self.api_key}",
+                    "Content-Type": "application/json",
+                }
+                payload: dict[str, Any] = {
                     "model": self.model,
-                    "tools": [t.get("function", {}).get("name") for t in (tools or [])],
-                    "message_count": len(payload.get("messages") or []),
-                    "streaming": streaming,
-                },
-            )
-        if LOG_DEBUG_PAYLOADS or logger.isEnabledFor(logging.DEBUG):
-            try:
-                logger.debug("MCP LLM request payload: %s", json.dumps(payload, ensure_ascii=False))
-            except Exception:  # pragma: no cover - log best effort
-                logger.debug("Failed to serialize MCP payload for logging.")
+                    "messages": [dict(msg) for msg in messages],
+                    "temperature": self.temperature,
+                    "top_p": self.top_p,
+                    "stream": streaming,
+                }
+                if not streaming:
+                    # For non-streaming planning calls we request structured JSON content
+                    # so the provider can return actions/extractions alongside text.
+                    payload["response_format"] = OpenAIChatProvider._response_schema()
+                if tools:
+                    payload["tools"] = list(tools)
+                    payload["tool_choice"] = "auto"
+                max_tokens_env = os.getenv("OPENAI_MAX_TOKENS")
+                if max_tokens_env:
+                    try:
+                        payload["max_tokens"] = max(1, int(max_tokens_env))
+                    except (TypeError, ValueError):
+                        structured_log(
+                            "llm",
+                            "warning",
+                            f"Invalid OPENAI_MAX_TOKENS value: {max_tokens_env}",
+                            level=logging.WARNING,
+                        )
 
-        data: dict[str, Any]
-        elapsed_ms = None
-        start_time = time.monotonic()
-        raw_body: str | None = None
-        if self._http_client:
-            try:
-                if streaming:
-                    with self._http_client.stream(
-                        "POST",
-                        "/v1/chat/completions",
-                        json=payload,
-                        headers=headers,
-                        timeout=self.timeout,
-                    ) as resp:
-                        status_code = resp.status_code
-                        if status_code >= 400:
-                            detail = resp.text[:200]
-                            raise PromptGenerationError(f"OpenAI tools error ({status_code}): {detail}")
-                        data = _consume_chat_completion_stream(_HttpxLineStream(resp.iter_lines()), on_stream_delta)
+                # Log a compact summary at INFO; heavy details only when enabled.
+                if LOG_TOKEN_ESTIMATE and logger.isEnabledFor(logging.DEBUG):
+                    try:
+                        char_count, token_est = _message_char_stats(payload.get("messages") or [], self.model)
+                        logger.debug(
+                            "MCP LLM request model=%s tools=%s messages=%s chars=%s tokens≈%s",
+                            self.model,
+                            [t.get("function", {}).get("name") for t in (tools or [])],
+                            len(payload.get("messages") or []),
+                            char_count,
+                            token_est,
+                        )
+                    except Exception:  # pragma: no cover - best effort
+                        logger.debug("Failed to estimate tokens for MCP request.")
                 else:
-                    resp = self._http_client.post(
-                        "/v1/chat/completions",
-                        json=payload,
-                        headers=headers,
-                        timeout=self.timeout,
-                    )
-                    status_code = resp.status_code
-                    raw_body = resp.text
-                    if status_code >= 400:
-                        raise PromptGenerationError(f"OpenAI tools error ({status_code}): {raw_body[:200]}")
-                elapsed_ms = int((time.monotonic() - start_time) * 1000)
-            except httpx.HTTPError as exc:
-                raise PromptGenerationError(f"OpenAI tools request failed: {exc}") from exc
-        else:
-            body = json.dumps(payload).encode("utf-8")
-            request = urllib_request.Request(
-                f"{self.base_url}/v1/chat/completions",
-                data=body,
-                headers=headers,
-                method="POST",
-            )
-
-            try:
-                with urllib_request.urlopen(request, timeout=self.timeout) as resp:
-                    if streaming:
-                        data = _consume_chat_completion_stream(resp, on_stream_delta)
-                        raw_body = None
-                    else:
-                        raw_body = resp.read().decode("utf-8")
-                        status_code = getattr(resp, "status", 200)
-            except urllib_error.HTTPError as exc:
-                detail = exc.read().decode("utf-8", errors="ignore")
-                raise PromptGenerationError(
-                    f"OpenAI tools error ({exc.code}): {detail.strip()[:200]}"
-                ) from exc
-            except urllib_error.URLError as exc:
-                raise PromptGenerationError(f"OpenAI tools request failed: {exc}") from exc
-            if not streaming and status_code >= 400:
-                raise PromptGenerationError(f"OpenAI tools error ({status_code}): {raw_body[:200] if raw_body else status_code}")
-            elapsed_ms = int((time.monotonic() - start_time) * 1000)
-
-        if streaming:
-            # In streaming mode we return the assembled assistant message so the
-            # orchestrator can inspect tool_calls or final content.
-            try:
-                logger.debug("MCP LLM stream assembled payload: %s", json.dumps(data, ensure_ascii=False))
-            except Exception:  # pragma: no cover - log best effort
-                logger.debug("Failed to serialize streamed MCP payload for logging.")
-            try:
-                message = (data.get("choices") or [{}])[0].get("message") if isinstance(data, Mapping) else {}
-                content = ""
-                if isinstance(message, Mapping):
-                    raw_content = message.get("content")
-                    if isinstance(raw_content, str):
-                        content = raw_content
-                out_tokens = _estimate_text_tokens(content, self.model) if content else 0
-                if out_tokens:
                     structured_log(
                         "llm",
-                        "stream.tokens",
-                        {"model": self.model, "tokens": out_tokens},
+                        "request",
+                        {
+                            "provider": "OpenAITools",
+                            "model": self.model,
+                            "tools": [t.get("function", {}).get("name") for t in (tools or [])],
+                            "message_count": len(payload.get("messages") or []),
+                            "streaming": streaming,
+                        },
                     )
-            except Exception:
-                logger.debug("Failed to log streaming token estimate.")
-            return data
+                if LOG_DEBUG_PAYLOADS or logger.isEnabledFor(logging.DEBUG):
+                    try:
+                        logger.debug("MCP LLM request payload: %s", json.dumps(payload, ensure_ascii=False))
+                    except Exception:  # pragma: no cover - log best effort
+                        logger.debug("Failed to serialize MCP payload for logging.")
 
-        try:
-            data = json.loads(raw_body)
-        except ValueError as exc:
-            raise PromptGenerationError("OpenAI tools response was not valid JSON.") from exc
-        logger.debug("MCP LLM raw response: %s", raw_body)
+                data: dict[str, Any]
+                raw_body: str | None = None
+                start_time = time.monotonic()
+                if self._http_client:
+                    try:
+                        if streaming:
+                            with self._http_client.stream(
+                                "POST",
+                                "/v1/chat/completions",
+                                json=payload,
+                                headers=headers,
+                                timeout=self.timeout,
+                            ) as resp:
+                                status_code = resp.status_code
+                                if status_code >= 400:
+                                    detail = resp.text[:200]
+                                    raise PromptGenerationError(f"OpenAI tools error ({status_code}): {detail}")
+                                data = _consume_chat_completion_stream(_HttpxLineStream(resp.iter_lines()), on_stream_delta)
+                        else:
+                            resp = self._http_client.post(
+                                "/v1/chat/completions",
+                                json=payload,
+                                headers=headers,
+                                timeout=self.timeout,
+                            )
+                            status_code = resp.status_code
+                            raw_body = resp.text
+                            if status_code >= 400:
+                                raise PromptGenerationError(f"OpenAI tools error ({status_code}): {raw_body[:200]}")
+                        elapsed_ms = int((time.monotonic() - start_time) * 1000)
+                    except httpx.HTTPError as exc:
+                        raise PromptGenerationError(f"OpenAI tools request failed: {exc}") from exc
+                else:
+                    body = json.dumps(payload).encode("utf-8")
+                    request = urllib_request.Request(
+                        f"{self.base_url}/v1/chat/completions",
+                        data=body,
+                        headers=headers,
+                        method="POST",
+                    )
 
-        _log_usage("OpenAITools", self.model, data.get("usage") if isinstance(data, Mapping) else None)
-        choices = data.get("choices") or []
-        if not choices:
-            raise PromptGenerationError("OpenAI tools response did not include choices.")
-        message = choices[0].get("message") or {}
-        tool_calls = message.get("tool_calls") or []
+                    try:
+                        with urllib_request.urlopen(request, timeout=self.timeout) as resp:
+                            if streaming:
+                                data = _consume_chat_completion_stream(resp, on_stream_delta)
+                                raw_body = None
+                            else:
+                                raw_body = resp.read().decode("utf-8")
+                                status_code = getattr(resp, "status", 200)
+                    except urllib_error.HTTPError as exc:
+                        detail = exc.read().decode("utf-8", errors="ignore")
+                        raise PromptGenerationError(
+                            f"OpenAI tools error ({exc.code}): {detail.strip()[:200]}"
+                        ) from exc
+                    except urllib_error.URLError as exc:
+                        raise PromptGenerationError(f"OpenAI tools request failed: {exc}") from exc
+                    if not streaming and status_code >= 400:
+                        raise PromptGenerationError(
+                            f"OpenAI tools error ({status_code}): {raw_body[:200] if raw_body else status_code}"
+                        )
+                    elapsed_ms = int((time.monotonic() - start_time) * 1000)
 
-        # If the model is requesting tool invocations, return the raw
-        # Chat Completions envelope so the orchestrator can dispatch calls.
-        if tool_calls:
-            return data
+                if streaming:
+                    # In streaming mode we return the assembled assistant message so the
+                    # orchestrator can inspect tool_calls or final content.
+                    try:
+                        logger.debug("MCP LLM stream assembled payload: %s", json.dumps(data, ensure_ascii=False))
+                    except Exception:  # pragma: no cover - log best effort
+                        logger.debug("Failed to serialize streamed MCP payload for logging.")
+                    try:
+                        message = (data.get("choices") or [{}])[0].get("message") if isinstance(data, Mapping) else {}
+                        content = ""
+                        if isinstance(message, Mapping):
+                            raw_content = message.get("content")
+                            if isinstance(raw_content, str):
+                                content = raw_content
+                        out_tokens = _estimate_text_tokens(content, self.model) if content else 0
+                        if out_tokens:
+                            structured_log(
+                                "llm",
+                                "stream.tokens",
+                                {"model": self.model, "tokens": out_tokens},
+                            )
+                    except Exception:
+                        logger.debug("Failed to log streaming token estimate.")
+                    _record_latency()
+                    return data
 
-        # Final assistant turn: parse structured JSON from the message content.
-        content = message.get("content")
-        if isinstance(content, list):
-            text = "".join(part.get("text", "") for part in content if isinstance(part, dict)).strip()
-        else:
-            text = str(content or "").strip()
-        if not text:
-            return {"role": "assistant", "content": "", "actions": [], "extractions": []}
+                try:
+                    data = json.loads(raw_body)
+                except ValueError as exc:
+                    raise PromptGenerationError("OpenAI tools response was not valid JSON.") from exc
+                logger.debug("MCP LLM raw response: %s", raw_body)
 
-        try:
-            parsed = json.loads(text)
-        except json.JSONDecodeError:
-            # Fallback: treat as plain text answer without actions/extractions.
-            parsed = {"response_text": text, "actions": [], "extractions": []}
+                _log_usage("OpenAITools", self.model, data.get("usage") if isinstance(data, Mapping) else None)
+                choices = data.get("choices") or []
+                if not choices:
+                    raise PromptGenerationError("OpenAI tools response did not include choices.")
+                message = choices[0].get("message") or {}
+                tool_calls = message.get("tool_calls") or []
 
-        response_text = str(parsed.get("response_text") or "").strip()
+                # If the model is requesting tool invocations, return the raw
+                # Chat Completions envelope so the orchestrator can dispatch calls.
+                if tool_calls:
+                    _record_latency()
+                    return data
 
-        if elapsed_ms is not None:
-            structured_log(
-                "llm",
-                "latency",
-                {
-                    "provider": "openai_tools",
-                    "model": self.model,
-                    "streaming": streaming,
-                    "elapsed_ms": elapsed_ms,
-                },
-            )
+                # Final assistant turn: parse structured JSON from the message content.
+                content = message.get("content")
+                if isinstance(content, list):
+                    text = "".join(part.get("text", "") for part in content if isinstance(part, dict)).strip()
+                else:
+                    text = str(content or "").strip()
+                if not text:
+                    _record_latency()
+                    return {"role": "assistant", "content": "", "actions": [], "extractions": []}
 
-        return {
-            "role": "assistant",
-            "content": response_text,
-            "actions": parsed.get("actions") or [],
-            "extractions": parsed.get("extractions") or [],
-            "placeholder_response": parsed.get("placeholder_response"),
-        }
+                try:
+                    parsed = json.loads(text)
+                except json.JSONDecodeError:
+                    # Fallback: treat as plain text answer without actions/extractions.
+                    parsed = {"response_text": text, "actions": [], "extractions": []}
+
+                response_text = str(parsed.get("response_text") or "").strip()
+
+                if elapsed_ms is not None:
+                    structured_log(
+                        "llm",
+                        "latency",
+                        {
+                            "provider": "openai_tools",
+                            "model": self.model,
+                            "streaming": streaming,
+                            "elapsed_ms": elapsed_ms,
+                        },
+                    )
+                _record_latency()
+
+                return {
+                    "role": "assistant",
+                    "content": response_text,
+                    "actions": parsed.get("actions") or [],
+                    "extractions": parsed.get("extractions") or [],
+                    "placeholder_response": parsed.get("placeholder_response"),
+                }
+            except Exception as exc:
+                if span and span.is_recording():
+                    span.record_exception(exc)
+                    span.set_status(Status(StatusCode.ERROR, str(exc)))
+                raise
 
 
 class DeepSeekToolsProvider(BaseMcpProvider):
@@ -1318,272 +1402,294 @@ class DeepSeekToolsProvider(BaseMcpProvider):
         on_stream_delta: Callable[[str], None] | None = None,
         response_format: Mapping[str, object] | None = None,
     ) -> Mapping[str, Any]:
-        headers = {
-            "Authorization": f"Bearer {self.api_key}",
-            "Content-Type": "application/json",
-        }
         streaming = bool(on_stream_delta)
-        payload: dict[str, Any] = {
-            "model": self.model,
-            "messages": [dict(msg) for msg in messages],
-            "temperature": self.temperature,
-            "top_p": self.top_p,
-            "stream": streaming,
-        }
-        if tools:
-            payload["tools"] = list(tools)
-            payload["tool_choice"] = "auto"
-        if response_format:
-            payload["response_format"] = response_format
+        with TRACER.start_as_current_span("llm.deepseek.tools") as span:
+            if span.is_recording():
+                span.set_attribute("llm.provider", "DeepSeekTools")
+                span.set_attribute("llm.model", self.model)
+                span.set_attribute("llm.streaming", streaming)
+            _log_span_debug("DeepSeekToolsProvider.chat", span)
 
-        # Compact summary at INFO; heavy logs only when enabled.
-        if LOG_TOKEN_ESTIMATE and logger.isEnabledFor(logging.DEBUG):
-            try:
-                char_count, token_est = _message_char_stats(payload.get("messages") or [], self.model)
-                logger.debug(
-                    "DeepSeek MCP request model=%s tools=%s messages=%s chars=%s tokens≈%s",
-                    self.model,
-                    [t.get("function", {}).get("name") for t in (tools or [])],
-                    len(payload.get("messages") or []),
-                    char_count,
-                    token_est,
-                )
-            except Exception:  # pragma: no cover - best effort
-                logger.debug("Failed to estimate tokens for DeepSeek MCP request.")
-        else:
-                structured_log(
-                    "llm",
-                    "request",
-                    {
-                        "provider": "DeepSeekTools",
-                        "model": self.model,
-                    "tools": [t.get("function", {}).get("name") for t in (tools or [])],
-                    "message_count": len(payload.get("messages") or []),
-                    "streaming": streaming,
-                },
-            )
-        if LOG_DEBUG_PAYLOADS or logger.isEnabledFor(logging.DEBUG):
-            try:
-                logger.debug("DeepSeek MCP request payload: %s", json.dumps(payload, ensure_ascii=False))
-            except Exception:  # pragma: no cover - log best effort
-                logger.debug("Failed to serialize DeepSeek MCP payload for logging.")
+            elapsed_ms: int | None = None
 
-        data: dict[str, Any]
-        elapsed_ms = None
-        start_time = time.monotonic()
-        raw_body: str | None = None
-        if self._http_client:
-            try:
-                if streaming:
-                    with self._http_client.stream(
-                        "POST",
-                        "/v1/chat/completions",
-                        json=payload,
-                        headers=headers,
-                        timeout=self.timeout,
-                    ) as resp:
-                        status_code = resp.status_code
-                        if status_code >= 400:
-                            detail = resp.text[:200]
-                            raise PromptGenerationError(f"DeepSeek tools error ({status_code}): {detail}")
-                        data = _consume_chat_completion_stream(_HttpxLineStream(resp.iter_lines()), on_stream_delta)
-                else:
-                    resp = self._http_client.post(
-                        "/v1/chat/completions",
-                        json=payload,
-                        headers=headers,
-                        timeout=self.timeout,
-                    )
-                    status_code = resp.status_code
-                    raw_body = resp.text
-                    if status_code >= 400:
-                        raise PromptGenerationError(f"DeepSeek tools error ({status_code}): {raw_body[:200]}")
-                elapsed_ms = int((time.monotonic() - start_time) * 1000)
-            except httpx.HTTPError as exc:
-                raise PromptGenerationError(f"DeepSeek tools request failed: {exc}") from exc
-        else:
-            body = json.dumps(payload).encode("utf-8")
-            request = urllib_request.Request(
-                f"{self.base_url}/v1/chat/completions",
-                data=body,
-                headers=headers,
-                method="POST",
-            )
+            def _record_latency() -> None:
+                if span and span.is_recording() and elapsed_ms is not None:
+                    span.set_attribute("llm.duration_ms", elapsed_ms)
 
             try:
-                with urllib_request.urlopen(request, timeout=self.timeout) as resp:
-                    if streaming:
-                        data = _consume_chat_completion_stream(resp, on_stream_delta)
-                        raw_body = None
-                    else:
-                        raw_body = resp.read().decode("utf-8")
-                        status_code = getattr(resp, "status", 200)
-            except urllib_error.HTTPError as exc:
-                detail = exc.read().decode("utf-8", errors="ignore")
-                raise PromptGenerationError(
-                    f"DeepSeek tools error ({exc.code}): {detail.strip()[:200]}"
-                ) from exc
-            except urllib_error.URLError as exc:
-                raise PromptGenerationError(f"DeepSeek tools request failed: {exc}") from exc
-            if not streaming and status_code >= 400:
-                raise PromptGenerationError(f"DeepSeek tools error ({status_code}): {raw_body[:200] if raw_body else status_code}")
-            elapsed_ms = int((time.monotonic() - start_time) * 1000)
-
-        if streaming:
-            # In streaming mode we return the assembled assistant message so the
-            # orchestrator can inspect tool_calls or final content.
-            # Defensive fallback: if the assembled payload has no content and no
-            # tool_calls (which results in "(no content)" replies), issue a
-            # single non-streaming completion to recover the text.
-            try:
-                if isinstance(data, Mapping):
-                    choices = data.get("choices") or []
-                    if choices:
-                        message = choices[0].get("message") or {}
-                        if isinstance(message, Mapping):
-                            tool_calls = message.get("tool_calls") or []
-                            content = message.get("content")
-                            has_text = isinstance(content, str) and bool(content.strip())
-                            if not has_text and not tool_calls:
-                                structured_log(
-                                    "llm",
-                                    "warning",
-                                    "DeepSeek MCP stream produced empty content; retrying once with non-stream completion.",
-                                    logger_obj=logger,
-                                    level=logging.WARNING,
-                                )
-                                # Build a non-streaming payload copy.
-                                retry_payload = dict(payload)
-                                retry_payload["stream"] = False
-                                if self._http_client:
-                                    try:
-                                        resp = self._http_client.post(
-                                            "/v1/chat/completions",
-                                            json=retry_payload,
-                                            headers=headers,
-                                            timeout=self.timeout,
-                                        )
-                                        status_code = resp.status_code
-                                        raw_body = resp.text
-                                        if status_code >= 400:
-                                            raise PromptGenerationError(
-                                                f"DeepSeek tools error ({status_code}): {raw_body[:200]}"
-                                            )
-                                        data = json.loads(raw_body)
-                                        _log_usage(
-                                            "DeepSeekTools",
-                                            self.model,
-                                            data.get("usage") if isinstance(data, Mapping) else None,
-                                        )
-                                    except httpx.HTTPError as exc:
-                                        raise PromptGenerationError(
-                                            f"DeepSeek tools request failed (retry): {exc}"
-                                        ) from exc
-                                else:
-                                    body = json.dumps(retry_payload).encode("utf-8")
-                                    request = urllib_request.Request(
-                                        f"{self.base_url}/v1/chat/completions",
-                                        data=body,
-                                        headers=headers,
-                                        method="POST",
-                                    )
-                                    try:
-                                        with urllib_request.urlopen(request, timeout=self.timeout) as resp:
-                                            raw_body = resp.read().decode("utf-8")
-                                            status_code = getattr(resp, "status", 200)
-                                    except urllib_error.HTTPError as exc:
-                                        detail = exc.read().decode("utf-8", errors="ignore")
-                                        raise PromptGenerationError(
-                                            f"DeepSeek tools error ({exc.code}): {detail.strip()[:200]}"
-                                        ) from exc
-                                    except urllib_error.URLError as exc:
-                                        raise PromptGenerationError(
-                                            f"DeepSeek tools request failed (retry): {exc}"
-                                        ) from exc
-                                    if status_code >= 400:
-                                        raise PromptGenerationError(
-                                            f"DeepSeek tools error ({status_code}): {raw_body[:200] if raw_body else status_code}"
-                                        )
-                                    data = json.loads(raw_body)
-                                    _log_usage(
-                                        "DeepSeekTools",
-                                        self.model,
-                                        data.get("usage") if isinstance(data, Mapping) else None,
-                                    )
-            except Exception:  # pragma: no cover - best effort; fall back to original data
-                logger.exception("DeepSeek MCP fallback to non-streaming completion failed.")
-
-            if logger.isEnabledFor(logging.DEBUG):
-                try:
-                    logger.debug("DeepSeek MCP stream assembled payload: %s", json.dumps(data, ensure_ascii=False))
-                except Exception:  # pragma: no cover - log best effort
-                    logger.debug("Failed to serialize streamed DeepSeek payload for logging.")
-            if LOG_TOKEN_ESTIMATE and logger.isEnabledFor(logging.DEBUG):
-                try:
-                    message = (data.get("choices") or [{}])[0].get("message") if isinstance(data, Mapping) else {}
-                    content = ""
-                    if isinstance(message, Mapping):
-                        raw_content = message.get("content")
-                        if isinstance(raw_content, str):
-                            content = raw_content
-                    out_tokens = _estimate_text_tokens(content, self.model) if content else 0
-                    if out_tokens:
-                        logger.debug("DeepSeek MCP stream tokens≈%s model=%s", out_tokens, self.model)
-                except Exception:
-                    logger.debug("Failed to log streaming token estimate.")
-            return data
-
-        try:
-            data = json.loads(raw_body)
-        except ValueError as exc:
-            raise PromptGenerationError("DeepSeek tools response was not valid JSON.") from exc
-        logger.debug("DeepSeek MCP raw response: %s", raw_body)
-
-        _log_usage("DeepSeekTools", self.model, data.get("usage") if isinstance(data, Mapping) else None)
-        choices = data.get("choices") or []
-        if not choices:
-            raise PromptGenerationError("DeepSeek tools response did not include choices.")
-        message = choices[0].get("message") or {}
-        tool_calls = message.get("tool_calls") or []
-
-        if tool_calls:
-            # Let the orchestrator inspect tool_calls directly.
-            return data
-
-        content = message.get("content")
-        if isinstance(content, list):
-            text = "".join(part.get("text", "") for part in content if isinstance(part, dict)).strip()
-        else:
-            text = str(content or "").strip()
-        if not text:
-            return {"role": "assistant", "content": "", "actions": [], "extractions": []}
-
-        try:
-            parsed = json.loads(text)
-        except json.JSONDecodeError:
-            return {"role": "assistant", "content": text, "actions": [], "extractions": []}
-
-        response_text = str(parsed.get("response_text") or "").strip()
-
-        if elapsed_ms is not None:
-            structured_log(
-                "llm",
-                "latency",
-                {
-                    "provider": "deepseek_tools",
+                headers = {
+                    "Authorization": f"Bearer {self.api_key}",
+                    "Content-Type": "application/json",
+                }
+                payload: dict[str, Any] = {
                     "model": self.model,
-                    "streaming": streaming,
-                    "elapsed_ms": elapsed_ms,
-                },
-            )
+                    "messages": [dict(msg) for msg in messages],
+                    "temperature": self.temperature,
+                    "top_p": self.top_p,
+                    "stream": streaming,
+                }
+                if tools:
+                    payload["tools"] = list(tools)
+                    payload["tool_choice"] = "auto"
+                if response_format:
+                    payload["response_format"] = response_format
 
-        return {
-            "role": "assistant",
-            "content": response_text,
-            "actions": parsed.get("actions") or [],
-            "extractions": parsed.get("extractions") or [],
-            "placeholder_response": parsed.get("placeholder_response"),
-        }
+                # Compact summary at INFO; heavy logs only when enabled.
+                if LOG_TOKEN_ESTIMATE and logger.isEnabledFor(logging.DEBUG):
+                    try:
+                        char_count, token_est = _message_char_stats(payload.get("messages") or [], self.model)
+                        logger.debug(
+                            "DeepSeek MCP request model=%s tools=%s messages=%s chars=%s tokens≈%s",
+                            self.model,
+                            [t.get("function", {}).get("name") for t in (tools or [])],
+                            len(payload.get("messages") or []),
+                            char_count,
+                            token_est,
+                        )
+                    except Exception:  # pragma: no cover - best effort
+                        logger.debug("Failed to estimate tokens for DeepSeek MCP request.")
+                else:
+                    structured_log(
+                        "llm",
+                        "request",
+                        {
+                            "provider": "DeepSeekTools",
+                            "model": self.model,
+                            "tools": [t.get("function", {}).get("name") for t in (tools or [])],
+                            "message_count": len(payload.get("messages") or []),
+                            "streaming": streaming,
+                        },
+                    )
+                if LOG_DEBUG_PAYLOADS or logger.isEnabledFor(logging.DEBUG):
+                    try:
+                        logger.debug("DeepSeek MCP request payload: %s", json.dumps(payload, ensure_ascii=False))
+                    except Exception:  # pragma: no cover - log best effort
+                        logger.debug("Failed to serialize DeepSeek MCP payload for logging.")
+
+                data: dict[str, Any]
+                raw_body: str | None = None
+                start_time = time.monotonic()
+                if self._http_client:
+                    try:
+                        if streaming:
+                            with self._http_client.stream(
+                                "POST",
+                                "/v1/chat/completions",
+                                json=payload,
+                                headers=headers,
+                                timeout=self.timeout,
+                            ) as resp:
+                                status_code = resp.status_code
+                                if status_code >= 400:
+                                    detail = resp.text[:200]
+                                    raise PromptGenerationError(f"DeepSeek tools error ({status_code}): {detail}")
+                                data = _consume_chat_completion_stream(_HttpxLineStream(resp.iter_lines()), on_stream_delta)
+                        else:
+                            resp = self._http_client.post(
+                                "/v1/chat/completions",
+                                json=payload,
+                                headers=headers,
+                                timeout=self.timeout,
+                            )
+                            status_code = resp.status_code
+                            raw_body = resp.text
+                            if status_code >= 400:
+                                raise PromptGenerationError(f"DeepSeek tools error ({status_code}): {raw_body[:200]}")
+                        elapsed_ms = int((time.monotonic() - start_time) * 1000)
+                    except httpx.HTTPError as exc:
+                        raise PromptGenerationError(f"DeepSeek tools request failed: {exc}") from exc
+                else:
+                    body = json.dumps(payload).encode("utf-8")
+                    request = urllib_request.Request(
+                        f"{self.base_url}/v1/chat/completions",
+                        data=body,
+                        headers=headers,
+                        method="POST",
+                    )
+
+                    try:
+                        with urllib_request.urlopen(request, timeout=self.timeout) as resp:
+                            if streaming:
+                                data = _consume_chat_completion_stream(resp, on_stream_delta)
+                                raw_body = None
+                            else:
+                                raw_body = resp.read().decode("utf-8")
+                                status_code = getattr(resp, "status", 200)
+                    except urllib_error.HTTPError as exc:
+                        detail = exc.read().decode("utf-8", errors="ignore")
+                        raise PromptGenerationError(
+                            f"DeepSeek tools error ({exc.code}): {detail.strip()[:200]}"
+                        ) from exc
+                    except urllib_error.URLError as exc:
+                        raise PromptGenerationError(f"DeepSeek tools request failed: {exc}") from exc
+                    if not streaming and status_code >= 400:
+                        raise PromptGenerationError(
+                            f"DeepSeek tools error ({status_code}): {raw_body[:200] if raw_body else status_code}"
+                        )
+                    elapsed_ms = int((time.monotonic() - start_time) * 1000)
+
+                if streaming:
+                    # In streaming mode we return the assembled assistant message so the
+                    # orchestrator can inspect tool_calls or final content.
+                    # Defensive fallback: if the assembled payload has no content and no
+                    # tool_calls we retry once without streaming.
+                    try:
+                        if isinstance(data, Mapping):
+                            choices = data.get("choices") or []
+                            if choices:
+                                message = choices[0].get("message") or {}
+                                if isinstance(message, Mapping):
+                                    tool_calls = message.get("tool_calls") or []
+                                    content = message.get("content")
+                                    has_text = isinstance(content, str) and bool(content.strip())
+                                    if not has_text and not tool_calls:
+                                        structured_log(
+                                            "llm",
+                                            "warning",
+                                            "DeepSeek MCP stream produced empty content; retrying once with non-stream completion.",
+                                            logger_obj=logger,
+                                            level=logging.WARNING,
+                                        )
+                                        retry_payload = dict(payload)
+                                        retry_payload["stream"] = False
+                                        if self._http_client:
+                                            try:
+                                                resp = self._http_client.post(
+                                                    "/v1/chat/completions",
+                                                    json=retry_payload,
+                                                    headers=headers,
+                                                    timeout=self.timeout,
+                                                )
+                                                status_code = resp.status_code
+                                                raw_body = resp.text
+                                                if status_code >= 400:
+                                                    raise PromptGenerationError(
+                                                        f"DeepSeek tools error ({status_code}): {raw_body[:200]}"
+                                                    )
+                                                data = json.loads(raw_body)
+                                                _log_usage(
+                                                    "DeepSeekTools",
+                                                    self.model,
+                                                    data.get("usage") if isinstance(data, Mapping) else None,
+                                                )
+                                            except httpx.HTTPError as exc:
+                                                raise PromptGenerationError(
+                                                    f"DeepSeek tools request failed (retry): {exc}"
+                                                ) from exc
+                                        else:
+                                            body = json.dumps(retry_payload).encode("utf-8")
+                                            request = urllib_request.Request(
+                                                f"{self.base_url}/v1/chat/completions",
+                                                data=body,
+                                                headers=headers,
+                                                method="POST",
+                                            )
+                                            try:
+                                                with urllib_request.urlopen(request, timeout=self.timeout) as resp:
+                                                    raw_body = resp.read().decode("utf-8")
+                                                    status_code = getattr(resp, "status", 200)
+                                            except urllib_error.HTTPError as exc:
+                                                detail = exc.read().decode("utf-8", errors="ignore")
+                                                raise PromptGenerationError(
+                                                    f"DeepSeek tools error ({exc.code}): {detail.strip()[:200]}"
+                                                ) from exc
+                                            except urllib_error.URLError as exc:
+                                                raise PromptGenerationError(
+                                                    f"DeepSeek tools request failed (retry): {exc}"
+                                                ) from exc
+                                            if status_code >= 400:
+                                                raise PromptGenerationError(
+                                                    f"DeepSeek tools error ({status_code}): {raw_body[:200] if raw_body else status_code}"
+                                                )
+                                            data = json.loads(raw_body)
+                                            _log_usage(
+                                                "DeepSeekTools",
+                                                self.model,
+                                                data.get("usage") if isinstance(data, Mapping) else None,
+                                            )
+                    except Exception:  # pragma: no cover - best effort; fall back to original data
+                        logger.exception("DeepSeek MCP fallback to non-streaming completion failed.")
+
+                    if logger.isEnabledFor(logging.DEBUG):
+                        try:
+                            logger.debug("DeepSeek MCP stream assembled payload: %s", json.dumps(data, ensure_ascii=False))
+                        except Exception:  # pragma: no cover - log best effort
+                            logger.debug("Failed to serialize streamed DeepSeek payload for logging.")
+                    if LOG_TOKEN_ESTIMATE and logger.isEnabledFor(logging.DEBUG):
+                        try:
+                            message = (data.get("choices") or [{}])[0].get("message") if isinstance(data, Mapping) else {}
+                            content = ""
+                            if isinstance(message, Mapping):
+                                raw_content = message.get("content")
+                                if isinstance(raw_content, str):
+                                    content = raw_content
+                            out_tokens = _estimate_text_tokens(content, self.model) if content else 0
+                            if out_tokens:
+                                logger.debug("DeepSeek MCP stream tokens≈%s model=%s", out_tokens, self.model)
+                        except Exception:
+                            logger.debug("Failed to log streaming token estimate.")
+                    _record_latency()
+                    return data
+
+                try:
+                    data = json.loads(raw_body)
+                except ValueError as exc:
+                    raise PromptGenerationError("DeepSeek tools response was not valid JSON.") from exc
+                logger.debug("DeepSeek MCP raw response: %s", raw_body)
+
+                _log_usage("DeepSeekTools", self.model, data.get("usage") if isinstance(data, Mapping) else None)
+                choices = data.get("choices") or []
+                if not choices:
+                    raise PromptGenerationError("DeepSeek tools response did not include choices.")
+                message = choices[0].get("message") or {}
+                tool_calls = message.get("tool_calls") or []
+
+                if tool_calls:
+                    _record_latency()
+                    return data
+
+                content = message.get("content")
+                if isinstance(content, list):
+                    text = "".join(part.get("text", "") for part in content if isinstance(part, dict)).strip()
+                else:
+                    text = str(content or "").strip()
+                if not text:
+                    _record_latency()
+                    return {"role": "assistant", "content": "", "actions": [], "extractions": []}
+
+                try:
+                    parsed = json.loads(text)
+                except json.JSONDecodeError:
+                    _record_latency()
+                    return {"role": "assistant", "content": text, "actions": [], "extractions": []}
+
+                response_text = str(parsed.get("response_text") or "").strip()
+
+                if elapsed_ms is not None:
+                    structured_log(
+                        "llm",
+                        "latency",
+                        {
+                            "provider": "deepseek_tools",
+                            "model": self.model,
+                            "streaming": streaming,
+                            "elapsed_ms": elapsed_ms,
+                        },
+                    )
+                _record_latency()
+
+                return {
+                    "role": "assistant",
+                    "content": response_text,
+                    "actions": parsed.get("actions") or [],
+                    "extractions": parsed.get("extractions") or [],
+                    "placeholder_response": parsed.get("placeholder_response"),
+                }
+            except Exception as exc:
+                if span and span.is_recording():
+                    span.record_exception(exc)
+                    span.set_status(Status(StatusCode.ERROR, str(exc)))
+                raise
 
 
 def load_mcp_provider() -> BaseMcpProvider | None:

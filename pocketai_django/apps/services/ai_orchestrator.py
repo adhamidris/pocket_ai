@@ -54,6 +54,7 @@ from apps.services.llm_provider import BaseLLMProvider, PromptGenerationError
 from apps.services.quality_monitor import QualityMonitor
 from apps.services.rag_logging import rag_log
 from core.metrics import latency_monitor
+from opentelemetry import trace as otel_trace
 
 try:  # optional dependency
     from sentence_transformers import CrossEncoder
@@ -62,6 +63,7 @@ except ImportError:  # pragma: no cover - dependency not installed by default
 
 
 logger = logging.getLogger(__name__)
+TRACER = otel_trace.get_tracer(__name__)
 
 
 def _rag_log(
@@ -806,6 +808,49 @@ class KnowledgeSearchService:
         return QueryNormalizer.normalize(query, filler_tokens=filler_tokens)
 
     def search(
+        self,
+        *,
+        business_profile,
+        query: str,
+        limit: int | None = None,
+        traits: QueryTraits | None = None,
+        alias_result: AliasSearchResult | None = None,
+        session_cache: MutableMapping[str, object] | None = None,
+        identifier_filter: Mapping[str, str] | None = None,
+    ) -> KnowledgeSearchResult:
+        """
+        Wrapper that runs knowledge retrieval and emits tracing spans for observability.
+        """
+
+        traits = traits or self.analyze_query(query, business_profile=business_profile)
+        with TRACER.start_as_current_span("knowledge.search") as span:
+            if span.is_recording():
+                span.set_attribute("knowledge.query", traits.original or query)
+                span.set_attribute("knowledge.query_tokens", traits.token_count)
+                if business_profile and getattr(business_profile, "id", None):
+                    span.set_attribute("knowledge.business_id", str(business_profile.id))
+            result = self._search_inner(
+                business_profile=business_profile,
+                query=query,
+                limit=limit,
+                traits=traits,
+                alias_result=alias_result,
+                session_cache=session_cache,
+                identifier_filter=identifier_filter,
+            )
+            if span.is_recording():
+                span.set_attribute("knowledge.status", result.status)
+                span.set_attribute("knowledge.snippet_count", len(result.snippets))
+                diagnostics = result.diagnostics or {}
+                snippet_limit = diagnostics.get("snippet_limit")
+                if isinstance(snippet_limit, int):
+                    span.set_attribute("knowledge.limit", snippet_limit)
+                duration_ms = diagnostics.get("total_duration_ms")
+                if isinstance(duration_ms, (int, float)):
+                    span.set_attribute("knowledge.duration_ms", duration_ms)
+            return result
+
+    def _search_inner(
         self,
         *,
         business_profile,
@@ -1909,57 +1954,69 @@ class KnowledgeSearchService:
         if not query_vector:
             return [], 0
         adaptive_factor = self._ann_factor_for_query(traits)
-        base_k = max(limit * 10, 60)
-        K = int(base_k * adaptive_factor)
-        start = time.perf_counter()
-        if self.ivfflat_probes:
-            try:
-                with connection.cursor() as cursor:
-                    cursor.execute("SET ivfflat.probes = %s", [self.ivfflat_probes])
-            except Exception:  # pragma: no cover - diagnostic only
-                logger.debug("Unable to set ivfflat.probes", exc_info=True)
-        ann_qs = (
-            base_qs.exclude(embedding__isnull=True)
-            .annotate(distance=CosineDistance("embedding", query_vector))
-            .order_by("distance")[:K]
-        )
-        hits: list[ChunkResult] = []
-        distances: list[float] = []
-        for chunk in ann_qs:
-            distance = getattr(chunk, "distance", None)
-            dist_val = None
-            if distance is not None:
+        with TRACER.start_as_current_span("knowledge.vector_candidates") as span:
+            if span.is_recording():
+                span.set_attribute("knowledge.business_id", str(business_id))
+                span.set_attribute("knowledge.vector.limit", limit)
+                span.set_attribute("knowledge.vector.adaptive_factor", adaptive_factor)
+                span.set_attribute("knowledge.vector_tokens", traits.token_count)
+            base_k = max(limit * 10, 60)
+            K = int(base_k * adaptive_factor)
+            start = time.perf_counter()
+            if self.ivfflat_probes:
                 try:
-                    dist_val = float(distance)
-                    distances.append(dist_val)
-                except (TypeError, ValueError):
-                    dist_val = None
-            hits.append(
-                ChunkResult(
-                    chunk=chunk,
-                    source_stage="vector_ann",
-                    vector_distance=dist_val,
-                    recency_score=self._recency_score(chunk.upload),
-                    diagnostics={"stage": "vector_ann"},
-                )
+                    with connection.cursor() as cursor:
+                        cursor.execute("SET ivfflat.probes = %s", [self.ivfflat_probes])
+                except Exception:  # pragma: no cover - diagnostic only
+                    logger.debug("Unable to set ivfflat.probes", exc_info=True)
+            ann_qs = (
+                base_qs.exclude(embedding__isnull=True)
+                .annotate(distance=CosineDistance("embedding", query_vector))
+                .order_by("distance")[:K]
             )
-        duration_ms = int((time.perf_counter() - start) * 1000)
-        distance_min = min(distances) if distances else None
-        distance_max = max(distances) if distances else None
-        distance_avg = (sum(distances) / len(distances)) if distances else None
-        _rag_log(
-            "vector.candidates",
-            {
-                "query_tokens": traits.token_count,
-                "candidates": len(hits),
-                "d_min": f"{distance_min:.4f}" if distance_min is not None else None,
-                "d_max": f"{distance_max:.4f}" if distance_max is not None else None,
-                "d_avg": f"{distance_avg:.4f}" if distance_avg is not None else None,
-            },
-            indent=1,
-            context={"business": business_id},
-        )
-        return hits, duration_ms
+            hits: list[ChunkResult] = []
+            distances: list[float] = []
+            for chunk in ann_qs:
+                distance = getattr(chunk, "distance", None)
+                dist_val = None
+                if distance is not None:
+                    try:
+                        dist_val = float(distance)
+                        distances.append(dist_val)
+                    except (TypeError, ValueError):
+                        dist_val = None
+                hits.append(
+                    ChunkResult(
+                        chunk=chunk,
+                        source_stage="vector_ann",
+                        vector_distance=dist_val,
+                        recency_score=self._recency_score(chunk.upload),
+                        diagnostics={"stage": "vector_ann"},
+                    )
+                )
+            duration_ms = int((time.perf_counter() - start) * 1000)
+            distance_min = min(distances) if distances else None
+            distance_max = max(distances) if distances else None
+            distance_avg = (sum(distances) / len(distances)) if distances else None
+            if span.is_recording():
+                span.set_attribute("knowledge.vector_duration_ms", duration_ms)
+                if distance_min is not None:
+                    span.set_attribute("knowledge.vector_distance_min", distance_min)
+                if distance_avg is not None:
+                    span.set_attribute("knowledge.vector_distance_mean", distance_avg)
+            _rag_log(
+                "vector.candidates",
+                {
+                    "query_tokens": traits.token_count,
+                    "candidates": len(hits),
+                    "d_min": f"{distance_min:.4f}" if distance_min is not None else None,
+                    "d_max": f"{distance_max:.4f}" if distance_max is not None else None,
+                    "d_avg": f"{distance_avg:.4f}" if distance_avg is not None else None,
+                },
+                indent=1,
+                context={"business": business_id},
+            )
+            return hits, duration_ms
 
     @staticmethod
     def _vector_distance_stats(candidates: Sequence[ChunkResult]) -> dict[str, float]:
@@ -6062,40 +6119,45 @@ class ActionDispatcher:
         self.agent = agent
 
     def execute(self, *, conversation: Conversation, planned_actions: Iterable[PlannedAction]) -> Sequence[ActionExecutionResult]:
+        actions = list(planned_actions)
         results: list[ActionExecutionResult] = []
-        for plan in planned_actions:
-            handler = getattr(self, f"_handle_{plan.action.value}", None)
-            if handler is None:
-                logger.warning("action_dispatcher skipped action %s: no handler", plan.action)
-                results.append(
-                    ActionExecutionResult(
-                        action=plan.action,
-                        status="skipped",
-                        metadata={},
-                        error="Handler not implemented",
+        with TRACER.start_as_current_span("portal.actions.dispatch") as span:
+            if span.is_recording():
+                span.set_attribute("actions.count", len(actions))
+                span.set_attribute("conversation.id", str(getattr(conversation, "id", "")))
+            for plan in actions:
+                handler = getattr(self, f"_handle_{plan.action.value}", None)
+                if handler is None:
+                    logger.warning("action_dispatcher skipped action %s: no handler", plan.action)
+                    results.append(
+                        ActionExecutionResult(
+                            action=plan.action,
+                            status="skipped",
+                            metadata={},
+                            error="Handler not implemented",
+                        )
                     )
-                )
-                continue
-            try:
-                metadata = handler(conversation=conversation, payload=plan.payload)
-                logger.info("action_dispatcher applied %s | payload=%s", plan.action, plan.payload)
-                results.append(
-                    ActionExecutionResult(
-                        action=plan.action,
-                        status="applied",
-                        metadata=metadata,
+                    continue
+                try:
+                    metadata = handler(conversation=conversation, payload=plan.payload)
+                    logger.info("action_dispatcher applied %s | payload=%s", plan.action, plan.payload)
+                    results.append(
+                        ActionExecutionResult(
+                            action=plan.action,
+                            status="applied",
+                            metadata=metadata,
+                        )
                     )
-                )
-            except ActionExecutionError as exc:
-                logger.warning("action_dispatcher failed %s | error=%s | payload=%s", plan.action, exc, plan.payload)
-                results.append(
-                    ActionExecutionResult(
-                        action=plan.action,
-                        status="failed",
-                        metadata={},
-                        error=str(exc),
+                except ActionExecutionError as exc:
+                    logger.warning("action_dispatcher failed %s | error=%s | payload=%s", plan.action, exc, plan.payload)
+                    results.append(
+                        ActionExecutionResult(
+                            action=plan.action,
+                            status="failed",
+                            metadata={},
+                            error=str(exc),
+                        )
                     )
-                )
         return tuple(results)
 
     # ------------------------------------------------------------------

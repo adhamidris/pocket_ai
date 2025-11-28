@@ -72,6 +72,8 @@ INSTALLED_APPS = [
     "django.contrib.sessions",
     "django.contrib.messages",
     "django.contrib.staticfiles",
+    # Profiling / request tracing (DEBUG-only URLs wired below)
+    "silk",
     # Project apps
     "apps.accounts",
     "apps.cases",
@@ -153,6 +155,8 @@ RAG_DRIFT_NOT_FOUND_THRESHOLD = float(os.getenv("RAG_DRIFT_NOT_FOUND_THRESHOLD",
 
 MIDDLEWARE = [
     "django.middleware.security.SecurityMiddleware",
+    # Silk must run early to capture timings for downstream middleware/views.
+    "silk.middleware.SilkyMiddleware",
     "django.contrib.sessions.middleware.SessionMiddleware",
     "django.middleware.common.CommonMiddleware",
     "django.middleware.csrf.CsrfViewMiddleware",
@@ -269,3 +273,11 @@ LOGGING = {
         "apps.api.chat_portal": {"handlers": ["console"], "level": "INFO", "propagate": False},
     },
 }
+
+# Silk profiling (kept lightweight and DEBUG-first; URLs are only mounted in DEBUG)
+SILKY_PYTHON_PROFILER = os.getenv("SILKY_PYTHON_PROFILER", "true").lower() in {"1", "true", "yes"}
+SILKY_PYTHON_PROFILER_BINARY = os.getenv("SILKY_PYTHON_PROFILER_BINARY", "false").lower() in {"1", "true", "yes"}
+if not DEBUG:
+    # Avoid profiler overhead and sensitive traces outside local development.
+    SILKY_PYTHON_PROFILER = False
+    SILKY_PYTHON_PROFILER_BINARY = False

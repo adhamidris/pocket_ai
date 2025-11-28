@@ -16,6 +16,8 @@ from django.db import close_old_connections
 from django.http import HttpRequest, HttpResponse, JsonResponse, StreamingHttpResponse
 from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_GET, require_http_methods, require_POST
+from opentelemetry import context as otel_context
+from opentelemetry import trace as otel_trace
 
 from apps.accounts.models import BusinessProfile
 from apps.conversations.models import ConversationSender
@@ -39,6 +41,7 @@ from apps.services.chat_portal import (
 )
 
 logger = logging.getLogger(__name__)
+TRACER = otel_trace.get_tracer(__name__)
 
 CONTEXT_STATUS_CODES = {
     "searching_knowledge",
@@ -582,205 +585,222 @@ def stream_send(request: HttpRequest) -> StreamingHttpResponse:
         # Placeholder responses are suppressed; status events handle UX.
         return
 
-    def finalize_stream_context(stream_context: StreamingTurnContext) -> None:
+    def finalize_stream_context(stream_context: StreamingTurnContext, parent_ctx) -> None:
         close_old_connections()
+        token = None
+        if parent_ctx is not None:
+            token = otel_context.attach(parent_ctx)
         trace_logger.log("finalize.started", indent=1)
         try:
-            # Planner now runs asynchronously using the streamed answer/context.
-            plan = orchestrator.run_planner_only(
-                conversation=conversation,
-                user_message=body,
-                answer_text=stream_context.response_text,
-                tool_context=getattr(stream_context, "tool_context", None),
-            )
-            if plan is None:
-                # Fallback to the streamed response without actions/extractions.
-                plan = orchestrator.finalize_turn(stream_context)
-            plan_holder["plan"] = plan
-            trace_logger.log(
-                "planner.completed",
-                detail=f"planned_actions={len(plan.planned_actions)} extractions={len(plan.extractions)}",
-                indent=1,
-            )
-            persist_text = plan.response_text or ""
-            if not persist_text:
-                streamed_text = "".join(stream_context.streamed_chunks).strip() if stream_context.streamed_chunks else ""
-                if streamed_text:
-                    persist_text = streamed_text
-            if not persist_text:
-                persist_text = "(no content)"
-            response_text, dropped = sanitize_with_diagnostics(
-                persist_text,
-                conversation=conversation,
-                stage="persisted_message",
-            )
-            answer_confidence = None
-            if plan.diagnostics:
-                answer_confidence = plan.diagnostics.get("answer_confidence")
-            pending_actions = serialize_planned_actions(plan.planned_actions)
-            message_metadata = {
-                "citations": [snippet.title for snippet in plan.citations],
-                "actions": pending_actions,
-                "diagnostics": plan.diagnostics,
-            }
-            if answer_confidence is not None:
-                message_metadata["answer_confidence"] = answer_confidence
-            if plan.ingestion_warnings:
-                message_metadata["ingestion_warnings"] = [dict(item) for item in plan.ingestion_warnings]
-            ai_message = service.append_message(
-                session_token=session_token,
-                sender=ConversationSender.AI,
-                body=response_text,
-                metadata=message_metadata,
-            )
+            with TRACER.start_as_current_span("portal.finalize_turn"):
+                plan = orchestrator.run_planner_only(
+                    conversation=conversation,
+                    user_message=body,
+                    answer_text=stream_context.response_text,
+                    tool_context=getattr(stream_context, "tool_context", None),
+                )
+                if plan is None:
+                    plan = orchestrator.finalize_turn(stream_context)
+                plan_holder["plan"] = plan
+                trace_logger.log(
+                    "planner.completed",
+                    detail=f"planned_actions={len(plan.planned_actions)} extractions={len(plan.extractions)}",
+                    indent=1,
+                )
+                persist_text = plan.response_text or ""
+                if not persist_text:
+                    streamed_text = "".join(stream_context.streamed_chunks).strip() if stream_context.streamed_chunks else ""
+                    if streamed_text:
+                        persist_text = streamed_text
+                if not persist_text:
+                    persist_text = "(no content)"
+                response_text, dropped = sanitize_with_diagnostics(
+                    persist_text,
+                    conversation=conversation,
+                    stage="persisted_message",
+                )
+                answer_confidence = None
+                if plan.diagnostics:
+                    answer_confidence = plan.diagnostics.get("answer_confidence")
+                pending_actions = serialize_planned_actions(plan.planned_actions)
+                message_metadata = {
+                    "citations": [snippet.title for snippet in plan.citations],
+                    "actions": pending_actions,
+                    "diagnostics": plan.diagnostics,
+                }
+                if answer_confidence is not None:
+                    message_metadata["answer_confidence"] = answer_confidence
+                if plan.ingestion_warnings:
+                    message_metadata["ingestion_warnings"] = [dict(item) for item in plan.ingestion_warnings]
+                ai_message = service.append_message(
+                    session_token=session_token,
+                    sender=ConversationSender.AI,
+                    body=response_text,
+                    metadata=message_metadata,
+                )
 
-            session_state = service.get_session_state(session_token=session_token)
-            final_payload = {
-                "text": response_text,
-                "message_id": str(ai_message.id),
-                "session_status": session_state.status,
-            }
-            if answer_confidence is not None:
-                final_payload["answer_confidence"] = answer_confidence
-            if plan.ingestion_warnings:
-                final_payload["ingestion_warnings"] = [dict(item) for item in plan.ingestion_warnings]
-            logger.info(
-                "portal response finalized conversation=%s message_id=%s status=%s",
-                conversation.id,
-                ai_message.id,
-                session_state.status,
-            )
-            extra_payload: dict[str, Any] = {
-                "citations": [snippet.title for snippet in plan.citations],
-                "pending_actions": len(plan.planned_actions),
-            }
-            if answer_confidence is not None:
-                extra_payload["answer_confidence"] = answer_confidence
-            trace_logger.log(
-                "response.persisted",
-                detail=f"message_id={ai_message.id}",
-                indent=1,
-                extra=extra_payload,
-            )
-            plan_holder["message_metadata"] = message_metadata
-            plan_holder["final_payload"] = final_payload
-            plan_holder["ai_message_id"] = ai_message.id
+                session_state = service.get_session_state(session_token=session_token)
+                final_payload = {
+                    "text": response_text,
+                    "message_id": str(ai_message.id),
+                    "session_status": session_state.status,
+                }
+                if answer_confidence is not None:
+                    final_payload["answer_confidence"] = answer_confidence
+                if plan.ingestion_warnings:
+                    final_payload["ingestion_warnings"] = [dict(item) for item in plan.ingestion_warnings]
+                logger.info(
+                    "portal response finalized conversation=%s message_id=%s status=%s",
+                    conversation.id,
+                    ai_message.id,
+                    session_state.status,
+                )
+                extra_payload: dict[str, Any] = {
+                    "citations": [snippet.title for snippet in plan.citations],
+                    "pending_actions": len(plan.planned_actions),
+                }
+                if answer_confidence is not None:
+                    extra_payload["answer_confidence"] = answer_confidence
+                trace_logger.log(
+                    "response.persisted",
+                    detail=f"message_id={ai_message.id}",
+                    indent=1,
+                    extra=extra_payload,
+                )
+                plan_holder["message_metadata"] = message_metadata
+                plan_holder["final_payload"] = final_payload
+                plan_holder["ai_message_id"] = ai_message.id
 
-            def run_post_actions() -> None:
-                close_old_connections()
-                trace_logger.log("post_actions.started", indent=2)
-                try:
-                    action_results = []
-                    if plan.planned_actions:
-                        action_results = dispatcher.execute(conversation=conversation, planned_actions=plan.planned_actions)
-                        logger.info(
-                            "portal action results conversation=%s results=%s",
-                            conversation.id,
-                            [
-                                {
-                                    "action": result.action.value,
-                                    "status": result.status,
-                                    "error": result.error,
-                                }
-                                for result in action_results
-                            ],
-                        )
-                        trace_logger.log(
-                            "actions.executed",
-                            detail=f"count={len(action_results)}",
-                            indent=2,
-                            extra=[
-                                {
-                                    "action": result.action.value,
-                                    "status": result.status,
-                                    "error": result.error,
-                                }
-                                for result in action_results
-                            ],
-                        )
-                    if plan.extractions:
-                        service.store_extractions(
-                            session_token=session_token,
-                            items=((extraction.extraction_type, extraction.payload) for extraction in plan.extractions),
-                        )
-                        logger.info(
-                            "portal extractions stored conversation=%s count=%s",
-                            conversation.id,
-                            len(plan.extractions),
-                        )
-                        trace_logger.log(
-                            "extractions.stored",
-                            detail=f"count={len(plan.extractions)}",
-                            indent=2,
-                        )
-                    if plan.planned_actions:
-                        serialized_actions = serialize_action_results(action_results)
-                        updated_metadata = copy.deepcopy(message_metadata)
-                        updated_metadata["actions"] = serialized_actions
-                        service.update_message(
-                            session_token=session_token,
-                            message_id=ai_message.id,
-                            metadata=updated_metadata,
-                        )
-                        actions_queue.put(
-                            {
-                                "type": "actionsComplete",
-                                "message_id": str(ai_message.id),
-                                "actions": serialized_actions,
-                            }
-                        )
-                    elif plan.extractions:
-                        actions_queue.put(
-                            {
-                                "type": "actionsComplete",
-                                "message_id": str(ai_message.id),
-                                "actions": [],
-                            }
-                    )
-                except Exception as exc:  # pragma: no cover - defensive
-                    logger.exception("portal post-processing failed: %s", exc)
-                    trace_logger.log_error("post_actions", exc, indent=2)
-                    actions_queue.put(
-                        {
-                            "type": "actionsError",
-                            "message_id": str(ai_message.id),
-                            "error": str(exc),
-                        }
-                    )
-                finally:
+                def run_post_actions(child_ctx) -> None:
                     close_old_connections()
-                    actions_queue.put(actions_sentinel)
+                    child_token = None
+                    if child_ctx is not None:
+                        child_token = otel_context.attach(child_ctx)
+                    trace_logger.log("post_actions.started", indent=2)
+                    try:
+                        with TRACER.start_as_current_span("portal.post_actions"):
+                            action_results = []
+                            if plan.planned_actions:
+                                action_results = dispatcher.execute(conversation=conversation, planned_actions=plan.planned_actions)
+                                logger.info(
+                                    "portal action results conversation=%s results=%s",
+                                    conversation.id,
+                                    [
+                                        {
+                                            "action": result.action.value,
+                                            "status": result.status,
+                                            "error": result.error,
+                                        }
+                                        for result in action_results
+                                    ],
+                                )
+                                trace_logger.log(
+                                    "actions.executed",
+                                    detail=f"count={len(action_results)}",
+                                    indent=2,
+                                    extra=[
+                                        {
+                                            "action": result.action.value,
+                                            "status": result.status,
+                                            "error": result.error,
+                                        }
+                                        for result in action_results
+                                    ],
+                                )
+                            if plan.extractions:
+                                service.store_extractions(
+                                    session_token=session_token,
+                                    items=((extraction.extraction_type, extraction.payload) for extraction in plan.extractions),
+                                )
+                                logger.info(
+                                    "portal extractions stored conversation=%s count=%s",
+                                    conversation.id,
+                                    len(plan.extractions),
+                                )
+                                trace_logger.log(
+                                    "extractions.stored",
+                                    detail=f"count={len(plan.extractions)}",
+                                    indent=2,
+                                )
+                            if plan.planned_actions:
+                                serialized_actions = serialize_action_results(action_results)
+                                updated_metadata = copy.deepcopy(message_metadata)
+                                updated_metadata["actions"] = serialized_actions
+                                service.update_message(
+                                    session_token=session_token,
+                                    message_id=ai_message.id,
+                                    metadata=updated_metadata,
+                                )
+                                actions_queue.put(
+                                    {
+                                        "type": "actionsComplete",
+                                        "message_id": str(ai_message.id),
+                                        "actions": serialized_actions,
+                                    }
+                                )
+                            elif plan.extractions:
+                                actions_queue.put(
+                                    {
+                                        "type": "actionsComplete",
+                                        "message_id": str(ai_message.id),
+                                        "actions": [],
+                                    }
+                                )
+                    except Exception as exc:  # pragma: no cover - defensive
+                        logger.exception("portal post-processing failed: %s", exc)
+                        trace_logger.log_error("post_actions", exc, indent=2)
+                        actions_queue.put(
+                            {
+                                "type": "actionsError",
+                                "message_id": str(ai_message.id),
+                                "error": str(exc),
+                            }
+                        )
+                    finally:
+                        if child_token is not None:
+                            otel_context.detach(child_token)
+                        close_old_connections()
+                        actions_queue.put(actions_sentinel)
 
-            if plan.planned_actions or plan.extractions:
-                threading.Thread(target=run_post_actions, daemon=True).start()
-            else:
-                actions_queue.put(actions_sentinel)
+                if plan.planned_actions or plan.extractions:
+                    threading.Thread(target=run_post_actions, args=(otel_context.get_current(),), daemon=True).start()
+                else:
+                    actions_queue.put(actions_sentinel)
         except Exception as exc:  # pragma: no cover - defensive
             logger.exception("Orchestrator finalize failed: %s", exc)
             trace_logger.log_error("finalize", exc, indent=1)
             plan_holder["final_error"] = str(exc)
             actions_queue.put(actions_sentinel)
         finally:
+            if token is not None:
+                otel_context.detach(token)
             close_old_connections()
             finalize_queue.put(finalize_sentinel)
 
-    def orchestrate() -> None:
+    def orchestrate(parent_ctx) -> None:
         close_old_connections()
+        token = None
+        if parent_ctx is not None:
+            token = otel_context.attach(parent_ctx)
         try:
             trace_logger.log("orchestrator.turn.start", indent=1)
-            context = orchestrator.stream_turn(
-                conversation=conversation,
-                user_message=body,
-                on_response_text_delta=on_response_text_delta,
-                on_status_change=on_status_change,
-                on_placeholder_response=on_placeholder_response,
-                on_stream_complete=signal_stream_complete,
-            )
-            plan_holder["context"] = context
-            threading.Thread(target=finalize_stream_context, args=(context,), daemon=True).start()
-            # Streaming is complete; signal immediately so SSE can finish without waiting for planner/actions.
-            signal_stream_complete()
-            trace_logger.log("orchestrator.turn.complete", indent=1)
+            with TRACER.start_as_current_span("portal.orchestrator.turn"):
+                stream_context = orchestrator.stream_turn(
+                    conversation=conversation,
+                    user_message=body,
+                    on_response_text_delta=on_response_text_delta,
+                    on_status_change=on_status_change,
+                    on_placeholder_response=on_placeholder_response,
+                    on_stream_complete=signal_stream_complete,
+                )
+                plan_holder["context"] = stream_context
+                threading.Thread(
+                    target=finalize_stream_context,
+                    args=(stream_context, otel_context.get_current()),
+                    daemon=True,
+                ).start()
+                signal_stream_complete()
+                trace_logger.log("orchestrator.turn.complete", indent=1)
         except Exception as exc:  # pragma: no cover - defensive
             logger.exception("Orchestrator turn failed: %s", exc)
             plan_holder["error"] = str(exc)
@@ -789,9 +809,12 @@ def stream_send(request: HttpRequest) -> StreamingHttpResponse:
             finalize_queue.put(finalize_sentinel)
             actions_queue.put(actions_sentinel)
         finally:
+            if token is not None:
+                otel_context.detach(token)
             close_old_connections()
 
-    worker = threading.Thread(target=orchestrate, daemon=True)
+    request_context = otel_context.get_current()
+    worker = threading.Thread(target=orchestrate, args=(request_context,), daemon=True)
     worker.start()
 
     def event_stream() -> Iterable[str]:
