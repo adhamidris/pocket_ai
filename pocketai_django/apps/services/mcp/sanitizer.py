@@ -11,9 +11,12 @@ import re
 import logging
 from typing import Iterable, Tuple
 
+from opentelemetry import trace as otel_trace
+
 from apps.services.rag_logging import structured_log
 
 logger = logging.getLogger(__name__)
+TRACER = otel_trace.get_tracer(__name__)
 
 
 def sanitize_with_diagnostics(
@@ -27,7 +30,12 @@ def sanitize_with_diagnostics(
     Sanitize text and log any dropped investigative filler sentences.
     """
 
-    cleaned, dropped = _sanitize(text, filter_level=filter_level)
+    with TRACER.start_as_current_span("sanitizer.filter") as span:
+        cleaned, dropped = _sanitize(text, filter_level=filter_level)
+        if span.is_recording():
+            span.set_attribute("sanitizer.stage", stage)
+            span.set_attribute("sanitizer.original_length", len(text or ""))
+            span.set_attribute("sanitizer.dropped_count", len(dropped))
     # If everything was dropped as filler, fall back to the original text to avoid empty replies.
     if not cleaned and text and text.strip():
         cleaned = text.strip()

@@ -5,8 +5,12 @@ import textwrap
 from datetime import datetime
 from typing import Mapping, Sequence
 
+from opentelemetry import trace as otel_trace
+
 from apps.accounts.models import AgentProfile
 from apps.conversations.models import Conversation, ConversationMessage
+
+TRACER = otel_trace.get_tracer(__name__)
 
 
 @dataclasses.dataclass(frozen=True)
@@ -148,100 +152,108 @@ class PromptBuilder:
         actions_catalog: Sequence[Mapping[str, str]],
         knowledge_log: Sequence[Mapping[str, object]] | None = None,
     ) -> PromptBundle:
-        business = conversation.business_profile
-        industry = (business.industry or "").strip() or "general services"
-        agent_traits = {
-            "role": self.agent.role or "AI Customer Specialist",
-            "tone": self.agent.tone or "friendly",
-            "business_name": business.name,
-            "agent_name": self.agent.name,
-            "business_industry": industry,
-        }
-
-        case_context = self._case_context(conversation)
-
-        system_prompt = textwrap.dedent(
-            f"""
-            You are {self.agent.name}, the {agent_traits['role']} for {business.name}, a company in the {industry} industry. Maintain a {agent_traits['tone']} tone, stay factual, and never hallucinate policy or pricing.
-
-            {self.CASE_MANDATE}
-
-            {self.CONVERSATION_RULES}
-
-            {self.ACTION_RULES}
-
-            {self.KNOWLEDGE_RULES}
-
-            {self.SEARCH_DISAMBIGUATION_RULES}
-
-            {self.CHUNK_READ_NUDGE}
-
-            {self.CUSTOMER_RULES}
-            """
-        ).strip()
-
-        user_prompt = self._compose_user_prompt(
-            case_context=case_context,
-            knowledge_snippets=knowledge_snippets,
-            actions_catalog=actions_catalog,
-            transcript=transcript,
-            business_industry=industry,
-            knowledge_log=knowledge_log or (),
-        )
-
-        transcript_payload = [
-            {
-                "sender": message.sender,
-                "content": message.body,
-                "sent_at": message.sent_at.isoformat(),
+        with TRACER.start_as_current_span("prompt.build_bundle") as span:
+            if span.is_recording():
+                span.set_attribute("conversation.id", str(getattr(conversation, "id", "")))
+                span.set_attribute("knowledge.count", len(knowledge_snippets))
+                span.set_attribute("transcript.count", len(transcript))
+                span.set_attribute("actions.count", len(actions_catalog))
+            business = conversation.business_profile
+            industry = (business.industry or "").strip() or "general services"
+            agent_traits = {
+                "role": self.agent.role or "AI Customer Specialist",
+                "tone": self.agent.tone or "friendly",
+                "business_name": business.name,
+                "agent_name": self.agent.name,
+                "business_industry": industry,
             }
-            for message in transcript
-        ]
 
-        knowledge_payload = [
-        {
-            "id": s.get("id"),
-            "title": s.get("title"),
-            "summary": s.get("summary"),
-            "source": s.get("source"),
-            "content": s.get("content"),
-            "public_label": s.get("public_label"),
-            "structuredTables": s.get("structuredTables") or [],
-            "issues": s.get("issues") or [],
-            "pageSummaries": s.get("pageSummaries") or [],
+            case_context = self._case_context(conversation)
 
-            # important for tool choice:
-            "status": s.get("status"),
-            "read_state": s.get("read_state"),
-            "coverage": s.get("coverage") or [],
-            "last_used_for": s.get("last_used_for"),
-            "last_used_at": s.get("last_used_at"),
-            "pin": bool(s.get("pin")),
-            "entity_type": s.get("entity_type"),
-            "entity_name": s.get("entity_name"),
-            "entity_business": s.get("entity_business"),
-            "is_table_chunk": bool(s.get("is_table_chunk")),
-            "chunk_index": s.get("chunk_index"),
-            "chunk_id": s.get("chunk_id"),
-            "aliases": s.get("aliases") or [],
-            "search_stage": s.get("search_stage"),
-            "confidence_score": s.get("confidence_score"),
-            "truncated": bool(s.get("truncated")),
-            "source_diagnostics": s.get("source_diagnostics") or {},
-            "partial_index": bool(s.get("partial_index")),
-            "truncation_note": s.get("truncation_note") or "",
-        }
-        for s in knowledge_snippets
-        ]
+            system_prompt = textwrap.dedent(
+                f"""
+                You are {self.agent.name}, the {agent_traits['role']} for {business.name}, a company in the {industry} industry. Maintain a {agent_traits['tone']} tone, stay factual, and never hallucinate policy or pricing.
 
-        return PromptBundle(
-            system_prompt=system_prompt,
-            user_prompt=user_prompt,
-            transcript=transcript_payload,
-            knowledge_snippets=knowledge_payload,
-            actions_catalog=actions_catalog,
-            agent_traits=agent_traits,
-        )
+                {self.CASE_MANDATE}
+
+                {self.CONVERSATION_RULES}
+
+                {self.ACTION_RULES}
+
+                {self.KNOWLEDGE_RULES}
+
+                {self.SEARCH_DISAMBIGUATION_RULES}
+
+                {self.CHUNK_READ_NUDGE}
+
+                {self.CUSTOMER_RULES}
+                """
+            ).strip()
+
+            user_prompt = self._compose_user_prompt(
+                case_context=case_context,
+                knowledge_snippets=knowledge_snippets,
+                actions_catalog=actions_catalog,
+                transcript=transcript,
+                business_industry=industry,
+                knowledge_log=knowledge_log or (),
+            )
+
+            transcript_payload = [
+                {
+                    "sender": message.sender,
+                    "content": message.body,
+                    "sent_at": message.sent_at.isoformat(),
+                }
+                for message in transcript
+            ]
+
+            knowledge_payload = [
+                {
+                    "id": s.get("id"),
+                    "title": s.get("title"),
+                    "summary": s.get("summary"),
+                    "source": s.get("source"),
+                    "content": s.get("content"),
+                    "public_label": s.get("public_label"),
+                    "structuredTables": s.get("structuredTables") or [],
+                    "issues": s.get("issues") or [],
+                    "pageSummaries": s.get("pageSummaries") or [],
+
+                    # important for tool choice:
+                    "status": s.get("status"),
+                    "read_state": s.get("read_state"),
+                    "coverage": s.get("coverage") or [],
+                    "last_used_for": s.get("last_used_for"),
+                    "last_used_at": s.get("last_used_at"),
+                    "pin": bool(s.get("pin")),
+                    "entity_type": s.get("entity_type"),
+                    "entity_name": s.get("entity_name"),
+                    "entity_business": s.get("entity_business"),
+                    "is_table_chunk": bool(s.get("is_table_chunk")),
+                    "chunk_index": s.get("chunk_index"),
+                    "chunk_id": s.get("chunk_id"),
+                    "aliases": s.get("aliases") or [],
+                    "search_stage": s.get("search_stage"),
+                    "confidence_score": s.get("confidence_score"),
+                    "truncated": bool(s.get("truncated")),
+                    "source_diagnostics": s.get("source_diagnostics") or {},
+                    "partial_index": bool(s.get("partial_index")),
+                    "truncation_note": s.get("truncation_note") or "",
+                }
+                for s in knowledge_snippets
+            ]
+
+            if span.is_recording():
+                span.set_attribute("knowledge.ready_count", sum(1 for entry in knowledge_payload if entry.get("status") == "ready"))
+            return PromptBundle(
+                system_prompt=system_prompt,
+                user_prompt=user_prompt,
+                transcript=transcript_payload,
+                knowledge_snippets=knowledge_payload,
+                actions_catalog=actions_catalog,
+                agent_traits=agent_traits,
+            )
 
     def _case_context(self, conversation: Conversation) -> str:
         if conversation.case:
@@ -271,60 +283,69 @@ class PromptBuilder:
         business_industry: str,
         knowledge_log: Sequence[Mapping[str, object]],
     ) -> str:
-        transcript_lines = []
-        for message in transcript:
-            sender = message.sender.upper()
-            transcript_lines.append(f"- [{sender}] {message.body}")
-        transcript_block = "\n".join(transcript_lines) or "(no prior messages)"
+        with TRACER.start_as_current_span("prompt.compose_user_prompt") as span:
+            if span.is_recording():
+                span.set_attribute("transcript.count", len(transcript))
+                span.set_attribute("knowledge.count", len(knowledge_snippets))
+                span.set_attribute("actions.count", len(actions_catalog))
+                span.set_attribute("knowledge_log.count", len(knowledge_log or ()))
+            transcript_lines = []
+            for message in transcript:
+                sender = message.sender.upper()
+                transcript_lines.append(f"- [{sender}] {message.body}")
+            transcript_block = "\n".join(transcript_lines) or "(no prior messages)"
 
-        use_envelope = True
-        if use_envelope:
-            knowledge_block = self.build_knowledge_context_envelope(
-                knowledge_snippets,
-                use_json_envelope=True
-            )
-        else:
-            knowledge_block_lines = []
-            for snippet in knowledge_snippets:
-                knowledge_block_lines.extend(self._render_snippet_entry(snippet))
-            knowledge_block = "\n".join(knowledge_block_lines) if knowledge_block_lines else "- No knowledge snippets were retrieved"
-        previous_deliveries_block = self._render_previous_deliveries(knowledge_log)
+            use_envelope = True
+            if use_envelope:
+                knowledge_block = self.build_knowledge_context_envelope(
+                    knowledge_snippets,
+                    use_json_envelope=True
+                )
+            else:
+                knowledge_block_lines = []
+                for snippet in knowledge_snippets:
+                    knowledge_block_lines.extend(self._render_snippet_entry(snippet))
+                knowledge_block = "\n".join(knowledge_block_lines) if knowledge_block_lines else "- No knowledge snippets were retrieved"
+            previous_deliveries_block = self._render_previous_deliveries(knowledge_log)
 
-        actions_block = []
-        for action in actions_catalog:
-            status = "ENABLED" if action.get("enabled") else "DISABLED"
-            actions_block.append(f"- {action.get('key')}: {action.get('description')} ({status})")
-        actions_block = "\n".join(actions_block)
+            actions_block = []
+            for action in actions_catalog:
+                status = "ENABLED" if action.get("enabled") else "DISABLED"
+                actions_block.append(f"- {action.get('key')}: {action.get('description')} ({status})")
+            actions_block = "\n".join(actions_block)
 
-        return textwrap.dedent(
-            f"""
-            ### Conversation Transcript
-            {transcript_block}
+            prompt = textwrap.dedent(
+                f"""
+                ### Conversation Transcript
+                {transcript_block}
 
-            ### Case Context (internal reference only — do not mention in replies unless asked)
-            {case_context}
+                ### Case Context (internal reference only — do not mention in replies unless asked)
+                {case_context}
 
-            ### Business Context
-            - Industry: {business_industry}
+                ### Business Context
+                - Industry: {business_industry}
 
-            ### Knowledge Ledger
-           {knowledge_block}
-            Ledger directive: When a snippet shows status=ready, you already have that data—respond now. Only invoke `read_knowledge` for summary-only/preview snippets or when the visitor asks for topics outside the listed coverage.
-            Ledger directive (chunk focus): When you need more context from a knowledge snippet, request that exact snippet ID (chunk) rather than the entire document, unless you truly need the whole document.
+                ### Knowledge Ledger
+               {knowledge_block}
+                Ledger directive: When a snippet shows status=ready, you already have that data—respond now. Only invoke `read_knowledge` for summary-only/preview snippets or when the visitor asks for topics outside the listed coverage.
+                Ledger directive (chunk focus): When you need more context from a knowledge snippet, request that exact snippet ID (chunk) rather than the entire document, unless you truly need the whole document.
 
-            ### Previously Delivered
-            {previous_deliveries_block}
+                ### Previously Delivered
+                {previous_deliveries_block}
 
-            ### Available Actions
-            {actions_block}
+                ### Available Actions
+                {actions_block}
 
-            ### Tasks
-            1. Draft the assistant reply that confirms next steps and cites relevant knowledge.
-            2. Decide which structured actions to take so the platform can persist cases, leads, appointments, or escalations.
-            3. Always produce at least one `create_case` or `update_case_status` action so the conversation is tracked.
-            4. If you include `read_knowledge`, still give the visitor the most helpful answer you can immediately. Mention what you will verify after the read, but never reply with placeholders like "Reviewing…" or "Searching…".
-            """
-        ).strip()
+                ### Tasks
+                1. Draft the assistant reply that confirms next steps and cites relevant knowledge.
+                2. Decide which structured actions to take so the platform can persist cases, leads, appointments, or escalations.
+                3. Always produce at least one `create_case` or `update_case_status` action so the conversation is tracked.
+                4. If you include `read_knowledge`, still give the visitor the most helpful answer you can immediately. Mention what you will verify after the read, but never reply with placeholders like "Reviewing…" or "Searching…".
+                """
+            ).strip()
+            if span.is_recording():
+                span.set_attribute("prompt.length", len(prompt))
+            return prompt
 
     def _render_snippet_entry(self, snippet: Mapping[str, object]) -> list[str]:
         lines: list[str] = []
@@ -442,79 +463,89 @@ class PromptBuilder:
             Formatted context string (JSON envelope or plain text)
         """
         import json
-        
-        if not use_json_envelope:
-            # Fall back to existing knowledge block format
-            return self._build_plain_knowledge_block(knowledge_snippets)
-        
-        # Build JSON envelope structure
-        documents = []
-        
-        for idx, snippet in enumerate(knowledge_snippets, start=1):
-            # Build document structure
-            doc = {
-                "index": idx,
-                "media_type": snippet.get("mime_type") or "text/plain",
-                "source": snippet.get("public_label") or snippet.get("title") or f"document_{snippet.get('id')}",
-                "text": snippet.get("content") or snippet.get("summary") or "",
-            }
-            
-            # Add structured tables if available
-            tables = snippet.get("structuredTables") or []
-            if tables:
-                doc["tables"] = []
-                for t in tables[:5]:
-                    entry = {
-                        "title": t.get("title"),
-                        "page_number": t.get("page_number") or t.get("pageNumber"),
-                        "column_schema": t.get("column_schema") or t.get("columnSchema") or [],
-                        "row_count": len(t.get("rows") or t.get("rowsSample") or []),
-                    }
-                    rows = t.get("rows") or t.get("rowsSample") or []
-                    if rows:
-                        entry["rowsSample"] = rows[:5]   # keep it small and consistent
-                    doc["tables"].append(entry)
 
-            
-            # Add page summaries if available
-            page_summaries = snippet.get("pageSummaries") or []
-            if page_summaries:
-                doc["pages"] = [
-                    {
-                        "page_number": p.get("page_number"),
-                        "summary": p.get("summary"),
-                    }
-                    for p in page_summaries[:10]  # Limit to 10 pages
-                ]
-            
-            # Add metadata
-            doc["metadata"] = {
-                "status": snippet.get("status"),
-                "read_state": snippet.get("read_state"),
-                "coverage": snippet.get("coverage") or [],
-                "last_used_for": snippet.get("last_used_for"),
-                "entity_type": snippet.get("entity_type"),
-                "entity_name": snippet.get("entity_name"),
-                "entity_business": snippet.get("entity_business"),
-                "is_table_chunk": bool(snippet.get("is_table_chunk")),
-                "chunk_index": snippet.get("chunk_index"),
-                "chunk_id": snippet.get("chunk_id"),
-                "search_stage": snippet.get("search_stage"),
-                "confidence_score": snippet.get("confidence_score"),
-                "truncated": bool(snippet.get("truncated")),
-                "aliases": snippet.get("aliases") or [],
-                "issues": snippet.get("issues") or [],
-                "partial_index": bool(snippet.get("partial_index")),
-                "truncation_note": snippet.get("truncation_note") or "",
-            }
+        with TRACER.start_as_current_span("prompt.build_knowledge_envelope") as span:
+            if span.is_recording():
+                span.set_attribute("knowledge.count", len(knowledge_snippets))
+                span.set_attribute("envelope.json", bool(use_json_envelope))
 
-            documents.append(doc)
-        
-        # Wrap in envelope
-        envelope = {"documents": documents}
-        
-        # Return as formatted JSON with instruction
-        return f"""<documents>
+            if not use_json_envelope:
+                # Fall back to existing knowledge block format
+                return self._build_plain_knowledge_block(knowledge_snippets)
+
+            # Build JSON envelope structure
+            documents = []
+            total_tables = 0
+
+            for idx, snippet in enumerate(knowledge_snippets, start=1):
+                # Build document structure
+                doc = {
+                    "index": idx,
+                    "media_type": snippet.get("mime_type") or "text/plain",
+                    "source": snippet.get("public_label") or snippet.get("title") or f"document_{snippet.get('id')}",
+                    "text": snippet.get("content") or snippet.get("summary") or "",
+                }
+
+                # Add structured tables if available
+                tables = snippet.get("structuredTables") or []
+                if tables:
+                    doc["tables"] = []
+                    for t in tables[:5]:
+                        entry = {
+                            "title": t.get("title"),
+                            "page_number": t.get("page_number") or t.get("pageNumber"),
+                            "column_schema": t.get("column_schema") or t.get("columnSchema") or [],
+                            "row_count": len(t.get("rows") or t.get("rowsSample") or []),
+                        }
+                        rows = t.get("rows") or t.get("rowsSample") or []
+                        if rows:
+                            entry["rowsSample"] = rows[:5]   # keep it small and consistent
+                        doc["tables"].append(entry)
+                        total_tables += 1
+
+                # Add page summaries if available
+                page_summaries = snippet.get("pageSummaries") or []
+                if page_summaries:
+                    doc["pages"] = [
+                        {
+                            "page_number": p.get("page_number"),
+                            "summary": p.get("summary"),
+                        }
+                        for p in page_summaries[:10]  # Limit to 10 pages
+                    ]
+
+                # Add metadata
+                doc["metadata"] = {
+                    "status": snippet.get("status"),
+                    "read_state": snippet.get("read_state"),
+                    "coverage": snippet.get("coverage") or [],
+                    "last_used_for": snippet.get("last_used_for"),
+                    "entity_type": snippet.get("entity_type"),
+                    "entity_name": snippet.get("entity_name"),
+                    "entity_business": snippet.get("entity_business"),
+                    "is_table_chunk": bool(snippet.get("is_table_chunk")),
+                    "chunk_index": snippet.get("chunk_index"),
+                    "chunk_id": snippet.get("chunk_id"),
+                    "search_stage": snippet.get("search_stage"),
+                    "confidence_score": snippet.get("confidence_score"),
+                    "truncated": bool(snippet.get("truncated")),
+                    "aliases": snippet.get("aliases") or [],
+                    "issues": snippet.get("issues") or [],
+                    "partial_index": bool(snippet.get("partial_index")),
+                    "truncation_note": snippet.get("truncation_note") or "",
+                }
+
+                documents.append(doc)
+
+            if span.is_recording():
+                span.set_attribute("knowledge.tables", total_tables)
+                span.set_attribute("knowledge.documents", len(documents))
+
+            # Wrap in envelope
+            envelope = {"documents": documents}
+
+            # Return as formatted JSON with instruction
+            return f"""<documents>
 {json.dumps(envelope, indent=2, ensure_ascii=False)}
 </documents>
 

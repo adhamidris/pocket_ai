@@ -18,6 +18,8 @@ from typing import Callable, Iterable, Mapping, Sequence
 from django.conf import settings
 from django.utils import timezone
 
+from opentelemetry import trace as otel_trace
+
 from apps.accounts.models import AgentProfile
 from apps.conversations.models import Conversation, ConversationExtractionType
 from apps.services.llm_provider import PromptGenerationError, _emit_stream_chunks
@@ -47,6 +49,7 @@ from .identifier_registry import IdentifierGuardrail
 
 
 logger = logging.getLogger(__name__)
+TRACER = otel_trace.get_tracer(__name__)
 
 
 class McpOrchestratorService:
@@ -100,23 +103,33 @@ class McpOrchestratorService:
         followed by a final answer pass that streams only customer-facing text.
         """
 
-        messages = prompts.build_messages(conversation=conversation, user_message=user_message)
-        filter_level = self._filter_level_for_conversation(conversation)
-        char_turn_limit = self._char_budget_per_turn(conversation.business_profile)
-        char_minute_limit = self._char_budget_per_minute(conversation.business_profile)
-        minute_reserver = self._build_minute_budget_reserver(conversation.business_profile, char_minute_limit)
-        tool_context = ToolExecutionContext(
-            max_chunk_reads_per_turn=self.max_chunk_reads_per_turn,
-            max_chunk_pages_per_turn=self.max_chunk_pages_per_turn,
-            char_budget_per_turn=char_turn_limit,
-            char_budget_per_minute=char_minute_limit,
-            minute_budget_reserver=minute_reserver,
-        )
-        tool_context.identifier_gate = IdentifierGuardrail.from_conversation(conversation)
-        self._hydrate_table_cache(conversation, tool_context)
-        cached_table_messages = prompts.build_cached_table_messages(
-            knowledge_results=tuple(tool_context.knowledge_results)
-        )
+        with TRACER.start_as_current_span("portal.mcp.turn_setup") as setup_span:
+            if setup_span.is_recording():
+                setup_span.set_attribute("conversation.id", str(conversation.id))
+                setup_span.set_attribute("business.id", str(conversation.business_profile_id))
+            messages = prompts.build_messages(conversation=conversation, user_message=user_message)
+            filter_level = self._filter_level_for_conversation(conversation)
+            char_turn_limit = self._char_budget_per_turn(conversation.business_profile)
+            char_minute_limit = self._char_budget_per_minute(conversation.business_profile)
+            minute_reserver = self._build_minute_budget_reserver(conversation.business_profile, char_minute_limit)
+            tool_context = ToolExecutionContext(
+                max_chunk_reads_per_turn=self.max_chunk_reads_per_turn,
+                max_chunk_pages_per_turn=self.max_chunk_pages_per_turn,
+                char_budget_per_turn=char_turn_limit,
+                char_budget_per_minute=char_minute_limit,
+                minute_budget_reserver=minute_reserver,
+            )
+            tool_context.identifier_gate = IdentifierGuardrail.from_conversation(conversation)
+            with TRACER.start_as_current_span("portal.mcp.table_cache") as cache_span:
+                self._hydrate_table_cache(conversation, tool_context)
+                if cache_span.is_recording():
+                    cache_span.set_attribute(
+                        "mcp.cached_tables",
+                        len(getattr(tool_context, "table_results", ()) or ()),
+                    )
+            cached_table_messages = prompts.build_cached_table_messages(
+                knowledge_results=tuple(tool_context.knowledge_results)
+            )
 
         if not self.provider:
             raise RuntimeError("MCP provider is not configured.")
@@ -270,11 +283,15 @@ class McpOrchestratorService:
                 break
 
         self._log_prompt("primary", conversation=conversation, messages=transcript)
-        first_payload = self.provider.chat(
-            transcript,
-            tools=self.tool_definitions,
-            on_stream_delta=_first_stream_chunk,
-        )
+        with TRACER.start_as_current_span("portal.mcp.initial_pass") as initial_span:
+            if initial_span.is_recording():
+                initial_span.set_attribute("mcp.message_count", len(transcript))
+                initial_span.set_attribute("mcp.tools_enabled", True)
+            first_payload = self.provider.chat(
+                transcript,
+                tools=self.tool_definitions,
+                on_stream_delta=_first_stream_chunk,
+            )
         first_message = self._coerce_assistant_message(first_payload)
         first_stream_message = dict(first_message or {})
         first_stream_tool_calls = list(first_stream_message.get("tool_calls") or [])
@@ -310,126 +327,140 @@ class McpOrchestratorService:
             )
             pending_assistant = None
 
-            for _ in range(self.max_tool_iterations):
-                # Execute each tool_call and append tool results.
+            for iteration_index in range(self.max_tool_iterations):
                 current_tool_calls = list(assistant_message.get("tool_calls") or [])
                 if not current_tool_calls:
                     break
-                for tool_call in current_tool_calls:
-                    tool_name = self._tool_name(tool_call)
-                    arguments = self._tool_arguments(tool_call)
-                    if self._is_knowledge_tool(tool_name):
-                        if on_status_change:
-                            if tool_name == "search_knowledge":
-                                raw_query = arguments.get("query")
-                                query = str(raw_query).strip() if raw_query is not None else ""
-                                label = f"Searching: {query[:80]}" if query else "Searching knowledge…"
-                                on_status_change({"code": "searching_knowledge", "label": label})
-                            elif tool_name == "read_document":
-                                raw_id = arguments.get("document_id")
-                                doc_id = str(raw_id).strip() if raw_id is not None else ""
-                                short_id = f"{doc_id[:8]}…" if doc_id else ""
-                                base_label = "Reading document"
-                                label = f"Reading: {short_id}" if short_id else base_label
-                                on_status_change({"code": "reading_document", "label": label})
-                    if on_placeholder_response and not placeholder_sent:
-                        placeholder_text = str(assistant_message.get("content") or "").strip()
-                        if placeholder_text:
-                            on_placeholder_response(placeholder_text)
-                            placeholder_sent = True
+                with TRACER.start_as_current_span("portal.mcp.tool_iteration") as iter_span:
+                    if iter_span.is_recording():
+                        iter_span.set_attribute("mcp.iteration_index", iteration_index)
+                        iter_span.set_attribute("mcp.pending_tool_calls", len(current_tool_calls))
+                        iter_span.set_attribute("mcp.transcript_length", len(transcript))
+                    # Execute each tool_call and append tool results.
+                    for tool_call in current_tool_calls:
+                        tool_name = self._tool_name(tool_call)
+                        arguments = self._tool_arguments(tool_call)
+                        if self._is_knowledge_tool(tool_name):
+                            if on_status_change:
+                                if tool_name == "search_knowledge":
+                                    raw_query = arguments.get("query")
+                                    query = str(raw_query).strip() if raw_query is not None else ""
+                                    label = f"Searching: {query[:80]}" if query else "Searching knowledge…"
+                                    on_status_change({"code": "searching_knowledge", "label": label})
+                                elif tool_name == "read_document":
+                                    raw_id = arguments.get("document_id")
+                                    doc_id = str(raw_id).strip() if raw_id is not None else ""
+                                    short_id = f"{doc_id[:8]}…" if doc_id else ""
+                                    base_label = "Reading document"
+                                    label = f"Reading: {short_id}" if short_id else base_label
+                                    on_status_change({"code": "reading_document", "label": label})
+                        if on_placeholder_response and not placeholder_sent:
+                            placeholder_text = str(assistant_message.get("content") or "").strip()
+                            if placeholder_text:
+                                on_placeholder_response(placeholder_text)
+                                placeholder_sent = True
 
-                    duplicate_result = None
-                    if tool_name == "search_knowledge":
-                        duplicate_result = self._short_circuit_duplicate_search(
-                            arguments,
-                            tool_context,
-                            conversation,
+                        duplicate_result = None
+                        if tool_name == "search_knowledge":
+                            duplicate_result = self._short_circuit_duplicate_search(
+                                arguments,
+                                tool_context,
+                                conversation,
+                            )
+
+                        with TRACER.start_as_current_span("portal.mcp.tool_call") as tool_span:
+                            if tool_span.is_recording():
+                                tool_span.set_attribute("mcp.tool_name", tool_name)
+                                tool_span.set_attribute("mcp.iteration_index", iteration_index)
+                                tool_span.set_attribute("mcp.duplicate_short_circuit", bool(duplicate_result))
+                                tool_span.set_attribute("mcp.tool_args_keys", sorted(arguments.keys()))
+                            if duplicate_result:
+                                tool_result = duplicate_result
+                            else:
+                                try:
+                                    tool_result = tools.execute_tool(
+                                        tool_name,
+                                        arguments,
+                                        conversation=conversation,
+                                        context=tool_context,
+                                    )
+                                except ToolConstraintError as exc:
+                                    structured_log(
+                                        "mcp",
+                                        "tool.constraint_violation",
+                                        {
+                                            "tool": tool_name,
+                                            "error": str(exc),
+                                        },
+                                        indent=1,
+                                        context={"conversation": conversation.id},
+                                        logger_obj=logger,
+                                        level=logging.WARNING,
+                                    )
+                                    tool_result = self._constraint_error_payload(tool_name, exc)
+                        if tool_name == "search_knowledge" and not duplicate_result:
+                            self._record_search_history(tool_context, arguments, tool_result)
+                        tool_context.add_tool_trace(
+                            {
+                                "tool": tool_name,
+                                "arguments": arguments,
+                                "result_keys": sorted(tool_result.keys()),
+                                "status": tool_result.get("status"),
+                                "error_code": tool_result.get("error_code"),
+                                "hint": tool_result.get("hint"),
+                                "mode": tool_result.get("mode"),
+                                "page": tool_result.get("page"),
+                                "token_budget": tool_result.get("token_budget"),
+                                "throttle_notice": bool(tool_result.get("throttle_notice")),
+                            }
+                        )
+                        if self._is_knowledge_tool(tool_name):
+                            self._record_knowledge_outputs(tool_context, tool_result)
+                            if tool_name == "read_document" and on_status_change:
+                                snippets = tool_result.get("snippets") if isinstance(tool_result, Mapping) else None
+                                if isinstance(snippets, list) and snippets:
+                                    first = snippets[0]
+                                    if isinstance(first, Mapping):
+                                        label_source = (
+                                            first.get("public_label")
+                                            or first.get("title")
+                                            or first.get("source")
+                                        )
+                                        if isinstance(label_source, str) and label_source.strip():
+                                            on_status_change(
+                                                {
+                                                    "code": "reading_document",
+                                                    "label": f"Reading: {label_source.strip()[:80]}",
+                                                }
+                                            )
+                        transcript.append(
+                            {
+                                "role": "tool",
+                                "tool_call_id": tool_call.get("id"),
+                                "name": tool_name,
+                                "content": json.dumps(tool_result, ensure_ascii=False),
+                            }
                         )
 
-                    if duplicate_result:
-                        tool_result = duplicate_result
-                    else:
-                        try:
-                            tool_result = tools.execute_tool(
-                                tool_name,
-                                arguments,
-                                conversation=conversation,
-                                context=tool_context,
-                            )
-                        except ToolConstraintError as exc:
-                            structured_log(
-                                "mcp",
-                                "tool.constraint_violation",
-                                {
-                                    "tool": tool_name,
-                                    "error": str(exc),
-                                },
-                                indent=1,
-                                context={"conversation": conversation.id},
-                                logger_obj=logger,
-                                level=logging.WARNING,
-                            )
-                            tool_result = self._constraint_error_payload(tool_name, exc)
-                    if tool_name == "search_knowledge" and not duplicate_result:
-                        self._record_search_history(tool_context, arguments, tool_result)
-                    tool_context.add_tool_trace(
-                        {
-                            "tool": tool_name,
-                            "arguments": arguments,
-                            "result_keys": sorted(tool_result.keys()),
-                            "status": tool_result.get("status"),
-                            "error_code": tool_result.get("error_code"),
-                            "hint": tool_result.get("hint"),
-                            "mode": tool_result.get("mode"),
-                            "page": tool_result.get("page"),
-                            "token_budget": tool_result.get("token_budget"),
-                            "throttle_notice": bool(tool_result.get("throttle_notice")),
-                        }
+                    # Ask the model again with tools enabled to see if more tool_calls are needed.
+                    payload = self.provider.chat(
+                        transcript,
+                        tools=self.tool_definitions,
+                        on_stream_delta=None,
                     )
-                    if self._is_knowledge_tool(tool_name):
-                        self._record_knowledge_outputs(tool_context, tool_result)
-                        if tool_name == "read_document" and on_status_change:
-                            snippets = tool_result.get("snippets") if isinstance(tool_result, Mapping) else None
-                            if isinstance(snippets, list) and snippets:
-                                first = snippets[0]
-                                if isinstance(first, Mapping):
-                                    label_source = (
-                                        first.get("public_label")
-                                        or first.get("title")
-                                        or first.get("source")
-                                    )
-                                    if isinstance(label_source, str) and label_source.strip():
-                                        on_status_change(
-                                            {
-                                                "code": "reading_document",
-                                                "label": f"Reading: {label_source.strip()[:80]}",
-                                            }
-                                        )
+                    assistant_message = self._coerce_assistant_message(payload)
+                    next_tool_calls = list(assistant_message.get("tool_calls") or [])
+                    # Append the assistant turn (empty content if tools present).
                     transcript.append(
                         {
-                            "role": "tool",
-                            "tool_call_id": tool_call.get("id"),
-                            "name": tool_name,
-                            "content": json.dumps(tool_result, ensure_ascii=False),
+                            "role": "assistant",
+                            "content": "" if next_tool_calls else assistant_message.get("content"),
+                            **({"tool_calls": next_tool_calls} if next_tool_calls else {}),
                         }
                     )
-
-                # Ask the model again with tools enabled to see if more tool_calls are needed.
-                payload = self.provider.chat(
-                    transcript,
-                    tools=self.tool_definitions,
-                    on_stream_delta=None,
-                )
-                assistant_message = self._coerce_assistant_message(payload)
-                next_tool_calls = list(assistant_message.get("tool_calls") or [])
-                # Append the assistant turn (empty content if tools present).
-                transcript.append(
-                    {
-                        "role": "assistant",
-                        "content": "" if next_tool_calls else assistant_message.get("content"),
-                        **({"tool_calls": next_tool_calls} if next_tool_calls else {}),
-                    }
-                )
+                    if iter_span.is_recording():
+                        iter_span.set_attribute("mcp.next_tool_calls", len(next_tool_calls))
+                        iter_span.set_attribute("mcp.cache_hits", len(getattr(tool_context, "knowledge_results", ())))
                 if not next_tool_calls:
                     tool_phase_assistant_message = assistant_message
                     raw_content = assistant_message.get("content")
@@ -450,12 +481,15 @@ class McpOrchestratorService:
             single_pass_text = "".join(answer_streamed_chunks).strip() or first_content_raw
             if on_status_change:
                 on_status_change({"code": "responding", "label": "Responding…"})
-            clean_single, dropped_single = sanitize_with_diagnostics(
-                single_pass_text,
-                conversation=conversation,
-                stage="single_pass_stream",
-                filter_level=filter_level,
-            )
+            with TRACER.start_as_current_span("portal.mcp.single_pass") as span:
+                if span.is_recording():
+                    span.set_attribute("mcp.streamed_chars", len(single_pass_text))
+                clean_single, dropped_single = sanitize_with_diagnostics(
+                    single_pass_text,
+                    conversation=conversation,
+                    stage="single_pass_stream",
+                    filter_level=filter_level,
+                )
             if not clean_single:
                 clean_single = single_pass_text
 
@@ -909,17 +943,30 @@ class McpOrchestratorService:
 
     def _extract_extractions(self, assistant_message: Mapping[str, object]) -> tuple[ExtractionPlan, ...]:
         extraction_payload = assistant_message.get("extractions") or []
+        try:
+            total_entries = len(extraction_payload)
+        except TypeError:
+            total_entries = 0
+        anomalies = {"non_mapping": 0, "unknown_type": 0}
         extractions: list[ExtractionPlan] = []
-        for item in extraction_payload:
-            if not isinstance(item, Mapping):
-                continue
-            extraction_type = item.get("type")
-            payload = item.get("payload") if isinstance(item.get("payload"), Mapping) else {}
-            try:
-                extraction_enum = ConversationExtractionType(extraction_type)
-            except Exception:
-                continue
-            extractions.append(ExtractionPlan(extraction_type=extraction_enum, payload=dict(payload)))
+        with TRACER.start_as_current_span("portal.mcp.validate_extractions") as span:
+            for item in extraction_payload:
+                if not isinstance(item, Mapping):
+                    anomalies["non_mapping"] += 1
+                    continue
+                extraction_type = item.get("type")
+                payload = item.get("payload") if isinstance(item.get("payload"), Mapping) else {}
+                try:
+                    extraction_enum = ConversationExtractionType(extraction_type)
+                except Exception:
+                    anomalies["unknown_type"] += 1
+                    continue
+                extractions.append(ExtractionPlan(extraction_type=extraction_enum, payload=dict(payload)))
+            if span.is_recording():
+                span.set_attribute("extractions.total", total_entries)
+                span.set_attribute("extractions.valid", len(extractions))
+                span.set_attribute("extractions.anomaly.non_mapping", anomalies["non_mapping"])
+                span.set_attribute("extractions.anomaly.unknown_type", anomalies["unknown_type"])
         return tuple(extractions)
 
     def _build_citations(self, tool_context: ToolExecutionContext) -> tuple[KnowledgeSnippet, ...]:

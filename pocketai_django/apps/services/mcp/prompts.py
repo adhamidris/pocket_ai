@@ -14,6 +14,8 @@ import textwrap
 import uuid
 from typing import Iterable, Mapping, Sequence
 
+from opentelemetry import trace as otel_trace
+
 from django.conf import settings
 
 from apps.accounts.models import AgentProfile
@@ -22,6 +24,8 @@ from apps.services.ai_prompt_builder import PromptBuilder
 from apps.services.mcp.identifier_registry import IdentifierGuardrail
 from apps.services.mcp.sanitizer import sanitize_text
 from apps.services import display_tone_label
+
+TRACER = otel_trace.get_tracer(__name__)
 
 
 TONE_STYLE_HINTS: Mapping[str, str] = {
@@ -138,39 +142,43 @@ def build_messages(*, conversation: Conversation, user_message: str) -> list[Map
     - Historical transcript alternating between customer/assistant
     - Final entry: the latest user message
     """
-    messages: list[Mapping[str, object]] = []
-    guard_summary = _identifier_requirements_note(conversation)
-    if guard_summary:
-        messages.append({"role": "system", "content": guard_summary})
-    agent = conversation.agent_profile
-    if agent:
-        messages.append(
-            {
-                "role": "system",
-                "content": build_system_message(agent).format(
-                    business_name=conversation.business_profile.name,
-                    business_industry=conversation.business_profile.industry or "general services",
-                ),
-            }
-        )
+    with TRACER.start_as_current_span("prompt.mcp.build_messages") as span:
+        messages: list[Mapping[str, object]] = []
+        guard_summary = _identifier_requirements_note(conversation)
+        if guard_summary:
+            messages.append({"role": "system", "content": guard_summary})
+        agent = conversation.agent_profile
+        if agent:
+            messages.append(
+                {
+                    "role": "system",
+                    "content": build_system_message(agent).format(
+                        business_name=conversation.business_profile.name,
+                        business_industry=conversation.business_profile.industry or "general services",
+                    ),
+                }
+            )
 
-    transcript = conversation.messages.order_by("-sent_at", "-created_at")[:8]
-    transcript = reversed(transcript)
-    for entry in transcript:
-        role = "assistant" if entry.sender == ConversationSender.AI else "user"
-        content = entry.body
-        if role == "assistant":
-            content = sanitize_text(content or "")
-        messages.append(
-            {
-                "role": role,
-                "content": content,
-                "name": entry.sender if entry.sender in {ConversationSender.AI, ConversationSender.CUSTOMER} else None,
-            }
-        )
+        transcript_qs = conversation.messages.order_by("-sent_at", "-created_at")[:8]
+        transcript = list(reversed(transcript_qs))
+        for entry in transcript:
+            role = "assistant" if entry.sender == ConversationSender.AI else "user"
+            content = entry.body
+            if role == "assistant":
+                content = sanitize_text(content or "")
+            messages.append(
+                {
+                    "role": role,
+                    "content": content,
+                    "name": entry.sender if entry.sender in {ConversationSender.AI, ConversationSender.CUSTOMER} else None,
+                }
+            )
 
-    messages.append({"role": "user", "content": user_message})
-    return messages
+        messages.append({"role": "user", "content": user_message})
+        if span.is_recording():
+            span.set_attribute("messages.total", len(messages))
+            span.set_attribute("messages.transcript_count", len(transcript))
+        return messages
 
 
 def build_cached_table_messages(
@@ -490,10 +498,15 @@ def build_final_answer_messages(
             user_sections.append(f"Assistant draft (internal, refine as needed):\n{draft_text}")
 
     payload = "\n\n".join(user_sections)
-    return [
-        {"role": "system", "content": system_message},
-        {"role": "user", "content": payload},
-    ]
+    with TRACER.start_as_current_span("prompt.mcp.build_final_answer") as span:
+        if span.is_recording():
+            span.set_attribute("prompt.length", len(payload))
+            span.set_attribute("tool_trace.count", len(tool_trace or ()))
+            span.set_attribute("coverage.count", len(coverage_ledger or ()))
+        return [
+            {"role": "system", "content": system_message},
+            {"role": "user", "content": payload},
+        ]
 
 
 def _identifier_requirements_note(conversation: Conversation) -> str | None:

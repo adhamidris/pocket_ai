@@ -7,6 +7,7 @@ from typing import Mapping
 
 from django.db.models import Count, Q, Sum
 from django.utils import timezone
+from opentelemetry import trace as otel_trace
 
 from apps.accounts.models import (
     BusinessProfile,
@@ -60,6 +61,9 @@ class KnowledgeOpsSnapshot:
     observed_at: str
 
 
+TRACER = otel_trace.get_tracer(__name__)
+
+
 class KnowledgeOpsDashboard:
     """Aggregate observability metrics for admin dashboards and runbooks."""
 
@@ -67,17 +71,18 @@ class KnowledgeOpsDashboard:
 
     @classmethod
     def snapshot(cls, business_profile: BusinessProfile, sample_limit: int | None = None) -> KnowledgeOpsSnapshot:
-        limit = sample_limit or cls.SAMPLE_LIMIT
-        alias_count = KnowledgeAlias.objects.filter(business_profile=business_profile).count()
-        entity_count = KnowledgeEntity.objects.filter(business_profile=business_profile).count()
-        samples = list(
-            KnowledgeDriftSample.objects.filter(
-                business_profile=business_profile,
-                sample_kind=KnowledgeDriftSample.SampleKind.RETRIEVAL,
+        with TRACER.start_as_current_span("knowledge.ops.snapshot") as span:
+            limit = sample_limit or cls.SAMPLE_LIMIT
+            alias_count = KnowledgeAlias.objects.filter(business_profile=business_profile).count()
+            entity_count = KnowledgeEntity.objects.filter(business_profile=business_profile).count()
+            samples = list(
+                KnowledgeDriftSample.objects.filter(
+                    business_profile=business_profile,
+                    sample_kind=KnowledgeDriftSample.SampleKind.RETRIEVAL,
+                )
+                .order_by("-observed_at")
+                .values("metrics", "metadata")[:limit]
             )
-            .order_by("-observed_at")
-            .values("metrics", "metadata")[:limit]
-        )
         stage_counter = Counter()
         alias_hits = 0
         alias_total = 0
@@ -126,7 +131,7 @@ class KnowledgeOpsDashboard:
             p50=statistics.median(latencies) if latencies else None,
             p95=cls._p95(latencies),
         )
-        return KnowledgeOpsSnapshot(
+        snapshot = KnowledgeOpsSnapshot(
             alias_coverage=alias_stats,
             stages=stage_stats,
             ingestion=ingestion,
@@ -134,29 +139,39 @@ class KnowledgeOpsDashboard:
             sample_size=len(samples),
             observed_at=timezone.now().isoformat(),
         )
+        if span.is_recording():
+            span.set_attribute("knowledge.ops.samples", len(samples))
+            span.set_attribute("knowledge.ops.alias_count", alias_count)
+        return snapshot
 
     @staticmethod
     def _ingestion_health(business_profile: BusinessProfile) -> IngestionHealthStats:
-        job_counts = KnowledgeIngestionJob.objects.filter(business_profile=business_profile).aggregate(
-            queued=Count("id", filter=Q(status=KnowledgeIngestionJobStatus.QUEUED)),
-            running=Count("id", filter=Q(status=KnowledgeIngestionJobStatus.RUNNING)),
-            deferred=Count("id", filter=Q(status=KnowledgeIngestionJobStatus.DEFERRED)),
-        )
-        truncation_events = KnowledgeUpload.objects.filter(
-            business_profile=business_profile,
-            ingestion_metadata__truncated_entities__gt=0,
-        ).count()
-        pending_embeddings = KnowledgeUpload.objects.filter(
-            business_profile=business_profile,
-            ingestion_metadata__pending_embedding_chunk_count__gt=0,
-        ).aggregate(total=Sum("ingestion_metadata__pending_embedding_chunk_count"))["total"] or 0
-        return IngestionHealthStats(
-            queued_jobs=int(job_counts.get("queued") or 0),
-            running_jobs=int(job_counts.get("running") or 0),
-            deferred_jobs=int(job_counts.get("deferred") or 0),
-            truncation_events=int(truncation_events),
-            pending_embeddings=int(pending_embeddings),
-        )
+        with TRACER.start_as_current_span("knowledge.ops.ingestion_health") as span:
+            job_counts = KnowledgeIngestionJob.objects.filter(business_profile=business_profile).aggregate(
+                queued=Count("id", filter=Q(status=KnowledgeIngestionJobStatus.QUEUED)),
+                running=Count("id", filter=Q(status=KnowledgeIngestionJobStatus.RUNNING)),
+                deferred=Count("id", filter=Q(status=KnowledgeIngestionJobStatus.DEFERRED)),
+            )
+            truncation_events = KnowledgeUpload.objects.filter(
+                business_profile=business_profile,
+                ingestion_metadata__truncated_entities__gt=0,
+            ).count()
+            pending_embeddings = KnowledgeUpload.objects.filter(
+                business_profile=business_profile,
+                ingestion_metadata__pending_embedding_chunk_count__gt=0,
+            ).aggregate(total=Sum("ingestion_metadata__pending_embedding_chunk_count"))["total"] or 0
+            stats = IngestionHealthStats(
+                queued_jobs=int(job_counts.get("queued") or 0),
+                running_jobs=int(job_counts.get("running") or 0),
+                deferred_jobs=int(job_counts.get("deferred") or 0),
+                truncation_events=int(truncation_events),
+                pending_embeddings=int(pending_embeddings),
+            )
+            if span.is_recording():
+                span.set_attribute("knowledge.ops.ingest.queued", stats.queued_jobs)
+                span.set_attribute("knowledge.ops.ingest.running", stats.running_jobs)
+                span.set_attribute("knowledge.ops.ingest.pending_embeddings", stats.pending_embeddings)
+            return stats
 
     @staticmethod
     def _p95(values: list[float]) -> float | None:

@@ -18,6 +18,7 @@ from django.conf import settings
 from django.db import transaction
 from django.db.models import Case, IntegerField, Value, When
 from django.utils import timezone
+from opentelemetry import trace as otel_trace
 
 from apps.accounts.models import (
     KnowledgeIngestionJob,
@@ -55,6 +56,7 @@ from apps.services.table_normalization import (
 )
 
 logger = logging.getLogger(__name__)
+TRACER = otel_trace.get_tracer(__name__)
 
 
 def _log_normalization_summary(upload: KnowledgeUpload | None, source: str, summary: Mapping[str, Any] | None) -> None:
@@ -1796,134 +1798,155 @@ class KnowledgeIngestionService:
 
         if job is None:
             return None
+        with TRACER.start_as_current_span("ingest.process_job") as span:
+            if span.is_recording():
+                span.set_attribute("ingest.job_id", str(job.id))
+                span.set_attribute("ingest.job_type", job.job_type.value)
+            if job.job_type == KnowledgeIngestionJobType.EMBED:
+                result = self._process_embedding_job(job)
+            else:
+                upload = job.upload
+                logger.info("ingest.start upload=%s job=%s source_type=%s", upload.id, job.id, upload.source_type)
+                try:
+                    with TRACER.start_as_current_span("ingest.extract") as extract_span:
+                        extraction = self._extract_upload(upload)
+                        characters = len(extraction.text)
+                        if extract_span.is_recording():
+                            extract_span.set_attribute("ingest.characters", characters)
+                            extract_span.set_attribute("ingest.format", extraction.format_hint or "unknown")
+                    with TRACER.start_as_current_span("ingest.persist") as persist_span:
+                        self._persist_extraction(upload, extraction)
+                        self._mark_job_completed(job, extra={"characters": characters, "format": extraction.format_hint})
+                        if persist_span.is_recording():
+                            persist_span.set_attribute("ingest.characters", characters)
+                    logger.info("ingest.done upload=%s job=%s chars=%s format=%s", upload.id, job.id, characters, extraction.format_hint)
 
-        if job.job_type == KnowledgeIngestionJobType.EMBED:
-            return self._process_embedding_job(job)
-
-        upload = job.upload
-        logger.info("ingest.start upload=%s job=%s source_type=%s", upload.id, job.id, upload.source_type)
-        try:
-            extraction = self._extract_upload(upload)
-            characters = len(extraction.text)
-            self._persist_extraction(upload, extraction)
-            self._mark_job_completed(job, extra={"characters": characters, "format": extraction.format_hint})
-            logger.info("ingest.done upload=%s job=%s chars=%s format=%s", upload.id, job.id, characters, extraction.format_hint)
-
-            return IngestionJobResult(
-                job_id=job.id,
-                upload_id=upload.id,
-                job_type=job.job_type,
-                status=KnowledgeIngestionJobStatus.COMPLETED,
-                characters=characters,
-            )
-        except KnowledgeIngestionError as exc:
-            self._handle_failure(job, str(exc))
-            logger.warning("Ingestion failed upload=%s job=%s error=%s", upload.id, job.id, exc)
-            return IngestionJobResult(
-                job_id=job.id,
-                upload_id=upload.id,
-                job_type=job.job_type,
-                status=KnowledgeIngestionJobStatus.FAILED,
-                characters=0,
-                error=str(exc),
-            )
+                    result = IngestionJobResult(
+                        job_id=job.id,
+                        upload_id=upload.id,
+                        job_type=job.job_type,
+                        status=KnowledgeIngestionJobStatus.COMPLETED,
+                        characters=characters,
+                    )
+                except KnowledgeIngestionError as exc:
+                    self._handle_failure(job, str(exc))
+                    logger.warning("Ingestion failed upload=%s job=%s error=%s", upload.id, job.id, exc)
+                    result = IngestionJobResult(
+                        job_id=job.id,
+                        upload_id=upload.id,
+                        job_type=job.job_type,
+                        status=KnowledgeIngestionJobStatus.FAILED,
+                        characters=0,
+                        error=str(exc),
+                    )
+            if span.is_recording():
+                span.set_attribute("ingest.result_status", result.status.value)
+            return result
 
     def _process_embedding_job(self, job: KnowledgeIngestionJob) -> IngestionJobResult:
-        payload = job.payload or {}
-        chunk_ids = payload.get("chunk_ids") if isinstance(payload, dict) else []
-        normalized_ids: list[uuid.UUID] = []
-        for value in chunk_ids or []:
-            try:
-                normalized_ids.append(uuid.UUID(str(value)))
-            except (TypeError, ValueError):
-                continue
-        if not normalized_ids:
-            self._mark_job_completed(job, extra={"embedded_chunks": 0})
-            return IngestionJobResult(
-                job_id=job.id,
-                upload_id=job.upload_id,
-                job_type=job.job_type,
-                status=KnowledgeIngestionJobStatus.COMPLETED,
-                characters=0,
+        with TRACER.start_as_current_span("ingest.embed_job") as span:
+            payload = job.payload or {}
+            chunk_ids = payload.get("chunk_ids") if isinstance(payload, dict) else []
+            normalized_ids: list[uuid.UUID] = []
+            for value in chunk_ids or []:
+                try:
+                    normalized_ids.append(uuid.UUID(str(value)))
+                except (TypeError, ValueError):
+                    continue
+            if span.is_recording():
+                span.set_attribute("ingest.embed.chunk_ids", len(normalized_ids))
+            if not normalized_ids:
+                self._mark_job_completed(job, extra={"embedded_chunks": 0})
+                return IngestionJobResult(
+                    job_id=job.id,
+                    upload_id=job.upload_id,
+                    job_type=job.job_type,
+                    status=KnowledgeIngestionJobStatus.COMPLETED,
+                    characters=0,
+                )
+            chunks = list(
+                KnowledgeUploadChunk.objects.filter(
+                    id__in=normalized_ids,
+                    upload=job.upload,
+                ).order_by("chunk_index")
             )
-        chunks = list(
-            KnowledgeUploadChunk.objects.filter(
-                id__in=normalized_ids,
-                upload=job.upload,
-            ).order_by("chunk_index")
-        )
-        if not chunks:
-            self._mark_job_completed(job, extra={"embedded_chunks": 0})
-            return IngestionJobResult(
-                job_id=job.id,
-                upload_id=job.upload_id,
-                job_type=job.job_type,
-                status=KnowledgeIngestionJobStatus.COMPLETED,
-                characters=0,
-            )
-        provider = self.embedding_service or self._get_fallback_embedding_service()
-        if not provider:
-            error = "Embedding backend unavailable"
-            self._handle_failure(job, error)
-            return IngestionJobResult(
-                job_id=job.id,
-                upload_id=job.upload_id,
-                job_type=job.job_type,
-                status=KnowledgeIngestionJobStatus.FAILED,
-                characters=0,
-                error=error,
-            )
-        updated: list[KnowledgeUploadChunk] = []
-        processed = 0
-        batched: list[list[KnowledgeUploadChunk]] = [
-            chunks[i : i + self.embedding_batch_size] for i in range(0, len(chunks), self.embedding_batch_size)
-        ]
-        for batch in batched:
-            texts = [chunk.content or "" for chunk in batch]
-            if not any(texts):
-                continue
-            try:
-                vectors = provider.embed_texts(texts)
-            except EmbeddingProviderError as exc:
-                self._handle_failure(job, f"Embedding batch failed: {exc}")
+            if not chunks:
+                self._mark_job_completed(job, extra={"embedded_chunks": 0})
+                return IngestionJobResult(
+                    job_id=job.id,
+                    upload_id=job.upload_id,
+                    job_type=job.job_type,
+                    status=KnowledgeIngestionJobStatus.COMPLETED,
+                    characters=0,
+                )
+            provider = self.embedding_service or self._get_fallback_embedding_service()
+            if not provider:
+                error = "Embedding backend unavailable"
+                self._handle_failure(job, error)
                 return IngestionJobResult(
                     job_id=job.id,
                     upload_id=job.upload_id,
                     job_type=job.job_type,
                     status=KnowledgeIngestionJobStatus.FAILED,
-                    characters=processed,
-                    error=str(exc),
+                    characters=0,
+                    error=error,
                 )
-            except Exception as exc:  # pragma: no cover - defensive
-                self._handle_failure(job, f"Embedding batch exception: {exc}")
-                return IngestionJobResult(
-                    job_id=job.id,
-                    upload_id=job.upload_id,
-                    job_type=job.job_type,
-                    status=KnowledgeIngestionJobStatus.FAILED,
-                    characters=processed,
-                    error=str(exc),
-                )
-            for chunk, vector in zip(batch, vectors):
-                normalized = self._normalize_embedding(vector)
-                if normalized:
-                    chunk.embedding = normalized
-                    chunk.updated_at = timezone.now()
-                    updated.append(chunk)
-                    processed += 1
-        processed_ids = [str(chunk.id) for chunk in updated]
-        if updated:
-            KnowledgeUploadChunk.objects.bulk_update(updated, ["embedding", "updated_at"])
-        if processed_ids:
-            self._update_upload_embedding_metadata(job.upload, processed_ids=processed_ids)
-        self._mark_job_completed(job, extra={"embedded_chunks": processed})
-        return IngestionJobResult(
-            job_id=job.id,
-            upload_id=job.upload_id,
-            job_type=job.job_type,
-            status=KnowledgeIngestionJobStatus.COMPLETED,
-            characters=processed,
-        )
+            updated: list[KnowledgeUploadChunk] = []
+            processed = 0
+            batched: list[list[KnowledgeUploadChunk]] = [
+                chunks[i : i + self.embedding_batch_size] for i in range(0, len(chunks), self.embedding_batch_size)
+            ]
+            for batch in batched:
+                texts = [chunk.content or "" for chunk in batch]
+                if not any(texts):
+                    continue
+                try:
+                    with TRACER.start_as_current_span("ingest.embed_batch") as batch_span:
+                        vectors = provider.embed_texts(texts)
+                        if batch_span.is_recording():
+                            batch_span.set_attribute("ingest.embed.batch_size", len(batch))
+                except EmbeddingProviderError as exc:
+                    self._handle_failure(job, f"Embedding batch failed: {exc}")
+                    return IngestionJobResult(
+                        job_id=job.id,
+                        upload_id=job.upload_id,
+                        job_type=job.job_type,
+                        status=KnowledgeIngestionJobStatus.FAILED,
+                        characters=processed,
+                        error=str(exc),
+                    )
+                except Exception as exc:  # pragma: no cover - defensive
+                    self._handle_failure(job, f"Embedding batch exception: {exc}")
+                    return IngestionJobResult(
+                        job_id=job.id,
+                        upload_id=job.upload_id,
+                        job_type=job.job_type,
+                        status=KnowledgeIngestionJobStatus.FAILED,
+                        characters=processed,
+                        error=str(exc),
+                    )
+                for chunk, vector in zip(batch, vectors):
+                    normalized = self._normalize_embedding(vector)
+                    if normalized:
+                        chunk.embedding = normalized
+                        chunk.updated_at = timezone.now()
+                        updated.append(chunk)
+                        processed += 1
+            processed_ids = [str(chunk.id) for chunk in updated]
+            if updated:
+                KnowledgeUploadChunk.objects.bulk_update(updated, ["embedding", "updated_at"])
+            if processed_ids:
+                self._update_upload_embedding_metadata(job.upload, processed_ids=processed_ids)
+            self._mark_job_completed(job, extra={"embedded_chunks": processed})
+            if span.is_recording():
+                span.set_attribute("ingest.embed.chunks", processed)
+            return IngestionJobResult(
+                job_id=job.id,
+                upload_id=job.upload_id,
+                job_type=job.job_type,
+                status=KnowledgeIngestionJobStatus.COMPLETED,
+                characters=processed,
+            )
 
 
     # ------------------------------------------------------------------

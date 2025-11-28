@@ -873,12 +873,16 @@ class KnowledgeSearchService:
         tables_available = self._business_has_tables(business_profile, cached_columns=table_context.get("available_columns"))
         alias_blocked = False
         if alias_result is None:
-            alias_result = self.search_by_alias(
-                business_profile=business_profile,
-                traits=traits,
-                limit=self.alias_result_cap,
-                feature_state=feature_state,
-            )
+            with TRACER.start_as_current_span("knowledge.alias_lookup") as alias_span:
+                alias_result = self.search_by_alias(
+                    business_profile=business_profile,
+                    traits=traits,
+                    limit=self.alias_result_cap,
+                    feature_state=feature_state,
+                )
+                if alias_span.is_recording():
+                    alias_span.set_attribute("knowledge.alias_candidates", len(traits.alias_candidates))
+                    alias_span.set_attribute("knowledge.alias_short_circuit", bool(alias_result.short_circuit))
         elif alias_result.short_circuit and not traits.is_identifier_like:
             alias_blocked = True
             alias_result = AliasSearchResult(
@@ -1365,83 +1369,89 @@ class KnowledgeSearchService:
         alias_candidates: Sequence[ChunkResult] | None = None,
         feature_state: FeatureState | None = None,
     ) -> HybridSearchResult:
-        base_qs = self._base_chunk_queryset(business_profile)
-        query_text = (query or "").strip() or traits.normalized or traits.original
-        feature_state = feature_state or FeatureFlagService.snapshot(business_profile)
-        query_vector: list[float] | None
-        vector_diag: dict[str, object]
-        vector_ms = 0
-        vector_hits: Sequence[ChunkResult]
-        if feature_state.hybrid_search:
-            query_vector, vector_diag = self._build_query_vector(
+        with TRACER.start_as_current_span("knowledge.hybrid_search") as span:
+            base_qs = self._base_chunk_queryset(business_profile)
+            query_text = (query or "").strip() or traits.normalized or traits.original
+            feature_state = feature_state or FeatureFlagService.snapshot(business_profile)
+            query_vector: list[float] | None
+            vector_diag: dict[str, object]
+            vector_ms = 0
+            vector_hits: Sequence[ChunkResult]
+            if feature_state.hybrid_search:
+                query_vector, vector_diag = self._build_query_vector(
+                    business_profile=business_profile,
+                    query_text=query_text.lower(),
+                )
+                vector_hits, vector_ms = self._vector_candidates(
+                    business_id=business_profile.id,
+                    base_qs=base_qs,
+                    query_vector=query_vector,
+                    limit=limit,
+                    traits=traits,
+                )
+            else:
+                query_vector = None
+                vector_diag = {"vector_disabled": True}
+                vector_hits = tuple()
+            lexical_hits, lexical_ms, lexical_diag = self._lexical_candidates(
                 business_profile=business_profile,
-                query_text=query_text.lower(),
-            )
-            vector_hits, vector_ms = self._vector_candidates(
-                business_id=business_profile.id,
                 base_qs=base_qs,
-                query_vector=query_vector,
+                traits=traits,
                 limit=limit,
+            )
+            latency_monitor.observe("rag.vector", vector_ms, tags={"business": str(business_profile.id)})
+            latency_monitor.observe("rag.lexical", lexical_ms, tags={"business": str(business_profile.id)})
+            merged = self._merge_candidates(
+                alias_candidates or tuple(),
+                vector_hits,
+                lexical_hits,
+            )
+            reranked, rerank_ms = self._rerank_candidates(
+                merged,
+                query_vector if self.embedding_service else None,
                 traits=traits,
             )
-        else:
-            query_vector = None
-            vector_diag = {"vector_disabled": True}
-            vector_hits = tuple()
-        lexical_hits, lexical_ms, lexical_diag = self._lexical_candidates(
-            business_profile=business_profile,
-            base_qs=base_qs,
-            traits=traits,
-            limit=limit,
-        )
-        latency_monitor.observe("rag.vector", vector_ms, tags={"business": str(business_profile.id)})
-        latency_monitor.observe("rag.lexical", lexical_ms, tags={"business": str(business_profile.id)})
-        merged = self._merge_candidates(
-            alias_candidates or tuple(),
-            vector_hits,
-            lexical_hits,
-        )
-        reranked, rerank_ms = self._rerank_candidates(
-            merged,
-            query_vector if self.embedding_service else None,
-            traits=traits,
-        )
-        latency_monitor.observe(
-            "rag.rerank",
-            rerank_ms,
-            tags={
-                "business": str(business_profile.id),
-                "cross_encoder": bool(self.cross_encoder),
-            },
-        )
-        diagnostics = {
-            "vector_candidates": len(vector_hits),
-            "vector_duration_ms": vector_ms,
-            "fts_candidates": len(lexical_hits),
-            "fts_duration_ms": lexical_ms,
-            "rerank_duration_ms": rerank_ms,
-            "hybrid_enabled": feature_state.hybrid_search,
-        }
-        diagnostics.update(lexical_diag)
-        diagnostics.update(vector_diag)
-        diagnostics.update(self._vector_distance_stats(vector_hits))
-        diagnostics["stage"] = "hybrid"
-        _rag_log(
-            "hybrid.summary",
-            {
-                "alias_stage": len(alias_candidates or ()),
+            latency_monitor.observe(
+                "rag.rerank",
+                rerank_ms,
+                tags={
+                    "business": str(business_profile.id),
+                    "cross_encoder": bool(self.cross_encoder),
+                },
+            )
+            diagnostics = {
                 "vector_candidates": len(vector_hits),
+                "vector_duration_ms": vector_ms,
                 "fts_candidates": len(lexical_hits),
+                "fts_duration_ms": lexical_ms,
+                "rerank_duration_ms": rerank_ms,
                 "hybrid_enabled": feature_state.hybrid_search,
-            },
-            indent=1,
-            context={"business": business_profile.id},
-        )
-        return HybridSearchResult(
-            hits=tuple(reranked),
-            query_vector=query_vector,
-            diagnostics=diagnostics,
-        )
+            }
+            diagnostics.update(lexical_diag)
+            diagnostics.update(vector_diag)
+            diagnostics.update(self._vector_distance_stats(vector_hits))
+            diagnostics["stage"] = "hybrid"
+            _rag_log(
+                "hybrid.summary",
+                {
+                    "alias_stage": len(alias_candidates or ()),
+                    "vector_candidates": len(vector_hits),
+                    "fts_candidates": len(lexical_hits),
+                    "hybrid_enabled": feature_state.hybrid_search,
+                },
+                indent=1,
+                context={"business": business_profile.id},
+            )
+            if span.is_recording():
+                span.set_attribute("knowledge.hybrid.vector_ms", vector_ms)
+                span.set_attribute("knowledge.hybrid.lexical_ms", lexical_ms)
+                span.set_attribute("knowledge.hybrid.rerank_ms", rerank_ms)
+                span.set_attribute("knowledge.hybrid.candidates", len(reranked))
+            return HybridSearchResult(
+                hits=tuple(reranked),
+                query_vector=query_vector,
+                diagnostics=diagnostics,
+            )
 
     def _search_chunks(
         self,
@@ -2059,39 +2069,44 @@ class KnowledgeSearchService:
         traits: QueryTraits,
         limit: int,
     ) -> tuple[list[ChunkResult], int, dict[str, object]]:
-        condensed_query = self._condensed_query_for_fts(business_profile, traits)
-        threshold = self._lexical_threshold_for_business(business_profile, traits)
-        token_min_length = self._significant_token_min_length(business_profile)
-        condensed_tokens = tuple(token for token in re.split(r"[^a-z0-9]+", condensed_query.lower()) if token)
-        token_filter = self._build_fts_token_filter(condensed_tokens or traits.tokens, min_length=token_min_length)
-        fts_base = base_qs.filter(token_filter) if token_filter else base_qs
-        N = max(limit * 8, 40)
-        start = time.perf_counter()
-        fts_qs = (
-            fts_base.annotate(sim=TrigramSimilarity("content", condensed_query))
-            .filter(sim__gte=threshold)
-            .order_by("-sim")[:N]
-        )
-        hits: list[ChunkResult] = []
-        for chunk in fts_qs:
-            sim = getattr(chunk, "sim", 0.0) or 0.0
-            hits.append(
-                ChunkResult(
-                    chunk=chunk,
-                    source_stage="content_fts",
-                    lexical_score=float(sim),
-                    recency_score=self._recency_score(chunk.upload),
-                    diagnostics={"stage": "content_fts"},
-                )
+        with TRACER.start_as_current_span("knowledge.lexical_candidates") as span:
+            condensed_query = self._condensed_query_for_fts(business_profile, traits)
+            threshold = self._lexical_threshold_for_business(business_profile, traits)
+            token_min_length = self._significant_token_min_length(business_profile)
+            condensed_tokens = tuple(token for token in re.split(r"[^a-z0-9]+", condensed_query.lower()) if token)
+            token_filter = self._build_fts_token_filter(condensed_tokens or traits.tokens, min_length=token_min_length)
+            fts_base = base_qs.filter(token_filter) if token_filter else base_qs
+            N = max(limit * 8, 40)
+            start = time.perf_counter()
+            fts_qs = (
+                fts_base.annotate(sim=TrigramSimilarity("content", condensed_query))
+                .filter(sim__gte=threshold)
+                .order_by("-sim")[:N]
             )
-        duration_ms = int((time.perf_counter() - start) * 1000)
-        diag = {
-            "fts_threshold": threshold,
-            "fts_condensed_query": condensed_query,
-            "fts_tokens_used": condensed_tokens[:5],
-            "fts_token_filter_min_length": token_min_length,
-        }
-        return hits, duration_ms, diag
+            hits: list[ChunkResult] = []
+            for chunk in fts_qs:
+                sim = getattr(chunk, "sim", 0.0) or 0.0
+                hits.append(
+                    ChunkResult(
+                        chunk=chunk,
+                        source_stage="content_fts",
+                        lexical_score=float(sim),
+                        recency_score=self._recency_score(chunk.upload),
+                        diagnostics={"stage": "content_fts"},
+                    )
+                )
+            duration_ms = int((time.perf_counter() - start) * 1000)
+            diag = {
+                "fts_threshold": threshold,
+                "fts_condensed_query": condensed_query,
+                "fts_tokens_used": condensed_tokens[:5],
+                "fts_token_filter_min_length": token_min_length,
+            }
+            if span.is_recording():
+                span.set_attribute("knowledge.lexical_hits", len(hits))
+                span.set_attribute("knowledge.lexical_duration_ms", duration_ms)
+                span.set_attribute("knowledge.lexical_threshold", threshold)
+            return hits, duration_ms, diag
 
     def _build_query_vector(
         self,
@@ -2442,35 +2457,40 @@ class KnowledgeSearchService:
     ) -> tuple[tuple[KnowledgeSnippet, ...], int]:
         if not self.snippet_rerank_enabled or len(snippets) <= 1:
             return tuple(snippets), 0
-        start = time.perf_counter()
-        normalized_query = (query_text or "").strip()
-        head = list(snippets[: self.snippet_rerank_pool])
-        scores: list[tuple[float, int, KnowledgeSnippet]] = []
-        ce_scores: list[float] | None = None
-        if self.cross_encoder and normalized_query:
-            pairs = [
-                [normalized_query, "\n".join(filter(None, [snip.summary, snip.content]))]
-                for snip in head
-            ]
-            try:  # pragma: no cover - optional dependency
-                raw = self.cross_encoder.predict(pairs)
-                ce_scores = [float(val) for val in raw]
-            except Exception as exc:  # pragma: no cover - optional dependency
-                logger.warning("Cross-encoder snippet rerank failed: %s", exc)
-                ce_scores = None
-        for idx, snip in enumerate(head):
-            text = "\n".join(filter(None, [snip.summary, snip.content]))
-            lexical = self._lexical_score_text(text, tokens)
-            ce_score = ce_scores[idx] if ce_scores and idx < len(ce_scores) else 0.0
-            score = ce_score if ce_scores else 0.0
-            score += 0.25 * lexical
-            scores.append((score, -idx, snip))
-        scores.sort(key=lambda item: item[0], reverse=True)
-        reranked = [item[2] for item in scores]
-        if len(snippets) > len(head):
-            reranked.extend(snippets[len(head) :])
-        duration_ms = int((time.perf_counter() - start) * 1000)
-        return tuple(reranked), duration_ms
+        with TRACER.start_as_current_span("knowledge.snippet_rerank") as span:
+            start = time.perf_counter()
+            normalized_query = (query_text or "").strip()
+            head = list(snippets[: self.snippet_rerank_pool])
+            scores: list[tuple[float, int, KnowledgeSnippet]] = []
+            ce_scores: list[float] | None = None
+            if self.cross_encoder and normalized_query:
+                pairs = [
+                    [normalized_query, "\n".join(filter(None, [snip.summary, snip.content]))]
+                    for snip in head
+                ]
+                try:  # pragma: no cover - optional dependency
+                    raw = self.cross_encoder.predict(pairs)
+                    ce_scores = [float(val) for val in raw]
+                except Exception as exc:  # pragma: no cover - optional dependency
+                    logger.warning("Cross-encoder snippet rerank failed: %s", exc)
+                    ce_scores = None
+            for idx, snip in enumerate(head):
+                text = "\n".join(filter(None, [snip.summary, snip.content]))
+                lexical = self._lexical_score_text(text, tokens)
+                ce_score = ce_scores[idx] if ce_scores and idx < len(ce_scores) else 0.0
+                score = ce_score if ce_scores else 0.0
+                score += 0.25 * lexical
+                scores.append((score, -idx, snip))
+            scores.sort(key=lambda item: item[0], reverse=True)
+            reranked = [item[2] for item in scores]
+            if len(snippets) > len(head):
+                reranked.extend(snippets[len(head) :])
+            duration_ms = int((time.perf_counter() - start) * 1000)
+            if span.is_recording():
+                span.set_attribute("knowledge.snippet_rerank_head", len(head))
+                span.set_attribute("knowledge.snippet_rerank_ms", duration_ms)
+                span.set_attribute("knowledge.snippet_cross_encoder", bool(self.cross_encoder))
+            return tuple(reranked), duration_ms
 
     def _table_query_context(self, business_profile, traits: QueryTraits) -> Mapping[str, object]:
         query_text = (traits.normalized or traits.original or "").lower()
@@ -6127,37 +6147,51 @@ class ActionDispatcher:
                 span.set_attribute("conversation.id", str(getattr(conversation, "id", "")))
             for plan in actions:
                 handler = getattr(self, f"_handle_{plan.action.value}", None)
-                if handler is None:
-                    logger.warning("action_dispatcher skipped action %s: no handler", plan.action)
-                    results.append(
-                        ActionExecutionResult(
-                            action=plan.action,
-                            status="skipped",
-                            metadata={},
-                            error="Handler not implemented",
+                span_name = f"portal.actions.{plan.action.value}"
+                with TRACER.start_as_current_span(span_name) as action_span:
+                    if action_span.is_recording():
+                        action_span.set_attribute("action.name", plan.action.value)
+                        action_span.set_attribute("action.payload_keys", sorted(plan.payload.keys()))
+                        action_span.set_attribute("conversation.id", str(getattr(conversation, "id", "")))
+                    if handler is None:
+                        logger.warning("action_dispatcher skipped action %s: no handler", plan.action)
+                        if action_span.is_recording():
+                            action_span.set_attribute("action.status", "skipped")
+                            action_span.set_attribute("action.error", "handler_missing")
+                        results.append(
+                            ActionExecutionResult(
+                                action=plan.action,
+                                status="skipped",
+                                metadata={},
+                                error="Handler not implemented",
+                            )
                         )
-                    )
-                    continue
-                try:
-                    metadata = handler(conversation=conversation, payload=plan.payload)
-                    logger.info("action_dispatcher applied %s | payload=%s", plan.action, plan.payload)
-                    results.append(
-                        ActionExecutionResult(
-                            action=plan.action,
-                            status="applied",
-                            metadata=metadata,
+                        continue
+                    try:
+                        metadata = handler(conversation=conversation, payload=plan.payload)
+                        logger.info("action_dispatcher applied %s | payload=%s", plan.action, plan.payload)
+                        if action_span.is_recording():
+                            action_span.set_attribute("action.status", "applied")
+                        results.append(
+                            ActionExecutionResult(
+                                action=plan.action,
+                                status="applied",
+                                metadata=metadata,
+                            )
                         )
-                    )
-                except ActionExecutionError as exc:
-                    logger.warning("action_dispatcher failed %s | error=%s | payload=%s", plan.action, exc, plan.payload)
-                    results.append(
-                        ActionExecutionResult(
-                            action=plan.action,
-                            status="failed",
-                            metadata={},
-                            error=str(exc),
+                    except ActionExecutionError as exc:
+                        logger.warning("action_dispatcher failed %s | error=%s | payload=%s", plan.action, exc, plan.payload)
+                        if action_span.is_recording():
+                            action_span.record_exception(exc)
+                            action_span.set_attribute("action.status", "failed")
+                        results.append(
+                            ActionExecutionResult(
+                                action=plan.action,
+                                status="failed",
+                                metadata={},
+                                error=str(exc),
+                            )
                         )
-                    )
         return tuple(results)
 
     # ------------------------------------------------------------------

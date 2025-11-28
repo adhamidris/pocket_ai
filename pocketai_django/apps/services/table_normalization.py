@@ -5,6 +5,7 @@ import math
 from typing import Any, Iterable, Mapping, Sequence
 
 from django.conf import settings
+from opentelemetry import trace as otel_trace
 
 DEFAULT_NULL_TOKENS = {
     "",
@@ -17,6 +18,8 @@ DEFAULT_NULL_TOKENS = {
     "#div/0!",
     "undefined",
 }
+
+TRACER = otel_trace.get_tracer(__name__)
 
 
 def _canonical(value: str) -> str:
@@ -60,84 +63,90 @@ def resolve_normalization_policy(upload: Any | None) -> TableNormalizationPolicy
     Resolve normalization behavior by combining settings, business metadata, and upload metadata.
     """
 
-    base_enabled = bool(getattr(settings, "INGEST_NORMALIZE_TABLES", True))
-    policy_version = getattr(settings, "INGEST_NORMALIZATION_POLICY_VERSION", "v1")
+    with TRACER.start_as_current_span("ingest.table.resolve_policy") as span:
+        base_enabled = bool(getattr(settings, "INGEST_NORMALIZE_TABLES", True))
+        policy_version = getattr(settings, "INGEST_NORMALIZATION_POLICY_VERSION", "v1")
 
-    business_meta: Mapping[str, Any] | None = None
-    upload_meta: Mapping[str, Any] | None = None
+        business_meta: Mapping[str, Any] | None = None
+        upload_meta: Mapping[str, Any] | None = None
 
-    if upload is not None:
-        upload_meta = getattr(upload, "metadata", None)
-        business = getattr(upload, "business_profile", None)
-        business_meta = getattr(business, "metadata", None)
+        if upload is not None:
+            upload_meta = getattr(upload, "metadata", None)
+            business = getattr(upload, "business_profile", None)
+            business_meta = getattr(business, "metadata", None)
 
-    def _extract_policy(source: Mapping[str, Any] | None) -> Mapping[str, Any]:
-        if not isinstance(source, Mapping):
-            return {}
-        payload = source.get("table_policy")
-        return payload if isinstance(payload, Mapping) else {}
+        def _extract_policy(source: Mapping[str, Any] | None) -> Mapping[str, Any]:
+            if not isinstance(source, Mapping):
+                return {}
+            payload = source.get("table_policy")
+            return payload if isinstance(payload, Mapping) else {}
 
-    business_policy = dict(_extract_policy(business_meta))
-    upload_policy = dict(_extract_policy(upload_meta))
+        business_policy = dict(_extract_policy(business_meta))
+        upload_policy = dict(_extract_policy(upload_meta))
 
-    enabled = base_enabled
-    if "enable_normalization" in business_policy:
-        enabled = bool(business_policy["enable_normalization"])
-    if "enable_normalization" in upload_policy:
-        enabled = bool(upload_policy["enable_normalization"])
+        enabled = base_enabled
+        if "enable_normalization" in business_policy:
+            enabled = bool(business_policy["enable_normalization"])
+        if "enable_normalization" in upload_policy:
+            enabled = bool(upload_policy["enable_normalization"])
 
-    def _token_set(raw: Iterable[str]) -> set[str]:
-        normalized: set[str] = set()
-        for item in raw:
-            if not isinstance(item, str):
-                continue
-            canonical = _canonical(item)
-            if canonical:
-                normalized.add(canonical)
-        return normalized
+        def _token_set(raw: Iterable[str]) -> set[str]:
+            normalized: set[str] = set()
+            for item in raw:
+                if not isinstance(item, str):
+                    continue
+                canonical = _canonical(item)
+                if canonical:
+                    normalized.add(canonical)
+            return normalized
 
-    tokens = set(DEFAULT_NULL_TOKENS)
-    extra_tokens = getattr(settings, "INGEST_NORMALIZATION_NULL_TOKENS", None)
-    if isinstance(extra_tokens, (list, tuple, set)):
-        tokens.update(_token_set(extra_tokens))
-    tokens.update(_token_set(business_policy.get("null_tokens") or []))
-    tokens.update(_token_set(upload_policy.get("null_tokens") or []))
+        tokens = set(DEFAULT_NULL_TOKENS)
+        extra_tokens = getattr(settings, "INGEST_NORMALIZATION_NULL_TOKENS", None)
+        if isinstance(extra_tokens, (list, tuple, set)):
+            tokens.update(_token_set(extra_tokens))
+        tokens.update(_token_set(business_policy.get("null_tokens") or []))
+        tokens.update(_token_set(upload_policy.get("null_tokens") or []))
 
-    def _sheet_set(raw: Iterable[str]) -> set[str]:
-        normalized: set[str] = set()
-        for item in raw:
-            if not isinstance(item, str):
-                continue
-            canonical = _canonical_sheet(item)
-            if canonical:
-                normalized.add(canonical)
-        return normalized
+        def _sheet_set(raw: Iterable[str]) -> set[str]:
+            normalized: set[str] = set()
+            for item in raw:
+                if not isinstance(item, str):
+                    continue
+                canonical = _canonical_sheet(item)
+                if canonical:
+                    normalized.add(canonical)
+            return normalized
 
-    whitelist = _sheet_set(business_policy.get("sheet_whitelist") or [])
-    upload_whitelist = _sheet_set(upload_policy.get("sheet_whitelist") or [])
-    if upload_whitelist:
-        whitelist = upload_whitelist
-    blacklist = _sheet_set(business_policy.get("sheet_blacklist") or [])
-    upload_blacklist = _sheet_set(upload_policy.get("sheet_blacklist") or [])
-    if upload_blacklist:
-        blacklist = upload_blacklist
+        whitelist = _sheet_set(business_policy.get("sheet_whitelist") or [])
+        upload_whitelist = _sheet_set(upload_policy.get("sheet_whitelist") or [])
+        if upload_whitelist:
+            whitelist = upload_whitelist
+        blacklist = _sheet_set(business_policy.get("sheet_blacklist") or [])
+        upload_blacklist = _sheet_set(upload_policy.get("sheet_blacklist") or [])
+        if upload_blacklist:
+            blacklist = upload_blacklist
 
-    drop_empty_columns = True
-    if "drop_empty_columns" in business_policy:
-        drop_empty_columns = bool(business_policy["drop_empty_columns"])
-    if "drop_empty_columns" in upload_policy:
-        drop_empty_columns = bool(upload_policy["drop_empty_columns"])
-    if not enabled:
-        drop_empty_columns = False
+        drop_empty_columns = True
+        if "drop_empty_columns" in business_policy:
+            drop_empty_columns = bool(business_policy["drop_empty_columns"])
+        if "drop_empty_columns" in upload_policy:
+            drop_empty_columns = bool(upload_policy["drop_empty_columns"])
+        if not enabled:
+            drop_empty_columns = False
 
-    return TableNormalizationPolicy(
-        enabled=enabled,
-        null_tokens=tokens,
-        drop_empty_columns=drop_empty_columns,
-        sheet_whitelist=whitelist,
-        sheet_blacklist=blacklist,
-        policy_version=str(policy_version or "v1"),
-    )
+        if span.is_recording():
+            span.set_attribute("ingest.table.enabled", enabled)
+            span.set_attribute("ingest.table.whitelist", len(whitelist))
+            span.set_attribute("ingest.table.blacklist", len(blacklist))
+
+        return TableNormalizationPolicy(
+            enabled=enabled,
+            null_tokens=tokens,
+            drop_empty_columns=drop_empty_columns,
+            sheet_whitelist=whitelist,
+            sheet_blacklist=blacklist,
+            policy_version=str(policy_version or "v1"),
+        )
 
 
 def sheet_is_allowed(sheet_name: str, policy: TableNormalizationPolicy) -> bool:
@@ -155,63 +164,73 @@ def normalize_sheet_rows(
     sheet_name: str,
     policy: TableNormalizationPolicy,
 ) -> NormalizedSheet:
-    diagnostics = SheetNormalizationDiagnostics(sheet_name=sheet_name)
-    normalized_rows: list[list[str]] = []
+    with TRACER.start_as_current_span("ingest.table.normalize_sheet") as span:
+        diagnostics = SheetNormalizationDiagnostics(sheet_name=sheet_name)
+        normalized_rows: list[list[str]] = []
 
-    for raw_row in raw_rows:
-        normalized_row, replaced, has_values = _normalize_row(raw_row, policy)
-        diagnostics.tokens_replaced += replaced
-        if not normalized_row:
-            continue
-        if not normalized_rows and not has_values:
-            diagnostics.rows_dropped += 1
-            continue
-        if normalized_rows and not has_values:
-            diagnostics.rows_dropped += 1
-            continue
-        normalized_rows.append(normalized_row)
+        for raw_row in raw_rows:
+            normalized_row, replaced, has_values = _normalize_row(raw_row, policy)
+            diagnostics.tokens_replaced += replaced
+            if not normalized_row:
+                continue
+            if not normalized_rows and not has_values:
+                diagnostics.rows_dropped += 1
+                continue
+            if normalized_rows and not has_values:
+                diagnostics.rows_dropped += 1
+                continue
+            normalized_rows.append(normalized_row)
 
-    if not normalized_rows:
-        diagnostics.skipped = True
-        diagnostics.skip_reason = diagnostics.skip_reason or "empty"
-        return NormalizedSheet(sheet_name=sheet_name, column_schema=[], rows=[], diagnostics=diagnostics)
+        if not normalized_rows:
+            diagnostics.skipped = True
+            diagnostics.skip_reason = diagnostics.skip_reason or "empty"
+            if span.is_recording():
+                span.set_attribute("ingest.table.skipped", True)
+            return NormalizedSheet(sheet_name=sheet_name, column_schema=[], rows=[], diagnostics=diagnostics)
 
-    header = normalized_rows[0]
-    data_rows = normalized_rows[1:]
+        header = normalized_rows[0]
+        data_rows = normalized_rows[1:]
 
-    column_count = max(len(row) for row in normalized_rows)
-    columns_to_keep: list[int] = []
-    column_schema: list[str] = []
+        column_count = max(len(row) for row in normalized_rows)
+        columns_to_keep: list[int] = []
+        column_schema: list[str] = []
 
-    for idx in range(column_count):
-        header_value = header[idx] if idx < len(header) else ""
-        column_values = [row[idx] if idx < len(row) else "" for row in data_rows]
-        should_drop = False
-        if policy.drop_empty_columns and not header_value and not any(column_values):
-            should_drop = True
-        if should_drop:
-            diagnostics.columns_trimmed += 1
-            continue
-        columns_to_keep.append(idx)
-        column_schema.append(header_value or f"column_{len(column_schema) + 1}")
+        for idx in range(column_count):
+            header_value = header[idx] if idx < len(header) else ""
+            column_values = [row[idx] if idx < len(row) else "" for row in data_rows]
+            should_drop = False
+            if policy.drop_empty_columns and not header_value and not any(column_values):
+                should_drop = True
+            if should_drop:
+                diagnostics.columns_trimmed += 1
+                continue
+            columns_to_keep.append(idx)
+            column_schema.append(header_value or f"column_{len(column_schema) + 1}")
 
-    if not columns_to_keep:
-        diagnostics.skipped = True
-        diagnostics.skip_reason = diagnostics.skip_reason or "empty_columns"
-        return NormalizedSheet(sheet_name=sheet_name, column_schema=[], rows=[], diagnostics=diagnostics)
+        if not columns_to_keep:
+            diagnostics.skipped = True
+            diagnostics.skip_reason = diagnostics.skip_reason or "empty_columns"
+            if span.is_recording():
+                span.set_attribute("ingest.table.skipped", True)
+            return NormalizedSheet(sheet_name=sheet_name, column_schema=[], rows=[], diagnostics=diagnostics)
 
-    trimmed_rows: list[list[str]] = []
-    for row in data_rows:
-        trimmed_rows.append([row[idx] if idx < len(row) else "" for idx in columns_to_keep])
+        trimmed_rows: list[list[str]] = []
+        for row in data_rows:
+            trimmed_rows.append([row[idx] if idx < len(row) else "" for idx in columns_to_keep])
 
-    diagnostics.skipped = False
-    diagnostics.skip_reason = None
-    return NormalizedSheet(
-        sheet_name=sheet_name,
-        column_schema=column_schema,
-        rows=trimmed_rows,
-        diagnostics=diagnostics,
-    )
+        diagnostics.skipped = False
+        diagnostics.skip_reason = None
+        if span.is_recording():
+            span.set_attribute("ingest.table.rows", len(trimmed_rows))
+            span.set_attribute("ingest.table.columns", len(column_schema))
+            span.set_attribute("ingest.table.columns_trimmed", diagnostics.columns_trimmed)
+            span.set_attribute("ingest.table.rows_dropped", diagnostics.rows_dropped)
+        return NormalizedSheet(
+            sheet_name=sheet_name,
+            column_schema=column_schema,
+            rows=trimmed_rows,
+            diagnostics=diagnostics,
+        )
 
 
 def summarize_normalization(policy: TableNormalizationPolicy, diagnostics: Sequence[SheetNormalizationDiagnostics]) -> dict[str, Any]:

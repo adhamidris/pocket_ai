@@ -592,15 +592,23 @@ def stream_send(request: HttpRequest) -> StreamingHttpResponse:
             token = otel_context.attach(parent_ctx)
         trace_logger.log("finalize.started", indent=1)
         try:
-            with TRACER.start_as_current_span("portal.finalize_turn"):
-                plan = orchestrator.run_planner_only(
-                    conversation=conversation,
-                    user_message=body,
-                    answer_text=stream_context.response_text,
-                    tool_context=getattr(stream_context, "tool_context", None),
-                )
-                if plan is None:
-                    plan = orchestrator.finalize_turn(stream_context)
+            with TRACER.start_as_current_span("portal.finalize_turn") as finalize_span:
+                if finalize_span.is_recording():
+                    finalize_span.set_attribute("conversation.id", str(conversation.id))
+                    finalize_span.set_attribute("business.id", str(conversation.business_profile_id))
+                plan = None
+                with TRACER.start_as_current_span("portal.finalize.plan") as plan_span:
+                    plan = orchestrator.run_planner_only(
+                        conversation=conversation,
+                        user_message=body,
+                        answer_text=stream_context.response_text,
+                        tool_context=getattr(stream_context, "tool_context", None),
+                    )
+                    if plan is None:
+                        plan = orchestrator.finalize_turn(stream_context)
+                    if plan_span.is_recording():
+                        plan_span.set_attribute("planner.actions", len(plan.planned_actions))
+                        plan_span.set_attribute("planner.extractions", len(plan.extractions))
                 plan_holder["plan"] = plan
                 trace_logger.log(
                     "planner.completed",
@@ -614,11 +622,14 @@ def stream_send(request: HttpRequest) -> StreamingHttpResponse:
                         persist_text = streamed_text
                 if not persist_text:
                     persist_text = "(no content)"
-                response_text, dropped = sanitize_with_diagnostics(
-                    persist_text,
-                    conversation=conversation,
-                    stage="persisted_message",
-                )
+                with TRACER.start_as_current_span("portal.finalize.sanitize") as sanitize_span:
+                    response_text, dropped = sanitize_with_diagnostics(
+                        persist_text,
+                        conversation=conversation,
+                        stage="persisted_message",
+                    )
+                    if sanitize_span.is_recording():
+                        sanitize_span.set_attribute("portal.sanitize_chars", len(persist_text))
                 answer_confidence = None
                 if plan.diagnostics:
                     answer_confidence = plan.diagnostics.get("answer_confidence")
@@ -632,12 +643,15 @@ def stream_send(request: HttpRequest) -> StreamingHttpResponse:
                     message_metadata["answer_confidence"] = answer_confidence
                 if plan.ingestion_warnings:
                     message_metadata["ingestion_warnings"] = [dict(item) for item in plan.ingestion_warnings]
-                ai_message = service.append_message(
-                    session_token=session_token,
-                    sender=ConversationSender.AI,
-                    body=response_text,
-                    metadata=message_metadata,
-                )
+                with TRACER.start_as_current_span("portal.finalize.persist") as persist_span:
+                    ai_message = service.append_message(
+                        session_token=session_token,
+                        sender=ConversationSender.AI,
+                        body=response_text,
+                        metadata=message_metadata,
+                    )
+                    if persist_span.is_recording():
+                        persist_span.set_attribute("portal.actions.pending", len(pending_actions))
 
                 session_state = service.get_session_state(session_token=session_token)
                 final_payload = {
@@ -678,7 +692,7 @@ def stream_send(request: HttpRequest) -> StreamingHttpResponse:
                         child_token = otel_context.attach(child_ctx)
                     trace_logger.log("post_actions.started", indent=2)
                     try:
-                        with TRACER.start_as_current_span("portal.post_actions"):
+                        with TRACER.start_as_current_span("portal.post_actions") as post_span:
                             action_results = []
                             if plan.planned_actions:
                                 action_results = dispatcher.execute(conversation=conversation, planned_actions=plan.planned_actions)
@@ -707,6 +721,8 @@ def stream_send(request: HttpRequest) -> StreamingHttpResponse:
                                         for result in action_results
                                     ],
                                 )
+                                if post_span.is_recording():
+                                    post_span.set_attribute("portal.actions.count", len(action_results))
                             if plan.extractions:
                                 service.store_extractions(
                                     session_token=session_token,
