@@ -210,6 +210,7 @@ ACTION_REGISTRY: dict[ActionType, ActionDescriptor] = {
 
 @dataclasses.dataclass(frozen=True)
 class KnowledgeSnippet:
+    """Normalized snippet payload used across MCP + legacy orchestrators."""
     id: uuid.UUID
     title: str
     summary: str
@@ -248,6 +249,7 @@ class KnowledgeSnippet:
 
 @dataclasses.dataclass(frozen=True)
 class KnowledgeSearchResult:
+    """Container for RAG search results (snippets + status/diagnostics)."""
     snippets: tuple[KnowledgeSnippet, ...]
     status: str
     diagnostics: Mapping[str, object] = dataclasses.field(default_factory=dict)
@@ -255,6 +257,7 @@ class KnowledgeSearchResult:
 
 @dataclasses.dataclass(frozen=True)
 class QueryTraits:
+    """Tokenized/normalized query traits used for intent detection and gating."""
     original: str
     normalized: str
     tokens: tuple[str, ...]
@@ -268,6 +271,7 @@ class QueryTraits:
 
 @dataclasses.dataclass(frozen=True)
 class AliasSearchResult:
+    """Alias/ID search result with optional short-circuit metadata."""
     hits: tuple["ChunkResult", ...]
     diagnostics: Mapping[str, object] = dataclasses.field(default_factory=dict)
     short_circuit: bool = False
@@ -275,6 +279,7 @@ class AliasSearchResult:
 
 @dataclasses.dataclass(frozen=True)
 class HybridSearchResult:
+    """Hybrid (vector + lexical) search result with diagnostics."""
     hits: tuple["ChunkResult", ...]
     query_vector: list[float] | None
     diagnostics: Mapping[str, object] = dataclasses.field(default_factory=dict)
@@ -345,6 +350,12 @@ class QueryNormalizer:
 
     @classmethod
     def normalize(cls, query: str, *, filler_tokens: Sequence[str] | None = None) -> QueryTraits:
+        """
+        Normalize a raw query into QueryTraits.
+
+        Used before ingestion/search to derive intent (identifier/table) and
+        filter filler tokens; keeps portal/MCP flows aligned on query handling.
+        """
         original = (query or "").strip()
         lowered = original.lower()
         collapsed = cls._SPACE_PATTERN.sub(" ", lowered).strip()
@@ -469,6 +480,30 @@ class AiOrchestratorPlan:
 
 @dataclasses.dataclass(frozen=True)
 class StreamingTurnContext:
+    """
+    Context returned from orchestrator.stream_turn after streaming completes.
+    
+    Produced by:
+        - McpOrchestratorService.stream_turn (MCP path)
+        - AiOrchestratorService.stream_turn (legacy path)
+        
+    Used by:
+        - finalize_stream_context in chat_portal.py (step 2.7 in flow doc)
+        - Carries streamed answer + tool context to planner pass
+        - Provides fallback text if streaming failed
+        
+    Key fields:
+        - response_text: Cleaned answer text (sanitized, filler removed)
+        - streamed_chunks: Individual chunks that were streamed (for replay if needed)
+        - tool_context: Per-turn execution context (knowledge results, budgets, etc.)
+        - resolved_citations: Knowledge snippets that were used
+        - knowledge_diagnostics: Tool traces, coverage, identifier gates
+        
+    Why separate from plan:
+        - Streaming context is available immediately after streaming
+        - Plan is produced later by planner pass (actions/extractions)
+        - Allows portal to show provisional answer while planner runs
+    """
     conversation: Conversation
     response_text: str
     planned_actions: Sequence[PlannedAction]
@@ -521,7 +556,45 @@ TOPIC_KEYWORD_MAP: dict[str, tuple[str, ...]] = {
 
 
 class KnowledgeSearchService:
-    """Chunk-aware RAG search leveraging extracted knowledge uploads."""
+    """
+    Chunk-aware RAG search leveraging extracted knowledge uploads.
+
+    Core ingestion/search layer used by both MCP and legacy orchestrators:
+    - normalizes queries (identifier vs free-text vs table intent)
+    - runs alias + hybrid (vector/lexical) search with per-business budgets
+    - assembles snippets for prompts and downstream read_document/table_aggregate
+    
+    Search Strategy (multi-stage):
+        1. Alias search: Exact ID/product code matches (fastest, most precise)
+           - Uses KnowledgeAlias table for identifier-like queries
+           - Short-circuits to results if exact match found
+        2. Vector search: Semantic similarity (pgvector embeddings)
+           - Uses cosine distance for semantic matching
+           - Configurable distance ceiling per business
+        3. Lexical search: Full-text search (PostgreSQL trigram similarity)
+           - Handles typos and partial matches
+           - Token-based matching with configurable thresholds
+        4. Table search: Structured table matching (if query has table keywords)
+           - Matches against table column names and cell values
+           - Returns table chunks with structured metadata
+        5. Reranking: Cross-encoder reranking (if configured)
+           - Re-scores candidates using more expensive model
+           - Improves precision for ambiguous queries
+        6. MMR (Maximal Marginal Relevance): Diversity optimization
+           - Reduces redundant snippets from same upload
+           - Balances relevance vs diversity
+    
+    Caching:
+        - Session cache: Per-conversation cache (avoids duplicate searches in same turn)
+        - Business cache: Cross-conversation cache (shared across all sessions)
+        - Query vector cache: Reuses embeddings for identical queries
+        - Window cache: Caches chunk neighbor windows for read_document
+    
+    Related:
+        - Called by mcp/tools.py:_search_knowledge_handler (MCP path)
+        - Called by AiOrchestratorService.stream_turn (legacy path)
+        - Powers read_document and table_aggregate tools
+    """
 
     def __init__(self) -> None:
         self.embedding_service = build_embedding_service()
@@ -619,6 +692,7 @@ class KnowledgeSearchService:
             "tab",
             "grid",
         }
+        # Embedding provider powers hybrid/vector search; logged for observability.
         logger.info("emb.provider %s model=%s", type(self.embedding_service).__name__ if self.embedding_service else None, getattr(self.embedding_service, "model", None))
         self._page_summary_cache: OrderedDict[uuid.UUID, dict[int, Mapping[str, object]]] = OrderedDict()
         self._table_presence_cache: OrderedDict[uuid.UUID, bool] = OrderedDict()
@@ -816,6 +890,41 @@ class KnowledgeSearchService:
         session_cache: MutableMapping[str, object] | None = None,
         identifier_filter: Mapping[str, str] | None = None,
     ) -> KnowledgeSearchResult:
+        """
+        Execute hybrid RAG search over knowledge uploads.
+        
+        This is the primary search entry point used by both MCP and legacy orchestrators.
+        Implements the multi-stage search strategy described in the class docstring.
+        
+        Flow:
+            1. Normalize query and detect intent (identifier/table/free-text)
+            2. Check session cache (avoid duplicate searches in same turn)
+            3. Check business cache (reuse results across conversations)
+            4. Run alias search (if not provided, or if identifier-like)
+            5. If alias short-circuits: return alias results immediately
+            6. Otherwise: run hybrid search (vector + lexical + table)
+            7. Rerank candidates (if enabled)
+            8. Apply MMR for diversity
+            9. Build KnowledgeSnippet objects
+            10. Cache results for future queries
+            
+        Args:
+            business_profile: Business context (for per-business configs, limits)
+            query: User's natural language query
+            limit: Max snippets to return (overrides business default)
+            traits: Pre-computed QueryTraits (if None, computed here)
+            alias_result: Pre-computed alias search (if None, computed here)
+            session_cache: Per-conversation cache (avoids duplicate searches)
+            identifier_filter: Filter by identifier value (for customer-scoped search)
+            
+        Returns:
+            KnowledgeSearchResult with snippets, status, and diagnostics
+            
+        Why identifier_filter:
+            - Once customer is identified (e.g., email), searches must be scoped
+            - Prevents showing other customers' data (account statements, tickets)
+            - Uses IdentifierColumnMapping to find matching uploads/columns
+        """
         traits = traits or self.analyze_query(query, business_profile=business_profile)
         overall_start = time.perf_counter()
         feature_state = FeatureFlagService.snapshot(business_profile)
@@ -827,6 +936,11 @@ class KnowledgeSearchService:
         table_context = self._table_query_context(business_profile, traits)
         tables_available = self._business_has_tables(business_profile, cached_columns=table_context.get("available_columns"))
         alias_blocked = False
+        # Run alias search if not provided (or if identifier-like query)
+        # Why alias first:
+        #   - Fastest path (exact matches, no vector/lexical overhead)
+        #   - Most precise for ID/product code queries
+        #   - Can short-circuit entire search if exact match found
         if alias_result is None:
             alias_result = self.search_by_alias(
                 business_profile=business_profile,
@@ -835,6 +949,10 @@ class KnowledgeSearchService:
                 feature_state=feature_state,
             )
         elif alias_result.short_circuit and not traits.is_identifier_like:
+            # Block alias short-circuit for non-identifier queries
+            # Why:
+            #   - Alias matches may be too narrow for general queries
+            #   - Force hybrid search to get broader context
             alias_blocked = True
             alias_result = AliasSearchResult(
                 hits=alias_result.hits,
@@ -885,6 +1003,11 @@ class KnowledgeSearchService:
             feature_state=feature_state,
             identifier_filter=identifier_filter,
         )
+        # Check session cache first (per-conversation, avoids duplicate searches in same turn)
+        # Why session cache:
+        #   - Model may call search_knowledge multiple times with same query
+        #   - Tool loop may retry searches
+        #   - Faster than business cache (in-memory dict)
         cached_result = None
         if session_cache is not None:
             cached_result = self._session_cache_get(session_cache, cache_key)
@@ -914,6 +1037,11 @@ class KnowledgeSearchService:
                     result=result_obj,
                 )
                 return result_obj
+        # Check business cache (cross-conversation, shared across all sessions)
+        # Why business cache:
+        #   - Common queries (e.g., "what are your hours?") appear in many conversations
+        #   - Reduces DB/vector index load
+        #   - TTL-based expiry (default 15 minutes)
         cached_result = self._result_cache_get(cache_key)
         if cached_result:
             cached_diag = dict(cached_result.diagnostics or {})
@@ -942,9 +1070,18 @@ class KnowledgeSearchService:
                 result=result_obj,
             )
             return result_obj
+        # Alias short-circuit: if exact alias match found, return immediately
+        # Why short-circuit:
+        #   - Alias matches are highly precise (exact ID/product code)
+        #   - No need for expensive vector/lexical search
+        #   - Faster response time for identifier queries
         if alias_result.short_circuit and alias_result.hits:
             chunk_ids = [hit.chunk_id for hit in alias_result.hits[: max(limit, self.alias_result_cap)]]
             neighbor = max(1, self.alias_neighbor_window)
+            # Load chunk contents with neighbor window for context
+            # Why neighbor window:
+            #   - Provides surrounding chunks for better context
+            #   - Helps model understand full context around exact match
             snippets = tuple(
                 self.load_chunk_contents(
                     business_profile=business_profile,
@@ -1224,6 +1361,13 @@ class KnowledgeSearchService:
         limit: int | None = None,
         feature_state: FeatureState | None = None,
     ) -> AliasSearchResult:
+        """
+        Resolve identifier/alias-style queries before full-text/vector search.
+
+        - Uses exact alias cache first (fast path, short_circuit when hit).
+        - Falls back to fuzzy FTS with thresholds tuned per business.
+        - Logs performance so portal traces align with alias vs hybrid stages.
+        """
         traits = traits or self.analyze_query(" ".join(aliases or ()), business_profile=business_profile)
         alias_values = tuple(
             value
@@ -1320,6 +1464,13 @@ class KnowledgeSearchService:
         alias_candidates: Sequence[ChunkResult] | None = None,
         feature_state: FeatureState | None = None,
     ) -> HybridSearchResult:
+        """
+        Perform hybrid free-text search (alias candidates + vector + lexical).
+
+        - Optionally builds query vector (guarded by feature flag).
+        - Merges alias/vector/lexical candidates then reranks with cross-encoder (if configured).
+        - Returns diagnostics consumed by MCP tools + logging.
+        """
         base_qs = self._base_chunk_queryset(business_profile)
         query_text = (query or "").strip() or traits.normalized or traits.original
         feature_state = feature_state or FeatureFlagService.snapshot(business_profile)
@@ -1406,6 +1557,12 @@ class KnowledgeSearchService:
         business_profile,
         pathway: str,
     ) -> Sequence[KnowledgeSnippet]:
+        """
+        Materialize ChunkResult hits into KnowledgeSnippets with per-upload caps.
+
+        Prevents any single upload from dominating the prompt and keeps within
+        max snippets/turn budgets described in the flow doc.
+        """
         if not hits:
             return tuple()
 
@@ -1436,6 +1593,11 @@ class KnowledgeSearchService:
         diagnostics: dict[str, object] | None = None,
         vector_ceiling: float | None = None,
     ) -> tuple[ChunkResult, ...]:
+        """
+        Consolidate alias + hybrid hits into a capped list of chunk results.
+
+        Honors per-upload caps, vector distance ceilings, and rerank priorities.
+        """
         alias_result = alias_result or AliasSearchResult(tuple(), {})
         if alias_result.short_circuit and alias_result.hits:
             return tuple(alias_result.hits[:limit])
@@ -1887,6 +2049,7 @@ class KnowledgeSearchService:
         )
 
     def _merge_candidates(self, *groups: Sequence[ChunkResult]) -> list[ChunkResult]:
+        """Deduplicate chunk hits across alias/vector/lexical groups while preserving order."""
         seen: set[uuid.UUID] = set()
         merged: list[ChunkResult] = []
         for group in groups:
@@ -1906,6 +2069,13 @@ class KnowledgeSearchService:
         limit: int,
         traits: QueryTraits,
     ) -> tuple[list[ChunkResult], int]:
+        """
+        Fetch ANN/vector candidates using pgvector cosine distance.
+
+        - Adaptive K based on query traits to widen search for short queries.
+        - Skips null embeddings to avoid DB errors.
+        - Returns candidates + latency (ms).
+        """
         if not query_vector:
             return [], 0
         adaptive_factor = self._ann_factor_for_query(traits)
@@ -2042,6 +2212,13 @@ class KnowledgeSearchService:
         business_profile,
         query_text: str,
     ) -> tuple[list[float] | None, dict[str, object]]:
+        """
+        Build (and cache) a query embedding for hybrid/vector search.
+
+        - Hashes business/model/query to derive cache key.
+        - Caches small vectors to avoid re-embedding within TTL.
+        - Returns diagnostics for logging (cache hit/embed latency).
+        """
         diagnostics: dict[str, object] = {"vector_cache_hit": False}
         if not self.embedding_service:
             return None, diagnostics
@@ -2072,6 +2249,11 @@ class KnowledgeSearchService:
         *,
         ceiling: float | None,
     ) -> list[ChunkResult]:
+        """
+        Filter vector candidates by distance ceiling to drop far-off matches.
+
+        Falls back to original candidates if filter would empty the list.
+        """
         threshold = ceiling if ceiling is not None else self.vector_distance_ceiling
         if not threshold or threshold <= 0 or not query_vector:
             return list(candidates)
@@ -2090,6 +2272,12 @@ class KnowledgeSearchService:
         k: int,
         lam: float,
     ) -> list[ChunkResult]:
+        """
+        Maximal Marginal Relevance selector to balance relevance/diversity.
+
+        Prevents prompt collapse onto near-duplicate chunks when vector search
+        returns many similar rows.
+        """
         if not query_vector:
             return list(candidates)[:k]
         selected: list[ChunkResult] = []
@@ -2217,6 +2405,7 @@ class KnowledgeSearchService:
         return 1.0
 
     def _effective_neighbor_window(self, chunk: KnowledgeUploadChunk, default_neighbor: int) -> int:
+        """Dynamic neighbor window: widen for table/entity chunks to capture surrounding context."""
         metadata = chunk.metadata if isinstance(chunk.metadata, dict) else {}
         window = default_neighbor
         if metadata.get("is_table_chunk"):
@@ -2232,6 +2421,7 @@ class KnowledgeSearchService:
         *,
         cache: dict[tuple[uuid.UUID, str], list[KnowledgeUploadChunk]],
     ) -> list[KnowledgeUploadChunk]:
+        """Fetch all chunks for a given entity within an upload, caching by (upload, entity)."""
         if not entity_name:
             return []
         key = (upload.id, entity_name.lower())
@@ -2260,6 +2450,11 @@ class KnowledgeSearchService:
         *,
         traits: QueryTraits,
     ) -> tuple[list[ChunkResult], int]:
+        """
+        Combine vector/lexical/alias/entity/recency into a single score and rerank.
+
+        Tail is preserved (beyond rerank_pool) to avoid throwing away long-tail hits.
+        """
         if not candidates:
             return [], 0
         start = time.perf_counter()
@@ -2329,6 +2524,11 @@ class KnowledgeSearchService:
 
     @staticmethod
     def _lexical_overlap_score(chunk: KnowledgeUploadChunk, tokens: tuple[str, ...]) -> float:
+        """
+        Simple lexical overlap heuristic when no explicit lexical_score is present.
+
+        Used as a fallback in rerank scoring to reward chunks containing query tokens.
+        """
         if not tokens:
             return 0.0
         text = (chunk.content or "").lower()
@@ -2341,6 +2541,7 @@ class KnowledgeSearchService:
 
     @staticmethod
     def _entity_bonus(chunk: KnowledgeUploadChunk, tokens: tuple[str, ...], query_text: str) -> float:
+        """Boost when chunk entity_name matches query text/tokens."""
         metadata = chunk.metadata if isinstance(chunk.metadata, dict) else {}
         entity_name = (metadata.get("entity_name") or "").strip().lower()
         if not entity_name:
@@ -2353,6 +2554,7 @@ class KnowledgeSearchService:
 
     @staticmethod
     def _alias_bonus(chunk: KnowledgeUploadChunk, tokens: tuple[str, ...], query_text: str) -> float:
+        """Boost when alias_string overlaps with query text/tokens."""
         metadata = chunk.metadata if isinstance(chunk.metadata, dict) else {}
         alias_blob = (metadata.get("alias_string") or "").lower()
         if not alias_blob:
@@ -2416,6 +2618,11 @@ class KnowledgeSearchService:
         return tuple(reranked), duration_ms
 
     def _table_query_context(self, business_profile, traits: QueryTraits) -> Mapping[str, object]:
+        """
+        Build table intent context: matched columns, semantic hints, and available columns.
+
+        Used to decide when to call table_aggregate and to bias prompts toward relevant columns.
+        """
         query_text = (traits.normalized or traits.original or "").lower()
         tokens = set(token.lower() for token in traits.tokens)
         matched_keywords = tokens & self.table_query_keywords
@@ -2434,6 +2641,11 @@ class KnowledgeSearchService:
         }
 
     def _table_columns_for_business(self, business_profile) -> set[str]:
+        """
+        Cache and return normalized table column names across uploads for a business.
+
+        Helps semantic matching of queries to columns without re-querying DB each turn.
+        """
         business_id = getattr(business_profile, "id", None)
         if not business_id:
             return set()
@@ -2467,6 +2679,8 @@ class KnowledgeSearchService:
     def _table_row_result_cap_for_business(self, business_profile, requested: int | None = None) -> int:
         """
         Resolve how many table rows we should surface for a business.
+
+        Honors per-business override to prevent excessive row exposure in prompts.
         """
 
         base = requested if requested is not None else self.table_result_cap
@@ -2476,6 +2690,11 @@ class KnowledgeSearchService:
         return max(3, int(override))
 
     def _table_ingestion_diagnostics(self, upload: KnowledgeUpload | None) -> dict[str, object]:
+        """
+        Extract table truncation/indexing diagnostics for an upload.
+
+        Surfaces partial_index or truncated rows to downstream tool_context so planners can warn.
+        """
         diagnostics: dict[str, object] = {
             "table_truncated": False,
             "total_rows": None,
@@ -2961,6 +3180,14 @@ class KnowledgeSearchService:
         content_mode: str = "abstract",
         table_row_sample: tuple[Mapping[str, object], ...] | None = None,
     ) -> KnowledgeSnippet:
+        """
+        Convert a KnowledgeUploadChunk into a KnowledgeSnippet used in prompts/tool payloads.
+
+        - Builds public titles/labels and summaries.
+        - If table_row_sample is present (from table_aggregate cache), bias the summary toward numeric context.
+        - Sets read_state so orchestrators know if this is summary/preview/full content.
+        - Carries diagnostics (vector distance, truncation, table counts) for planner/tool_context.
+        """
         upload = chunk.upload
         label = self._public_label(upload)
         chunk_number = (chunk.chunk_index or 0) + 1 if chunk.chunk_index is not None else None
@@ -3288,8 +3515,70 @@ class KnowledgeSearchService:
         token_budget: int | None = None,
     ) -> Sequence[KnowledgeSnippet]:
         """
-        Fetch a single chunk "page" with a tighter char budget so the LLM can
-        request additional windows via repeated tool calls.
+        Load a page window (chunk + neighbors) for read_document tool.
+        
+        Called by mcp/tools.py:_read_document_handler to load full page content
+        when search snippets signal read_required. This implements "Scenario B –
+        Deep page read" from docs/llm_conversation_backend_flow.md.
+        
+        Modes:
+            - "excerpt": Truncated content (faster, cheaper, ~800 chars)
+            - "full_page": Complete page content (slower, more tokens, ~6000 chars)
+            
+        Neighbor window:
+            - Loads surrounding chunks for context (e.g., neighbor=1 loads ±1 chunk)
+            - Helps model understand full context around the requested page
+            - Cached in _window_cache to avoid repeated DB queries
+            
+        Args:
+            business_profile: Business context (for per-business limits)
+            upload_id: Upload UUID (if loading from upload start)
+            chunk_id: Chunk UUID (if loading specific chunk + neighbors)
+            page_index: 1-based page number (maps to chunk_index)
+            neighbor: Number of neighbor chunks to include (±neighbor)
+            mode: "excerpt" (truncated) or "full_page" (complete)
+            token_budget: Optional token limit (overrides mode defaults)
+            
+        Returns:
+            Sequence of KnowledgeSnippet objects with full page content
+            
+        Why two IDs:
+            - chunk_id: Precise chunk-level read (from search result)
+            - upload_id: Upload-level read (starts from first chunk)
+            - Model may request either depending on search context
+        """
+        """
+        Load a page window (chunk + neighbors) for read_document tool.
+        
+        Called by mcp/tools.py:_read_document_handler to load full page content
+        when search snippets signal read_required. This implements "Scenario B –
+        Deep page read" from docs/llm_conversation_backend_flow.md.
+        
+        Modes:
+            - "excerpt": Truncated content (faster, cheaper, ~800 chars)
+            - "full_page": Complete page content (slower, more tokens, ~6000 chars)
+            
+        Neighbor window:
+            - Loads surrounding chunks for context (e.g., neighbor=1 loads ±1 chunk)
+            - Helps model understand full context around the requested page
+            - Cached in _window_cache to avoid repeated DB queries
+            
+        Args:
+            business_profile: Business context (for per-business limits)
+            upload_id: Upload UUID (if loading from upload start)
+            chunk_id: Chunk UUID (if loading specific chunk + neighbors)
+            page_index: 1-based page number (maps to chunk_index)
+            neighbor: Number of neighbor chunks to include (±neighbor)
+            mode: "excerpt" (truncated) or "full_page" (complete)
+            token_budget: Optional token limit (overrides mode defaults)
+            
+        Returns:
+            Sequence of KnowledgeSnippet objects with full page content
+            
+        Why two IDs:
+            - chunk_id: Precise chunk-level read (from search result)
+            - upload_id: Upload-level read (starts from first chunk)
+            - Model may request either depending on search context
         """
 
         inline_cap = self.inline_char_limit_for_business(business_profile)
@@ -3585,6 +3874,9 @@ class KnowledgeSearchService:
         """
         Extract high-level truncation metrics from ingestion metadata so the orchestrator
         can reason about severe truncation when deciding whether to warn the user.
+
+        Used in MCP tool_context and planner diagnostics to surface ingestion warnings
+        (partial tables, capped rows) that the portal flow later renders to users.
         """
         metadata = upload.ingestion_metadata if isinstance(upload.ingestion_metadata, dict) else {}
         metrics: dict[str, object] = {}
@@ -3631,6 +3923,12 @@ class KnowledgeSearchService:
 
     # apps/services/ai_orchestrator.py (inside KnowledgeSearchService)
     def _serialize_structured_tables_with_rows(self, upload, *, max_tables: int = 3, max_rows: int = 5):
+        """
+        Serialize a limited set of tables/rows for planner/tool_context.
+
+        Prevents huge table payloads while still giving the model a preview
+        that points to identifiers/columns. Mirrors ingestion caps to avoid OOM.
+        """
         tables_manager = getattr(upload, "tables", None)
         if not hasattr(tables_manager, "all"):
             return []
@@ -3700,6 +3998,7 @@ class KnowledgeSearchService:
 
     @staticmethod
     def _render_structured_tables_text(upload: KnowledgeUpload, *, max_preview_rows: int = 5) -> str:
+        """Text preview of tables for logging/debugging without large payloads."""
         tables_manager = getattr(upload, "tables", None)
         if not hasattr(tables_manager, "all"):
             return ""
@@ -6056,12 +6355,74 @@ class AiOrchestratorService:
 
 
 class ActionDispatcher:
-    """Executes orchestrator planned actions if the agent has them enabled."""
+    """
+    Executes orchestrator planned actions if the agent has them enabled.
+
+    Used post-stream in chat_portal to fulfill MCP/legacy planner outputs
+    (create_case, update_customer, create_lead, etc.) without blocking SSE.
+    
+    This is the execution layer for step 5.3 in docs/llm_conversation_backend_flow.md.
+    Actions are planned by the orchestrator (MCP or legacy) and executed here
+    in a background thread so they don't delay the user-facing response.
+    
+    Action types:
+        - CREATE_CASE: Create customer support case with AI diagnosis
+        - UPDATE_CASE_STATUS: Change case lifecycle (open/closed)
+        - UPDATE_CASE_DETAILS: Update case title/description/priority
+        - ADD_CASE_HISTORY: Log case timeline entry
+        - FLAG_ESCALATION: Escalate conversation for human follow-up
+        - CREATE_CUSTOMER: Create customer record from chat
+        - UPDATE_CUSTOMER: Update existing customer profile
+        - CREATE_LEAD: Capture sales lead intent
+        - CREATE_APPOINTMENT: Schedule appointment request
+        
+    Why background execution:
+        - Actions can be slow (DB writes, external API calls)
+        - User already has their answer; actions are follow-ups
+        - SSE events (actionsComplete/actionsError) notify portal when done
+        - Graceful degradation: if actions fail, answer still shown
+    """
 
     def __init__(self, *, agent: AgentProfile):
+        """
+        Initialize dispatcher with agent context.
+        
+        Args:
+            agent: AgentProfile for checking action permissions and business context
+        """
         self.agent = agent
 
     def execute(self, *, conversation: Conversation, planned_actions: Iterable[PlannedAction]) -> Sequence[ActionExecutionResult]:
+        """
+        Execute planned actions and return results.
+        
+        Called by finalize_stream_context → run_post_actions in chat_portal.py.
+        Each action is mapped to a handler method (e.g., _handle_create_case).
+        
+        Flow:
+            1. Iterate through planned_actions
+            2. Find handler method for action type (e.g., _handle_create_case)
+            3. Execute handler with conversation + payload
+            4. Collect results (applied/skipped/failed) with metadata/errors
+            5. Return sequence of ActionExecutionResult objects
+            
+        Args:
+            conversation: Active conversation (for case/customer linkage)
+            planned_actions: Iterable of PlannedAction from orchestrator planner
+            
+        Returns:
+            Sequence of ActionExecutionResult with status, metadata, error per action
+            
+        Error handling:
+            - Missing handler: Returns "skipped" status with error message
+            - ActionExecutionError: Returns "failed" status with error
+            - Success: Returns "applied" status with action metadata (e.g., case_id)
+            
+        Why per-action results:
+            - Some actions may succeed while others fail
+            - Portal needs to know which actions completed
+            - Metadata (e.g., case_id) is used to update message metadata
+        """
         results: list[ActionExecutionResult] = []
         for plan in planned_actions:
             handler = getattr(self, f"_handle_{plan.action.value}", None)
@@ -6102,9 +6463,21 @@ class ActionDispatcher:
     # Individual action handlers
 
     def _handle_create_case(self, *, conversation: Conversation, payload: dict) -> dict:
+        """
+        Create a customer support case from planner action.
+        
+        Why skip if case exists:
+            - Conversation may already have a linked case from previous turn
+            - Prevents duplicate case creation
+            - Returns existing case_id for consistency
+        """
         if conversation.case_id:
             return {"case_id": str(conversation.case_id), "skipped": True}
         description = (payload.get("description") or "").strip()
+        # Validate business context to prevent spam/empty cases
+        # Why _is_business_text:
+        #   - Filters out greetings ("hi", "hello") that aren't real issues
+        #   - Requires business keywords (order, payment, support) or sufficient length
         if not _is_business_text(description):
             raise ActionExecutionError("Case description lacks business context; creation aborted.")
         with transaction.atomic():
@@ -6128,9 +6501,18 @@ class ActionDispatcher:
         return {"case_id": str(case.id), "case_number": case.case_number}
 
     def _handle_update_case_status(self, *, conversation: Conversation, payload: dict) -> dict:
+        """
+        Update case lifecycle status (open/closed).
+        
+        Why status aliases:
+            - Model may use various terms ("resolved", "close", "closed")
+            - Normalize to standard CaseStatus enum values
+            - Prevents errors from minor wording differences
+        """
         if not conversation.case_id:
             raise ActionExecutionError("No linked case to update")
         status = (payload.get("status") or "").strip().lower()
+        # Normalize common status variations to enum values
         alias = {
             "resolved": CaseStatus.CLOSED,
             "close": CaseStatus.CLOSED,
@@ -6146,16 +6528,33 @@ class ActionDispatcher:
         conversation.case.save(update_fields=["status", "updated_at"])
         if status == CaseStatus.CLOSED:
             # Preserve the live chat session so the visitor can continue chatting even after the case closes.
+            # Why preserve session:
+            #   - Visitor may have follow-up questions
+            #   - Case closure doesn't end the conversation
+            #   - Only updates closed_at timestamp for tracking
             fields.append("closed_at")
         conversation.save(update_fields=fields)
         return {"case_id": str(conversation.case_id), "status": status}
 
     def _handle_update_case_details(self, *, conversation: Conversation, payload: dict) -> dict:
+        """
+        Update case metadata (title, description, priority).
+        
+        Why allow_description_overwrite flag:
+            - Case descriptions are authoritative (written by humans or AI)
+            - Prevents accidental overwrites from model refinements
+            - Only allow overwrite when model is confident prior description is wrong
+        """
         if not conversation.case_id:
             raise ActionExecutionError("No linked case to update")
         case = conversation.case
         fields: list[str] = []
         if payload.get("description"):
+            # Require explicit flag to prevent accidental overwrites
+            # Why:
+            #   - Case descriptions are important (used by human agents)
+            #   - Model may refine description, but shouldn't overwrite without confirmation
+            #   - Flag signals model confidence that prior description is incorrect
             if not payload.get("allow_description_overwrite"):
                 raise ActionExecutionError("Description updates require allow_description_overwrite=true")
             if not _is_business_text(payload["description"]):

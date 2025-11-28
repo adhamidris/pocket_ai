@@ -137,6 +137,31 @@ def build_messages(*, conversation: Conversation, user_message: str) -> list[Map
     - First entry: system message
     - Historical transcript alternating between customer/assistant
     - Final entry: the latest user message
+
+    Mirrors the transcript shape described in docs/llm_conversation_backend_flow.md so
+    MCP orchestrator and providers share the same assumptions.
+    
+    Used by:
+        - McpOrchestratorService._execute_turn (first streaming pass with tools)
+        - Builds transcript for tool-enabled LLM calls
+        
+    Message structure:
+        1. Identifier requirements note (if identifiers needed)
+        2. System message (agent profile, behavior contract, tool guidance)
+        3. Recent conversation history (last 8 messages, reversed for chronological order)
+        4. Latest user message (the current query)
+        
+    Why sanitize assistant messages:
+        - Removes investigative filler from previous turns
+        - Keeps transcript clean for model
+        - Prevents filler from influencing current turn
+        
+    Args:
+        conversation: Active conversation (for history, agent, business context)
+        user_message: Latest customer message (the current query)
+        
+    Returns:
+        List of message dicts in Chat Completions API format
     """
     messages: list[Mapping[str, object]] = []
     guard_summary = _identifier_requirements_note(conversation)
@@ -179,6 +204,26 @@ def build_cached_table_messages(
     """
     Render hydrated table cache snippets as synthetic tool traffic so the provider
     can see deterministic contributor lists before planning tools.
+
+    Keeps table_aggregate context sticky across turns (prompt hint: "reuse document_id").
+    
+    Why cached table messages:
+        - Table aggregates from previous turns are cached in conversation.metadata
+        - Model needs to see cached results to avoid re-aggregating same data
+        - Injected as synthetic tool calls/results in transcript
+        - Allows model to reference cached totals without calling table_aggregate again
+        
+    Used by:
+        - McpOrchestratorService._execute_turn (injected before first LLM call)
+        - Ensures model has table context from previous turns
+        
+    Args:
+        knowledge_results: Cached table aggregate snippets from conversation metadata
+        limit: Max cached entries to inject (default 8)
+        
+    Returns:
+        List of message dicts (assistant message with tool_calls + tool results)
+        Empty list if no cached results
     """
 
     if not knowledge_results:
@@ -267,6 +312,31 @@ def build_planner_messages(
     exchange. The streamed `answer_text` is considered authoritative for the
     final response shown to the visitor; the planner focuses on actions and
     extractions only.
+    
+    Used by:
+        - McpOrchestratorService._run_planner (step 5.1 in flow doc)
+        - Called after streaming completes to derive backend intents
+        
+    Why separate planner pass:
+        - Streaming focuses on answer quality (user sees it immediately)
+        - Planner focuses on backend intents (actions/extractions)
+        - Separating concerns keeps streaming fast and planner thorough
+        - Allows model to analyze full answer + tool context before planning
+        
+    Prompt structure:
+        - System: Planner role, case/customer rules, identifier guardrails
+        - User: Latest exchange, tool context note, coverage ledger, tool trace
+        
+    Args:
+        conversation: Active conversation (for agent, business, identifier context)
+        user_message: Latest customer message (for context)
+        answer_text: Streamed answer text (planner can refine or keep as-is)
+        tool_context_note: Summary of knowledge reads, constraints, warnings
+        tool_trace: Per-tool diagnostics (search/read/aggregate calls)
+        coverage_ledger: High-level view of what knowledge was covered
+        
+    Returns:
+        List of message dicts for planner LLM call (non-streaming, JSON response format)
     """
 
     agent = conversation.agent_profile
@@ -382,6 +452,33 @@ def build_final_answer_messages(
 
     Emphasizes: tools already run, respond directly without narrating searches,
     and ground the reply in provided snippet summaries/reads.
+    
+    Used by:
+        - McpOrchestratorService._execute_turn (final answer streaming pass)
+        - Called after tool loop completes, before streaming final answer
+        
+    Why final answer pass:
+        - Tool loop may have produced assistant draft (from tool phase)
+        - Model needs to synthesize tool results into coherent answer
+        - Ensures answer is grounded in actual knowledge reads (not summaries)
+        - Prevents model from narrating tool execution ("I searched...")
+        
+    Prompt structure:
+        - System: Direct answer instructions, no narration, identifier guardrails
+        - User: Latest message, conversation history, tool context, coverage ledger,
+                tool trace, identifier filters, assistant draft (if any)
+        
+    Args:
+        conversation: Active conversation (for history, agent, business)
+        user_message: Latest customer message
+        tool_context_note: Summary of knowledge reads, constraints, warnings
+        coverage_ledger: What knowledge parts were covered (for context)
+        tool_trace: Per-tool diagnostics (for model awareness)
+        assistant_draft: Optional draft from tool phase (model can refine)
+        identifier_filters: Identifier gate decisions (for security awareness)
+        
+    Returns:
+        List of message dicts for final answer LLM call (streaming, no tools)
     """
 
     business_name = conversation.business_profile.name
@@ -497,6 +594,26 @@ def build_final_answer_messages(
 
 
 def _identifier_requirements_note(conversation: Conversation) -> str | None:
+    """
+    Build a system-only note summarizing identifier guardrails for the provider.
+
+    Injected ahead of the system prompt so MCP understands which identifiers
+    are required/locked and when to ask (only for gated actions).
+    
+    Why identifier notes:
+        - Model needs to know which identifiers are required/locked
+        - Prevents model from asking for identifiers unnecessarily
+        - Guides model to use provided identifiers in search/read calls
+        - Explains match policy ("or" vs "and") for multi-identifier requirements
+        
+    Used by:
+        - build_messages (injected as first system message)
+        - build_planner_messages (included in system sections)
+        - build_final_answer_messages (included in user sections)
+        
+    Returns:
+        Formatted string note if identifiers are required, None otherwise
+    """
     try:
         guard = IdentifierGuardrail.from_conversation(conversation)
     except Exception:

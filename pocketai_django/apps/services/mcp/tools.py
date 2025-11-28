@@ -333,9 +333,24 @@ def execute_tool(
     """
     Execute the requested tool call and return the serialized result.
 
+    This is the main dispatcher for MCP tools. Called by the orchestrator
+    during the tool loop (step 3.3 in docs/llm_conversation_backend_flow.md).
+
     The `context` parameter carries per-turn business constraints (chunk-read
     budgets, ingestion warnings, etc.) so the orchestrator can enforce them no
     matter which tool the LLM selects.
+    
+    Args:
+        name: Tool name (e.g., "search_knowledge", "read_document", "table_aggregate")
+        arguments: Tool-specific parameters (parsed from LLM tool_call)
+        conversation: Active conversation (for business context, identifiers)
+        context: Per-turn execution context (budgets, knowledge results, etc.)
+        
+    Returns:
+        Serialized tool result dict with status, snippets, diagnostics, etc.
+        
+    Raises:
+        ValueError: If tool name is not recognized
     """
 
     handler = _TOOL_HANDLERS.get(name)
@@ -391,6 +406,12 @@ def _normalize_priority(raw: object) -> str | None:
 
 
 def _identifier_guard(context: ToolExecutionContext, conversation: Conversation):
+    """
+    Fetch or initialize IdentifierGuardrail for the conversation.
+
+    Stored on the ToolExecutionContext so multiple tools in the same turn
+    share gate state (locked identifiers, provided keys).
+    """
     guard = getattr(context, "identifier_gate", None)
     if isinstance(guard, IdentifierGuardrail):
         return guard
@@ -403,6 +424,9 @@ def _identifier_guard(context: ToolExecutionContext, conversation: Conversation)
 
 
 def _record_identifier_check(context: ToolExecutionContext, decision) -> None:
+    """
+    Persist identifier gate decisions to tool_context for planner diagnostics and prompts.
+    """
     if decision is None:
         return
     payload = getattr(decision, "as_dict", lambda: None)()
@@ -421,6 +445,16 @@ def _record_identifier_check(context: ToolExecutionContext, decision) -> None:
 def _query_intent(query: str) -> dict[str, object]:
     """
     Lightweight heuristic to classify the query and suggest search/read defaults.
+
+    Guides search limit tuning and mode selection (identifier vs table vs long).
+    
+    Why intent detection:
+        - Identifier queries (short, has digits) need precise matching (lower limit)
+        - Table queries need higher limits (more snippets to find the right sheet)
+        - Long queries may need full-page reads (not just summaries)
+        
+    Returns:
+        Dict with intent ("identifier"|"table"|"long"|"short"), token count, flags
     """
     text = (query or "").strip()
     lowered = text.lower()
@@ -464,6 +498,9 @@ def _match_knowledge_entry(
 ) -> Mapping[str, object] | None:
     """
     Locate snippet metadata associated with the requested chunk/upload.
+
+    Used to refine status labels (document titles) and determine full/excerpt mode
+    based on prior search/read outputs cached in tool_context.
     """
 
     if not context or not identifiers:
@@ -495,6 +532,20 @@ def _detect_full_page_intent(
     Decide whether to allow a full-page read. Prefers excerpts unless:
     - The visitor explicitly asks for a page/section.
     - The referenced table is small (few rows/columns) and not truncated.
+    
+    Why prefer excerpts:
+        - Full pages are expensive (token cost, latency)
+        - Excerpts usually contain enough context for answers
+        - Full pages only needed for complex tables or explicit requests
+        
+    Args:
+        conversation: For checking latest user message for explicit keywords
+        requested_mode: Explicit mode from tool call ("full_page"|"excerpt")
+        document_entry: Cached snippet metadata (for table stats)
+        upload: Upload record (for ingestion metadata)
+        
+    Returns:
+        True if full_page mode should be used, False for excerpt
     """
 
     def _coerce_int(value: object) -> int:
@@ -585,6 +636,8 @@ def _serialize_snippets(snippets: Sequence[object]) -> list[dict[str, object]]:
 def _estimate_tokens(characters: int) -> int:
     """
     Rough heuristic to approximate tokens for logging purposes.
+
+    Keeps diagnostics light while still giving the orchestrator a feel for prompt cost.
     """
 
     if characters <= 0:
@@ -613,12 +666,14 @@ PRIMARY_TOTAL_TERMS = (
 
 
 def _normalize_column_name(value: object) -> str:
+    """Normalize column labels for matching (lowercase, collapse whitespace)."""
     if not isinstance(value, str):
         return ""
     return re.sub(r"\s+", " ", value.strip().lower())
 
 
 def _parse_numeric_value(value: str | None) -> float | None:
+    """Parse numeric text from a table cell, tolerating commas/arabic digits and dashes."""
     if not isinstance(value, str):
         return None
     text = value.strip()
@@ -635,6 +690,7 @@ def _parse_numeric_value(value: str | None) -> float | None:
 
 
 def _format_numeric_display(value: float | None, raw: str | None = None) -> str | None:
+    """Format numeric values for snippets; prefer raw cell text when provided."""
     if isinstance(raw, str) and raw.strip():
         return raw.strip()
     if value is None:
@@ -646,6 +702,7 @@ def _format_numeric_display(value: float | None, raw: str | None = None) -> str 
 
 
 def _total_column_priority(value: object) -> int:
+    """Rank how strongly a column label implies 'total' to prioritize contributions."""
     normalized = _normalize_column_name(value)
     if not normalized:
         return 0
@@ -666,6 +723,9 @@ def _is_total_column_label(value: object) -> bool:
 def _snippet_payload_metrics(snippets: Sequence[Mapping[str, object]]) -> dict[str, object]:
     """
     Compute lightweight telemetry for snippet payloads so we can benchmark prompt costs.
+
+    Used in search/read/aggregate handlers to feed diagnostics (char_count, token_estimate,
+    table/issue richness) back to the orchestrator/tool_context for budgeting/logging.
     """
 
     total_chars = 0
@@ -726,6 +786,11 @@ def _log_tool_metrics(
 ) -> dict[str, object]:
     """
     Emit structured telemetry for MCP tools without changing runtime behavior.
+
+     Metrics feed:
+     - structured_log for trace visibility
+     - latency_monitor for basic observability
+     - returned dict for downstream budgeting (char_count/token_estimate)
     """
     metrics = _snippet_payload_metrics(snippets)
     if extra:
@@ -786,6 +851,7 @@ def _log_snippet_payloads(
     snippet_payloads: Sequence[Mapping[str, object]],
     meta: Mapping[str, object] | None = None,
 ) -> None:
+    """Log a compact preview of snippet payloads to aid debugging prompt inputs."""
     preview_items: list[dict[str, object]] = []
     for payload in snippet_payloads[:5]:
         preview_items.append(
@@ -819,6 +885,15 @@ def _maybe_throttle_full_page(
 ) -> dict[str, object] | None:
     """
     Determine if a full-page request should be downgraded to an excerpt.
+    
+    Why throttling:
+        - Full pages consume large character budgets
+        - Per-turn and per-minute limits prevent cost overruns
+        - Downgrading to excerpt keeps the turn within budget
+        
+    Returns:
+        Throttle notice dict if downgrade needed, None otherwise.
+        Notice includes reason, remaining characters, threshold.
     """
 
     limit = context.char_budget_per_turn
@@ -916,6 +991,31 @@ def _search_knowledge_handler(
     conversation: Conversation,
     context: ToolExecutionContext,
 ) -> Mapping[str, object]:
+    """
+    Run hybrid search over knowledge uploads for the business.
+
+    Implements "Scenario A – Search-only answer" from docs/llm_conversation_backend_flow.md.
+    This is the primary RAG entry point that:
+        - Runs hybrid search (alias + vector + lexical + table)
+        - Applies identifier gating (restrict to customer's own data)
+        - Returns snippets with read hints for follow-up reads
+        
+    Flow:
+        1. Parse query and detect intent (identifier/table/long)
+        2. Build identifier filter if customer is identified
+        3. Call KnowledgeSearchService.search (hybrid search)
+        4. Apply identifier gate (may block if identifiers required)
+        5. Attach read hints for snippets that need full-page reads
+        6. Return serialized snippets + diagnostics
+        
+    Args:
+        arguments: Tool arguments with "query" (required) and "limit" (optional)
+        conversation: For business context and identifier extraction
+        context: For recording results, applying budgets, identifier gating
+        
+    Returns:
+        Tool result dict with status, snippets, diagnostics, identifier_gate, hints
+    """
     query = _coerce_str(arguments.get("query")).strip()
     if not query:
         return {
@@ -947,6 +1047,10 @@ def _search_knowledge_handler(
         limit = None
 
     # Tune limits based on intent to keep results targeted.
+    # Why:
+    #   - Identifier queries: Lower limit (4) for precise matching (exact ID/product code)
+    #   - Table queries: Higher limit (6-8) to find the right sheet/table
+    #   - General queries: Default limit (5) balances recall vs token cost
     if intent == "identifier":
         limit = min(limit or 5, 4)
     elif intent == "table":
@@ -954,6 +1058,10 @@ def _search_knowledge_handler(
 
     service = _knowledge_service()
     # Apply identifier value filter when an email is locked/provided to prevent cross-identifier leakage.
+    # Why identifier filtering:
+    #   - Once we identify a customer (e.g., email), all searches must be scoped to their data
+    #   - Prevents showing other customers' account statements, tickets, orders
+    #   - Uses IdentifierColumnMapping to find which uploads/columns contain the identifier
     identifier_filter: dict[str, object] | None = None
     allowed_uploads: set[str] | None = None
     guard = _identifier_guard(context, conversation)
@@ -987,6 +1095,13 @@ def _search_knowledge_handler(
                 "upload_ids": list(allowed_uploads),
             }
 
+    # Hybrid search (alias + lexical + vector + table) with per-business constraints.
+    # Search strategy (from KnowledgeSearchService):
+    #   1. Alias search: Exact ID/product code matches (fastest, most precise)
+    #   2. Vector search: Semantic similarity (pgvector embeddings)
+    #   3. Lexical search: Full-text search (PostgreSQL trigram similarity)
+    #   4. Table search: Structured table matching (if query has table keywords)
+    #   5. Reranking: Cross-encoder reranking (if configured) for final ordering
     result = service.search(
         business_profile=conversation.business_profile,
         query=query,
@@ -1038,6 +1153,11 @@ def _search_knowledge_handler(
         )
     snippet_payloads = _serialize_snippets(result.snippets)
     # If locked identifier exists, drop snippets whose identifier hash/value does not match locked value.
+    # Prevents showing other-customer data even if search matched.
+    # Why post-filter:
+    #   - Search may return snippets that match query but belong to different customer
+    #   - Identifier filter reduces scope, but we double-check snippet identifiers
+    #   - Final safety check before showing results to user
     if locked_key and locked_value:
         locked_val_norm = str(locked_value).strip()
         filtered_snippets = []
@@ -1051,10 +1171,18 @@ def _search_knowledge_handler(
         snippet_payloads = filtered_snippets
     decision = None
     if guard:
+        # Identifier gate runs after snippet prep; can request identifiers instead of answering.
+        # Why gate after search:
+        #   - We need snippets to know if they require identifiers
+        #   - Gate checks if sensitive uploads need identifier verification
+        #   - Returns "identifier_required" status if user must provide email/ID first
         decision = guard.evaluate_snippets(snippet_payloads)
         _record_identifier_check(context, decision)
         if decision.status == "identifier_conflict":
             # Treat conflicts as missing/required identifiers; do not poison the session.
+            # Why:
+            #   - Conflict means we have identifier but it doesn't match snippets
+            #   - Better to ask for correct identifier than show wrong data
             _log_search_performance(
                 snippet_payloads,
                 status_override="identifier_required",
@@ -1136,14 +1264,20 @@ def _search_knowledge_handler(
                 "identifier_gate": decision.as_dict() if decision else None,
                 "hint": "No records found for this identifier.",
             }
+    # Determine if snippets need full-page reads
+    # Why read_required:
+    #   - Table/identifier queries often need exact page context (not summaries)
+    #   - Aggregation queries need full table rows (not previews)
+    #   - Read hints guide the model to call read_document with correct page/mode
     if intent in {"table", "identifier"}:
         if len(snippet_payloads) <= 2:
-            read_required = True
+            read_required = True  # Few results = need full context
         elif all((p.get("read_state") or "summary") in {"summary", "preview"} for p in snippet_payloads):
-            read_required = True
+            read_required = True  # All summaries = need full pages
     if intent == "table" and aggregation_query:
-        read_required = True
+        read_required = True  # Aggregations need full table data
     # Attach read hints for table/identifier paths so the model can issue a precise read.
+    # Read hints include: document_id (chunk/upload UUID), page (1-based), mode (excerpt/full_page)
     for payload in snippet_payloads:
         chunk_id = payload.get("chunk_id") or payload.get("id")
         upload_id = payload.get("upload_id")
@@ -1210,6 +1344,30 @@ def _read_document_handler(
     conversation: Conversation,
     context: ToolExecutionContext,
 ) -> Mapping[str, object]:
+    """
+    Load a page/window from an upload for deeper context.
+
+    Implements "Scenario B – Deep page read" from docs/llm_conversation_backend_flow.md.
+    Called when search snippets signal `read_required` or model explicitly requests a page.
+
+    Flow:
+        1. Resolve document_id to chunk or upload record
+        2. Apply identifier gating (hard block if identifiers required)
+        3. Reserve chunk read + page budgets (enforce per-turn limits)
+        4. Auto-detect full_page vs excerpt mode (or use explicit mode)
+        5. Throttle full_page if budgets are low (downgrade to excerpt)
+        6. Load page window via KnowledgeSearchService.load_page_window
+        7. Filter snippets by locked identifier (if applicable)
+        8. Return serialized snippets + knowledge_reads + warnings
+        
+    Args:
+        arguments: Tool arguments with document_id (required), page, mode, token_budget, chunk_neighbor
+        conversation: For business context and identifier extraction
+        context: For budgets, identifier gating, recording results
+        
+    Returns:
+        Tool result dict with status, snippets, knowledge_reads, ingestion_warnings, throttle_notice
+    """
     raw_id = arguments.get("document_id")
     document_id = _coerce_str(raw_id).strip()
     if not document_id:
@@ -1263,6 +1421,7 @@ def _read_document_handler(
         locked_value = locked.get("value")
     decision = None
     if guard and gating_upload_id:
+        # Hard gate: if identifiers required for this upload, bail early with instructions to ask the user.
         decision = guard.require_for_upload(str(gating_upload_id))
         _record_identifier_check(context, decision)
         if decision.status != "ok":
@@ -1302,6 +1461,11 @@ def _read_document_handler(
             }
 
     # Enforce per-turn chunk budget. Each read_document call counts as one unit.
+    # Why budgets:
+    #   - Prevents runaway costs (each read consumes tokens + DB queries)
+    #   - Per-turn limit (default 3) ensures reasonable latency
+    #   - Per-minute limit prevents abuse across multiple turns
+    #   - Raises ToolConstraintError if budget exceeded (model must continue with existing snippets)
     context.reserve_chunk_reads(1)
     context.reserve_chunk_pages(1)
 
@@ -1345,16 +1509,24 @@ def _read_document_handler(
     upload_source = chunk_record.upload if chunk_record else upload_record
     knowledge_entry = _match_knowledge_entry(context, [str(identifier), str(gating_upload_id)])
     if mode is None:
+        # Auto-detect full_page vs excerpt based on table/identifier intent and per-business defaults.
+        # Why auto-detect:
+        #   - Model may not specify mode (relies on our heuristics)
+        #   - Table queries usually need full pages (all rows)
+        #   - Identifier queries need full pages (exact matches)
+        #   - General queries can use excerpts (faster, cheaper)
         prefer_full_page = _detect_full_page_intent(
             conversation,
             None,
             document_entry=knowledge_entry,
             upload=upload_source,
         )
+        # Check budget before allowing full_page (may downgrade to excerpt)
         mode = "full_page" if (prefer_full_page and _budget_allows_full_page(context, business_profile=business, service=service)) else "excerpt"
 
     downgraded = False
     if mode == "full_page":
+        # Throttle can downgrade to excerpt when budgets are exceeded to avoid blowing token budgets.
         throttle_notice = _maybe_throttle_full_page(context, business, service)
         if throttle_notice:
             mode = "excerpt"
@@ -1482,6 +1654,12 @@ def _list_tables_handler(
     conversation: Conversation,
     context: ToolExecutionContext,
 ) -> Mapping[str, object]:
+    """
+    List recent table uploads + sheet metadata for disambiguation.
+
+    Supports the prompt hint “call list_tables once, then reuse document_id”
+    in the flow doc before running table_aggregate.
+    """
     del context
     query_input = _coerce_str(arguments.get("query")).strip()
     raw_limit = arguments.get("limit")
@@ -1591,6 +1769,7 @@ TABLE_LIST_PREVIEW_LIMIT = 8
 
 
 def _table_row_cache_key(upload: KnowledgeUpload) -> str:
+    """Cache key for table row cache (per upload)."""
     return str(upload.id)
 
 
@@ -1599,6 +1778,11 @@ def _load_table_rows_for_cache(
     conversation: Conversation,
     upload: KnowledgeUpload,
 ) -> list[dict[str, object]]:
+    """
+    Preload all table rows + cells for an upload.
+
+    Used to warm a per-session cache so repeated aggregates avoid DB hits.
+    """
     rows_qs = (
         KnowledgeUploadTableRow.objects.filter(
             table__upload=upload,
@@ -1615,6 +1799,7 @@ def _load_table_rows_for_cache(
 
 
 def _serialize_table_row_for_cache(row: KnowledgeUploadTableRow) -> dict[str, object]:
+    """Serialize a row into a lightweight structure for aggregation/search."""
     table = getattr(row, "table", None)
     table_metadata = getattr(table, "metadata", {}) if table else {}
     if not isinstance(table_metadata, Mapping):
@@ -1670,6 +1855,38 @@ def _table_aggregate_handler(
     conversation: Conversation,
     context: ToolExecutionContext,
 ) -> Mapping[str, object]:
+    """
+    Aggregate numeric table rows (sum/row_total) for spreadsheet uploads.
+
+    Implements the "Scenario C – Table aggregation" path in the flow doc:
+    filters rows, computes totals, returns snippets + structured rows for MCP.
+    
+    Use cases:
+        - "What is the total monthly salary for all senior engineers?"
+        - "Sum the total insurance premiums for gold plans."
+        - "What is the total yearly fee across tiers A, B, and C?"
+    
+    Flow:
+        1. Resolve document_id to upload record
+        2. Load table rows from cache (or DB if cache miss)
+        3. Filter rows by match_column/match_value or query text
+        4. For each matching row:
+           - Compute row_total (sum of numeric cells, prefer total columns)
+           - Collect contributions (per-column numeric values)
+           - Build preview cells for snippet
+        5. Aggregate totals across all matched rows
+        6. Build table aggregate snippets with structured_tables payload
+        7. Return snippets + matched_rows + total + diagnostics
+        
+    Args:
+        arguments: Tool arguments with document_id (required), mode, query, match_column,
+                   match_value, value_column, columns, sheet_name, max_rows
+        conversation: For business context
+        context: For caching table rows, recording results
+        
+    Returns:
+        Tool result dict with status, total, display_total, rows, snippets, diagnostics
+    """
     start = time.perf_counter()
     raw_id = _coerce_str(arguments.get("document_id")).strip()
     if not raw_id:
@@ -1751,7 +1968,8 @@ def _table_aggregate_handler(
             candidate = _coerce_str(entry).strip()
             if candidate:
                 column_filters.append(candidate)
-    normalized_column_filters = { _normalize_column_name(value) for value in column_filters if _normalize_column_name(value) }
+    # Normalize column filters to reduce prompt/token noise and improve matching.
+    normalized_column_filters = {_normalize_column_name(value) for value in column_filters if _normalize_column_name(value)}
 
     total_value = 0.0
     matched_rows: list[dict[str, object]] = []
@@ -1769,6 +1987,7 @@ def _table_aggregate_handler(
 
     for row_payload in cached_rows:
         if table_index is not None:
+            # Constrain to a specific table within the upload when provided.
             row_table_index = row_payload.get("table_order_index")
             try:
                 row_table_idx_int = int(row_table_index)
@@ -1787,11 +2006,13 @@ def _table_aggregate_handler(
         }
         row_matches = True
         if match_column and normalized_match_values:
+            # Structured match: look for normalized match values in the target column.
             candidate = column_map.get(match_column)
             candidate_value = candidate.get("normalized_value") if isinstance(candidate, Mapping) else None
             if not candidate_value or not any(value and value in candidate_value for value in normalized_match_values):
                 row_matches = False
         elif query:
+            # Fallback fuzzy match across row + cell text.
             row_text = str(row_payload.get("row_text") or "")
             cell_text = " ".join(str(cell.get("raw_text") or "") for cell in cells)
             haystack = f"{row_text} {cell_text}".lower()
@@ -1837,6 +2058,7 @@ def _table_aggregate_handler(
         numeric_value: float | None = None
         display_value: str | None = None
         if mode == "row_total":
+            # Prefer explicit total columns; otherwise sum non-total numeric cells.
             if total_column_value is not None:
                 numeric_value = float(total_column_value)
                 display_value = total_column_display or _format_numeric_display(total_column_value)
@@ -2088,6 +2310,11 @@ def _create_case_handler(
     conversation: Conversation,
     context: ToolExecutionContext,
 ) -> Mapping[str, object]:
+    """
+    Plan a case creation action (no side effects here).
+
+    MCP tool emits a planned action; ActionDispatcher executes later in portal flow.
+    """
     del context  # planning only; no side effects
     title = _coerce_str(arguments.get("title")).strip() or "Customer request"
     description = _coerce_str(arguments.get("description")).strip()
@@ -2117,6 +2344,7 @@ def _update_case_status_handler(
     conversation: Conversation,
     context: ToolExecutionContext,
 ) -> Mapping[str, object]:
+    """Plan case status change (open/closed)."""
     del context, conversation  # planning only
     status_raw = _coerce_str(arguments.get("status")).strip().lower()
     if status_raw in {"resolve", "resolved", "close", "closed"}:
@@ -2138,6 +2366,7 @@ def _update_case_details_handler(
     conversation: Conversation,
     context: ToolExecutionContext,
 ) -> Mapping[str, object]:
+    """Plan case detail updates (title/description/priority)."""
     del context, conversation
     payload: dict[str, object] = {
         "case_id": _coerce_str(arguments.get("case_id")).strip(),
@@ -2163,6 +2392,7 @@ def _add_case_history_handler(
     conversation: Conversation,
     context: ToolExecutionContext,
 ) -> Mapping[str, object]:
+    """Plan adding a history entry to an existing case."""
     del context, conversation
     payload = {
         "case_id": _coerce_str(arguments.get("case_id")).strip(),
@@ -2176,6 +2406,7 @@ def _flag_escalation_handler(
     conversation: Conversation,
     context: ToolExecutionContext,
 ) -> Mapping[str, object]:
+    """Plan an escalation flag with optional metadata."""
     del context, conversation
     reason = _coerce_str(arguments.get("reason")).strip() or "Escalated by MCP orchestrator"
     details = _coerce_str(arguments.get("details")).strip()
@@ -2190,6 +2421,7 @@ def _create_customer_handler(
     conversation: Conversation,
     context: ToolExecutionContext,
 ) -> Mapping[str, object]:
+    """Plan a customer creation action."""
     del context  # planning only
     full_name = _coerce_str(arguments.get("full_name")).strip() or "Web Visitor"
     email = _coerce_str(arguments.get("email")).strip()
@@ -2210,6 +2442,7 @@ def _update_customer_handler(
     conversation: Conversation,
     context: ToolExecutionContext,
 ) -> Mapping[str, object]:
+    """Plan a customer update (name/metadata)."""
     del context, conversation
     full_name = _coerce_str(arguments.get("full_name")).strip()
     metadata = arguments.get("metadata") if isinstance(arguments.get("metadata"), Mapping) else {}
@@ -2228,6 +2461,7 @@ def _create_lead_handler(
     conversation: Conversation,
     context: ToolExecutionContext,
 ) -> Mapping[str, object]:
+    """Plan a lead creation with source annotated as MCP."""
     del context  # planning only
     payload = {
         "title": _coerce_str(arguments.get("title")).strip(),
@@ -2243,6 +2477,7 @@ def _create_appointment_handler(
     conversation: Conversation,
     context: ToolExecutionContext,
 ) -> Mapping[str, object]:
+    """Plan an appointment creation tied to the conversation."""
     del context  # planning only
     payload = {
         "topic": _coerce_str(arguments.get("topic")).strip(),
@@ -2275,6 +2510,7 @@ def _require_provider_stub(tool_name: str, *, preflight: Callable[[ToolExecution
 
 
 def _enforce_single_chunk_read(context: ToolExecutionContext) -> None:
+    """Preflight helper for stub tools that should consume a chunk read budget."""
     context.reserve_chunk_reads(1)
 
 

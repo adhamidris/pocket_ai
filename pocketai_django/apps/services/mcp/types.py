@@ -43,6 +43,28 @@ class ToolExecutionContext:
     Carries per-turn limits (like chunk-read budgets) and any warnings that
     should be bubbled up to diagnostics when the orchestrator assembles the
     final response.
+    
+    This is the "state bag" that flows through all tool calls in a single turn.
+    It accumulates:
+        - Knowledge results (snippets from search/read/aggregate)
+        - Tool traces (diagnostics per tool call)
+        - Coverage ledger (what knowledge parts were covered)
+        - Budget usage (chunk reads, pages, characters consumed)
+        - Identifier gates (security decisions)
+        - Ingestion warnings (partial/risky data flags)
+        - Table cache (cached aggregate rows for reuse)
+        - Search history (for duplicate search short-circuiting)
+    
+    Why shared context:
+        - Tools need to know what's already been read/searched
+        - Budgets must be enforced across all tools in a turn
+        - Identifier gates must be consistent across search/read calls
+        - Coverage ledger helps model understand what's available
+        
+    Used by:
+        - McpOrchestratorService._execute_turn (created at turn start)
+        - All MCP tool handlers (search_knowledge, read_document, table_aggregate)
+        - Planner pass (for tool context note)
     """
 
     max_chunk_reads_per_turn: int | None = None
@@ -108,25 +130,94 @@ class ToolExecutionContext:
             self.minute_budget_reserver(count)
 
     def add_ingestion_warning(self, warning: Mapping[str, object]) -> None:
-        """Record an ingestion warning so the orchestrator can surface it later."""
-
+        """
+        Record an ingestion warning so the orchestrator can surface it later.
+        
+        Warnings indicate potential data quality issues (partial uploads, risky content, etc.).
+        These are surfaced in message metadata and diagnostics for transparency.
+        
+        Why warnings:
+        - Alerts user to potential data limitations
+        - Helps debug knowledge base issues
+        - Provides context for answer quality
+        """
         self.ingestion_warnings.append(dict(warning))
 
     def add_knowledge_result(self, result: Mapping[str, object]) -> None:
+        """
+        Add knowledge snippet to results (from search/read/aggregate tools).
+        
+        Knowledge results are used to:
+        - Build citations in final answer
+        - Provide context to planner pass
+        - Track what knowledge was accessed
+        """
         self.knowledge_results.append(dict(result))
 
     def add_knowledge_read(self, read: Mapping[str, object]) -> None:
+        """
+        Record a knowledge read operation (which document/page was read).
+        
+        Tracks actual reads (not just search results) for:
+        - Coverage ledger (what's been read)
+        - Budget tracking (read counts)
+        - Planner context (what knowledge is available)
+        """
         self.knowledge_reads.append(dict(read))
 
     def add_tool_trace(self, trace: Mapping[str, object]) -> None:
+        """
+        Record tool call diagnostics for observability.
+        
+        Tool traces include:
+        - Tool name, arguments, status
+        - Error codes, hints, modes
+        - Token budgets, throttle flags
+        - Duration, result counts
+        
+        Used for:
+        - Debugging tool call issues
+        - Performance monitoring
+        - Answer quality diagnostics
+        """
         self.tool_trace.append(dict(trace))
 
     def add_coverage_entry(self, entry: Mapping[str, object]) -> None:
+        """
+        Add entry to coverage ledger (high-level view of knowledge coverage).
+        
+        Coverage ledger helps model understand:
+        - What knowledge parts have been accessed
+        - What's available but not yet read
+        - Coverage gaps (missing information)
+        
+        Used in planner pass to provide context about knowledge availability.
+        """
         self.coverage_ledger.append(dict(entry))
 @dataclasses.dataclass
 class KnowledgeToolResult:
-    """Structured record of knowledge snippets returned by tool calls."""
-
+    """
+    Structured record of knowledge snippets returned by tool calls.
+    
+    Returned by knowledge tools (search_knowledge, read_document, table_aggregate)
+    to provide consistent structure for orchestrator processing.
+    
+    Fields:
+        - snippets: Tuple of snippet dicts (immutable, prevents accidental mutation)
+        - source_tool: Tool name that produced these snippets (for diagnostics)
+        - note: Optional note about the results (e.g., "read_required", "throttled")
+    
+    Why dataclass:
+        - Type safety (structured data vs raw dicts)
+        - Immutable snippets (prevents accidental mutation)
+        - Clear contract for tool return values
+        - Easy to extend with new fields
+    
+    Used by:
+        - Tool handlers (return KnowledgeToolResult)
+        - Orchestrator (processes results, builds citations)
+        - Planner pass (includes in tool context note)
+    """
     snippets: tuple[dict[str, object], ...] = dataclasses.field(default_factory=tuple)
     source_tool: str | None = None
     note: str | None = None

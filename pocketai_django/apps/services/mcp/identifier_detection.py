@@ -25,6 +25,7 @@ class ValueAwareIdentifierDetector:
     Lightweight value-based detector that combines header hints with sampled column values.
 
     Intent: detect likely identifier columns without relying on brittle aliases.
+    Feeds IdentifierGuardrail so MCP can gate reads/searches on required identifiers.
     """
 
     HEADER_ALIASES = {
@@ -52,6 +53,7 @@ class ValueAwareIdentifierDetector:
         self.model_assist = model_assist
 
     def detect(self, *, upload: KnowledgeUpload | None, headers: Sequence[str] | None = None) -> list[dict[str, object]]:
+        """Suggest identifier column mappings using header + value signals."""
         header_matches = self._header_candidates(headers or [], model_assist=self.model_assist)
         value_samples = self._collect_column_samples(upload) if upload else []
         value_candidates = self._value_candidates(value_samples, model_assist=self.model_assist)
@@ -108,6 +110,7 @@ class ValueAwareIdentifierDetector:
         fallback_name: str,
         sheet_name: str,
     ) -> dict[str, object] | None:
+        """Merge header/value candidates, preferring value evidence when keys agree."""
         if not header_candidate and not value_candidate:
             return None
 

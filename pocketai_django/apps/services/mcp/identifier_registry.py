@@ -56,6 +56,33 @@ class IdentifierGateDecision:
 class IdentifierGuardrail:
     """
     Evaluate identifier requirements for MCP retrieval against a conversation.
+
+    This is the security layer that prevents cross-customer data leakage. It ensures
+    that once a customer is identified (e.g., email), all subsequent searches/reads
+    are scoped to that customer's data only.
+    
+    Responsibilities:
+    - Normalize/lock provided identifiers (conversation metadata, customer record, recent messages).
+    - Compute required vs provided identifiers per business schema.
+    - Block tool calls (search/read) when identifiers are missing or conflicting.
+    - Feed snapshots into MCP prompts and planner diagnostics.
+    
+    Security Model:
+        - Locked identifier: First identifier found becomes "locked" for the conversation
+        - Prevents switching identities mid-session (e.g., email A → email B)
+        - Required identifiers: Some uploads require specific identifiers (e.g., account statements need email)
+        - Match policy: "or" (any identifier) vs "and" (all identifiers required)
+        
+    Usage:
+        - Created from conversation via from_conversation() classmethod
+        - Used by search_knowledge_handler and read_document_handler
+        - evaluate_snippets() checks if snippets require identifiers
+        - require_for_upload() checks if specific upload needs identifiers
+        
+    Related:
+        - IdentifierColumnMapping: Maps identifier keys to upload columns
+        - IdentifierSchema: Defines which identifiers are required per business
+        - Called by mcp/tools.py for gating search/read operations
     """
 
     def __init__(self, *, business_profile: BusinessProfile, provided_identifiers: Mapping[str, str]) -> None:
@@ -84,6 +111,22 @@ class IdentifierGuardrail:
     def _extract_identifiers(conversation: Conversation) -> dict[str, str]:
         """
         Collect customer identifiers from conversation metadata and linked customer record.
+
+        Also backfills detected identifiers into conversation.metadata for future turns.
+        
+        Extraction sources (in priority order):
+            1. conversation.metadata["customer_identifiers"] (explicitly set)
+            2. conversation.metadata["email"/"phone"/"customer_id"] (common fallbacks)
+            3. conversation.customer record (if linked)
+            4. Recent customer messages (regex extraction as last resort)
+            
+        Why backfill:
+            - If identifiers found in messages but not in metadata, persist them
+            - Ensures subsequent turns have identifiers without re-extraction
+            - Updates conversation.metadata atomically
+            
+        Returns:
+            Tuple of (identifiers dict, locked_identifier dict, identifier_conflict dict)
         """
 
         values: dict[str, str] = {}
@@ -163,6 +206,8 @@ class IdentifierGuardrail:
     def _normalize_provided(provided_identifiers: Mapping[str, str]) -> tuple[dict[str, str], dict | None, dict | None]:
         """
         Normalize identifiers and enforce session lock rules.
+
+        Locked identifier wins over new inputs for the same key to prevent switching identities mid-session.
         """
 
         values: dict[str, str] = {}
@@ -283,6 +328,28 @@ class IdentifierGuardrail:
         return self.require_for_uploads(upload_ids)
 
     def require_for_uploads(self, upload_ids: Iterable[str]) -> IdentifierGateDecision:
+        """
+        Check if provided identifiers satisfy requirements for the given uploads.
+        
+        This is the core gating logic that blocks access when identifiers are missing.
+        Used by search_knowledge_handler and read_document_handler to enforce security.
+        
+        Match policies:
+            - "and": All required identifiers must be provided (strict)
+            - "or": Any required identifier is sufficient (lenient)
+            
+        Why blocking:
+            - Sensitive uploads (account statements, tickets) require customer verification
+            - Prevents showing other customers' data
+            - Forces model to ask user for identifier before accessing sensitive content
+            
+        Args:
+            upload_ids: Upload UUIDs to check requirements for
+            
+        Returns:
+            IdentifierGateDecision with status ("ok" | "identifier_required"),
+            required_keys, provided_keys, blocked_uploads, hint message
+        """
         blocked: set[str] = set()
         missing_by_upload: dict[str, tuple[str, ...]] = {}
         required: set[str] = set()
@@ -290,8 +357,9 @@ class IdentifierGuardrail:
         for upload_id in upload_ids:
             required_keys = self._required_keys_for_upload(upload_id)
             if not required_keys:
-                continue
+                continue  # No requirements for this upload
             required.update(required_keys)
+            # Check match policy: "and" requires all, "or" requires any
             if self.match_policy == "and":
                 missing = required_keys.difference(provided)
                 if missing:
@@ -299,6 +367,7 @@ class IdentifierGuardrail:
                     missing_by_upload[upload_id] = tuple(sorted(required_keys))
                     continue
             elif required_keys.isdisjoint(provided):
+                # "or" policy: if no overlap, block
                 blocked.add(upload_id)
                 missing_by_upload[upload_id] = tuple(sorted(required_keys))
         if blocked:

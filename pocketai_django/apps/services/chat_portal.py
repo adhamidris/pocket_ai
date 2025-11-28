@@ -78,7 +78,20 @@ DEFAULT_SESSION_TTL = timedelta(hours=4)
 
 
 class ChatPortalService:
-    """High-level orchestration for public chat portal lifecycle."""
+    """
+    High-level orchestration for public chat portal lifecycle.
+    
+    Responsibilities:
+        - Session management (bootstrap, resume, expiry)
+        - Message persistence (customer + AI messages)
+        - Identifier extraction from customer messages
+        - CSAT and feedback recording
+        - Extraction storage for downstream analytics
+        
+    Thread safety:
+        Methods are designed to be called from multiple threads (e.g., stream_send
+        worker threads). Uses Django transactions for atomicity.
+    """
 
     def __init__(self, *, session_ttl: timedelta | None = None) -> None:
         self.session_ttl = session_ttl or DEFAULT_SESSION_TTL
@@ -87,6 +100,22 @@ class ChatPortalService:
     # Public API
 
     def resolve_handle(self, business_slug: str, agent_slug: str) -> tuple[BusinessProfile, AgentProfile]:
+        """
+        Resolve friendly URL slugs to business + agent entities.
+        
+        Used by the portal widget to validate the chat URL before bootstrapping.
+        Matches step 1.1 in docs/llm_conversation_backend_flow.md.
+        
+        Args:
+            business_slug: URL-friendly business identifier (e.g., "my-store")
+            agent_slug: URL-friendly agent identifier (e.g., "pocket-agent")
+            
+        Returns:
+            Tuple of (BusinessProfile, AgentProfile) for the matched entities.
+            
+        Raises:
+            PortalNotFoundError: If business or agent not found, or agent slug mismatch.
+        """
         business = self._get_business_by_slug(business_slug)
         try:
             agent = business.agent_profile
@@ -109,6 +138,29 @@ class ChatPortalService:
         existing_session_token: str | None = None,
         metadata: dict | None = None,
     ) -> PortalSessionBootstrap:
+        """
+        Create or resume a portal session (step 1.2 in flow doc).
+        
+        Flow:
+            1. Resolve business/agent from slugs
+            2. Reuse existing conversation if session_token is valid and active
+            3. Otherwise create new conversation with welcome message
+            4. Return session snapshot + message history for widget initialization
+            
+        Why session tokens:
+            - Allows widget refresh without losing conversation state
+            - TTL-based expiry (default 4 hours) prevents stale sessions
+            - Token is opaque to client (security through obscurity)
+            
+        Args:
+            business_slug: URL-friendly business identifier
+            agent_slug: URL-friendly agent identifier
+            existing_session_token: Optional token from previous bootstrap (for resume)
+            metadata: Optional per-session metadata (identifier hints, etc.)
+            
+        Returns:
+            PortalSessionBootstrap with business/agent/session + message history
+        """
         business, agent = self.resolve_handle(business_slug, agent_slug)
         conversation = self._get_or_create_conversation(
             business=business,
@@ -132,6 +184,31 @@ class ChatPortalService:
         body: str,
         metadata: dict | None = None,
     ) -> PortalMessage:
+        """
+        Persist a message (customer or AI) to the conversation.
+        
+        Used by:
+            - stream_send: Persists customer message before LLM turn (step 2.2 in flow doc)
+            - finalize_stream_context: Persists AI message after streaming completes
+            
+        Side effects:
+            - Extracts identifiers (email, phone, IDs) from customer messages
+            - Updates conversation timestamps and status
+            - Locks first identifier found (prevents cross-customer data leakage)
+            
+        Args:
+            session_token: Active session token
+            sender: CUSTOMER or AI
+            body: Message text (trimmed before storage)
+            metadata: Optional message metadata (citations, actions, diagnostics)
+            
+        Returns:
+            Serialized PortalMessage with id, sender, body, sent_at, metadata
+            
+        Raises:
+            PortalNotFoundError: If session_token is invalid or conversation inactive
+            PortalValidationError: If body is empty
+        """
         conversation = self._get_active_conversation_by_token(session_token)
         if not body.strip():
             raise PortalValidationError("Message body cannot be empty")
@@ -144,6 +221,7 @@ class ChatPortalService:
                 metadata=metadata,
             )
             metadata_updated = False
+            # Extract identifiers from customer messages for knowledge gating
             if sender == ConversationSender.CUSTOMER:
                 metadata_updated = self._capture_customer_identifiers(
                     conversation=conversation,
@@ -242,6 +320,22 @@ class ChatPortalService:
         session_token: str,
         items: Iterable[tuple[ConversationExtractionType, dict]],
     ) -> Sequence[ConversationExtraction]:
+        """
+        Store structured entity extractions from the planner pass.
+        
+        Used by finalize_stream_context after planner completes (step 5.3 in flow doc).
+        Extractions are used for:
+            - Analytics (what entities were mentioned in conversations)
+            - Downstream workflows (CRM integration, reporting)
+            - Training data (improve entity recognition)
+            
+        Args:
+            session_token: Active session token
+            items: Iterable of (extraction_type, payload) tuples from planner
+            
+        Returns:
+            Sequence of created ConversationExtraction records
+        """
         conversation = self._get_active_conversation_by_token(session_token)
         created: list[ConversationExtraction] = []
         with transaction.atomic():
@@ -259,6 +353,26 @@ class ChatPortalService:
     # Internal helpers
 
     def _get_business_by_slug(self, slug_value: str) -> BusinessProfile:
+        """
+        Resolve business by URL-friendly slug.
+        
+        Used by resolve_handle to map portal URLs (e.g., /chat/my-store/agent)
+        to BusinessProfile entities. Normalizes slug for case-insensitive matching.
+        
+        Why slug normalization:
+            - Slugs may have inconsistent casing from URL encoding
+            - Django slugify ensures consistent format
+            - Case-insensitive matching handles variations
+        
+        Args:
+            slug_value: URL-friendly business identifier (e.g., "my-store")
+            
+        Returns:
+            BusinessProfile with matching slug
+            
+        Raises:
+            PortalNotFoundError: If slug is empty or business not found
+        """
         if not slug_value:
             raise PortalNotFoundError("Business handle is required")
         normalized = slugify(slug_value)
@@ -272,6 +386,28 @@ class ChatPortalService:
         return business
 
     def _get_active_conversation_by_token(self, session_token: str) -> Conversation:
+        """
+        Load active conversation by session token with eager loading.
+        
+        Used by bootstrap_session and get_conversation to resume existing
+        sessions. Eagerly loads related objects (business, agent, case, messages)
+        to avoid N+1 queries.
+        
+        Why eager loading:
+            - Conversation is accessed frequently (every message)
+            - Related objects (business, agent) are always needed
+            - Messages are needed for transcript assembly
+            - Prefetch reduces database round-trips
+        
+        Args:
+            session_token: Opaque session identifier from portal client
+            
+        Returns:
+            Active Conversation with related objects loaded
+            
+        Raises:
+            PortalNotFoundError: If token is empty, conversation not found, or conversation is inactive
+        """
         if not session_token:
             raise PortalNotFoundError("Session token is required")
         conversation = (
@@ -394,6 +530,19 @@ class ChatPortalService:
     def _capture_customer_identifiers(self, *, conversation, body: str, message_metadata: dict | None) -> bool:
         """
         Extract lightweight identifiers (email/phone/id) from the message and merge into conversation metadata.
+        
+        Why identifier extraction:
+            - Enables knowledge gating (restrict search/read to customer's own data)
+            - Supports identifier-based routing (e.g., "check my account")
+            - First identifier found becomes "locked" (prevents cross-customer leakage)
+            
+        Patterns detected:
+            - Email addresses (regex)
+            - Phone numbers (10-15 digits, flexible formatting)
+            - Labeled IDs (ticket/case/order/customer/account/user IDs)
+            
+        Returns:
+            True if conversation metadata was updated, False otherwise
         """
 
         convo_meta = conversation.metadata if isinstance(getattr(conversation, "metadata", None), dict) else {}
@@ -455,6 +604,12 @@ class ChatPortalService:
 
         updated_meta = dict(convo_meta)
         updated_meta["customer_identifiers"] = identifiers
+        # Lock the first identifier found to prevent cross-customer data leakage
+        # Why locking:
+        #   - Once we identify a customer (e.g., email), all subsequent searches
+        #     must be scoped to that customer's data only
+        #   - Prevents showing other customers' account statements, tickets, etc.
+        #   - Lock persists for the conversation lifetime
         if not locked_identifier and captured_new:
             lock_key, lock_value = captured_new[0]
             updated_meta["locked_identifier"] = {

@@ -51,14 +51,18 @@ logger = logging.getLogger(__name__)
 
 class McpOrchestratorService:
     """
-    Placeholder MCP orchestrator.
+    MCP-based orchestrator implementing the flow described in docs/llm_conversation_backend_flow.md.
 
-    This class mirrors the public API of AiOrchestratorService so the chat
-    portal can swap between implementations via a feature flag. Real behavior
-    will be implemented in later phases of the migration plan.
+    Responsibilities:
+    - Build transcripts/prompts for MCP tool-enabled providers.
+    - Run the tool loop (search/read/aggregate/actions) with streaming.
+    - Stream final answers and construct StreamingTurnContext for the portal.
+    - Run planner-only pass to derive actions/extractions after streaming.
+    Mirrors AiOrchestratorService API so stream_send can switch modes via feature flag.
     """
 
     def __init__(self, *, agent: AgentProfile, provider: BaseMcpProvider | None) -> None:
+        """Store agent/provider and initialize per-business budgets/bounds."""
         self.agent = agent
         self.provider = provider
         self.tool_definitions = tools.TOOL_DEFINITIONS
@@ -94,10 +98,27 @@ class McpOrchestratorService:
         on_placeholder_response: Callable[[str], None] | None = None,
     ) -> dict[str, object]:
         """
-        Build the orchestration plan for the latest customer message.
+        Execute one MCP turn (tool loop + final answer).
 
-        Splits the turn into an internal tool loop (no user-facing streaming)
-        followed by a final answer pass that streams only customer-facing text.
+        Implements the core orchestration flow from docs/llm_conversation_backend_flow.md:
+            - Phase 1: Streaming tool-enabled call (may emit tool_calls)
+            - Phase 2: Tool loop (search/read/aggregate) if tool_calls present
+            - Phase 3: Final answer streaming pass
+        
+        Single-pass optimization:
+            If the first streaming call has no tool_calls, we skip the tool loop
+            and return the streamed answer directly (faster for simple queries).
+
+        Args:
+            conversation: Active conversation entity.
+            user_message: Latest customer message text.
+            on_response_text_delta: Streams answer tokens to caller (portal SSE).
+            on_status_change: Pushes status codes (searching/reading/responding) for UX.
+            on_placeholder_response: Provider placeholder hook (suppressed by portal).
+
+        Returns:
+            dict containing assistant_message, tool_context, streamed_chunks,
+            clean_answer_text, dropped_sentences, and llm_strategy metadata.
         """
 
         messages = prompts.build_messages(conversation=conversation, user_message=user_message)
@@ -228,6 +249,11 @@ class McpOrchestratorService:
         # fall back to the full tool loop + final-answer path. If no tool_calls
         # and we have content, we can keep this streamed text and skip the
         # second content call.
+        #
+        # Why sentence-by-sentence processing:
+        #   - Filters "investigative filler" (e.g., "Let me check that for you...")
+        #   - Streams complete sentences for better UX (not mid-word)
+        #   - Accumulates dropped sentences for diagnostics
         def _first_stream_chunk(chunk: str) -> None:
             nonlocal stream_buffer
             if not chunk:
@@ -286,9 +312,14 @@ class McpOrchestratorService:
             # Defer appending until we process the tool call in the loop.
             pending_assistant = first_stream_message
             # We don't want to surface the streamed text from the tool-call turn.
+            # Why clear:
+            #   - Tool-call turns often emit placeholder text ("Let me search...")
+            #   - We'll get the real answer after tools execute
+            #   - Prevents showing filler to the user
             answer_streamed_chunks.clear()
         else:
             # No tools; keep streamed assistant content in transcript.
+            # Single-pass path: answer is ready, no tool loop needed.
             transcript.append(
                 {
                     "role": "assistant",
@@ -310,11 +341,16 @@ class McpOrchestratorService:
             )
             pending_assistant = None
 
+            # Tool loop: execute tools iteratively until model stops requesting more
+            # Why iteration limit:
+            #   - Prevents infinite loops if model keeps requesting tools
+            #   - Default 10 iterations is usually enough for complex queries
+            #   - Each iteration can include multiple tool calls (parallel execution)
             for _ in range(self.max_tool_iterations):
                 # Execute each tool_call and append tool results.
                 current_tool_calls = list(assistant_message.get("tool_calls") or [])
                 if not current_tool_calls:
-                    break
+                    break  # Model is done with tools, proceed to final answer
                 for tool_call in current_tool_calls:
                     tool_name = self._tool_name(tool_call)
                     arguments = self._tool_arguments(tool_call)
@@ -338,6 +374,11 @@ class McpOrchestratorService:
                             on_placeholder_response(placeholder_text)
                             placeholder_sent = True
 
+                    # Short-circuit duplicate searches to avoid redundant DB/vector calls
+                    # Why:
+                    #   - Model may call search_knowledge multiple times with same query
+                    #   - We cache results in tool_context.search_history
+                    #   - Reuse cached results if query + read_required match
                     duplicate_result = None
                     if tool_name == "search_knowledge":
                         duplicate_result = self._short_circuit_duplicate_search(
@@ -415,14 +456,21 @@ class McpOrchestratorService:
                     )
 
                 # Ask the model again with tools enabled to see if more tool_calls are needed.
+                # Why iterative:
+                #   - Model may need multiple rounds (search → read → aggregate)
+                #   - Each round adds tool results to transcript
+                #   - Model decides when it has enough context to answer
                 payload = self.provider.chat(
                     transcript,
                     tools=self.tool_definitions,
-                    on_stream_delta=None,
+                    on_stream_delta=None,  # Non-streaming in tool loop (faster, less token cost)
                 )
                 assistant_message = self._coerce_assistant_message(payload)
                 next_tool_calls = list(assistant_message.get("tool_calls") or [])
                 # Append the assistant turn (empty content if tools present).
+                # Why empty content during tool calls:
+                #   - Prevents model from emitting filler ("Let me check...")
+                #   - Content is only added when model is ready to answer
                 transcript.append(
                     {
                         "role": "assistant",
@@ -431,6 +479,7 @@ class McpOrchestratorService:
                     }
                 )
                 if not next_tool_calls:
+                    # No more tools needed; model is ready to answer
                     tool_phase_assistant_message = assistant_message
                     raw_content = assistant_message.get("content")
                     if isinstance(raw_content, str) and raw_content.strip():
@@ -531,6 +580,10 @@ class McpOrchestratorService:
                 break
 
         # If identifier gating blocked retrieval and nothing was read, respond deterministically.
+        # Why early return:
+        #   - User needs to provide identifier (email, customer ID) before we can search/read
+        #   - Don't waste tokens asking the model to answer without context
+        #   - Return a clear message asking for the required identifier
         identifier_filters = getattr(tool_context, "identifier_filters", []) or []
         identifier_blocks = [f for f in identifier_filters if isinstance(f, Mapping) and f.get("status") == "identifier_required"]
         if identifier_blocks and not getattr(tool_context, "knowledge_reads", []):
@@ -650,9 +703,14 @@ class McpOrchestratorService:
                 table_results_present = True
             if unmet_read_required and table_results_present:
                 break
+        # Enforce read-before-answer for table/identifier hits
+        # Why:
+        #   - Search may return table snippets that need full page context
+        #   - Identifier queries need precise page reads (not summaries)
+        #   - Prevents model from guessing when it should read first
         no_reads = not getattr(tool_context, "knowledge_reads", [])
         if no_reads and (unmet_read_required or table_results_present):
-            # Enforce read-before-answer for table/identifier hits
+            # Model should have called read_document but didn't; return empty to force retry
             final_assistant_message = {
                 "role": "assistant",
                 "content": "",
@@ -727,6 +785,12 @@ class McpOrchestratorService:
         on_placeholder_response: Callable[[str], None] | None = None,
         on_stream_complete: Callable[[], None] | None = None,
     ) -> StreamingTurnContext:
+        """
+        Public entry for streaming path used by chat_portal.stream_send.
+
+        Wraps _execute_turn output into StreamingTurnContext, attaches tool
+        diagnostics, and triggers on_stream_complete when ready.
+        """
         result = self._execute_turn(
             conversation=conversation,
             user_message=user_message,
@@ -808,6 +872,7 @@ class McpOrchestratorService:
         )
 
     def finalize_turn(self, context: StreamingTurnContext) -> AiOrchestratorPlan:
+        """Fallback plan builder when planner is unavailable (legacy parity)."""
         return context.plan or AiOrchestratorPlan(
             response_text=context.response_text,
             citations=tuple(context.resolved_citations),
@@ -845,6 +910,28 @@ class McpOrchestratorService:
         tool_context: ToolExecutionContext,
         sanitized_dropped: Iterable[str] | None = None,
     ) -> AiOrchestratorPlan:
+        """
+        Build final plan from planner LLM response.
+        
+        Called by _run_planner after planner pass completes. Extracts structured
+        data (response_text, actions, extractions) from planner JSON response
+        and assembles diagnostics from tool context.
+        
+        Why separate plan builder:
+            - Planner response is structured JSON (not streaming)
+            - Needs to extract actions/extractions from nested structure
+            - Combines planner output with tool context diagnostics
+            - Sanitization diagnostics are merged into plan
+            
+        Args:
+            conversation: Active conversation (for identifier context)
+            assistant_message: Planner LLM response (JSON with response_text/actions/extractions)
+            tool_context: Tool execution context (for diagnostics, coverage, identifier gates)
+            sanitized_dropped: List of sentences dropped during sanitization
+            
+        Returns:
+            AiOrchestratorPlan with final answer, actions, extractions, and diagnostics
+        """
         response_text = str(assistant_message.get("content") or "").strip()
         planned_actions = self._extract_planned_actions(conversation, assistant_message)
         extractions = self._extract_extractions(assistant_message)
@@ -891,6 +978,25 @@ class McpOrchestratorService:
         conversation: Conversation,
         assistant_message: Mapping[str, object],
     ) -> tuple[PlannedAction, ...]:
+        """
+        Extract planned actions from planner LLM response.
+        
+        Planner returns actions as JSON array with action type and payload.
+        This method validates action types (must be valid ActionType enum)
+        and normalizes payloads to dicts.
+        
+        Why validation:
+            - Planner may hallucinate invalid action types
+            - Invalid actions are silently skipped (graceful degradation)
+            - Only valid ActionType enums are passed to ActionDispatcher
+            
+        Args:
+            conversation: Active conversation (for context, currently unused)
+            assistant_message: Planner response with "actions" array
+            
+        Returns:
+            Tuple of PlannedAction objects (empty if no valid actions found)
+        """
         actions_payload = assistant_message.get("actions") or []
         planned: list[PlannedAction] = []
         for item in actions_payload:
@@ -903,11 +1009,30 @@ class McpOrchestratorService:
             try:
                 action_type = ActionType(action_name)
             except Exception:
+                # Skip invalid action types (planner may hallucinate)
                 continue
             planned.append(PlannedAction(action=action_type, payload=dict(payload)))
         return tuple(planned)
 
     def _extract_extractions(self, assistant_message: Mapping[str, object]) -> tuple[ExtractionPlan, ...]:
+        """
+        Extract structured extractions from planner LLM response.
+        
+        Planner returns extractions as JSON array with extraction type and payload.
+        Extractions are entities discovered in conversation (customer IDs, products,
+        appointments, leads, complaints) that are stored for analytics.
+        
+        Why validation:
+            - Planner may hallucinate invalid extraction types
+            - Invalid extractions are silently skipped (graceful degradation)
+            - Only valid ConversationExtractionType enums are stored
+            
+        Args:
+            assistant_message: Planner response with "extractions" array
+            
+        Returns:
+            Tuple of ExtractionPlan objects (empty if no valid extractions found)
+        """
         extraction_payload = assistant_message.get("extractions") or []
         extractions: list[ExtractionPlan] = []
         for item in extraction_payload:
@@ -918,13 +1043,33 @@ class McpOrchestratorService:
             try:
                 extraction_enum = ConversationExtractionType(extraction_type)
             except Exception:
+                # Skip invalid extraction types (planner may hallucinate)
                 continue
             extractions.append(ExtractionPlan(extraction_type=extraction_enum, payload=dict(payload)))
         return tuple(extractions)
 
     def _build_citations(self, tool_context: ToolExecutionContext) -> tuple[KnowledgeSnippet, ...]:
+        """
+        Build citation list from tool context knowledge results.
+        
+        Converts tool context knowledge_results (dicts) into KnowledgeSnippet
+        objects for plan citations. Filters out suppressed entries (internal-only
+        snippets that shouldn't be shown to users).
+        
+        Why citations:
+            - Citations track which knowledge snippets were used in the answer
+            - Used for attribution, analytics, and debugging
+            - Suppressed snippets (e.g., cached table rows) are excluded
+            
+        Args:
+            tool_context: Tool execution context with knowledge_results
+            
+        Returns:
+            Tuple of KnowledgeSnippet objects (empty if no results or all suppressed)
+        """
         citations: list[KnowledgeSnippet] = []
         for entry in getattr(tool_context, "knowledge_results", []):
+            # Skip suppressed entries (internal-only, not user-facing)
             if entry.get("suppress_in_prompt"):
                 continue
             try:
@@ -1036,6 +1181,27 @@ class McpOrchestratorService:
     ) -> AiOrchestratorPlan | None:
         """
         Run planner-only pass using the already streamed answer and tool context.
+
+        Called by finalize_stream_context after streaming completes (step 5.1 in flow doc).
+        This is a second, non-streaming LLM call that:
+            - Analyzes the streamed answer + tool context
+            - Proposes structured actions (create_case, update_customer, etc.)
+            - Extracts entities (customer IDs, product names, etc.)
+        
+        Why separate pass:
+            - Streaming focuses on answer quality (user sees it immediately)
+            - Planner focuses on backend intents (actions/extractions)
+            - Separating concerns keeps streaming fast and planner thorough
+
+        Args:
+            conversation: Conversation for context/identifiers.
+            user_message: Latest customer text (for planner transcript).
+            answer_text: Streamed answer text to anchor planner.
+            tool_context: Knowledge/tool diagnostics to include in planner note.
+            on_status_change: Optional hook to surface planning status.
+
+        Returns:
+            AiOrchestratorPlan or None if provider is not configured/failed.
         """
         if not self.provider:
             return None
@@ -1264,6 +1430,17 @@ class McpOrchestratorService:
         context: ToolExecutionContext,
         conversation: Conversation,
     ) -> Mapping[str, object] | None:
+        """
+        Check if this search query was already executed in this turn.
+        
+        Why short-circuit:
+            - Model may call search_knowledge multiple times with same/similar query
+            - Avoids redundant DB/vector index hits (cost + latency)
+            - Reuses cached results from search_history
+            
+        Returns:
+            Cached tool result dict if duplicate found, None otherwise.
+        """
         history = getattr(context, "search_history", None) or []
         if not history:
             return None
@@ -1274,8 +1451,10 @@ class McpOrchestratorService:
         normalized = query.lower()
         if not normalized:
             return None
+        # Only short-circuit if no reads happened yet (reads may change context)
         if getattr(context, "knowledge_reads", None):
             return None
+        # Check most recent searches first (likely to match)
         for entry in reversed(history):
             if entry.get("query") != normalized:
                 continue

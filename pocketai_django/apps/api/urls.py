@@ -1,3 +1,28 @@
+"""
+Django URL routing for API endpoints.
+
+This module defines all API routes, including the public chat portal endpoints.
+Routes are organized by feature area (chat portal, knowledge, cases, etc.).
+
+Portal Chat Routes (aligned with docs/llm_conversation_backend_flow.md):
+    - resolve_portal_handle: Step 1.1 - Resolve business/agent slugs
+    - bootstrap_session: Step 1.2 - Create/resume conversation
+    - stream_send: Step 2 - Main streaming LLM entry point
+    - messages_endpoint: Non-streaming message fetch/append (legacy/reload)
+    - events: Step 6 - Heartbeat/status SSE stream
+    - submit_csat: Customer satisfaction feedback
+    - submit_feedback: General feedback submission
+
+URL Parameter Patterns:
+    - <slug:...>: URL-friendly identifiers (business_slug, agent_slug)
+    - <uuid:...>: Database UUIDs (conversation_id, message_id, etc.)
+    
+Route Naming:
+    - Uses kebab-case for URLs (chat-portal-resolve)
+    - Uses snake_case for view names (chat_portal_resolve)
+    - Matches Django conventions for consistency
+"""
+
 from django.urls import path
 
 from . import views
@@ -34,11 +59,18 @@ urlpatterns = [
         views.finalize_uploads,
         name="register-uploads",
     ),
+    # Portal chat routes (public-facing, no authentication required)
+    # Step 1.1: Resolve business/agent slugs to entities
     path("chat/portal/resolve/<slug:business_slug>/<slug:agent_slug>/", resolve_portal_handle, name="chat-portal-resolve"),
+    # Step 1.2: Bootstrap session (create/resume conversation)
     path("chat/portal/sessions/", bootstrap_session, name="chat-portal-session"),
+    # Non-streaming message endpoint (for reload/legacy support)
     path("chat/messages/", messages_endpoint, name="chat-messages"),
+    # Step 2: Main streaming LLM entry point (SSE stream)
     path("chat/stream/send/", stream_send, name="chat-stream-send"),
+    # Step 6: Heartbeat/status SSE stream (separate from stream_send)
     path("chat/events/", events, name="chat-events"),
+    # Customer satisfaction and feedback
     path("chat/csat/", submit_csat, name="chat-csat"),
     path("chat/feedback/", submit_feedback, name="chat-feedback"),
     path("knowledge/documents/", views.knowledge_documents_collection, name="knowledge-documents-list"),

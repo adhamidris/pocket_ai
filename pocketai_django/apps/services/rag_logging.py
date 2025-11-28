@@ -54,6 +54,12 @@ def structured_log(
     level: int = logging.INFO,
     logger_obj: logging.Logger | None = None,
 ) -> None:
+    """
+    Emit human-readable structured logs used across RAG, MCP, and LLM namespaces.
+
+    Mirrors the portal flow docs: stages (search/read/aggregate) and context
+    (conversation/business) are baked into the header for quick grepability.
+    """
     timestamp = _timestamp()
     header_parts: list[str] = [f"[{timestamp}]", f"stage={stage}"]
     if context:
