@@ -240,7 +240,7 @@ class OpenAIChatProvider:
         model: str | None = None,
         base_url: str | None = None,
         timeout: float = 60.0,
-        temperature: float = 0.3,
+        temperature: float = 0.25,
         top_p: float = 0.9,
     ) -> None:
         self.api_key = api_key or os.getenv("OPENAI_API_KEY")
@@ -432,7 +432,7 @@ class DeepSeekChatProvider(OpenAIChatProvider):
         model: str | None = None,
         base_url: str | None = None,
         timeout: float = 60.0,
-        temperature: float = 0.3,
+        temperature: float = 0.25,
         top_p: float = 0.9,
     ) -> None:
         key = api_key or os.getenv("DEEPSEEK_API_KEY")

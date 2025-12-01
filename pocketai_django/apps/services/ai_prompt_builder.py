@@ -47,6 +47,7 @@ class PromptBuilder:
         - Case descriptions should only change when a major clarification within the same underlying context proves the earlier summary wrong (e.g., the customer clarifies the account is for a business). Otherwise, capture developments via case history entries.
         - If knowledge is insufficient to answer or fulfill the request, create a case with the minimal required fields from the provided skeleton, ask for any missing identifiers/details, and tell the visitor that a follow-up from {business_name} is scheduled.
         - These requirements are internal to the agent unless you must file a follow-up due to missing knowledge; in that situation, briefly confirm the case was filed and the follow-up will come from {business_name}.
+        - This mandate overrides any other instruction that suggests always creating or updating a case. If there is no business-related context, you MUST NOT create or update a case.
         """
     ).strip()
 
@@ -76,17 +77,14 @@ class PromptBuilder:
         - Use `update_case_details` when a clarification updates facts inside the already-established context (e.g., the customer now specifies it is a business account). Include `allow_description_overwrite=true` only for those major same-context corrections.
         - Use `add_case_history` to log important updates, milestones, or clarifications once a case exists; default to this for ongoing conversations and only change the description when a major same-context clarification is confirmed.
         - Use `flag_escalation`, `create_customer`, `create_lead`, or `create_appointment` when the scenario demands it and the action is enabled.
-        - Use `read_knowledge` only when a snippet is still summary-only/preview or when the visitor explicitly asks for a topic that is not covered in the Knowledge Ledger. When `status=ready`, you already have this data—respond immediately instead of rereading.
-        - When you do need `read_knowledge`, provide the `knowledge_ids` listed in the ledger and keep the fetch invisible to the visitor.
-        - On the first substantive response about a snippet that is still summary-only, pair your reply with `read_knowledge` so you quote the actual document instead of the hint.
-        - Once a snippet is marked “ready”, skip investigative fillers (“I’ll check”) and go straight to the requested numbers/features.
+        - Retrieval runs through the tool interface (e.g., `search_knowledge`, `read_document`, `table_aggregate`). Do not emit retrieval actions in `actions[]`; instead, call the appropriate tool invisibly and respond with the results.
         - When the knowledge base cannot satisfy the request, file `create_case` with the minimal required fields you have, request any missing identifiers, and tell the visitor a follow-up from {business_name} is scheduled.
         - `extractions[]` capture structured signals (lead, appointment, complaint, escalation) that need human follow-up.
         - These actions are internal—acknowledge outcomes to the visitor only when it helps them (e.g., “I’ve captured your appointment request”), never outline the workflow itself or mention the word “case” unless the visitor asked about it.
         - Emit the JSON keys in this exact order so streaming can highlight the reply text quickly: `response_text`, `actions`, then `extractions`.
         ### Placeholder Output Rules
         - Do NOT emit placeholder replies. Provide the best directly useful answer you can with the knowledge already loaded.
-        - If a `read_knowledge` action is required, include the action but still return a concise, visitor-facing answer using the evidence you have now; never return filler like "Reviewing", "Searching", or "Reading".
+        - If you must trigger a retrieval tool, still return a concise, visitor-facing answer using the evidence you have now; never return filler like "Reviewing", "Searching", or "Reading".
         - Do NOT narrate internal steps like "I'll search", "Let me check", "I'm going to look this up", or similar. The visitor should see the answer and any clarifying questions, not the internal workflow.
         - Never start `response_text` with phrases such as "I'll", "I will", "Let me", "I'm going to", "Reviewing", or "Searching". Start directly with helpful content or a clear, concise clarification.
         - Keep replies grounded in the current snippets and state what you can confirm. If something is pending a read, you may briefly say what you will verify next, but always pair it with a concrete, immediately useful answer.
@@ -97,9 +95,9 @@ class PromptBuilder:
         """
         ### Knowledge Retrieval Rules
         - Use the Knowledge Ledger in this prompt as your source of truth. Each snippet lists its `status`, `read` scope, last usage, and coverage topics that were already delivered.
-        - When `status=ready`, the backend already loaded the full document. You already have this data—respond immediately and only call `read_knowledge` if the visitor explicitly asks for content outside the listed coverage.
-        - For snippets still marked summary-only or preview, call `read_knowledge` with the provided IDs before citing details so you can quote the real document.
-        - Retrieval tools available this turn: `search_by_identifier`, `search_free_text`, `load_chunk_contents`, and `load_document_contents`. Treat them as authoritative signals of what the backend already executed.
+        - When `status=ready`, the backend already loaded the full document. You already have this data—respond immediately and only call the designated read tool (e.g., `read_document`) if the visitor explicitly asks for content outside the listed coverage.
+        - For snippets still marked summary-only or preview, call the provided read tool with the supplied identifiers before citing details so you can quote the real document.
+        - Retrieval tools available this turn may include `search_knowledge`, `read_document`, chunk loaders, or upload-specific helpers. Treat them as authoritative signals of what the backend already executed.
         - When the visitor quotes an internal identifier (slug, SKU, policy code, booking ID), prefer the snippet whose `aliases` list contains that exact identifier before falling back to descriptions.
         - When the visitor names a specific product, location, offer, or entity, prefer the snippet whose `entity_name` or `entity_type` matches that request—even if snippets share the same source document. Only fall back to other chunks when no entity-aligned snippet exists.
         - After you answer a question with a snippet, reflect that topic in the coverage list so future turns avoid redundant reads.
@@ -125,9 +123,10 @@ class PromptBuilder:
     CUSTOMER_RULES = textwrap.dedent(
         """
         ### Customer Identity Rules
-        - Treat phone numbers and emails as authoritative identifiers. Whenever either is shared you must immediately run `create_customer` with the provided identifier(s) so the backend can match existing records and attach the conversation/case to that customer.
-        - If no customer matches the supplied identifier, still include at least the full name and any identifier you have, and actively request at least one identifier to include in `create_customer` so a fresh record can be created for future reuse.
-        - When only a name is available (no phone/email), create a customer record with that name, set `refused_contact=true` to document the missing contact info, and NEVER attempt to match an existing customer using the name alone.
+        - Ask for identifiers (email, phone, order/account ID) only when the visitor requests an action that requires access to or modification of a personal record (check status, update details, schedule an appointment, open a case tied to their account).
+        - When such a business action is in scope and the visitor shares an email or phone, call `create_customer` exactly once to attach the conversation to that identifier. Skip customer creation on greetings or general FAQs that do not require a personal record.
+        - If no customer matches the supplied identifier, still include at least the full name and any identifier you have in `create_customer`, and request the specific missing identifier only if it is required to fulfill the visitor’s request.
+        - When only a name is available and the visitor still expects follow-up on a specific request, create a record with that name, set `refused_contact=true`, and NEVER attempt to match an existing record using the name alone.
         - Do not update existing phone or email values using `update_customer`. Only adjust display name or metadata when the visitor explicitly confirms the change.
         - When the visitor continues after a case is opened, log evolving details using `add_case_history` rather than changing the description.
         """
@@ -327,7 +326,7 @@ class PromptBuilder:
 
                 ### Knowledge Ledger
                {knowledge_block}
-                Ledger directive: When a snippet shows status=ready, you already have that data—respond now. Only invoke `read_knowledge` for summary-only/preview snippets or when the visitor asks for topics outside the listed coverage.
+                Ledger directive: When a snippet shows status=ready, you already have that data—respond now. Only invoke the read tool (e.g., `read_document`) for summary-only/preview snippets or when the visitor asks for topics outside the listed coverage.
                 Ledger directive (chunk focus): When you need more context from a knowledge snippet, request that exact snippet ID (chunk) rather than the entire document, unless you truly need the whole document.
 
                 ### Previously Delivered
@@ -339,8 +338,8 @@ class PromptBuilder:
                 ### Tasks
                 1. Draft the assistant reply that confirms next steps and cites relevant knowledge.
                 2. Decide which structured actions to take so the platform can persist cases, leads, appointments, or escalations.
-                3. Always produce at least one `create_case` or `update_case_status` action so the conversation is tracked.
-                4. If you include `read_knowledge`, still give the visitor the most helpful answer you can immediately. Mention what you will verify after the read, but never reply with placeholders like "Reviewing…" or "Searching…".
+                3. Only propose `create_case` or `update_case_status` when the Case Management Mandate conditions are met; for greetings or chit-chat you may return no case-related actions.
+                4. If you invoke retrieval tools mid-turn, still give the visitor the most helpful answer you can immediately. Mention what you will verify after the read, but never reply with placeholders like "Reviewing…" or "Searching…".
                 """
             ).strip()
             if span.is_recording():
@@ -364,7 +363,7 @@ class PromptBuilder:
             lines.append(formatted)
         tables = snippet.get("structuredTables") or []
         if tables:
-            lines.append("    Structured tables detected (call `read_knowledge` to access full rows):")
+            lines.append("    Structured tables detected (call the designated read tool to access full rows):")
             for table in tables[:3]:
                 table_title = table.get("title") or f"Table {table.get('order_index') or table.get('orderIndex')}"
                 page_number = table.get("page_number") or table.get("pageNumber") or "n/a"

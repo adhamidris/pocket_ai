@@ -282,13 +282,16 @@ class McpOrchestratorService:
                     continue
                 break
 
-        self._log_prompt("primary", conversation=conversation, messages=transcript)
+        # Limit the initial payload so the provider only sees the guardrails and
+        # the latest transcript entries needed for intent selection.
+        primary_messages = prompts.limit_messages_for_stage(transcript, stage="initial_pass")
+        self._log_prompt("primary", conversation=conversation, messages=primary_messages)
         with TRACER.start_as_current_span("portal.mcp.initial_pass") as initial_span:
             if initial_span.is_recording():
-                initial_span.set_attribute("mcp.message_count", len(transcript))
+                initial_span.set_attribute("mcp.message_count", len(primary_messages))
                 initial_span.set_attribute("mcp.tools_enabled", True)
             first_payload = self.provider.chat(
-                transcript,
+                primary_messages,
                 tools=self.tool_definitions,
                 on_stream_delta=_first_stream_chunk,
             )
@@ -443,8 +446,10 @@ class McpOrchestratorService:
                         )
 
                     # Ask the model again with tools enabled to see if more tool_calls are needed.
+                    # Trim tool-loop prompts so each call focuses on the newest inputs.
+                    loop_messages = prompts.limit_messages_for_stage(transcript, stage="tool_iteration")
                     payload = self.provider.chat(
-                        transcript,
+                        loop_messages,
                         tools=self.tool_definitions,
                         on_stream_delta=None,
                     )
@@ -461,6 +466,7 @@ class McpOrchestratorService:
                     if iter_span.is_recording():
                         iter_span.set_attribute("mcp.next_tool_calls", len(next_tool_calls))
                         iter_span.set_attribute("mcp.cache_hits", len(getattr(tool_context, "knowledge_results", ())))
+                        iter_span.set_attribute("mcp.message_count", len(loop_messages))
                 if not next_tool_calls:
                     tool_phase_assistant_message = assistant_message
                     raw_content = assistant_message.get("content")

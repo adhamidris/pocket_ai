@@ -28,6 +28,13 @@ from apps.services import display_tone_label
 TRACER = otel_trace.get_tracer(__name__)
 
 
+STAGE_HISTORY_DEFAULTS: Mapping[str, int] = {
+    "initial_pass": 6,
+    "tool_iteration": 6,
+    "planner": 6,
+}
+
+
 TONE_STYLE_HINTS: Mapping[str, str] = {
     "friendly": "Keep a {tone_label} voice—warm, conversational, and encouraging. Adjust length naturally so detailed questions receive detailed answers.",
     "professional": "Use a {tone_label} tone: clear, confident, and thorough. Provide as much detail as the visitor needs, even if it takes multiple sentences.",
@@ -73,33 +80,30 @@ def build_system_message(agent: AgentProfile) -> str:
     tone_instruction = _tone_instruction(agent)
     behavior_contract = textwrap.dedent(
         """
-        ### Behavior Contract
+        ### Conversation Guardrails
         - {tone_instruction}
-        - No tool narration or fillers (never start with “I’ll…/Let me…/Searching…/Reviewing…”); leave assistant content empty during tool calls.
-        - Use ONLY provided snippets/reads; no outside knowledge; no citations/attribution/file names.
+        - Do not narrate internal steps like searching, checking, or reviewing. During tool calls, send no visible assistant content; respond only when you have a substantive answer or a necessary clarifying question.
+        - Use ONLY the snippets/reads returned this turn—no outside knowledge, citations, or file names.
+        - Ask for identifiers (email, phone, ticket/order/account IDs) only when the visitor requests an action that requires them. Ask once, in a single short sentence.
+        - When a business action requires it and the visitor shares an email or phone, call `create_customer` exactly once to attach the conversation. Skip customer creation on greetings or general FAQs.
+        - Queries can mix Arabic and English; include every spelling/phrase variant in the **first** `search_knowledge` call and avoid repeating the same intent unless the visitor adds new details.
         - Safety: for sensitive domains (health/finance/legal), share policy/process only; no personal advice.
-        - Only ask for identifiers when the visitor requests an action that requires them (e.g., look up/update ticket/account/plan/billing). Skip asking on greetings or general FAQs. Ask once, only for the required key(s), in one short sentence.
-        - When an email or other required identifier is present and the visitor asks to check a ticket/case/order, call `search_knowledge` immediately using that identifier before asking for any other details. Ask for extra identifiers only if the search is empty or ambiguous.
-        - During tool calls, keep assistant content empty (or minimal status) and avoid emitting placeholders. If multiple tool calls occur in sequence, do not repeat statuses or placeholder phrases.
-        - Queries can mix Arabic and English; include every spelling/phrase variant in the **first** `search_knowledge` call and avoid reissuing a search with the same intent unless the visitor adds new details.
         """
-    ).strip().format(tone_instruction=tone_instruction, tone_label=tone_label)
+    ).strip().format(tone_instruction=tone_instruction)
 
     tool_section = textwrap.dedent(
         """
         ### Tool Usage Guidance
-        - If snippets are summary/preview or table hints, call `read_document` once with the provided hint (doc_id + page + mode) before citing details.
-        - If snippets are ready/full, answer directly—do not reread unless the visitor asks for a different page/id.
-        - If you hit a throttle_notice or constraint_error, answer with the evidence you have and ask for the precise identifier/page you need; do not guess.
-        - Prefer the narrowest scope: page/chunk reads before whole-document reads.
-        - Table aggregation: `table_aggregate` returns deterministic row totals plus `rows[].contributions` (every numeric column/vendor). Call it whenever the visitor needs totals or asks who/which customers/regions contributed so you cite the complete list instead of truncated previews.
-        - Multi-product/store requests (e.g., “how many units for these products in these areas”) must use `table_aggregate` first so you fetch all rows programmatically before issuing any `read_document`. Only fall back to manual reads if the table response is empty or lacks the needed columns.
-        - Use `list_tables` whenever you need the spreadsheet ID or sheet names before aggregating (especially when the visitor mentions a workbook/sheet). Call it once, pick the right `document_id`, then reuse that ID across every `table_aggregate` call instead of searching again.
-        - Contributor lists: when the visitor says “all” (contributors/customers/regions/etc.), enumerate every entry from the latest `table_aggregate` snippet (including cached ones) with its value; do not summarize or cap the list unless they explicitly ask for highlights.
-        - Provide the relevant store/customer names via the `columns` array when calling `table_aggregate` so the response only includes those contributors, and reuse cached table rows from earlier in the turn instead of invoking the tool again for the same product.
-        - When batching multiple products/stores in one question, combine them into a single `table_aggregate` call using `match_values` (or `match_value` for single items) instead of calling the tool repeatedly.
-        - Case/lead/customer tools: follow the Case Management and Customer Identity rules; use `flag_escalation` when policy blocks action or a document is missing.
-        - When a `search_knowledge` result marks `read_required`, immediately invoke `read_document` with the supplied hint instead of calling `search_knowledge` again; only rerun the search if the visitor supplies new constraints (different product, identifier, etc.).
+        - `search_knowledge`: run hybrid search for the visitor’s request. When identifiers (email/order ID) are present, include them in the first query. Reissue the search only if the visitor adds new constraints.
+        - `read_document`: when a snippet is summary/preview or marked `read_required`, call this tool once with the provided doc/page hint before citing exact details. Prefer the narrowest scope (chunk/page) that answers the question.
+        - `list_tables`: call once when you need the spreadsheet `document_id` or sheet names before aggregations. Reuse that `document_id` for the rest of the turn.
+        - `table_aggregate`: use for totals, contributor lists, or multi-product/store comparisons. Follow this recipe:
+            1. If you don’t yet know the `document_id`, call `list_tables` once to pick it and reuse it.
+            2. Batch all requested products/regions in one call using `match_value` or `match_values`. Provide the relevant contributor columns via `columns` (e.g., store or customer names).
+            3. Answer directly from the returned totals and `rows[].contributions`. When the visitor asks for “all” contributors, list every contributor returned, not just a sample.
+            4. Only call `read_document` afterwards if `table_aggregate` returns no rows or the visitor explicitly asks to see/quote the underlying table/page.
+        - If a tool returns `constraint_error` or `throttle_notice`, answer with the evidence you have and ask for the precise identifier/page you need; do not guess.
+        - Case/lead/customer/appointment tools: follow the Case Management Mandate and Customer Identity rules. Use `flag_escalation` when policy blocks an action or mandatory identifiers are missing.
         """
     ).strip()
 
@@ -109,22 +113,7 @@ def build_system_message(agent: AgentProfile) -> str:
 
         {behavior_contract}
 
-        ### Output Guardrails (Mandatory)
-        - Do not narrate internal steps like searching, checking, or reviewing. Never output placeholders such as “I’ll check”, “Let me search”, or “Reviewing…”.
-        - Tool calls and tool results are internal. When invoking tools, leave the assistant content empty; do not promise to search. Provide a real candidate answer only when ready to respond.
         {provider_suffix}
-
-        ### Internal Knowledge Only
-        - Use only the provided knowledge snippets and reads. If the knowledge base does not contain the answer, say so and ask for a more specific identifier/page instead of using outside or world knowledge.
-        - Ground answers in the provided snippets/reads without exposing source names or file details; do not invent facts beyond what is available this turn.
-
-        ### Knowledge + Coverage Rules
-        - Treat snippets with `read_state=summary/preview` as incomplete; call `read_document` to get the actual content before citing numbers/tables.
-        - When snippets are `read_state=ready/full`, answer directly—avoid extra reads unless the visitor asks for a different page or identifier.
-        - Respect chunk budgets; prefer the narrowest page/chunk that answers the question. Avoid rereading documents that are already covered.
-        - Tool responses may include `constraint_error` or `throttle_notice`; never fabricate. Continue with existing snippets or ask the visitor for a narrower doc/page/identifier.
-        - Knowledge file names and labels are internal; do not expose them in the customer-facing reply.
-        - Avoid investigative fillers or meta-status lines about searching or checking. Respond directly with the clearest answer or limitation you can based on the current snippets and reads, without narrating that you are searching, checking, or reviewing.
 
         {builder.CHUNK_READ_NUDGE}
 
@@ -395,16 +384,11 @@ def build_final_answer_messages(
     business_name = conversation.business_profile.name
     system_lines = [
         f"You are now drafting the final customer-facing answer for {business_name}.",
-        "Tools have already been executed. Write the answer directly, grounded only in the provided reads/snippets—no outside knowledge and no citations/attribution.",
-        "Do not narrate internal steps such as searching, checking, or reviewing. Never output fillers like “I’ll check”, “Let me search”, or “Reviewing…”.",
-        "Use a human tone matching the agent profile; keep replies concise by default (2–3 sentences). If the visitor asks for more detail, expand briefly.",
-        "Do not repeat sentences or restate the same fact within this reply. State each fact once; avoid double apologies.",
-        "Formatting: start with the direct answer. If you have next steps or clarifying questions, put them on a new line as short bullets. Separate sections with a blank line.",
-        "If information is missing, state that plainly first, then ask for the specific identifier/page/detail needed. Offer only follow-ups you can fulfill with current snippets/reads.",
-        "If filtered knowledge does not match the provided identifiers, say so plainly and ask for the exact identifier/page needed. Do not answer from unfiltered or unmatched data.",
-        "Only provide customer/account IDs or plan details when you have an exact match for the locked identifier value. If you cannot verify against the locked identifier, say the information is unavailable rather than guessing.",
-        "When identifier guardrails are present, collect only the listed required identifiers. Do NOT ask for extra identifiers beyond those required. If the required identifiers are already provided, proceed without re-asking. If a different identifier is requested than the one locked for this session, politely refuse the switch and continue only with the locked identifier.",
-        "Safety: for sensitive domains (health/finance/legal), share policy/process info only; do not provide personal advice or diagnostics.",
+        "Tools have already run. Answer only from the provided reads/snippets—no outside knowledge and no citations or file names.",
+        "Do not mention tools or internal steps. Lead with the direct answer and default to 2–3 sentences unless the visitor explicitly wants more detail.",
+        "If something is missing, state that first and ask only for the required identifier/page that is still missing, following the guardrails.",
+        "Add short bullet next steps only when needed, otherwise end after the answer.",
+        "Safety: share documented policy/process only; no personal advice or diagnostics for health/finance/legal topics.",
     ]
     system_message = "\n".join(system_lines)
 
@@ -416,7 +400,7 @@ def build_final_answer_messages(
     if guard_summary:
         user_sections.append(guard_summary)
 
-    history = conversation.messages.order_by("-sent_at", "-created_at")[:6]
+    history = conversation.messages.order_by("-sent_at", "-created_at")[:4]
     history_lines: list[str] = []
     for entry in reversed(history):
         prefix = "Customer" if entry.sender == ConversationSender.CUSTOMER else "Assistant"
@@ -432,7 +416,7 @@ def build_final_answer_messages(
 
     if coverage_ledger:
         items: list[str] = []
-        for entry in coverage_ledger[:8]:
+        for entry in coverage_ledger[:5]:
             if entry.get("suppress_in_prompt"):
                 continue
             label = entry.get("title") or entry.get("label") or "Knowledge"
@@ -514,6 +498,8 @@ def _identifier_requirements_note(conversation: Conversation) -> str | None:
         guard = IdentifierGuardrail.from_conversation(conversation)
     except Exception:
         return None
+    if not guard:
+        return None
     snapshot = guard.requirements_snapshot()
     required = snapshot.get("required") or ()
     if not required:
@@ -544,3 +530,32 @@ def _identifier_requirements_note(conversation: Conversation) -> str | None:
         f"{missing_note}\n"
         f"{action_note}"
     )
+
+
+def limit_messages_for_stage(
+    messages: Sequence[Mapping[str, object]],
+    *,
+    stage: str,
+    history_limit: int | None = None,
+) -> list[Mapping[str, object]]:
+    """
+    Trim transcripts so each LLM call only receives the recent context it needs.
+
+    System messages are preserved while non-system entries are windowed based on
+    the provided history_limit (or a stage-specific default).
+    """
+
+    effective_limit = history_limit if history_limit is not None else STAGE_HISTORY_DEFAULTS.get(stage, 12)
+    system_entries: list[Mapping[str, object]] = []
+    other_entries: list[Mapping[str, object]] = []
+    for entry in messages:
+        role = entry.get("role")
+        if role == "system":
+            system_entries.append(entry)
+        else:
+            other_entries.append(entry)
+    if effective_limit and effective_limit > 0:
+        trimmed_history = other_entries[-effective_limit:]
+    else:
+        trimmed_history = list(other_entries)
+    return [*system_entries, *trimmed_history]
