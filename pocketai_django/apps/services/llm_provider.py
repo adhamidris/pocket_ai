@@ -7,6 +7,7 @@ import logging
 import os
 from dataclasses import dataclass
 import time
+from threading import Lock
 from typing import Any, Callable, Iterable, Mapping, Protocol
 
 from urllib import error as urllib_error
@@ -38,6 +39,9 @@ HTTP_TIMEOUT_READ = os.getenv("LLM_HTTP_TIMEOUT_READ")
 
 logger = logging.getLogger(__name__)
 TRACER = otel_trace.get_tracer(__name__)
+
+_MCP_PROVIDER_SINGLETON: BaseMcpProvider | None = None
+_MCP_PROVIDER_LOCK = Lock()
 
 
 def _format_trace_id(value: int) -> str:
@@ -1699,36 +1703,42 @@ def load_mcp_provider() -> BaseMcpProvider | None:
     Mirrors load_default_provider but targets tool-calling implementations.
     """
 
-    preferred = (os.getenv("MCP_PROVIDER") or os.getenv("LLM_PROVIDER") or "").strip().lower()
+    global _MCP_PROVIDER_SINGLETON
 
-    def _try(cls):
-        try:
-            return cls()
-        except PromptGenerationError as exc:
-            structured_log(
-                "llm",
-                "provider.disabled",
-                {"provider": cls.__name__, "error": str(exc)},
-                level=logging.WARNING,
-            )
-            return None
+    with _MCP_PROVIDER_LOCK:
+        if _MCP_PROVIDER_SINGLETON is not None:
+            return _MCP_PROVIDER_SINGLETON
 
-    order: list[type[BaseMcpProvider]] = []
-    if preferred == "deepseek":
-        order = [DeepSeekToolsProvider, OpenAIToolsProvider]
-    elif preferred == "openai":
-        order = [OpenAIToolsProvider, DeepSeekToolsProvider]
-    else:
-        # Default preference: OpenAI if configured, else DeepSeek.
-        if os.getenv("OPENAI_API_KEY"):
-            order.append(OpenAIToolsProvider)
-        if os.getenv("DEEPSEEK_API_KEY"):
-            order.append(DeepSeekToolsProvider)
+        preferred = (os.getenv("MCP_PROVIDER") or os.getenv("LLM_PROVIDER") or "").strip().lower()
 
-    for provider_cls in order:
-        provider = _try(provider_cls)
-        if provider:
-            return provider
+        def _try(cls):
+            try:
+                return cls()
+            except PromptGenerationError as exc:
+                structured_log(
+                    "llm",
+                    "provider.disabled",
+                    {"provider": cls.__name__, "error": str(exc)},
+                    level=logging.WARNING,
+                )
+                return None
+
+        order: list[type[BaseMcpProvider]] = []
+        if preferred == "deepseek":
+            order = [DeepSeekToolsProvider, OpenAIToolsProvider]
+        elif preferred == "openai":
+            order = [OpenAIToolsProvider, DeepSeekToolsProvider]
+        else:
+            if os.getenv("OPENAI_API_KEY"):
+                order.append(OpenAIToolsProvider)
+            if os.getenv("DEEPSEEK_API_KEY"):
+                order.append(DeepSeekToolsProvider)
+
+        for provider_cls in order:
+            provider = _try(provider_cls)
+            if provider:
+                _MCP_PROVIDER_SINGLETON = provider
+                return provider
     return None
 
 

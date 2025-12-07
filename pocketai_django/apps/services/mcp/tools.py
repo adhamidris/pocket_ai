@@ -11,6 +11,9 @@ touching unrelated parts of the codebase.
 
 from __future__ import annotations
 
+import copy
+import hashlib
+import json
 import uuid
 import re
 import time
@@ -22,6 +25,7 @@ from typing import Any, Callable, Mapping, Sequence
 
 from django.db import models
 from django.db.models import Prefetch
+from django.core.cache import cache
 
 from apps.accounts.models import (
     KnowledgeStatus,
@@ -29,6 +33,7 @@ from apps.accounts.models import (
     KnowledgeUploadChunk,
     KnowledgeUploadTable,
     KnowledgeUploadTableRow,
+    KnowledgeUploadTableCell,
 )
 from apps.conversations.models import Conversation
 from apps.services.ai_orchestrator import (
@@ -43,6 +48,7 @@ from .types import ToolExecutionContext
 
 
 logger = logging.getLogger(__name__)
+IDENTIFIER_MAPPING_CACHE_TTL = 300
 
 
 def _function_schema(
@@ -66,6 +72,38 @@ def _function_schema(
             },
         },
     }
+
+
+def _bounded_cache_store(cache: dict, key, payload: Mapping[str, object], *, limit: int = 16) -> None:
+    cache[key] = copy.deepcopy(payload)
+    while len(cache) > limit:
+        oldest_key = next(iter(cache))
+        cache.pop(oldest_key, None)
+
+
+def _search_cache_key(
+    query: str,
+    limit: int | None,
+    identifier_filter: Mapping[str, object] | None,
+    locked_key: str | None,
+    locked_value: str | None,
+) -> tuple[str, int, str, str | None, str | None]:
+    normalized_query = (query or "").strip().lower()
+    safe_limit = int(limit or 0)
+    filter_blob = json.dumps(identifier_filter or {}, sort_keys=True, default=str)
+    return (normalized_query, safe_limit, filter_blob, locked_key, locked_value)
+
+
+def _read_cache_key(
+    document_id: str,
+    page_index: int,
+    mode: str,
+    neighbor_window: int,
+    token_budget: int | None,
+) -> tuple[str, int, str, int, int | None]:
+    normalized_id = str(document_id)
+    normalized_mode = (mode or "excerpt").strip().lower()
+    return (normalized_id, int(page_index), normalized_mode, int(neighbor_window), token_budget)
 
 
 TOOL_DEFINITIONS: tuple[Mapping[str, object], ...] = (
@@ -416,6 +454,68 @@ def _record_identifier_check(context: ToolExecutionContext, decision) -> None:
         hashes = payload.get("provided_hashes")
         if isinstance(hashes, Mapping):
             context.identifier_hashes = dict(hashes)
+
+
+def _identifier_mapping_cache_key(
+    guard: IdentifierGuardrail | None,
+    locked_key: str | None,
+    locked_value: str | None,
+) -> tuple[tuple[tuple[str, str], ...], str | None, str | None] | None:
+    if not guard:
+        return None
+    provided = getattr(guard, "provided_identifiers", None)
+    if not isinstance(provided, Mapping) or not provided:
+        return None
+    normalized_pairs: list[tuple[str, str]] = []
+    for key, value in provided.items():
+        text = str(value).strip()
+        if not text:
+            continue
+        normalized_pairs.append((str(key), text))
+    if not normalized_pairs:
+        return None
+    normalized_pairs.sort()
+    return (tuple(normalized_pairs), locked_key, locked_value)
+
+
+def _identifier_mapping_cache_token(
+    cache_key: tuple[tuple[tuple[str, str], ...], str | None, str | None] | None,
+) -> str | None:
+    if not cache_key:
+        return None
+    try:
+        fingerprint = json.dumps(cache_key, sort_keys=True, default=str)
+    except TypeError:
+        return None
+    digest = hashlib.sha256(fingerprint.encode("utf-8")).hexdigest()
+    return f"mcp:idmap:{digest}"
+
+
+def _record_identifier_event_once(
+    context: ToolExecutionContext,
+    *,
+    business_profile,
+    decision,
+    tool: str,
+    conversation: Conversation,
+    upload_ids: Sequence[str] | None,
+) -> None:
+    if not decision:
+        return
+    required = tuple(sorted(decision.required_keys or ()))
+    provided = tuple(sorted(decision.provided_keys or ()))
+    uploads = tuple(sorted(str(uid) for uid in (upload_ids or ()) if uid))
+    fingerprint = (decision.status, required, provided, uploads)
+    if fingerprint in context.identifier_event_fingerprints:
+        return
+    context.identifier_event_fingerprints.add(fingerprint)
+    IdentifierRegistryService.record_event(
+        business_profile=business_profile,
+        decision=decision,
+        tool=tool,
+        conversation=conversation,
+        upload_ids=list(uploads),
+    )
 
 
 def _query_intent(query: str) -> dict[str, object]:
@@ -963,7 +1063,22 @@ def _search_knowledge_handler(
     if isinstance(locked, Mapping):
         locked_key = locked.get("key")
         locked_value = locked.get("value")
-    if guard and guard.provided_identifiers:
+    cache_key = _identifier_mapping_cache_key(guard, locked_key, locked_value)
+    cache_token = _identifier_mapping_cache_token(cache_key)
+    cached_mapping = None
+    if cache_key:
+        cached_mapping = context.identifier_mapping_cache.get(cache_key)
+        if cached_mapping is None and cache_token:
+            cached_from_store = cache.get(cache_token)
+            if isinstance(cached_from_store, dict):
+                cached_mapping = cached_from_store
+                context.identifier_mapping_cache[cache_key] = cached_mapping
+    if cached_mapping is not None:
+        identifier_filter = cached_mapping.get("identifier_filter")
+        cached_allowed = cached_mapping.get("allowed_uploads")
+        if isinstance(cached_allowed, (list, tuple, set)):
+            allowed_uploads = {str(value) for value in cached_allowed if value}
+    elif guard and guard.provided_identifiers:
         # Derive filter from active mappings for provided identifiers (dynamic, not email-only).
         from apps.accounts.models import IdentifierColumnMapping, IdentifierColumnStatus, IdentifierSchemaStatus
 
@@ -986,6 +1101,39 @@ def _search_knowledge_handler(
                 "value": value_for_filter,
                 "upload_ids": list(allowed_uploads),
             }
+        cache_payload = {
+            "allowed_uploads": list(allowed_uploads) if allowed_uploads else [],
+            "identifier_filter": identifier_filter,
+        }
+        if cache_key:
+            context.identifier_mapping_cache[cache_key] = cache_payload
+        if cache_token:
+            cache.set(cache_token, cache_payload, IDENTIFIER_MAPPING_CACHE_TTL)
+
+    search_cache_key = _search_cache_key(
+        query,
+        limit,
+        identifier_filter,
+        locked_key,
+        str(locked_value) if locked_value is not None else None,
+    )
+    cached_result = None
+    if context.search_cache and search_cache_key in context.search_cache:
+        cached_result = copy.deepcopy(context.search_cache[search_cache_key])
+    if cached_result:
+        structured_log(
+            "mcp",
+            "search.cache_hit",
+            {
+                "query": query,
+                "intent": intent,
+                "limit": limit,
+            },
+            context={"conversation": conversation.id, "business": conversation.business_profile_id},
+            logger_obj=logger,
+        )
+        _record_search_history(context, arguments, cached_result)
+        return cached_result
 
     result = service.search(
         business_profile=conversation.business_profile,
@@ -1163,7 +1311,8 @@ def _search_knowledge_handler(
         applied_filter = decision.as_dict()
         applied_filter["tool"] = "search_knowledge"
         context.identifier_filters.append(applied_filter)
-        IdentifierRegistryService.record_event(
+        _record_identifier_event_once(
+            context,
             business_profile=conversation.business_profile,
             decision=decision,
             tool="search_knowledge",
@@ -1171,7 +1320,8 @@ def _search_knowledge_handler(
             upload_ids=[str(p.get("upload_id") or "") for p in snippet_payloads if p.get("upload_id")],
         )
     elif guard and decision:
-        IdentifierRegistryService.record_event(
+        _record_identifier_event_once(
+            context,
             business_profile=conversation.business_profile,
             decision=decision,
             tool="search_knowledge",
@@ -1192,7 +1342,7 @@ def _search_knowledge_handler(
     context.reserve_characters(int(metrics.get("char_count", 0)))
     _log_search_performance(snippet_payloads)
 
-    return {
+    payload = {
         "tool": "search_knowledge",
         "query": query,
         "limit": limit,
@@ -1203,6 +1353,9 @@ def _search_knowledge_handler(
         "snippets": snippet_payloads,
         "hint": _search_hint(result.status, intent, snippet_payloads, result.diagnostics),
     }
+    if search_cache_key:
+        _bounded_cache_store(context.search_cache, search_cache_key, payload)
+    return payload
 
 
 def _read_document_handler(
@@ -1279,7 +1432,8 @@ def _read_document_handler(
                 logger_obj=logger,
                 level=logging.WARNING,
             )
-            IdentifierRegistryService.record_event(
+            _record_identifier_event_once(
+                context,
                 business_profile=conversation.business_profile,
                 decision=decision,
                 tool="read_document",
@@ -1300,10 +1454,6 @@ def _read_document_handler(
                 "hint": decision.hint,
                 "llm_hint": decision.hint,
             }
-
-    # Enforce per-turn chunk budget. Each read_document call counts as one unit.
-    context.reserve_chunk_reads(1)
-    context.reserve_chunk_pages(1)
 
     def _coerce_page(value: object) -> int:
         try:
@@ -1369,6 +1519,28 @@ def _read_document_handler(
         logger_obj=logger,
     )
 
+    cache_key = _read_cache_key(document_id, page_index, mode or "excerpt", neighbor_window, token_budget)
+    cached_payload = None
+    if context.read_cache and cache_key in context.read_cache:
+        cached_payload = copy.deepcopy(context.read_cache[cache_key])
+    if cached_payload:
+        structured_log(
+            "mcp",
+            "read_document.cache_hit",
+            {
+                "document_id": document_id,
+                "page": page_index,
+                "mode": mode,
+            },
+            context={"conversation": conversation.id, "business": conversation.business_profile_id},
+            logger_obj=logger,
+        )
+        return cached_payload
+
+    # Enforce per-turn chunk budget only when actually loading the window.
+    context.reserve_chunk_reads(1)
+    context.reserve_chunk_pages(1)
+
     snippets: list[Any] = []
     if chunk_record:
         snippets.extend(
@@ -1421,7 +1593,8 @@ def _read_document_handler(
         applied_filter = decision.as_dict()
         applied_filter["tool"] = "read_document"
         context.identifier_filters.append(applied_filter)
-        IdentifierRegistryService.record_event(
+        _record_identifier_event_once(
+            context,
             business_profile=conversation.business_profile,
             decision=decision,
             tool="read_document",
@@ -1462,7 +1635,7 @@ def _read_document_handler(
         },
     )
 
-    return {
+    payload = {
         "tool": "read_document",
         "document_id": document_id,
         "page": page_index,
@@ -1475,6 +1648,8 @@ def _read_document_handler(
         "ingestion_warnings": ingestion_warnings,
         "throttle_notice": throttle_notice,
     }
+    _bounded_cache_store(context.read_cache, cache_key, payload)
+    return payload
 
 
 def _list_tables_handler(
@@ -1497,6 +1672,16 @@ def _list_tables_handler(
             status=KnowledgeStatus.ACTIVE,
             tables__isnull=False,
         )
+        .only(
+            "id",
+            "display_name",
+            "source_name",
+            "description",
+            "slug",
+            "external_reference",
+            "updated_at",
+            "status",
+        )
         .select_related(None)
         .order_by("-updated_at")
         .distinct()
@@ -1513,12 +1698,22 @@ def _list_tables_handler(
 
     table_prefetch = Prefetch(
         "tables",
-        queryset=KnowledgeUploadTable.objects.order_by("order_index"),
+        queryset=KnowledgeUploadTable.objects.only(
+            "id",
+            "upload_id",
+            "order_index",
+            "title",
+            "section_heading",
+            "metadata",
+            "column_schema",
+        )
+        .order_by("order_index")[:TABLE_LIST_PREVIEW_LIMIT],
+        to_attr="table_previews",
     )
     uploads = list(uploads_qs.prefetch_related(table_prefetch)[:limit])
     results: list[dict[str, object]] = []
     for upload in uploads:
-        tables = list(upload.tables.all())
+        tables = list(getattr(upload, "table_previews", []))
         if not tables:
             continue
         seen_sheet_names: set[str] = set()
@@ -1590,26 +1785,99 @@ def _list_tables_handler(
 TABLE_LIST_PREVIEW_LIMIT = 8
 
 
-def _table_row_cache_key(upload: KnowledgeUpload) -> str:
-    return str(upload.id)
+def _table_row_cache_key(
+    upload: KnowledgeUpload,
+    *,
+    table_index: int | None,
+    sheet_name: str | None,
+    match_column: str | None,
+    match_values: Sequence[str] | None,
+    query: str | None,
+) -> str:
+    def _canonical_column(value: str | None) -> str | None:
+        normalized = _normalize_column_name(value)
+        return normalized or None
+
+    def _canonical_text(value: str | None) -> str | None:
+        if not isinstance(value, str):
+            return None
+        trimmed = value.strip().lower()
+        return trimmed or None
+
+    canonical_values = [
+        _canonical_column(candidate)
+        for candidate in (match_values or [])
+        if candidate is not None
+    ]
+    fingerprint = json.dumps(
+        {
+            "table_index": table_index,
+            "sheet_name": _canonical_text(sheet_name),
+            "match_column": _canonical_column(match_column),
+            "match_values": [value for value in canonical_values if value],
+            "query": _canonical_text(query),
+        },
+        sort_keys=True,
+    )
+    return f"{upload.id}:{fingerprint}"
 
 
 def _load_table_rows_for_cache(
     *,
     conversation: Conversation,
     upload: KnowledgeUpload,
+    table_index: int | None = None,
+    sheet_name: str | None = None,
+    match_column: str | None = None,
+    match_values: Sequence[str] | None = None,
+    query: str | None = None,
+    max_rows: int | None = None,
 ) -> list[dict[str, object]]:
-    rows_qs = (
-        KnowledgeUploadTableRow.objects.filter(
-            table__upload=upload,
-            table__upload__business_profile=conversation.business_profile,
-        )
-        .select_related("table")
-        .prefetch_related("cells")
-        .order_by("table__order_index", "row_index")
+    rows_qs = KnowledgeUploadTableRow.objects.filter(
+        table__upload=upload,
+        table__upload__business_profile=conversation.business_profile,
     )
+    if table_index is not None:
+        rows_qs = rows_qs.filter(table__order_index=table_index)
+    if sheet_name:
+        normalized_sheet = sheet_name.strip()
+        rows_qs = rows_qs.filter(
+            models.Q(table__metadata__sheet_name__iexact=normalized_sheet)
+            | models.Q(table__title__iexact=normalized_sheet)
+            | models.Q(table__section_heading__iexact=normalized_sheet)
+        )
+    if match_column:
+        normalized_column = match_column.strip()
+        rows_qs = rows_qs.filter(cells__column_key__iexact=normalized_column)
+    if query:
+        normalized_query = query.strip()
+        rows_qs = rows_qs.filter(
+            models.Q(raw_text__icontains=normalized_query) | models.Q(cells__raw_text__icontains=normalized_query)
+        )
+    if match_values:
+        normalized_values = [value for value in match_values if value]
+        if normalized_values:
+            rows_qs = rows_qs.filter(cells__raw_text__iregex="|".join(re.escape(value) for value in normalized_values))
+    rows_qs = rows_qs.select_related("table").only(
+        "id",
+        "row_index",
+        "raw_text",
+        "table__order_index",
+        "table__title",
+        "table__section_heading",
+        "table__metadata",
+    )
+    cell_queryset = KnowledgeUploadTableCell.objects.only(
+        "id",
+        "row_id",
+        "column_index",
+        "column_key",
+        "raw_text",
+    ).order_by("column_index")
+    rows_qs = rows_qs.prefetch_related(Prefetch("cells", queryset=cell_queryset))
+    max_candidates = max_rows or 400
     payloads: list[dict[str, object]] = []
-    for row in rows_qs:
+    for row in rows_qs.order_by("table__order_index", "row_index")[: max_candidates]:
         payloads.append(_serialize_table_row_for_cache(row))
     return payloads
 
@@ -1759,11 +2027,30 @@ def _table_aggregate_handler(
     if cache is None:
         cache = {}
         context.table_row_cache = cache
-    cache_key = _table_row_cache_key(upload)
+    has_row_filters = bool(match_column_input or normalized_match_values or query_input)
+    overscan_factor = 2 if has_row_filters else 3
+    max_candidates = max(row_limit * overscan_factor, row_limit + 20)
+    cache_key = _table_row_cache_key(
+        upload,
+        table_index=table_index,
+        sheet_name=sheet_name_input,
+        match_column=match_column,
+        match_values=normalized_match_values,
+        query=query_input,
+    )
     cached_rows = cache.get(cache_key)
     cache_hit = cached_rows is not None
     if cached_rows is None:
-        cached_rows = _load_table_rows_for_cache(conversation=conversation, upload=upload)
+        cached_rows = _load_table_rows_for_cache(
+            conversation=conversation,
+            upload=upload,
+            table_index=table_index,
+            sheet_name=sheet_name_input,
+            match_column=match_column_input,
+            match_values=normalized_match_values,
+            query=query_input,
+            max_rows=max_candidates,
+        )
         cache[cache_key] = cached_rows
     evaluated_rows = len(cached_rows)
 

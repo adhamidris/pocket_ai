@@ -15,21 +15,27 @@ from apps.services.ai_orchestrator import AiOrchestratorPlan, KnowledgeSnippet, 
 class StubPortalService:
     def __init__(self) -> None:
         self.session = SimpleNamespace(status="open")
+        business = SimpleNamespace(id=uuid.uuid4(), metadata={"mcp_orchestrator_enabled": False})
+        agent = SimpleNamespace(id=uuid.uuid4(), business_profile=business, tone="friendly")
         self.conversation = SimpleNamespace(
             id=uuid.uuid4(),
-            agent_profile=SimpleNamespace(id=uuid.uuid4(), business_profile=SimpleNamespace(id=uuid.uuid4(), metadata={})),
+            business_profile=business,
+            agent_profile=agent,
+            business_profile_id=business.id,
+            is_active=True,
+            session_token="abc",
         )
         self.messages: list[SimpleNamespace] = []
 
-    def append_message(self, *, session_token: str, sender: ConversationSender, body: str, metadata: dict | None = None):
+    def append_message(self, *, session_token: str, sender: ConversationSender, body: str, metadata: dict | None = None, conversation=None):
         message = SimpleNamespace(id=uuid.uuid4(), sender=sender, body=body, metadata=metadata)
         self.messages.append(message)
         return message
 
-    def get_conversation(self, session_token: str):
+    def get_conversation(self, session_token: str, include_messages: bool = True):
         return self.conversation
 
-    def get_session_state(self, session_token: str):
+    def get_session_state(self, session_token: str, conversation=None):
         return self.session
 
     def store_extractions(self, session_token: str, items):
@@ -37,13 +43,15 @@ class StubPortalService:
 
 
 class ImmediateThread:
-    def __init__(self, target, daemon=False):
+    def __init__(self, target, args=(), kwargs=None, daemon=False):
         self._target = target
+        self._args = args or ()
+        self._kwargs = kwargs or {}
         self._alive = False
 
     def start(self):
         self._alive = True
-        self._target()
+        self._target(*self._args, **self._kwargs)
         self._alive = False
 
     def join(self, timeout=None):
@@ -151,6 +159,9 @@ class ChatPortalStreamingTests(TestCase):
             def finalize_turn(self, *_):
                 return self.plan
 
+            def run_planner_only(self, **_):
+                return self.plan
+
         stub_orchestrator = StubOrchestrator(self.plan, self.stub_service.conversation)
 
         class StubDispatcher:
@@ -171,6 +182,8 @@ class ChatPortalStreamingTests(TestCase):
         events: list[tuple[str | None, str]] = []
         current_event: str | None = None
         for chunk in chunks:
+            if isinstance(chunk, bytes):
+                chunk = chunk.decode("utf-8")
             if chunk.startswith("event:"):
                 current_event = chunk.split("event:", 1)[1].strip()
             elif chunk.startswith("data:"):

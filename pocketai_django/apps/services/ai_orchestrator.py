@@ -3221,17 +3221,7 @@ class KnowledgeSearchService:
             return tuple()
         table_prefetch = Prefetch(
             "tables",
-            queryset=KnowledgeUploadTable.objects.order_by("order_index").select_related("page").prefetch_related(
-                Prefetch(
-                    "rows",
-                    queryset=KnowledgeUploadTableRow.objects.order_by("row_index").prefetch_related(
-                        Prefetch(
-                            "cells",
-                            queryset=KnowledgeUploadTableCell.objects.order_by("column_index"),
-                        )
-                    ),
-                )
-            ),
+            queryset=KnowledgeUploadTable.objects.order_by("order_index").select_related("page"),
         )
         issue_prefetch = Prefetch(
             "issues",
@@ -3707,30 +3697,46 @@ class KnowledgeSearchService:
         return metrics
 
     # apps/services/ai_orchestrator.py (inside KnowledgeSearchService)
-    def _serialize_structured_tables_with_rows(self, upload, *, max_tables: int = 3, max_rows: int = 5):
+    def _serialize_structured_tables_with_rows(
+        self,
+        upload,
+        *,
+        max_tables: int = 3,
+        max_rows: int = 5,
+        max_columns: int = 8,
+    ):
         tables_manager = getattr(upload, "tables", None)
-        if not hasattr(tables_manager, "all"):
+        if not hasattr(tables_manager, "order_by"):
             return []
         enriched = []
-        for table in list(tables_manager.all())[:max_tables]:
-            columns = list(table.column_schema or [])
-            rows_iter = list(table.rows.all()) if hasattr(table, "rows") else []
-            rows_sample = []
-            for row in rows_iter[:max_rows]:
-                cells = list(row.cells.all()) if hasattr(row, "cells") else []
-                ordered = sorted(cells, key=lambda c: c.column_index)
-                rows_sample.append([c.raw_text for c in ordered])
-            enriched.append({
-                "order_index": table.order_index,
-                "title": table.title or f"Table {table.order_index}",
-                "section_heading": table.section_heading or "",
-                "page_number": table.page.page_number if table.page else None,
-                "column_schema": columns,
-                "row_count": len(rows_iter),
-                "rowsSample": rows_sample,
-                "bbox": dict(table.bbox or {}),
-                "metadata": dict(table.metadata or {}),
-            })
+        table_qs = tables_manager.order_by("order_index")
+        for table in table_qs[:max_tables]:
+            rows_manager = getattr(table, "rows", None)
+            rows_sample: list[list[str]] = []
+            rows_qs = rows_manager.order_by("row_index") if hasattr(rows_manager, "order_by") else None
+            if rows_qs is not None:
+                limited_rows = rows_qs[:max_rows] if max_rows else rows_qs
+                for row in limited_rows:
+                    cells_manager = getattr(row, "cells", None)
+                    cells_qs = cells_manager.order_by("column_index") if hasattr(cells_manager, "order_by") else None
+                    if cells_qs is None:
+                        rows_sample.append([])
+                        continue
+                    limited_cells = cells_qs[:max_columns] if max_columns else cells_qs
+                    rows_sample.append([cell.raw_text for cell in limited_cells])
+            enriched.append(
+                {
+                    "order_index": table.order_index,
+                    "title": table.title or f"Table {table.order_index}",
+                    "section_heading": table.section_heading or "",
+                    "page_number": table.page.page_number if table.page else None,
+                    "column_schema": list(table.column_schema or []),
+                    "row_count": rows_manager.count() if hasattr(rows_manager, "count") else 0,
+                    "rowsSample": rows_sample,
+                    "bbox": dict(table.bbox or {}),
+                    "metadata": dict(table.metadata or {}),
+                }
+            )
         return enriched
 
     def _table_row_sample(self, chunk: KnowledgeUploadChunk, *, max_columns: int = 4) -> tuple[Mapping[str, object], ...]:

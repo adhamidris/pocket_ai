@@ -131,8 +131,13 @@ class ChatPortalService:
         sender: ConversationSender,
         body: str,
         metadata: dict | None = None,
+        conversation: Conversation | None = None,
     ) -> PortalMessage:
-        conversation = self._get_active_conversation_by_token(session_token)
+        conversation = self._resolve_conversation(
+            session_token=session_token,
+            conversation=conversation,
+            include_messages=False,
+        )
         if not body.strip():
             raise PortalValidationError("Message body cannot be empty")
         metadata = metadata or {}
@@ -160,10 +165,15 @@ class ChatPortalService:
         message_id: uuid.UUID,
         body: str | None = None,
         metadata: dict | None = None,
+        conversation: Conversation | None = None,
     ) -> PortalMessage:
         if not message_id:
             raise PortalValidationError("message_id is required")
-        conversation = self._get_active_conversation_by_token(session_token)
+        conversation = self._resolve_conversation(
+            session_token=session_token,
+            conversation=conversation,
+            include_messages=False,
+        )
         message = conversation.messages.filter(id=message_id).first()
         if message is None:
             raise PortalNotFoundError("Message not found")
@@ -189,14 +199,22 @@ class ChatPortalService:
             qs = qs.order_by("sent_at", "created_at")[:limit]
         return tuple(self._serialize_messages(qs))
 
-    def get_session_state(self, *, session_token: str) -> PortalSessionState:
-        conversation = self._get_active_conversation_by_token(session_token)
-        return self._serialize_session(conversation)
+    def get_session_state(self, *, session_token: str, conversation: Conversation | None = None) -> PortalSessionState:
+        conversation_obj = self._resolve_conversation(
+            session_token=session_token,
+            conversation=conversation,
+            include_messages=False,
+        )
+        return self._serialize_session(conversation_obj)
 
     def record_csat(self, *, session_token: str, score: int, comment: str | None = None) -> PortalSessionState:
         if score < 1 or score > 5:
             raise PortalValidationError("Score must be between 1 and 5")
-        conversation = self._get_active_conversation_by_token(session_token)
+        conversation = self._resolve_conversation(
+            session_token=session_token,
+            conversation=None,
+            include_messages=False,
+        )
         conversation.csat_score = score
         conversation.csat_comment = (comment or "").strip()
         conversation.csat_recorded_at = timezone.now()
@@ -215,7 +233,11 @@ class ChatPortalService:
     ) -> ConversationFeedback:
         if feedback_type not in ConversationFeedback.FeedbackType.values:
             raise PortalValidationError("Unsupported feedback_type")
-        conversation = self._get_active_conversation_by_token(session_token)
+        conversation = self._resolve_conversation(
+            session_token=session_token,
+            conversation=None,
+            include_messages=False,
+        )
         message = None
         if message_id:
             message = conversation.messages.filter(id=message_id).first()
@@ -231,18 +253,23 @@ class ChatPortalService:
             self._promote_feedback_case(conversation=conversation, feedback=feedback)
         return feedback
 
-    def get_conversation(self, *, session_token: str) -> Conversation:
+    def get_conversation(self, *, session_token: str, include_messages: bool = True) -> Conversation:
         """Expose the active conversation for downstream orchestration logic."""
 
-        return self._get_active_conversation_by_token(session_token)
+        return self._get_active_conversation_by_token(session_token, include_messages=include_messages)
 
     def store_extractions(
         self,
         *,
         session_token: str,
         items: Iterable[tuple[ConversationExtractionType, dict]],
+        conversation: Conversation | None = None,
     ) -> Sequence[ConversationExtraction]:
-        conversation = self._get_active_conversation_by_token(session_token)
+        conversation = self._resolve_conversation(
+            session_token=session_token,
+            conversation=conversation,
+            include_messages=False,
+        )
         created: list[ConversationExtraction] = []
         with transaction.atomic():
             for extraction_type, payload in items:
@@ -271,23 +298,40 @@ class ChatPortalService:
             raise PortalNotFoundError("Business not found")
         return business
 
-    def _get_active_conversation_by_token(self, session_token: str) -> Conversation:
+    def _get_active_conversation_by_token(self, session_token: str, *, include_messages: bool = False) -> Conversation:
         if not session_token:
             raise PortalNotFoundError("Session token is required")
-        conversation = (
-            Conversation.objects.select_related("business_profile", "agent_profile", "case")
-            .prefetch_related(
-                Prefetch("messages", queryset=ConversationMessage.objects.order_by("sent_at", "created_at")),
-                "agent_profile__action_permissions",
-            )
-            .filter(session_token=session_token)
-            .first()
-        )
+        queryset = self._conversation_queryset(include_messages=include_messages)
+        conversation = queryset.filter(session_token=session_token).first()
         if conversation is None:
             raise PortalNotFoundError("Conversation not found")
         if not conversation.is_active:
             raise PortalNotFoundError("Conversation is no longer active")
         return conversation
+
+    def _conversation_queryset(self, *, include_messages: bool):
+        queryset = (
+            Conversation.objects.select_related("business_profile", "agent_profile", "case")
+            .prefetch_related("agent_profile__action_permissions")
+        )
+        if include_messages:
+            queryset = queryset.prefetch_related(
+                Prefetch("messages", queryset=ConversationMessage.objects.order_by("sent_at", "created_at"))
+            )
+        return queryset
+
+    def _resolve_conversation(
+        self,
+        *,
+        session_token: str,
+        conversation: Conversation | None,
+        include_messages: bool,
+    ) -> Conversation:
+        if conversation is not None:
+            if conversation.session_token != session_token:
+                raise PortalValidationError("Conversation session mismatch")
+            return conversation
+        return self._get_active_conversation_by_token(session_token, include_messages=include_messages)
 
     def _promote_feedback_case(self, *, conversation: Conversation, feedback: ConversationFeedback) -> None:
         payload = feedback.payload or {}

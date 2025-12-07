@@ -9,7 +9,7 @@ system takes shape.
 from __future__ import annotations
 
 import dataclasses
-from typing import Callable, Mapping, Sequence
+from typing import Callable, Mapping, Sequence, Tuple
 
 
 JsonDict = Mapping[str, object]
@@ -62,9 +62,13 @@ class ToolExecutionContext:
     identifier_checks: list[dict[str, object]] = dataclasses.field(default_factory=list)
     identifier_filters: list[dict[str, object]] = dataclasses.field(default_factory=list)
     identifier_hashes: dict[str, str] = dataclasses.field(default_factory=dict)
+    identifier_mapping_cache: dict[tuple[tuple[tuple[str, str], ...], str | None, str | None], dict[str, object]] = dataclasses.field(default_factory=dict)
+    identifier_event_fingerprints: set[tuple[str | None, tuple[str, ...], tuple[str, ...], tuple[str, ...]]] = dataclasses.field(default_factory=set)
     table_aggregate_rows: list[dict[str, object]] = dataclasses.field(default_factory=list)
     table_row_cache: dict[str, list[dict[str, object]]] = dataclasses.field(default_factory=dict)
     search_history: list[dict[str, object]] = dataclasses.field(default_factory=list)
+    search_cache: dict[Tuple[str, int, str, str | None, str | None], dict[str, object]] = dataclasses.field(default_factory=dict)
+    read_cache: dict[Tuple[str, int, str, int, int | None], dict[str, object]] = dataclasses.field(default_factory=dict)
 
     def reserve_chunk_reads(self, count: int) -> None:
         """Ensure the requested chunk reads do not exceed the per-turn budget."""
