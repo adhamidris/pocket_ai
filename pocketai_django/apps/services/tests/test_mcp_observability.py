@@ -12,11 +12,14 @@ class _FakeProvider:
     def __init__(self) -> None:
         self.calls = 0
 
-    def chat(self, messages, *, tools=None, on_stream_delta=None, response_format=None):
+    def chat(self, messages, *, tools=None, on_stream_delta=None, on_stream_event=None, response_format=None):
         self.calls += 1
         if tools is not None:
-            # Tool loop: return an assistant turn with no tool calls.
-            return {"message": {"role": "assistant", "content": "ready"}}
+            # Initial pass: emit a filler sentence followed by the answer so sanitization logs drop the filler.
+            text = "I'll check the docs. The fee is $100 per year."
+            if on_stream_delta:
+                on_stream_delta(text)
+            return {"choices": [{"message": {"role": "assistant", "content": text}}]}
         # Final answer pass.
         return {
             "choices": [
@@ -42,6 +45,8 @@ class McpObservabilityTests(TestCase):
             name="Observer",
             role="AI Specialist",
         )
+        self.agent.tone = "professional"
+        self.agent.save(update_fields=["tone"])
         self.conversation = Conversation.objects.create(
             business_profile=self.business,
             agent_profile=self.agent,
@@ -53,7 +58,7 @@ class McpObservabilityTests(TestCase):
         orchestrator = McpOrchestratorService(agent=self.agent, provider=provider)
         streamed: list[str] = []
 
-        with self.assertLogs("apps.services.mcp.sanitizer", level="INFO") as logs:
+        with self.assertLogs("apps.services.mcp.orchestrator", level="INFO") as logs:
             context = orchestrator.stream_turn(
                 conversation=self.conversation,
                 user_message="What's the annual fee?",
@@ -83,7 +88,10 @@ class McpObservabilityTests(TestCase):
         )
         self.assertEqual(final_messages[0]["role"], "system")
         system_text = final_messages[0]["content"]
-        self.assertIn("Tools have already been executed", system_text)
-        self.assertIn("Do not narrate internal steps", system_text)
+        self.assertTrue(
+            "Tools have already run" in system_text or "Tools have already been executed" in system_text,
+            system_text,
+        )
+        self.assertIn("internal steps", system_text)
         user_payload = final_messages[1]["content"]
         self.assertIn("Latest user message:", user_payload)

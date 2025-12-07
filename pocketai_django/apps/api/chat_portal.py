@@ -598,12 +598,22 @@ def stream_send(request: HttpRequest) -> StreamingHttpResponse:
                     finalize_span.set_attribute("business.id", str(conversation.business_profile_id))
                 plan = None
                 with TRACER.start_as_current_span("portal.finalize.plan") as plan_span:
-                    plan = orchestrator.run_planner_only(
-                        conversation=conversation,
-                        user_message=body,
-                        answer_text=stream_context.response_text,
-                        tool_context=getattr(stream_context, "tool_context", None),
-                    )
+                    planner_should_run = True
+                    planner_guard = getattr(orchestrator, "should_run_planner", None)
+                    if callable(planner_guard):
+                        planner_should_run = planner_guard(
+                            conversation=conversation,
+                            tool_context=getattr(stream_context, "tool_context", None),
+                            answer_text=stream_context.response_text,
+                            tool_trace=getattr(stream_context, "tool_trace", None),
+                        )
+                    if planner_should_run:
+                        plan = orchestrator.run_planner_only(
+                            conversation=conversation,
+                            user_message=body,
+                            answer_text=stream_context.response_text,
+                            tool_context=getattr(stream_context, "tool_context", None),
+                        )
                     if plan is None:
                         plan = orchestrator.finalize_turn(stream_context)
                     if plan_span.is_recording():

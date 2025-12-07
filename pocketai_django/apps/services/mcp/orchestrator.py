@@ -9,10 +9,14 @@ tool dispatch, and plan construction logic.
 
 from __future__ import annotations
 
+import copy
+import hashlib
 import json
 import logging
 import re
+import threading
 import uuid
+import time
 from typing import Callable, Iterable, Mapping, Sequence
 
 from django.conf import settings
@@ -22,13 +26,14 @@ from opentelemetry import trace as otel_trace
 
 from apps.accounts.models import AgentProfile
 from apps.conversations.models import Conversation, ConversationExtractionType
-from apps.services.llm_provider import PromptGenerationError, _emit_stream_chunks
+from apps.services.llm_provider import PromptGenerationError, _emit_stream_chunks, StreamEvent
 from apps.services.ai_orchestrator import (
     AiOrchestratorPlan,
     PlannedAction,
     ExtractionPlan,
     KnowledgeSnippet,
     ActionType,
+    ACTION_REGISTRY,
     StreamingTurnContext,
 )
 from apps.services.rag_logging import structured_log
@@ -50,8 +55,88 @@ from .identifier_registry import IdentifierGuardrail
 
 logger = logging.getLogger(__name__)
 TRACER = otel_trace.get_tracer(__name__)
+HYDRATION_CONCURRENCY = max(1, int(getattr(settings, "MCP_TABLE_HYDRATION_CONCURRENCY", 4)))
+_TABLE_HYDRATION_SEMAPHORE = threading.Semaphore(HYDRATION_CONCURRENCY)
 
 
+class ToolLoopStreamTap:
+    """
+    Gated streaming helper that can abort when tool_call frames arrive mid-stream.
+    """
+
+    def __init__(
+        self,
+        *,
+        enabled: bool,
+        on_emit: Callable[[str], None],
+        on_abort: Callable[[], None] | None,
+        conversation_id: str,
+        business_id: str | None,
+    ) -> None:
+        self.enabled = enabled
+        self._on_emit = on_emit
+        self._on_abort = on_abort
+        self._tool_detected = False
+        self._context = {
+            "conversation": conversation_id,
+            "business": business_id,
+        }
+        if self.enabled:
+            structured_log(
+                "mcp",
+                "portal.mcp.tool_tap.arm",
+                {"state": "armed"},
+                context=self._context,
+                logger_obj=logger,
+            )
+
+    @property
+    def tool_detected(self) -> bool:
+        return self._tool_detected
+
+    def emit_text(self, chunk: str) -> None:
+        if not chunk:
+            return
+        if not self.enabled or not self._tool_detected:
+            self._on_emit(chunk)
+
+    def handle_event(self, event: StreamEvent) -> None:
+        if not self.enabled:
+            return
+        if event.event_type == "tool_call":
+            if self._tool_detected:
+                return
+            self._tool_detected = True
+            if self._on_abort:
+                try:
+                    self._on_abort()
+                except Exception:  # pragma: no cover - defensive
+                    logger.exception("ToolLoopStreamTap abort callback failed.")
+            detail = {}
+            if event.tool_call:
+                func = event.tool_call.get("function") if isinstance(event.tool_call, Mapping) else {}
+                detail = {
+                    "tool_id": event.tool_call.get("id"),
+                    "tool_name": func.get("name"),
+                }
+            structured_log(
+                "mcp",
+                "portal.mcp.tool_tap.abort",
+                detail or {"tool_detected": True},
+                context=self._context,
+                logger_obj=logger,
+            )
+        elif event.event_type == "finish":
+            structured_log(
+                "mcp",
+                "portal.mcp.tool_tap.complete",
+                {
+                    "tool_detected": self._tool_detected,
+                    "finish_reason": event.finish_reason,
+                },
+                context=self._context,
+                logger_obj=logger,
+            )
 class McpOrchestratorService:
     """
     Placeholder MCP orchestrator.
@@ -86,6 +171,10 @@ class McpOrchestratorService:
             int(getattr(settings, "RAG_MAX_CHAR_BUDGET_PER_MINUTE", 64000)),
         )
         self.char_budget_window_seconds = max(30, int(getattr(settings, "RAG_CHAR_BUDGET_WINDOW_SECONDS", 60)))
+        self._planner_actions_enabled = self._detect_action_enablement(agent)
+        self.streaming_tap_enabled = bool(getattr(settings, "MCP_STREAMING_TAP_ENABLED", False))
+        self.search_cache_ttl = max(0, int(getattr(settings, "MCP_SEARCH_CACHE_TTL", 45)))
+        self.table_cache_ttl = max(0, int(getattr(settings, "MCP_TABLE_CACHE_TTL", 45)))
 
     def _execute_turn(
         self,
@@ -121,7 +210,8 @@ class McpOrchestratorService:
             )
             tool_context.identifier_gate = IdentifierGuardrail.from_conversation(conversation)
             with TRACER.start_as_current_span("portal.mcp.table_cache") as cache_span:
-                self._hydrate_table_cache(conversation, tool_context)
+                with _TABLE_HYDRATION_SEMAPHORE:
+                    self._hydrate_table_cache(conversation, tool_context)
                 if cache_span.is_recording():
                     cache_span.set_attribute(
                         "mcp.cached_tables",
@@ -237,6 +327,12 @@ class McpOrchestratorService:
                 _emit_tokens(trailing)
             stream_buffer = ""
 
+        def _reset_stream_state() -> None:
+            nonlocal stream_buffer
+            stream_buffer = ""
+            stream_dropped.clear()
+            answer_streamed_chunks.clear()
+
         # Phase 1: streaming tool-enabled call. If tool_calls appear, we will
         # fall back to the full tool loop + final-answer path. If no tool_calls
         # and we have content, we can keep this streamed text and skip the
@@ -282,9 +378,26 @@ class McpOrchestratorService:
                     continue
                 break
 
+        tap: ToolLoopStreamTap | None = None
+        if on_response_text_delta:
+            if self.streaming_tap_enabled:
+                tap = ToolLoopStreamTap(
+                    enabled=True,
+                    on_emit=_first_stream_chunk,
+                    on_abort=_reset_stream_state,
+                    conversation_id=str(conversation.id),
+                    business_id=str(conversation.business_profile_id),
+                )
+                stream_delta_callback: Callable[[str], None] | None = tap.emit_text
+            else:
+                stream_delta_callback = _first_stream_chunk
+        else:
+            stream_delta_callback = None
+
         # Limit the initial payload so the provider only sees the guardrails and
         # the latest transcript entries needed for intent selection.
         primary_messages = prompts.limit_messages_for_stage(transcript, stage="initial_pass")
+        self._log_prompt_trim("initial_pass", len(transcript), len(primary_messages), conversation)
         self._log_prompt("primary", conversation=conversation, messages=primary_messages)
         with TRACER.start_as_current_span("portal.mcp.initial_pass") as initial_span:
             if initial_span.is_recording():
@@ -293,7 +406,8 @@ class McpOrchestratorService:
             first_payload = self.provider.chat(
                 primary_messages,
                 tools=self.tool_definitions,
-                on_stream_delta=_first_stream_chunk,
+                on_stream_delta=stream_delta_callback,
+                on_stream_event=tap.handle_event if tap else None,
             )
         first_message = self._coerce_assistant_message(first_payload)
         first_stream_message = dict(first_message or {})
@@ -370,15 +484,22 @@ class McpOrchestratorService:
                                 tool_context,
                                 conversation,
                             )
+                        cached_result = None
+                        if not duplicate_result:
+                            cached_result = self._cached_tool_result(tool_name, arguments, conversation)
 
                         with TRACER.start_as_current_span("portal.mcp.tool_call") as tool_span:
+                            start_tool = time.monotonic()
                             if tool_span.is_recording():
                                 tool_span.set_attribute("mcp.tool_name", tool_name)
                                 tool_span.set_attribute("mcp.iteration_index", iteration_index)
                                 tool_span.set_attribute("mcp.duplicate_short_circuit", bool(duplicate_result))
+                                tool_span.set_attribute("mcp.cache_hit", bool(cached_result))
                                 tool_span.set_attribute("mcp.tool_args_keys", sorted(arguments.keys()))
                             if duplicate_result:
                                 tool_result = duplicate_result
+                            elif cached_result:
+                                tool_result = cached_result
                             else:
                                 try:
                                     tool_result = tools.execute_tool(
@@ -401,6 +522,11 @@ class McpOrchestratorService:
                                         level=logging.WARNING,
                                     )
                                     tool_result = self._constraint_error_payload(tool_name, exc)
+                                else:
+                                    self._maybe_cache_tool_result(tool_name, arguments, conversation, tool_result)
+                            duration_ms = int((time.monotonic() - start_tool) * 1000)
+                            if tool_span.is_recording():
+                                tool_span.set_attribute("mcp.tool_duration_ms", duration_ms)
                         if tool_name == "search_knowledge" and not duplicate_result:
                             self._record_search_history(tool_context, arguments, tool_result)
                         tool_context.add_tool_trace(
@@ -448,6 +574,7 @@ class McpOrchestratorService:
                     # Ask the model again with tools enabled to see if more tool_calls are needed.
                     # Trim tool-loop prompts so each call focuses on the newest inputs.
                     loop_messages = prompts.limit_messages_for_stage(transcript, stage="tool_iteration")
+                    self._log_prompt_trim("tool_iteration", len(transcript), len(loop_messages), conversation)
                     payload = self.provider.chat(
                         loop_messages,
                         tools=self.tool_definitions,
@@ -613,86 +740,140 @@ class McpOrchestratorService:
                 logger_obj=logger,
             )
 
-        final_messages = prompts.build_final_answer_messages(
-            conversation=conversation,
-            user_message=user_message,
-            tool_context_note=self._planner_tool_note(tool_context),
-            coverage_ledger=tuple(getattr(tool_context, "coverage_ledger", ())),
-            tool_trace=tuple(getattr(tool_context, "tool_trace", ())),
-            assistant_draft=tool_phase_assistant_message,
-            identifier_filters=tuple(getattr(tool_context, "identifier_filters", ())),
-        )
-        use_response_format = True
-        if self.provider.__class__.__name__ == "DeepSeekToolsProvider":
-            use_response_format = False
-        self._log_prompt("final", conversation=conversation, messages=final_messages)
-        try:
-            final_payload = self.provider.chat(
-                final_messages,
-                tools=None,
-                on_stream_delta=_answer_stream_chunk,
-                response_format=self._final_response_schema() if use_response_format else None,
+        read_enforcement_needed = self._requires_full_read(tool_context)
+        fast_final_used = False
+        clean_answer_text = ""
+        dropped_sentences: list[str] = []
+        final_assistant_message = None
+        answer_text_raw = ""
+
+        fast_path_candidate: dict[str, object] | None = None
+
+        candidate_text = ""
+        if tool_phase_assistant_message:
+            existing_text = str(tool_phase_assistant_message.get("content") or "").strip()
+            if not existing_text:
+                existing_text = str(tool_phase_assistant_message.get("response_text") or "").strip()
+            if existing_text:
+                candidate_text = existing_text
+                fast_path_candidate = dict(tool_phase_assistant_message)
+        if not fast_path_candidate and single_pass_candidate:
+            candidate_text = single_pass_candidate.strip()
+            if candidate_text:
+                fast_path_candidate = dict(tool_phase_assistant_message or {"role": "assistant"})
+                fast_path_candidate["content"] = candidate_text
+
+        if fast_path_candidate:
+            tool_phase_assistant_message = fast_path_candidate
+
+        if fast_path_candidate and candidate_text and not read_enforcement_needed:
+            if on_status_change:
+                on_status_change({"code": "responding", "label": "Responding…"})
+            raw_fast_text = candidate_text
+            clean_answer_text, dropped_sentences = sanitize_with_diagnostics(
+                raw_fast_text,
+                conversation=conversation,
+                stage="final_answer",
+                filter_level=filter_level,
             )
-        except PromptGenerationError as exc:
-            if "response_format" in str(exc).lower():
-                structured_log(
-                    "mcp",
-                    "final_response_format_unsupported",
-                    {"provider": self.provider.__class__.__name__, "error": str(exc)},
-                    context={"conversation": conversation.id},
-                    level=logging.WARNING,
-                )
+            if not clean_answer_text and raw_fast_text:
+                clean_answer_text = raw_fast_text.strip()
+            stream_buffer = ""
+            _emit_stream_chunks(_answer_stream_chunk, clean_answer_text)
+            trailing = stream_buffer
+            if trailing:
+                trailing_stripped = trailing.strip()
+                if trailing_stripped and is_investigative_filler_with_level(trailing_stripped, filter_level=filter_level):
+                    stream_dropped.append(trailing_stripped)
+                    structured_log(
+                        "mcp",
+                        "sanitizer.dropped_sentence",
+                        {
+                            "stage": "streaming_answer",
+                            "text": trailing_stripped[:200],
+                        },
+                        indent=1,
+                        context={
+                            "conversation": conversation.id,
+                            "business": conversation.business_profile_id,
+                        },
+                    )
+                else:
+                    _emit_tokens(trailing)
+            stream_buffer = ""
+            if on_status_change:
+                on_status_change({"code": "stream_complete", "label": ""})
+            final_assistant_message = dict(fast_path_candidate)
+            final_assistant_message["content"] = clean_answer_text
+            answer_text_raw = clean_answer_text
+            fast_final_used = True
+        else:
+            final_messages = prompts.build_final_answer_messages(
+                conversation=conversation,
+                user_message=user_message,
+                tool_context_note=self._planner_tool_note(tool_context),
+                coverage_ledger=tuple(getattr(tool_context, "coverage_ledger", ())),
+                tool_trace=tuple(getattr(tool_context, "tool_trace", ())),
+                assistant_draft=tool_phase_assistant_message,
+                identifier_filters=tuple(getattr(tool_context, "identifier_filters", ())),
+            )
+            use_response_format = True
+            if self.provider.__class__.__name__ == "DeepSeekToolsProvider":
+                use_response_format = False
+            self._log_prompt("final", conversation=conversation, messages=final_messages)
+            try:
                 final_payload = self.provider.chat(
                     final_messages,
                     tools=None,
                     on_stream_delta=_answer_stream_chunk,
-                    response_format=None,
+                    response_format=self._final_response_schema() if use_response_format else None,
                 )
-            else:
-                raise
-        final_assistant_message = self._coerce_assistant_message(final_payload)
-        trailing = stream_buffer
-        if trailing:
-            trailing_stripped = trailing.strip()
-            if trailing_stripped and is_investigative_filler_with_level(trailing_stripped, filter_level=filter_level):
-                stream_dropped.append(trailing_stripped)
-                structured_log(
-                    "mcp",
-                    "sanitizer.dropped_sentence",
-                    {
-                        "stage": "streaming_answer",
-                        "text": trailing_stripped[:200],
-                    },
-                    indent=1,
-                    context={
-                        "conversation": conversation.id,
-                        "business": conversation.business_profile_id,
-                    },
-                )
-            else:
-                _emit_tokens(trailing)
+            except PromptGenerationError as exc:
+                if "response_format" in str(exc).lower():
+                    structured_log(
+                        "mcp",
+                        "final_response_format_unsupported",
+                        {"provider": self.provider.__class__.__name__, "error": str(exc)},
+                        context={"conversation": conversation.id},
+                        level=logging.WARNING,
+                    )
+                    final_payload = self.provider.chat(
+                        final_messages,
+                        tools=None,
+                        on_stream_delta=_answer_stream_chunk,
+                        response_format=None,
+                    )
+                else:
+                    raise
+            final_assistant_message = self._coerce_assistant_message(final_payload)
+            trailing = stream_buffer
+            if trailing:
+                trailing_stripped = trailing.strip()
+                if trailing_stripped and is_investigative_filler_with_level(trailing_stripped, filter_level=filter_level):
+                    stream_dropped.append(trailing_stripped)
+                    structured_log(
+                        "mcp",
+                        "sanitizer.dropped_sentence",
+                        {
+                            "stage": "streaming_answer",
+                            "text": trailing_stripped[:200],
+                        },
+                        indent=1,
+                        context={
+                            "conversation": conversation.id,
+                            "business": conversation.business_profile_id,
+                        },
+                    )
+                else:
+                    _emit_tokens(trailing)
 
-        answer_text_raw = ""
-        if final_assistant_message is not None:
-            answer_text_raw = str(final_assistant_message.get("content") or "").strip()
+            if final_assistant_message is not None:
+                answer_text_raw = str(final_assistant_message.get("content") or "").strip()
 
-        if on_status_change:
-            on_status_change({"code": "stream_complete", "label": ""})
+            if on_status_change:
+                on_status_change({"code": "stream_complete", "label": ""})
 
-        unmet_read_required = False
-        table_results_present = False
-        for entry in getattr(tool_context, "knowledge_results", []):
-            if not isinstance(entry, Mapping):
-                continue
-            if entry.get("read_required"):
-                unmet_read_required = True
-            if entry.get("search_stage") in {"table_direct", "table_blended"}:
-                table_results_present = True
-            if unmet_read_required and table_results_present:
-                break
-        no_reads = not getattr(tool_context, "knowledge_reads", [])
-        if no_reads and (unmet_read_required or table_results_present):
-            # Enforce read-before-answer for table/identifier hits
+        if read_enforcement_needed and not getattr(tool_context, "knowledge_reads", []):
             final_assistant_message = {
                 "role": "assistant",
                 "content": "",
@@ -701,15 +882,20 @@ class McpOrchestratorService:
                 "placeholder_response": "Need to read the recommended document/page before answering. Use read_hint (doc_id + page + mode).",
             }
             answer_text_raw = ""
+            clean_answer_text = ""
+            dropped_sentences = []
+            fast_final_used = False
 
-        clean_answer_text, dropped_sentences = sanitize_with_diagnostics(
-            answer_text_raw,
-            conversation=conversation,
-            stage="final_answer",
-            filter_level=filter_level,
-        )
-        if not clean_answer_text and answer_text_raw:
-            clean_answer_text = answer_text_raw.strip()
+        if not fast_final_used:
+            clean_answer_text, dropped_sentences = sanitize_with_diagnostics(
+                answer_text_raw,
+                conversation=conversation,
+                stage="final_answer",
+                filter_level=filter_level,
+            )
+            if not clean_answer_text and answer_text_raw:
+                clean_answer_text = answer_text_raw.strip()
+
         all_dropped = stream_dropped + dropped_sentences
         normalized_assistant_msg = dict(final_assistant_message or {})
         normalized_assistant_msg["content"] = clean_answer_text
@@ -736,6 +922,7 @@ class McpOrchestratorService:
             "streamed_chunks": tuple(answer_streamed_chunks),
             "clean_answer_text": clean_answer_text,
             "dropped_sentences": tuple(all_dropped),
+            "llm_strategy": "mcp_tools_stream_fast_final" if fast_final_used else "mcp_tools_stream_only",
         }
 
     @staticmethod
@@ -756,6 +943,92 @@ class McpOrchestratorService:
         if tone_norm in {"free", "freeflow", "freeflowing", "free-flowing", "casual"}:
             return "friendly"
         return "friendly"
+
+    @staticmethod
+    def _requires_full_read(context: ToolExecutionContext | None) -> bool:
+        if not context:
+            return False
+        unmet_read_required = False
+        table_requires_read = False
+        blockers: list[dict[str, object]] = []
+        for entry in getattr(context, "knowledge_results", []):
+            if not isinstance(entry, Mapping):
+                continue
+            snippet_id = entry.get("id") or entry.get("chunk_id")
+            label = entry.get("public_label") or entry.get("title")
+            if entry.get("read_required"):
+                unmet_read_required = True
+                blockers.append(
+                    {
+                        "reason": "read_required",
+                        "id": snippet_id,
+                        "label": label,
+                        "search_stage": entry.get("search_stage"),
+                    }
+                )
+            read_state = str(entry.get("read_state") or "").lower()
+            page_mode = str(entry.get("page_mode") or "").lower()
+            content_mode = str(entry.get("content_mode") or "").lower()
+            table_mode = (
+                page_mode == "structured_table"
+                or content_mode == "structured_table"
+                or bool(entry.get("is_table_chunk"))
+            )
+            structured_full = bool(
+                table_mode
+                and (read_state == "full" or not entry.get("read_required"))
+            )
+            search_stage = entry.get("search_stage")
+            if search_stage in {"table_direct", "table_blended"} and not structured_full:
+                table_requires_read = True
+                blockers.append(
+                    {
+                        "reason": "table_requires_read",
+                        "id": snippet_id,
+                        "label": label,
+                        "search_stage": search_stage,
+                        "read_state": read_state,
+                        "page_mode": page_mode,
+                        "content_mode": content_mode,
+                    }
+                )
+            if (unmet_read_required or table_requires_read) and len(blockers) >= 5:
+                break
+        no_reads = not getattr(context, "knowledge_reads", [])
+        if not no_reads:
+            if blockers:
+                structured_log(
+                    "mcp",
+                    "read_enforcement.cleared",
+                    {
+                        "blockers": blockers[:5],
+                        "reads_present": len(getattr(context, "knowledge_reads", [])),
+                    },
+                    logger_obj=logger,
+                )
+            return False
+        enforcement = bool(unmet_read_required or table_requires_read)
+        if enforcement:
+            structured_log(
+                "mcp",
+                "read_enforcement.block",
+                {
+                    "blockers": blockers[:5],
+                    "snippet_total": len(getattr(context, "knowledge_results", [])),
+                },
+                logger_obj=logger,
+            )
+        else:
+            structured_log(
+                "mcp",
+                "read_enforcement.pass",
+                {
+                    "snippet_total": len(getattr(context, "knowledge_results", [])),
+                    "blockers": blockers[:5],
+                },
+                logger_obj=logger,
+            )
+        return enforcement
 
     def stream_turn(
         self,
@@ -1141,50 +1414,83 @@ class McpOrchestratorService:
         return name in {"search_knowledge", "read_document", "table_aggregate"}
 
     @staticmethod
+    def _auto_read_from_snippet(snippet: Mapping[str, object]) -> Mapping[str, object] | None:
+        read_state = str(snippet.get("read_state") or "").lower()
+        if read_state != "full":
+            return None
+        page_mode = str(snippet.get("page_mode") or "").lower()
+        content_mode = str(snippet.get("content_mode") or "").lower()
+        is_table = bool(
+            snippet.get("is_table_chunk")
+            or page_mode == "structured_table"
+            or content_mode == "structured_table"
+            or snippet.get("structured_table_count")
+            or snippet.get("structuredTables")
+            or snippet.get("structured_tables")
+            or str(snippet.get("status") or "").lower() == "table_aggregate"
+        )
+        if not is_table:
+            return None
+        snapshot = {
+            "id": snippet.get("id") or snippet.get("chunk_id"),
+            "label": snippet.get("public_label") or snippet.get("title") or "Knowledge",
+            "page": snippet.get("page_number"),
+            "mode": page_mode or content_mode or "structured_table",
+        }
+        filtered = {k: v for k, v in snapshot.items() if v is not None}
+        snippet_copy = snippet if isinstance(snippet, dict) else dict(snippet)
+        snippet_copy["read_required"] = False
+        return filtered
+
+    @staticmethod
     def _record_knowledge_outputs(context: ToolExecutionContext, tool_result: Mapping[str, object]) -> None:
         snippets = tool_result.get("snippets") if isinstance(tool_result, Mapping) else None
         if isinstance(snippets, list):
             for entry in snippets:
                 if isinstance(entry, Mapping):
-                    context.add_knowledge_result(entry)
+                    snippet = dict(entry)
+                    context.add_knowledge_result(snippet)
                     coverage_entry = {
-                        "id": entry.get("id"),
-                        "title": entry.get("title") or entry.get("public_label") or "Knowledge",
-                        "label": entry.get("public_label") or entry.get("title") or "Knowledge",
-                        "read_state": entry.get("read_state"),
-                        "coverage": entry.get("coverage") if isinstance(entry.get("coverage"), (list, tuple)) else (),
-                        "search_stage": entry.get("search_stage"),
-                        "chunk_id": entry.get("chunk_id"),
-                        "upload_id": entry.get("upload_id"),
-                        "page_mode": entry.get("page_mode"),
-                        "is_table_chunk": entry.get("is_table_chunk"),
-                        "suppress_in_prompt": bool(entry.get("suppress_in_prompt")),
+                        "id": snippet.get("id"),
+                        "title": snippet.get("title") or snippet.get("public_label") or "Knowledge",
+                        "label": snippet.get("public_label") or snippet.get("title") or "Knowledge",
+                        "read_state": snippet.get("read_state"),
+                        "coverage": snippet.get("coverage") if isinstance(snippet.get("coverage"), (list, tuple)) else (),
+                        "search_stage": snippet.get("search_stage"),
+                        "chunk_id": snippet.get("chunk_id"),
+                        "upload_id": snippet.get("upload_id"),
+                        "page_mode": snippet.get("page_mode"),
+                        "is_table_chunk": snippet.get("is_table_chunk"),
+                        "suppress_in_prompt": bool(snippet.get("suppress_in_prompt")),
                     }
                     context.add_coverage_entry(coverage_entry)
-                    diagnostics = entry.get("source_diagnostics") if isinstance(entry.get("source_diagnostics"), Mapping) else None
-                    if diagnostics and diagnostics.get("table_aggregate") and entry.get("upload_id"):
-                        structured_tables = entry.get("structured_tables") or entry.get("structuredTables") or ()
+                    diagnostics = snippet.get("source_diagnostics") if isinstance(snippet.get("source_diagnostics"), Mapping) else None
+                    if diagnostics and diagnostics.get("table_aggregate") and snippet.get("upload_id"):
+                        structured_tables = snippet.get("structured_tables") or snippet.get("structuredTables") or ()
                         first_table = None
                         if isinstance(structured_tables, Sequence) and structured_tables:
                             first_candidate = structured_tables[0]
                             if isinstance(first_candidate, Mapping):
                                 first_table = first_candidate
                         table_details = {
-                            "snippet_id": entry.get("id"),
-                            "upload_id": entry.get("upload_id"),
+                            "snippet_id": snippet.get("id"),
+                            "upload_id": snippet.get("upload_id"),
                             "table_order_index": diagnostics.get("table_order_index"),
                             "row_index": diagnostics.get("table_row_index"),
                             "sheet_name": diagnostics.get("table_sheet_name"),
                             "columns": first_table.get("columns") if isinstance(first_table, Mapping) else None,
-                            "row_total": diagnostics.get("table_row_total") or entry.get("row_total"),
-                            "row_total_display": diagnostics.get("table_row_total_display") or entry.get("row_total_display"),
-                            "snippet": McpOrchestratorService._snapshot_snippet(entry),
+                            "row_total": diagnostics.get("table_row_total") or snippet.get("row_total"),
+                            "row_total_display": diagnostics.get("table_row_total_display") or snippet.get("row_total_display"),
+                            "snippet": McpOrchestratorService._snapshot_snippet(snippet),
                         }
                         context.table_aggregate_rows.append({k: v for k, v in table_details.items() if v is not None})
                         McpOrchestratorService._suppress_table_previews(
                             context,
-                            upload_id=str(entry.get("upload_id")),
+                            upload_id=str(snippet.get("upload_id")),
                         )
+                    auto_read = McpOrchestratorService._auto_read_from_snippet(snippet)
+                    if auto_read:
+                        context.add_knowledge_read(auto_read)
         reads = tool_result.get("knowledge_reads") if isinstance(tool_result, Mapping) else None
         if isinstance(reads, list):
             for read in reads:
@@ -1366,6 +1672,137 @@ class McpOrchestratorService:
                 "diagnostics": diagnostics,
             }
         return None
+
+    def _cached_tool_result(
+        self,
+        tool_name: str,
+        arguments: Mapping[str, object],
+        conversation: Conversation,
+    ) -> Mapping[str, object] | None:
+        cache_key = None
+        if tool_name == "search_knowledge" and self.search_cache_ttl:
+            cache_key = self._search_cache_key(conversation, arguments)
+        elif tool_name == "table_aggregate" and self.table_cache_ttl:
+            cache_key = self._table_cache_key(conversation, arguments)
+        if not cache_key:
+            return None
+        cached = cache.get(cache_key)
+        if cached is None:
+            return None
+        structured_log(
+            "mcp",
+            "cache.tool_hit",
+            {"tool": tool_name},
+            indent=1,
+            context={"conversation": conversation.id, "business": conversation.business_profile_id},
+            logger_obj=logger,
+        )
+        return copy.deepcopy(cached)
+
+    def _maybe_cache_tool_result(
+        self,
+        tool_name: str,
+        arguments: Mapping[str, object],
+        conversation: Conversation,
+        result: Mapping[str, object],
+    ) -> None:
+        if tool_name == "search_knowledge":
+            if not self.search_cache_ttl or not self._is_cacheable_search(result):
+                return
+            cache_key = self._search_cache_key(conversation, arguments)
+            if not cache_key:
+                return
+            cache.set(cache_key, copy.deepcopy(result), timeout=self.search_cache_ttl)
+            structured_log(
+                "mcp",
+                "cache.tool_store",
+                {"tool": tool_name},
+                indent=1,
+                context={"conversation": conversation.id, "business": conversation.business_profile_id},
+                logger_obj=logger,
+            )
+        elif tool_name == "table_aggregate":
+            if not self.table_cache_ttl or not self._is_cacheable_table(result):
+                return
+            cache_key = self._table_cache_key(conversation, arguments)
+            if not cache_key:
+                return
+            cache.set(cache_key, copy.deepcopy(result), timeout=self.table_cache_ttl)
+            structured_log(
+                "mcp",
+                "cache.tool_store",
+                {"tool": tool_name},
+                indent=1,
+                context={"conversation": conversation.id, "business": conversation.business_profile_id},
+                logger_obj=logger,
+            )
+
+    def _cache_namespace(self, conversation: Conversation) -> tuple[str, str, int]:
+        business_id = str(conversation.business_profile_id)
+        conversation_id = str(conversation.id)
+        business_profile = conversation.business_profile
+        updated_at = getattr(business_profile, "updated_at", None)
+        version = int(updated_at.timestamp()) if updated_at else 0
+        return business_id, conversation_id, version
+
+    def _search_cache_key(self, conversation: Conversation, arguments: Mapping[str, object]) -> str | None:
+        raw_query = arguments.get("query")
+        query = str(raw_query).strip() if raw_query is not None else ""
+        if not query:
+            return None
+        limit = arguments.get("limit")
+        try:
+            limit_val = int(limit) if limit is not None else None
+        except (TypeError, ValueError):
+            limit_val = None
+        namespace = self._cache_namespace(conversation)
+        digest_source = f"{query}\u241f{limit_val or ''}"
+        digest = hashlib.sha256(digest_source.encode("utf-8")).hexdigest()[:24]
+        return f"mcp:search:{namespace[0]}:{namespace[1]}:{namespace[2]}:{digest}"
+
+    def _table_cache_key(self, conversation: Conversation, arguments: Mapping[str, object]) -> str | None:
+        document_id = str(arguments.get("document_id") or "").strip()
+        if not document_id:
+            return None
+        relevant_keys = (
+            "document_id",
+            "match_column",
+            "match_value",
+            "match_values",
+            "mode",
+            "columns",
+            "requested_columns",
+            "table_order_index",
+            "sheet_name",
+            "query",
+        )
+        payload = {key: arguments.get(key) for key in relevant_keys if arguments.get(key) not in (None, "")}
+        canonical = self._canonicalize_arguments(payload)
+        namespace = self._cache_namespace(conversation)
+        serialized = json.dumps(canonical, sort_keys=True, ensure_ascii=False)
+        digest = hashlib.sha256(serialized.encode("utf-8")).hexdigest()[:24]
+        return f"mcp:table:{namespace[0]}:{namespace[1]}:{namespace[2]}:{digest}"
+
+    def _canonicalize_arguments(self, value):
+        if isinstance(value, Mapping):
+            return {key: self._canonicalize_arguments(value[key]) for key in sorted(value.keys())}
+        if isinstance(value, (list, tuple)):
+            return [self._canonicalize_arguments(item) for item in value]
+        return value
+
+    @staticmethod
+    def _is_cacheable_search(result: Mapping[str, object]) -> bool:
+        if not isinstance(result, Mapping):
+            return False
+        snippets = result.get("snippets")
+        return isinstance(snippets, list) and bool(snippets)
+
+    @staticmethod
+    def _is_cacheable_table(result: Mapping[str, object]) -> bool:
+        if not isinstance(result, Mapping):
+            return False
+        rows = result.get("rows")
+        return isinstance(rows, list) and bool(rows)
 
     def _persist_table_cache(self, conversation: Conversation, context: ToolExecutionContext) -> None:
         rows = getattr(context, "table_aggregate_rows", [])
@@ -1558,6 +1995,21 @@ class McpOrchestratorService:
             logger_obj=logger,
         )
 
+    def _log_prompt_trim(self, stage: str, before: int, after: int, conversation: Conversation) -> None:
+        removed = max(0, before - after)
+        if removed <= 0:
+            return
+        structured_log(
+            "mcp",
+            "prompt.trimmed",
+            {"stage": stage, "removed_messages": removed},
+            context={
+                "conversation": conversation.id,
+                "business": conversation.business_profile_id,
+            },
+            logger_obj=logger,
+        )
+
     def _business_override(self, business_profile, key: str, default: int | float) -> int | float:
         metadata = getattr(business_profile, "metadata", None)
         overrides = metadata.get(self.business_override_key) if isinstance(metadata, dict) else None
@@ -1606,6 +2058,90 @@ class McpOrchestratorService:
             cache.set(cache_key, new_total, timeout=window)
 
         return _reserve
+
+    def _detect_action_enablement(self, agent: AgentProfile | None) -> bool:
+        if not agent:
+            return False
+        permissions: dict[str, bool] = {}
+        if hasattr(agent, "action_permissions"):
+            try:
+                permissions = {perm.action_key: perm.is_enabled for perm in agent.action_permissions.all()}
+            except Exception:
+                permissions = {}
+        for action, descriptor in ACTION_REGISTRY.items():
+            if action == ActionType.READ_KNOWLEDGE:
+                continue
+            enabled = permissions.get(action.value, descriptor.default_enabled)
+            if enabled:
+                return True
+        return False
+
+    def should_run_planner(
+        self,
+        *,
+        conversation: Conversation,
+        tool_context: ToolExecutionContext | None,
+        answer_text: str,
+        tool_trace: Sequence[Mapping[str, object]] | None = None,
+    ) -> bool:
+        if not self._planner_actions_enabled:
+            structured_log(
+                "mcp",
+                "planner.guard",
+                {
+                    "decision": "skip",
+                    "reason": "actions_disabled",
+                },
+                context={"conversation": conversation.id},
+                logger_obj=logger,
+            )
+            return False
+        if not answer_text or not answer_text.strip():
+            structured_log(
+                "mcp",
+                "planner.guard",
+                {
+                    "decision": "skip",
+                    "reason": "no_answer_text",
+                },
+                context={"conversation": conversation.id},
+                logger_obj=logger,
+            )
+            return False
+        trace_entries: Sequence[Mapping[str, object]] | list[Mapping[str, object]] = tool_trace or ()
+        if not trace_entries and tool_context:
+            trace_entries = getattr(tool_context, "tool_trace", [])
+        tool_names: list[str] = []
+        for entry in trace_entries:
+            if not isinstance(entry, Mapping):
+                continue
+            name = entry.get("tool")
+            if isinstance(name, str) and name:
+                tool_names.append(name)
+        decision = "run"
+        reason = "default"
+        if tool_names and all(self._is_knowledge_tool(name) for name in tool_names):
+            unique_tools = {name for name in tool_names}
+            if unique_tools == {"search_knowledge"}:
+                decision = "skip"
+                reason = "search_only"
+        elif not tool_names:
+            reason = "no_trace"
+        structured_log(
+            "mcp",
+            "planner.guard",
+            {
+                "decision": decision,
+                "reason": reason,
+                "tool_names": tool_names,
+                "trace_size": len(tool_names),
+            },
+            context={"conversation": conversation.id},
+            logger_obj=logger,
+        )
+        if decision == "skip":
+            return False
+        return True
 
     @staticmethod
     def _constraint_error_payload(tool_name: str, exc: ToolConstraintError) -> Mapping[str, object]:
