@@ -65,6 +65,7 @@ class ToolExecutionContext:
     table_aggregate_rows: list[dict[str, object]] = dataclasses.field(default_factory=list)
     table_row_cache: dict[str, list[dict[str, object]]] = dataclasses.field(default_factory=dict)
     search_history: list[dict[str, object]] = dataclasses.field(default_factory=list)
+    tool_result_cache: dict[str, dict[str, object]] = dataclasses.field(default_factory=dict)
 
     def reserve_chunk_reads(self, count: int) -> None:
         """Ensure the requested chunk reads do not exceed the per-turn budget."""

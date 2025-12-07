@@ -179,6 +179,20 @@ class BaseMcpProvider(Protocol):
         ...
 
 
+@dataclass(frozen=True)
+class StreamEvent:
+    """
+    Metadata emitted for each streamed SSE frame so callers can detect tool calls.
+    """
+
+    event_type: Literal["text", "tool_call", "finish"]
+    text: str | None = None
+    tool_call: Mapping[str, object] | None = None
+    payload: Mapping[str, object] | None = None
+    index: int | None = None
+    finish_reason: str | None = None
+
+
 def _emit_stream_chunks(emit: Callable[[str], None], text: str, chunk_size: int = 64) -> None:
     """
     Helper to emit a long string in smaller chunks so the chat portal can
@@ -299,7 +313,7 @@ class OpenAIChatProvider:
                 with urllib_request.urlopen(request, timeout=self.timeout) as resp:
                     status_code = getattr(resp, "status", 200)
                     if streaming:
-                        data = _consume_chat_completion_stream(resp, on_stream_delta)
+                        data = _consume_chat_completion_stream(resp, on_stream_delta, None)
                         raw_body = None
                     else:
                         raw_body = resp.read().decode("utf-8")
@@ -964,7 +978,11 @@ def _collapse_stream_tool_calls(store: dict[int, dict[str, object]]) -> list[dic
     return collapsed
 
 
-def _consume_chat_completion_stream(stream, on_stream_delta: Callable[[str], None] | None) -> dict[str, object]:
+def _consume_chat_completion_stream(
+    stream,
+    on_stream_delta: Callable[[str], None] | None,
+    on_stream_event: Callable[[StreamEvent], bool] | None = None,
+) -> dict[str, object]:
     """
     Assemble a chat-completions style payload from a streaming HTTP response.
 
@@ -979,6 +997,7 @@ def _consume_chat_completion_stream(stream, on_stream_delta: Callable[[str], Non
     finish_reason: str | None = None
     last_message_content: str | None = None
     last_message_tool_calls: list[dict[str, object]] | None = None
+    stop_stream = False
 
     def _normalize_delta(chunk: str) -> str:
         return chunk or ""
@@ -986,7 +1005,19 @@ def _consume_chat_completion_stream(stream, on_stream_delta: Callable[[str], Non
     start_first = time.monotonic()
     first_delta_at: float | None = None
 
+    def _emit_event(event_type: Literal["text", "tool_call", "finish"], **kwargs) -> bool:
+        if not on_stream_event:
+            return False
+        try:
+            result = on_stream_event(StreamEvent(event_type=event_type, **kwargs))
+        except Exception:  # pragma: no cover - safeguard user callbacks
+            logger.exception("Streaming event callback failed for %s frame.", event_type)
+            return False
+        return bool(result)
+
     for payload in _iter_sse_events(stream):
+        if stop_stream:
+            break
         if not payload:
             continue
         try:
@@ -1020,6 +1051,9 @@ def _consume_chat_completion_stream(stream, on_stream_delta: Callable[[str], Non
                         on_stream_delta(text)
                     except Exception:  # pragma: no cover - safeguard user callbacks
                         logger.exception("Streaming callback failed while emitting delta chunk.")
+                if _emit_event("text", text=text, payload=chunk):
+                    stop_stream = True
+                    break
         elif isinstance(content_block, str) and content_block:
             normalized = _normalize_delta(content_block)
             text_parts.append(normalized)
@@ -1030,10 +1064,21 @@ def _consume_chat_completion_stream(stream, on_stream_delta: Callable[[str], Non
                     on_stream_delta(normalized)
                 except Exception:  # pragma: no cover - safeguard user callbacks
                     logger.exception("Streaming callback failed while emitting delta chunk.")
+            if _emit_event("text", text=normalized, payload=None):
+                stop_stream = True
+        if stop_stream:
+            finish_reason = finish_reason or "tool_calls"
+            break
 
         for tool_delta in delta.get("tool_calls") or []:
             if isinstance(tool_delta, Mapping):
                 _merge_stream_tool_call(tool_calls, tool_delta)
+                if _emit_event("tool_call", tool_call=tool_delta, payload=tool_delta, index=tool_delta.get("index")):
+                    stop_stream = True
+                    break
+        if stop_stream:
+            finish_reason = finish_reason or "tool_calls"
+            break
 
         # Capture any full message payload sent on streaming frames (some providers
         # emit the final message in the last SSE event).
@@ -1081,6 +1126,9 @@ def _consume_chat_completion_stream(stream, on_stream_delta: Callable[[str], Non
         logger_obj=logger,
     )
 
+    if finish_reason:
+        _emit_event("finish", finish_reason=finish_reason, payload={"finish_reason": finish_reason})
+
     return {"choices": [{"message": message}]}
 
 
@@ -1126,9 +1174,10 @@ class OpenAIToolsProvider(BaseMcpProvider):
         *,
         tools: Iterable[Mapping[str, object]] | None = None,
         on_stream_delta: Callable[[str], None] | None = None,
+        on_stream_event: Callable[[StreamEvent], bool] | None = None,
         response_format: Mapping[str, object] | None = None,
     ) -> Mapping[str, Any]:
-        streaming = bool(on_stream_delta)
+        streaming = bool(on_stream_delta or on_stream_event)
         with TRACER.start_as_current_span("llm.openai.tools") as span:
             if span.is_recording():
                 span.set_attribute("llm.provider", "OpenAITools")
@@ -1222,7 +1271,11 @@ class OpenAIToolsProvider(BaseMcpProvider):
                                 if status_code >= 400:
                                     detail = resp.text[:200]
                                     raise PromptGenerationError(f"OpenAI tools error ({status_code}): {detail}")
-                                data = _consume_chat_completion_stream(_HttpxLineStream(resp.iter_lines()), on_stream_delta)
+                                data = _consume_chat_completion_stream(
+                                    _HttpxLineStream(resp.iter_lines()),
+                                    on_stream_delta,
+                                    on_stream_event,
+                                )
                         else:
                             resp = self._http_client.post(
                                 "/v1/chat/completions",
@@ -1249,7 +1302,7 @@ class OpenAIToolsProvider(BaseMcpProvider):
                     try:
                         with urllib_request.urlopen(request, timeout=self.timeout) as resp:
                             if streaming:
-                                data = _consume_chat_completion_stream(resp, on_stream_delta)
+                                data = _consume_chat_completion_stream(resp, on_stream_delta, on_stream_event)
                                 raw_body = None
                             else:
                                 raw_body = resp.read().decode("utf-8")
@@ -1400,9 +1453,10 @@ class DeepSeekToolsProvider(BaseMcpProvider):
         *,
         tools: Iterable[Mapping[str, object]] | None = None,
         on_stream_delta: Callable[[str], None] | None = None,
+        on_stream_event: Callable[[StreamEvent], bool] | None = None,
         response_format: Mapping[str, object] | None = None,
     ) -> Mapping[str, Any]:
-        streaming = bool(on_stream_delta)
+        streaming = bool(on_stream_delta or on_stream_event)
         with TRACER.start_as_current_span("llm.deepseek.tools") as span:
             if span.is_recording():
                 span.set_attribute("llm.provider", "DeepSeekTools")
@@ -1483,7 +1537,11 @@ class DeepSeekToolsProvider(BaseMcpProvider):
                                 if status_code >= 400:
                                     detail = resp.text[:200]
                                     raise PromptGenerationError(f"DeepSeek tools error ({status_code}): {detail}")
-                                data = _consume_chat_completion_stream(_HttpxLineStream(resp.iter_lines()), on_stream_delta)
+                                data = _consume_chat_completion_stream(
+                                    _HttpxLineStream(resp.iter_lines()),
+                                    on_stream_delta,
+                                    on_stream_event,
+                                )
                         else:
                             resp = self._http_client.post(
                                 "/v1/chat/completions",
@@ -1510,7 +1568,7 @@ class DeepSeekToolsProvider(BaseMcpProvider):
                     try:
                         with urllib_request.urlopen(request, timeout=self.timeout) as resp:
                             if streaming:
-                                data = _consume_chat_completion_stream(resp, on_stream_delta)
+                                data = _consume_chat_completion_stream(resp, on_stream_delta, on_stream_event)
                                 raw_body = None
                             else:
                                 raw_body = resp.read().decode("utf-8")
