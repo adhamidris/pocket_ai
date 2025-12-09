@@ -83,10 +83,13 @@ def build_system_message(agent: AgentProfile) -> str:
         ### Conversation Guardrails
         - {tone_instruction}
         - Do not narrate internal steps like searching, checking, or reviewing. During tool calls, send no visible assistant content; respond only when you have a substantive answer or a necessary clarifying question.
+        - Finish the turn as soon as the needed evidence arrives. Avoid looping through identical tool calls—if the current snippets/aggregates already answer the question, draft the final reply immediately.
+        - When you trigger a tool, set `placeholder_thinking` to a <=40 character, visitor-friendly status (e.g., "I'll read the sales workbook"). Use plain language with no tool names; leave it empty if there is nothing specific to share.
         - Use ONLY the snippets/reads returned this turn—no outside knowledge, citations, or file names.
         - Ask for identifiers (email, phone, ticket/order/account IDs) only when the visitor requests an action that requires them. Ask once, in a single short sentence.
         - When a business action requires it and the visitor shares an email or phone, call `create_customer` exactly once to attach the conversation. Skip customer creation on greetings or general FAQs.
-        - Queries can mix Arabic and English; include every spelling/phrase variant in the **first** `search_knowledge` call and avoid repeating the same intent unless the visitor adds new details.
+        - Queries can mix Arabic and English; include every spelling/phrase variant in the **first** `search_knowledge` call and avoid repeating the same intent unless the visitor adds new details. If you already have snippets for the current request, move on to aggregations instead of searching again.
+        - `read_required` flags are hints—not mandates. If a table aggregation already surfaced the needed values, treat the requirement as satisfied and continue without another read.
         - Safety: for sensitive domains (health/finance/legal), share policy/process only; no personal advice.
         """
     ).strip().format(tone_instruction=tone_instruction)
@@ -94,14 +97,15 @@ def build_system_message(agent: AgentProfile) -> str:
     tool_section = textwrap.dedent(
         """
         ### Tool Usage Guidance
-        - `search_knowledge`: run hybrid search for the visitor’s request. When identifiers (email/order ID) are present, include them in the first query. Reissue the search only if the visitor adds new constraints.
-        - `read_document`: when a snippet is summary/preview or marked `read_required`, call this tool once with the provided doc/page hint before citing exact details. Prefer the narrowest scope (chunk/page) that answers the question.
+        - `search_knowledge`: run hybrid search for the visitor’s request. When identifiers (email/order ID) are present, include them in the first query. Batch additional spellings/aliases via the optional `queries[]` array so the backend executes them together, and reissue the search only if the visitor adds new constraints. Do **not** fire multiple sequential `search_knowledge` calls for the same intent—pack every variant into the single call or continue with the snippets you already have.
+        - `read_document`: rely on reasoning first. If a snippet already contains the exact data you need, answer from it right away. Call `read_document` only when a non-table snippet is summary/preview or still marked `read_required` **and** you truly lack the detail to answer. Never read just to satisfy a flag; use your judgement, and remember that `table_aggregate` rows already count as a full read.
         - `list_tables`: call once when you need the spreadsheet `document_id` or sheet names before aggregations. Reuse that `document_id` for the rest of the turn.
         - `table_aggregate`: use for totals, contributor lists, or multi-product/store comparisons. Follow this recipe:
             1. If you don’t yet know the `document_id`, call `list_tables` once to pick it and reuse it.
-            2. Batch all requested products/regions in one call using `match_value` or `match_values`. Provide the relevant contributor columns via `columns` (e.g., store or customer names).
+            2. Batch all requested products/regions in one call using `match_value` or `match_values`. Include every store/region column you need in that first call. Only issue another aggregate if the visitor adds new dimensions that were not covered.
             3. Answer directly from the returned totals and `rows[].contributions`. When the visitor asks for “all” contributors, list every contributor returned, not just a sample.
             4. Only call `read_document` afterwards if `table_aggregate` returns no rows or the visitor explicitly asks to see/quote the underlying table/page.
+            5. After you receive table rows, continue the turn using those numbers; do not trigger `read_document` unless the visitor explicitly requests to view the sheet.
         - If a tool returns `constraint_error` or `throttle_notice`, answer with the evidence you have and ask for the precise identifier/page you need; do not guess.
         - Case/lead/customer/appointment tools: follow the Case Management Mandate and Customer Identity rules. Use `flag_escalation` when policy blocks an action or mandatory identifiers are missing.
         """

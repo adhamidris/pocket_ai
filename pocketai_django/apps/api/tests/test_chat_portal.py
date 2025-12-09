@@ -5,7 +5,7 @@ import uuid
 from types import SimpleNamespace
 from unittest import mock
 
-from django.test import RequestFactory, TestCase
+from django.test import RequestFactory, TestCase, override_settings
 
 from apps.api import chat_portal
 from apps.conversations.models import ConversationSender
@@ -27,8 +27,8 @@ class StubPortalService:
         )
         self.messages: list[SimpleNamespace] = []
 
-    def append_message(self, *, session_token: str, sender: ConversationSender, body: str, metadata: dict | None = None, conversation=None):
-        message = SimpleNamespace(id=uuid.uuid4(), sender=sender, body=body, metadata=metadata)
+    def append_message(self, *, session_token: str, sender: ConversationSender, body: str, metadata: dict | None = None, conversation=None, message_id=None):
+        message = SimpleNamespace(id=message_id or uuid.uuid4(), sender=sender, body=body, metadata=metadata)
         self.messages.append(message)
         return message
 
@@ -131,6 +131,7 @@ class ChatPortalStreamingTests(TestCase):
                 user_message,
                 on_response_text_delta=None,
                 on_stream_complete=None,
+                on_spinner_update=None,
                 **_,
             ):
                 if on_response_text_delta:
@@ -205,3 +206,91 @@ class ChatPortalStreamingTests(TestCase):
         self.assertIn("answer_confidence", persisted_payload)
         self.assertIn("ingestion_warnings", persisted_payload)
         self.assertAlmostEqual(persisted_payload["answer_confidence"], 0.62)
+
+    @override_settings(PORTAL_STREAM_STATE_MACHINE=True)
+    def test_stream_send_emits_turn_pending_with_state_machine_enabled(self) -> None:
+        payload = {"session_token": "abc", "body": "hello"}
+        request = self.factory.post(
+            "/stream",
+            data=json.dumps(payload),
+            content_type="application/json",
+        )
+
+        class StubOrchestrator:
+            def __init__(self, plan, conversation):
+                self.plan = plan
+                self.conversation = conversation
+
+            def stream_turn(
+                self,
+                *,
+                conversation,
+                user_message,
+                on_response_text_delta=None,
+                on_stream_complete=None,
+                on_spinner_update=None,
+                **_,
+            ):
+                if on_response_text_delta:
+                    on_response_text_delta(self.plan.response_text)
+                if on_spinner_update:
+                    on_spinner_update("Reading data")
+                if on_stream_complete:
+                    on_stream_complete()
+                return StreamingTurnContext(
+                    conversation=conversation,
+                    response_text=self.plan.response_text,
+                    planned_actions=self.plan.planned_actions,
+                    extractions=self.plan.extractions,
+                    resolved_citations=self.plan.citations,
+                    knowledge_payload=tuple(),
+                    knowledge_reads=tuple(),
+                    knowledge_status="ok",
+                    knowledge_diagnostics={},
+                    knowledge_loading=False,
+                    placeholder_response=None,
+                    prompt_bundle=None,
+                    tool_trace=tuple(),
+                    cached_snippet_count=0,
+                    llm_source="provider",
+                    streamed_chunks=(self.plan.response_text,),
+                )
+
+            def finalize_turn(self, *_):
+                return self.plan
+
+            def run_planner_only(self, **_):
+                return self.plan
+
+        stub_orchestrator = StubOrchestrator(self.plan, self.stub_service.conversation)
+
+        class StubDispatcher:
+            def __init__(self, *_, **__):
+                pass
+
+            def execute(self, **_):
+                return []
+
+        with mock.patch.object(chat_portal, "_service", return_value=self.stub_service), \
+            mock.patch.object(chat_portal, "AiOrchestratorService", return_value=stub_orchestrator), \
+            mock.patch.object(chat_portal, "ActionDispatcher", StubDispatcher), \
+            mock.patch.object(chat_portal, "load_default_provider", return_value=None), \
+            mock.patch.object(chat_portal.threading, "Thread", ImmediateThread):
+            response = chat_portal.stream_send(request)
+
+        chunks = list(response.streaming_content)
+        events: list[tuple[str | None, str]] = []
+        current_event: str | None = None
+        for chunk in chunks:
+            if isinstance(chunk, bytes):
+                chunk = chunk.decode("utf-8")
+            if chunk.startswith("event:"):
+                current_event = chunk.split("event:", 1)[1].strip()
+            elif chunk.startswith("data:"):
+                payload = chunk.split("data:", 1)[1].strip()
+                events.append((current_event, payload))
+
+        turn_pending = next((data for evt, data in events if evt == "turnPending"), None)
+        self.assertIsNotNone(turn_pending)
+        persisted_event = next((data for evt, data in events if evt == "turnPersisted"), None)
+        self.assertIsNotNone(persisted_event)

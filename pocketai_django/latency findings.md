@@ -67,3 +67,22 @@ Latency Contributors
 Fixes Implemented
 -----------------
 - `_table_row_cache_key` now canonicalizes every input before hashing—`match_column`/`match_values` reuse `_normalize_column_name`, while `sheet_name` and `query` are trimmed + lowercased. `_table_aggregate_handler` feeds those canonical strings into the key so “Net Sales” vs “net sales” vs “net   sales” reuse the same cached payload. After the first `table_aggregate` hydrates rows, later retries hit the cache and skip redundant DB loads, restoring table turns to the prior ~50 s baseline without changing functionality.
+Report 6
+========
+
+Latency Contributors
+--------------------
+- `apps/api/chat_portal.py:260-320`: The planner pass still triggered for every turn unless the exact low-intent regex matched, so short, tool-free answers paid for a second MCP call and planner warm-up. No per-session memory meant consecutive small-talk turns repeated the same latency spike.
+- `apps/api/chat_portal.py:720-1181`: Streaming UX stayed silent until full sentences arrived or the worker joined; placeholders were suppressed entirely and `turnPersisted` waited for planner metadata, so visitors stared at spinners whenever the model paused mid-sentence.
+- `apps/services/mcp/orchestrator.py:115-814`: Each turn rebuilt tool caches from scratch. Identical `search_knowledge` calls reran ANN + rerank, identifier mappings hit the ORM again, and table row hydration repeated across turns. Streaming also buffered until sentence boundaries, so deltas stalled on long clauses.
+- `apps/services/mcp/tools.py:1655-2249`: `list_tables` fetched every table per upload before slicing, and `table_aggregate` still materialized large row sets, making table-heavy tenants wait seconds even when repeating the same filters.
+- `apps/services/mcp/prompts.py:200-249`: Cached table snippets injected full contributor payloads into every prompt, inflating token counts and slowing LLM responses without adding new evidence once the cache warmed.
+
+Fixes Implemented
+-----------------
+- Added `_is_low_volume_stream` heuristics, per-session planner skip guards, and tracing so small, tool-free replies bypass `run_planner_only` until the visitor issues a substantive request.
+- Surfaced sanitized placeholder deltas, enforced partial flushes every ~0.4s/96 chars, and emitted provisional `turnPersisted` events immediately; final metadata now arrives via `turnUpdated`, keeping the bubble responsive.
+- Introduced session-scoped caches for search results, identifier mappings, table rows, and `list_tables` data, hydrated at turn start and persisted afterward; streaming flush logic was updated to use these caches and keep deltas flowing.
+- Reworked `list_tables` to use `values()` + targeted table pulls, added bounded caches to `table_aggregate`, and limited row hydration per session so table tools reuse ORM work instead of reloading sheets each call.
+- Trimmed prompt injections to compact table summaries (row label + total + top contributors), reducing prompt size and improving response latency without losing determinism.
+- Rebuilt the streaming state machine (docs/portal_stream_state.md, apps/api/chat_portal.py, frontend/static/js/chat-portal.js) so SSE emits `turnPending`/`turnPersisted`/`turnUpdated`, spinner text reflects sanitized `placeholder_thinking`, and planner metadata flows asynchronously—cutting visible idle time without dropping accuracy.

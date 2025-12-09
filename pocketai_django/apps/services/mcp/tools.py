@@ -21,6 +21,7 @@ from collections import Counter
 from functools import lru_cache
 import logging
 import math
+from concurrent.futures import ThreadPoolExecutor
 from typing import Any, Callable, Mapping, Sequence
 
 from django.db import models
@@ -114,6 +115,11 @@ TOOL_DEFINITIONS: tuple[Mapping[str, object], ...] = (
             "query": {
                 "type": "string",
                 "description": "Visitor question or keywords to search for.",
+            },
+            "queries": {
+                "type": "array",
+                "items": {"type": "string"},
+                "description": "Optional list of alias queries to batch with the primary query.",
             },
             "limit": {
                 "type": "integer",
@@ -888,10 +894,16 @@ def _log_snippet_payloads(
 ) -> None:
     preview_items: list[dict[str, object]] = []
     for payload in snippet_payloads[:5]:
+        upload_id = payload.get("upload_id")
+        chunk_id = payload.get("chunk_id") or payload.get("id")
         preview_items.append(
             {
                 "label": payload.get("public_label") or payload.get("title") or payload.get("label"),
+                "upload_id": str(upload_id) if upload_id else None,
+                "chunk_id": str(chunk_id) if chunk_id else None,
                 "read_state": payload.get("read_state"),
+                "read_required": bool(payload.get("read_required")),
+                "is_table_chunk": bool(payload.get("is_table_chunk")),
                 "score": payload.get("score"),
                 "preview": _snippet_preview_text(payload),
             }
@@ -1016,8 +1028,30 @@ def _search_knowledge_handler(
     conversation: Conversation,
     context: ToolExecutionContext,
 ) -> Mapping[str, object]:
-    query = _coerce_str(arguments.get("query")).strip()
-    if not query:
+    primary_query = _coerce_str(arguments.get("query")).strip()
+    raw_extra_queries = arguments.get("queries")
+    queries: list[str] = []
+    seen_queries: set[str] = set()
+
+    def _append_query(candidate: str) -> None:
+        normalized = candidate.strip()
+        if not normalized:
+            return
+        lowered = normalized.lower()
+        if lowered in seen_queries:
+            return
+        seen_queries.add(lowered)
+        queries.append(normalized)
+
+    if primary_query:
+        _append_query(primary_query)
+    if isinstance(raw_extra_queries, (list, tuple)):
+        for candidate in raw_extra_queries:
+            candidate_str = _coerce_str(candidate).strip()
+            if candidate_str:
+                _append_query(candidate_str)
+
+    if not queries:
         return {
             "tool": "search_knowledge",
             "status": "error",
@@ -1025,32 +1059,11 @@ def _search_knowledge_handler(
             "snippets": [],
         }
 
-    intent_info = _query_intent(query)
-    intent = intent_info.get("intent")
-    normalized_query = query.lower()
-    aggregation_keywords = (
-        "total",
-        "sum",
-        "overall",
-        "aggregate",
-        "اجمالي",
-        "إجمالي",
-        "الاجمالي",
-        "المجموع",
-    )
-    aggregation_query = any(keyword in normalized_query for keyword in aggregation_keywords)
     raw_limit = arguments.get("limit")
-    limit: int | None
     try:
-        limit = int(raw_limit) if raw_limit is not None else None
+        requested_limit = int(raw_limit) if raw_limit is not None else None
     except (TypeError, ValueError):
-        limit = None
-
-    # Tune limits based on intent to keep results targeted.
-    if intent == "identifier":
-        limit = min(limit or 5, 4)
-    elif intent == "table":
-        limit = min(8, max(limit or 5, 6))
+        requested_limit = None
 
     service = _knowledge_service()
     # Apply identifier value filter when an email is locked/provided to prevent cross-identifier leakage.
@@ -1101,77 +1114,54 @@ def _search_knowledge_handler(
                 "value": value_for_filter,
                 "upload_ids": list(allowed_uploads),
             }
-        cache_payload = {
-            "allowed_uploads": list(allowed_uploads) if allowed_uploads else [],
-            "identifier_filter": identifier_filter,
-        }
+            cache_payload = {
+                "allowed_uploads": list(allowed_uploads) if allowed_uploads else [],
+                "identifier_filter": identifier_filter,
+            }
         if cache_key:
             context.identifier_mapping_cache[cache_key] = cache_payload
         if cache_token:
             cache.set(cache_token, cache_payload, IDENTIFIER_MAPPING_CACHE_TTL)
 
-    search_cache_key = _search_cache_key(
-        query,
-        limit,
-        identifier_filter,
-        locked_key,
-        str(locked_value) if locked_value is not None else None,
-    )
-    cached_result = None
-    if context.search_cache and search_cache_key in context.search_cache:
-        cached_result = copy.deepcopy(context.search_cache[search_cache_key])
-    if cached_result:
-        structured_log(
-            "mcp",
-            "search.cache_hit",
-            {
-                "query": query,
-                "intent": intent,
-                "limit": limit,
-            },
-            context={"conversation": conversation.id, "business": conversation.business_profile_id},
-            logger_obj=logger,
-        )
-        _record_search_history(context, arguments, cached_result)
-        return cached_result
-
-    result = service.search(
-        business_profile=conversation.business_profile,
-        query=query,
-        limit=limit,
-        identifier_filter=identifier_filter,
-    )
+    def _tuned_limit(intent: str | None, base_limit: int | None) -> int | None:
+        limit_val = base_limit
+        if intent == "identifier":
+            limit_val = min(limit_val or 5, 4)
+        elif intent == "table":
+            limit_val = min(8, max(limit_val or 5, 6))
+        return limit_val
 
     def _log_search_performance(
-        snippets: Sequence[Mapping[str, object]],
         *,
-        status_override: str | None = None,
+        snippets: Sequence[Mapping[str, object]],
+        diagnostics: Mapping[str, object] | None,
+        intent: str | None,
+        limit_value: int | None,
+        status: str,
         note: str | None = None,
     ) -> None:
-        diagnostics = dict(result.diagnostics or {})
+        diag = dict(diagnostics or {})
         snippet_count = len(snippets)
-        diagnostics.setdefault("snippet_count", snippet_count)
+        diag.setdefault("snippet_count", snippet_count)
         detail = {
-            "status": status_override or result.status,
+            "status": status,
             "intent": intent,
-            "path": diagnostics.get("path"),
+            "path": diag.get("path"),
             "snippet_count": snippet_count,
-            "limit": limit,
-            "total_ms": diagnostics.get("total_duration_ms"),
-            "alias_ms": diagnostics.get("alias_duration_ms"),
-            "vector_ms": diagnostics.get("vector_duration_ms"),
-            "lexical_ms": diagnostics.get("fts_duration_ms"),
-            "rerank_ms": diagnostics.get("rerank_duration_ms"),
-            "table_ms": diagnostics.get("table_duration_ms"),
-            "snippet_rerank_ms": diagnostics.get("snippet_rerank_ms"),
-            "chunk_candidates": diagnostics.get("chunk_candidate_count"),
-            "alias_hits": diagnostics.get("alias_hits"),
-            "table_reason": diagnostics.get("table_reason"),
-            "cache_hit": diagnostics.get("cache_hit"),
-            "cache_scope": diagnostics.get("cache_scope"),
-            "read_required": sum(
-                1 for payload in snippets if isinstance(payload, Mapping) and payload.get("read_required")
-            ),
+            "limit": limit_value,
+            "total_ms": diag.get("total_duration_ms"),
+            "alias_ms": diag.get("alias_duration_ms"),
+            "vector_ms": diag.get("vector_duration_ms"),
+            "lexical_ms": diag.get("fts_duration_ms"),
+            "rerank_ms": diag.get("rerank_duration_ms"),
+            "table_ms": diag.get("table_duration_ms"),
+            "snippet_rerank_ms": diag.get("snippet_rerank_ms"),
+            "chunk_candidates": diag.get("chunk_candidate_count"),
+            "alias_hits": diag.get("alias_hits"),
+            "table_reason": diag.get("table_reason"),
+            "cache_hit": diag.get("cache_hit"),
+            "cache_scope": diag.get("cache_scope"),
+            "read_required": sum(1 for payload in snippets if isinstance(payload, Mapping) and payload.get("read_required")),
         }
         if note:
             detail["note"] = note
@@ -1184,177 +1174,419 @@ def _search_knowledge_handler(
                 "conversation": conversation.id,
             },
         )
-    snippet_payloads = _serialize_snippets(result.snippets)
-    # If locked identifier exists, drop snippets whose identifier hash/value does not match locked value.
-    if locked_key and locked_value:
-        locked_val_norm = str(locked_value).strip()
-        filtered_snippets = []
-        for p in snippet_payloads:
-            identifiers = p.get("identifiers") if isinstance(p, Mapping) else None
-            if identifiers and isinstance(identifiers, Mapping):
-                candidate = identifiers.get(locked_key)
-                if candidate and str(candidate).strip().lower() != locked_val_norm.lower():
-                    continue
-            filtered_snippets.append(p)
-        snippet_payloads = filtered_snippets
-    decision = None
-    if guard:
-        decision = guard.evaluate_snippets(snippet_payloads)
-        _record_identifier_check(context, decision)
-        if decision.status == "identifier_conflict":
-            # Treat conflicts as missing/required identifiers; do not poison the session.
-            _log_search_performance(
-                snippet_payloads,
-                status_override="identifier_required",
-                note="identifier_conflict",
-            )
-            return {
-                "tool": "search_knowledge",
-                "query": query,
-                "limit": limit,
-                "intent": intent,
-                "status": "identifier_required",
-                "error": "identifier_required",
-                "error_code": "identifier_required",
-                "diagnostics": dict(result.diagnostics or {}),
-                "snippets": [],
-                "identifier_gate": decision.as_dict(),
-                "required_identifiers": list(decision.required_keys),
-                "provided_identifiers": list(decision.provided_keys),
-                "hint": decision.hint,
-                "llm_hint": decision.hint,
-            }
-        if decision.status != "ok":
+
+    def _execute_single_query(
+        query_text: str,
+        *,
+        intent_info_override: Mapping[str, object] | None = None,
+        intent_override: str | None = None,
+        limit_override: int | None = None,
+        precomputed_result: object | None = None,
+    ) -> Mapping[str, object]:
+        intent_info = intent_info_override or _query_intent(query_text)
+        intent = intent_override or intent_info.get("intent")
+        normalized_query = query_text.lower()
+        aggregation_keywords = (
+            "total",
+            "sum",
+            "overall",
+            "aggregate",
+            "اجمالي",
+            "إجمالي",
+            "الاجمالي",
+            "المجموع",
+        )
+        aggregation_query = any(keyword in normalized_query for keyword in aggregation_keywords)
+        limit_for_run = limit_override if limit_override is not None else _tuned_limit(intent, requested_limit)
+        search_cache_key = _search_cache_key(
+            query_text,
+            limit_for_run,
+            identifier_filter,
+            locked_key,
+            str(locked_value) if locked_value is not None else None,
+        )
+        cached_result = None
+        if context.search_cache and search_cache_key in context.search_cache:
+            cached_result = copy.deepcopy(context.search_cache[search_cache_key])
+        if cached_result:
             structured_log(
                 "mcp",
-                "identifier.denied",
+                "search.cache_hit",
                 {
-                    "tool": "search_knowledge",
-                    "uploads": list(decision.blocked_uploads),
-                    "required": list(decision.required_keys),
-                    "provided": list(decision.provided_keys),
+                    "query": query_text,
+                    "intent": intent,
+                    "limit": limit_for_run,
                 },
-                context={"business": conversation.business_profile_id},
+                context={"conversation": conversation.id, "business": conversation.business_profile_id},
                 logger_obj=logger,
-                level=logging.WARNING,
             )
-            _log_search_performance(
-                snippet_payloads,
-                status_override=decision.status,
-                note="identifier_gate_blocked",
+            cached_result["query"] = query_text
+            cached_result["limit_used"] = limit_for_run
+            cached_result.setdefault("intent", intent)
+            cached_result.setdefault("intent_signal", intent_info)
+            cached_result.setdefault("snippets", [])
+            cached_result["snippets"] = [dict(snippet) for snippet in cached_result.get("snippets", [])]
+            cached_result["cache_hit"] = True
+            return cached_result
+
+        if precomputed_result is not None:
+            result = precomputed_result
+        else:
+            result = service.search(
+                business_profile=conversation.business_profile,
+                query=query_text,
+                limit=limit_for_run,
+                identifier_filter=identifier_filter,
             )
-            return {
-                "tool": "search_knowledge",
-                "query": query,
-                "limit": limit,
-                "intent": intent,
-                "status": decision.status,
-                "error": "identifier_required",
-                "error_code": "identifier_required",
-                "diagnostics": dict(result.diagnostics or {}),
-                "snippets": [],
-                "identifier_gate": decision.as_dict(),
-                "required_identifiers": list(decision.required_keys),
-                "provided_identifiers": list(decision.provided_keys),
-                "hint": decision.hint,
-                "llm_hint": decision.hint,
+        snippet_payloads = _serialize_snippets(result.snippets)
+        if locked_key and locked_value:
+            locked_val_norm = str(locked_value).strip()
+            filtered_snippets = []
+            for payload in snippet_payloads:
+                identifiers = payload.get("identifiers") if isinstance(payload, Mapping) else None
+                if identifiers and isinstance(identifiers, Mapping):
+                    candidate = identifiers.get(locked_key)
+                    if candidate and str(candidate).strip().lower() != locked_val_norm.lower():
+                        continue
+                filtered_snippets.append(payload)
+            snippet_payloads = filtered_snippets
+        decision = None
+        if guard:
+            decision = guard.evaluate_snippets(snippet_payloads)
+            _record_identifier_check(context, decision)
+            if decision.status == "identifier_conflict":
+                _log_search_performance(
+                    snippets=snippet_payloads,
+                    diagnostics=result.diagnostics,
+                    intent=intent,
+                    limit_value=limit_for_run,
+                    status="identifier_required",
+                    note="identifier_conflict",
+                )
+                return {
+                    "tool": "search_knowledge",
+                    "query": query_text,
+                    "limit": limit_for_run,
+                    "limit_used": limit_for_run,
+                    "intent": intent,
+                    "intent_signal": intent_info,
+                    "status": "identifier_required",
+                    "error": "identifier_required",
+                    "error_code": "identifier_required",
+                    "diagnostics": dict(result.diagnostics or {}),
+                    "snippets": [],
+                    "identifier_gate": decision.as_dict(),
+                    "required_identifiers": list(decision.required_keys),
+                    "provided_identifiers": list(decision.provided_keys),
+                    "hint": decision.hint,
+                    "llm_hint": decision.hint,
+                }
+            if decision.status != "ok":
+                structured_log(
+                    "mcp",
+                    "identifier.denied",
+                    {
+                        "tool": "search_knowledge",
+                        "uploads": list(decision.blocked_uploads),
+                        "required": list(decision.required_keys),
+                        "provided": list(decision.provided_keys),
+                    },
+                    context={"business": conversation.business_profile_id},
+                    logger_obj=logger,
+                    level=logging.WARNING,
+                )
+                _log_search_performance(
+                    snippets=snippet_payloads,
+                    diagnostics=result.diagnostics,
+                    intent=intent,
+                    limit_value=limit_for_run,
+                    status=decision.status,
+                    note="identifier_gate_blocked",
+                )
+                return {
+                    "tool": "search_knowledge",
+                    "query": query_text,
+                    "limit": limit_for_run,
+                    "limit_used": limit_for_run,
+                    "intent": intent,
+                    "intent_signal": intent_info,
+                    "status": decision.status,
+                    "error": "identifier_required",
+                    "error_code": "identifier_required",
+                    "diagnostics": dict(result.diagnostics or {}),
+                    "snippets": [],
+                    "identifier_gate": decision.as_dict(),
+                    "required_identifiers": list(decision.required_keys),
+                    "provided_identifiers": list(decision.provided_keys),
+                    "hint": decision.hint,
+                    "llm_hint": decision.hint,
+                }
+        read_required = False
+        if allowed_uploads is not None:
+            snippet_payloads = [payload for payload in snippet_payloads if str(payload.get("upload_id") or "") in allowed_uploads]
+            if not snippet_payloads:
+                _log_snippet_payloads(
+                    tool="search_knowledge",
+                    conversation=conversation,
+                    snippet_payloads=snippet_payloads,
+                    meta={"query": query_text, "intent": intent, "read_required": read_required, "filtered": True},
+                )
+                _log_search_performance(
+                    snippets=snippet_payloads,
+                    diagnostics=result.diagnostics,
+                    intent=intent,
+                    limit_value=limit_for_run,
+                    status="ok",
+                    note="identifier_scope_filtered",
+                )
+                return {
+                    "tool": "search_knowledge",
+                    "query": query_text,
+                    "limit": limit_for_run,
+                    "limit_used": limit_for_run,
+                    "intent": intent,
+                    "intent_signal": intent_info,
+                    "status": "ok",
+                    "snippets": [],
+                    "identifier_gate": decision.as_dict() if decision else None,
+                    "hint": "No records found for this identifier.",
+                }
+        if intent == "identifier":
+            if len(snippet_payloads) <= 2:
+                read_required = True
+            elif all((payload.get("read_state") or "summary") in {"summary", "preview"} for payload in snippet_payloads):
+                read_required = True
+        for payload in snippet_payloads:
+            chunk_id = payload.get("chunk_id") or payload.get("id")
+            upload_id = payload.get("upload_id")
+            chunk_index = payload.get("chunk_index")
+            hinted_page = (int(chunk_index) + 1) if isinstance(chunk_index, int) else None
+            mode_hint = "full_page" if intent == "identifier" else "excerpt"
+            payload["read_hint"] = {
+                "document_id": str(chunk_id or upload_id or ""),
+                "page": hinted_page,
+                "mode": mode_hint,
             }
-    read_required = False
-    if allowed_uploads is not None:
-        snippet_payloads = [p for p in snippet_payloads if str(p.get("upload_id") or "") in allowed_uploads]
-        if not snippet_payloads:
-            _log_snippet_payloads(
+            if read_required:
+                payload["read_required"] = True
+        if guard and decision and decision.status == "ok":
+            applied_filter = decision.as_dict()
+            applied_filter["tool"] = "search_knowledge"
+            context.identifier_filters.append(applied_filter)
+            _record_identifier_event_once(
+                context,
+                business_profile=conversation.business_profile,
+                decision=decision,
                 tool="search_knowledge",
                 conversation=conversation,
-                snippet_payloads=snippet_payloads,
-                meta={"query": query, "intent": intent, "read_required": read_required, "filtered": True},
+                upload_ids=[str(payload.get("upload_id") or "") for payload in snippet_payloads if payload.get("upload_id")],
             )
-            _log_search_performance(
-                snippet_payloads,
-                status_override="ok",
-                note="identifier_scope_filtered",
+        elif guard and decision:
+            _record_identifier_event_once(
+                context,
+                business_profile=conversation.business_profile,
+                decision=decision,
+                tool="search_knowledge",
+                conversation=conversation,
+                upload_ids=list(decision.blocked_uploads or ()),
             )
-            return {
-                "tool": "search_knowledge",
-                "query": query,
-                "limit": limit,
-                "intent": intent,
-                "status": "ok",
-                "snippets": [],
-                "identifier_gate": decision.as_dict() if decision else None,
-                "hint": "No records found for this identifier.",
-            }
-    if intent in {"table", "identifier"}:
-        if len(snippet_payloads) <= 2:
-            read_required = True
-        elif all((p.get("read_state") or "summary") in {"summary", "preview"} for p in snippet_payloads):
-            read_required = True
-    if intent == "table" and aggregation_query:
-        read_required = True
-    # Attach read hints for table/identifier paths so the model can issue a precise read.
-    for payload in snippet_payloads:
-        chunk_id = payload.get("chunk_id") or payload.get("id")
-        upload_id = payload.get("upload_id")
-        chunk_index = payload.get("chunk_index")
-        hinted_page = (int(chunk_index) + 1) if isinstance(chunk_index, int) else None
-        mode_hint = "full_page" if intent in {"table", "identifier"} else "excerpt"
-        payload["read_hint"] = {
-            "document_id": str(chunk_id or upload_id or ""),
-            "page": hinted_page,
-            "mode": mode_hint,
+        _log_snippet_payloads(
+            tool="search_knowledge",
+            conversation=conversation,
+            snippet_payloads=snippet_payloads,
+            meta={"query": query_text, "intent": intent, "read_required": read_required},
+        )
+        _log_search_performance(
+            snippets=snippet_payloads,
+            diagnostics=result.diagnostics,
+            intent=intent,
+            limit_value=limit_for_run,
+            status=result.status,
+        )
+        payload = {
+            "tool": "search_knowledge",
+            "query": query_text,
+            "limit": limit_for_run,
+            "limit_used": limit_for_run,
+            "intent": intent,
+            "intent_signal": intent_info,
+            "status": result.status,
+            "diagnostics": dict(result.diagnostics or {}),
+            "snippets": snippet_payloads,
+            "hint": _search_hint(result.status, intent, snippet_payloads, result.diagnostics),
         }
-        if read_required:
-            payload["read_required"] = True
-    for payload in snippet_payloads:
-        context.add_knowledge_result(payload)
-    if guard and decision and decision.status == "ok":
-        applied_filter = decision.as_dict()
-        applied_filter["tool"] = "search_knowledge"
-        context.identifier_filters.append(applied_filter)
-        _record_identifier_event_once(
-            context,
-            business_profile=conversation.business_profile,
-            decision=decision,
-            tool="search_knowledge",
-            conversation=conversation,
-            upload_ids=[str(p.get("upload_id") or "") for p in snippet_payloads if p.get("upload_id")],
+        if search_cache_key:
+            _bounded_cache_store(context.search_cache, search_cache_key, copy.deepcopy(payload))
+        return payload
+
+    resolved_runs: list[tuple[int, Mapping[str, object]]] = []
+    pending_specs: list[tuple[int, str, Mapping[str, object], str | None, int | None]] = []
+    non_cached_queries = 0
+    for idx, query_text in enumerate(queries):
+        intent_info = _query_intent(query_text)
+        intent = intent_info.get("intent")
+        limit_for_run = _tuned_limit(intent, requested_limit)
+        search_cache_key = _search_cache_key(
+            query_text,
+            limit_for_run,
+            identifier_filter,
+            locked_key,
+            str(locked_value) if locked_value is not None else None,
         )
-    elif guard and decision:
-        _record_identifier_event_once(
-            context,
-            business_profile=conversation.business_profile,
-            decision=decision,
-            tool="search_knowledge",
-            conversation=conversation,
-            upload_ids=list(decision.blocked_uploads or ()),
-        )
+        cached_result = None
+        if context.search_cache and search_cache_key in context.search_cache:
+            cached_result = copy.deepcopy(context.search_cache[search_cache_key])
+        if cached_result:
+            structured_log(
+                "mcp",
+                "search.cache_hit",
+                {
+                    "query": query_text,
+                    "intent": intent,
+                    "limit": limit_for_run,
+                },
+                context={"conversation": conversation.id, "business": conversation.business_profile_id},
+                logger_obj=logger,
+            )
+            cached_result["query"] = query_text
+            cached_result["limit_used"] = limit_for_run
+            cached_result.setdefault("intent", intent)
+            cached_result.setdefault("intent_signal", intent_info)
+            cached_result.setdefault("snippets", [])
+            cached_result["snippets"] = [dict(snippet) for snippet in cached_result.get("snippets", [])]
+            cached_result["cache_hit"] = True
+            resolved_runs.append((idx, cached_result))
+            continue
+        pending_specs.append((idx, query_text, intent_info, intent, limit_for_run))
+        non_cached_queries += 1
+
+    executor: ThreadPoolExecutor | None = None
+    futures: list[tuple[int, str, Mapping[str, object], str | None, int | None, object]] = []
+    if non_cached_queries > 1:
+        executor = ThreadPoolExecutor(max_workers=min(non_cached_queries, 4), thread_name_prefix="mcp_search")
+    try:
+        for idx, query_text, intent_info, intent, limit_for_run in pending_specs:
+            if executor:
+                future = executor.submit(
+                    service.search,
+                    business_profile=conversation.business_profile,
+                    query=query_text,
+                    limit=limit_for_run,
+                    identifier_filter=identifier_filter,
+                )
+                futures.append((idx, query_text, intent_info, intent, limit_for_run, future))
+            else:
+                result = service.search(
+                    business_profile=conversation.business_profile,
+                    query=query_text,
+                    limit=limit_for_run,
+                    identifier_filter=identifier_filter,
+                )
+                run_payload = _execute_single_query(
+                    query_text,
+                    intent_info_override=intent_info,
+                    intent_override=intent,
+                    limit_override=limit_for_run,
+                    precomputed_result=result,
+                )
+                resolved_runs.append((idx, run_payload))
+                if run_payload.get("status") not in {"ok", "not_found"}:
+                    if len(queries) > 1:
+                        run_payload = dict(run_payload)
+                        run_payload["batched_queries"] = tuple(queries)
+                    return run_payload
+        if executor:
+            for idx, query_text, intent_info, intent, limit_for_run, future in sorted(futures, key=lambda entry: entry[0]):
+                result = future.result()
+                run_payload = _execute_single_query(
+                    query_text,
+                    intent_info_override=intent_info,
+                    intent_override=intent,
+                    limit_override=limit_for_run,
+                    precomputed_result=result,
+                )
+                resolved_runs.append((idx, run_payload))
+                if run_payload.get("status") not in {"ok", "not_found"}:
+                    if len(queries) > 1:
+                        run_payload = dict(run_payload)
+                        run_payload["batched_queries"] = tuple(queries)
+                    return run_payload
+    finally:
+        if executor:
+            executor.shutdown(wait=True)
+
+    resolved_runs.sort(key=lambda entry: entry[0])
+    runs = [payload for _, payload in resolved_runs]
+
+    if not runs:
+        return {
+            "tool": "search_knowledge",
+            "query": "",
+            "limit": requested_limit,
+            "status": "not_found",
+            "snippets": [],
+            "error": "no_query",
+        }
+
+    primary_run = runs[0]
+    limit_cap = primary_run.get("limit_used")
+    clip_limit = int(limit_cap) if isinstance(limit_cap, int) and limit_cap > 0 else None
+    deduped_snippets: list[dict[str, object]] = []
+    seen_snippets: set[str] = set()
+    for run in runs:
+        for snippet in run.get("snippets", []):
+            identifier = snippet.get("chunk_id") or snippet.get("id") or snippet.get("upload_id")
+            dedup_key = str(identifier) if identifier else json.dumps(snippet, sort_keys=True, default=str)
+            if dedup_key in seen_snippets:
+                continue
+            seen_snippets.add(dedup_key)
+            deduped_snippets.append(snippet)
+            if clip_limit and len(deduped_snippets) >= clip_limit:
+                break
+        if clip_limit and len(deduped_snippets) >= clip_limit:
+            break
+
+    for snippet in deduped_snippets:
+        context.add_knowledge_result(snippet)
 
     metrics = _log_tool_metrics(
         tool="search_knowledge",
         conversation=conversation,
-        snippets=snippet_payloads,
+        snippets=deduped_snippets,
         extra={
-            "status": result.status,
-            "limit": limit,
-            "query_length": len(query),
+            "status": primary_run.get("status"),
+            "limit": limit_cap,
+            "query_length": len(str(primary_run.get("query") or "")),
         },
     )
     context.reserve_characters(int(metrics.get("char_count", 0)))
-    _log_search_performance(snippet_payloads)
+
+    final_status = "ok" if deduped_snippets else runs[-1].get("status") or "not_found"
+    diag = dict(primary_run.get("diagnostics") or {})
+    diag["batched_runs"] = [
+        {
+            "query": run.get("query"),
+            "status": run.get("status"),
+            "snippet_count": len(run.get("snippets", [])),
+            "cache_hit": bool(run.get("cache_hit")),
+        }
+        for run in runs
+    ]
+    diag["batched_queries"] = queries
 
     payload = {
         "tool": "search_knowledge",
-        "query": query,
-        "limit": limit,
-        "intent": intent,
-        "intent_signal": intent_info,
-        "status": result.status,
-        "diagnostics": dict(result.diagnostics or {}),
-        "snippets": snippet_payloads,
-        "hint": _search_hint(result.status, intent, snippet_payloads, result.diagnostics),
+        "query": primary_run.get("query"),
+        "limit": limit_cap,
+        "intent": primary_run.get("intent"),
+        "intent_signal": primary_run.get("intent_signal"),
+        "status": final_status,
+        "diagnostics": diag,
+        "snippets": deduped_snippets,
+        "hint": _search_hint(final_status, primary_run.get("intent"), deduped_snippets, diag),
     }
-    if search_cache_key:
-        _bounded_cache_store(context.search_cache, search_cache_key, payload)
+    if len(queries) > 1:
+        payload["batched_queries"] = tuple(queries)
     return payload
 
 

@@ -42,6 +42,10 @@ class ChatPortalClient {
     this.streamingBuffer = "";
     this.streamingRawBuffer = "";
     this.streamingRewritePending = false;
+    this.streamingMessageId = null;
+    this.pendingMessageId = null;
+    this.pendingMetadataVersion = 0;
+    this.usingStateMachine = false;
     this.markdownRenderer = this.createMarkdownRenderer();
     this.workflowLocked = false;
     this.streamingActive = false;
@@ -143,6 +147,9 @@ class ChatPortalClient {
     if (!this.sessionToken) return;
     this.clearStreamingStatus();
     this.resetStreamingState(true, false);
+    this.pendingMessageId = null;
+    this.pendingMetadataVersion = 0;
+    this.usingStateMachine = false;
     this.workflowLocked = false;
     this.streamFinished = false;
     this.awaitingReply = true;
@@ -229,6 +236,21 @@ class ChatPortalClient {
   }
 
   handleStreamEvent(eventType, data) {
+    if (eventType === "turnPending") {
+      this.handleTurnPendingEvent(data);
+      return;
+    }
+
+    if (eventType === "spinnerStatus") {
+      this.handleSpinnerStatusEvent(data);
+      return;
+    }
+
+    if (eventType === "turnUpdated") {
+      this.handleTurnUpdatedEvent(data);
+      return;
+    }
+
     if (eventType === "status") {
       if (this.workflowLocked) {
         return;
@@ -240,22 +262,25 @@ class ChatPortalClient {
           const label = (payload.label || "").toString().trim();
 
       if (state === "stream_complete" || state === "complete" || state === "done") {
+        if (this.usingStateMachine) {
+          this.setSpinnerText("", { pending: false });
+        }
         return;
       }
 
-      if (state === "reading_document") {
+      if (state === "reading_document" && !this.usingStateMachine) {
             // Knowledge read: we expect content to be revised after doc load.
             this.streamingRewritePending = true;
             this.setStreamingStatus("reading", label || "Reading…");
-          } else if (state === "searching_knowledge") {
+          } else if (state === "searching_knowledge" && !this.usingStateMachine) {
             // Surface search-specific label (e.g. "Searching: billing policy").
             this.setStreamingStatus("searching", label || "Searching…");
           } else if (state === "planning_actions") {
             // Keep this internal; do not surface to the visitor.
             return;
-          } else if (state === "responding") {
+          } else if (state === "responding" && !this.usingStateMachine) {
             this.setStreamingStatus("refining", "Refining answer…");
-          } else if (state && state !== "responding") {
+          } else if (state && state !== "responding" && !this.usingStateMachine) {
             // Generic fallback for other states; skip explicit "responding"/"writing".
             const fallbackLabel = label || this.formatStatus(state);
             this.setStreamingStatus("working", fallbackLabel);
@@ -268,6 +293,9 @@ class ChatPortalClient {
     }
 
     if (eventType === "delta") {
+      if (this.usingStateMachine) {
+        return;
+      }
       try {
         const payload = data ? JSON.parse(data) : null;
         if (payload && payload.text) {
@@ -354,18 +382,96 @@ class ChatPortalClient {
     }
 }
 
+  handleTurnPendingEvent(data) {
+    let payload = null;
+    try {
+      payload = data ? JSON.parse(data) : null;
+    } catch (error) {
+      console.warn("Failed to parse turnPending event", error);
+      return;
+    }
+    if (!payload) return;
+    const messageId = payload.message_id || this.pendingMessageId || null;
+    this.pendingMessageId = messageId;
+    this.usingStateMachine = true;
+    if (typeof payload.metadata_version === "number") {
+      this.pendingMetadataVersion = payload.metadata_version;
+    }
+    if (payload.session_status) {
+      this.updateStatus(payload.session_status);
+      this.updateCsatVisibility(payload.session_status);
+    }
+    this.updateStreamingText(payload.text || "", messageId);
+    if (payload.spinner_text) {
+      this.setSpinnerText(payload.spinner_text, { pending: payload.pending !== false });
+    }
+    this.awaitingReply = false;
+    this.isStreaming = true;
+    this.updateSendButtonState(true);
+  }
+
+  handleSpinnerStatusEvent(data) {
+    let payload = null;
+    try {
+      payload = data ? JSON.parse(data) : null;
+    } catch (error) {
+      console.warn("Failed to parse spinner status", error);
+      return;
+    }
+    if (!payload) return;
+    this.usingStateMachine = true;
+    const text = payload.text || "";
+    const pending = payload.pending !== false;
+    this.setSpinnerText(text, { pending });
+  }
+
+  handleTurnUpdatedEvent(data) {
+    let payload = null;
+    try {
+      payload = data ? JSON.parse(data) : null;
+    } catch (error) {
+      console.warn("Failed to parse turnUpdated payload", error);
+      return;
+    }
+    if (!payload) return;
+    const version = typeof payload.metadata_version === "number" ? payload.metadata_version : null;
+    if (version && version <= this.pendingMetadataVersion) {
+      return;
+    }
+    if (version) {
+      this.pendingMetadataVersion = version;
+    }
+    const messageId = payload.message_id || this.pendingMessageId || this.streamingMessageId;
+    this.updateMessageMetadata(messageId, payload);
+  }
+
   handleTurnPersistedEvent(data) {
     try {
       const payload = data ? JSON.parse(data) : null;
       if (!payload) return;
-      const text = payload.text ? payload.text.toString() : "";
-      if (text) {
-        this.updateLatestAssistantMessage(text);
+      const messageId = payload.message_id || this.pendingMessageId || this.streamingMessageId || null;
+      if (typeof payload.metadata_version === "number") {
+        this.pendingMetadataVersion = payload.metadata_version;
       }
+      if (payload.text) {
+        this.updateLatestAssistantMessage(payload.text.toString(), messageId);
+      }
+      this.updateMessageMetadata(messageId, payload);
       if (payload.session_status) {
         this.updateStatus(payload.session_status);
         this.updateCsatVisibility(payload.session_status);
       }
+      this.setSpinnerText("", { pending: false });
+      this.resetStreamingState(false, false);
+      this.pendingMessageId = null;
+      this.usingStateMachine = false;
+      this.streamFinished = true;
+      this.isStreaming = false;
+      this.workflowLocked = false;
+      this.updateSendButtonState(false);
+      this.setComposerAvailability(true);
+      this.updateComposerNotice(false);
+      this.flushQueueAfterTurn = true;
     } catch (error) {
       console.warn("Failed to parse persisted turn", error);
     }
@@ -429,6 +535,9 @@ class ChatPortalClient {
     const message = this.normalizeMessage(raw);
     const node = this.buildMessageNode(message);
     container.appendChild(node);
+    if (message.metadata) {
+      this.updateMessageMetadata(message.id, message.metadata);
+    }
     container.scrollTo({ top: container.scrollHeight, behavior: "smooth" });
   }
 
@@ -440,7 +549,9 @@ class ChatPortalClient {
       raw.author && raw.author.name ? raw.author.name : (isAi ? this.agentName : isCustomer ? "You" : "System");
     const authorInitials =
       raw.author && raw.author.initials ? raw.author.initials : (isAi ? this.agentInitials : isCustomer ? "YOU" : "SYS");
+    const metadata = raw.metadata && typeof raw.metadata === "object" ? raw.metadata : {};
     return {
+      id: raw.id || null,
       sender,
       body: raw.body || "",
       sentAt: raw.sent_at || raw.sentAt || new Date().toISOString(),
@@ -448,12 +559,16 @@ class ChatPortalClient {
         name: authorName,
         initials: authorInitials,
       },
+      metadata,
     };
   }
 
   buildMessageNode(message) {
     const wrapper = document.createElement("div");
     wrapper.className = "flex gap-3 items-start";
+    if (message.id) {
+      wrapper.dataset.messageId = message.id;
+    }
     if (message.sender === "customer") {
       wrapper.classList.add("flex-row-reverse", "text-right");
     }
@@ -484,6 +599,11 @@ class ChatPortalClient {
     timestamp.className = "mt-2 text-xs text-muted-foreground";
     timestamp.textContent = this.formatTimestamp(message.sentAt);
     bubble.appendChild(timestamp);
+
+    const metadataRow = document.createElement("div");
+    metadataRow.dataset.messageMeta = "true";
+    metadataRow.className = "mt-2 text-xs text-muted-foreground space-y-1 hidden";
+    bubble.appendChild(metadataRow);
 
     if (message.sender === "customer") {
       wrapper.appendChild(bubble);
@@ -519,6 +639,20 @@ class ChatPortalClient {
     this.elements.messages.scrollTo({ top: this.elements.messages.scrollHeight, behavior: "smooth" });
   }
 
+  updateStreamingText(text, messageId = null) {
+    if (!this.elements.messages) return;
+    this.ensureStreamingMessageNode(messageId || this.pendingMessageId);
+    if (typeof text !== "string") {
+      return;
+    }
+    this.streamingRawBuffer = text;
+    this.streamingBuffer = this.formatAssistantText(text);
+    if (this.streamingFinalBodyEl) {
+      this.streamingFinalBodyEl.innerHTML = this.renderMarkdown(this.streamingBuffer);
+    }
+    this.elements.messages.scrollTo({ top: this.elements.messages.scrollHeight, behavior: "smooth" });
+  }
+
   normalizeStreamingChunk(chunk) {
     let text = chunk;
     const buffer = this.streamingRawBuffer || "";
@@ -537,8 +671,14 @@ class ChatPortalClient {
     return text;
   }
 
-  ensureStreamingMessageNode() {
-    if (this.streamingMessageNode && this.streamingMessageBodyEl) return;
+  ensureStreamingMessageNode(messageId = null) {
+    if (this.streamingMessageNode && this.streamingMessageBodyEl) {
+      if (messageId) {
+        this.streamingMessageNode.dataset.messageId = messageId;
+        this.streamingMessageId = messageId;
+      }
+      return;
+    }
     if (!this.elements.messages) return;
   
     const node = this.buildMessageNode({
@@ -547,7 +687,10 @@ class ChatPortalClient {
       sent_at: new Date().toISOString(),
       author: { name: this.agentName, initials: this.agentInitials },
     });
-  
+    if (messageId) {
+      node.dataset.messageId = messageId;
+      this.streamingMessageId = messageId;
+    }
     this.streamingMessageNode = node;
     this.streamingMessageBodyEl = node.querySelector("[data-message-body]");
     this.streamingMessageBubbleEl = node.querySelector("[data-message-bubble]");
@@ -606,24 +749,86 @@ class ChatPortalClient {
     this.resetStreamingState(false);
   }
 
-  updateLatestAssistantMessage(text) {
+  updateLatestAssistantMessage(text, messageId = null) {
     if (!text || !this.elements.messages) return;
     const normalized = this.formatAssistantText(text);
-    const bodies = Array.from(this.elements.messages.querySelectorAll("[data-message-body]"));
-    for (let idx = bodies.length - 1; idx >= 0; idx -= 1) {
-      const body = bodies[idx];
-      const wrapper = body.closest(".flex");
-      if (!wrapper || wrapper.classList.contains("flex-row-reverse")) {
-        continue;
+    let body = this.getMessageBodyElement(messageId);
+    if (!body) {
+      const bodies = Array.from(this.elements.messages.querySelectorAll("[data-message-body]"));
+      for (let idx = bodies.length - 1; idx >= 0; idx -= 1) {
+        const candidate = bodies[idx];
+        const wrapper = candidate.closest(".flex");
+        if (!wrapper || wrapper.classList.contains("flex-row-reverse")) {
+          continue;
+        }
+        body = candidate;
+        break;
       }
-      const finalBody = body.querySelector("[data-message-final-body]");
-      if (finalBody) {
-        finalBody.innerHTML = this.renderMarkdown(normalized);
-      } else {
-        body.innerHTML = this.renderMarkdown(normalized);
-      }
-      break;
     }
+    if (!body) return;
+    const finalBody = body.querySelector("[data-message-final-body]");
+    if (finalBody) {
+      finalBody.innerHTML = this.renderMarkdown(normalized);
+    } else {
+      body.innerHTML = this.renderMarkdown(normalized);
+    }
+  }
+
+  getMessageBodyElement(messageId) {
+    if (!messageId || !this.elements.messages) return null;
+    const wrapper = this.elements.messages.querySelector(`[data-message-id="${messageId}"]`);
+    if (!wrapper) return null;
+    return wrapper.querySelector("[data-message-body]");
+  }
+
+  updateMessageMetadata(messageId, metadata) {
+    if (!metadata || !this.elements.messages) return;
+    let wrapper = null;
+    if (messageId) {
+      wrapper = this.elements.messages.querySelector(`[data-message-id="${messageId}"]`);
+    }
+    if (!wrapper && this.streamingMessageNode) {
+      wrapper = this.streamingMessageNode;
+    }
+    if (!wrapper) return;
+    const metaEl = wrapper.querySelector("[data-message-meta]");
+    if (!metaEl) return;
+    const fragments = [];
+    if (typeof metadata.answer_confidence === "number") {
+      const percent = Math.round(metadata.answer_confidence * 100);
+      fragments.push(`Confidence: ${percent}%`);
+    } else if (metadata.answer_confidence) {
+      fragments.push(`Confidence: ${metadata.answer_confidence}`);
+    }
+    if (Array.isArray(metadata.ingestion_warnings) && metadata.ingestion_warnings.length) {
+      metadata.ingestion_warnings.slice(0, 2).forEach((warning) => {
+        const label = warning.label || warning.details || warning.type || "Source warning";
+        fragments.push(`Note: ${label}`);
+      });
+    }
+    if (Array.isArray(metadata.actions) && metadata.actions.length) {
+      const summary = metadata.actions
+        .map((action) => {
+          const status = action.status || "queued";
+          return `${action.action || "action"} (${status})`;
+        })
+        .slice(0, 2)
+        .join(", ");
+      if (summary) {
+        fragments.push(`Actions: ${summary}`);
+      }
+    }
+    metaEl.innerHTML = "";
+    if (!fragments.length) {
+      metaEl.classList.add("hidden");
+      return;
+    }
+    fragments.forEach((line) => {
+      const p = document.createElement("p");
+      p.textContent = line;
+      metaEl.appendChild(p);
+    });
+    metaEl.classList.remove("hidden");
   }
 
   resetStreamingState(removeNode = false, lockWorkflow = true) {
@@ -647,13 +852,14 @@ class ChatPortalClient {
     this.streamingBuffer = "";
     this.streamingRawBuffer = "";
     this.streamingRewritePending = false;
+    this.streamingMessageId = null;
+    if (removeNode) {
+      this.pendingMessageId = null;
+    }
   }
 
   setStreamingStatus(mode = "working", labelOverride) {
     if (this.workflowLocked) return;
-    this.ensureStreamingMessageNode();
-    if (!this.streamingStatusEl || !this.streamingStatusTextEl) return;
-    const formattedLabel = this.formatStatusLabel(labelOverride);
     const labelMap = {
       working: "Assistant is working…",
       drafting: "Refining answer…",
@@ -663,22 +869,33 @@ class ChatPortalClient {
       refining: "Refining answer…",
       error: "Workflow issue detected.",
     };
-    const baseLabel = labelMap[mode] || labelMap.working;
-    const label = formattedLabel || baseLabel;
-    this.streamingStatusTextEl.innerHTML = label;
-    this.streamingStatusEl.classList.remove("hidden");
+    const baseLabel = labelOverride || labelMap[mode] || labelMap.working;
     const isError = mode === "error";
+    this.setSpinnerText(baseLabel, { pending: mode !== "done", isError });
+  }
+
+  setSpinnerText(rawText, { pending = true, isError = false } = {}) {
+    if (this.workflowLocked && pending) return;
+    this.ensureStreamingMessageNode(this.pendingMessageId);
+    if (!this.streamingStatusEl || !this.streamingStatusTextEl) return;
+    const label = (rawText || "").toString().trim();
+    if (!label) {
+      if (!pending) {
+        this.clearStreamingStatus();
+      }
+      return;
+    }
+    this.streamingStatusTextEl.innerHTML = this.formatStatusLabel(label);
+    this.streamingStatusEl.classList.remove("hidden");
     if (this.streamingStatusDotEl) {
       this.streamingStatusDotEl.classList.toggle("bg-primary", !isError);
       this.streamingStatusDotEl.classList.toggle("bg-destructive", isError);
     }
-    if (this.streamingStatusTextEl) {
-      this.streamingStatusTextEl.classList.toggle("text-destructive", isError);
-      if (isError) {
-        this.streamingStatusTextEl.classList.remove("chat-portal-status-shimmer");
-      } else {
-        this.streamingStatusTextEl.classList.add("chat-portal-status-shimmer");
-      }
+    this.streamingStatusTextEl.classList.toggle("text-destructive", isError);
+    if (pending && !isError) {
+      this.streamingStatusTextEl.classList.add("chat-portal-status-shimmer");
+    } else {
+      this.streamingStatusTextEl.classList.remove("chat-portal-status-shimmer");
     }
   }
 

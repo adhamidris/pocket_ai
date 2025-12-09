@@ -4053,6 +4053,7 @@ class AiOrchestratorService:
         on_status_change: Callable[[str], None] | None = None,
         on_placeholder_response: Callable[[str], None] | None = None,
         on_stream_complete: Callable[[], None] | None = None,
+        on_spinner_update: Callable[[str], None] | None = None,
     ) -> StreamingTurnContext:
         """
         Execute the streaming phase of an orchestration turn.
@@ -4528,6 +4529,7 @@ class AiOrchestratorService:
         on_status_change: Callable[[str], None] | None = None,
         on_placeholder_response: Callable[[str], None] | None = None,
         on_stream_complete: Callable[[], None] | None = None,
+        on_spinner_update: Callable[[str], None] | None = None,
     ) -> AiOrchestratorPlan:
         """
         Build the orchestration plan for the latest customer message.
@@ -4544,6 +4546,7 @@ class AiOrchestratorService:
             on_status_change=on_status_change,
             on_placeholder_response=on_placeholder_response,
             on_stream_complete=on_stream_complete,
+            on_spinner_update=on_spinner_update,
         )
         return self.finalize_turn(context)
 

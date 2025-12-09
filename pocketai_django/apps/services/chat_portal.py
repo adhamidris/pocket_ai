@@ -132,6 +132,7 @@ class ChatPortalService:
         body: str,
         metadata: dict | None = None,
         conversation: Conversation | None = None,
+        message_id: uuid.UUID | None = None,
     ) -> PortalMessage:
         conversation = self._resolve_conversation(
             session_token=session_token,
@@ -142,12 +143,15 @@ class ChatPortalService:
             raise PortalValidationError("Message body cannot be empty")
         metadata = metadata or {}
         with transaction.atomic():
-            message = ConversationMessage.objects.create(
-                conversation=conversation,
-                sender=sender,
-                body=body.strip(),
-                metadata=metadata,
-            )
+            create_kwargs = {
+                "conversation": conversation,
+                "sender": sender,
+                "body": body.strip(),
+                "metadata": metadata,
+            }
+            if message_id:
+                create_kwargs["id"] = message_id
+            message = ConversationMessage.objects.create(**create_kwargs)
             metadata_updated = False
             if sender == ConversationSender.CUSTOMER:
                 metadata_updated = self._capture_customer_identifiers(

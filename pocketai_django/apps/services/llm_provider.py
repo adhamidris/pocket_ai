@@ -1353,6 +1353,7 @@ class OpenAIToolsProvider(BaseMcpProvider):
                     "actions": parsed.get("actions") or [],
                     "extractions": parsed.get("extractions") or [],
                     "placeholder_response": parsed.get("placeholder_response"),
+                    "placeholder_thinking": parsed.get("placeholder_thinking"),
                 }
             except Exception as exc:
                 if span and span.is_recording():
@@ -1688,6 +1689,7 @@ class DeepSeekToolsProvider(BaseMcpProvider):
                     "actions": parsed.get("actions") or [],
                     "extractions": parsed.get("extractions") or [],
                     "placeholder_response": parsed.get("placeholder_response"),
+                    "placeholder_thinking": parsed.get("placeholder_thinking"),
                 }
             except Exception as exc:
                 if span and span.is_recording():

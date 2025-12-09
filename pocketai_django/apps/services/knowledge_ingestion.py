@@ -1798,50 +1798,70 @@ class KnowledgeIngestionService:
 
         if job is None:
             return None
-        with TRACER.start_as_current_span("ingest.process_job") as span:
-            if span.is_recording():
-                span.set_attribute("ingest.job_id", str(job.id))
-                span.set_attribute("ingest.job_type", job.job_type.value)
-            if job.job_type == KnowledgeIngestionJobType.EMBED:
-                result = self._process_embedding_job(job)
-            else:
-                upload = job.upload
-                logger.info("ingest.start upload=%s job=%s source_type=%s", upload.id, job.id, upload.source_type)
-                try:
-                    with TRACER.start_as_current_span("ingest.extract") as extract_span:
-                        extraction = self._extract_upload(upload)
-                        characters = len(extraction.text)
-                        if extract_span.is_recording():
-                            extract_span.set_attribute("ingest.characters", characters)
-                            extract_span.set_attribute("ingest.format", extraction.format_hint or "unknown")
-                    with TRACER.start_as_current_span("ingest.persist") as persist_span:
-                        self._persist_extraction(upload, extraction)
-                        self._mark_job_completed(job, extra={"characters": characters, "format": extraction.format_hint})
-                        if persist_span.is_recording():
-                            persist_span.set_attribute("ingest.characters", characters)
-                    logger.info("ingest.done upload=%s job=%s chars=%s format=%s", upload.id, job.id, characters, extraction.format_hint)
+        try:
+            with TRACER.start_as_current_span("ingest.process_job") as span:
+                if span.is_recording():
+                    span.set_attribute("ingest.job_id", str(job.id))
+                    span.set_attribute("ingest.job_type", str(job.job_type))
+                if job.job_type == KnowledgeIngestionJobType.EMBED:
+                    result = self._process_embedding_job(job)
+                else:
+                    upload = job.upload
+                    logger.info("ingest.start upload=%s job=%s source_type=%s", upload.id, job.id, upload.source_type)
+                    try:
+                        with TRACER.start_as_current_span("ingest.extract") as extract_span:
+                            extraction = self._extract_upload(upload)
+                            characters = len(extraction.text)
+                            if extract_span.is_recording():
+                                extract_span.set_attribute("ingest.characters", characters)
+                                extract_span.set_attribute("ingest.format", extraction.format_hint or "unknown")
+                        with TRACER.start_as_current_span("ingest.persist") as persist_span:
+                            self._persist_extraction(upload, extraction)
+                            self._mark_job_completed(job, extra={"characters": characters, "format": extraction.format_hint})
+                            if persist_span.is_recording():
+                                persist_span.set_attribute("ingest.characters", characters)
+                        logger.info(
+                            "ingest.done upload=%s job=%s chars=%s format=%s",
+                            upload.id,
+                            job.id,
+                            characters,
+                            extraction.format_hint,
+                        )
 
-                    result = IngestionJobResult(
-                        job_id=job.id,
-                        upload_id=upload.id,
-                        job_type=job.job_type,
-                        status=KnowledgeIngestionJobStatus.COMPLETED,
-                        characters=characters,
-                    )
-                except KnowledgeIngestionError as exc:
-                    self._handle_failure(job, str(exc))
-                    logger.warning("Ingestion failed upload=%s job=%s error=%s", upload.id, job.id, exc)
-                    result = IngestionJobResult(
-                        job_id=job.id,
-                        upload_id=upload.id,
-                        job_type=job.job_type,
-                        status=KnowledgeIngestionJobStatus.FAILED,
-                        characters=0,
-                        error=str(exc),
-                    )
-            if span.is_recording():
-                span.set_attribute("ingest.result_status", result.status.value)
-            return result
+                        result = IngestionJobResult(
+                            job_id=job.id,
+                            upload_id=upload.id,
+                            job_type=job.job_type,
+                            status=KnowledgeIngestionJobStatus.COMPLETED,
+                            characters=characters,
+                        )
+                    except KnowledgeIngestionError as exc:
+                        self._handle_failure(job, str(exc))
+                        logger.warning("Ingestion failed upload=%s job=%s error=%s", upload.id, job.id, exc)
+                        result = IngestionJobResult(
+                            job_id=job.id,
+                            upload_id=upload.id,
+                            job_type=job.job_type,
+                            status=KnowledgeIngestionJobStatus.FAILED,
+                            characters=0,
+                            error=str(exc),
+                        )
+                if span.is_recording():
+                    span.set_attribute("ingest.result_status", result.status.value)
+                return result
+        except Exception as exc:  # pragma: no cover - defensive guardrail
+            logger.exception(
+                "ingest.unexpected_error upload=%s job=%s", getattr(job, "upload_id", None), getattr(job, "id", None)
+            )
+            self._handle_failure(job, f"unexpected ingestion error: {exc}")
+            return IngestionJobResult(
+                job_id=job.id,
+                upload_id=job.upload_id,
+                job_type=job.job_type,
+                status=KnowledgeIngestionJobStatus.FAILED,
+                characters=0,
+                error=str(exc),
+            )
 
     def _process_embedding_job(self, job: KnowledgeIngestionJob) -> IngestionJobResult:
         with TRACER.start_as_current_span("ingest.embed_job") as span:

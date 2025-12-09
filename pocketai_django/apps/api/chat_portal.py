@@ -27,7 +27,7 @@ from apps.services.ai_orchestrator import (
     AiOrchestratorService,
     StreamingTurnContext,
 )
-from apps.services.mcp.sanitizer import sanitize_text, sanitize_with_diagnostics
+from apps.services.mcp.sanitizer import sanitize_placeholder_thinking, sanitize_text, sanitize_with_diagnostics
 from apps.services.llm_provider import load_default_provider
 from apps.services.chat_portal import (
     ChatPortalService,
@@ -680,6 +680,71 @@ def stream_send(request: HttpRequest) -> StreamingHttpResponse:
     stream_complete = threading.Event()
     plan_holder: dict[str, Any] = {}
     streamed_text_chunks: list[str] = []
+    state_machine_enabled = getattr(settings, "PORTAL_STREAM_STATE_MACHINE", False)
+    plan_holder["metadata_version"] = 1
+    plan_holder["session_status"] = conversation.status
+    plan_holder["spinner_text"] = None
+    reserved_message_id = uuid.uuid4() if state_machine_enabled else None
+    if reserved_message_id:
+        plan_holder["pending_message_id"] = reserved_message_id
+    spinner_state = {"text": None, "pending": True}
+
+    def _current_message_id() -> str:
+        raw_id = plan_holder.get("ai_message_id") or plan_holder.get("pending_message_id")
+        if raw_id:
+            return str(raw_id)
+        return ""
+
+    def _current_session_status() -> str | None:
+        status = plan_holder.get("session_status")
+        if status:
+            return status
+        return conversation.status
+
+    def _next_metadata_version() -> int:
+        version = int(plan_holder.get("metadata_version") or 1) + 1
+        plan_holder["metadata_version"] = version
+        return version
+
+    def _emit_spinner_status(
+        raw_text: str | None,
+        *,
+        pending: bool = True,
+        fallback: str | None = "Working...",
+        allow_empty: bool = False,
+    ) -> None:
+        if not state_machine_enabled:
+            return
+        text_value = sanitize_placeholder_thinking(raw_text, fallback=fallback)
+        if text_value is None and allow_empty:
+            text_value = ""
+        if text_value is None:
+            return
+        if spinner_state["text"] == text_value and spinner_state["pending"] == pending:
+            return
+        spinner_state["text"] = text_value
+        spinner_state["pending"] = pending
+        plan_holder["spinner_text"] = text_value or None
+        payload = {
+            "type": "spinnerStatus",
+            "message_id": _current_message_id(),
+            "spinner_text": text_value,
+            "pending": pending,
+        }
+        stream_queue.put(payload)
+
+    def _turn_pending_payload(text: str, *, pending: bool = True) -> dict[str, object]:
+        payload = {
+            "message_id": _current_message_id(),
+            "text": text,
+            "pending": pending,
+            "session_status": _current_session_status(),
+            "metadata_version": plan_holder.get("metadata_version", 1),
+        }
+        spinner_text = plan_holder.get("spinner_text")
+        if spinner_text:
+            payload["spinner_text"] = spinner_text
+        return payload
 
     def on_response_text_delta(chunk: str) -> None:
         if chunk:
@@ -707,6 +772,13 @@ def stream_send(request: HttpRequest) -> StreamingHttpResponse:
             return
         trace_logger.log_status(code, label=label, meta=meta)
         _enqueue_status_events(stream_queue, code=code, label=label, meta=meta)
+        if state_machine_enabled:
+            if code in {"searching_knowledge", "reading_document"}:
+                _emit_spinner_status(label or code.replace("_", " ").title())
+            elif code == "responding":
+                _emit_spinner_status(label or "Drafting answer...")
+            elif code in {"stream_complete", "complete"}:
+                _emit_spinner_status("", pending=False, fallback=None, allow_empty=True)
 
     def signal_stream_complete() -> None:
         if stream_complete.is_set():
@@ -718,8 +790,10 @@ def stream_send(request: HttpRequest) -> StreamingHttpResponse:
         stream_queue.put(stream_sentinel)
 
     def on_placeholder_response(text: str) -> None:
-        # Placeholder responses are suppressed; status events handle UX.
-        return
+        _emit_spinner_status(text)
+
+    def on_spinner_update(text: str) -> None:
+        _emit_spinner_status(text)
 
     def run_planner_async(
         stream_context: StreamingTurnContext,
@@ -803,6 +877,8 @@ def stream_send(request: HttpRequest) -> StreamingHttpResponse:
                 updated_payload["ingestion_warnings"] = [dict(item) for item in plan.ingestion_warnings]
             plan_holder["final_payload"] = updated_payload or None
             if updated_payload:
+                version = _next_metadata_version()
+                updated_payload["metadata_version"] = version
                 actions_queue.put(
                     {
                         "type": "turnUpdated",
@@ -812,6 +888,7 @@ def stream_send(request: HttpRequest) -> StreamingHttpResponse:
                             "session_status": updated_payload.get("session_status"),
                             "answer_confidence": updated_payload.get("answer_confidence"),
                             "ingestion_warnings": updated_payload.get("ingestion_warnings"),
+                            "metadata_version": version,
                         },
                     }
                 )
@@ -948,6 +1025,7 @@ def stream_send(request: HttpRequest) -> StreamingHttpResponse:
                         body=response_text,
                         metadata=message_metadata,
                         conversation=conversation,
+                        message_id=plan_holder.get("pending_message_id"),
                     )
                     if persist_span.is_recording():
                         persist_span.set_attribute("portal.actions.pending", len(pending_actions))
@@ -957,6 +1035,7 @@ def stream_send(request: HttpRequest) -> StreamingHttpResponse:
                     "text": response_text,
                     "message_id": str(ai_message.id),
                     "session_status": session_state.status,
+                    "metadata_version": plan_holder.get("metadata_version", 1),
                 }
                 if base_plan.diagnostics:
                     answer_confidence = base_plan.diagnostics.get("answer_confidence")
@@ -970,6 +1049,7 @@ def stream_send(request: HttpRequest) -> StreamingHttpResponse:
                     ai_message.id,
                     session_state.status,
                 )
+                plan_holder["session_status"] = session_state.status
                 extra_payload: dict[str, Any] = {
                     "citations": [snippet.title for snippet in base_plan.citations],
                     "pending_actions": len(base_plan.planned_actions),
@@ -983,6 +1063,7 @@ def stream_send(request: HttpRequest) -> StreamingHttpResponse:
                 plan_holder["message_metadata"] = message_metadata
                 plan_holder["final_payload"] = final_payload
                 plan_holder["ai_message_id"] = ai_message.id
+                plan_holder["pending_message_id"] = ai_message.id
 
                 threading.Thread(
                     target=run_planner_async,
@@ -1020,6 +1101,7 @@ def stream_send(request: HttpRequest) -> StreamingHttpResponse:
                     on_status_change=on_status_change,
                     on_placeholder_response=on_placeholder_response,
                     on_stream_complete=signal_stream_complete,
+                    on_spinner_update=on_spinner_update,
                 )
                 plan_holder["context"] = stream_context
                 threading.Thread(
@@ -1045,7 +1127,7 @@ def stream_send(request: HttpRequest) -> StreamingHttpResponse:
     worker = threading.Thread(target=orchestrate, args=(request_context,), daemon=True)
     worker.start()
 
-    def event_stream() -> Iterable[str]:
+    def _legacy_event_stream() -> Iterable[str]:
         streamed_from_provider = False
         while True:
             try:
@@ -1083,6 +1165,15 @@ def stream_send(request: HttpRequest) -> StreamingHttpResponse:
                     if isinstance(meta_value, dict):
                         data["meta"] = meta_value
                     yield "event: status\n"
+                    yield f"data: {json.dumps(data)}\n\n"
+                    continue
+                if chunk.get("type") == "spinnerStatus":
+                    data = {
+                        "message_id": chunk.get("message_id"),
+                        "text": chunk.get("spinner_text"),
+                        "pending": chunk.get("pending"),
+                    }
+                    yield "event: spinnerStatus\n"
                     yield f"data: {json.dumps(data)}\n\n"
                     continue
             streamed_from_provider = True
@@ -1203,6 +1294,165 @@ def stream_send(request: HttpRequest) -> StreamingHttpResponse:
                 )
                 yield "event: actionsError\n"
                 yield f"data: {json.dumps(payload)}\n\n"
+
+    def _state_machine_event_stream() -> Iterable[str]:
+        streamed_from_provider = False
+        pending_emitted = False
+        while True:
+            try:
+                chunk = stream_queue.get(timeout=0.25)
+            except Empty:
+                if worker.is_alive() or not stream_complete.is_set():
+                    continue
+                break
+            if chunk is stream_sentinel:
+                break
+            if isinstance(chunk, dict):
+                if chunk.get("type") == "context_progress":
+                    state_value = chunk.get("state")
+                    label_value = chunk.get("label")
+                    data: dict[str, object] = {}
+                    if isinstance(state_value, str):
+                        data["state"] = state_value
+                    if isinstance(label_value, str):
+                        data["label"] = label_value
+                    meta_value = chunk.get("meta")
+                    if isinstance(meta_value, dict):
+                        data["meta"] = meta_value
+                    yield "event: context_progress\n"
+                    yield f"data: {json.dumps(data)}\n\n"
+                    continue
+                if chunk.get("type") == "status":
+                    state_value = chunk.get("state")
+                    label_value = chunk.get("label")
+                    data: dict[str, object] = {}
+                    if isinstance(state_value, str):
+                        data["state"] = state_value
+                    if isinstance(label_value, str):
+                        data["label"] = label_value
+                    meta_value = chunk.get("meta")
+                    if isinstance(meta_value, dict):
+                        data["meta"] = meta_value
+                    yield "event: status\n"
+                    yield f"data: {json.dumps(data)}\n\n"
+                    continue
+                if chunk.get("type") == "spinnerStatus":
+                    payload = {
+                        "message_id": chunk.get("message_id"),
+                        "text": chunk.get("spinner_text"),
+                        "pending": chunk.get("pending"),
+                    }
+                    yield "event: spinnerStatus\n"
+                    yield f"data: {json.dumps(payload)}\n\n"
+                    continue
+            streamed_from_provider = True
+            chunk_text = str(chunk)
+            streamed_text_chunks.append(chunk_text)
+            pending_payload = _turn_pending_payload("".join(streamed_text_chunks))
+            pending_emitted = True
+            yield "event: turnPending\n"
+            yield f"data: {json.dumps(pending_payload)}\n\n"
+
+        streamed_text = "".join(streamed_text_chunks)
+        normalized_streamed = streamed_text.strip()
+        context: StreamingTurnContext | None = None
+        need_context_for_text = (not streamed_from_provider) or not normalized_streamed
+        if need_context_for_text:
+            worker.join()
+            context = plan_holder.get("context")
+            if not context:
+                error_message = plan_holder.get("error", "AI orchestration failed")
+                yield "event: error\n"
+                yield f"data: {json.dumps(error_message)}\n\n"
+                return
+            stream_text = "".join(context.streamed_chunks).strip() or context.response_text or ""
+            if stream_text:
+                streamed_text_chunks.append(stream_text)
+                normalized_streamed = "".join(streamed_text_chunks).strip()
+        if not pending_emitted:
+            pending_payload = _turn_pending_payload(normalized_streamed)
+            yield "event: turnPending\n"
+            yield f"data: {json.dumps(pending_payload)}\n\n"
+
+        worker.join()
+        finalize_queue.get()
+        final_payload = plan_holder.get("final_payload")
+        if not final_payload:
+            error_message = plan_holder.get("final_error", "AI finalization failed")
+            yield "event: error\n"
+            yield f"data: {json.dumps(error_message)}\n\n"
+            return
+
+        final_payload = dict(final_payload)
+        persisted_text = final_payload.get("text", "")
+        normalized_streamed = normalized_streamed or ""
+        effective_text = normalized_streamed or persisted_text
+        message_id_value = final_payload.get("message_id")
+        if effective_text and effective_text != persisted_text and message_id_value:
+            try:
+                message_uuid = uuid.UUID(str(message_id_value))
+            except (TypeError, ValueError):
+                message_uuid = None
+            if message_uuid:
+                service.update_message(
+                    session_token=session_token,
+                    message_id=message_uuid,
+                    body=effective_text,
+                    conversation=conversation,
+                )
+                final_payload["text"] = effective_text
+
+        final_payload["pending"] = False
+        if "metadata_version" not in final_payload:
+            final_payload["metadata_version"] = plan_holder.get("metadata_version", 1)
+        trace_logger.log(
+            "response.dispatched",
+            detail=f"message_id={final_payload.get('message_id')}",
+            indent=1,
+        )
+        _emit_spinner_status("", pending=False, fallback=None, allow_empty=True)
+        yield "event: turnPersisted\n"
+        yield f"data: {json.dumps(final_payload)}\n\n"
+
+        while True:
+            post_event = actions_queue.get()
+            if post_event is actions_sentinel:
+                break
+            if post_event.get("type") == "turnUpdated":
+                payload = post_event.get("payload") or {}
+                yield "event: turnUpdated\n"
+                yield f"data: {json.dumps(payload)}\n\n"
+            elif post_event.get("type") == "actionsComplete":
+                payload = {
+                    "message_id": post_event.get("message_id"),
+                    "actions": post_event.get("actions", []),
+                    "label": "Follow-up tasks completed.",
+                }
+                trace_logger.log(
+                    "actions.completed",
+                    detail=f"message_id={payload['message_id']} count={len(payload['actions'])}",
+                    indent=2,
+                )
+                yield "event: actionsComplete\n"
+                yield f"data: {json.dumps(payload)}\n\n"
+            elif post_event.get("type") == "actionsError":
+                payload = {
+                    "message_id": post_event.get("message_id"),
+                    "error": post_event.get("error", "Background workflow failed."),
+                }
+                trace_logger.log_error(
+                    "actions",
+                    payload.get("error") or "actions failed",
+                    indent=2,
+                )
+                yield "event: actionsError\n"
+                yield f"data: {json.dumps(payload)}\n\n"
+
+    def event_stream() -> Iterable[str]:
+        if state_machine_enabled:
+            yield from _state_machine_event_stream()
+        else:
+            yield from _legacy_event_stream()
 
     return StreamingHttpResponse(event_stream(), content_type="text/event-stream")
 

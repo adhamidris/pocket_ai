@@ -462,6 +462,7 @@
                     <div class="rounded-md border border-border/50 bg-muted/40 px-3 py-2 text-xs text-muted-foreground">
                       After saving your sheet selections, run the sync worker or launch it from the modal:
                       <pre class="mt-1 overflow-x-auto rounded bg-background px-2 py-1 text-[11px] font-mono text-foreground">python manage.py sync_knowledge_integrations --integration-id {{ integration.id }} --ignore-schedule
+python manage.py reset_stalled_ingestion_jobs --older-than 15 --requeue --requeue-missing
 python manage.py process_knowledge_ingestion --watch</pre>
                     </div>
                   {% endif %}
@@ -1059,9 +1060,10 @@ python manage.py process_knowledge_ingestion --watch</pre>
             <div class="rounded-lg border border-dashed border-border/50 bg-muted/20 p-3 text-xs text-muted-foreground">
               <p>Prefer the CLI? Run:</p>
               <pre class="mt-2 overflow-x-auto rounded bg-background px-2 py-1 text-[11px] font-mono text-foreground" data-sheets-command>python manage.py sync_knowledge_integrations --integration-id … --ignore-schedule
+python manage.py reset_stalled_ingestion_jobs --older-than 15 --requeue --requeue-missing
 python manage.py process_knowledge_ingestion --watch</pre>
               <p class="mt-2" data-sheets-instructions>
-                Keep <code>python manage.py process_knowledge_ingestion --watch</code> running so new CSV rows are embedded automatically.
+                Keep <code>python manage.py process_knowledge_ingestion --watch</code> running, and schedule <code>python manage.py reset_stalled_ingestion_jobs --older-than 15 --requeue --requeue-missing</code> every few minutes so stalled uploads automatically retry.
               </p>
             </div>
           </div>

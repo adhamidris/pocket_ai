@@ -152,6 +152,7 @@ RAG_EVAL_THRESHOLDS = {
 RAG_DRIFT_TRUNCATION_THRESHOLD = float(os.getenv("RAG_DRIFT_TRUNCATION_THRESHOLD", "0.2"))
 RAG_DRIFT_ALIAS_HIT_THRESHOLD = float(os.getenv("RAG_DRIFT_ALIAS_HIT_THRESHOLD", "0.85"))
 RAG_DRIFT_NOT_FOUND_THRESHOLD = float(os.getenv("RAG_DRIFT_NOT_FOUND_THRESHOLD", "0.3"))
+PORTAL_STREAM_STATE_MACHINE = os.getenv("PORTAL_STREAM_STATE_MACHINE", "false").lower() in {"1", "true", "yes"}
 
 MIDDLEWARE = [
     "django.middleware.security.SecurityMiddleware",
@@ -252,6 +253,13 @@ LOGGING = {
         "console": {
             "class": "logging.StreamHandler",
         },
+        "rag_file": {
+            "class": "logging.handlers.RotatingFileHandler",
+            "filename": str(BASE_DIR / "var" / "logs" / "rag.log"),
+            "maxBytes": 1024 * 1024,
+            "backupCount": 3,
+            "formatter": "verbose",
+        },
         "deepseek_file": {
             "class": "logging.handlers.RotatingFileHandler",
             "filename": str(DEEPSEEK_LOG_FILE),
@@ -261,15 +269,11 @@ LOGGING = {
         },
     },
     "loggers": {
-        "apps.services.llm_provider": {
-            "handlers": ["console", "deepseek_file"],
-            "level": "INFO",  # use DEBUG if you want even more detail
-            "propagate": False,
-        },
+        "apps.services.llm_provider": {"handlers": ["console", "deepseek_file"], "level": "INFO", "propagate": False},
         "apps.services.knowledge_ingestion": {"handlers": ["console"], "level": "INFO", "propagate": False},
         "apps.services.ai_orchestrator": {"handlers": ["console"], "level": "INFO", "propagate": False},
-        "apps.services.mcp.tools": {"handlers": ["console"], "level": "INFO", "propagate": False},
-        "apps.services.mcp.orchestrator": {"handlers": ["console"], "level": "INFO", "propagate": False},
+        "apps.services.mcp.tools": {"handlers": ["console", "rag_file"], "level": "INFO", "propagate": False},
+        "apps.services.mcp.orchestrator": {"handlers": ["console", "rag_file"], "level": "INFO", "propagate": False},
         "apps.api.chat_portal": {"handlers": ["console"], "level": "INFO", "propagate": False},
     },
 }

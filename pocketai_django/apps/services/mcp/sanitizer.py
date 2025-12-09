@@ -18,6 +18,11 @@ from apps.services.rag_logging import structured_log
 logger = logging.getLogger(__name__)
 TRACER = otel_trace.get_tracer(__name__)
 
+PLACEHOLDER_TOOL_PATTERN = re.compile(
+    r"\b(search_knowledge|read_document|table_aggregate|list_tables|create_case|update_case_details)\b",
+    re.IGNORECASE,
+)
+
 
 def sanitize_with_diagnostics(
     text: str,
@@ -53,6 +58,33 @@ def sanitize_with_diagnostics(
                 context={"conversation": conversation_id, "business": business_id},
             )
     return cleaned, dropped
+
+
+def sanitize_placeholder_thinking(
+    text: str | None,
+    *,
+    fallback: str | None = "Gathering docs...",
+    limit: int = 48,
+) -> str | None:
+    """
+    Produce a short, visitor-safe spinner label from provider placeholders.
+    """
+
+    raw = (text or "").strip()
+    if not raw and fallback:
+        return fallback
+    if not raw:
+        return None
+    normalized = PLACEHOLDER_TOOL_PATTERN.sub("", raw)
+    normalized = re.sub(r"\s+", " ", normalized).strip(" .,:-")
+    if not normalized:
+        normalized = (fallback or "").strip()
+    if not normalized:
+        return None
+    if limit and len(normalized) > limit:
+        normalized = normalized[: limit - 3].rstrip()
+        normalized = f"{normalized}..."
+    return normalized
 
 def extract_sentences(buffer: str) -> Tuple[list[Tuple[str, str]], str]:
     """

@@ -9,11 +9,12 @@ tool dispatch, and plan construction logic.
 
 from __future__ import annotations
 
+import copy
 import json
 import logging
 import re
 import uuid
-from typing import Callable, Iterable, Mapping, Sequence
+from typing import Callable, Iterable, Mapping, MutableMapping, Sequence
 
 from django.conf import settings
 from django.utils import timezone
@@ -34,7 +35,12 @@ from apps.services.ai_orchestrator import (
 from apps.services.rag_logging import structured_log
 
 from . import prompts, tools
-from .sanitizer import extract_sentences, is_investigative_filler_with_level, sanitize_with_diagnostics
+from .sanitizer import (
+    extract_sentences,
+    is_investigative_filler_with_level,
+    sanitize_placeholder_thinking,
+    sanitize_with_diagnostics,
+)
 from django.core.cache import cache
 
 from .types import (
@@ -95,6 +101,7 @@ class McpOrchestratorService:
         on_response_text_delta: Callable[[str], None] | None = None,
         on_status_change: Callable[[str], None] | None = None,
         on_placeholder_response: Callable[[str], None] | None = None,
+        on_spinner_update: Callable[[str], None] | None = None,
     ) -> dict[str, object]:
         """
         Build the orchestration plan for the latest customer message.
@@ -183,12 +190,34 @@ class McpOrchestratorService:
         tool_phase_assistant_message: dict[str, object] | None = None
         final_assistant_message: dict[str, object] | None = None
         placeholder_sent = False
+        first_pass_streamed_chunks: list[str] = []
         answer_streamed_chunks: list[str] = []
+        streaming_mode = "initial"
         single_pass_candidate: str | None = None
         first_stream_tool_calls: list[Mapping[str, object]] = []
         first_stream_message: dict[str, object] | None = None
         stream_buffer = ""
         stream_dropped: list[str] = []
+        spinner_last_sent: str | None = None
+        spinner_hints = {
+            "search_knowledge": "Searching knowledge",
+            "read_document": "Reading document",
+            "list_tables": "Listing tables",
+            "table_aggregate": "Summarizing table",
+        }
+
+        def _notify_spinner(raw_text: str | None, *, fallback: str | None = None) -> None:
+            nonlocal spinner_last_sent
+            if not on_spinner_update:
+                return
+            candidate = sanitize_placeholder_thinking(raw_text, fallback=fallback or "Working...")
+            if not candidate or candidate == spinner_last_sent:
+                return
+            spinner_last_sent = candidate
+            try:
+                on_spinner_update(candidate)
+            except Exception:  # pragma: no cover - defensive
+                logger.exception("on_spinner_update callback failed")
 
         if on_status_change:
             on_status_change({"code": "thinking", "label": "Thinking…"})
@@ -199,12 +228,15 @@ class McpOrchestratorService:
             for token in re.findall(r"\S+\s*|\s+", text, flags=re.MULTILINE):
                 if not token:
                     continue
-                answer_streamed_chunks.append(token)
-                if on_response_text_delta:
-                    try:
-                        on_response_text_delta(token)
-                    except Exception:  # pragma: no cover - defensive
-                        logger.exception("on_response_text_delta callback failed")
+                if streaming_mode == "initial":
+                    first_pass_streamed_chunks.append(token)
+                else:
+                    answer_streamed_chunks.append(token)
+                    if on_response_text_delta:
+                        try:
+                            on_response_text_delta(token)
+                        except Exception:  # pragma: no cover - defensive
+                            logger.exception("on_response_text_delta callback failed")
 
         def _emit_sentence(text: str) -> None:
             if not text:
@@ -306,7 +338,7 @@ class McpOrchestratorService:
             # Defer appending until we process the tool call in the loop.
             pending_assistant = first_stream_message
             # We don't want to surface the streamed text from the tool-call turn.
-            answer_streamed_chunks.clear()
+            first_pass_streamed_chunks.clear()
         else:
             # No tools; keep streamed assistant content in transcript.
             transcript.append(
@@ -343,6 +375,29 @@ class McpOrchestratorService:
                     for tool_call in current_tool_calls:
                         tool_name = self._tool_name(tool_call)
                         arguments = self._tool_arguments(tool_call)
+                        cached_table_result = None
+                        table_cache_key = None
+                        if tool_name == "table_aggregate":
+                            arguments = dict(arguments)
+                            self._apply_table_column_hint(arguments, tool_context)
+                            table_cache_key = self._table_aggregate_cache_key(arguments)
+                            if table_cache_key and table_cache_key in tool_context.table_result_cache:
+                                cached_table_result = copy.deepcopy(tool_context.table_result_cache[table_cache_key])
+                                structured_log(
+                                    "mcp",
+                                    "table.aggregate.cache_hit",
+                                    {
+                                        "document_id": str(arguments.get("document_id") or ""),
+                                        "match_column": arguments.get("match_column"),
+                                        "match_values": arguments.get("match_values"),
+                                        "columns": arguments.get("columns"),
+                                    },
+                                    context={
+                                        "conversation": conversation.id,
+                                        "business": conversation.business_profile_id,
+                                    },
+                                    logger_obj=logger,
+                                )
                         if self._is_knowledge_tool(tool_name):
                             if on_status_change:
                                 if tool_name == "search_knowledge":
@@ -357,11 +412,20 @@ class McpOrchestratorService:
                                     base_label = "Reading document"
                                     label = f"Reading: {short_id}" if short_id else base_label
                                     on_status_change({"code": "reading_document", "label": label})
-                        if on_placeholder_response and not placeholder_sent:
-                            placeholder_text = str(assistant_message.get("content") or "").strip()
+                        placeholder_source = (
+                            assistant_message.get("placeholder_thinking")
+                            or assistant_message.get("placeholder_response")
+                            or assistant_message.get("content")
+                        )
+                        if placeholder_source:
+                            placeholder_text = str(placeholder_source).strip()
                             if placeholder_text:
-                                on_placeholder_response(placeholder_text)
-                                placeholder_sent = True
+                                if on_placeholder_response and not placeholder_sent:
+                                    on_placeholder_response(placeholder_text)
+                                    placeholder_sent = True
+                                _notify_spinner(placeholder_text)
+                        elif tool_name in spinner_hints:
+                            _notify_spinner(spinner_hints[tool_name])
 
                         duplicate_result = None
                         if tool_name == "search_knowledge":
@@ -377,7 +441,9 @@ class McpOrchestratorService:
                                 tool_span.set_attribute("mcp.iteration_index", iteration_index)
                                 tool_span.set_attribute("mcp.duplicate_short_circuit", bool(duplicate_result))
                                 tool_span.set_attribute("mcp.tool_args_keys", sorted(arguments.keys()))
-                            if duplicate_result:
+                            if cached_table_result is not None:
+                                tool_result = cached_table_result
+                            elif duplicate_result:
                                 tool_result = duplicate_result
                             else:
                                 try:
@@ -401,6 +467,10 @@ class McpOrchestratorService:
                                         level=logging.WARNING,
                                     )
                                     tool_result = self._constraint_error_payload(tool_name, exc)
+                        if tool_name == "table_aggregate":
+                            self._record_table_column_hint(arguments, tool_context, tool_result)
+                            if cached_table_result is None and table_cache_key:
+                                self._cache_table_result(tool_context, table_cache_key, tool_result)
                         if tool_name == "search_knowledge" and not duplicate_result:
                             self._record_search_history(tool_context, arguments, tool_result)
                         tool_context.add_tool_trace(
@@ -444,6 +514,10 @@ class McpOrchestratorService:
                                 "content": json.dumps(tool_result, ensure_ascii=False),
                             }
                         )
+                        if tool_name == "table_aggregate":
+                            document_id = str(arguments.get("document_id") or tool_result.get("document_id") or "").strip()
+                            if document_id:
+                                self._satisfy_transcript_snippets(transcript, document_id, tool_context)
 
                     # Ask the model again with tools enabled to see if more tool_calls are needed.
                     # Trim tool-loop prompts so each call focuses on the newest inputs.
@@ -484,7 +558,7 @@ class McpOrchestratorService:
         else:
             tool_phase_assistant_message = first_stream_message
             _flush_stream_buffer("streaming_tools")
-            single_pass_text = "".join(answer_streamed_chunks).strip() or first_content_raw
+            single_pass_text = "".join(first_pass_streamed_chunks).strip() or first_content_raw
             if on_status_change:
                 on_status_change({"code": "responding", "label": "Responding…"})
             with TRACER.start_as_current_span("portal.mcp.single_pass") as span:
@@ -517,6 +591,9 @@ class McpOrchestratorService:
             del on_status_change, on_placeholder_response
             normalized_assistant = dict(tool_phase_assistant_message or {"role": "assistant"})
             normalized_assistant["content"] = clean_single
+            streaming_mode = "final"
+            answer_streamed_chunks.clear()
+            _emit_tokens(clean_single)
             return {
                 "assistant_message": normalized_assistant,
                 "tool_context": tool_context,
@@ -613,6 +690,7 @@ class McpOrchestratorService:
                 logger_obj=logger,
             )
 
+        streaming_mode = "final"
         final_messages = prompts.build_final_answer_messages(
             conversation=conversation,
             user_message=user_message,
@@ -766,6 +844,7 @@ class McpOrchestratorService:
         on_status_change: Callable[[str], None] | None = None,
         on_placeholder_response: Callable[[str], None] | None = None,
         on_stream_complete: Callable[[], None] | None = None,
+        on_spinner_update: Callable[[str], None] | None = None,
     ) -> StreamingTurnContext:
         result = self._execute_turn(
             conversation=conversation,
@@ -773,6 +852,7 @@ class McpOrchestratorService:
             on_response_text_delta=on_response_text_delta,
             on_status_change=on_status_change,
             on_placeholder_response=on_placeholder_response,
+            on_spinner_update=on_spinner_update,
         )
         streamed_chunks = tuple(result.get("streamed_chunks") or ())
         clean_answer_text = str(result.get("clean_answer_text") or "")
@@ -866,6 +946,7 @@ class McpOrchestratorService:
         on_status_change: Callable[[str], None] | None = None,
         on_placeholder_response: Callable[[str], None] | None = None,
         on_stream_complete: Callable[[], None] | None = None,
+        on_spinner_update: Callable[[str], None] | None = None,
     ) -> AiOrchestratorPlan:
         context = self.stream_turn(
             conversation=conversation,
@@ -874,6 +955,7 @@ class McpOrchestratorService:
             on_status_change=on_status_change,
             on_placeholder_response=on_placeholder_response,
             on_stream_complete=on_stream_complete,
+            on_spinner_update=on_spinner_update,
         )
         return self.finalize_turn(context)
 
@@ -893,7 +975,8 @@ class McpOrchestratorService:
             "llm_strategy": "mcp_tools_stream_planner",
             "knowledge_reads": getattr(tool_context, "knowledge_reads", []),
             "tool_trace": getattr(tool_context, "tool_trace", []),
-            "placeholder_response": assistant_message.get("placeholder_response"),
+            "placeholder_response": assistant_message.get("placeholder_thinking")
+            or assistant_message.get("placeholder_response"),
             "coverage_ledger": getattr(tool_context, "coverage_ledger", []),
             "sanitized_sentences": {
                 "count": len(dropped_list),
@@ -1072,6 +1155,7 @@ class McpOrchestratorService:
             return assistant_message
         merged: dict[str, object] = dict(assistant_message)
         merged.pop("placeholder_response", None)
+        merged.pop("placeholder_thinking", None)
         if isinstance(planner_message.get("actions"), list):
             merged["actions"] = planner_message.get("actions")
         if isinstance(planner_message.get("extractions"), list):
@@ -1128,6 +1212,7 @@ class McpOrchestratorService:
                         "actions": {"type": "array", "items": {"type": "object"}},
                         "extractions": {"type": "array", "items": {"type": "object"}},
                         "placeholder_response": {"type": "string"},
+                        "placeholder_thinking": {"type": "string"},
                     },
                     "required": ["response_text"],
                     "additionalProperties": True,
@@ -1185,6 +1270,18 @@ class McpOrchestratorService:
                             context,
                             upload_id=str(entry.get("upload_id")),
                         )
+                        McpOrchestratorService._mark_upload_as_satisfied(
+                            context,
+                            upload_id=str(entry.get("upload_id")),
+                        )
+                        read_entry = {
+                            "id": entry.get("id") or entry.get("chunk_id"),
+                            "label": entry.get("public_label") or entry.get("title") or "Table aggregate",
+                            "mode": "table_aggregate",
+                            "table_order_index": diagnostics.get("table_order_index"),
+                            "row_index": diagnostics.get("table_row_index"),
+                        }
+                        context.add_knowledge_read({k: v for k, v in read_entry.items() if v is not None})
         reads = tool_result.get("knowledge_reads") if isinstance(tool_result, Mapping) else None
         if isinstance(reads, list):
             for read in reads:
@@ -1209,6 +1306,67 @@ class McpOrchestratorService:
                 continue
             if entry.get("is_table_chunk"):
                 entry["suppress_in_prompt"] = True
+
+    @staticmethod
+    def _mark_upload_as_satisfied(context: ToolExecutionContext, upload_id: str) -> None:
+        if not upload_id:
+            return
+        normalized_id = str(upload_id).strip()
+        if not normalized_id:
+            return
+        for entry in context.knowledge_results:
+            if not isinstance(entry, MutableMapping):
+                continue
+            if str(entry.get("upload_id") or "").strip() != normalized_id:
+                continue
+            if entry.get("read_required"):
+                entry["read_required"] = False
+            entry.setdefault("read_state", "full")
+        for coverage in context.coverage_ledger:
+            if not isinstance(coverage, MutableMapping):
+                continue
+            if str(coverage.get("upload_id") or "").strip() != normalized_id:
+                continue
+            if coverage.get("read_required"):
+                coverage["read_required"] = False
+
+    @staticmethod
+    def _satisfy_transcript_snippets(
+        transcript: list[MutableMapping[str, object]],
+        upload_id: str,
+        context: ToolExecutionContext,
+    ) -> None:
+        normalized_id = str(upload_id or "").strip()
+        if not normalized_id:
+            return
+        for entry in transcript:
+            if entry.get("role") != "tool":
+                continue
+            if entry.get("name") != "search_knowledge":
+                continue
+            content_raw = entry.get("content")
+            if not isinstance(content_raw, str):
+                continue
+            try:
+                payload = json.loads(content_raw)
+            except json.JSONDecodeError:
+                continue
+            snippets = payload.get("snippets")
+            if not isinstance(snippets, list):
+                continue
+            updated = False
+            for snippet in snippets:
+                if not isinstance(snippet, MutableMapping):
+                    continue
+                snippet_upload = str(snippet.get("upload_id") or "").strip()
+                if snippet_upload != normalized_id:
+                    continue
+                if snippet.get("read_required"):
+                    snippet["read_required"] = False
+                    updated = True
+                snippet.setdefault("read_state", "full")
+            if updated:
+                entry["content"] = json.dumps(payload, ensure_ascii=False)
         for coverage in context.coverage_ledger:
             if str(coverage.get("upload_id") or "").strip() != upload_id:
                 continue
@@ -1216,6 +1374,132 @@ class McpOrchestratorService:
                 continue
             if coverage.get("is_table_chunk"):
                 coverage["suppress_in_prompt"] = True
+
+    @staticmethod
+    def _normalized_column_entries(columns: Sequence[object] | object) -> list[str]:
+        normalized: list[str] = []
+        if isinstance(columns, str):
+            iterable: Sequence[object] = [columns]
+        elif isinstance(columns, Sequence):
+            iterable = columns
+        else:
+            return normalized
+        for entry in iterable:
+            if entry is None:
+                continue
+            text = str(entry).strip()
+            if not text:
+                continue
+            normalized.append(text)
+        return normalized
+
+    @staticmethod
+    def _table_aggregate_cache_key(arguments: Mapping[str, object]) -> tuple | None:
+        document_id = str(arguments.get("document_id") or "").strip()
+        if not document_id:
+            return None
+
+        def _norm(value: object) -> str | None:
+            if value is None:
+                return None
+            text = str(value).strip()
+            return text.lower() or None
+
+        match_column = _norm(arguments.get("match_column"))
+        match_value = _norm(arguments.get("match_value"))
+        raw_match_values = arguments.get("match_values")
+        if isinstance(raw_match_values, str):
+            match_iter: Sequence[object] = [raw_match_values]
+        elif isinstance(raw_match_values, Sequence):
+            match_iter = raw_match_values
+        else:
+            match_iter = ()
+        match_values: tuple[str, ...] = tuple(
+            value
+            for value in (_norm(entry) for entry in match_iter)
+            if value
+        )
+        if match_value and match_value not in match_values:
+            match_values = match_values + (match_value,)
+        normalized_columns = tuple(
+            value
+            for value in (
+                _norm(entry) for entry in arguments.get("columns") or ()
+            )
+            if value
+        )
+        query = _norm(arguments.get("query"))
+        sheet_name = _norm(arguments.get("sheet_name"))
+        table_index = arguments.get("table_order_index")
+        try:
+            table_index_norm = int(table_index) if table_index is not None else None
+        except (TypeError, ValueError):
+            table_index_norm = None
+        row_limit = arguments.get("max_rows")
+        try:
+            row_limit_norm = int(row_limit) if row_limit is not None else None
+        except (TypeError, ValueError):
+            row_limit_norm = None
+        mode = _norm(arguments.get("mode"))
+        value_column = _norm(arguments.get("value_column"))
+        return (
+            document_id,
+            match_column,
+            match_values,
+            normalized_columns,
+            query,
+            sheet_name,
+            table_index_norm,
+            row_limit_norm,
+            mode,
+            value_column,
+        )
+
+    def _apply_table_column_hint(self, arguments: MutableMapping[str, object], context: ToolExecutionContext) -> None:
+        document_id = str(arguments.get("document_id") or "").strip()
+        if not document_id:
+            return
+        raw_columns = arguments.get("columns")
+        normalized = self._normalized_column_entries(raw_columns)
+        if normalized:
+            context.table_column_filters[document_id] = normalized
+            arguments["columns"] = list(normalized)
+            return
+        cached_columns = context.table_column_filters.get(document_id)
+        if cached_columns:
+            arguments["columns"] = list(cached_columns)
+
+    @staticmethod
+    def _record_table_column_hint(arguments: Mapping[str, object], context: ToolExecutionContext, tool_result: Mapping[str, object]) -> None:
+        document_id = str(arguments.get("document_id") or "").strip()
+        if not document_id:
+            return
+        raw_columns = arguments.get("columns")
+        normalized = McpOrchestratorService._normalized_column_entries(raw_columns)
+        if normalized:
+            context.table_column_filters[document_id] = normalized
+            return
+        rows = tool_result.get("rows") if isinstance(tool_result, Mapping) else None
+        if document_id not in context.table_column_filters and isinstance(rows, list):
+            first_row = rows[0] if rows else None
+            if isinstance(first_row, Mapping):
+                cells = first_row.get("cells") if isinstance(first_row.get("cells"), list) else []
+                columns = []
+                for cell in cells:
+                    if not isinstance(cell, Mapping):
+                        continue
+                    col_name = cell.get("column")
+                    if isinstance(col_name, str) and col_name.strip():
+                        columns.append(col_name.strip())
+                if columns:
+                    context.table_column_filters[document_id] = columns[:200]
+
+    @staticmethod
+    def _cache_table_result(context: ToolExecutionContext, cache_key: tuple, payload: Mapping[str, object], limit: int = 4) -> None:
+        context.table_result_cache[cache_key] = copy.deepcopy(payload)
+        while len(context.table_result_cache) > limit:
+            first_key = next(iter(context.table_result_cache))
+            context.table_result_cache.pop(first_key, None)
 
     @staticmethod
     def _table_cache_entries(conversation: Conversation) -> list[dict[str, object]]:
@@ -1301,15 +1585,26 @@ class McpOrchestratorService:
                         pieces.append(f"mode={mode}")
                     if pieces:
                         hint_text = "Read with " + ", ".join(pieces)
-        history.append(
-            {
-                "query": normalized,
-                "snippet_count": len(snippets),
-                "read_required": read_required,
-                "snippet_ids": snippet_ids,
-                "hint": hint_text or "Existing snippets already require read_document; use the provided read_hint.",
-            }
-        )
+        queries_to_record = [normalized]
+        extra_queries = arguments.get("queries")
+        if isinstance(extra_queries, (list, tuple)):
+            for value in extra_queries:
+                candidate = str(value).strip().lower()
+                if candidate and candidate not in queries_to_record:
+                    queries_to_record.append(candidate)
+        record_payload = {
+            "snippet_count": len(snippets),
+            "read_required": read_required,
+            "snippet_ids": snippet_ids,
+            "hint": hint_text or "Existing snippets already require read_document; use the provided read_hint.",
+        }
+        for query_value in queries_to_record:
+            history.append(
+                {
+                    "query": query_value,
+                    **record_payload,
+                }
+            )
 
     def _short_circuit_duplicate_search(
         self,
@@ -1429,11 +1724,13 @@ class McpOrchestratorService:
                 if isinstance(message, dict):
                     msg = dict(message)
                     msg.pop("placeholder_response", None)
+                    msg.pop("placeholder_thinking", None)
                     return msg
         message = payload.get("message")
         if isinstance(message, dict):
             msg = dict(message)
             msg.pop("placeholder_response", None)
+            msg.pop("placeholder_thinking", None)
             return msg
         return payload
 
