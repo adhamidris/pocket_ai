@@ -376,8 +376,8 @@ class McpOrchestratorService:
             first_content_raw = str(first_stream_message.get("content") or "").strip()
         pending_assistant = None
         if first_stream_tool_calls:
-            # Defer appending until we process the tool call in the loop, but keep
-            # any streamed text visible so the visitor sees human-like fillers.
+            # Defer appending until we process the tool call in the loop; initial
+            # stream chunks stay buffered alongside the first pass message.
             pending_assistant = first_stream_message
         else:
             # No tools; keep streamed assistant content in transcript.

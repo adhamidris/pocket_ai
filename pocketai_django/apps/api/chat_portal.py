@@ -28,7 +28,7 @@ from apps.services.ai_orchestrator import (
     StreamingTurnContext,
 )
 from apps.services.mcp.sanitizer import sanitize_placeholder_thinking, sanitize_text, sanitize_with_diagnostics
-from apps.services.llm_provider import load_default_provider
+from apps.services.llm_provider import _emit_stream_chunks, load_default_provider
 from apps.services.chat_portal import (
     ChatPortalService,
     PortalAgentSummary,
@@ -646,31 +646,6 @@ def stream_send(request: HttpRequest) -> StreamingHttpResponse:
             )
         return payloads
 
-    def _response_chunks(text: str, chunk_size: int = 64) -> Iterable[str]:
-        clean = (text or "").strip()
-        if not clean:
-            return
-        words = clean.split()
-        if not words:
-            return
-        current: list[str] = []
-        current_len = 0
-        for word in words:
-            if not current:
-                current.append(word)
-                current_len = len(word)
-                continue
-            projected = current_len + 1 + len(word)
-            if projected <= chunk_size:
-                current.append(word)
-                current_len = projected
-            else:
-                yield " ".join(current)
-                current = [word]
-                current_len = len(word)
-        if current:
-            yield " ".join(current)
-
     stream_queue: Queue = Queue()
     stream_sentinel = object()
     finalize_queue: Queue = Queue()
@@ -1203,7 +1178,9 @@ def stream_send(request: HttpRequest) -> StreamingHttpResponse:
                 return
             if not streamed_from_provider:
                 stream_text = "".join(context.streamed_chunks).strip() or context.response_text or ""
-                for chunk in _response_chunks(stream_text):
+                reconstructed: list[str] = []
+                _emit_stream_chunks(reconstructed.append, stream_text)
+                for chunk in reconstructed:
                     streamed_text_chunks.append(chunk)
                     yield "event: delta\n"
                     yield f"data: {json.dumps({'text': chunk})}\n\n"

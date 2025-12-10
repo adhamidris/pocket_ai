@@ -183,39 +183,6 @@ class BaseMcpProvider(Protocol):
         ...
 
 
-def _emit_stream_chunks(emit: Callable[[str], None], text: str, chunk_size: int = 64) -> None:
-    """
-    Helper to emit a long string in smaller chunks so the chat portal can
-    surface incremental deltas even when the underlying provider call is
-    non-streaming.
-    """
-
-    clean = (text or "").strip()
-    if not clean:
-        return
-    words = clean.split()
-    if not words:
-        emit(clean)
-        return
-    current: list[str] = []
-    current_len = 0
-    for word in words:
-        if not current:
-            current.append(word)
-            current_len = len(word)
-            continue
-        projected = current_len + 1 + len(word)
-        if projected <= chunk_size:
-            current.append(word)
-            current_len = projected
-        else:
-            emit(" ".join(current))
-            current = [word]
-            current_len = len(word)
-    if current:
-        emit(" ".join(current))
-
-
 @dataclass
 class StubLLMProvider:
     """
