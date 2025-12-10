@@ -1224,7 +1224,10 @@ class OpenAIToolsProvider(BaseMcpProvider):
                             ) as resp:
                                 status_code = resp.status_code
                                 if status_code >= 400:
-                                    detail = resp.text[:200]
+                                    try:
+                                        detail = resp.read().decode("utf-8", errors="ignore")[:200]
+                                    except Exception:
+                                        detail = ""
                                     raise PromptGenerationError(f"OpenAI tools error ({status_code}): {detail}")
                                 data = _consume_chat_completion_stream(_HttpxLineStream(resp.iter_lines()), on_stream_delta)
                         else:
@@ -1486,7 +1489,10 @@ class DeepSeekToolsProvider(BaseMcpProvider):
                             ) as resp:
                                 status_code = resp.status_code
                                 if status_code >= 400:
-                                    detail = resp.text[:200]
+                                    try:
+                                        detail = resp.read().decode("utf-8", errors="ignore")[:200]
+                                    except Exception:
+                                        detail = ""
                                     raise PromptGenerationError(f"DeepSeek tools error ({status_code}): {detail}")
                                 data = _consume_chat_completion_stream(_HttpxLineStream(resp.iter_lines()), on_stream_delta)
                         else:
