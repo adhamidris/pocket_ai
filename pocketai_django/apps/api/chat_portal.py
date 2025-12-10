@@ -765,10 +765,12 @@ def stream_send(request: HttpRequest) -> StreamingHttpResponse:
         stream_queue.put(stream_sentinel)
 
     def on_placeholder_response(text: str) -> None:
-        _emit_spinner_status(text)
+        # Placeholder thinking is no longer surfaced via the spinner.
+        return
 
     def on_spinner_update(text: str) -> None:
-        _emit_spinner_status(text)
+        # Spinner updates now rely solely on explicit status codes.
+        return
 
     def run_planner_async(
         stream_context: StreamingTurnContext,

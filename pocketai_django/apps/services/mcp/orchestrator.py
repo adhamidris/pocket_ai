@@ -38,7 +38,6 @@ from . import prompts, tools
 from .sanitizer import (
     extract_sentences,
     is_investigative_filler_with_level,
-    sanitize_placeholder_thinking,
     sanitize_with_diagnostics,
 )
 from django.core.cache import cache
@@ -190,70 +189,51 @@ class McpOrchestratorService:
                 transcript = list(cached_table_messages)
         tool_phase_assistant_message: dict[str, object] | None = None
         final_assistant_message: dict[str, object] | None = None
-        placeholder_sent = False
         first_pass_streamed_chunks: list[str] = []
         answer_streamed_chunks: list[str] = []
         streaming_mode = "initial"
         final_separator_pending = False
-        final_streamed = False
-        initial_stream_trailing_space = False
+        last_stream_char = ""
         single_pass_candidate: str | None = None
         first_stream_tool_calls: list[Mapping[str, object]] = []
         first_stream_message: dict[str, object] | None = None
         stream_buffer = ""
         stream_dropped: list[str] = []
-        spinner_last_sent: str | None = None
-        spinner_hints = {
-            "search_knowledge": "Searching knowledge",
-            "read_document": "Reading document",
-            "list_tables": "Listing tables",
-            "table_aggregate": "Summarizing table",
-        }
-
-        def _notify_spinner(raw_text: str | None, *, fallback: str | None = None) -> None:
-            nonlocal spinner_last_sent
-            if not on_spinner_update:
-                return
-            candidate = sanitize_placeholder_thinking(raw_text, fallback=fallback or "Working...")
-            if not candidate or candidate == spinner_last_sent:
-                return
-            spinner_last_sent = candidate
-            try:
-                on_spinner_update(candidate)
-            except Exception:  # pragma: no cover - defensive
-                logger.exception("on_spinner_update callback failed")
 
         if on_status_change:
             on_status_change({"code": "thinking", "label": "Thinking…"})
 
+        def _append_chunk(chunk: str, target: list[str]) -> None:
+            if not chunk:
+                return
+            nonlocal last_stream_char
+            target.append(chunk)
+            last_stream_char = chunk[-1]
+            if on_response_text_delta:
+                try:
+                    on_response_text_delta(chunk)
+                except Exception:  # pragma: no cover - defensive
+                    logger.exception("on_response_text_delta callback failed")
+
         def _emit_tokens(text: str) -> None:
             if not text:
                 return
-            nonlocal final_separator_pending, final_streamed, initial_stream_trailing_space
+            nonlocal final_separator_pending
             target = first_pass_streamed_chunks if streaming_mode == "initial" else answer_streamed_chunks
             if streaming_mode != "initial":
-                if final_separator_pending:
+                if final_separator_pending and not (last_stream_char and last_stream_char.isspace()):
                     final_separator_pending = False
                     if first_pass_streamed_chunks:
-                        separator = "\n\n"
-                        target.append(separator)
-                        if on_response_text_delta:
-                            try:
-                                on_response_text_delta(separator)
-                            except Exception:  # pragma: no cover - defensive
-                                logger.exception("on_response_text_delta callback failed")
-                final_streamed = True
+                        _append_chunk(" ", target)
+                else:
+                    final_separator_pending = False
             for token in re.findall(r"\S+\s*|\s+", text, flags=re.MULTILINE):
                 if not token:
                     continue
-                if streaming_mode == "initial":
-                    initial_stream_trailing_space = token[-1].isspace()
-                target.append(token)
-                if on_response_text_delta:
-                    try:
-                        on_response_text_delta(token)
-                    except Exception:  # pragma: no cover - defensive
-                        logger.exception("on_response_text_delta callback failed")
+                first_char = token[0]
+                if last_stream_char and not last_stream_char.isspace() and first_char.isalnum():
+                    _append_chunk(" ", target)
+                _append_chunk(token, target)
 
         def _emit_sentence(text: str) -> None:
             if not text:
@@ -470,21 +450,6 @@ class McpOrchestratorService:
                                     base_label = "Reading document"
                                     label = f"Reading: {short_id}" if short_id else base_label
                                     on_status_change({"code": "reading_document", "label": label})
-                        placeholder_source = (
-                            assistant_message.get("placeholder_thinking")
-                            or assistant_message.get("placeholder_response")
-                            or assistant_message.get("content")
-                        )
-                        if placeholder_source:
-                            placeholder_text = str(placeholder_source).strip()
-                            if placeholder_text:
-                                if on_placeholder_response and not placeholder_sent:
-                                    on_placeholder_response(placeholder_text)
-                                    placeholder_sent = True
-                                _notify_spinner(placeholder_text)
-                        elif tool_name in spinner_hints:
-                            _notify_spinner(spinner_hints[tool_name])
-
                         duplicate_result = None
                         if tool_name == "search_knowledge":
                             duplicate_result = self._short_circuit_duplicate_search(
@@ -613,8 +578,7 @@ class McpOrchestratorService:
             stream_buffer = ""
             stream_dropped = []
             streaming_mode = "final"
-            final_separator_pending = bool(first_pass_streamed_chunks) and not initial_stream_trailing_space
-            final_streamed = False
+            final_separator_pending = bool(first_pass_streamed_chunks)
         # No tool calls from the first streaming pass: take single-pass fast path.
         else:
             tool_phase_assistant_message = first_stream_message
@@ -649,14 +613,11 @@ class McpOrchestratorService:
             if on_status_change:
                 on_status_change({"code": "stream_complete", "label": ""})
             self._log_turn_metrics(conversation, tool_context)
-            del on_status_change, on_placeholder_response
             normalized_assistant = dict(tool_phase_assistant_message or {"role": "assistant"})
             normalized_assistant["content"] = clean_single
             streaming_mode = "final"
             answer_streamed_chunks[:] = list(first_pass_streamed_chunks)
             final_separator_pending = False
-            initial_stream_trailing_space = False
-            final_streamed = bool(answer_streamed_chunks)
             return {
                 "assistant_message": normalized_assistant,
                 "tool_context": tool_context,
@@ -686,7 +647,6 @@ class McpOrchestratorService:
             if on_status_change:
                 on_status_change({"code": "stream_complete", "label": ""})
             self._log_turn_metrics(conversation, tool_context)
-            del on_status_change, on_placeholder_response
             return {
                 "assistant_message": final_assistant_message,
                 "tool_context": tool_context,
@@ -761,7 +721,6 @@ class McpOrchestratorService:
 
         self._log_turn_metrics(conversation, tool_context)
         self._persist_table_cache(conversation, tool_context)
-        del on_status_change, on_placeholder_response
         return {
             "assistant_message": normalized_assistant_msg,
             "tool_context": tool_context,
