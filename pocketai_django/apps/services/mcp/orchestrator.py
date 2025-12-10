@@ -194,6 +194,8 @@ class McpOrchestratorService:
         first_pass_streamed_chunks: list[str] = []
         answer_streamed_chunks: list[str] = []
         streaming_mode = "initial"
+        final_separator_pending = False
+        final_streamed = False
         single_pass_candidate: str | None = None
         first_stream_tool_calls: list[Mapping[str, object]] = []
         first_stream_message: dict[str, object] | None = None
@@ -226,7 +228,20 @@ class McpOrchestratorService:
         def _emit_tokens(text: str) -> None:
             if not text:
                 return
+            nonlocal final_separator_pending, final_streamed
             target = first_pass_streamed_chunks if streaming_mode == "initial" else answer_streamed_chunks
+            if streaming_mode != "initial":
+                if final_separator_pending:
+                    final_separator_pending = False
+                    if first_pass_streamed_chunks:
+                        separator = "\n\n"
+                        target.append(separator)
+                        if on_response_text_delta:
+                            try:
+                                on_response_text_delta(separator)
+                            except Exception:  # pragma: no cover - defensive
+                                logger.exception("on_response_text_delta callback failed")
+                final_streamed = True
             for token in re.findall(r"\S+\s*|\s+", text, flags=re.MULTILINE):
                 if not token:
                     continue
@@ -595,6 +610,8 @@ class McpOrchestratorService:
             stream_buffer = ""
             stream_dropped = []
             streaming_mode = "final"
+            final_separator_pending = bool(first_pass_streamed_chunks)
+            final_streamed = False
         # No tool calls from the first streaming pass: take single-pass fast path.
         else:
             tool_phase_assistant_message = first_stream_message
@@ -634,6 +651,8 @@ class McpOrchestratorService:
             normalized_assistant["content"] = clean_single
             streaming_mode = "final"
             answer_streamed_chunks[:] = list(first_pass_streamed_chunks)
+            final_separator_pending = False
+            final_streamed = bool(answer_streamed_chunks)
             return {
                 "assistant_message": normalized_assistant,
                 "tool_context": tool_context,
@@ -736,9 +755,6 @@ class McpOrchestratorService:
         normalized_assistant_msg = dict(final_assistant_message or {})
         normalized_assistant_msg["content"] = clean_answer_text
 
-        if not answer_streamed_chunks:
-            _emit_tokens(clean_answer_text)
-
         self._log_turn_metrics(conversation, tool_context)
         self._persist_table_cache(conversation, tool_context)
         del on_status_change, on_placeholder_response
@@ -795,6 +811,13 @@ class McpOrchestratorService:
         assistant_message = result.get("assistant_message") or {}
         if not streamed_chunks and clean_answer_text:
             reconstructed: list[str] = []
+            logger.debug(
+                "mcp.stream_turn.fallback_emit",
+                extra={
+                    "conversation_id": str(conversation.id),
+                    "strategy": str(result.get("llm_strategy") or ""),
+                },
+            )
             _emit_stream_chunks(reconstructed.append, clean_answer_text)
             streamed_chunks = tuple(reconstructed)
         strategy = str(result.get("llm_strategy") or "mcp_tools_stream_only")
