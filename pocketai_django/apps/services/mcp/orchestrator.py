@@ -196,6 +196,7 @@ class McpOrchestratorService:
         streaming_mode = "initial"
         final_separator_pending = False
         final_streamed = False
+        initial_stream_trailing_space = False
         single_pass_candidate: str | None = None
         first_stream_tool_calls: list[Mapping[str, object]] = []
         first_stream_message: dict[str, object] | None = None
@@ -228,7 +229,7 @@ class McpOrchestratorService:
         def _emit_tokens(text: str) -> None:
             if not text:
                 return
-            nonlocal final_separator_pending, final_streamed
+            nonlocal final_separator_pending, final_streamed, initial_stream_trailing_space
             target = first_pass_streamed_chunks if streaming_mode == "initial" else answer_streamed_chunks
             if streaming_mode != "initial":
                 if final_separator_pending:
@@ -245,6 +246,8 @@ class McpOrchestratorService:
             for token in re.findall(r"\S+\s*|\s+", text, flags=re.MULTILINE):
                 if not token:
                     continue
+                if streaming_mode == "initial":
+                    initial_stream_trailing_space = token[-1].isspace()
                 target.append(token)
                 if on_response_text_delta:
                     try:
@@ -610,7 +613,7 @@ class McpOrchestratorService:
             stream_buffer = ""
             stream_dropped = []
             streaming_mode = "final"
-            final_separator_pending = bool(first_pass_streamed_chunks)
+            final_separator_pending = bool(first_pass_streamed_chunks) and not initial_stream_trailing_space
             final_streamed = False
         # No tool calls from the first streaming pass: take single-pass fast path.
         else:
@@ -652,6 +655,7 @@ class McpOrchestratorService:
             streaming_mode = "final"
             answer_streamed_chunks[:] = list(first_pass_streamed_chunks)
             final_separator_pending = False
+            initial_stream_trailing_space = False
             final_streamed = bool(answer_streamed_chunks)
             return {
                 "assistant_message": normalized_assistant,
