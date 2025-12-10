@@ -56,6 +56,7 @@ def sanitize_with_diagnostics(
                     "text": sentence[:200],
                 },
                 context={"conversation": conversation_id, "business": business_id},
+                logger_obj=logger,
             )
     return cleaned, dropped
 
@@ -128,6 +129,8 @@ def is_investigative_filler_with_level(sentence: str, *, filter_level: str = "fr
         r"\bstep[-\s]?by[-\s]?step\b",
         r"\breasoning\b[:\-]",
         r"\banalysis\b[:\-]",
+        r"i['’]ll check (the )?(docs|document|documents)",
+        r"let me check (the )?(docs|document|documents)",
     )
     for pattern in hard_patterns:
         if re.search(pattern, text):

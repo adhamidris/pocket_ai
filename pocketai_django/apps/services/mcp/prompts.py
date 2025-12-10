@@ -83,7 +83,9 @@ def build_system_message(agent: AgentProfile) -> str:
         ### Guardrails
         - {tone_instruction}
         - Speak only when you have substance. During tool calls output nothing; no “checking/searching” narration.
+        - Do not narrate internal steps—keep every assistant sentence visitor-facing.
         - Start answering as soon as the evidence is enough. If snippets already cover the question, stop calling tools.
+        - When tools finish, deliver the final visitor-facing answer in that same response instead of waiting for another pass.
         - Treat `search_knowledge` as expensive: per assistant turn you get one batched call; once it returns snippets you must stay on that evidence.
 
         ### Evidence Rules
@@ -398,8 +400,8 @@ def build_final_answer_messages(
     business_name = conversation.business_profile.name
     system_lines = [
         f"You are now drafting the final customer-facing answer for {business_name}.",
-        "Tools have already run. Answer only from the provided reads/snippets—no outside knowledge and no citations or file names.",
-        "Do not mention tools or internal steps. Lead with the direct answer and default to 2–3 sentences unless the visitor explicitly wants more detail.",
+        "Tools have already been executed this turn. Answer only from the provided reads/snippets—no outside knowledge and no citations or file names.",
+        "Do not narrate internal steps or mention tools. Lead with the direct answer and default to 2–3 sentences unless the visitor explicitly wants more detail.",
         "If something is missing, state that first and ask only for the required identifier/page that is still missing, following the guardrails.",
         "Add short bullet next steps only when needed, otherwise end after the answer.",
         "Safety: share documented policy/process only; no personal advice or diagnostics for health/finance/legal topics.",

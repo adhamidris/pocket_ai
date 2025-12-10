@@ -314,6 +314,47 @@ class McpOrchestratorService:
                     continue
                 break
 
+        def _answer_stream_chunk(chunk: str) -> None:
+            nonlocal stream_buffer
+            if not chunk:
+                return
+            stream_buffer = f"{stream_buffer}{chunk}"
+            while True:
+                match = re.search(r"(.+?[.!?])([\s]|$)", stream_buffer)
+                if match:
+                    sentence = match.group(1)
+                    remainder = stream_buffer[match.end(1):]
+                    stripped = sentence.strip()
+                    if is_investigative_filler_with_level(stripped, filter_level=filter_level):
+                        stream_dropped.append(stripped)
+                        structured_log(
+                            "mcp",
+                            "sanitizer.dropped_sentence",
+                            {
+                                "stage": "streaming_answer",
+                                "text": stripped[:200],
+                            },
+                            indent=1,
+                            context={
+                                "conversation": conversation.id,
+                                "business": conversation.business_profile_id,
+                            },
+                            logger_obj=logger,
+                        )
+                    else:
+                        _emit_sentence(sentence + (match.group(2) or ""))
+                    stream_buffer = remainder
+                    continue
+                if is_investigative_filler_with_level(stream_buffer.strip(), filter_level=filter_level):
+                    break
+                words = stream_buffer.split(" ")
+                if len(words) > 1:
+                    emit_part = " ".join(words[:-1]) + " "
+                    stream_buffer = words[-1]
+                    _emit_tokens(emit_part)
+                    continue
+                break
+
         # Limit the initial payload so the provider only sees the guardrails and
         # the latest transcript entries needed for intent selection.
         primary_messages = prompts.limit_messages_for_stage(transcript, stage="initial_pass")
@@ -524,7 +565,7 @@ class McpOrchestratorService:
                     payload = self.provider.chat(
                         loop_messages,
                         tools=self.tool_definitions,
-                        on_stream_delta=None,
+                        on_stream_delta=_answer_stream_chunk,
                     )
                     assistant_message = self._coerce_assistant_message(payload)
                     next_tool_calls = list(assistant_message.get("tool_calls") or [])
@@ -553,6 +594,7 @@ class McpOrchestratorService:
             answer_streamed_chunks.clear()
             stream_buffer = ""
             stream_dropped = []
+            streaming_mode = "final"
         # No tool calls from the first streaming pass: take single-pass fast path.
         else:
             tool_phase_assistant_message = first_stream_message
@@ -601,50 +643,6 @@ class McpOrchestratorService:
                 "llm_strategy": "mcp_tools_stream_single_pass",
             }
 
-        def _answer_stream_chunk(chunk: str) -> None:
-            nonlocal stream_buffer
-            if not chunk:
-                return
-            stream_buffer = f"{stream_buffer}{chunk}"
-            while True:
-                # If we have a full sentence, process it.
-                match = re.search(r"(.+?[.!?])([\s]|$)", stream_buffer)
-                if match:
-                    sentence = match.group(1)
-                    remainder = stream_buffer[match.end(1):]
-                    stripped = sentence.strip()
-                    if is_investigative_filler_with_level(stripped, filter_level=filter_level):
-                        stream_dropped.append(stripped)
-                        structured_log(
-                            "mcp",
-                            "sanitizer.dropped_sentence",
-                            {
-                                "stage": "streaming_answer",
-                                "text": stripped[:200],
-                            },
-                            indent=1,
-                            context={
-                                "conversation": conversation.id,
-                                "business": conversation.business_profile_id,
-                            },
-                            logger_obj=logger,
-                        )
-                    else:
-                        _emit_sentence(sentence + (match.group(2) or ""))
-                    stream_buffer = remainder
-                    continue
-
-                # No full sentence yet; stream word-by-word if it's not a filler prefix.
-                if is_investigative_filler_with_level(stream_buffer.strip(), filter_level=filter_level):
-                    break
-                words = stream_buffer.split(" ")
-                if len(words) > 1:
-                    emit_part = " ".join(words[:-1]) + " "
-                    stream_buffer = words[-1]
-                    _emit_tokens(emit_part)
-                    continue
-                break
-
         # If identifier gating blocked retrieval and nothing was read, respond deterministically.
         identifier_filters = getattr(tool_context, "identifier_filters", []) or []
         identifier_blocks = [f for f in identifier_filters if isinstance(f, Mapping) and f.get("status") == "identifier_required"]
@@ -688,69 +686,15 @@ class McpOrchestratorService:
                 logger_obj=logger,
             )
 
-        streaming_mode = "final"
-        final_messages = prompts.build_final_answer_messages(
-            conversation=conversation,
-            user_message=user_message,
-            tool_context_note=self._planner_tool_note(tool_context),
-            coverage_ledger=tuple(getattr(tool_context, "coverage_ledger", ())),
-            tool_trace=tuple(getattr(tool_context, "tool_trace", ())),
-            assistant_draft=tool_phase_assistant_message,
-            identifier_filters=tuple(getattr(tool_context, "identifier_filters", ())),
-        )
-        use_response_format = True
-        if self.provider.__class__.__name__ == "DeepSeekToolsProvider":
-            use_response_format = False
-        self._log_prompt("final", conversation=conversation, messages=final_messages)
-        try:
-            final_payload = self.provider.chat(
-                final_messages,
-                tools=None,
-                on_stream_delta=_answer_stream_chunk,
-                response_format=self._final_response_schema() if use_response_format else None,
-            )
-        except PromptGenerationError as exc:
-            if "response_format" in str(exc).lower():
-                structured_log(
-                    "mcp",
-                    "final_response_format_unsupported",
-                    {"provider": self.provider.__class__.__name__, "error": str(exc)},
-                    context={"conversation": conversation.id},
-                    level=logging.WARNING,
-                )
-                final_payload = self.provider.chat(
-                    final_messages,
-                    tools=None,
-                    on_stream_delta=_answer_stream_chunk,
-                    response_format=None,
-                )
-            else:
-                raise
-        final_assistant_message = self._coerce_assistant_message(final_payload)
-        trailing = stream_buffer
-        if trailing:
-            trailing_stripped = trailing.strip()
-            if trailing_stripped and is_investigative_filler_with_level(trailing_stripped, filter_level=filter_level):
-                stream_dropped.append(trailing_stripped)
-                structured_log(
-                    "mcp",
-                    "sanitizer.dropped_sentence",
-                    {
-                        "stage": "streaming_answer",
-                        "text": trailing_stripped[:200],
-                    },
-                    indent=1,
-                    context={
-                        "conversation": conversation.id,
-                        "business": conversation.business_profile_id,
-                    },
-                )
-            else:
-                _emit_tokens(trailing)
-
+        final_assistant_message = tool_phase_assistant_message or {"role": "assistant"}
+        _flush_stream_buffer("streaming_answer")
         answer_text_raw = ""
-        if final_assistant_message is not None:
+        if isinstance(final_assistant_message, Mapping):
             answer_text_raw = str(final_assistant_message.get("content") or "").strip()
+        else:
+            final_assistant_message = {"role": "assistant", "content": ""}
+        if not answer_text_raw and answer_streamed_chunks:
+            answer_text_raw = "".join(answer_streamed_chunks).strip()
 
         if on_status_change:
             on_status_change({"code": "stream_complete", "label": ""})
@@ -781,24 +725,16 @@ class McpOrchestratorService:
         clean_answer_text, dropped_sentences = sanitize_with_diagnostics(
             answer_text_raw,
             conversation=conversation,
-            stage="final_answer",
+            stage="tool_loop_final",
             filter_level=filter_level,
         )
         if not clean_answer_text and answer_text_raw:
             clean_answer_text = answer_text_raw.strip()
+        if not clean_answer_text and answer_streamed_chunks:
+            clean_answer_text = "".join(answer_streamed_chunks).strip()
         all_dropped = stream_dropped + dropped_sentences
         normalized_assistant_msg = dict(final_assistant_message or {})
         normalized_assistant_msg["content"] = clean_answer_text
-
-        def _record_chunk(chunk: str) -> None:
-            if not chunk:
-                return
-            answer_streamed_chunks.append(chunk)
-            if on_response_text_delta:
-                try:
-                    on_response_text_delta(chunk)
-                except Exception:  # pragma: no cover - defensive
-                    logger.exception("on_response_text_delta callback failed")
 
         if not answer_streamed_chunks:
             _emit_tokens(clean_answer_text)
@@ -812,6 +748,7 @@ class McpOrchestratorService:
             "streamed_chunks": tuple(answer_streamed_chunks),
             "clean_answer_text": clean_answer_text,
             "dropped_sentences": tuple(all_dropped),
+            "llm_strategy": "mcp_tools_stream_loop",
         }
 
     @staticmethod

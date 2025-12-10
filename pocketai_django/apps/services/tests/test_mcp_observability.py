@@ -14,15 +14,11 @@ class _FakeProvider:
 
     def chat(self, messages, *, tools=None, on_stream_delta=None, response_format=None):
         self.calls += 1
-        if tools is not None:
-            # Tool loop: return an assistant turn with no tool calls.
-            return {"message": {"role": "assistant", "content": "ready"}}
-        # Final answer pass.
-        return {
-            "choices": [
-                {"message": {"role": "assistant", "content": "I'll check the docs. The fee is $100 per year."}}
-            ]
-        }
+        content = "I'll check the docs. The fee is $100 per year."
+        if on_stream_delta:
+            for chunk in ["I'll check the docs. ", "The fee is $100 per year."]:
+                on_stream_delta(chunk)
+        return {"message": {"role": "assistant", "content": content}}
 
 
 class McpObservabilityTests(TestCase):
