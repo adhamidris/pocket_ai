@@ -116,6 +116,7 @@ class McpOrchestratorService:
                 setup_span.set_attribute("business.id", str(conversation.business_profile_id))
             messages = prompts.build_messages(conversation=conversation, user_message=user_message)
             filter_level = self._filter_level_for_conversation(conversation)
+            initial_stream_filter_level = "friendly"
             char_turn_limit = self._char_budget_per_turn(conversation.business_profile)
             char_minute_limit = self._char_budget_per_minute(conversation.business_profile)
             minute_reserver = self._build_minute_budget_reserver(conversation.business_profile, char_minute_limit)
@@ -225,31 +226,30 @@ class McpOrchestratorService:
         def _emit_tokens(text: str) -> None:
             if not text:
                 return
+            target = first_pass_streamed_chunks if streaming_mode == "initial" else answer_streamed_chunks
             for token in re.findall(r"\S+\s*|\s+", text, flags=re.MULTILINE):
                 if not token:
                     continue
-                if streaming_mode == "initial":
-                    first_pass_streamed_chunks.append(token)
-                else:
-                    answer_streamed_chunks.append(token)
-                    if on_response_text_delta:
-                        try:
-                            on_response_text_delta(token)
-                        except Exception:  # pragma: no cover - defensive
-                            logger.exception("on_response_text_delta callback failed")
+                target.append(token)
+                if on_response_text_delta:
+                    try:
+                        on_response_text_delta(token)
+                    except Exception:  # pragma: no cover - defensive
+                        logger.exception("on_response_text_delta callback failed")
 
         def _emit_sentence(text: str) -> None:
             if not text:
                 return
             _emit_tokens(text)
 
-        def _flush_stream_buffer(stage: str) -> None:
+        def _flush_stream_buffer(stage: str, *, filter_override: str | None = None) -> None:
             nonlocal stream_buffer
             trailing = stream_buffer
             if not trailing:
                 return
             trailing_stripped = trailing.strip()
-            if trailing_stripped and is_investigative_filler_with_level(trailing_stripped, filter_level=filter_level):
+            active_filter = filter_override or filter_level
+            if trailing_stripped and is_investigative_filler_with_level(trailing_stripped, filter_level=active_filter):
                 stream_dropped.append(trailing_stripped)
                 structured_log(
                     "mcp",
@@ -284,7 +284,7 @@ class McpOrchestratorService:
                     sentence = match.group(1)
                     remainder = stream_buffer[match.end(1):]
                     stripped = sentence.strip()
-                    if is_investigative_filler_with_level(stripped, filter_level=filter_level):
+                    if is_investigative_filler_with_level(stripped, filter_level=initial_stream_filter_level):
                         stream_dropped.append(stripped)
                         structured_log(
                             "mcp",
@@ -304,7 +304,7 @@ class McpOrchestratorService:
                         _emit_sentence(sentence + (match.group(2) or ""))
                     stream_buffer = remainder
                     continue
-                if is_investigative_filler_with_level(stream_buffer.strip(), filter_level=filter_level):
+                if is_investigative_filler_with_level(stream_buffer.strip(), filter_level=initial_stream_filter_level):
                     break
                 words = stream_buffer.split(" ")
                 if len(words) > 1:
@@ -335,10 +335,9 @@ class McpOrchestratorService:
             first_content_raw = str(first_stream_message.get("content") or "").strip()
         pending_assistant = None
         if first_stream_tool_calls:
-            # Defer appending until we process the tool call in the loop.
+            # Defer appending until we process the tool call in the loop, but keep
+            # any streamed text visible so the visitor sees human-like fillers.
             pending_assistant = first_stream_message
-            # We don't want to surface the streamed text from the tool-call turn.
-            first_pass_streamed_chunks.clear()
         else:
             # No tools; keep streamed assistant content in transcript.
             transcript.append(
@@ -557,7 +556,7 @@ class McpOrchestratorService:
         # No tool calls from the first streaming pass: take single-pass fast path.
         else:
             tool_phase_assistant_message = first_stream_message
-            _flush_stream_buffer("streaming_tools")
+            _flush_stream_buffer("streaming_tools", filter_override=initial_stream_filter_level)
             single_pass_text = "".join(first_pass_streamed_chunks).strip() or first_content_raw
             if on_status_change:
                 on_status_change({"code": "responding", "label": "Responding…"})
@@ -592,8 +591,7 @@ class McpOrchestratorService:
             normalized_assistant = dict(tool_phase_assistant_message or {"role": "assistant"})
             normalized_assistant["content"] = clean_single
             streaming_mode = "final"
-            answer_streamed_chunks.clear()
-            _emit_tokens(clean_single)
+            answer_streamed_chunks[:] = list(first_pass_streamed_chunks)
             return {
                 "assistant_message": normalized_assistant,
                 "tool_context": tool_context,

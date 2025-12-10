@@ -1,40 +1,56 @@
-• Trace Walkthrough
+# Investigation Report: Django MCP Flow & Latency
 
-  - Overall turn portal.orchestrator.turn ran ~45.2 s. Most of that was sequential DeepSeek calls; Django + orchestrator glue stayed sub‑100 ms per span.
-  - Initial pass llm.deepseek.tools (span 90b29a…) took ~5.9 s to classify intent and propose the first tool call.
-  - Tool iteration #0 (search): MCP called search_knowledge once (a80beb…), which triggered a short RAG run (knowledge.search ~0.33 s with alias short-circuit). DeepSeek then spent ~10.5 s
-  (b77f71…) processing those snippets before asking for the next tool. Total time for iteration #0 ≈ 10.9 s.
-  - Tool iteration #1 (table aggregate): Backend ran a single batched table_aggregate (73114e…) which finished in 2.8 s. DeepSeek then reasoned for ~18 s (a17351…) on the returned rows before
-  emitting the final answer request. Total time for iteration #1 ≈ 20.8 s.
-  - Final answer: Prompt build negligible; the answer LLM call (962221…) streamed in ~7.5 s. Sanitizer added <1 ms.
-  - Planner/finalize: Planner prompt triggered another DeepSeek call (54813c…) lasting ~10.6 s, bringing finalization to ~10.7 s. Planner still proposed zero actions/extractions (validation
-  showed 0 valid entries despite 4 attempts flagged “unknown_type”).
+## 1. Overview of the New MCP Flow
+The new MCP flow is orchestrated by `McpOrchestratorService` in `apps/services/mcp/orchestrator.py` and differs significantly from the legacy flow.
 
-  LLM Call Count
+*   **Entry Point**: `ChatPortalService.stream_send` initiates `orchestrator.stream_turn` in a background thread.
+*   **Execution Loop (`_execute_turn`)**:
+    1.  **Initial Pass**: Calls the LLM (DeepSeek/OpenAI) with tools enabled. Streams text *if* no tools are called.
+    2.  **Tool Loop**: If tools are requested, it enters a loop (max 10 iterations). It executes tools (`execute_tool`) and feeds results back to the LLM.
+    3.  **Final Answer**: Once tools are done, it calls the LLM one last time (tools disabled) to generate the final response, which is streamed to the user.
+*   **Streaming**: Text deltas are streamed directly from the LLM provider to the user via SSE (`event_stream`).
+*   **Planner**: A separate, asynchronous pass (`run_planner_async`) runs *after* the turn is persisted to generate structured data (actions, extractions) without blocking the user-facing stream.
 
-  1. Initial pass (reasoning before tools) – 5.9 s.
-  2. After search_knowledge tool – 10.5 s.
-  3. After table_aggregate tool – 18 s.
-  4. Final answer drafting – 7.5 s.
-  5. Planner/finalizer – 10.6 s.
+## 2. Latency Investigation (Jaeger Perspective)
 
-  Total: 5 DeepSeek calls, same structure as the prior trace.
+Based on the code analysis and the provided Jaeger report references, here are the key latency contributors in the new flow:
 
-  Bottlenecks
+### A. `table_aggregate` Tool (High Latency)
+The `table_aggregate` tool is a significant bottleneck for table-heavy queries.
+*   **Location**: `apps/services/mcp/tools.py` (`_table_aggregate_handler`)
+*   **Mechanism**:
+    1.  **Fetching**: It fetches rows using `KnowledgeUploadTableRow.objects.filter(...)` with `Prefetch` for cells. It limits the fetch to `row_limit * overscan_factor` (approx. 100-150 rows).
+    2.  **Processing**: It iterates through these rows in **Python**, performing filtering (`_row_matches_sheet_hint`), cell mapping, and numeric parsing.
+    3.  **Impact**: For large documents, hydrating ~150 complex row objects with all their cells and processing them in Python is CPU-bound and slow.
+    4.  **Fix Verification**: The "canonical cache key" fix (Report 5) is present (`_table_row_cache_key`), which helps *repeated* identical queries, but the *first* un-cached aggregation is still expensive.
 
-  - LLM latency dominates: 5 calls sum to ~52 s of LLM time, which is larger than the 45 s wall clock because some overlap occurs with backend work.
-  - table_aggregate backend work is inexpensive (2.8 s), but the reasoning before/after it is long.
-  - Planner still consumes ~10 s even when producing no actions. Planner validation flagged 4 “unknown_type” extractions, meaning the planner tried to output something outside the schema;
-  prompts are enforcing “no legacy actions,” but there’s room to remind the planner to skip non-mapped extraction types entirely.
+### B. Synchronous Database Writes
+*   **Location**: `McpOrchestratorService._execute_turn` -> `_persist_table_cache`
+*   **Mechanism**: At the very end of `_execute_turn`, the system writes the updated table cache back to `conversation.metadata` and saves the conversation.
+*   **Impact**: This write happens inline, blocking the final completion of the stream request. If the metadata is large, this serialization and DB write adds perceptible latency.
 
-  Observations vs prior run
+### C. Multi-Turn LLM Overhead
+*   **Mechanism**: The MCP loop involves sequential network round-trips to the LLM:
+    `Initial LLM Call` -> `Tool Execution` -> `Second LLM Call` -> ... -> `Final Answer LLM Call`.
+*   **Impact**: Each "hop" adds full network latency + token generation time. If DeepSeek "chatters" (narrates its steps) or requires multiple tool steps, latency stacks linearly.
 
-  - Same 2-tool pattern (search → aggregate). No redundant list_tables or read_document.
-  - Knowledge search faster this time (0.33 s vs ~0.93 s) due to alias short-circuit.
-  - Table call still batched all six products + three stores correctly; no iteration cap issues.
+## 3. "Filler" Leakage ("I'll search...")
 
-  Follow-ups
+The user reported "I'll search..." fillers leaking through. This was successfully reproduced and traced to the sanitizer configuration.
 
-  - If we want to shave latency further, planner call (~10 s) is now proportionally large; consider shorter planner prompt or async later.
-  - The biggest single block remains the LLM reasoning after table_aggregate (18 s). Fast-path batching/guard (once unstashed) will reduce iterations but not reasoning time; to shrink that,
-  we’d need model-side adjustments (temperature, shorter context, or even caching partial responses).
+*   **Root Cause**: The sanitizer (`apps/services/mcp/sanitizer.py`) has a `filter_level`.
+    *   `friendly` (Default): **ALLOWS** conversational fillers like "I'll search for that", "Let me check". It only filters "hard" robot-like traces (e.g., `tool call`).
+    *   `professional`: **FILTERS** these phrases.
+*   **Current State**: `McpOrchestratorService` defaults to `filter_level="friendly"` (derived from `agent.tone`).
+*   **Result**: Since DeepSeek often outputs these conversational fillers, and the default filter level explicitly permits them, they are streamed to the user.
+
+## 4. Recommendations
+
+1.  **Fix Filler Leakage**:
+    *   **Immediate**: Change the default filter level to `professional` for the MCP orchestrator, OR update `is_investigative_filler_with_level` to treat "investigative" phrases as filtered even in "friendly" mode (since they represent internal system state, not friendly chatter).
+
+2.  **Optimize `table_aggregate`**:
+    *   Push filtering down to the database level (Django ORM) where possible, instead of fetching 150 rows and filtering in Python.
+
+3.  **Async Cache Persistence**:
+    *   Move `_persist_table_cache` to a background task (like the planner) so it doesn't block the user-facing stream completion.

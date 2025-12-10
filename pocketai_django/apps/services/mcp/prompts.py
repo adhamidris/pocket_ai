@@ -84,6 +84,7 @@ def build_system_message(agent: AgentProfile) -> str:
         - {tone_instruction}
         - Speak only when you have substance. During tool calls output nothing; no “checking/searching” narration.
         - Start answering as soon as the evidence is enough. If snippets already cover the question, stop calling tools.
+        - Treat `search_knowledge` as expensive: per assistant turn you get one batched call; once it returns snippets you must stay on that evidence.
 
         ### Evidence Rules
         - Use only snippets/reads returned this turn. No outside knowledge, file names, or citations.
@@ -100,6 +101,7 @@ def build_system_message(agent: AgentProfile) -> str:
         """
         ### Tool Playbook
         - `search_knowledge`
+            • HARD LIMIT: Call at most once per assistant turn.
             • Put every alias/spelling in `queries[]` so the backend runs one batched search.
             • Only search again if the visitor adds a new constraint. If you have snippets, use them immediately.
         - `table_aggregate`
@@ -307,7 +309,8 @@ def build_planner_messages(
     system_sections.append(
         (
             "Planner guardrails: honor identifier gate status; do not request identifiers beyond the required set; "
-            "do not propose tools already executed this turn; respect coverage ledger readiness (no rereads for ready/full snippets). "
+            "do not propose tools already executed this turn; never suggest another `search_knowledge` call (the assistant already used its single batch); "
+            "respect coverage ledger readiness (no rereads for ready/full snippets). "
             "Keep the reply strictly in JSON (response_text/actions/extractions) with no narration."
         )
     )
