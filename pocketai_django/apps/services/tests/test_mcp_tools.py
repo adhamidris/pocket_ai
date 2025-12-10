@@ -166,3 +166,66 @@ class McpReadDocumentHandlerTests(TestCase):
         self.assertEqual(result["status"], "ok")
         self.assertTrue(result["snippets"])
         self.assertEqual(result["snippets"][0]["read_state"], "summary")
+
+
+class McpSearchKnowledgeHandlerTests(TestCase):
+    def setUp(self) -> None:
+        super().setUp()
+        tools._knowledge_service.cache_clear()  # type: ignore[attr-defined]
+        self.embed_patcher = mock.patch("apps.services.ai_orchestrator.build_embedding_service", return_value=None)
+        self.embed_patcher.start()
+        self.user = User.objects.create(email="mcp-search@example.com", first_name="Searcher")
+        self.registration = RegistrationSession.objects.create(user=self.user)
+        self.business = BusinessProfile.objects.create(
+            user=self.user,
+            registration_session=self.registration,
+            name="Search Co",
+            industry="analytics",
+        )
+        self.conversation = Conversation.objects.create(
+            business_profile=self.business,
+            session_token="search-session",
+        )
+
+    def tearDown(self) -> None:
+        self.embed_patcher.stop()
+        super().tearDown()
+
+    @mock.patch("apps.services.mcp.tools._knowledge_service")
+    def test_search_knowledge_caps_extra_queries(self, service_factory_mock) -> None:
+        class _DummySearchResult:
+            def __init__(self) -> None:
+                self.snippets = tuple()
+                self.status = "ok"
+                self.diagnostics = {}
+
+        service_mock = mock.Mock()
+        service_mock.search.return_value = _DummySearchResult()
+        service_factory_mock.return_value = service_mock
+        context = ToolExecutionContext(
+            max_chunk_reads_per_turn=5,
+            max_chunk_pages_per_turn=5,
+            char_budget_per_turn=5000,
+        )
+        primary_query = "sales units ازموراب 20 مجم 2 شريط سانسو هيماتنيك 28 قرص Retail Nasr Al-Deen"
+        extra_queries = [
+            "ازموراب 20 مجم 2 شريط",
+            "سانسو هيماتنيك 28 قرص",
+            "ازموراب 20 مجم 2 شريط",  # duplicate should be ignored
+            "Retail Nasr Al-Deen",
+            "Re Khatem Morsalin",
+            "سانسو ومن 28 قرص",
+            "ازموراب 40 مجم 14 كبسولة",
+        ]
+        payload = {
+            "query": primary_query,
+            "queries": extra_queries,
+            "limit": 5,
+        }
+
+        tools._search_knowledge_handler(payload, self.conversation, context)
+
+        queries_seen = [call.kwargs["query"] for call in service_mock.search.call_args_list]
+        self.assertTrue(queries_seen)
+        self.assertEqual(queries_seen[0], primary_query)
+        self.assertLessEqual(len(queries_seen), 4)

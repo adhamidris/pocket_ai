@@ -27,6 +27,7 @@ from typing import Any, Callable, Mapping, Sequence
 from django.db import models
 from django.db.models import Prefetch
 from django.core.cache import cache
+from django.conf import settings
 
 from apps.accounts.models import (
     KnowledgeStatus,
@@ -37,11 +38,7 @@ from apps.accounts.models import (
     KnowledgeUploadTableCell,
 )
 from apps.conversations.models import Conversation
-from apps.services.ai_orchestrator import (
-    ActionType,
-    AiOrchestratorService,
-    KnowledgeSearchService,
-)
+from apps.services.ai_orchestrator import ActionType, AiOrchestratorService, KnowledgeSearchService
 from apps.services.rag_logging import structured_log
 from core.metrics import latency_monitor
 from .identifier_registry import IdentifierGuardrail, IdentifierRegistryService
@@ -50,6 +47,7 @@ from .types import ToolExecutionContext
 
 logger = logging.getLogger(__name__)
 IDENTIFIER_MAPPING_CACHE_TTL = 300
+DEFAULT_MAX_SEARCH_QUERY_VARIANTS = 4
 
 
 def _function_schema(
@@ -1050,6 +1048,49 @@ def _search_knowledge_handler(
             candidate_str = _coerce_str(candidate).strip()
             if candidate_str:
                 _append_query(candidate_str)
+
+    query_variant_limit = max(
+        1,
+        int(getattr(settings, "MCP_SEARCH_MAX_QUERY_VARIANTS", DEFAULT_MAX_SEARCH_QUERY_VARIANTS)),
+    )
+
+    def _prune_queries(values: Sequence[str]) -> list[str]:
+        if len(values) <= query_variant_limit:
+            return list(values)
+        deduped: list[str] = []
+        seen: set[str] = set()
+        for entry in values:
+            normalized = entry.strip()
+            if not normalized:
+                continue
+            lowered = normalized.lower()
+            if lowered in seen:
+                continue
+            seen.add(lowered)
+            deduped.append(entry)
+            if len(deduped) >= query_variant_limit:
+                break
+        if not deduped and values:
+            deduped.append(values[0])
+        return deduped
+
+    optimized_queries = _prune_queries(queries)
+    if len(optimized_queries) < len(queries):
+        structured_log(
+            "mcp",
+            "search.query_pruned",
+            {
+                "original_count": len(queries),
+                "kept": len(optimized_queries),
+                "limit": query_variant_limit,
+            },
+            context={
+                "conversation": conversation.id,
+                "business": conversation.business_profile_id,
+            },
+            logger_obj=logger,
+        )
+    queries = optimized_queries
 
     if not queries:
         return {
