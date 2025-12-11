@@ -200,9 +200,134 @@ class McpOrchestratorService:
         first_stream_message: dict[str, object] | None = None
         stream_buffer = ""
         stream_dropped: list[str] = []
+        initial_stream_started = False
+        active_phase_payloads: dict[str, dict[str, object]] = {}
+        final_answer_started = False
 
-        if on_status_change:
-            on_status_change({"code": "thinking", "label": "Thinking…"})
+        def _status_event(code: str, label: str | None = None, meta: Mapping[str, object] | None = None) -> None:
+            if not on_status_change:
+                return
+            code_value = (code or "").strip()
+            if not code_value:
+                return
+            payload: dict[str, object] = {"code": code_value}
+            label_value = label.strip() if isinstance(label, str) else ""
+            if label_value:
+                payload["label"] = label_value
+            if meta:
+                try:
+                    payload["meta"] = dict(meta)
+                except Exception:
+                    pass
+            on_status_change(payload)
+
+        def _snippet_count(payload: Mapping[str, object] | None) -> int:
+            if not isinstance(payload, Mapping):
+                return 0
+            snippets = payload.get("snippets")
+            if isinstance(snippets, Sequence) and not isinstance(snippets, (str, bytes, bytearray)):
+                return len(snippets)
+            return 0
+
+        def _knowledge_phase_payload(tool_name: str, arguments: Mapping[str, object]) -> dict[str, object] | None:
+            if tool_name == "search_knowledge":
+                raw_query = arguments.get("query")
+                query = str(raw_query).strip() if raw_query is not None else ""
+                label = f"Searching: {query[:80]}" if query else "Searching knowledge…"
+                meta: dict[str, object] = {}
+                if query:
+                    meta["query"] = query[:200]
+                return {"code": "searching", "label": label, "meta": meta, "compat_code": "searching_knowledge"}
+            if tool_name == "read_document":
+                raw_id = arguments.get("document_id")
+                doc_id = str(raw_id).strip() if raw_id is not None else ""
+                short_id = f"{doc_id[:8]}…" if doc_id else ""
+                base_label = "Reading document"
+                label = f"Reading: {short_id}" if short_id else base_label
+                meta = {"document_id": doc_id} if doc_id else {}
+                return {"code": "reading", "label": label, "meta": meta, "compat_code": "reading_document"}
+            if tool_name == "table_aggregate":
+                raw_id = arguments.get("document_id")
+                doc_id = str(raw_id).strip() if raw_id is not None else ""
+                label = "Reading table data"
+                meta = {"document_id": doc_id} if doc_id else {}
+                return {"code": "reading", "label": label, "meta": meta, "compat_code": "reading_document"}
+            return None
+
+        def _emit_phase_start(phase: Mapping[str, object] | None) -> dict[str, object] | None:
+            if not phase:
+                return None
+            code = str(phase.get("code") or "").strip()
+            if not code:
+                return None
+            if code not in active_phase_payloads:
+                label = phase.get("label")
+                meta = phase.get("meta")
+                _status_event(f"{code}_start", label, meta)
+                compat = phase.get("compat_code")
+                if isinstance(compat, str) and compat:
+                    _status_event(compat, label, meta)
+                active_phase_payloads[code] = {
+                    "code": code,
+                    "label": label,
+                    "meta": dict(meta or {}),
+                    "compat_code": compat,
+                }
+            return {
+                "code": code,
+                "label": phase.get("label"),
+                "meta": dict((phase.get("meta") or {})),
+                "compat_code": phase.get("compat_code"),
+            }
+
+        def _emit_phase_complete(phase: Mapping[str, object] | None, *, snippet_total: int | None = None) -> None:
+            if not phase:
+                return
+            code = str(phase.get("code") or "").strip()
+            if not code:
+                return
+            label = phase.get("label")
+            meta = dict((phase.get("meta") or {}))
+            if snippet_total is not None:
+                if code == "searching":
+                    meta["result_count"] = snippet_total
+                elif code == "reading":
+                    meta["snippets_returned"] = snippet_total
+            active_phase_payloads.pop(code, None)
+            _status_event(f"{code}_complete", label, meta)
+
+        def _mark_answer_started(label: str | None = "Responding…") -> None:
+            nonlocal final_answer_started
+            if final_answer_started:
+                _status_event("responding", label)
+                return
+            final_answer_started = True
+            _status_event("answer_started", label)
+            _status_event("responding", label)
+
+        def _prime_phase_starts(tool_calls: Sequence[Mapping[str, object]]) -> None:
+            for tool_call in tool_calls:
+                tool_name = self._tool_name(tool_call)
+                if not self._is_knowledge_tool(tool_name):
+                    continue
+                arguments = self._tool_arguments(tool_call)
+                phase = _knowledge_phase_payload(tool_name, arguments)
+                _emit_phase_start(phase)
+
+        def _on_stream_tool_call_start(tool_call: Mapping[str, object] | None) -> None:
+            if not tool_call:
+                return
+            try:
+                tool_name = self._tool_name(tool_call)
+                if not self._is_knowledge_tool(tool_name):
+                    return
+                arguments = self._tool_arguments(tool_call)
+            except Exception:
+                return
+            phase = _knowledge_phase_payload(tool_name, arguments)
+            _emit_phase_start(phase)
+
+        _status_event("thinking", "Thinking…")
 
         def _append_chunk(chunk: str, target: list[str]) -> None:
             if not chunk:
@@ -279,9 +404,12 @@ class McpOrchestratorService:
         # and we have content, we can keep this streamed text and skip the
         # second content call.
         def _first_stream_chunk(chunk: str) -> None:
-            nonlocal stream_buffer, sentence_space_pending
+            nonlocal stream_buffer, sentence_space_pending, initial_stream_started
             if not chunk:
                 return
+            if not initial_stream_started:
+                initial_stream_started = True
+                _status_event("responding", "Responding…")
             stream_buffer = f"{stream_buffer}{chunk}"
             while True:
                 match = re.search(r"(.+?[.!?])([\\s]|$)", stream_buffer)
@@ -326,6 +454,8 @@ class McpOrchestratorService:
             nonlocal stream_buffer, sentence_space_pending
             if not chunk:
                 return
+            if not final_answer_started:
+                _mark_answer_started()
             stream_buffer = f"{stream_buffer}{chunk}"
             while True:
                 match = re.search(r"(.+?[.!?])([\s]|$)", stream_buffer)
@@ -378,10 +508,13 @@ class McpOrchestratorService:
                 primary_messages,
                 tools=self.tool_definitions,
                 on_stream_delta=_first_stream_chunk,
+                on_tool_call_start=_on_stream_tool_call_start,
             )
         first_message = self._coerce_assistant_message(first_payload)
         first_stream_message = dict(first_message or {})
         first_stream_tool_calls = list(first_stream_message.get("tool_calls") or [])
+        if first_stream_tool_calls:
+            _prime_phase_starts(first_stream_tool_calls)
         first_content_raw = ""
         if first_stream_message:
             first_content_raw = str(first_stream_message.get("content") or "").strip()
@@ -449,20 +582,9 @@ class McpOrchestratorService:
                                     },
                                     logger_obj=logger,
                                 )
+                        knowledge_phase: dict[str, object] | None = None
                         if self._is_knowledge_tool(tool_name):
-                            if on_status_change:
-                                if tool_name == "search_knowledge":
-                                    raw_query = arguments.get("query")
-                                    query = str(raw_query).strip() if raw_query is not None else ""
-                                    label = f"Searching: {query[:80]}" if query else "Searching knowledge…"
-                                    on_status_change({"code": "searching_knowledge", "label": label})
-                                elif tool_name == "read_document":
-                                    raw_id = arguments.get("document_id")
-                                    doc_id = str(raw_id).strip() if raw_id is not None else ""
-                                    short_id = f"{doc_id[:8]}…" if doc_id else ""
-                                    base_label = "Reading document"
-                                    label = f"Reading: {short_id}" if short_id else base_label
-                                    on_status_change({"code": "reading_document", "label": label})
+                            knowledge_phase = _emit_phase_start(_knowledge_phase_payload(tool_name, arguments))
                         duplicate_result = None
                         if tool_name == "search_knowledge":
                             duplicate_result = self._short_circuit_duplicate_search(
@@ -525,7 +647,7 @@ class McpOrchestratorService:
                         )
                         if self._is_knowledge_tool(tool_name):
                             self._record_knowledge_outputs(tool_context, tool_result)
-                            if tool_name == "read_document" and on_status_change:
+                            if tool_name == "read_document":
                                 snippets = tool_result.get("snippets") if isinstance(tool_result, Mapping) else None
                                 if isinstance(snippets, list) and snippets:
                                     first = snippets[0]
@@ -536,12 +658,12 @@ class McpOrchestratorService:
                                             or first.get("source")
                                         )
                                         if isinstance(label_source, str) and label_source.strip():
-                                            on_status_change(
-                                                {
-                                                    "code": "reading_document",
-                                                    "label": f"Reading: {label_source.strip()[:80]}",
-                                                }
+                                            _status_event(
+                                                "reading_document",
+                                                f"Reading: {label_source.strip()[:80]}",
                                             )
+                        if knowledge_phase:
+                            _emit_phase_complete(knowledge_phase, snippet_total=_snippet_count(tool_result))
                         transcript.append(
                             {
                                 "role": "tool",
@@ -558,13 +680,30 @@ class McpOrchestratorService:
                     # Ask the model again with tools enabled to see if more tool_calls are needed.
                     # Trim tool-loop prompts so each call focuses on the newest inputs.
                     loop_messages = prompts.limit_messages_for_stage(transcript, stage="tool_iteration")
+                    reminder = {
+                        "role": "system",
+                        "content": (
+                            "You have already acknowledged that you are checking. For this call you MUST return only "
+                            "the tool_calls payload with empty assistant content until you can provide the final visitor-facing answer. "
+                            "If another tool is required, respond with tool_calls only—NO additional narration or placeholders."
+                        ),
+                    }
+                    insert_at = 0
+                    while insert_at < len(loop_messages) and loop_messages[insert_at].get("role") == "system":
+                        insert_at += 1
+                    loop_messages.insert(insert_at, reminder)
                     payload = self.provider.chat(
                         loop_messages,
                         tools=self.tool_definitions,
                         on_stream_delta=_answer_stream_chunk,
+                        on_tool_call_start=_on_stream_tool_call_start,
                     )
                     assistant_message = self._coerce_assistant_message(payload)
                     next_tool_calls = list(assistant_message.get("tool_calls") or [])
+                    if next_tool_calls:
+                        _prime_phase_starts(next_tool_calls)
+                    else:
+                        _mark_answer_started()
                     # Append the assistant turn (empty content if tools present).
                     transcript.append(
                         {
@@ -597,8 +736,7 @@ class McpOrchestratorService:
             tool_phase_assistant_message = first_stream_message
             _flush_stream_buffer("streaming_tools", filter_override=initial_stream_filter_level)
             single_pass_text = "".join(first_pass_streamed_chunks).strip() or first_content_raw
-            if on_status_change:
-                on_status_change({"code": "responding", "label": "Responding…"})
+            _mark_answer_started()
             with TRACER.start_as_current_span("portal.mcp.single_pass") as span:
                 if span.is_recording():
                     span.set_attribute("mcp.streamed_chars", len(single_pass_text))
@@ -623,8 +761,8 @@ class McpOrchestratorService:
                     "business": conversation.business_profile_id,
                 },
             )
-            if on_status_change:
-                on_status_change({"code": "stream_complete", "label": ""})
+            _status_event("answer_finalized", "Answer ready")
+            _status_event("stream_complete", "")
             self._log_turn_metrics(conversation, tool_context)
             normalized_assistant = dict(tool_phase_assistant_message or {"role": "assistant"})
             normalized_assistant["content"] = clean_single
@@ -650,6 +788,7 @@ class McpOrchestratorService:
             hint = requirement.get("hint")
             requirement_text = self._identifier_requirement_message(required_keys, match_policy, hint)
             _emit_tokens(requirement_text)
+            _mark_answer_started()
             final_assistant_message = {
                 "role": "assistant",
                 "content": requirement_text,
@@ -657,8 +796,8 @@ class McpOrchestratorService:
                 "extractions": [],
                 "placeholder_response": None,
             }
-            if on_status_change:
-                on_status_change({"code": "stream_complete", "label": ""})
+            _status_event("answer_finalized", "Answer ready")
+            _status_event("stream_complete", "")
             self._log_turn_metrics(conversation, tool_context)
             return {
                 "assistant_message": final_assistant_message,
@@ -692,8 +831,9 @@ class McpOrchestratorService:
         if not answer_text_raw and answer_streamed_chunks:
             answer_text_raw = "".join(answer_streamed_chunks).strip()
 
-        if on_status_change:
-            on_status_change({"code": "stream_complete", "label": ""})
+        _mark_answer_started()
+        _status_event("answer_finalized", "Answer ready")
+        _status_event("stream_complete", "")
 
         unmet_read_required = False
         table_results_present = False

@@ -9,7 +9,7 @@ import time
 import uuid
 from datetime import datetime
 from queue import Empty, Queue
-from typing import Any, Iterable
+from typing import Any, Callable, Iterable
 from zoneinfo import ZoneInfo
 
 from django.conf import settings
@@ -45,9 +45,16 @@ TRACER = otel_trace.get_tracer(__name__)
 
 CONTEXT_STATUS_CODES = {
     "searching_knowledge",
+    "searching_start",
+    "searching_complete",
     "reading_document",
+    "reading_start",
+    "reading_complete",
     "planning_actions",
     "responding",
+    "answer_started",
+    "answer_finalized",
+    "clarifying",
 }
 
 
@@ -663,6 +670,49 @@ def stream_send(request: HttpRequest) -> StreamingHttpResponse:
     if reserved_message_id:
         plan_holder["pending_message_id"] = reserved_message_id
     spinner_state = {"text": None, "pending": True}
+    spinner_phase_state = {
+        "searching": {"active": False, "index": 0, "label": None, "meta": None, "timer": None},
+        "reading": {"active": False, "index": 0, "label": None, "meta": None, "timer": None},
+    }
+    spinner_phase_interval_setting = getattr(settings, "PORTAL_SPINNER_PHASE_INTERVAL", 5.5)
+    try:
+        spinner_phase_interval = float(spinner_phase_interval_setting)
+    except (TypeError, ValueError):
+        spinner_phase_interval = 5.5
+    if spinner_phase_interval < 0:
+        spinner_phase_interval = 0.0
+
+    def _search_base_text(label: str | None, meta: dict | None) -> str:
+        return label or "Searching knowledge…"
+
+    def _search_variant_text(label: str | None, meta: dict | None) -> str:
+        query_text = ""
+        if isinstance(meta, dict):
+            raw_query = meta.get("query")
+            if isinstance(raw_query, str):
+                query_text = raw_query.strip()
+        if query_text:
+            return f"Exploring deeper insights for {query_text[:60]}…"
+        return "Exploring deeper insights…"
+
+    def _reading_base_text(label: str | None, meta: dict | None) -> str:
+        return label or "Reading document…"
+
+    def _reading_variant_text(label: str | None, meta: dict | None) -> str:
+        doc_hint = ""
+        if isinstance(meta, dict):
+            doc_hint = str(meta.get("document_id") or "").strip()
+        if not doc_hint and isinstance(label, str):
+            parts = label.split(":", 1)
+            if len(parts) == 2:
+                doc_hint = parts[1].strip()
+        hint_suffix = f" ({doc_hint[:40]})" if doc_hint else ""
+        return f"Gathering more context…{hint_suffix}"
+
+    SPINNER_PHASE_VARIANTS: dict[str, tuple[Callable[[str | None, dict | None], str], ...]] = {
+        "searching": (_search_base_text, _search_variant_text),
+        "reading": (_reading_base_text, _reading_variant_text),
+    }
 
     def _current_message_id() -> str:
         raw_id = plan_holder.get("ai_message_id") or plan_holder.get("pending_message_id")
@@ -708,6 +758,105 @@ def stream_send(request: HttpRequest) -> StreamingHttpResponse:
         }
         stream_queue.put(payload)
 
+    def _phase_variant_text(phase: str, index: int, label: str | None, meta: dict | None) -> str:
+        variants = SPINNER_PHASE_VARIANTS.get(phase)
+        if not variants:
+            return label or "Working..."
+        variant_fn = variants[index % len(variants)]
+        try:
+            return variant_fn(label, meta)
+        except Exception:
+            return label or "Working..."
+
+    def _cancel_phase_timer(phase: str) -> None:
+        state = spinner_phase_state.get(phase)
+        if not state:
+            return
+        timer = state.get("timer")
+        if timer:
+            timer.cancel()
+            state["timer"] = None
+
+    def _advance_phase_spinner(phase: str) -> None:
+        state = spinner_phase_state.get(phase)
+        if not state or not state.get("active"):
+            return
+        variants = SPINNER_PHASE_VARIANTS.get(phase)
+        if not variants:
+            return
+        if state["index"] + 1 >= len(variants):
+            state["active"] = False
+            return
+        state["index"] += 1
+        text = _phase_variant_text(phase, state["index"], state.get("label"), state.get("meta"))
+        _emit_spinner_status(text)
+        _schedule_phase_rotation(phase)
+
+    def _schedule_phase_rotation(phase: str) -> None:
+        state = spinner_phase_state.get(phase)
+        if not state or not state.get("active"):
+            return
+        variants = SPINNER_PHASE_VARIANTS.get(phase)
+        if not variants or len(variants) <= 1 or spinner_phase_interval <= 0:
+            return
+        if state["index"] >= len(variants) - 1:
+            return
+        _cancel_phase_timer(phase)
+        timer = threading.Timer(spinner_phase_interval, lambda: _advance_phase_spinner(phase))
+        timer.daemon = True
+        state["timer"] = timer
+        timer.start()
+
+    def _set_phase_spinner(phase: str, label: str | None, meta: dict | None, *, reset_index: bool) -> None:
+        state = spinner_phase_state.setdefault(
+            phase,
+            {"active": False, "index": 0, "label": None, "meta": None, "timer": None},
+        )
+        if reset_index or not state["active"]:
+            state["index"] = 0
+        state["active"] = True
+        state["label"] = label or state.get("label")
+        if isinstance(meta, dict) and meta:
+            state["meta"] = meta
+        elif not state.get("meta"):
+            state["meta"] = {}
+        text = _phase_variant_text(phase, state["index"], state.get("label"), state.get("meta"))
+        _emit_spinner_status(text)
+        _schedule_phase_rotation(phase)
+
+    def _reset_phase_spinner(phase: str) -> None:
+        state = spinner_phase_state.get(phase)
+        if not state:
+            return
+        _cancel_phase_timer(phase)
+        state["active"] = False
+        state["index"] = 0
+        state["label"] = None
+        state["meta"] = None
+
+    def _progressive_spinner_update(code: str | None, label: str | None, meta: dict | None) -> bool:
+        if not state_machine_enabled:
+            return False
+        phase_map = {
+            "searching_start": ("searching", True),
+            "searching_knowledge": ("searching", False),
+            "reading_start": ("reading", True),
+            "reading_document": ("reading", False),
+        }
+        reset_map = {
+            "searching_complete": "searching",
+            "reading_complete": "reading",
+        }
+        phase_entry = phase_map.get(code or "")
+        if phase_entry:
+            phase, reset_index = phase_entry
+            _set_phase_spinner(phase, label, meta, reset_index=reset_index)
+            return True
+        reset_phase = reset_map.get(code or "")
+        if reset_phase:
+            _reset_phase_spinner(reset_phase)
+        return False
+
     def _turn_pending_payload(text: str, *, pending: bool = True) -> dict[str, object]:
         payload = {
             "message_id": _current_message_id(),
@@ -748,10 +897,14 @@ def stream_send(request: HttpRequest) -> StreamingHttpResponse:
         trace_logger.log_status(code, label=label, meta=meta)
         _enqueue_status_events(stream_queue, code=code, label=label, meta=meta)
         if state_machine_enabled:
-            if code in {"searching_knowledge", "reading_document"}:
-                _emit_spinner_status(label or code.replace("_", " ").title())
-            elif code == "responding":
+            if _progressive_spinner_update(code, label, meta):
+                return
+            if code in {"responding", "answer_started"}:
                 _emit_spinner_status(label or "Drafting answer...")
+            elif code == "clarifying":
+                _emit_spinner_status(label or "Clarifying request…")
+            elif code == "answer_finalized":
+                _emit_spinner_status(label or "Finalizing answer…")
             elif code in {"stream_complete", "complete"}:
                 _emit_spinner_status("", pending=False, fallback=None, allow_empty=True)
 

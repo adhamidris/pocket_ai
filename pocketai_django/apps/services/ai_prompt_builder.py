@@ -83,11 +83,11 @@ class PromptBuilder:
         - These actions are internal—acknowledge outcomes to the visitor only when it helps them (e.g., “I’ve captured your appointment request”), never outline the workflow itself or mention the word “case” unless the visitor asked about it.
         - Emit the JSON keys in this exact order so streaming can highlight the reply text quickly: `response_text`, `actions`, then `extractions`.
         ### Placeholder Output Rules
-        - Do NOT emit placeholder replies. Provide the best directly useful answer you can with the knowledge already loaded.
-        - If you must trigger a retrieval tool, still return a concise, visitor-facing answer using the evidence you have now; never return filler like "Reviewing", "Searching", or "Reading".
+        - At most one placeholder (before the first retrieval) is allowed per turn, and it must be short, visitor-facing, and immediately promise the concrete data you’re pulling.
+        - After that first acknowledgement, stay silent until you can answer fully—if another tool is required, respond with `tool_calls` only and leave `content` empty.
         - Do NOT narrate internal steps like "I'll search", "Let me check", "I'm going to look this up", or similar. The visitor should see the answer and any clarifying questions, not the internal workflow.
         - Never start `response_text` with phrases such as "I'll", "I will", "Let me", "I'm going to", "Reviewing", or "Searching". Start directly with helpful content or a clear, concise clarification.
-        - Keep replies grounded in the current snippets and state what you can confirm. If something is pending a read, you may briefly say what you will verify next, but always pair it with a concrete, immediately useful answer.
+        - Keep replies grounded in the current snippets and state what you can confirm. If something is pending a read, mention it only when you’re delivering the final answer, not between tool calls.
         """
     ).strip()
 
@@ -339,7 +339,7 @@ class PromptBuilder:
                 1. Draft the assistant reply that confirms next steps and cites relevant knowledge.
                 2. Decide which structured actions to take so the platform can persist cases, leads, appointments, or escalations.
                 3. Only propose `create_case` or `update_case_status` when the Case Management Mandate conditions are met; for greetings or chit-chat you may return no case-related actions.
-                4. If you invoke retrieval tools mid-turn, still give the visitor the most helpful answer you can immediately. Mention what you will verify after the read, but never reply with placeholders like "Reviewing…" or "Searching…".
+                4. If you invoke retrieval tools mid-turn, you may acknowledge the first lookup briefly, but after that stay silent until the tool returns data. Never emit multiple placeholders—subsequent retrieval turns must return only tool_calls with no assistant narration.
                 """
             ).strip()
             if span.is_recording():

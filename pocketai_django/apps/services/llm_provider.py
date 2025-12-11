@@ -178,6 +178,7 @@ class BaseMcpProvider(Protocol):
         *,
         tools: Iterable[Mapping[str, object]] | None = None,
         on_stream_delta: Callable[[str], None] | None = None,
+        on_tool_call_start: Callable[[Mapping[str, object]], None] | None = None,
         response_format: Mapping[str, object] | None = None,
     ) -> Mapping[str, Any]:  # pragma: no cover - interface only
         ...
@@ -891,14 +892,14 @@ def _iter_sse_events(stream) -> Iterable[str]:
 def _merge_stream_tool_call(
     store: dict[int, dict[str, object]],
     delta: Mapping[str, object],
-) -> None:
+) -> tuple[dict[str, object], bool]:
     try:
         idx = int(delta.get("index", 0))
     except (TypeError, ValueError):
         idx = 0
     state = store.setdefault(
         idx,
-        {"id": None, "type": None, "function": {"name": None, "arguments": ""}},
+        {"id": None, "type": None, "function": {"name": None, "arguments": ""}, "index": idx},
     )
     identifier = delta.get("id")
     if isinstance(identifier, str) and identifier:
@@ -907,6 +908,7 @@ def _merge_stream_tool_call(
     if isinstance(tool_type, str) and tool_type:
         state["type"] = tool_type
     function_block = state.setdefault("function", {"name": None, "arguments": ""})
+    previous_name = function_block.get("name")
     func_delta = delta.get("function") if isinstance(delta.get("function"), Mapping) else {}
     func_name = func_delta.get("name")
     if isinstance(func_name, str) and func_name:
@@ -915,6 +917,9 @@ def _merge_stream_tool_call(
     if isinstance(func_args, str) and func_args:
         existing = function_block.get("arguments") or ""
         function_block["arguments"] = f"{existing}{func_args}"
+    name_now = function_block.get("name")
+    fired = bool(name_now and name_now != previous_name)
+    return state, fired
 
 
 def _collapse_stream_tool_calls(store: dict[int, dict[str, object]]) -> list[dict[str, object]]:
@@ -935,7 +940,12 @@ def _collapse_stream_tool_calls(store: dict[int, dict[str, object]]) -> list[dic
     return collapsed
 
 
-def _consume_chat_completion_stream(stream, on_stream_delta: Callable[[str], None] | None) -> dict[str, object]:
+def _consume_chat_completion_stream(
+    stream,
+    on_stream_delta: Callable[[str], None] | None,
+    *,
+    on_tool_call_start: Callable[[Mapping[str, object]], None] | None = None,
+) -> dict[str, object]:
     """
     Assemble a chat-completions style payload from a streaming HTTP response.
 
@@ -1004,7 +1014,19 @@ def _consume_chat_completion_stream(stream, on_stream_delta: Callable[[str], Non
 
         for tool_delta in delta.get("tool_calls") or []:
             if isinstance(tool_delta, Mapping):
-                _merge_stream_tool_call(tool_calls, tool_delta)
+                state, fired = _merge_stream_tool_call(tool_calls, tool_delta)
+                if fired and on_tool_call_start:
+                    try:
+                        on_tool_call_start(
+                            {
+                                "id": state.get("id"),
+                                "type": state.get("type") or "function",
+                                "function": dict(state.get("function") or {}),
+                                "index": state.get("index"),
+                            }
+                        )
+                    except Exception:  # pragma: no cover - defensive
+                        logger.exception("Streaming tool-call callback failed.")
 
         # Capture any full message payload sent on streaming frames (some providers
         # emit the final message in the last SSE event).
@@ -1097,6 +1119,7 @@ class OpenAIToolsProvider(BaseMcpProvider):
         *,
         tools: Iterable[Mapping[str, object]] | None = None,
         on_stream_delta: Callable[[str], None] | None = None,
+        on_tool_call_start: Callable[[Mapping[str, object]], None] | None = None,
         response_format: Mapping[str, object] | None = None,
     ) -> Mapping[str, Any]:
         streaming = bool(on_stream_delta)
@@ -1196,7 +1219,11 @@ class OpenAIToolsProvider(BaseMcpProvider):
                                     except Exception:
                                         detail = ""
                                     raise PromptGenerationError(f"OpenAI tools error ({status_code}): {detail}")
-                                data = _consume_chat_completion_stream(_HttpxLineStream(resp.iter_lines()), on_stream_delta)
+                                data = _consume_chat_completion_stream(
+                                    _HttpxLineStream(resp.iter_lines()),
+                                    on_stream_delta,
+                                    on_tool_call_start=on_tool_call_start,
+                                )
                         else:
                             resp = self._http_client.post(
                                 "/v1/chat/completions",
@@ -1223,7 +1250,11 @@ class OpenAIToolsProvider(BaseMcpProvider):
                     try:
                         with urllib_request.urlopen(request, timeout=self.timeout) as resp:
                             if streaming:
-                                data = _consume_chat_completion_stream(resp, on_stream_delta)
+                                data = _consume_chat_completion_stream(
+                                    resp,
+                                    on_stream_delta,
+                                    on_tool_call_start=on_tool_call_start,
+                                )
                                 raw_body = None
                             else:
                                 raw_body = resp.read().decode("utf-8")
@@ -1375,6 +1406,7 @@ class DeepSeekToolsProvider(BaseMcpProvider):
         *,
         tools: Iterable[Mapping[str, object]] | None = None,
         on_stream_delta: Callable[[str], None] | None = None,
+        on_tool_call_start: Callable[[Mapping[str, object]], None] | None = None,
         response_format: Mapping[str, object] | None = None,
     ) -> Mapping[str, Any]:
         streaming = bool(on_stream_delta)
@@ -1461,7 +1493,11 @@ class DeepSeekToolsProvider(BaseMcpProvider):
                                     except Exception:
                                         detail = ""
                                     raise PromptGenerationError(f"DeepSeek tools error ({status_code}): {detail}")
-                                data = _consume_chat_completion_stream(_HttpxLineStream(resp.iter_lines()), on_stream_delta)
+                                data = _consume_chat_completion_stream(
+                                    _HttpxLineStream(resp.iter_lines()),
+                                    on_stream_delta,
+                                    on_tool_call_start=on_tool_call_start,
+                                )
                         else:
                             resp = self._http_client.post(
                                 "/v1/chat/completions",
@@ -1488,7 +1524,11 @@ class DeepSeekToolsProvider(BaseMcpProvider):
                     try:
                         with urllib_request.urlopen(request, timeout=self.timeout) as resp:
                             if streaming:
-                                data = _consume_chat_completion_stream(resp, on_stream_delta)
+                                data = _consume_chat_completion_stream(
+                                    resp,
+                                    on_stream_delta,
+                                    on_tool_call_start=on_tool_call_start,
+                                )
                                 raw_body = None
                             else:
                                 raw_body = resp.read().decode("utf-8")
