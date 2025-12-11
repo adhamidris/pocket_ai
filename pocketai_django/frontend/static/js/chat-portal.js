@@ -43,6 +43,8 @@ class ChatPortalClient {
     this.streamingRawBuffer = "";
     this.streamingRewritePending = false;
     this.streamingMessageId = null;
+    this.streamingTextEl = null;
+    this.streamingBlocksEl = null;
     this.pendingMessageId = null;
     this.pendingMetadataVersion = 0;
     this.usingStateMachine = false;
@@ -56,6 +58,9 @@ class ChatPortalClient {
     this.pendingMessages = [];
     this.statusStyleInjected = false;
     this.ensureStatusStyle();
+    this.tableIntentActive = false;
+    this.tableIntentTimestamp = 0;
+    this.tableIntentWindowMs = 2500;
   }
 
   async init() {
@@ -529,6 +534,202 @@ class ChatPortalClient {
     return this.markdownRenderer.render(text);
   }
 
+  renderResponseBlocks(bodyEl, blocks) {
+    if (!bodyEl || !Array.isArray(blocks) || !blocks.length) {
+      return;
+    }
+    try {
+      const target = bodyEl.querySelector("[data-streaming-blocks]") || bodyEl;
+      const existing = target.querySelector("[data-response-blocks]");
+      if (existing) {
+        existing.remove();
+      }
+      if (target === bodyEl) {
+        const hasTables = blocks.some(
+          (block) => block && typeof block === "object" && (block.type || "").toString().toLowerCase() === "table",
+        );
+        if (hasTables) {
+          bodyEl.querySelectorAll("table").forEach((tableEl) => {
+            tableEl.remove();
+          });
+        }
+      }
+      const blockEl = this.buildResponseBlocks(blocks);
+      if (blockEl) {
+        target.appendChild(blockEl);
+      }
+    } catch (error) {
+      console.warn("Failed to render structured blocks", error);
+    }
+  }
+
+  buildResponseBlocks(blocks) {
+    if (!Array.isArray(blocks) || !blocks.length) {
+      return null;
+    }
+    const wrapper = document.createElement("div");
+    wrapper.dataset.responseBlocks = "true";
+    wrapper.className = "mt-3 space-y-4";
+    blocks.forEach((block) => {
+      const section = this.buildResponseBlock(block);
+      if (section) {
+        wrapper.appendChild(section);
+      }
+    });
+    if (!wrapper.children.length) {
+      return null;
+    }
+    return wrapper;
+  }
+
+  buildResponseBlock(block) {
+    if (!block || typeof block !== "object") {
+      return null;
+    }
+    const type = (block.type || "").toString().toLowerCase();
+    if (type === "text") {
+      return this.buildTextBlock(block);
+    }
+    if (type === "table") {
+      return this.buildTableBlock(block);
+    }
+    return null;
+  }
+
+  buildTextBlock(block) {
+    const lines = Array.isArray(block.body_md)
+      ? block.body_md
+      : Array.isArray(block.body)
+        ? block.body
+        : Array.isArray(block.lines)
+          ? block.lines
+          : block.text
+            ? [block.text]
+            : [];
+    if (!lines.length) {
+      return null;
+    }
+    const container = document.createElement("div");
+    container.className = "space-y-1 rounded-xl bg-background/60 px-3 py-2 border border-border/60";
+    if (block.heading) {
+      const heading = document.createElement("p");
+      heading.className = "text-sm font-semibold text-foreground";
+      heading.textContent = block.heading;
+      container.appendChild(heading);
+    }
+    lines.forEach((line) => {
+      if (!line) return;
+      const paragraph = document.createElement("div");
+      paragraph.className = "text-sm leading-relaxed";
+      paragraph.innerHTML = this.renderMarkdown(line);
+      container.appendChild(paragraph);
+    });
+    if (block.rtl) {
+      container.dir = "rtl";
+      container.classList.add("text-right");
+    }
+    return container;
+  }
+
+  buildTableBlock(block) {
+    const columns = Array.isArray(block.columns) ? block.columns : [];
+    const rows = Array.isArray(block.rows) ? block.rows : [];
+    if (!columns.length) {
+      return null;
+    }
+    const wrapper = document.createElement("div");
+    wrapper.className = "rounded-xl border border-border/60 overflow-hidden bg-background/80 shadow-sm";
+    if (block.title) {
+      const title = document.createElement("div");
+      title.className = "px-4 py-2 border-b border-border/60 text-sm font-semibold text-foreground";
+      title.textContent = block.title;
+      wrapper.appendChild(title);
+    }
+    const table = document.createElement("table");
+    table.className = "w-full border-collapse text-sm";
+    const thead = document.createElement("thead");
+    thead.className = "bg-muted/40 text-muted-foreground";
+    const headerRow = document.createElement("tr");
+    const columnMeta = columns.map((col, idx) => {
+      if (typeof col === "string") {
+        return { key: `col_${idx}`, label: col, align: "left" };
+      }
+      const label = col && (col.label || col.title || col.text || col.value) ? col.label || col.title || col.text || col.value : `Col ${idx + 1}`;
+      const align = col && typeof col.align === "string" ? col.align.toLowerCase() : "";
+      return {
+        key: col && col.key ? col.key : `col_${idx}`,
+        label,
+        align: ["center", "right"].includes(align) ? align : "left",
+      };
+    });
+
+    columnMeta.forEach((col) => {
+      const th = document.createElement("th");
+      th.className = "px-3 py-2 text-left font-medium";
+      th.textContent = col.label || "";
+      if (col.align === "center") {
+        th.classList.add("text-center");
+      } else if (col.align === "right") {
+        th.classList.add("text-right");
+      }
+      headerRow.appendChild(th);
+    });
+    thead.appendChild(headerRow);
+    table.appendChild(thead);
+
+    const tbody = document.createElement("tbody");
+    if (!rows.length) {
+      const placeholderRow = document.createElement("tr");
+      placeholderRow.className = "border-t border-border/40";
+      const placeholderCell = document.createElement("td");
+      placeholderCell.colSpan = columnMeta.length;
+      placeholderCell.className = "px-3 py-4 text-center text-xs uppercase tracking-wide text-muted-foreground";
+      placeholderCell.textContent = "Formatting table…";
+      placeholderRow.appendChild(placeholderCell);
+      tbody.appendChild(placeholderRow);
+    } else {
+      rows.forEach((row) => {
+        const tr = document.createElement("tr");
+        tr.className = "border-t border-border/40";
+        const cells = Array.isArray(row && row.cells) ? row.cells : Array.isArray(row) ? row : [];
+        columnMeta.forEach((col, idx) => {
+          const td = document.createElement("td");
+          td.className = "px-3 py-2 text-foreground";
+          const cellValue = cells[idx];
+          const text =
+            cellValue && typeof cellValue === "object" ? cellValue.value || cellValue.text || cellValue.label || "" : cellValue ?? "";
+          td.textContent = text === null || text === undefined ? "" : text.toString();
+          if (col.align === "center") {
+            td.classList.add("text-center");
+          } else if (col.align === "right") {
+            td.classList.add("text-right");
+          }
+          tr.appendChild(td);
+        });
+        if (row.rtl) {
+          tr.dir = "rtl";
+          tr.classList.add("text-right");
+        }
+        tbody.appendChild(tr);
+      });
+    }
+    table.appendChild(tbody);
+    wrapper.appendChild(table);
+
+    if (block.note) {
+      const note = document.createElement("p");
+      note.className = "px-4 py-2 text-xs text-muted-foreground border-t border-border/40";
+      note.textContent = block.note;
+      wrapper.appendChild(note);
+    }
+
+    if (block.rtl) {
+      wrapper.dir = "rtl";
+      wrapper.classList.add("text-right");
+    }
+    return wrapper;
+  }
+
   appendMessage(raw) {
     const container = this.elements.messages;
     if (!container) return;
@@ -592,7 +793,12 @@ class ChatPortalClient {
     const body = document.createElement("div");
     body.className = "space-y-2 leading-relaxed";
     body.dataset.messageBody = "true";
-    body.innerHTML = this.renderMarkdown(message.body);
+    const cleanBody = this.stripInlineResponseBlocks(message.body || "");
+    body.innerHTML = this.renderMarkdown(cleanBody);
+    const initialBlocks = Array.isArray(message.metadata?.response_blocks) ? message.metadata.response_blocks : [];
+    if (initialBlocks.length) {
+      this.renderResponseBlocks(body, initialBlocks);
+    }
     bubble.appendChild(body);
 
     const timestamp = document.createElement("p");
@@ -631,11 +837,7 @@ class ChatPortalClient {
       this.setStreamingStatus("refining", "Refining answer…");
     }
     this.streamingRawBuffer += normalized;
-    const formatted = this.formatAssistantText(this.streamingRawBuffer);
-    this.streamingBuffer = formatted;
-    if (this.streamingFinalBodyEl) {
-      this.streamingFinalBodyEl.innerHTML = this.renderMarkdown(formatted);
-    }
+    this.refreshStreamingView();
     this.elements.messages.scrollTo({ top: this.elements.messages.scrollHeight, behavior: "smooth" });
   }
 
@@ -646,10 +848,7 @@ class ChatPortalClient {
       return;
     }
     this.streamingRawBuffer = text;
-    this.streamingBuffer = this.formatAssistantText(text);
-    if (this.streamingFinalBodyEl) {
-      this.streamingFinalBodyEl.innerHTML = this.renderMarkdown(this.streamingBuffer);
-    }
+    this.refreshStreamingView();
     this.elements.messages.scrollTo({ top: this.elements.messages.scrollHeight, behavior: "smooth" });
   }
 
@@ -714,9 +913,18 @@ class ChatPortalClient {
 
       const finalEl = document.createElement("div");
       finalEl.dataset.messageFinalBody = "true";
-      finalEl.className = "space-y-2 leading-relaxed";
+      finalEl.className = "space-y-3";
+      const textEl = document.createElement("div");
+      textEl.dataset.streamingText = "true";
+      textEl.className = "space-y-2 leading-relaxed";
+      finalEl.appendChild(textEl);
+      const blocksEl = document.createElement("div");
+      blocksEl.dataset.streamingBlocks = "true";
+      finalEl.appendChild(blocksEl);
       this.streamingMessageBodyEl.appendChild(finalEl);
       this.streamingFinalBodyEl = finalEl;
+      this.streamingTextEl = textEl;
+      this.streamingBlocksEl = blocksEl;
     }
   
     this.elements.messages.appendChild(node);
@@ -724,16 +932,11 @@ class ChatPortalClient {
 
   finalizeStreamingMessage(finalText) {
     const incoming = (finalText || "").toString();
-    let text = "";
-
     if (incoming) {
       this.streamingRawBuffer = incoming;
-      this.streamingBuffer = this.formatAssistantText(incoming);
-      text = this.streamingBuffer;
-    } else {
-      text = this.streamingBuffer || "";
     }
-
+    this.refreshStreamingView();
+    const text = this.streamingBuffer || "";
     if (!text) {
       if (this.streamingMessageNode) {
         this.resetStreamingState(true);
@@ -741,9 +944,7 @@ class ChatPortalClient {
       return;
     }
 
-    if (this.streamingFinalBodyEl) {
-      this.streamingFinalBodyEl.innerHTML = this.renderMarkdown(text);
-    } else {
+    if (!this.streamingFinalBodyEl) {
       this.appendMessage({ sender: "ai", body: text, sent_at: new Date().toISOString() });
     }
     this.resetStreamingState(false);
@@ -752,6 +953,7 @@ class ChatPortalClient {
   updateLatestAssistantMessage(text, messageId = null) {
     if (!text || !this.elements.messages) return;
     const normalized = this.formatAssistantText(text);
+    const clean = this.stripInlineResponseBlocks(normalized);
     let body = this.getMessageBodyElement(messageId);
     if (!body) {
       const bodies = Array.from(this.elements.messages.querySelectorAll("[data-message-body]"));
@@ -768,9 +970,14 @@ class ChatPortalClient {
     if (!body) return;
     const finalBody = body.querySelector("[data-message-final-body]");
     if (finalBody) {
-      finalBody.innerHTML = this.renderMarkdown(normalized);
+      const textTarget = finalBody.querySelector("[data-streaming-text]");
+      if (textTarget) {
+        textTarget.innerHTML = this.renderMarkdown(clean);
+      } else {
+        finalBody.innerHTML = this.renderMarkdown(clean);
+      }
     } else {
-      body.innerHTML = this.renderMarkdown(normalized);
+      body.innerHTML = this.renderMarkdown(clean);
     }
   }
 
@@ -782,7 +989,8 @@ class ChatPortalClient {
   }
 
   updateMessageMetadata(messageId, metadata) {
-    if (!metadata || !this.elements.messages) return;
+    if (!this.elements.messages) return;
+    const metaPayload = metadata && typeof metadata === "object" ? metadata : {};
     let wrapper = null;
     if (messageId) {
       wrapper = this.elements.messages.querySelector(`[data-message-id="${messageId}"]`);
@@ -794,20 +1002,20 @@ class ChatPortalClient {
     const metaEl = wrapper.querySelector("[data-message-meta]");
     if (!metaEl) return;
     const fragments = [];
-    if (typeof metadata.answer_confidence === "number") {
-      const percent = Math.round(metadata.answer_confidence * 100);
+    if (typeof metaPayload.answer_confidence === "number") {
+      const percent = Math.round(metaPayload.answer_confidence * 100);
       fragments.push(`Confidence: ${percent}%`);
-    } else if (metadata.answer_confidence) {
-      fragments.push(`Confidence: ${metadata.answer_confidence}`);
+    } else if (metaPayload.answer_confidence) {
+      fragments.push(`Confidence: ${metaPayload.answer_confidence}`);
     }
-    if (Array.isArray(metadata.ingestion_warnings) && metadata.ingestion_warnings.length) {
-      metadata.ingestion_warnings.slice(0, 2).forEach((warning) => {
+    if (Array.isArray(metaPayload.ingestion_warnings) && metaPayload.ingestion_warnings.length) {
+      metaPayload.ingestion_warnings.slice(0, 2).forEach((warning) => {
         const label = warning.label || warning.details || warning.type || "Source warning";
         fragments.push(`Note: ${label}`);
       });
     }
-    if (Array.isArray(metadata.actions) && metadata.actions.length) {
-      const summary = metadata.actions
+    if (Array.isArray(metaPayload.actions) && metaPayload.actions.length) {
+      const summary = metaPayload.actions
         .map((action) => {
           const status = action.status || "queued";
           return `${action.action || "action"} (${status})`;
@@ -821,14 +1029,80 @@ class ChatPortalClient {
     metaEl.innerHTML = "";
     if (!fragments.length) {
       metaEl.classList.add("hidden");
+    } else {
+      fragments.forEach((line) => {
+        const p = document.createElement("p");
+        p.textContent = line;
+        metaEl.appendChild(p);
+      });
+      metaEl.classList.remove("hidden");
+    }
+    if (Array.isArray(metaPayload.response_blocks) && metaPayload.response_blocks.length) {
+      const body = wrapper.querySelector("[data-message-body]");
+      this.renderResponseBlocks(body, metaPayload.response_blocks);
+    }
+  }
+
+  renderStreamingText() {
+    if (this.streamingTextEl) {
+      this.streamingTextEl.innerHTML = this.renderMarkdown(this.streamingBuffer);
       return;
     }
-    fragments.forEach((line) => {
-      const p = document.createElement("p");
-      p.textContent = line;
-      metaEl.appendChild(p);
-    });
-    metaEl.classList.remove("hidden");
+    if (this.streamingFinalBodyEl) {
+      this.streamingFinalBodyEl.innerHTML = this.renderMarkdown(this.streamingBuffer);
+      return;
+    }
+    if (this.streamingMessageBodyEl) {
+      this.streamingMessageBodyEl.innerHTML = this.renderMarkdown(this.streamingBuffer);
+    }
+  }
+
+  refreshStreamingView() {
+    const stripped = this.stripInlineResponseBlocks(this.streamingRawBuffer || "");
+    this.updateTableIntent(stripped);
+    this.streamingBuffer = this.formatAssistantText(stripped);
+    this.renderStreamingText();
+  }
+
+  stripInlineResponseBlocks(text) {
+    if (!text) {
+      return "";
+    }
+    const pattern = /(?:^|\n)\s*(?:[-*+]\s*)?["'`]?response(?:_|\s)?blocks["'`]?\s*:?/gi;
+    let match;
+    let lastIndex = -1;
+    while ((match = pattern.exec(text)) !== null) {
+      lastIndex = match.index;
+    }
+    if (lastIndex < 0) {
+      return text;
+    }
+    return text.slice(0, lastIndex).replace(/\s+$/, "");
+  }
+
+  updateTableIntent(bufferText) {
+    const now = Date.now();
+    if (this.tableIntentActive && now - this.tableIntentTimestamp > this.tableIntentWindowMs) {
+      this.tableIntentActive = false;
+    }
+    const cues = [
+      "following table",
+      "table below",
+      "table above",
+      "table shows",
+      "table presents",
+      "table summarizes",
+      "see table",
+    ];
+    const haystack = (bufferText || "").toLowerCase().slice(-400);
+    if (!haystack) {
+      return;
+    }
+    const cueFound = cues.some((phrase) => haystack.includes(phrase));
+    if (cueFound) {
+      this.tableIntentActive = true;
+      this.tableIntentTimestamp = now;
+    }
   }
 
   resetStreamingState(removeNode = false, lockWorkflow = true) {
@@ -853,6 +1127,8 @@ class ChatPortalClient {
     this.streamingRawBuffer = "";
     this.streamingRewritePending = false;
     this.streamingMessageId = null;
+    this.streamingTextEl = null;
+    this.streamingBlocksEl = null;
     if (removeNode) {
       this.pendingMessageId = null;
     }
@@ -1245,6 +1521,184 @@ class ChatPortalClient {
       return `<${tag} class="${classes}">${inner}</${tag}>`;
     };
 
+    const splitTableRow = (line = "") => {
+      let text = line.trim();
+      if (!text) {
+        return [];
+      }
+      if (text.startsWith("|")) {
+        text = text.slice(1);
+      }
+      if (text.endsWith("|")) {
+        text = text.slice(0, -1);
+      }
+      return text.split("|").map((cell) => cell.trim());
+    };
+
+    const normalizeColumnAlignment = (token = "") => {
+      const trimmed = token.trim();
+      const starts = trimmed.startsWith(":");
+      const ends = trimmed.endsWith(":");
+      if (starts && ends) return "center";
+      if (ends) return "right";
+      return "left";
+    };
+
+    const isTableRowCandidate = (line = "") => {
+      if (!line || typeof line !== "string") {
+        return false;
+      }
+      if (/^\s*```/.test(line)) {
+        return false;
+      }
+      return (line.match(/\|/g) || []).length >= 2;
+    };
+
+    const isPartialTableRowLine = (line = "") => {
+      if (!line || typeof line !== "string") {
+        return false;
+      }
+      if (/^\s*```/.test(line)) {
+        return false;
+      }
+      const trimmed = line.trim();
+      if (!trimmed) {
+        return false;
+      }
+      return trimmed.startsWith("|");
+    };
+
+    const isTableSeparatorLine = (line = "") => {
+      const cells = splitTableRow(line);
+      if (!cells.length) return false;
+      return cells.every((cell) => /^:?-{2,}:?$/.test(cell.replace(/\s+/g, "")));
+    };
+
+    const isPotentialSeparatorLine = (line = "") => {
+      if (!line || typeof line !== "string") {
+        return false;
+      }
+      const cells = splitTableRow(line);
+      if (!cells.length) return false;
+      return cells.every((cell) => /^:?-*:?$/.test(cell.replace(/\s+/g, "")));
+    };
+
+    const containsRtlCharacters = (text = "") => /[\u0590-\u08FF]/.test(text);
+
+    const buildTableHtml = (headerCells, alignCells, rowLines, { placeholderOnly = false } = {}) => {
+      const columnMeta = headerCells.map((raw, idx) => {
+        const label = raw || `Column ${idx + 1}`;
+        const align = normalizeColumnAlignment(alignCells[idx] || "");
+        return {
+          label,
+          align,
+        };
+      });
+      const bodyRows = rowLines.map((row) => {
+        const cells = splitTableRow(row);
+        while (cells.length < columnMeta.length) {
+          cells.push("");
+        }
+        const rtl = containsRtlCharacters(row);
+        return {
+          cells: cells.slice(0, columnMeta.length),
+          rtl,
+        };
+      });
+      const wrapperClasses = "mt-3 overflow-hidden rounded-xl border border-border/60 bg-background/80 shadow-sm";
+      const tableClasses = "w-full border-collapse text-sm";
+      const headCells = columnMeta
+        .map((col) => {
+          const alignClass = col.align === "center" ? "text-center" : col.align === "right" ? "text-right" : "text-left";
+          return `<th class="px-3 py-2 font-medium ${alignClass}">${applyInlineFormatting(col.label)}</th>`;
+        })
+        .join("");
+      const bodyHtml =
+        bodyRows.length === 0
+          ? ""
+          : bodyRows
+              .map((row) => {
+                const rowAlign = row.rtl ? ' dir="rtl" class="text-right"' : "";
+                const cellsHtml = row.cells
+                  .map((cell, idx) => {
+                    const alignClass =
+                      columnMeta[idx] && columnMeta[idx].align === "center"
+                        ? "text-center"
+                        : columnMeta[idx] && columnMeta[idx].align === "right"
+                          ? "text-right"
+                          : "text-left";
+                    return `<td class="px-3 py-2 ${alignClass}">${applyInlineFormatting(cell)}</td>`;
+                  })
+                  .join("");
+                return `<tr${rowAlign}>${cellsHtml}</tr>`;
+              })
+              .join("");
+      const placeholder =
+        placeholderOnly || bodyRows.length === 0
+          ? `<tr><td class="px-3 py-3 text-center text-xs text-muted-foreground" colspan="${columnMeta.length}">Formatting table…</td></tr>`
+          : "";
+      return `<div class="${wrapperClasses}"><table class="${tableClasses}"><thead class="bg-muted/40 text-muted-foreground"><tr>${headCells}</tr></thead><tbody>${bodyHtml || placeholder}</tbody></table></div>`;
+    };
+
+    const tryParseTable = (lines, startIndex, { intentActive } = {}) => {
+      const line = lines[startIndex];
+      if (!isTableRowCandidate(line)) {
+        return null;
+      }
+      const headerCells = splitTableRow(line);
+      if (headerCells.length < 2) {
+        return null;
+      }
+      if (startIndex + 1 >= lines.length) {
+        if (intentActive) {
+          return {
+            html: buildTableHtml(headerCells, [], [], { placeholderOnly: true }),
+            nextIndex: startIndex + 1,
+            awaitingSeparator: true,
+          };
+        }
+        return null;
+      }
+      const separatorLine = lines[startIndex + 1];
+      if (!isTableSeparatorLine(separatorLine)) {
+        const remainingLines = lines.slice(startIndex + 2);
+        const hasTrailingContent = remainingLines.some((nextLine) => nextLine.trim());
+        if (intentActive && !hasTrailingContent && (isPotentialSeparatorLine(separatorLine) || !separatorLine.trim())) {
+          return {
+            html: buildTableHtml(headerCells, [], [], { placeholderOnly: true }),
+            nextIndex: startIndex + 2,
+            awaitingSeparator: true,
+          };
+        }
+        return null;
+      }
+      const rowLines = [];
+      const headerTrimmed = (line || "").trim();
+      const headerHasOuterPipes = headerTrimmed.startsWith("|") || headerTrimmed.endsWith("|");
+      const allowOnePipeRows = headerCells.length === 2 && !headerHasOuterPipes;
+      let cursor = startIndex + 2;
+      while (cursor < lines.length) {
+        const rowLine = lines[cursor];
+        if (!rowLine.trim()) {
+          break;
+        }
+        const pipeCount = (rowLine.match(/\|/g) || []).length;
+        const isBodyRow =
+          isTableRowCandidate(rowLine) ||
+          isPartialTableRowLine(rowLine) ||
+          (allowOnePipeRows && pipeCount >= 1);
+        if (!isBodyRow) {
+          break;
+        }
+        rowLines.push(rowLine);
+        cursor += 1;
+      }
+      return {
+        html: buildTableHtml(headerCells, splitTableRow(separatorLine), rowLines),
+        nextIndex: cursor,
+      };
+    };
+
     const renderBlocks = (input = "") => {
       const lines = input.replace(/\r\n/g, "\n").split("\n");
       const blocks = [];
@@ -1256,7 +1710,9 @@ class ChatPortalClient {
         currentList = null;
       };
 
-      for (const line of lines) {
+      let idx = 0;
+      while (idx < lines.length) {
+        const line = lines[idx];
         const matchUnordered = line.match(/^\s*[-*+]\s+(.*)/);
         const matchOrdered = line.match(/^\s*\d+\.\s+(.*)/);
         if (matchUnordered) {
@@ -1265,6 +1721,7 @@ class ChatPortalClient {
             currentList = { ordered: false, items: [] };
           }
           currentList.items.push(matchUnordered[1]);
+          idx += 1;
           continue;
         }
         if (matchOrdered) {
@@ -1273,12 +1730,27 @@ class ChatPortalClient {
             currentList = { ordered: true, items: [] };
           }
           currentList.items.push(matchOrdered[1]);
+          idx += 1;
           continue;
         }
 
         const trimmed = line.trim();
         if (!trimmed) {
           flushList();
+          idx += 1;
+          continue;
+        }
+
+        const tableCandidate = tryParseTable(lines, idx, { intentActive: this.tableIntentActive });
+        if (tableCandidate) {
+          flushList();
+          blocks.push(tableCandidate.html);
+          idx = tableCandidate.nextIndex;
+          if (tableCandidate.awaitingSeparator) {
+            break;
+          } else {
+            this.tableIntentActive = false;
+          }
           continue;
         }
 
@@ -1289,10 +1761,12 @@ class ChatPortalClient {
           const tag = level === 1 ? "h3" : level === 2 ? "h4" : "h5";
           const classes = "font-semibold text-foreground";
           blocks.push(`<${tag} class="${classes}">${applyInlineFormatting(heading[2])}</${tag}>`);
+          idx += 1;
           continue;
         }
 
         blocks.push(`<p>${applyInlineFormatting(trimmed)}</p>`);
+        idx += 1;
       }
 
       flushList();

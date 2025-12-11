@@ -2661,6 +2661,7 @@ def chat_portal(request: HttpRequest, business_slug: str, agent_slug: str) -> Ht
         "csat_scores": [(i, i) for i in range(1, 6)],
         "bootstrap_payload": bootstrap_payload,
         "bootstrap_script_id": PORTAL_BOOTSTRAP_SCRIPT_ID,
+        "asset_version": getattr(settings, "PORTAL_ASSET_VERSION", "dev"),
         "endpoints": {
             "bootstrap": reverse("api:chat-portal-session"),
             "messages": reverse("api:chat-messages"),

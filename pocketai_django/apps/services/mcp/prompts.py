@@ -63,7 +63,12 @@ def _tone_instruction(agent: AgentProfile | None) -> str:
     )
 
 
-def build_system_message(agent: AgentProfile) -> str:
+def build_system_message(
+    agent: AgentProfile,
+    *,
+    business_name: str | None = None,
+    business_industry: str | None = None,
+) -> str:
     """
     Construct the MCP system prompt for the supplied agent profile.
 
@@ -96,10 +101,12 @@ def build_system_message(agent: AgentProfile) -> str:
 
         ### Markdown Formatting Contract
         - Every final response must be structured with polished Markdown. Open with a short intro sentence, then use level-2 headings (`##`) or bold labels to separate each product/topic.
-        - List metrics with bullet or numbered lists so each line follows the pattern `- **Store Name:** 12 units` or `1. **Product:** detail`. Avoid long paragraphs.
-        - When comparing more than two stores/products, emit a Markdown table with headers and align Arabic/English labels on separate lines so bilingual content stays readable. Use only the data already returned by tools (especially `table_aggregate`)—never call `read_document` solely to improve formatting.
+        - Use a short bullet/numbered list only when there are one or two metrics to highlight; for three or more rows switch entirely to a Markdown table and skip repeating the same numbers in bullets or paragraphs.
+        - When comparing more than two stores/products, emit a Markdown table with headers and align Arabic/English labels on separate lines so bilingual content stays readable. Use only the data already returned by tools (especially `table_aggregate`)—never call `read_document` solely to improve formatting, and do not restate the exact table cells elsewhere in the answer.
+        - When a table is required (three or more items), present the underlying numbers only once inside that table; skip serialised product-by-product paragraphs before it. If needed, follow the table with a brief “Key observations” paragraph instead of repeating the raw values.
         - Ensure all Markdown markers are balanced—never leave stray `**`, `_`, or ``` fences. If the model cannot format a section cleanly, fall back to plain text for that section only.
-        - Keep Arabic sentences grouped together (separated by blank lines) and, when mixing languages, prefix each block with a bold label indicating the language (e.g., `**Arabic:** ...`).
+        - Keep Arabic sentences grouped together (separated by blank lines) and, when mixing languages, prefix each block with a bold label indicating the language (e.g., `**Arabic:** ...`). Never add a second-language translation unless the visitor or retrieved snippet already uses that language.
+        - Mirror the Markdown layout in `response_blocks`: populate an array where each entry is either `{{"type":"text","heading":"optional","body_md":[...],"rtl":bool}}` or `{{"type":"table","title":"optional","columns":[{{"key":"k","label":"Name","align":"left|center|right"}}],"rows":[{{"cells":["value1","value2"],"rtl":bool}}]}}`. Use tables when you already listed structured comparisons, use text blocks for narrative sections, and omit the field entirely if there is nothing to render. Never invent additional data, add duplicate-language translations, or trigger extra tool calls just to fill the blocks—reuse only the evidence already returned. Keep these blocks in the JSON response metadata only—do not display the `response_blocks` array (or any JSON keys) in the visitor-visible Markdown; never write the literal string `response_blocks` in `response_text`.
 
         ### Evidence Rules
         - Use only snippets/reads returned this turn. No outside knowledge, file names, or citations.
@@ -123,6 +130,7 @@ def build_system_message(agent: AgentProfile) -> str:
             • Call once per dimension set: include all requested products + store/region columns in the first call.
             • Reuse the same `document_id`. Repeat only if the visitor asks for a new metric or column set.
             • Answer directly from `rows[].contributions`; list every contributor returned.
+            • Do NOT follow a successful table_aggregate with `read_document` purely to reformat or restate the same data (including for `response_blocks`).
         - `read_document`
             • Use only when a non-table snippet is summary/preview and you truly need the detail.
             • Never read just to satisfy a flag; table rows already satisfy reads.
@@ -137,9 +145,12 @@ def build_system_message(agent: AgentProfile) -> str:
         """
     ).strip()
 
+    resolved_business_name = business_name or "your business"
+    resolved_industry = business_industry or "general services"
+
     return textwrap.dedent(
         f"""
-        You are {agent.name}, the {agent.role or "AI Customer Specialist"} for {{business_name}}. Maintain a {tone_label} tone aligned to the agent profile.
+        You are {agent.name}, the {agent.role or "AI Customer Specialist"} for {resolved_business_name}. Maintain a {tone_label} tone aligned to the agent profile in the {resolved_industry} space.
 
         {behavior_contract}
 
@@ -168,12 +179,16 @@ def build_messages(*, conversation: Conversation, user_message: str) -> list[Map
             messages.append({"role": "system", "content": guard_summary})
         agent = conversation.agent_profile
         if agent:
+            business_profile = conversation.business_profile
+            business_name = business_profile.name if business_profile else "your business"
+            business_industry = business_profile.industry if business_profile and business_profile.industry else "general services"
             messages.append(
                 {
                     "role": "system",
-                    "content": build_system_message(agent).format(
-                        business_name=conversation.business_profile.name,
-                        business_industry=conversation.business_profile.industry or "general services",
+                    "content": build_system_message(
+                        agent,
+                        business_name=business_name,
+                        business_industry=business_industry,
                     ),
                 }
             )
@@ -291,7 +306,7 @@ def build_planner_messages(
 ) -> list[Mapping[str, object]]:
     """
     Build a lightweight planning prompt that asks the model to return
-    structured JSON (response_text/actions/extractions) based on the latest
+    structured JSON (response_text/response_blocks/actions/extractions) based on the latest
     exchange. The streamed `answer_text` is considered authoritative for the
     final response shown to the visitor; the planner focuses on actions and
     extractions only.
@@ -318,7 +333,7 @@ def build_planner_messages(
     system_sections.append(
         (
             "You must reply with JSON matching the schema provided via "
-            "`response_format` (response_text/actions/extractions). "
+            "`response_format` (response_text/response_blocks/actions/extractions). "
             "Set response_text to an empty string or a brief summary; the "
             "frontend will use the already-streamed assistant answer."
         )
@@ -329,7 +344,7 @@ def build_planner_messages(
             "Planner guardrails: honor identifier gate status; do not request identifiers beyond the required set; "
             "do not propose tools already executed this turn; never suggest another `search_knowledge` call (the assistant already used its single batch); "
             "respect coverage ledger readiness (no rereads for ready/full snippets). "
-            "Keep the reply strictly in JSON (response_text/actions/extractions) with no narration."
+            "Keep the reply strictly in JSON (response_text/response_blocks/actions/extractions) with no narration."
         )
     )
 

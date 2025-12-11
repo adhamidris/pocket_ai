@@ -13,6 +13,7 @@ import copy
 import json
 import logging
 import re
+import time
 import uuid
 from typing import Callable, Iterable, Mapping, MutableMapping, Sequence
 
@@ -33,6 +34,7 @@ from apps.services.ai_orchestrator import (
     StreamingTurnContext,
 )
 from apps.services.rag_logging import structured_log
+from apps.services.response_blocks import normalize_response_blocks
 
 from . import prompts, tools
 from .sanitizer import (
@@ -67,6 +69,11 @@ TABLE_CACHE_KEY_FIELDS = (
     "max_rows",
     "mode",
     "value_column",
+)
+
+INLINE_RESPONSE_BLOCK_PATTERN = re.compile(
+    r"(?:^|\n)\s*(?:[-*+]\s*)?[\"'`]?response(?:_|\s)?blocks[\"'`]?\s*:?",
+    re.IGNORECASE,
 )
 
 
@@ -558,6 +565,9 @@ class McpOrchestratorService:
                                 conversation,
                             )
 
+                        call_origin = "live"
+                        call_duration_ms: float | None = None
+                        cache_hit = False
                         with TRACER.start_as_current_span("portal.mcp.tool_call") as tool_span:
                             if tool_span.is_recording():
                                 tool_span.set_attribute("mcp.tool_name", tool_name)
@@ -566,9 +576,13 @@ class McpOrchestratorService:
                                 tool_span.set_attribute("mcp.tool_args_keys", sorted(arguments.keys()))
                             if cached_table_result is not None:
                                 tool_result = cached_table_result
+                                cache_hit = True
+                                call_origin = "cache"
                             elif duplicate_result:
                                 tool_result = duplicate_result
+                                call_origin = "duplicate"
                             else:
+                                call_start = time.perf_counter()
                                 try:
                                     tool_result = tools.execute_tool(
                                         tool_name,
@@ -590,6 +604,8 @@ class McpOrchestratorService:
                                         level=logging.WARNING,
                                     )
                                     tool_result = self._constraint_error_payload(tool_name, exc)
+                                finally:
+                                    call_duration_ms = (time.perf_counter() - call_start) * 1000.0
                         if tool_name == "table_aggregate":
                             self._record_table_column_hint(arguments, tool_context, tool_result)
                             if cached_table_result is None and table_cache_key:
@@ -608,6 +624,10 @@ class McpOrchestratorService:
                                 "page": tool_result.get("page"),
                                 "token_budget": tool_result.get("token_budget"),
                                 "throttle_notice": bool(tool_result.get("throttle_notice")),
+                                "duration_ms": int(call_duration_ms) if call_duration_ms is not None else 0,
+                                "origin": call_origin,
+                                "cache_hit": cache_hit,
+                                "duplicate_short_circuit": bool(duplicate_result),
                             }
                         )
                         if self._is_knowledge_tool(tool_name):
@@ -734,6 +754,8 @@ class McpOrchestratorService:
             streaming_mode = "final"
             answer_streamed_chunks[:] = list(first_pass_streamed_chunks)
             final_separator_pending = False
+            response_blocks = self._extract_response_blocks(normalized_assistant)
+            clean_single = str(normalized_assistant.get("content") or clean_single)
             return {
                 "assistant_message": normalized_assistant,
                 "tool_context": tool_context,
@@ -741,6 +763,7 @@ class McpOrchestratorService:
                 "clean_answer_text": clean_single,
                 "dropped_sentences": tuple(dropped_single),
                 "llm_strategy": "mcp_tools_stream_single_pass",
+                "response_blocks": response_blocks,
             }
 
         # If identifier gating blocked retrieval and nothing was read, respond deterministically.
@@ -771,6 +794,7 @@ class McpOrchestratorService:
                 "clean_answer_text": requirement_text,
                 "dropped_sentences": tuple(),
                 "llm_strategy": "mcp_tools_stream_only",
+                "response_blocks": tuple(),
             }
 
         single_pass_detected = bool(single_pass_candidate and (not tool_phase_assistant_message or not tool_phase_assistant_message.get("tool_calls")))
@@ -836,6 +860,8 @@ class McpOrchestratorService:
         all_dropped = stream_dropped + dropped_sentences
         normalized_assistant_msg = dict(final_assistant_message or {})
         normalized_assistant_msg["content"] = clean_answer_text
+        response_blocks = self._extract_response_blocks(normalized_assistant_msg)
+        clean_answer_text = str(normalized_assistant_msg.get("content") or clean_answer_text)
 
         self._log_turn_metrics(conversation, tool_context)
         self._persist_table_cache(conversation, tool_context)
@@ -846,6 +872,7 @@ class McpOrchestratorService:
             "clean_answer_text": clean_answer_text,
             "dropped_sentences": tuple(all_dropped),
             "llm_strategy": "mcp_tools_stream_loop",
+            "response_blocks": response_blocks,
         }
 
     @staticmethod
@@ -890,6 +917,7 @@ class McpOrchestratorService:
         clean_answer_text = str(result.get("clean_answer_text") or "")
         tool_context = result.get("tool_context")
         assistant_message = result.get("assistant_message") or {}
+        response_blocks = tuple(result.get("response_blocks") or ())
         if not streamed_chunks and clean_answer_text:
             reconstructed: list[str] = []
             logger.debug(
@@ -910,7 +938,8 @@ class McpOrchestratorService:
             },
         }
         if tool_context:
-            diagnostics["tool_trace"] = list(getattr(tool_context, "tool_trace", ()))
+            trace_entries = list(getattr(tool_context, "tool_trace", ()))
+            diagnostics["tool_trace"] = trace_entries
             diagnostics["coverage_ledger"] = list(getattr(tool_context, "coverage_ledger", ()))
             diagnostics["knowledge_reads"] = list(getattr(tool_context, "knowledge_reads", ()))
             diagnostics["knowledge_results"] = list(getattr(tool_context, "knowledge_results", ()))
@@ -926,6 +955,31 @@ class McpOrchestratorService:
                     diagnostics["identifier_gate"] = gate.snapshot()  # type: ignore[attr-defined]
                 except Exception:
                     diagnostics["identifier_gate"] = None
+            if trace_entries:
+                tool_metrics: dict[str, dict[str, float | int]] = {}
+                for entry in trace_entries:
+                    tool_name = entry.get("tool")
+                    if not tool_name:
+                        continue
+                    bucket = tool_metrics.setdefault(
+                        tool_name,
+                        {"count": 0, "cache_hits": 0, "total_ms": 0.0},
+                    )
+                    bucket["count"] += 1
+                    if entry.get("cache_hit"):
+                        bucket["cache_hits"] += 1
+                    duration = entry.get("duration_ms")
+                    if isinstance(duration, (int, float)):
+                        bucket["total_ms"] += max(0.0, float(duration))
+                diagnostics["tool_metrics"] = [
+                    {
+                        "tool": name,
+                        "count": stats["count"],
+                        "cache_hits": stats["cache_hits"],
+                        "total_ms": round(stats["total_ms"], 2),
+                    }
+                    for name, stats in tool_metrics.items()
+                ]
         llm_source = "provider"
         if diagnostics.get("llm_strategy"):
             llm_source = str(diagnostics.get("llm_strategy"))
@@ -964,6 +1018,7 @@ class McpOrchestratorService:
             streamed_chunks=streamed_chunks,
             plan=None,
             tool_context=tool_context,
+            response_blocks=response_blocks,
         )
 
     def finalize_turn(self, context: StreamingTurnContext) -> AiOrchestratorPlan:
@@ -974,6 +1029,7 @@ class McpOrchestratorService:
             extractions=tuple(context.extractions),
             diagnostics=dict(context.knowledge_diagnostics),
             ingestion_warnings=tuple(),
+            response_blocks=tuple(context.response_blocks),
         )
 
     def run_turn(
@@ -1022,6 +1078,14 @@ class McpOrchestratorService:
                 "examples": dropped_list[:3],
             },
         }
+        block_source = None
+        for key in ("response_blocks", "responseBlocks", "response_blocks_json"):
+            if isinstance(assistant_message, Mapping) and key in assistant_message:
+                candidate = assistant_message.get(key)
+                if candidate is not None:
+                    block_source = candidate
+                    break
+        response_blocks = normalize_response_blocks(block_source)
         if getattr(tool_context, "identifier_gate", None):
             snapshot = None
             try:
@@ -1046,6 +1110,7 @@ class McpOrchestratorService:
             extractions=extractions,
             diagnostics=diagnostics,
             ingestion_warnings=ingestion_warnings,
+            response_blocks=response_blocks,
         )
 
     def _extract_planned_actions(
@@ -1199,6 +1264,11 @@ class McpOrchestratorService:
             merged["actions"] = planner_message.get("actions")
         if isinstance(planner_message.get("extractions"), list):
             merged["extractions"] = planner_message.get("extractions")
+        if not merged.get("response_blocks"):
+            for key in ("response_blocks", "responseBlocks", "response_blocks_json"):
+                if key in planner_message and planner_message.get(key) is not None:
+                    merged["response_blocks"] = planner_message.get(key)
+                    break
         return merged
 
     def run_planner_only(
@@ -1248,17 +1318,81 @@ class McpOrchestratorService:
                     "type": "object",
                     "properties": {
                         "response_text": {"type": "string"},
+                        "response_blocks": {
+                            "type": "array",
+                            "items": {"type": "object"},
+                        },
                         "actions": {"type": "array", "items": {"type": "object"}},
                         "extractions": {"type": "array", "items": {"type": "object"}},
                         "placeholder_response": {"type": "string"},
                         "placeholder_thinking": {"type": "string"},
                     },
-                    "required": ["response_text"],
+                    "required": ["response_text", "response_blocks"],
                     "additionalProperties": True,
                 },
                 "strict": False,
             },
         }
+
+    @staticmethod
+    def _extract_response_blocks(source: Mapping[str, object] | None) -> tuple[dict[str, object], ...]:
+        if not isinstance(source, Mapping):
+            return tuple()
+        block_source = None
+        for key in ("response_blocks", "responseBlocks", "response_blocks_json"):
+            if key in source and source.get(key) is not None:
+                block_source = source.get(key)
+                break
+        if isinstance(source, MutableMapping):
+            if block_source is None:
+                inline = McpOrchestratorService._extract_inline_response_blocks(source)
+                if inline is not None:
+                    block_source = inline
+            else:
+                # Even when structured blocks exist, strip any inline duplicates from the visible content.
+                McpOrchestratorService._extract_inline_response_blocks(source)
+        return normalize_response_blocks(block_source)
+
+    @staticmethod
+    def _extract_inline_response_blocks(message: MutableMapping[str, object]) -> object | None:
+        content = message.get("content")
+        if not isinstance(content, str):
+            return None
+        match = None
+        for candidate in INLINE_RESPONSE_BLOCK_PATTERN.finditer(content):
+            match = candidate
+        if not match:
+            return None
+        prefix = content[: match.start()]
+        suffix = content[match.end():]
+        block_source = McpOrchestratorService._parse_inline_block_payload(suffix)
+        if block_source is None:
+            return None
+        message["content"] = prefix.rstrip()
+        return block_source
+
+    @staticmethod
+    def _parse_inline_block_payload(text: str) -> object | None:
+        remainder = text.lstrip()
+        if remainder.startswith(":"):
+            remainder = remainder[1:].lstrip()
+        if remainder.startswith("```"):
+            remainder = remainder[3:].lstrip()
+            if remainder.lower().startswith("json"):
+                remainder = remainder[4:].lstrip()
+            fence_end = remainder.find("```")
+            snippet = remainder if fence_end < 0 else remainder[:fence_end]
+        else:
+            snippet = remainder
+        snippet = snippet.strip()
+        if not snippet:
+            return None
+        decoder = json.JSONDecoder()
+        try:
+            parsed, _ = decoder.raw_decode(snippet)
+        except ValueError:
+            return None
+        return parsed
 
     @staticmethod
     def _is_knowledge_tool(name: str) -> bool:

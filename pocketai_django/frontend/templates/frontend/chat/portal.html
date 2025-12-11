@@ -119,5 +119,5 @@
 
 {% block extra_js %}
   {{ portal.bootstrap_payload|json_script:portal.bootstrap_script_id }}
-  <script src="{% static 'js/chat-portal.js' %}"></script>
+  <script src="{% static 'js/chat-portal.js' %}?v={{ portal.asset_version }}"></script>
 {% endblock %}

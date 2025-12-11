@@ -67,7 +67,11 @@ class McpObservabilityTests(TestCase):
         self.assertTrue(any("dropped_sentence" in entry for entry in logs.output))
 
     def test_prompts_include_no_narration_language(self) -> None:
-        system_prompt = prompts.build_system_message(self.agent)
+        system_prompt = prompts.build_system_message(
+            self.agent,
+            business_name=self.business.name,
+            business_industry=self.business.industry or "general services",
+        )
         self.assertIn("Do not narrate internal steps", system_prompt)
         final_messages = prompts.build_final_answer_messages(
             conversation=self.conversation,

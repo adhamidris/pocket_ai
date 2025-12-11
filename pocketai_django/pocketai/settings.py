@@ -5,6 +5,7 @@ import base64
 import binascii
 import hashlib
 import os
+import time
 
 # Base directory of the Django project (the folder that contains manage.py)
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -160,6 +161,9 @@ except (TypeError, ValueError):
     PORTAL_SPINNER_PHASE_INTERVAL = 5.5
 if PORTAL_SPINNER_PHASE_INTERVAL < 0:
     PORTAL_SPINNER_PHASE_INTERVAL = 0.0
+PORTAL_ASSET_VERSION = os.getenv("PORTAL_ASSET_VERSION")
+if not PORTAL_ASSET_VERSION:
+    PORTAL_ASSET_VERSION = str(int(time.time()))
 
 MIDDLEWARE = [
     "django.middleware.security.SecurityMiddleware",

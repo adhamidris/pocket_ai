@@ -380,8 +380,12 @@ class OpenAIChatProvider:
                                 "required": ["type", "payload"],
                             },
                         },
+                        "response_blocks": {
+                            "type": "array",
+                            "items": {"type": "object"},
+                        },
                     },
-                    "required": ["response_text", "actions", "extractions"],
+                    "required": ["response_text", "response_blocks", "actions", "extractions"],
                 },
             },
         }
@@ -596,8 +600,12 @@ class DeepSeekChatProvider(OpenAIChatProvider):
                                 "required": ["type", "payload"],
                             },
                         },
+                        "response_blocks": {
+                            "type": "array",
+                            "items": {"type": "object"},
+                        },
                     },
-                    "required": ["response_text", "actions", "extractions"],
+                    "required": ["response_text", "response_blocks", "actions", "extractions"],
                 },
             },
         }
@@ -960,6 +968,7 @@ def _consume_chat_completion_stream(
     finish_reason: str | None = None
     last_message_content: str | None = None
     last_message_tool_calls: list[dict[str, object]] | None = None
+    last_message_payload: dict[str, object] | None = None
 
     def _normalize_delta(chunk: str) -> str:
         return chunk or ""
@@ -1031,6 +1040,7 @@ def _consume_chat_completion_stream(
         # Capture any full message payload sent on streaming frames (some providers
         # emit the final message in the last SSE event).
         if isinstance(message_block, Mapping):
+            last_message_payload = dict(message_block)
             msg_content = message_block.get("content")
             if isinstance(msg_content, list):
                 joined = "".join(part.get("text", "") for part in msg_content if isinstance(part, Mapping)).strip()
@@ -1059,7 +1069,14 @@ def _consume_chat_completion_stream(
             "tool_calls": last_message_tool_calls,
         }
     else:
-        message = {"role": role or "assistant", "content": assembled_text}
+        if last_message_payload:
+            message = dict(last_message_payload)
+            if assembled_text:
+                message["content"] = assembled_text
+            else:
+                message.setdefault("content", "")
+        else:
+            message = {"role": role or "assistant", "content": assembled_text}
 
     elapsed_ms = int((time.monotonic() - start_first) * 1000)
     first_ms = int((first_delta_at - start_first) * 1000) if first_delta_at else None
@@ -1334,6 +1351,11 @@ class OpenAIToolsProvider(BaseMcpProvider):
                     parsed = {"response_text": text, "actions": [], "extractions": []}
 
                 response_text = str(parsed.get("response_text") or "").strip()
+                response_blocks = None
+                for key in ("response_blocks", "responseBlocks", "response_blocks_json"):
+                    if key in parsed and parsed.get(key) is not None:
+                        response_blocks = parsed.get(key)
+                        break
 
                 if elapsed_ms is not None:
                     structured_log(
@@ -1355,6 +1377,7 @@ class OpenAIToolsProvider(BaseMcpProvider):
                     "extractions": parsed.get("extractions") or [],
                     "placeholder_response": parsed.get("placeholder_response"),
                     "placeholder_thinking": parsed.get("placeholder_thinking"),
+                    "response_blocks": response_blocks,
                 }
             except Exception as exc:
                 if span and span.is_recording():

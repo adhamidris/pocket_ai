@@ -28,3 +28,6 @@ dist-ssr
 backend/.env
 .env
 pocketai_django/.venv/
+
+.gemini/
+gha-creds-*.json

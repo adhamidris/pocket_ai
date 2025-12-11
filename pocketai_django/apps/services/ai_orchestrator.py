@@ -53,6 +53,7 @@ from apps.services.feature_flags import FeatureFlagService, FeatureState
 from apps.services.llm_provider import BaseLLMProvider, PromptGenerationError
 from apps.services.quality_monitor import QualityMonitor
 from apps.services.rag_logging import rag_log
+from apps.services.response_blocks import normalize_response_blocks
 from core.metrics import latency_monitor
 from opentelemetry import trace as otel_trace
 
@@ -467,6 +468,7 @@ class AiOrchestratorPlan:
     extractions: Sequence[ExtractionPlan]
     diagnostics: dict
     ingestion_warnings: Sequence[Mapping[str, object]] = dataclasses.field(default_factory=tuple)
+    response_blocks: Sequence[Mapping[str, object]] = dataclasses.field(default_factory=tuple)
 
 
 @dataclasses.dataclass(frozen=True)
@@ -489,6 +491,7 @@ class StreamingTurnContext:
     streamed_chunks: Sequence[str]
     plan: AiOrchestratorPlan | None = None
     tool_context: object | None = None
+    response_blocks: Sequence[Mapping[str, object]] = dataclasses.field(default_factory=tuple)
 
 
 @dataclasses.dataclass(frozen=True)
@@ -4007,6 +4010,7 @@ class LlmPlan:
     planned_actions: Sequence[PlannedAction]
     extractions: Sequence[ExtractionPlan]
     knowledge_requests: Sequence[str]
+    response_blocks: Sequence[Mapping[str, object]] = dataclasses.field(default_factory=tuple)
 
 
 class AiOrchestratorService:
@@ -4471,6 +4475,7 @@ class AiOrchestratorService:
 
         llm_plan = final_plan
         resolved_citations = tuple(snippet_lookup.values()) if snippet_lookup else tuple(citations)
+        response_blocks: tuple[Mapping[str, object], ...] = tuple()
         if llm_plan:
             if knowledge_loading and on_status_change:
                 on_status_change("responding")
@@ -4479,6 +4484,8 @@ class AiOrchestratorService:
             ]
             extractions = list(llm_plan.extractions)
             response_text = (llm_plan.response_text or "").strip()
+            # ensure downstream tuples stay JSON-friendly
+            response_blocks = tuple(llm_plan.response_blocks)
             llm_source = "provider"
         else:
             planned_actions, extractions = self._plan_actions(conversation=conversation, user_message=query)
@@ -4518,6 +4525,7 @@ class AiOrchestratorService:
             cached_snippet_count=len(cached_entries),
             llm_source=llm_source,
             streamed_chunks=tuple(streamed_chunks),
+            response_blocks=response_blocks,
         )
 
     def run_turn(
@@ -4630,6 +4638,7 @@ class AiOrchestratorService:
             extractions=context.extractions,
             diagnostics=diagnostics,
             ingestion_warnings=tuple(ingestion_warnings),
+            response_blocks=tuple(context.response_blocks),
         )
 
     def _compute_answer_confidence(
@@ -5947,11 +5956,19 @@ class AiOrchestratorService:
                 )
             )
 
+        block_source = None
+        for key in ("response_blocks", "responseBlocks", "response_blocks_json"):
+            if key in raw_payload and raw_payload.get(key) is not None:
+                block_source = raw_payload.get(key)
+                break
+        response_blocks = normalize_response_blocks(block_source)
+
         return LlmPlan(
             response_text=text,
             planned_actions=planned_actions,
             extractions=extractions,
             knowledge_requests=tuple(knowledge_requests),
+            response_blocks=response_blocks,
         )
 
     @staticmethod
