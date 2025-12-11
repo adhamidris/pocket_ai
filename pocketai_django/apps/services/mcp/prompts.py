@@ -28,6 +28,11 @@ from apps.services import display_tone_label
 TRACER = otel_trace.get_tracer(__name__)
 
 
+PLACEHOLDER_REMINDER = (
+    "Reminder: Each assistant turn may include only one short placeholder before the first tool call. After you acknowledge you're checking, every subsequent tool step must return tool_calls with empty content until you have the final visitor-facing answer. Never narrate internal steps between tools."
+)
+
+
 STAGE_HISTORY_DEFAULTS: Mapping[str, int] = {
     "initial_pass": 6,
     "tool_iteration": 6,
@@ -165,6 +170,7 @@ def build_messages(*, conversation: Conversation, user_message: str) -> list[Map
                     ),
                 }
             )
+            messages.append({"role": "system", "content": PLACEHOLDER_REMINDER})
 
         transcript_qs = conversation.messages.order_by("-sent_at", "-created_at")[:8]
         transcript = list(reversed(transcript_qs))
