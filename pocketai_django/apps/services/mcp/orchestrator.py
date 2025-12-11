@@ -56,6 +56,19 @@ from .identifier_registry import IdentifierGuardrail
 logger = logging.getLogger(__name__)
 TRACER = otel_trace.get_tracer(__name__)
 
+TABLE_CACHE_KEY_FIELDS = (
+    "document_id",
+    "match_column",
+    "match_values",
+    "columns",
+    "query",
+    "sheet_name",
+    "table_order_index",
+    "max_rows",
+    "mode",
+    "value_column",
+)
+
 
 class McpOrchestratorService:
     """
@@ -128,65 +141,17 @@ class McpOrchestratorService:
             )
             tool_context.identifier_gate = IdentifierGuardrail.from_conversation(conversation)
             with TRACER.start_as_current_span("portal.mcp.table_cache") as cache_span:
-                self._hydrate_table_cache(conversation, tool_context)
+                self._hydrate_table_result_cache(conversation, tool_context)
                 if cache_span.is_recording():
                     cache_span.set_attribute(
                         "mcp.cached_tables",
-                        len(getattr(tool_context, "table_results", ()) or ()),
+                        len(getattr(tool_context, "table_result_cache", {}) or {}),
                     )
-            cached_table_messages = prompts.build_cached_table_messages(
-                knowledge_results=tuple(tool_context.knowledge_results)
-            )
 
         if not self.provider:
             raise RuntimeError("MCP provider is not configured.")
 
         transcript = list(messages)
-        if cached_table_messages:
-            cached_row_count = 0
-            cached_uploads: set[str] = set()
-            for entry in cached_table_messages:
-                if entry.get("role") != "tool" or entry.get("name") != "table_aggregate":
-                    continue
-                cached_row_count += 1
-                payload = entry.get("content")
-                payload_data = None
-                if isinstance(payload, str):
-                    try:
-                        payload_data = json.loads(payload)
-                    except json.JSONDecodeError:
-                        payload_data = None
-                elif isinstance(payload, Mapping):
-                    payload_data = payload
-                if isinstance(payload_data, Mapping):
-                    snippets = payload_data.get("snippets")
-                    if isinstance(snippets, Sequence):
-                        for snippet in snippets:
-                            if isinstance(snippet, Mapping):
-                                upload_id = snippet.get("upload_id")
-                                if upload_id:
-                                    cached_uploads.add(str(upload_id))
-            structured_log(
-                "mcp",
-                "cache.table_injected",
-                {
-                    "cached_rows": cached_row_count,
-                    "message_count": len(cached_table_messages),
-                    "upload_ids": sorted(cached_uploads),
-                },
-                indent=1,
-                context={
-                    "conversation": conversation.id,
-                    "business": conversation.business_profile_id,
-                },
-                logger_obj=logger,
-            )
-            if transcript:
-                latest_user = transcript.pop()
-                transcript.extend(cached_table_messages)
-                transcript.append(latest_user)
-            else:
-                transcript = list(cached_table_messages)
         tool_phase_assistant_message: dict[str, object] | None = None
         final_assistant_message: dict[str, object] | None = None
         first_pass_streamed_chunks: list[str] = []
@@ -1571,47 +1536,37 @@ class McpOrchestratorService:
     @staticmethod
     def _cache_table_result(context: ToolExecutionContext, cache_key: tuple, payload: Mapping[str, object], limit: int = 4) -> None:
         context.table_result_cache[cache_key] = copy.deepcopy(payload)
+        context.table_result_cache_dirty.add(cache_key)
         while len(context.table_result_cache) > limit:
             first_key = next(iter(context.table_result_cache))
             context.table_result_cache.pop(first_key, None)
+            context.table_result_cache_dirty.discard(first_key)
 
     @staticmethod
     def _table_cache_entries(conversation: Conversation) -> list[dict[str, object]]:
         metadata = conversation.metadata or {}
         cache_entries = metadata.get("mcp_table_cache") if isinstance(metadata, Mapping) else None
-        if isinstance(cache_entries, list):
-            return [entry for entry in cache_entries if isinstance(entry, Mapping)]
-        return []
+        if not isinstance(cache_entries, list):
+            return []
+        return [entry for entry in cache_entries if isinstance(entry, Mapping)]
 
-    def _hydrate_table_cache(self, conversation: Conversation, context: ToolExecutionContext) -> None:
+    def _hydrate_table_result_cache(self, conversation: Conversation, context: ToolExecutionContext) -> None:
         cached_entries = self._table_cache_entries(conversation)
         if not cached_entries:
             return
         hydrated = 0
-        upload_ids: set[str] = set()
         for entry in cached_entries[:8]:
-            snippet = entry.get("snippet")
-            if not isinstance(snippet, Mapping):
+            cache_key = self._deserialize_table_cache_key(entry.get("cache_key"))
+            cached_result = entry.get("result")
+            if not cache_key or not isinstance(cached_result, Mapping):
                 continue
-            normalized = dict(snippet)
-            normalized.setdefault("read_state", "full")
-            normalized.setdefault("page_mode", "structured_table")
-            normalized.setdefault("search_stage", normalized.get("search_stage") or "table_cached")
-            normalized["suppress_in_prompt"] = False
-            self._record_knowledge_outputs(context, {"snippets": [normalized]})
+            context.table_result_cache[cache_key] = copy.deepcopy(cached_result)
             hydrated += 1
-            snippet_upload = normalized.get("upload_id") or entry.get("upload_id")
-            if snippet_upload:
-                upload_ids.add(str(snippet_upload))
         if hydrated:
             structured_log(
                 "mcp",
-                "cache.table_hydrate",
-                {
-                    "total_cached": len(cached_entries),
-                    "hydrated_rows": hydrated,
-                    "upload_ids": sorted(upload_ids),
-                },
+                "cache.table_result_hydrate",
+                {"entries": hydrated},
                 indent=1,
                 context={
                     "conversation": conversation.id,
@@ -1737,32 +1692,30 @@ class McpOrchestratorService:
         return None
 
     def _persist_table_cache(self, conversation: Conversation, context: ToolExecutionContext) -> None:
-        rows = getattr(context, "table_aggregate_rows", [])
-        if not rows:
+        dirty_keys = getattr(context, "table_result_cache_dirty", set())
+        if not dirty_keys:
             return
         metadata = conversation.metadata or {}
         cache_entries = self._table_cache_entries(conversation)
-        cache_map: dict[tuple[str, int], dict[str, object]] = {}
+        cache_map: dict[tuple, dict[str, object]] = {}
         for existing in cache_entries:
-            upload_id = str(existing.get("upload_id") or "").strip()
-            row_index = existing.get("row_index")
-            if not upload_id or row_index is None:
+            cache_key = self._deserialize_table_cache_key(existing.get("cache_key"))
+            if not cache_key:
                 continue
-            cache_map[(upload_id, int(row_index))] = dict(existing)
+            cache_map[cache_key] = dict(existing)
         changed = False
-        for row in rows:
-            upload_id = str(row.get("upload_id") or "").strip()
-            row_index = row.get("row_index")
-            snippet = row.get("snippet")
-            if not upload_id or row_index is None or not isinstance(snippet, Mapping):
+        for key in dirty_keys:
+            payload = context.table_result_cache.get(key)
+            serialized_key = self._serialize_table_cache_key(key)
+            if not payload or not serialized_key:
                 continue
-            snapshot = self._snapshot_snippet(snippet)
-            cache_map[(upload_id, int(row_index))] = {
-                "upload_id": upload_id,
-                "row_index": int(row_index),
-                "table_order_index": row.get("table_order_index"),
-                "sheet_name": row.get("sheet_name"),
-                "snippet": snapshot,
+            cache_map[key] = {
+                "cache_key": serialized_key,
+                "result": self._snapshot_table_result(payload),
+                "document_id": key[0],
+                "match_column": key[1],
+                "match_values": list(key[2] or ()),
+                "columns": list(key[3] or ()),
                 "updated_at": timezone.now().isoformat(),
             }
             changed = True
@@ -1773,6 +1726,7 @@ class McpOrchestratorService:
         new_metadata["mcp_table_cache"] = ordered
         conversation.metadata = new_metadata
         conversation.save(update_fields=["metadata"])
+        context.table_result_cache_dirty.clear()
 
     @staticmethod
     def _snapshot_snippet(snippet: Mapping[str, object]) -> dict[str, object]:
@@ -1780,6 +1734,50 @@ class McpOrchestratorService:
             return json.loads(json.dumps(snippet, default=str))
         except Exception:
             return dict(snippet)
+
+    @staticmethod
+    def _snapshot_table_result(result: Mapping[str, object]) -> dict[str, object]:
+        try:
+            return json.loads(json.dumps(result, default=str))
+        except Exception:
+            return dict(result)
+
+    @staticmethod
+    def _serialize_table_cache_key(cache_key: tuple | None) -> Mapping[str, object] | None:
+        if not cache_key:
+            return None
+        if len(cache_key) != len(TABLE_CACHE_KEY_FIELDS):
+            return None
+        payload: dict[str, object] = {}
+        for index, field in enumerate(TABLE_CACHE_KEY_FIELDS):
+            value = cache_key[index]
+            if field in {"match_values", "columns"}:
+                payload[field] = list(value or ())
+            else:
+                payload[field] = value
+        return payload
+
+    @staticmethod
+    def _deserialize_table_cache_key(serialized: object) -> tuple | None:
+        if serialized is None:
+            return None
+        if isinstance(serialized, Sequence) and not isinstance(serialized, (str, bytes, bytearray)):
+            if len(serialized) != len(TABLE_CACHE_KEY_FIELDS):
+                return None
+            return tuple(serialized)
+        if not isinstance(serialized, Mapping):
+            return None
+        values: list[object] = []
+        for field in TABLE_CACHE_KEY_FIELDS:
+            value = serialized.get(field)
+            if field in {"match_values", "columns"}:
+                if isinstance(value, Sequence) and not isinstance(value, (str, bytes, bytearray)):
+                    values.append(tuple(value))
+                else:
+                    values.append(tuple())
+            else:
+                values.append(value)
+        return tuple(values)
 
     @staticmethod
     def _coerce_assistant_message(payload: dict | None) -> dict[str, object]:

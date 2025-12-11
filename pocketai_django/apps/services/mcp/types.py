@@ -71,6 +71,7 @@ class ToolExecutionContext:
     read_cache: dict[Tuple[str, int, str, int, int | None], dict[str, object]] = dataclasses.field(default_factory=dict)
     table_column_filters: dict[str, list[str]] = dataclasses.field(default_factory=dict)
     table_result_cache: dict[tuple, dict[str, object]] = dataclasses.field(default_factory=dict)
+    table_result_cache_dirty: set[tuple] = dataclasses.field(default_factory=set)
 
     def reserve_chunk_reads(self, count: int) -> None:
         """Ensure the requested chunk reads do not exceed the per-turn budget."""
