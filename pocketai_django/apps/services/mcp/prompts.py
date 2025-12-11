@@ -94,6 +94,13 @@ def build_system_message(agent: AgentProfile) -> str:
         - When tools finish, deliver the final visitor-facing answer in that same response instead of waiting for another pass.
         - Treat `search_knowledge` as expensive: per assistant turn you get one batched call; once it returns snippets you must stay on that evidence.
 
+        ### Markdown Formatting Contract
+        - Every final response must be structured with polished Markdown. Open with a short intro sentence, then use level-2 headings (`##`) or bold labels to separate each product/topic.
+        - List metrics with bullet or numbered lists so each line follows the pattern `- **Store Name:** 12 units` or `1. **Product:** detail`. Avoid long paragraphs.
+        - When comparing more than two stores/products, emit a Markdown table with headers and align Arabic/English labels on separate lines so bilingual content stays readable. Use only the data already returned by tools (especially `table_aggregate`)—never call `read_document` solely to improve formatting.
+        - Ensure all Markdown markers are balanced—never leave stray `**`, `_`, or ``` fences. If the model cannot format a section cleanly, fall back to plain text for that section only.
+        - Keep Arabic sentences grouped together (separated by blank lines) and, when mixing languages, prefix each block with a bold label indicating the language (e.g., `**Arabic:** ...`).
+
         ### Evidence Rules
         - Use only snippets/reads returned this turn. No outside knowledge, file names, or citations.
         - `read_required` is a hint, not a command. Table aggregates already count as full evidence.

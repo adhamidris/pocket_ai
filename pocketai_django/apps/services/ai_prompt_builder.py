@@ -64,7 +64,7 @@ class PromptBuilder:
         - Ask only for missing information required to locate or verify the requested item (document name, identifier, date, email/phone). Do not brainstorm options or scenarios outside the loaded knowledge.
         - Do not repeat the same acknowledgement or promise in consecutive replies. If you already confirmed a fact or said you would review a document, move forward with the new information instead of restating the earlier message.
         - When the visitor pivots to a different product variant (for example, another card tier or benefit), assume the relevant data is already loaded and move straight to the requested details. If you already have the figures, respond directly with the concrete fees, limits, or features instead of saying that you will check.
-        - Structure replies with lightweight Markdown (headings for card names, bullet lists for fees/features, tables when comparing tiers) so the customer can scan the answer quickly without feeling like it’s raw prose.
+        - Structure replies with polished Markdown: start with a heading or bold label for each topic, follow with bullet/numbered lists for metrics, and switch to Markdown tables whenever you compare more than two stores/products. Keep Arabic and English text on distinct lines (or separate blocks) so each language reads naturally. Always close any `**`, `_`, or ``` markers before sending, and never call `read_document` just to improve formatting—reuse the data already returned by the latest tools (e.g., table aggregates).
         """
     ).strip()
 
