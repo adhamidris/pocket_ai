@@ -194,6 +194,7 @@ class McpOrchestratorService:
         streaming_mode = "initial"
         final_separator_pending = False
         last_stream_char = ""
+        sentence_space_pending = False
         single_pass_candidate: str | None = None
         first_stream_tool_calls: list[Mapping[str, object]] = []
         first_stream_message: dict[str, object] | None = None
@@ -218,7 +219,7 @@ class McpOrchestratorService:
         def _emit_tokens(text: str) -> None:
             if not text:
                 return
-            nonlocal final_separator_pending
+            nonlocal final_separator_pending, sentence_space_pending
             target = first_pass_streamed_chunks if streaming_mode == "initial" else answer_streamed_chunks
             if streaming_mode != "initial":
                 if final_separator_pending and not (last_stream_char and last_stream_char.isspace()):
@@ -231,7 +232,13 @@ class McpOrchestratorService:
                 if not token:
                     continue
                 first_char = token[0]
-                if last_stream_char and not last_stream_char.isspace() and first_char.isalnum():
+                if sentence_space_pending:
+                    if first_char.isspace():
+                        sentence_space_pending = False
+                    else:
+                        _append_chunk(" ", target)
+                        sentence_space_pending = False
+                if last_stream_char and last_stream_char.isalnum() and first_char.isalnum():
                     _append_chunk(" ", target)
                 _append_chunk(token, target)
 
@@ -272,7 +279,7 @@ class McpOrchestratorService:
         # and we have content, we can keep this streamed text and skip the
         # second content call.
         def _first_stream_chunk(chunk: str) -> None:
-            nonlocal stream_buffer
+            nonlocal stream_buffer, sentence_space_pending
             if not chunk:
                 return
             stream_buffer = f"{stream_buffer}{chunk}"
@@ -281,6 +288,7 @@ class McpOrchestratorService:
                 if match:
                     sentence = match.group(1)
                     remainder = stream_buffer[match.end(1):]
+                    ensure_spacing = not bool(match.group(2))
                     stripped = sentence.strip()
                     if is_investigative_filler_with_level(stripped, filter_level=initial_stream_filter_level):
                         stream_dropped.append(stripped)
@@ -300,6 +308,8 @@ class McpOrchestratorService:
                         )
                     else:
                         _emit_sentence(sentence + (match.group(2) or ""))
+                        if ensure_spacing:
+                            sentence_space_pending = True
                     stream_buffer = remainder
                     continue
                 if is_investigative_filler_with_level(stream_buffer.strip(), filter_level=initial_stream_filter_level):
@@ -313,7 +323,7 @@ class McpOrchestratorService:
                 break
 
         def _answer_stream_chunk(chunk: str) -> None:
-            nonlocal stream_buffer
+            nonlocal stream_buffer, sentence_space_pending
             if not chunk:
                 return
             stream_buffer = f"{stream_buffer}{chunk}"
@@ -322,6 +332,7 @@ class McpOrchestratorService:
                 if match:
                     sentence = match.group(1)
                     remainder = stream_buffer[match.end(1):]
+                    ensure_spacing = not bool(match.group(2))
                     stripped = sentence.strip()
                     if is_investigative_filler_with_level(stripped, filter_level=filter_level):
                         stream_dropped.append(stripped)
@@ -341,6 +352,8 @@ class McpOrchestratorService:
                         )
                     else:
                         _emit_sentence(sentence + (match.group(2) or ""))
+                        if ensure_spacing:
+                            sentence_space_pending = True
                     stream_buffer = remainder
                     continue
                 if is_investigative_filler_with_level(stream_buffer.strip(), filter_level=filter_level):
