@@ -380,12 +380,8 @@ class OpenAIChatProvider:
                                 "required": ["type", "payload"],
                             },
                         },
-                        "response_blocks": {
-                            "type": "array",
-                            "items": {"type": "object"},
-                        },
                     },
-                    "required": ["response_text", "response_blocks", "actions", "extractions"],
+                    "required": ["response_text", "actions", "extractions"],
                 },
             },
         }
@@ -600,12 +596,8 @@ class DeepSeekChatProvider(OpenAIChatProvider):
                                 "required": ["type", "payload"],
                             },
                         },
-                        "response_blocks": {
-                            "type": "array",
-                            "items": {"type": "object"},
-                        },
                     },
-                    "required": ["response_text", "response_blocks", "actions", "extractions"],
+                    "required": ["response_text", "actions", "extractions"],
                 },
             },
         }

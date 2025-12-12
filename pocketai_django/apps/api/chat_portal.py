@@ -82,20 +82,6 @@ def _enqueue_status_events(queue, *, code: str, label: str | None = None, meta: 
     _queue_put(queue, payload)
 
 
-def _serialize_response_blocks(blocks: Iterable[Mapping[str, object]] | None) -> list[dict[str, object]]:
-    serialized: list[dict[str, object]] = []
-    if not blocks:
-        return serialized
-    for block in blocks:
-        if not isinstance(block, Mapping):
-            continue
-        try:
-            serialized.append(json.loads(json.dumps(block)))
-        except Exception:
-            serialized.append(dict(block))
-    return serialized
-
-
 LOW_INTENT_PATTERNS: tuple[re.Pattern[str], ...] = (
     re.compile(r"^(hi|hello|hey|hola|hallo|مرحبا|السلام عليكم|as-salamu alaykum)\b", re.IGNORECASE),
     re.compile(r"^(good\s+(morning|evening|afternoon|day|night))\b", re.IGNORECASE),
@@ -1001,8 +987,6 @@ def stream_send(request: HttpRequest) -> StreamingHttpResponse:
                     "diagnostics": plan.diagnostics,
                 }
             )
-            if plan.response_blocks:
-                message_metadata["response_blocks"] = _serialize_response_blocks(plan.response_blocks)
             answer_confidence = None
             if plan.diagnostics:
                 answer_confidence = plan.diagnostics.get("answer_confidence")
@@ -1164,10 +1148,6 @@ def stream_send(request: HttpRequest) -> StreamingHttpResponse:
                     "actions": pending_actions,
                     "diagnostics": base_plan.diagnostics,
                 }
-                block_payload: list[dict[str, object]] | None = None
-                if base_plan.response_blocks:
-                    block_payload = _serialize_response_blocks(base_plan.response_blocks)
-                    message_metadata["response_blocks"] = block_payload
                 if base_plan.diagnostics and base_plan.diagnostics.get("answer_confidence") is not None:
                     message_metadata["answer_confidence"] = base_plan.diagnostics.get("answer_confidence")
                 if base_plan.ingestion_warnings:
@@ -1191,8 +1171,6 @@ def stream_send(request: HttpRequest) -> StreamingHttpResponse:
                     "session_status": session_state.status,
                     "metadata_version": plan_holder.get("metadata_version", 1),
                 }
-                if block_payload:
-                    final_payload["response_blocks"] = block_payload
                 if base_plan.diagnostics:
                     answer_confidence = base_plan.diagnostics.get("answer_confidence")
                     if answer_confidence is not None:

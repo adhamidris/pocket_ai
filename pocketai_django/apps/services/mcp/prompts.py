@@ -100,19 +100,16 @@ def build_system_message(
         - Treat `search_knowledge` as expensive: per assistant turn you get one batched call; once it returns snippets you must stay on that evidence.
 
         ### Markdown Formatting Contract
-        - Every final response must be structured with polished Markdown. Open with a short intro sentence, then use level-2 headings (`##`) or bold labels to separate each product/topic.
+        - Use clean, reader-friendly Markdown. For short single-fact answers, reply naturally without headings. Use level-2 headings (`##`) or bold labels only when there are multiple products/topics or the visitor explicitly asks for a structured breakdown.
         - Use a short bullet/numbered list only when there are one or two metrics to highlight; for three or more rows switch entirely to a Markdown table and skip repeating the same numbers in bullets or paragraphs.
-        - When comparing more than two stores/products, emit a Markdown table with headers and align Arabic/English labels on separate lines so bilingual content stays readable. Use only the data already returned by tools (especially `table_aggregate`)—never call `read_document` solely to improve formatting, and do not restate the exact table cells elsewhere in the answer.
+        - When comparing more than two stores/products, emit a Markdown table with headers. Use only the data already returned by tools (especially `table_aggregate`)—never call `read_document` solely to improve formatting, and do not restate the exact table cells elsewhere in the answer.
         - When a table is required (three or more items), present the underlying numbers only once inside that table; skip serialised product-by-product paragraphs before it. If needed, follow the table with a brief “Key observations” paragraph instead of repeating the raw values.
         - Ensure all Markdown markers are balanced—never leave stray `**`, `_`, or ``` fences. If the model cannot format a section cleanly, fall back to plain text for that section only.
-        - Keep Arabic sentences grouped together (separated by blank lines) and, when mixing languages, prefix each block with a bold label indicating the language (e.g., `**Arabic:** ...`). Never add a second-language translation unless the visitor or retrieved snippet already uses that language.
-        - Mirror the Markdown layout in `response_blocks`: populate an array where each entry is either `{{"type":"text","heading":"optional","body_md":[...],"rtl":bool}}` or `{{"type":"table","title":"optional","columns":[{{"key":"k","label":"Name","align":"left|center|right"}}],"rows":[{{"cells":["value1","value2"],"rtl":bool}}]}}`. Use tables when you already listed structured comparisons, use text blocks for narrative sections, and omit the field entirely if there is nothing to render. Never invent additional data, add duplicate-language translations, or trigger extra tool calls just to fill the blocks—reuse only the evidence already returned. Keep these blocks in the JSON response metadata only—do not display the `response_blocks` array (or any JSON keys) in the visitor-visible Markdown; never write the literal string `response_blocks` in `response_text`.
-
         ### Evidence Rules
         - Use only snippets/reads returned this turn. No outside knowledge, file names, or citations.
         - `read_required` is a hint, not a command. Table aggregates already count as full evidence.
         - Ask for identifiers only when an action absolutely needs them, and ask once. If an email/phone arrives for an action, call `create_customer` exactly once; skip it on greetings or FAQs.
-        - Mixed Arabic/English queries are normal—include every spelling variant in the first search batch. Once you have snippets, move on instead of re-searching.
+        - Mixed-language queries are normal—include every spelling variant in the first search batch. Once you have snippets, move on instead of re-searching.
 
         ### Safety
         - Policy-first responses for health/finance/legal topics—never offer personal advice.
@@ -130,7 +127,7 @@ def build_system_message(
             • Call once per dimension set: include all requested products + store/region columns in the first call.
             • Reuse the same `document_id`. Repeat only if the visitor asks for a new metric or column set.
             • Answer directly from `rows[].contributions`; list every contributor returned.
-            • Do NOT follow a successful table_aggregate with `read_document` purely to reformat or restate the same data (including for `response_blocks`).
+            • Do NOT follow a successful table_aggregate with `read_document` purely to reformat or restate the same data.
         - `read_document`
             • Use only when a non-table snippet is summary/preview and you truly need the detail.
             • Never read just to satisfy a flag; table rows already satisfy reads.
@@ -306,7 +303,7 @@ def build_planner_messages(
 ) -> list[Mapping[str, object]]:
     """
     Build a lightweight planning prompt that asks the model to return
-    structured JSON (response_text/response_blocks/actions/extractions) based on the latest
+    structured JSON (response_text/actions/extractions) based on the latest
     exchange. The streamed `answer_text` is considered authoritative for the
     final response shown to the visitor; the planner focuses on actions and
     extractions only.
@@ -333,7 +330,7 @@ def build_planner_messages(
     system_sections.append(
         (
             "You must reply with JSON matching the schema provided via "
-            "`response_format` (response_text/response_blocks/actions/extractions). "
+            "`response_format` (response_text/actions/extractions). "
             "Set response_text to an empty string or a brief summary; the "
             "frontend will use the already-streamed assistant answer."
         )
@@ -344,7 +341,7 @@ def build_planner_messages(
             "Planner guardrails: honor identifier gate status; do not request identifiers beyond the required set; "
             "do not propose tools already executed this turn; never suggest another `search_knowledge` call (the assistant already used its single batch); "
             "respect coverage ledger readiness (no rereads for ready/full snippets). "
-            "Keep the reply strictly in JSON (response_text/response_blocks/actions/extractions) with no narration."
+            "Keep the reply strictly in JSON (response_text/actions/extractions) with no narration."
         )
     )
 

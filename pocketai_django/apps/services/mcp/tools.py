@@ -187,8 +187,8 @@ TOOL_DEFINITIONS: tuple[Mapping[str, object], ...] = (
     _function_schema(
         name="table_aggregate",
         description=(
-            "Aggregate numeric values from a structured table (totals + per-column contributions). "
-            "Use it to sum wide sheets and to retrieve contributor lists via rows[].contributions."
+            "Aggregate numeric values from a structured table (per-column contributions). "
+            "Use it to retrieve numeric rows/columns; compute any totals yourself from rows[].contributions when needed."
         ),
         properties={
             "document_id": {
@@ -2362,24 +2362,29 @@ def _table_aggregate_handler(
 
         preview_cells: list[dict[str, object]] = []
         contributions: list[dict[str, object]] = []
-        total_column_value: float | None = None
-        total_column_display: str | None = None
-        total_column_priority = -1
         for cell in cells:
             column_label = cell.get("column") or f"column_{(cell.get('column_index') or 0) + 1}"
             cell_value = cell.get("raw_text") or ""
             normalized_label = cell.get("normalized") or _normalize_column_name(column_label)
+            is_total_col = bool(cell.get("is_total_column"))
             include_in_preview = True
-            if normalized_column_filters and normalized_label not in normalized_column_filters:
+            if normalized_column_filters:
+                include_in_preview = normalized_label in normalized_column_filters
+            elif is_total_col:
                 include_in_preview = False
             if include_in_preview and len(preview_cells) < 12:
                 preview_cells.append({"column": column_label, "value": cell_value})
             numeric_candidate = cell.get("numeric")
-            total_priority = int(cell.get("total_priority") or 0)
-            is_total_col = bool(cell.get("is_total_column"))
             if numeric_candidate is not None:
                 numeric_float = float(numeric_candidate)
-                if not normalized_column_filters or normalized_label in normalized_column_filters or is_total_col:
+                include_numeric = False
+                if normalized_column_filters:
+                    include_numeric = normalized_label in normalized_column_filters
+                else:
+                    include_numeric = not is_total_col
+                if mode == "column_sum" and value_column_raw and normalized_label == value_column_raw:
+                    include_numeric = True
+                if include_numeric:
                     contributions.append(
                         {
                             "column": column_label,
@@ -2388,25 +2393,16 @@ def _table_aggregate_handler(
                             "is_total_column": is_total_col,
                         }
                     )
-                if is_total_col:
-                    if total_priority > total_column_priority:
-                        total_column_value = numeric_float
-                        total_column_display = cell_value.strip() or _format_numeric_display(numeric_float)
-                        total_column_priority = total_priority
 
         numeric_value: float | None = None
         display_value: str | None = None
         if mode == "row_total":
-            if total_column_value is not None:
-                numeric_value = float(total_column_value)
-                display_value = total_column_display or _format_numeric_display(total_column_value)
+            non_total_values = [entry["value"] for entry in contributions if not entry["is_total_column"]]
+            if non_total_values:
+                numeric_value = float(sum(non_total_values))
+                display_value = _format_numeric_display(numeric_value)
             else:
-                non_total_values = [entry["value"] for entry in contributions if not entry["is_total_column"]]
-                if non_total_values:
-                    numeric_value = float(sum(non_total_values))
-                    display_value = _format_numeric_display(numeric_value)
-                else:
-                    continue
+                continue
         else:
             if not value_column_raw:
                 continue
@@ -2423,12 +2419,9 @@ def _table_aggregate_handler(
                 "row_index": row_payload.get("row_index"),
                 "table_order_index": row_payload.get("table_order_index"),
                 "sheet_name": row_payload.get("sheet_name"),
-                "row_total": numeric_value,
-                "row_total_display": display_value,
                 "cells": preview_cells,
                 "contributions": contributions_sorted[:200],
                 "contribution_count": len(contributions_sorted),
-                "total_column_value": total_column_display,
             }
         )
         if len(matched_rows) >= row_limit:
@@ -2510,8 +2503,6 @@ def _table_aggregate_handler(
         "sheet_name": sheet_name_input or None,
         "columns": column_filters or None,
         "match_count": len(matched_rows),
-        "total": total_value if matched_rows else None,
-        "display_total": _format_numeric_display(total_value) if matched_rows else None,
         "rows": matched_rows,
         "snippets": snippet_payloads,
         "duration_ms": duration_ms,
@@ -2534,22 +2525,12 @@ def _build_table_aggregate_snippet(
     row_index = row.get("row_index")
     table_idx = row.get("table_order_index")
     sheet_name = row.get("sheet_name")
-    row_total = row.get("row_total")
-    row_total_display = row.get("row_total_display") or _format_numeric_display(row_total if isinstance(row_total, (int, float)) else None)
     cells = row.get("cells") if isinstance(row.get("cells"), list) else []
     contributions = row.get("contributions") if isinstance(row.get("contributions"), list) else []
     primary_label = _table_row_label(cells, query)
     snippet_id = f"table-aggregate:{upload.id}:{table_idx}:{row_index}"
-    summary = f"{primary_label or 'Table row'} – total {row_total_display or 'unknown'}"
+    summary = primary_label or "Table row"
     contribution_lines: list[str] = []
-    total_lines: list[str] = []
-    total_entries = [entry for entry in contributions if entry.get("is_total_column")]
-    for entry in total_entries[:10]:
-        column = entry.get("column") or "Total"
-        display = entry.get("display") or _format_numeric_display(entry.get("value"))
-        total_lines.append(f"- {column}: {display or '—'}")
-    if len(total_entries) > 10:
-        total_lines.append(f"...+{len(total_entries) - 10} more totals")
     for entry in contributions[:25]:
         column = entry.get("column") or "Column"
         display = entry.get("display") or _format_numeric_display(entry.get("value"))
@@ -2560,8 +2541,6 @@ def _build_table_aggregate_snippet(
         "row_index": row_index,
         "table_order_index": table_idx,
         "sheet_name": sheet_name,
-        "row_total": row_total,
-        "row_total_display": row_total_display,
         "columns": [dict(entry) for entry in contributions],
     }
     diagnostics = {
@@ -2573,23 +2552,10 @@ def _build_table_aggregate_snippet(
         "table_aggregate_query": query or None,
         "table_match_column": match_column or None,
         "table_match_value": match_value or None,
-        "table_row_total": row_total,
-        "table_row_total_display": row_total_display,
         "table_requested_columns": list(columns or ()),
     }
-    if total_entries:
-        diagnostics["table_total_columns"] = [
-            {
-                "column": entry.get("column"),
-                "value": entry.get("value"),
-                "display": entry.get("display"),
-            }
-            for entry in total_entries
-        ]
     label_suffix = f" (sheet {sheet_name})" if sheet_name else ""
     content_parts: list[str] = [summary]
-    if total_lines:
-        content_parts.extend(["", "Totals:", *total_lines])
     if contribution_lines:
         content_parts.extend(["", "Contributors:", *contribution_lines])
     return {

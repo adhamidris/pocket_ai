@@ -2779,8 +2779,6 @@ class KnowledgeSearchService:
             business_name = getattr(upload.business_profile, "name", None)
             cells = sorted(row.cells.all(), key=lambda c: c.column_index)
             structured: list[dict[str, str]] = []
-            numeric_cells: list[float] = []
-            total_value_raw: str | None = None
             for cell in cells:
                 column_label = cell.column_key or f"column_{cell.column_index + 1}"
                 cell_value = cell.raw_text or ""
@@ -2790,21 +2788,19 @@ class KnowledgeSearchService:
                         "value": cell_value,
                     }
                 )
-                parsed_numeric = _parse_numeric(cell_value)
-                if parsed_numeric is not None:
-                    numeric_cells.append(parsed_numeric)
-                if total_value_raw is None and _is_total_column(column_label):
-                    total_value_raw = cell_value
+            visible_structured = [entry for entry in structured if not _is_total_column(entry.get("column"))]
+            if not visible_structured:
+                visible_structured = structured
             summary_candidates = [
                 (entry["column"], entry["value"])
-                for entry in structured
+                for entry in visible_structured
                 if entry["value"]
             ]
             base_candidates = summary_candidates[:8]
             highlight_candidates = [
                 item
                 for item in summary_candidates[8:]
-                if _is_total_column(item[0]) or _is_numeric_value(item[1])
+                if _is_numeric_value(item[1])
             ]
             display_parts: list[str] = []
             seen_parts: set[str] = set()
@@ -2816,40 +2812,19 @@ class KnowledgeSearchService:
                     continue
                 seen_parts.add(text)
                 display_parts.append(text)
-            row_total_numeric = None
-            row_total_display = None
-            if total_value_raw and total_value_raw.strip():
-                row_total_numeric = _parse_numeric(total_value_raw)
-                row_total_display = _format_total(row_total_numeric, total_value_raw)
-            elif numeric_cells:
-                row_total_numeric = sum(numeric_cells)
-                row_total_display = _format_total(row_total_numeric)
-            if row_total_display:
-                row_total_text = f"Row total: {row_total_display}"
-                if row_total_text not in seen_parts:
-                    display_parts.append(row_total_text)
-                    seen_parts.add(row_total_text)
             summary = "; ".join(display_parts) or (row.raw_text or "")
             content_parts = [f"{column}: {value}" for column, value in summary_candidates]
-            if row_total_display:
-                content_parts.append(f"Row total: {row_total_display}")
             content = "\n".join(content_parts) or (row.raw_text or summary)
             structured_table = {
                 "title": table.title or table.section_heading or "Table",
-                "columns": [entry["column"] for entry in structured],
-                "rows": [[entry["value"] for entry in structured]],
+                "columns": [entry["column"] for entry in visible_structured],
+                "rows": [[entry["value"] for entry in visible_structured]],
                 "metadata": {
                     "sheet_name": (table.metadata or {}).get("sheet_name"),
                     "row_index": row.row_index,
                     "table_order_index": table.order_index,
                 },
             }
-            if row_total_display:
-                structured_table["metadata"]["row_total"] = row_total_display
-            if row_total_numeric is not None:
-                structured_table["metadata"]["row_total_numeric"] = row_total_numeric
-            if total_value_raw:
-                structured_table["metadata"]["total_column_present"] = True
             ingestion_diag = ingestion_diag_cache.get(upload.id)
             if ingestion_diag is None:
                 ingestion_diag = self._table_ingestion_diagnostics(upload)
@@ -2859,9 +2834,6 @@ class KnowledgeSearchService:
             diag = dict(cell_diag.get(row_id, {}))
             diag.update(
                 {
-                    "row_total_display": row_total_display,
-                    "row_total_numeric": row_total_numeric,
-                    "total_column_present": bool(total_value_raw),
                     "table_id": str(table.id),
                     "row_index": row.row_index,
                     "table_truncated": table_truncated,

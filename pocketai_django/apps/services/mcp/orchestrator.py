@@ -175,6 +175,7 @@ class McpOrchestratorService:
         initial_stream_started = False
         active_phase_payloads: dict[str, dict[str, object]] = {}
         final_answer_started = False
+        inline_response_blocks_detected = False
 
         def _status_event(code: str, label: str | None = None, meta: Mapping[str, object] | None = None) -> None:
             if not on_status_change:
@@ -376,13 +377,19 @@ class McpOrchestratorService:
         # and we have content, we can keep this streamed text and skip the
         # second content call.
         def _first_stream_chunk(chunk: str) -> None:
-            nonlocal stream_buffer, sentence_space_pending, initial_stream_started
+            nonlocal stream_buffer, sentence_space_pending, initial_stream_started, inline_response_blocks_detected
             if not chunk:
+                return
+            if inline_response_blocks_detected:
                 return
             if not initial_stream_started:
                 initial_stream_started = True
                 _status_event("responding", "Responding…")
             stream_buffer = f"{stream_buffer}{chunk}"
+            block_match = INLINE_RESPONSE_BLOCK_PATTERN.search(stream_buffer)
+            if block_match:
+                stream_buffer = stream_buffer[: block_match.start()]
+                inline_response_blocks_detected = True
             while True:
                 match = re.search(r"(.+?[.!?])([\\s]|$)", stream_buffer)
                 if match:
@@ -423,12 +430,18 @@ class McpOrchestratorService:
                 break
 
         def _answer_stream_chunk(chunk: str) -> None:
-            nonlocal stream_buffer, sentence_space_pending
+            nonlocal stream_buffer, sentence_space_pending, inline_response_blocks_detected
             if not chunk:
+                return
+            if inline_response_blocks_detected:
                 return
             if not final_answer_started:
                 _mark_answer_started()
             stream_buffer = f"{stream_buffer}{chunk}"
+            block_match = INLINE_RESPONSE_BLOCK_PATTERN.search(stream_buffer)
+            if block_match:
+                stream_buffer = stream_buffer[: block_match.start()]
+                inline_response_blocks_detected = True
             while True:
                 match = re.search(r"(.+?[.!?])([\s]|$)", stream_buffer)
                 if match:
@@ -518,6 +531,10 @@ class McpOrchestratorService:
             )
             pending_assistant = None
 
+            seen_tool_signatures: set[str] = set()
+            duplicate_loop_streak = 0
+            duplicate_loop_threshold = 2
+
             for iteration_index in range(self.max_tool_iterations):
                 current_tool_calls = list(assistant_message.get("tool_calls") or [])
                 if not current_tool_calls:
@@ -565,6 +582,10 @@ class McpOrchestratorService:
                                 conversation,
                             )
 
+                        # Record the signature of the tool call after any hint injection so we can
+                        # detect no-progress loops.
+                        seen_tool_signatures.add(self._tool_signature(tool_name, arguments))
+
                         call_origin = "live"
                         call_duration_ms: float | None = None
                         cache_hit = False
@@ -610,6 +631,13 @@ class McpOrchestratorService:
                             self._record_table_column_hint(arguments, tool_context, tool_result)
                             if cached_table_result is None and table_cache_key:
                                 self._cache_table_result(tool_context, table_cache_key, tool_result)
+                            # If the aggregate returned nothing, drop any cached column
+                            # filters so a follow-up call without explicit columns can
+                            # broaden the search instead of repeating a too‑narrow set.
+                            if str(tool_result.get("status") or "").lower() in {"not_found", "error"}:
+                                document_id_hint = str(arguments.get("document_id") or tool_result.get("document_id") or "").strip()
+                                if document_id_hint:
+                                    tool_context.table_column_filters.pop(document_id_hint, None)
                         if tool_name == "search_knowledge" and not duplicate_result:
                             self._record_search_history(tool_context, arguments, tool_result)
                         tool_context.add_tool_trace(
@@ -685,6 +713,70 @@ class McpOrchestratorService:
                     )
                     assistant_message = self._coerce_assistant_message(payload)
                     next_tool_calls = list(assistant_message.get("tool_calls") or [])
+
+                    next_signatures: list[str] = []
+                    if next_tool_calls:
+                        for next_call in next_tool_calls:
+                            next_name = self._tool_name(next_call)
+                            next_args = self._tool_arguments(next_call)
+                            if next_name == "table_aggregate":
+                                next_args = dict(next_args)
+                                self._apply_table_column_hint(next_args, tool_context)
+                            next_signatures.append(self._tool_signature(next_name, next_args))
+
+                        if next_signatures and all(sig in seen_tool_signatures for sig in next_signatures):
+                            duplicate_loop_streak += 1
+                        else:
+                            duplicate_loop_streak = 0
+
+                        force_final = duplicate_loop_streak >= duplicate_loop_threshold or (
+                            iteration_index >= self.max_tool_iterations - 1
+                        )
+                        if force_final:
+                            structured_log(
+                                "mcp",
+                                "tool.loop.force_final",
+                                {
+                                    "reason": "duplicate_signatures" if duplicate_loop_streak >= duplicate_loop_threshold else "iteration_limit",
+                                    "next_tools": [self._tool_name(c) for c in next_tool_calls],
+                                },
+                                context={
+                                    "conversation": conversation.id,
+                                    "business": conversation.business_profile_id,
+                                },
+                                logger_obj=logger,
+                                level=logging.WARNING,
+                            )
+                            forced_reminder = {
+                                "role": "system",
+                                "content": (
+                                    "Tools are not returning new evidence. Do NOT call tools again. "
+                                    "Answer now using the snippets/aggregates already provided. "
+                                    "If something is still unclear, ask a single clarifying question."
+                                ),
+                            }
+                            forced_messages = list(loop_messages)
+                            forced_messages.insert(insert_at, forced_reminder)
+                            forced_payload = self.provider.chat(
+                                forced_messages,
+                                tools=None,
+                                on_stream_delta=_answer_stream_chunk,
+                            )
+                            assistant_message = self._coerce_assistant_message(forced_payload)
+                            next_tool_calls = []
+                            _mark_answer_started()
+                            transcript.append(
+                                {
+                                    "role": "assistant",
+                                    "content": assistant_message.get("content"),
+                                }
+                            )
+                            tool_phase_assistant_message = assistant_message
+                            raw_content = assistant_message.get("content")
+                            if isinstance(raw_content, str) and raw_content.strip():
+                                single_pass_candidate = raw_content.strip()
+                            break
+
                     if next_tool_calls:
                         _prime_phase_starts(next_tool_calls)
                     else:
@@ -1264,11 +1356,6 @@ class McpOrchestratorService:
             merged["actions"] = planner_message.get("actions")
         if isinstance(planner_message.get("extractions"), list):
             merged["extractions"] = planner_message.get("extractions")
-        if not merged.get("response_blocks"):
-            for key in ("response_blocks", "responseBlocks", "response_blocks_json"):
-                if key in planner_message and planner_message.get(key) is not None:
-                    merged["response_blocks"] = planner_message.get(key)
-                    break
         return merged
 
     def run_planner_only(
@@ -1318,16 +1405,12 @@ class McpOrchestratorService:
                     "type": "object",
                     "properties": {
                         "response_text": {"type": "string"},
-                        "response_blocks": {
-                            "type": "array",
-                            "items": {"type": "object"},
-                        },
                         "actions": {"type": "array", "items": {"type": "object"}},
                         "extractions": {"type": "array", "items": {"type": "object"}},
                         "placeholder_response": {"type": "string"},
                         "placeholder_thinking": {"type": "string"},
                     },
-                    "required": ["response_text", "response_blocks"],
+                    "required": ["response_text"],
                     "additionalProperties": True,
                 },
                 "strict": False,
@@ -2178,3 +2261,15 @@ class McpOrchestratorService:
                 return {}
             return parsed if isinstance(parsed, dict) else {}
         return {}
+
+    @staticmethod
+    def _tool_signature(tool_name: str, arguments: Mapping[str, object]) -> str:
+        """
+        Generate a stable signature for a tool invocation so we can detect
+        duplicate/no-progress tool loops.
+        """
+        try:
+            args_json = json.dumps(arguments, sort_keys=True, ensure_ascii=False, default=str)
+        except Exception:
+            args_json = str(arguments)
+        return f"{tool_name}:{args_json}"

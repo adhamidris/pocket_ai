@@ -23,6 +23,29 @@ PLACEHOLDER_TOOL_PATTERN = re.compile(
     re.IGNORECASE,
 )
 
+INLINE_RESPONSE_BLOCK_PATTERN = re.compile(
+    r"(?:^|\n)\s*(?:[-*+]\s*)?[\"'`]?response(?:_|\s)?blocks[\"'`]?\s*:?",
+    re.IGNORECASE,
+)
+
+
+def strip_inline_response_blocks(text: str) -> str:
+    """
+    Remove any inline `response_blocks` JSON appended to visible text.
+
+    Models sometimes leak the structured blocks array into `response_text`
+    despite prompt/schema guidance. We treat anything after the last marker
+    as non-visitor-facing.
+    """
+    if not text:
+        return ""
+    match = None
+    for candidate in INLINE_RESPONSE_BLOCK_PATTERN.finditer(text):
+        match = candidate
+    if not match:
+        return text
+    return text[: match.start()].rstrip()
+
 
 def sanitize_with_diagnostics(
     text: str,
@@ -114,6 +137,9 @@ def is_investigative_filler_with_level(sentence: str, *, filter_level: str = "fr
     text = (sentence or "").strip().lower()
     if not text:
         return False
+    text = strip_inline_response_blocks(text)
+    if not text:
+        return True
     # Only treat phrases that risk leaking internal mechanics as filler; allow human-style chatter.
     hard_patterns = (
         r"\bsearch_knowledge\b",
@@ -131,6 +157,9 @@ def is_investigative_filler_with_level(sentence: str, *, filter_level: str = "fr
         r"\banalysis\b[:\-]",
         r"i['’]ll check (the )?(docs|document|documents)",
         r"let me check (the )?(docs|document|documents)",
+        r"let me (search|check|look|find|review)",
+        r"i['’]ll (search|check|look|find|review)",
+        r"i will (search|check|look|find|review)",
     )
     for pattern in hard_patterns:
         if re.search(pattern, text):
@@ -176,6 +205,7 @@ def sanitize_text(text: str) -> str:
 
 
 def _sanitize(text: str, filter_level: str = "friendly") -> tuple[str, list[str]]:
+    text = strip_inline_response_blocks(text)
     sentences, remainder = extract_sentences(text)
     keep_parts: list[str] = []
     dropped: list[str] = []
