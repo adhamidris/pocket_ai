@@ -484,11 +484,16 @@ def _identifier_mapping_cache_key(
 
 def _identifier_mapping_cache_token(
     cache_key: tuple[tuple[tuple[str, str], ...], str | None, str | None] | None,
+    business_profile_id: object | None = None,
 ) -> str | None:
     if not cache_key:
         return None
     try:
-        fingerprint = json.dumps(cache_key, sort_keys=True, default=str)
+        fingerprint = json.dumps(
+            {"business_id": str(business_profile_id) if business_profile_id else None, "cache_key": cache_key},
+            sort_keys=True,
+            default=str,
+        )
     except TypeError:
         return None
     digest = hashlib.sha256(fingerprint.encode("utf-8")).hexdigest()
@@ -1118,7 +1123,7 @@ def _search_knowledge_handler(
         locked_key = locked.get("key")
         locked_value = locked.get("value")
     cache_key = _identifier_mapping_cache_key(guard, locked_key, locked_value)
-    cache_token = _identifier_mapping_cache_token(cache_key)
+    cache_token = _identifier_mapping_cache_token(cache_key, conversation.business_profile_id)
     cached_mapping = None
     if cache_key:
         cached_mapping = context.identifier_mapping_cache.get(cache_key)
@@ -1142,6 +1147,7 @@ def _search_knowledge_handler(
             identifier__status=IdentifierSchemaStatus.ACTIVE,
             identifier__key__in=list(guard.provided_identifiers.keys()),
         )
+        cache_payload: dict[str, object] | None = None
         if mappings:
             allowed_uploads = {str(m.upload_id) for m in mappings if m.upload_id}
             # Use first mapping for value filter hint.
@@ -1159,10 +1165,11 @@ def _search_knowledge_handler(
                 "allowed_uploads": list(allowed_uploads) if allowed_uploads else [],
                 "identifier_filter": identifier_filter,
             }
-        if cache_key:
-            context.identifier_mapping_cache[cache_key] = cache_payload
-        if cache_token:
-            cache.set(cache_token, cache_payload, IDENTIFIER_MAPPING_CACHE_TTL)
+        if cache_payload is not None:
+            if cache_key:
+                context.identifier_mapping_cache[cache_key] = cache_payload
+            if cache_token:
+                cache.set(cache_token, cache_payload, IDENTIFIER_MAPPING_CACHE_TTL)
 
     def _tuned_limit(intent: str | None, base_limit: int | None) -> int | None:
         limit_val = base_limit
@@ -2428,6 +2435,43 @@ def _table_aggregate_handler(
             break
 
     status = "ok" if matched_rows else "not_found"
+
+    # Guardrail: extremely broad aggregates can explode prompt size. When the
+    # model omits `columns` and/or matches many rows, truncate the payload and
+    # emit a hint to narrow the next call.
+    truncation_notice: dict[str, object] | None = None
+    original_match_count = len(matched_rows)
+    if matched_rows:
+        max_rows_for_prompt = 20
+        if not column_filters and len(matched_rows) > max_rows_for_prompt:
+            matched_rows = matched_rows[:max_rows_for_prompt]
+        max_total_contributions = 600
+        total_contributions = sum(
+            len(row.get("contributions") or ()) if isinstance(row.get("contributions"), list) else 0
+            for row in matched_rows
+        )
+        if total_contributions > max_total_contributions:
+            per_row_limit = max(3, max_total_contributions // max(1, len(matched_rows)))
+            for row in matched_rows:
+                contributions_list = row.get("contributions")
+                if isinstance(contributions_list, list) and len(contributions_list) > per_row_limit:
+                    row["contributions"] = contributions_list[:per_row_limit]
+            truncation_notice = {
+                "reason": "prompt_budget",
+                "message": (
+                    "Aggregate result truncated for prompt size. "
+                    "If you need a full breakdown, call table_aggregate again with a narrower "
+                    "match_column/match_values and/or an explicit columns list."
+                ),
+                "original_match_count": original_match_count,
+                "returned_match_count": len(matched_rows),
+                "original_contribution_rows": total_contributions,
+                "returned_contribution_rows": sum(
+                    len(row.get("contributions") or ()) if isinstance(row.get("contributions"), list) else 0
+                    for row in matched_rows
+                ),
+            }
+
     snippet_payloads: list[dict[str, object]] = []
     if matched_rows:
         snippet_payloads = [

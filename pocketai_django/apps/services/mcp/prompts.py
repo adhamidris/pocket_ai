@@ -110,6 +110,7 @@ def build_system_message(
         - `read_required` is a hint, not a command. Table aggregates already count as full evidence.
         - Ask for identifiers only when an action absolutely needs them, and ask once. If an email/phone arrives for an action, call `create_customer` exactly once; skip it on greetings or FAQs.
         - Mixed-language queries are normal—include every spelling variant in the first search batch. Once you have snippets, move on instead of re-searching.
+        - When you report derived numbers (totals, averages, percentages), compute them carefully from the evidence and sanity‑check that they add up before stating them.
 
         ### Safety
         - Policy-first responses for health/finance/legal topics—never offer personal advice.

@@ -66,6 +66,7 @@ class PromptBuilder:
         - When the visitor pivots to a different product variant (for example, another card tier or benefit), assume the relevant data is already loaded and move straight to the requested details. If you already have the figures, respond directly with the concrete fees, limits, or features instead of saying that you will check.
         - Use clean, reader-friendly Markdown. For short single-fact answers, reply naturally without headings. Use a heading (`##`) or bold label only when there are multiple topics/products or the visitor explicitly asks for a structured breakdown. Use a short bullet or numbered list only when there are one or two metrics; as soon as three or more rows are involved, switch entirely to a Markdown table and do not restate the exact figures elsewhere. Always close any `**`, `_`, or ``` markers before sending, and never call `read_document` just to improve formatting—reuse the data already returned by the latest tools (e.g., table aggregates).
         - When a table is appropriate, surface the numeric details only once inside that table. Skip repeating the same figures in prose beforehand; instead, add a short “Key observations” paragraph after the table if extra context is needed.
+        - When you report derived numbers (totals, averages, percentages), compute them carefully from the evidence and sanity-check that they add up before stating them.
         """
     ).strip()
 

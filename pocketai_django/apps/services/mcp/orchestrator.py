@@ -23,7 +23,7 @@ from django.utils import timezone
 from opentelemetry import trace as otel_trace
 
 from apps.accounts.models import AgentProfile
-from apps.conversations.models import Conversation, ConversationExtractionType
+from apps.conversations.models import Conversation, ConversationExtractionType, ConversationSender
 from apps.services.llm_provider import PromptGenerationError, _emit_stream_chunks
 from apps.services.ai_orchestrator import (
     AiOrchestratorPlan,
@@ -159,6 +159,7 @@ class McpOrchestratorService:
             raise RuntimeError("MCP provider is not configured.")
 
         transcript = list(messages)
+        task_summary_note = self._build_task_summary_note(conversation, user_message, tool_context)
         tool_phase_assistant_message: dict[str, object] | None = None
         final_assistant_message: dict[str, object] | None = None
         first_pass_streamed_chunks: list[str] = []
@@ -704,7 +705,14 @@ class McpOrchestratorService:
                     insert_at = 0
                     while insert_at < len(loop_messages) and loop_messages[insert_at].get("role") == "system":
                         insert_at += 1
-                    loop_messages.insert(insert_at, reminder)
+                    extra_system_messages: list[dict[str, str]] = []
+                    if task_summary_note:
+                        extra_system_messages.append({"role": "system", "content": task_summary_note})
+                    loop_note = self._tool_loop_note(tool_context)
+                    if loop_note:
+                        extra_system_messages.append({"role": "system", "content": loop_note})
+                    extra_system_messages.append(reminder)
+                    loop_messages[insert_at:insert_at] = extra_system_messages
                     payload = self.provider.chat(
                         loop_messages,
                         tools=self.tool_definitions,
@@ -2080,6 +2088,134 @@ class McpOrchestratorService:
                 lines.append("Coverage ledger: " + "; ".join(display))
 
         return "\n".join(lines) if lines else None
+
+    def _build_task_summary_note(
+        self,
+        conversation: Conversation,
+        user_message: str,
+        context: ToolExecutionContext | None = None,
+        *,
+        max_anchor_chars: int = 500,
+    ) -> str | None:
+        """
+        Build a pinned task summary for tool-iteration calls.
+
+        Captures the latest user question and the most recent "anchor" customer
+        request (long/rich message) so retries don't lose constraints.
+        """
+
+        current = (user_message or "").strip()
+        if not current:
+            return None
+
+        anchor_text: str | None = None
+        try:
+            recent_messages = list(conversation.messages.order_by("-sent_at", "-created_at")[:20])
+        except Exception:
+            recent_messages = []
+
+        for entry in recent_messages:
+            try:
+                if entry.sender != ConversationSender.CUSTOMER:
+                    continue
+            except Exception:
+                continue
+            body = (entry.body or "").strip()
+            if not body or body == current:
+                continue
+            lower = body.lower()
+            is_anchor = len(body) >= 80 or "\n" in body or "product" in lower or "store" in lower
+            if is_anchor:
+                anchor_text = body
+                break
+
+        def _trim(text: str) -> str:
+            trimmed = text.replace("\n", " ").strip()
+            if len(trimmed) > max_anchor_chars:
+                return trimmed[:max_anchor_chars].rstrip() + "…"
+            return trimmed
+
+        lines: list[str] = []
+        if anchor_text:
+            lines.append(f"Anchor request: {_trim(anchor_text)}")
+        lines.append(f"Current question: {_trim(current)}")
+
+        if context:
+            cache_keys = getattr(context, "table_result_cache", {}) or {}
+            doc_ids = {str(key[0]) for key in cache_keys.keys() if isinstance(key, tuple) and key}
+            doc_ids = {doc for doc in doc_ids if doc}
+            if doc_ids:
+                short_docs = ", ".join(doc[:8] + "…" for doc in list(doc_ids)[:2])
+                lines.append(f"Known table docs: {short_docs} (reuse if relevant).")
+
+        bullets = "\n".join(f"- {line}" for line in lines if line)
+        return (
+            "Task summary (internal; keep these constraints stable unless the visitor changes them):\n"
+            f"{bullets}"
+        )
+
+    @staticmethod
+    def _tool_loop_note(tool_context: ToolExecutionContext | None) -> str | None:
+        """
+        Compact ledger of tools executed this turn to ground retries.
+        """
+        if not tool_context:
+            return None
+        trace = getattr(tool_context, "tool_trace", [])
+        if not isinstance(trace, list) or not trace:
+            return None
+
+        def _clean(value: object, limit: int = 120) -> str:
+            if value is None:
+                return ""
+            text = str(value).replace("\n", " ").strip()
+            if len(text) > limit:
+                return text[:limit].rstrip() + "…"
+            return text
+
+        def _clean_list(value: object, *, limit_items: int = 4, per_item: int = 60) -> str:
+            if isinstance(value, (list, tuple)):
+                items = [_clean(item, per_item) for item in value[:limit_items] if item is not None]
+                suffix = "…" if len(value) > limit_items else ""
+                return ", ".join(items) + suffix
+            return _clean(value)
+
+        lines: list[str] = [
+            "Tool ledger this turn (internal; do not repeat identical tools unless the visitor adds a new constraint):"
+        ]
+        for entry in trace[-6:]:
+            if not isinstance(entry, Mapping):
+                continue
+            tool_name = str(entry.get("tool") or "tool")
+            status = str(entry.get("status") or entry.get("error_code") or "").strip()
+            args = entry.get("arguments") if isinstance(entry.get("arguments"), Mapping) else {}
+            if tool_name == "search_knowledge":
+                query = args.get("query") or args.get("queries") or ""
+                lines.append(f"- search_knowledge(query={_clean_list(query)}) -> {status or 'done'}")
+            elif tool_name == "table_aggregate":
+                doc_id = args.get("document_id") or ""
+                match_col = args.get("match_column") or ""
+                match_vals = args.get("match_values") or args.get("match_value") or args.get("query") or ""
+                columns = args.get("columns") or []
+                lines.append(
+                    "- table_aggregate("
+                    f"doc={_clean(doc_id, 40)}, "
+                    f"match_column={_clean(match_col, 60)}, "
+                    f"match_values={_clean_list(match_vals)}, "
+                    f"columns={_clean_list(columns)}"
+                    f") -> {status or 'done'}"
+                )
+            elif tool_name == "read_document":
+                doc_id = args.get("document_id") or ""
+                page = args.get("page") or ""
+                mode = args.get("mode") or ""
+                lines.append(
+                    f"- read_document(doc={_clean(doc_id, 40)}, page={_clean(page, 20)}, mode={_clean(mode, 20)}) -> {status or 'done'}"
+                )
+            else:
+                lines.append(f"- {tool_name} -> {status or 'done'}")
+
+        return "\n".join(lines)
 
     @staticmethod
     def _log_turn_metrics(conversation: Conversation, context: ToolExecutionContext) -> None:
