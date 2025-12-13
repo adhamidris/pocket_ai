@@ -1,123 +1,147 @@
-{% extends "frontend/base.html" %}
+{% extends "frontend/base_app.html" %}
 {% load static ui_components %}
 
 {% block title %}Pocket AI Chat | {{ portal.agent.name }}{% endblock %}
 
 {% block extra_head %}
-  <meta http-equiv="Cache-Control" content="no-store">
+<meta http-equiv="Cache-Control" content="no-store">
 {% endblock %}
 
 {% block content %}
-<section class="min-h-screen bg-background">
-  <div class="container mx-auto px-4 md:px-8 py-10 md:py-16" data-chat-portal
-       data-session-token="{{ portal.session_token }}"
-       data-session-cache-key="{{ portal.session_storage_key }}"
-       data-endpoint-bootstrap="{{ portal.endpoints.bootstrap }}"
-       data-endpoint-messages="{{ portal.endpoints.messages }}"
-       data-endpoint-stream-send="{{ portal.endpoints.stream_send }}"
-       data-endpoint-events="{{ portal.endpoints.events }}"
-       data-endpoint-csat="{{ portal.endpoints.csat }}"
-       data-business-slug="{{ portal.business.slug }}"
-       data-agent-slug="{{ portal.agent.slug }}"
-       data-agent-name="{{ portal.agent.name }}"
-       data-agent-initials="{{ portal.agent.initials }}"
-       data-bootstrap-script-id="{{ portal.bootstrap_script_id }}"
-       data-initial-status="{{ portal.conversation_status_code }}">
-    <div class="grid lg:grid-cols-[360px_1fr] gap-8">
-      <aside class="hidden lg:block border border-border/60 rounded-2xl bg-card/70 p-6 shadow-soft">
-        <div class="flex items-center gap-4">
-          <div class="h-12 w-12 rounded-full bg-primary/15 text-primary flex items-center justify-center font-semibold">
-            {{ portal.agent.initials }}
-          </div>
-          <div>
-            <h2 class="text-lg font-semibold text-foreground">{{ portal.agent.name }}</h2>
-            <p class="text-sm text-muted-foreground">{{ portal.agent.role }}</p>
-          </div>
-        </div>
-        <div class="mt-6 space-y-3 text-sm text-muted-foreground">
-          <p>{{ portal.agent.bio }}</p>
-          <div>
-            <span class="font-semibold text-foreground">Business</span>
-            <p>{{ portal.business.name }}</p>
-          </div>
-        </div>
-      </aside>
+<div class="h-screen flex overflow-hidden" data-chat-portal data-session-token="{{ portal.session_token }}"
+  data-session-cache-key="{{ portal.session_storage_key }}" data-endpoint-bootstrap="{{ portal.endpoints.bootstrap }}"
+  data-endpoint-messages="{{ portal.endpoints.messages }}"
+  data-endpoint-stream-send="{{ portal.endpoints.stream_send }}" data-endpoint-events="{{ portal.endpoints.events }}"
+  data-endpoint-csat="{{ portal.endpoints.csat }}" data-business-slug="{{ portal.business.slug }}"
+  data-agent-slug="{{ portal.agent.slug }}" data-agent-name="{{ portal.agent.name }}"
+  data-agent-initials="{{ portal.agent.initials }}" data-bootstrap-script-id="{{ portal.bootstrap_script_id }}"
+  data-initial-status="{{ portal.conversation_status_code }}">
 
-      <div class="flex flex-col border border-border/60 rounded-2xl bg-card/70 shadow-premium">
-        <header class="border-b border-border/60 px-4 md:px-6 py-4 flex items-center justify-between gap-3">
-          <div>
-            <h1 class="text-lg font-semibold text-foreground">Chat with {{ portal.agent.name }}</h1>
-            <p class="text-xs text-muted-foreground">{{ portal.business.name }}</p>
-          </div>
-          <span class="inline-flex items-center rounded-full border border-border px-2.5 py-1 text-xs text-muted-foreground" data-chat-status>
-            {{ portal.conversation_status }}
-          </span>
-        </header>
-
-        <div class="flex-1 overflow-hidden flex flex-col">
-          <div class="flex-1 overflow-y-auto px-4 md:px-6 py-6 space-y-4" data-chat-messages>
-            {% for message in portal.messages %}
-              {% chat_message message %}
-            {% empty %}
-              <div class="text-sm text-muted-foreground text-center">No messages yet. Say hello to start the conversation.</div>
-            {% endfor %}
-          </div>
-
-          <div class="px-4 md:px-6 pb-4">
-            <form class="space-y-3" data-chat-send-form>
-              <textarea
-                name="message"
-                rows="3"
-                class="w-full rounded-xl border border-border bg-background/60 px-4 py-3 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-primary"
-                placeholder="Write your message…"
-              ></textarea>
-              <div class="flex items-center justify-between gap-3">
-                <div></div>
-                <button type="submit" data-chat-send-button class="inline-flex items-center justify-center rounded-full bg-gradient-primary h-11 w-11 text-white shadow-soft hover:opacity-90 transition">
-                  <span data-chat-send-icon class="inline-flex">
-                    <svg class="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                      <path d="M5 12h14M12 5l7 7-7 7"/>
-                    </svg>
-                  </span>
-                  <span class="hidden inline-flex" data-chat-stop-icon>
-                    <svg class="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                      <rect x="6" y="5" width="4" height="14"></rect>
-                      <rect x="14" y="5" width="4" height="14"></rect>
-                    </svg>
-                  </span>
-                </button>
-              </div>
-            </form>
-          </div>
+  <!-- Sidebar - Flush to left edge -->
+  <aside class="hidden lg:flex flex-col w-64 bg-muted/30 border-r border-border/50">
+    <!-- Logo/Brand -->
+    <div class="p-4 border-b border-border/50">
+      <div class="flex items-center gap-3">
+        <div class="h-8 w-8 rounded-lg bg-primary flex items-center justify-center">
+          <span class="text-white font-bold text-sm">{{ portal.agent.initials }}</span>
         </div>
-
-        <div class="border-t border-border/60 px-4 md:px-6 py-4{% if portal.conversation_status_code != 'resolved' %} hidden{% endif %}" data-chat-csat>
-          <form class="flex flex-col gap-2 md:flex-row md:items-center md:justify-between" data-chat-csat-form>
-            <div>
-              <p class="text-sm font-semibold text-foreground">How was your experience?</p>
-              <p class="text-xs text-muted-foreground">Rate this conversation</p>
-            </div>
-            <div class="flex items-center gap-2">
-              {% for score,label in portal.csat_scores %}
-                <label class="inline-flex flex-col items-center gap-1 text-xs text-muted-foreground">
-                  <input type="radio" name="score" value="{{ score }}" class="hidden" {% if forloop.first %}checked{% endif %}>
-                  <span class="h-9 w-9 rounded-full border border-border flex items-center justify-center">{{ label }}</span>
-                </label>
-              {% endfor %}
-              <input type="hidden" name="score" value="5">
-              <button type="submit" class="inline-flex items-center gap-2 rounded-lg border border-border px-3 py-1.5 text-xs font-semibold text-foreground hover:border-primary hover:text-primary transition">
-                Submit
-              </button>
-            </div>
-          </form>
-        </div>
+        <span class="font-semibold text-foreground">{{ portal.business.name }}</span>
       </div>
     </div>
-  </div>
-</section>
+
+    <!-- Agent Info -->
+    <div class="flex-1 p-4">
+      <div class="mb-6">
+        <p class="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-2">Agent</p>
+        <div class="flex items-center gap-3">
+          <div class="h-10 w-10 rounded-full bg-primary/10 flex items-center justify-center">
+            <span class="text-primary font-semibold text-sm">{{ portal.agent.initials }}</span>
+          </div>
+          <div>
+            <p class="font-medium text-foreground text-sm">{{ portal.agent.name }}</p>
+            <p class="text-xs text-muted-foreground">{{ portal.agent.role }}</p>
+          </div>
+        </div>
+      </div>
+
+      {% if portal.agent.bio %}
+      <div class="mb-6">
+        <p class="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-2">About</p>
+        <p class="text-sm text-muted-foreground leading-relaxed">{{ portal.agent.bio }}</p>
+      </div>
+      {% endif %}
+    </div>
+
+    <!-- Status Footer -->
+    <div class="p-4 border-t border-border/50">
+      <div class="flex items-center gap-2 text-xs text-muted-foreground">
+        <span class="h-2 w-2 rounded-full bg-emerald-500"></span>
+        <span>Online</span>
+      </div>
+    </div>
+  </aside>
+
+  <!-- Main Chat Area -->
+  <main class="flex-1 flex flex-col min-w-0 bg-background" data-chat-main>
+
+    <!-- Messages -->
+    <div class="flex-1 overflow-y-auto {% if not portal.messages %}hidden{% endif %}" data-chat-messages>
+      <div class="max-w-3xl mx-auto w-full px-4 py-6 space-y-6" data-chat-inner-container>
+        {% for message in portal.messages %}
+        {% chat_message message %}
+        {% endfor %}
+      </div>
+    </div>
+
+    <!-- CSAT (shown when resolved) -->
+    <div class="px-4 py-4{% if portal.conversation_status_code != 'resolved' %} hidden{% endif %}" data-chat-csat>
+      <div class="max-w-3xl mx-auto w-full bg-muted/30 rounded-xl border border-border/50 p-4">
+        <form class="flex items-center justify-between gap-4" data-chat-csat-form>
+          <p class="text-sm font-medium text-foreground">Rate conversation</p>
+          <div class="flex items-center gap-2">
+            {% for score,label in portal.csat_scores %}
+            <label class="cursor-pointer">
+              {% if forloop.first %}
+              <input type="radio" name="score" value="{{ score }}" class="peer sr-only" checked>
+              {% else %}
+              <input type="radio" name="score" value="{{ score }}" class="peer sr-only">
+              {% endif %}
+              <span
+                class="h-8 w-8 rounded-full border border-border flex items-center justify-center text-sm hover:bg-background peer-checked:bg-primary peer-checked:text-white peer-checked:border-primary transition-colors">{{
+                label }}</span>
+            </label>
+            {% endfor %}
+            <button type="submit"
+              class="ml-2 px-3 py-1.5 text-sm font-medium text-white bg-primary rounded-lg hover:bg-primary/90 transition-colors">
+              Send
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+
+    <!-- Input Area -->
+    <div class="p-4 pb-6 {% if not portal.messages %}flex-1 flex flex-col justify-center{% endif %}"
+      data-chat-input-area>
+      <div class="max-w-3xl mx-auto w-full">
+        <!-- Empty State Welcome -->
+        <div class="text-center mb-8 {% if portal.messages %}hidden{% endif %}" data-chat-welcome>
+          <h2 class="text-2xl font-semibold text-foreground">How can {{ portal.business.name }}'s assistant help you
+            today?</h2>
+        </div>
+
+        <form data-chat-send-form>
+          <div
+            class="relative flex items-end gap-2 rounded-2xl border border-border bg-card p-3 shadow-sm focus-within:border-primary/50 focus-within:ring-1 focus-within:ring-primary/20 transition-all">
+            <textarea name="message" rows="1"
+              class="flex-1 bg-transparent px-2 py-1 text-base md:text-sm text-foreground placeholder:text-muted-foreground focus:outline-none resize-none max-h-48"
+              placeholder="Message {{ portal.agent.name }}..." style="field-sizing: content;"></textarea>
+            <button type="submit" data-chat-send-button
+              class="flex-shrink-0 h-8 w-8 rounded-lg bg-primary text-white flex items-center justify-center hover:bg-primary/90 disabled:opacity-50 transition-colors mb-0.5">
+              <span data-chat-send-icon>
+                <svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <path d="M5 12h14M12 5l7 7-7 7" />
+                </svg>
+              </span>
+              <span class="hidden" data-chat-stop-icon>
+                <svg class="h-4 w-4" viewBox="0 0 24 24" fill="currentColor">
+                  <rect x="6" y="6" width="12" height="12" rx="2" />
+                </svg>
+              </span>
+            </button>
+          </div>
+          <p class="text-center text-xs text-muted-foreground/50 mt-3">
+            AI can make mistakes. Please verify important information.
+          </p>
+        </form>
+      </div>
+    </div>
+  </main>
+</div>
+{% include "frontend/partials/toasts.html" %}
 {% endblock %}
 
 {% block extra_js %}
-  {{ portal.bootstrap_payload|json_script:portal.bootstrap_script_id }}
-  <script src="{% static 'js/chat-portal.js' %}?v={{ portal.asset_version }}"></script>
+{{ portal.bootstrap_payload|json_script:portal.bootstrap_script_id }}
+<script src="{% static 'js/chat-portal.js' %}?v={{ portal.asset_version }}"></script>
 {% endblock %}

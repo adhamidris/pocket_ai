@@ -116,7 +116,13 @@ class ChatPortalService:
             existing_session_token=existing_session_token,
             metadata=metadata or {},
         )
-        messages = tuple(self._serialize_messages(conversation.messages.all().order_by("sent_at", "created_at")))
+        messages_qs = conversation.messages.all().order_by("sent_at", "created_at")
+        # Filter out legacy welcome messages so the UI starts empty
+        messages_list = [
+            msg for msg in messages_qs
+            if not (isinstance(msg.metadata, dict) and msg.metadata.get("type") == "welcome")
+        ]
+        messages = tuple(self._serialize_messages(messages_list))
         return PortalSessionBootstrap(
             business=self._serialize_business(business),
             agent=self._serialize_agent(agent),
@@ -201,7 +207,13 @@ class ChatPortalService:
         qs = conversation.messages.all()
         if limit:
             qs = qs.order_by("sent_at", "created_at")[:limit]
-        return tuple(self._serialize_messages(qs))
+        
+        # Filter out legacy welcome messages
+        messages_list = [
+            msg for msg in qs
+            if not (isinstance(msg.metadata, dict) and msg.metadata.get("type") == "welcome")
+        ]
+        return tuple(self._serialize_messages(messages_list))
 
     def get_session_state(self, *, session_token: str, conversation: Conversation | None = None) -> PortalSessionState:
         conversation_obj = self._resolve_conversation(
@@ -401,7 +413,7 @@ class ChatPortalService:
                 metadata=metadata,
                 expires_at=expires_at,
             )
-            self._ensure_welcome_message(conversation)
+            # self._ensure_welcome_message(conversation) # Disabled to support empty state
             conversation.refresh_from_db()
             return conversation
 

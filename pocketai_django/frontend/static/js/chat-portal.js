@@ -22,6 +22,7 @@ class ChatPortalClient {
     this.bootstrapPayload = null;
     this.elements = {
       messages: container.querySelector("[data-chat-messages]"),
+      messagesInner: container.querySelector("[data-chat-inner-container]"),
       sendForm: container.querySelector("[data-chat-send-form]"),
       sendButton: container.querySelector("[data-chat-send-button]"),
       sendIcon: container.querySelector("[data-chat-send-icon]"),
@@ -30,6 +31,9 @@ class ChatPortalClient {
       csatContainer: container.querySelector("[data-chat-csat]"),
       toastRoot: document.getElementById("toast-root"),
       statusBadge: container.querySelector("[data-chat-status]"),
+      main: container.querySelector("[data-chat-main]"),
+      welcome: container.querySelector("[data-chat-welcome]"),
+      inputArea: container.querySelector("[data-chat-input-area]"),
     };
     this.streamingDedupDone = false;
     this.streamingFinalBodyEl = null;
@@ -73,6 +77,18 @@ class ChatPortalClient {
       this.connectEventStream();
     } catch (error) {
       this.showToast("Unable to load chat", error.message || "Please refresh and try again.", true);
+    }
+  }
+
+  transitionToActiveChat() {
+    if (this.elements.inputArea) {
+      this.elements.inputArea.classList.remove("flex-1", "flex", "flex-col", "justify-center");
+    }
+    if (this.elements.welcome) {
+      this.elements.welcome.classList.add("hidden");
+    }
+    if (this.elements.messages) {
+      this.elements.messages.classList.remove("hidden");
     }
   }
 
@@ -266,14 +282,14 @@ class ChatPortalClient {
           const state = (payload.state || "").toString().trim();
           const label = (payload.label || "").toString().trim();
 
-      if (state === "stream_complete" || state === "complete" || state === "done") {
-        if (this.usingStateMachine) {
-          this.setSpinnerText("", { pending: false });
-        }
-        return;
-      }
+          if (state === "stream_complete" || state === "complete" || state === "done") {
+            if (this.usingStateMachine) {
+              this.setSpinnerText("", { pending: false });
+            }
+            return;
+          }
 
-      if (state === "reading_document" && !this.usingStateMachine) {
+          if (state === "reading_document" && !this.usingStateMachine) {
             // Knowledge read: we expect content to be revised after doc load.
             this.streamingRewritePending = true;
             this.setStreamingStatus("reading", label || "Reading…");
@@ -317,7 +333,7 @@ class ChatPortalClient {
       }
       return;
     }
-    
+
     if (eventType === "actionsComplete") {
       try {
         const payload = data ? JSON.parse(data) : null;
@@ -385,7 +401,7 @@ class ChatPortalClient {
       this.clearStreamingStatus();
       this.markStreamFinished();
     }
-}
+  }
 
   handleTurnPendingEvent(data) {
     let payload = null;
@@ -518,9 +534,14 @@ class ChatPortalClient {
   }
 
   renderTranscript(messages) {
-    const container = this.elements.messages;
+    const container = this.elements.messagesInner || this.elements.messages;
     if (!container) return;
+
     container.innerHTML = "";
+
+    // Validate message list
+    if (!Array.isArray(messages)) return;
+
     messages.forEach((message) => {
       if (message && message.metadata && message.metadata.placeholder) {
         return;
@@ -731,15 +752,23 @@ class ChatPortalClient {
   }
 
   appendMessage(raw) {
-    const container = this.elements.messages;
-    if (!container) return;
+    const container = this.elements.messagesInner || this.elements.messages;
+    const scroller = this.elements.messages;
+    if (!container) return; // Should not happen if init passed
+
+    if (this.elements.welcome && !this.elements.welcome.classList.contains("hidden")) {
+      this.transitionToActiveChat();
+    }
+
     const message = this.normalizeMessage(raw);
     const node = this.buildMessageNode(message);
     container.appendChild(node);
     if (message.metadata) {
       this.updateMessageMetadata(message.id, message.metadata);
     }
-    container.scrollTo({ top: container.scrollHeight, behavior: "smooth" });
+    if (scroller) {
+      scroller.scrollTo({ top: scroller.scrollHeight, behavior: "smooth" });
+    }
   }
 
   normalizeMessage(raw) {
@@ -766,58 +795,59 @@ class ChatPortalClient {
 
   buildMessageNode(message) {
     const wrapper = document.createElement("div");
-    wrapper.className = "flex gap-3 items-start";
+    wrapper.className = "flex gap-4 items-start py-2";
     if (message.id) {
       wrapper.dataset.messageId = message.id;
     }
-    if (message.sender === "customer") {
-      wrapper.classList.add("flex-row-reverse", "text-right");
-    }
+
+    // Avatar
     const avatar = document.createElement("div");
-    avatar.className = `h-9 w-9 rounded-full flex items-center justify-center font-semibold ${
-      message.sender === "customer" ? "bg-primary text-white" : "bg-primary/15 text-primary"
-    }`;
+    avatar.className = `flex-shrink-0 h-8 w-8 rounded-full flex items-center justify-center text-sm font-medium ${message.sender === "customer"
+      ? "bg-primary text-white"
+      : "bg-muted text-foreground"
+      }`;
     avatar.textContent = message.author.initials;
 
-    const bubble = document.createElement("div");
-    bubble.className = `flex-1 rounded-2xl px-4 py-3 text-sm text-foreground shadow-soft ${
-      message.sender === "customer" ? "bg-primary/10" : "bg-muted/60"
-    }`;
-    bubble.dataset.messageBubble = "true";
+    // Content container
+    const content = document.createElement("div");
+    content.className = "flex-1 min-w-0";
 
-    const author = document.createElement("p");
-    author.className = "font-medium text-sm text-muted-foreground mb-1";
+    // Header with author and timestamp
+    const header = document.createElement("div");
+    header.className = "flex items-baseline gap-2 mb-1";
+
+    const author = document.createElement("span");
+    author.className = "font-medium text-sm text-foreground";
     author.textContent = message.author.name;
-    bubble.appendChild(author);
+    header.appendChild(author);
 
+    const timestamp = document.createElement("span");
+    timestamp.className = "text-xs text-muted-foreground";
+    timestamp.textContent = this.formatTimestamp(message.sentAt);
+    header.appendChild(timestamp);
+
+    content.appendChild(header);
+
+    // Message body
     const body = document.createElement("div");
-    body.className = "space-y-2 leading-relaxed";
+    body.className = "text-sm text-foreground leading-relaxed";
     body.dataset.messageBody = "true";
+    body.dataset.messageBubble = "true";
     const cleanBody = this.stripInlineResponseBlocks(message.body || "");
     body.innerHTML = this.renderMarkdown(cleanBody);
     const initialBlocks = Array.isArray(message.metadata?.response_blocks) ? message.metadata.response_blocks : [];
     if (initialBlocks.length) {
       this.renderResponseBlocks(body, initialBlocks);
     }
-    bubble.appendChild(body);
-
-    const timestamp = document.createElement("p");
-    timestamp.className = "mt-2 text-xs text-muted-foreground";
-    timestamp.textContent = this.formatTimestamp(message.sentAt);
-    bubble.appendChild(timestamp);
+    content.appendChild(body);
 
     const metadataRow = document.createElement("div");
     metadataRow.dataset.messageMeta = "true";
     metadataRow.className = "mt-2 text-xs text-muted-foreground space-y-1 hidden";
-    bubble.appendChild(metadataRow);
+    content.appendChild(metadataRow);
 
-    if (message.sender === "customer") {
-      wrapper.appendChild(bubble);
-      wrapper.appendChild(avatar);
-    } else {
-      wrapper.appendChild(avatar);
-      wrapper.appendChild(bubble);
-    }
+    wrapper.appendChild(avatar);
+    wrapper.appendChild(content);
 
     return wrapper;
   }
@@ -878,8 +908,10 @@ class ChatPortalClient {
       }
       return;
     }
-    if (!this.elements.messages) return;
-  
+
+    const container = this.elements.messagesInner || this.elements.messages;
+    if (!container) return;
+
     const node = this.buildMessageNode({
       sender: "ai",
       body: "",
@@ -893,7 +925,7 @@ class ChatPortalClient {
     this.streamingMessageNode = node;
     this.streamingMessageBodyEl = node.querySelector("[data-message-body]");
     this.streamingMessageBubbleEl = node.querySelector("[data-message-bubble]");
-  
+
     if (this.streamingMessageBodyEl) {
       this.streamingMessageBodyEl.innerHTML = "";
       const statusRow = document.createElement("div");
@@ -926,8 +958,8 @@ class ChatPortalClient {
       this.streamingTextEl = textEl;
       this.streamingBlocksEl = blocksEl;
     }
-  
-    this.elements.messages.appendChild(node);
+
+    container.appendChild(node);
   }
 
   finalizeStreamingMessage(finalText) {
@@ -1617,22 +1649,22 @@ class ChatPortalClient {
         bodyRows.length === 0
           ? ""
           : bodyRows
-              .map((row) => {
-                const rowAlign = row.rtl ? ' dir="rtl" class="text-right"' : "";
-                const cellsHtml = row.cells
-                  .map((cell, idx) => {
-                    const alignClass =
-                      columnMeta[idx] && columnMeta[idx].align === "center"
-                        ? "text-center"
-                        : columnMeta[idx] && columnMeta[idx].align === "right"
-                          ? "text-right"
-                          : "text-left";
-                    return `<td class="px-3 py-2 ${alignClass}">${applyInlineFormatting(cell)}</td>`;
-                  })
-                  .join("");
-                return `<tr${rowAlign}>${cellsHtml}</tr>`;
-              })
-              .join("");
+            .map((row) => {
+              const rowAlign = row.rtl ? ' dir="rtl" class="text-right"' : "";
+              const cellsHtml = row.cells
+                .map((cell, idx) => {
+                  const alignClass =
+                    columnMeta[idx] && columnMeta[idx].align === "center"
+                      ? "text-center"
+                      : columnMeta[idx] && columnMeta[idx].align === "right"
+                        ? "text-right"
+                        : "text-left";
+                  return `<td class="px-3 py-2 ${alignClass}">${applyInlineFormatting(cell)}</td>`;
+                })
+                .join("");
+              return `<tr${rowAlign}>${cellsHtml}</tr>`;
+            })
+            .join("");
       const placeholder =
         placeholderOnly || bodyRows.length === 0
           ? `<tr><td class="px-3 py-3 text-center text-xs text-muted-foreground" colspan="${columnMeta.length}">Formatting table…</td></tr>`
@@ -1802,11 +1834,10 @@ class ChatPortalClient {
     const root = this.elements.toastRoot;
     if (!root) return;
     const panel = document.createElement("div");
-    panel.className = `pointer-events-auto rounded-xl border px-4 py-3 shadow-lg backdrop-blur transition ${
-      destructive
-        ? "border-destructive bg-destructive/10 text-destructive"
-        : "border-border bg-card text-foreground"
-    }`;
+    panel.className = `pointer-events-auto rounded-xl border px-4 py-3 shadow-lg backdrop-blur transition ${destructive
+      ? "border-destructive bg-destructive/10 text-destructive"
+      : "border-border bg-card text-foreground"
+      }`;
     panel.innerHTML = `
       <div class="font-semibold">${title}</div>
       <div class="text-sm">${description}</div>

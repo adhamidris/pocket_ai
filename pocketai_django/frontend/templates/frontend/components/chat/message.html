@@ -1,9 +1,17 @@
-<div class="flex gap-3 items-start">
-  <div class="h-9 w-9 rounded-full bg-primary/15 text-primary flex items-center justify-center font-semibold">
+<div class="flex gap-4 items-start py-2 {{ message.sender_class }}">
+  <!-- Avatar -->
+  <div
+    class="flex-shrink-0 h-8 w-8 rounded-full flex items-center justify-center text-sm font-medium {% if message.sender == 'customer' %}bg-primary text-white{% else %}bg-muted text-foreground{% endif %}">
     {{ message.initials }}
   </div>
-  <div class="flex-1 rounded-2xl bg-muted/60 px-4 py-3 text-sm text-foreground shadow-soft">
-    <p class="font-medium text-sm text-muted-foreground mb-1">{{ message.author }}</p>
-    <p>{{ message.body }}</p>
+  <!-- Content -->
+  <div class="flex-1 min-w-0">
+    <div class="flex items-baseline gap-2 mb-1">
+      <span class="font-medium text-sm text-foreground">{{ message.author }}</span>
+      {% if message.sent_at %}
+      <span class="text-xs text-muted-foreground">{{ message.sent_at }}</span>
+      {% endif %}
+    </div>
+    <div class="text-sm text-foreground leading-relaxed">{{ message.body }}</div>
   </div>
 </div>
