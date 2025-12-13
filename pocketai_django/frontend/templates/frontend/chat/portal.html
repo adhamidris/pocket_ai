@@ -64,13 +64,25 @@
   <!-- Main Chat Area -->
   <main class="flex-1 flex flex-col min-w-0 bg-background" data-chat-main>
 
-    <!-- Messages -->
     <div
-      class="flex-1 overflow-y-auto transition-all duration-700 ease-out {% if not portal.messages %}hidden opacity-0 translate-y-4{% endif %}"
+      class="flex-1 overflow-y-auto {% if not portal.messages %}transition-all duration-700 ease-out hidden opacity-0 translate-y-4{% endif %}"
       data-chat-messages>
       <div class="max-w-3xl mx-auto w-full px-4 py-6 space-y-6" data-chat-inner-container>
         {% for message in portal.messages %}
-        {% chat_message message %}
+        <div class="flex gap-4 items-start py-2 {% if message.sender|lower == 'customer' %}flex-row-reverse{% endif %}">
+          <!-- Content -->
+          <div
+            class="flex-1 min-w-0 flex flex-col {% if message.sender|lower == 'customer' %}items-end{% else %}items-start{% endif %}">
+            <div
+              class="flex items-baseline gap-2 mb-1 {% if message.sender|lower == 'customer' %}flex-row-reverse{% endif %}">
+              <!-- Timestamp removed -->
+            </div>
+            <div
+              class="text-sm leading-relaxed {% if message.sender|lower == 'customer' %}bg-muted text-foreground px-5 py-3 rounded-2xl rounded-tr-sm text-left inline-block shadow-sm{% else %}text-foreground{% endif %}">
+              {{ message.body }}
+            </div>
+          </div>
+        </div>
         {% endfor %}
       </div>
     </div>
@@ -104,7 +116,7 @@
 
     <!-- Input Area -->
     <div
-      class="p-4 pb-6 transition-all duration-700 ease-in-out {% if not portal.messages %}flex-1 flex flex-col justify-center{% endif %}"
+      class="p-4 pb-6 {% if not portal.messages %}transition-all duration-700 ease-in-out flex-1 flex flex-col justify-center{% endif %}"
       data-chat-input-area>
       <div class="max-w-3xl mx-auto w-full">
         <!-- Empty State Welcome -->
@@ -119,12 +131,13 @@
             class="relative flex items-end gap-2 rounded-2xl border border-border bg-card p-3 shadow-sm focus-within:border-primary/50 focus-within:ring-1 focus-within:ring-primary/20 transition-all">
             <textarea name="message" rows="1"
               class="flex-1 bg-transparent px-2 py-1 text-base md:text-sm text-foreground placeholder:text-muted-foreground focus:outline-none resize-none max-h-48"
-              placeholder="Message {{ portal.agent.name }}..." style="field-sizing: content;"></textarea>
+              placeholder="Message {{ portal.agent.name }}..." style="field-sizing: content;" autofocus></textarea>
             <button type="submit" data-chat-send-button
               class="flex-shrink-0 h-8 w-8 rounded-lg bg-primary text-white flex items-center justify-center hover:bg-primary/90 disabled:opacity-50 transition-colors mb-0.5">
               <span data-chat-send-icon>
-                <svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                  <path d="M5 12h14M12 5l7 7-7 7" />
+                <svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                  stroke-linecap="round" stroke-linejoin="round">
+                  <path d="M12 19V5M5 12l7-7 7 7" />
                 </svg>
               </span>
               <span class="hidden" data-chat-stop-icon>

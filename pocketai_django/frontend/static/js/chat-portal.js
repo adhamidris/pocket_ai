@@ -74,6 +74,13 @@ class ChatPortalClient {
     try {
       await this.bootstrapSession();
       this.setComposerAvailability(true);
+
+      // Auto-focus input now that it is enabled
+      if (this.elements.sendForm) {
+        const ta = this.elements.sendForm.querySelector('textarea');
+        if (ta) requestAnimationFrame(() => ta.focus());
+      }
+
       this.connectEventStream();
     } catch (error) {
       this.showToast("Unable to load chat", error.message || "Please refresh and try again.", true);
@@ -185,7 +192,14 @@ class ChatPortalClient {
       throw new Error("Session token missing from bootstrap response");
     }
     this.persistSessionToken(token);
-    this.renderTranscript(data.messages || []);
+
+    // Fix FOUC: Only render transcript if container is empty (client-side only),
+    // otherwise assume server-side rendering is correct.
+    const container = this.elements.messagesInner || this.elements.messages;
+    if (container && container.children.length === 0) {
+      this.renderTranscript(data.messages || []);
+    }
+
     const sessionStatus = data && data.session ? data.session.status : null;
     this.updateStatus(sessionStatus);
     this.updateCsatVisibility(sessionStatus);
@@ -859,13 +873,15 @@ class ChatPortalClient {
 
     // Author Removed
 
+    // Timestamp Removed for all messages as requested
+    /*
     if (!isCustomer) {
       const timestamp = document.createElement("span");
       timestamp.className = "text-xs text-muted-foreground";
       timestamp.textContent = this.formatTimestamp(message.sentAt);
       header.appendChild(timestamp);
     }
-
+    */
     content.appendChild(header);
 
     // Message body

@@ -2630,6 +2630,7 @@ def chat_portal(request: HttpRequest, business_slug: str, agent_slug: str) -> Ht
             {
                 "author": author,
                 "initials": initials,
+                "sender": sender,
                 "body": message.get("body", ""),
                 "sent_at": message.get("sent_at"),
                 "metadata": message.get("metadata") or {},
