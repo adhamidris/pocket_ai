@@ -65,7 +65,9 @@
   <main class="flex-1 flex flex-col min-w-0 bg-background" data-chat-main>
 
     <!-- Messages -->
-    <div class="flex-1 overflow-y-auto {% if not portal.messages %}hidden{% endif %}" data-chat-messages>
+    <div
+      class="flex-1 overflow-y-auto transition-all duration-700 ease-out {% if not portal.messages %}hidden opacity-0 translate-y-4{% endif %}"
+      data-chat-messages>
       <div class="max-w-3xl mx-auto w-full px-4 py-6 space-y-6" data-chat-inner-container>
         {% for message in portal.messages %}
         {% chat_message message %}
@@ -101,11 +103,13 @@
     </div>
 
     <!-- Input Area -->
-    <div class="p-4 pb-6 {% if not portal.messages %}flex-1 flex flex-col justify-center{% endif %}"
+    <div
+      class="p-4 pb-6 transition-all duration-700 ease-in-out {% if not portal.messages %}flex-1 flex flex-col justify-center{% endif %}"
       data-chat-input-area>
       <div class="max-w-3xl mx-auto w-full">
         <!-- Empty State Welcome -->
-        <div class="text-center mb-8 {% if portal.messages %}hidden{% endif %}" data-chat-welcome>
+        <div class="text-center mb-8 transition-all duration-500 ease-in-out {% if portal.messages %}hidden{% endif %}"
+          data-chat-welcome>
           <h2 class="text-2xl font-semibold text-foreground">How can {{ portal.business.name }}'s assistant help you
             today?</h2>
         </div>

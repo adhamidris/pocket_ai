@@ -1,17 +1,21 @@
-<div class="flex gap-4 items-start py-2 {{ message.sender_class }}">
+<div
+  class="flex gap-4 items-start py-2 {% if message.sender == 'customer' %}flex-row-reverse{% endif %} {{ message.sender_class }}">
   <!-- Avatar -->
   <div
     class="flex-shrink-0 h-8 w-8 rounded-full flex items-center justify-center text-sm font-medium {% if message.sender == 'customer' %}bg-primary text-white{% else %}bg-muted text-foreground{% endif %}">
     {{ message.initials }}
   </div>
   <!-- Content -->
-  <div class="flex-1 min-w-0">
-    <div class="flex items-baseline gap-2 mb-1">
-      <span class="font-medium text-sm text-foreground">{{ message.author }}</span>
-      {% if message.sent_at %}
+  <div
+    class="flex-1 min-w-0 flex flex-col {% if message.sender == 'customer' %}items-end{% else %}items-start{% endif %}">
+    <div class="flex items-baseline gap-2 mb-1 {% if message.sender == 'customer' %}flex-row-reverse{% endif %}">
+      {% if message.sent_at and message.sender != 'customer' %}
       <span class="text-xs text-muted-foreground">{{ message.sent_at }}</span>
       {% endif %}
     </div>
-    <div class="text-sm text-foreground leading-relaxed">{{ message.body }}</div>
+    <div
+      class="text-sm leading-relaxed {% if message.sender == 'customer' %}bg-muted text-foreground px-5 py-3 rounded-2xl rounded-tr-sm text-left inline-block shadow-sm{% else %}text-foreground{% endif %}">
+      {{ message.body }}
+    </div>
   </div>
 </div>

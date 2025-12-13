@@ -80,15 +80,25 @@ class ChatPortalClient {
     }
   }
 
-  transitionToActiveChat() {
+  async transitionToActiveChat() {
+    // 1. Fade out welcome
+    if (this.elements.welcome && !this.elements.welcome.classList.contains("hidden")) {
+      this.elements.welcome.classList.add("opacity-0", "-translate-y-4");
+      await new Promise((resolve) => setTimeout(resolve, 300)); // Wait for fade out
+      this.elements.welcome.classList.add("hidden");
+    }
+
+    // 2. Animate layout change (Input area moves down)
     if (this.elements.inputArea) {
       this.elements.inputArea.classList.remove("flex-1", "flex", "flex-col", "justify-center");
     }
-    if (this.elements.welcome) {
-      this.elements.welcome.classList.add("hidden");
-    }
+
+    // 3. Fade in messages
     if (this.elements.messages) {
       this.elements.messages.classList.remove("hidden");
+      // Force reflow
+      void this.elements.messages.offsetWidth;
+      this.elements.messages.classList.remove("opacity-0", "translate-y-4");
     }
   }
 
@@ -96,6 +106,23 @@ class ChatPortalClient {
     const form = this.elements.sendForm;
     const textarea = form ? form.querySelector("textarea[name='message']") : null;
     if (!form) return;
+
+    // Auto-resize logic (optional but good for UX)
+    const resizeTextarea = () => {
+      textarea.style.height = 'auto';
+      textarea.style.height = textarea.scrollHeight + 'px';
+    };
+    if (textarea) {
+      textarea.addEventListener('input', resizeTextarea);
+      // Enter to send
+      textarea.addEventListener("keydown", (event) => {
+        if (event.key === "Enter" && !event.shiftKey) {
+          event.preventDefault();
+          form.requestSubmit();
+        }
+      });
+    }
+
     form.addEventListener("submit", async (event) => {
       event.preventDefault();
       const data = new FormData(form);
@@ -762,7 +789,22 @@ class ChatPortalClient {
 
     const message = this.normalizeMessage(raw);
     const node = this.buildMessageNode(message);
-    container.appendChild(node);
+
+    // Animation for AI messages
+    if (message.sender === "ai") {
+      node.classList.add("opacity-0", "translate-y-4", "transition-all", "duration-500", "ease-out");
+      container.appendChild(node);
+      // Trigger reflow
+      void node.offsetWidth;
+      node.classList.remove("opacity-0", "translate-y-4");
+      // Remove transition after animation to allow instant height changes during streaming
+      setTimeout(() => {
+        node.classList.remove("transition-all", "duration-500", "ease-out");
+      }, 500);
+    } else {
+      container.appendChild(node);
+    }
+
     if (message.metadata) {
       this.updateMessageMetadata(message.id, message.metadata);
     }
@@ -795,42 +837,44 @@ class ChatPortalClient {
 
   buildMessageNode(message) {
     const wrapper = document.createElement("div");
-    wrapper.className = "flex gap-4 items-start py-2";
+    // Match message.html structure: flex with conditional reverse for customer
+    const isCustomer = message.sender === "customer";
+    wrapper.className = `flex gap-4 items-start py-2 ${isCustomer ? "flex-row-reverse" : ""}`;
+
     if (message.id) {
       wrapper.dataset.messageId = message.id;
     }
 
-    // Avatar
-    const avatar = document.createElement("div");
-    avatar.className = `flex-shrink-0 h-8 w-8 rounded-full flex items-center justify-center text-sm font-medium ${message.sender === "customer"
-      ? "bg-primary text-white"
-      : "bg-muted text-foreground"
-      }`;
-    avatar.textContent = message.author.initials;
+    // No Avatar
 
     // Content container
     const content = document.createElement("div");
-    content.className = "flex-1 min-w-0";
+    // Match message.html: flex column, items-end/start based on sender
+    content.className = `flex-1 min-w-0 flex flex-col ${isCustomer ? "items-end" : "items-start"}`;
 
     // Header with author and timestamp
     const header = document.createElement("div");
-    header.className = "flex items-baseline gap-2 mb-1";
+    // Match message.html: reverse row for customer to keep author info aligned
+    header.className = `flex items-baseline gap-2 mb-1 ${isCustomer ? "flex-row-reverse" : ""}`;
 
-    const author = document.createElement("span");
-    author.className = "font-medium text-sm text-foreground";
-    author.textContent = message.author.name;
-    header.appendChild(author);
+    // Author Removed
 
-    const timestamp = document.createElement("span");
-    timestamp.className = "text-xs text-muted-foreground";
-    timestamp.textContent = this.formatTimestamp(message.sentAt);
-    header.appendChild(timestamp);
+    if (!isCustomer) {
+      const timestamp = document.createElement("span");
+      timestamp.className = "text-xs text-muted-foreground";
+      timestamp.textContent = this.formatTimestamp(message.sentAt);
+      header.appendChild(timestamp);
+    }
 
     content.appendChild(header);
 
     // Message body
     const body = document.createElement("div");
-    body.className = "text-sm text-foreground leading-relaxed";
+    if (isCustomer) {
+      body.className = "text-sm leading-relaxed bg-muted text-foreground px-5 py-3 rounded-2xl rounded-tr-sm text-left inline-block shadow-sm";
+    } else {
+      body.className = "text-sm text-foreground leading-relaxed";
+    }
     body.dataset.messageBody = "true";
     body.dataset.messageBubble = "true";
     const cleanBody = this.stripInlineResponseBlocks(message.body || "");
@@ -846,7 +890,6 @@ class ChatPortalClient {
     metadataRow.className = "mt-2 text-xs text-muted-foreground space-y-1 hidden";
     content.appendChild(metadataRow);
 
-    wrapper.appendChild(avatar);
     wrapper.appendChild(content);
 
     return wrapper;
@@ -931,8 +974,12 @@ class ChatPortalClient {
       const statusRow = document.createElement("div");
       statusRow.dataset.streamingStatus = "true";
       statusRow.className = "flex items-center gap-2 text-xs text-muted-foreground mb-2 hidden";
-      const statusDot = document.createElement("span");
-      statusDot.className = "inline-block h-2 w-2 rounded-full bg-primary animate-pulse";
+      const statusDot = document.createElement("div");
+      statusDot.className = "flex items-center justify-center h-3.5 w-3.5 text-primary";
+      statusDot.innerHTML = `<svg class="animate-spin h-full w-full" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+        <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+        <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+      </svg>`;
       const statusText = document.createElement("span");
       statusText.classList.add("chat-portal-status-shimmer");
       statusText.textContent = "";
@@ -959,7 +1006,16 @@ class ChatPortalClient {
       this.streamingBlocksEl = blocksEl;
     }
 
+    // Animation for streaming AI message entry
+    node.classList.add("opacity-0", "translate-y-4", "transition-all", "duration-500", "ease-out");
     container.appendChild(node);
+    // Trigger reflow
+    void node.offsetWidth;
+    node.classList.remove("opacity-0", "translate-y-4");
+    // Remove transition after animation to allow instant height changes during streaming
+    setTimeout(() => {
+      node.classList.remove("transition-all", "duration-500", "ease-out");
+    }, 500);
   }
 
   finalizeStreamingMessage(finalText) {
@@ -1196,8 +1252,13 @@ class ChatPortalClient {
     this.streamingStatusTextEl.innerHTML = this.formatStatusLabel(label);
     this.streamingStatusEl.classList.remove("hidden");
     if (this.streamingStatusDotEl) {
-      this.streamingStatusDotEl.classList.toggle("bg-primary", !isError);
-      this.streamingStatusDotEl.classList.toggle("bg-destructive", isError);
+      if (isError) {
+        this.streamingStatusDotEl.classList.remove("text-primary");
+        this.streamingStatusDotEl.classList.add("text-destructive");
+      } else {
+        this.streamingStatusDotEl.classList.remove("text-destructive");
+        this.streamingStatusDotEl.classList.add("text-primary");
+      }
     }
     this.streamingStatusTextEl.classList.toggle("text-destructive", isError);
     if (pending && !isError) {
@@ -1217,8 +1278,8 @@ class ChatPortalClient {
       this.streamingStatusTextEl.classList.add("chat-portal-status-shimmer");
     }
     if (this.streamingStatusDotEl) {
-      this.streamingStatusDotEl.classList.remove("bg-destructive");
-      this.streamingStatusDotEl.classList.add("bg-primary");
+      this.streamingStatusDotEl.classList.remove("text-destructive");
+      this.streamingStatusDotEl.classList.add("text-primary");
     }
   }
 
@@ -1294,9 +1355,14 @@ class ChatPortalClient {
         100% { background-position: 200% 50%; }
       }
       .chat-portal-status-shimmer {
-        background-image: linear-gradient(90deg, rgba(255,255,255,0.1), rgba(255,255,255,0.7), rgba(255,255,255,0.1));
+        background: linear-gradient(
+          90deg,
+          hsl(var(--muted-foreground) / 0.5) 0%,
+          hsl(var(--muted-foreground) / 1) 40%,
+          hsl(var(--muted-foreground) / 0.5) 80%
+        );
         background-size: 200% auto;
-        animation: chat-portal-status-shimmer 2.2s linear infinite;
+        animation: chat-portal-status-shimmer 3s ease-in-out infinite;
         -webkit-background-clip: text;
         background-clip: text;
         color: transparent;
