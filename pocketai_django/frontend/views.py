@@ -2650,7 +2650,7 @@ def chat_portal(request: HttpRequest, business_slug: str, agent_slug: str) -> Ht
         "agent": {
             "name": agent_name,
             "role": agent.get("role") or "AI Customer Specialist",
-            "bio": "Trained on your knowledge base and policies to provide personalised support.",
+            "bio": "Trained on our knowledge base and policies to provide personalised support.",
             "initials": agent_initials,
             "slug": cookie_agent_slug,
         },

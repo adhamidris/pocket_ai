@@ -139,7 +139,27 @@ class ChatPortalClient {
         return;
       }
       if (textarea) {
+        const startHeight = textarea.style.height;
         textarea.value = "";
+
+        // Calculate minimal height
+        textarea.style.height = "auto";
+        const targetHeight = textarea.scrollHeight + "px";
+
+        // Restore start height to animate from
+        if (startHeight && startHeight !== targetHeight) {
+          textarea.style.height = startHeight;
+          requestAnimationFrame(() => {
+            textarea.style.transition = "height 0.3s ease-out";
+            textarea.style.height = targetHeight;
+
+            setTimeout(() => {
+              textarea.style.transition = "";
+            }, 300);
+          });
+        } else {
+          textarea.style.height = targetHeight;
+        }
       }
       if (this.isSending || this.isStreaming) {
         this.enqueueMessage(message);
@@ -886,10 +906,11 @@ class ChatPortalClient {
 
     // Message body
     const body = document.createElement("div");
+    body.dir = "auto";
     if (isCustomer) {
-      body.className = "text-sm leading-relaxed bg-muted text-foreground px-5 py-3 rounded-2xl rounded-tr-sm text-left inline-block shadow-sm";
+      body.className = "text-sm leading-relaxed bg-muted text-foreground px-5 py-3 rounded-2xl rounded-tr-sm text-start inline-block shadow-sm";
     } else {
-      body.className = "text-sm text-foreground leading-relaxed";
+      body.className = "text-sm text-foreground leading-relaxed text-start";
     }
     body.dataset.messageBody = "true";
     body.dataset.messageBubble = "true";

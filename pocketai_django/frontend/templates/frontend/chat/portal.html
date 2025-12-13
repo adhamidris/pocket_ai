@@ -1,10 +1,20 @@
 {% extends "frontend/base_app.html" %}
-{% load static ui_components %}
+{% load static ui_components markdown_extras %}
 
 {% block title %}Pocket AI Chat | {{ portal.agent.name }}{% endblock %}
 
 {% block extra_head %}
 <meta http-equiv="Cache-Control" content="no-store">
+<style>
+  .no-scrollbar::-webkit-scrollbar {
+    display: none;
+  }
+
+  .no-scrollbar {
+    -ms-overflow-style: none;
+    scrollbar-width: none;
+  }
+</style>
 {% endblock %}
 
 {% block content %}
@@ -32,13 +42,30 @@
     <!-- Agent Info -->
     <div class="flex-1 p-4">
       <div class="mb-6">
-        <p class="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-2">Agent</p>
+
         <div class="flex items-center gap-3">
           <div class="h-10 w-10 rounded-full bg-primary/10 flex items-center justify-center">
-            <span class="text-primary font-semibold text-sm">{{ portal.agent.initials }}</span>
+            <svg class="h-5 w-5 text-primary" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+              stroke-linecap="round" stroke-linejoin="round">
+              <rect x="3" y="11" width="18" height="10" rx="2" />
+              <circle cx="12" cy="5" r="2" />
+              <path d="M12 7v4" />
+              <line x1="8" y1="16" x2="8" y2="16" />
+              <line x1="16" y1="16" x2="16" y2="16" />
+            </svg>
           </div>
           <div>
-            <p class="font-medium text-foreground text-sm">{{ portal.agent.name }}</p>
+            <div class="flex items-center gap-2">
+              <p class="font-medium text-foreground text-sm">{{ portal.agent.name }}</p>
+              <div class="flex items-center gap-1.5">
+                <span class="relative flex h-1.5 w-1.5">
+                  <span
+                    class="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-500 opacity-75"></span>
+                  <span class="relative inline-flex rounded-full h-1.5 w-1.5 bg-emerald-500"></span>
+                </span>
+                <span class="text-[10px] font-medium text-emerald-600">Online</span>
+              </div>
+            </div>
             <p class="text-xs text-muted-foreground">{{ portal.agent.role }}</p>
           </div>
         </div>
@@ -46,19 +73,12 @@
 
       {% if portal.agent.bio %}
       <div class="mb-6">
-        <p class="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-2">About</p>
         <p class="text-sm text-muted-foreground leading-relaxed">{{ portal.agent.bio }}</p>
       </div>
       {% endif %}
     </div>
 
-    <!-- Status Footer -->
-    <div class="p-4 border-t border-border/50">
-      <div class="flex items-center gap-2 text-xs text-muted-foreground">
-        <span class="h-2 w-2 rounded-full bg-emerald-500"></span>
-        <span>Online</span>
-      </div>
-    </div>
+
   </aside>
 
   <!-- Main Chat Area -->
@@ -77,9 +97,9 @@
               class="flex items-baseline gap-2 mb-1 {% if message.sender|lower == 'customer' %}flex-row-reverse{% endif %}">
               <!-- Timestamp removed -->
             </div>
-            <div
-              class="text-sm leading-relaxed {% if message.sender|lower == 'customer' %}bg-muted text-foreground px-5 py-3 rounded-2xl rounded-tr-sm text-left inline-block shadow-sm{% else %}text-foreground{% endif %}">
-              {{ message.body }}
+            <div dir="auto"
+              class="text-sm leading-relaxed {% if message.sender|lower == 'customer' %}bg-muted text-foreground px-5 py-3 rounded-2xl rounded-tr-sm text-start inline-block shadow-sm{% else %}text-foreground text-start{% endif %}">
+              {{ message.body|render_markdown|safe }}
             </div>
           </div>
         </div>
@@ -130,7 +150,7 @@
           <div
             class="relative flex items-end gap-2 rounded-2xl border border-border bg-card p-3 shadow-sm focus-within:border-primary/50 focus-within:ring-1 focus-within:ring-primary/20 transition-all">
             <textarea name="message" rows="1"
-              class="flex-1 bg-transparent px-2 py-1 text-base md:text-sm text-foreground placeholder:text-muted-foreground focus:outline-none resize-none max-h-48"
+              class="flex-1 bg-transparent px-2 py-1 text-base md:text-sm text-foreground placeholder:text-muted-foreground focus:outline-none resize-none max-h-48 no-scrollbar"
               placeholder="Message {{ portal.agent.name }}..." style="field-sizing: content;" autofocus></textarea>
             <button type="submit" data-chat-send-button
               class="flex-shrink-0 h-8 w-8 rounded-lg bg-primary text-white flex items-center justify-center hover:bg-primary/90 disabled:opacity-50 transition-colors mb-0.5">
