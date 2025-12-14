@@ -15,7 +15,7 @@ import logging
 import re
 import time
 import uuid
-from typing import Callable, Iterable, Mapping, MutableMapping, Sequence
+from typing import Any, Callable, Iterable, Mapping, MutableMapping, Sequence
 
 from django.conf import settings
 from django.utils import timezone
@@ -490,8 +490,10 @@ class McpOrchestratorService:
             if initial_span.is_recording():
                 initial_span.set_attribute("mcp.message_count", len(primary_messages))
                 initial_span.set_attribute("mcp.tools_enabled", True)
-            first_payload = self.provider.chat(
-                primary_messages,
+            first_payload = self._chat_with_context_governor(
+                conversation=conversation,
+                stage="initial_pass",
+                messages=primary_messages,
                 tools=self.tool_definitions,
                 on_stream_delta=_first_stream_chunk,
                 on_tool_call_start=_on_stream_tool_call_start,
@@ -713,8 +715,10 @@ class McpOrchestratorService:
                         extra_system_messages.append({"role": "system", "content": loop_note})
                     extra_system_messages.append(reminder)
                     loop_messages[insert_at:insert_at] = extra_system_messages
-                    payload = self.provider.chat(
-                        loop_messages,
+                    payload = self._chat_with_context_governor(
+                        conversation=conversation,
+                        stage="tool_iteration",
+                        messages=loop_messages,
                         tools=self.tool_definitions,
                         on_stream_delta=_answer_stream_chunk,
                         on_tool_call_start=_on_stream_tool_call_start,
@@ -765,8 +769,10 @@ class McpOrchestratorService:
                             }
                             forced_messages = list(loop_messages)
                             forced_messages.insert(insert_at, forced_reminder)
-                            forced_payload = self.provider.chat(
-                                forced_messages,
+                            forced_payload = self._chat_with_context_governor(
+                                conversation=conversation,
+                                stage="force_final",
+                                messages=forced_messages,
                                 tools=None,
                                 on_stream_delta=_answer_stream_chunk,
                             )
@@ -1338,7 +1344,13 @@ class McpOrchestratorService:
             coverage_ledger=tuple(tool_context.coverage_ledger),
         )
         self._log_prompt("planner", conversation=conversation, messages=planner_messages)
-        payload = self.provider.chat(planner_messages, tools=None, on_stream_delta=None)
+        payload = self._chat_with_context_governor(
+            conversation=conversation,
+            stage="planner",
+            messages=planner_messages,
+            tools=None,
+            on_stream_delta=None,
+        )
         if not isinstance(payload, dict):
             return None
         return self._coerce_assistant_message(payload)
@@ -2279,6 +2291,522 @@ class McpOrchestratorService:
             },
             logger_obj=logger,
         )
+
+    def _context_governor_enabled_for_business(self, business_profile) -> bool:
+        enabled = bool(getattr(settings, "MCP_CONTEXT_GOVERNOR_ENABLED", True))
+        override = self._business_override(business_profile, "mcp_context_governor_enabled", 1 if enabled else 0)
+        try:
+            return bool(int(override))
+        except (TypeError, ValueError):
+            return enabled
+
+    def _max_input_tokens_for_business(self, business_profile) -> int:
+        default = int(getattr(settings, "MCP_MAX_INPUT_TOKENS", 7000))
+        override = self._business_override(business_profile, "mcp_max_input_tokens", default)
+        try:
+            limit = int(override)
+        except (TypeError, ValueError):
+            limit = default
+        return max(1000, limit)
+
+    @staticmethod
+    def _estimate_request_tokens(
+        *,
+        messages: Sequence[Mapping[str, object]],
+        tools: Iterable[Mapping[str, object]] | None,
+        response_format: Mapping[str, object] | None,
+    ) -> dict[str, int]:
+        def _dump_len(obj: object) -> int:
+            try:
+                return len(json.dumps(obj, ensure_ascii=False, separators=(",", ":"), default=str))
+            except Exception:
+                return len(str(obj))
+
+        message_chars = 0
+        for msg in messages:
+            if not isinstance(msg, Mapping):
+                continue
+            content = msg.get("content")
+            if isinstance(content, list):
+                for part in content:
+                    if isinstance(part, Mapping):
+                        text = part.get("text")
+                        if isinstance(text, str):
+                            message_chars += len(text)
+            elif isinstance(content, str):
+                message_chars += len(content)
+            tool_calls = msg.get("tool_calls")
+            if isinstance(tool_calls, Sequence) and not isinstance(tool_calls, (str, bytes, bytearray)):
+                message_chars += _dump_len(tool_calls)
+            name = msg.get("name")
+            if isinstance(name, str):
+                message_chars += len(name)
+            role = msg.get("role")
+            if isinstance(role, str):
+                message_chars += len(role)
+            message_chars += 12
+
+        tool_chars = _dump_len(list(tools)) if tools else 0
+        response_chars = _dump_len(response_format) if response_format else 0
+        total_chars = message_chars + tool_chars + response_chars
+        padded_chars = int(total_chars * 1.2)
+        tokens_est = (padded_chars + 3) // 4 if padded_chars else 0
+        return {
+            "message_chars": message_chars,
+            "tool_chars": tool_chars,
+            "response_format_chars": response_chars,
+            "total_chars": total_chars,
+            "tokens_est": tokens_est,
+        }
+
+    @staticmethod
+    def _clip_text(value: object, limit: int) -> str:
+        if value is None:
+            return ""
+        text = str(value)
+        if limit <= 0:
+            return ""
+        if len(text) <= limit:
+            return text
+        return text[: max(0, limit - 1)].rstrip() + "…"
+
+    def _strip_optional_system_messages(self, messages: Sequence[Mapping[str, object]]) -> tuple[list[dict[str, object]], int]:
+        kept: list[dict[str, object]] = []
+        dropped = 0
+        placeholder_reminder = getattr(prompts, "PLACEHOLDER_REMINDER", "").strip()
+
+        for entry in messages:
+            payload = dict(entry)
+            if payload.get("role") != "system":
+                kept.append(payload)
+                continue
+            content = payload.get("content")
+            if not isinstance(content, str):
+                kept.append(payload)
+                continue
+            trimmed = content.strip()
+            if not trimmed:
+                kept.append(payload)
+                continue
+
+            is_optional = False
+            if placeholder_reminder and trimmed == placeholder_reminder:
+                is_optional = True
+            elif trimmed.startswith("Task summary (internal;"):
+                is_optional = True
+            elif trimmed.startswith("Tool ledger this turn (internal;"):
+                is_optional = True
+            elif "You have already acknowledged that you are checking." in trimmed:
+                is_optional = True
+            elif "Tools are not returning new evidence. Do NOT call tools again." in trimmed:
+                is_optional = True
+
+            if is_optional:
+                dropped += 1
+                continue
+            kept.append(payload)
+
+        if not any(entry.get("role") == "system" for entry in kept):
+            return [dict(entry) for entry in messages], 0
+        return kept, dropped
+
+    def _compact_snippet_for_prompt(
+        self,
+        snippet: Mapping[str, object],
+        *,
+        include_content: bool,
+        content_chars: int,
+        summary_chars: int = 400,
+    ) -> dict[str, object]:
+        kept_keys = (
+            "id",
+            "upload_id",
+            "chunk_id",
+            "chunk_index",
+            "page_number",
+            "page_mode",
+            "title",
+            "public_label",
+            "read_state",
+            "read_required",
+            "read_hint",
+            "coverage",
+            "search_stage",
+            "structured_table_hint",
+            "structured_table_count",
+            "issue_count",
+            "confidence_score",
+            "is_table_chunk",
+            "entity_type",
+            "entity_name",
+            "entity_business",
+        )
+        compact: dict[str, object] = {}
+        for key in kept_keys:
+            if key not in snippet:
+                continue
+            value = snippet.get(key)
+            if value is None:
+                continue
+            if isinstance(value, str) and not value.strip():
+                continue
+            if isinstance(value, (list, tuple, set, dict)) and not value:
+                continue
+            compact[key] = value
+        summary = snippet.get("summary")
+        if isinstance(summary, str) and summary.strip():
+            compact["summary"] = self._clip_text(summary.strip(), summary_chars)
+        if include_content:
+            content = snippet.get("content")
+            if isinstance(content, str) and content.strip():
+                compact["content"] = self._clip_text(content.strip(), content_chars)
+        return compact
+
+    def _compact_tool_payload_for_prompt(
+        self,
+        tool_name: str,
+        payload: Mapping[str, object],
+        *,
+        max_snippets: int,
+        snippet_content_chars: int,
+        max_rows: int,
+        max_contributions: int,
+    ) -> dict[str, object]:
+        normalized_name = (tool_name or payload.get("tool") or "").strip()
+        compact: dict[str, object] = {"tool": normalized_name or payload.get("tool") or tool_name}
+        status = payload.get("status")
+        if status is not None:
+            compact["status"] = status
+        for key in ("error", "error_code", "hint"):
+            if key in payload and payload.get(key) not in {None, ""}:
+                compact[key] = payload.get(key)
+
+        if normalized_name == "search_knowledge":
+            for key in ("query", "intent"):
+                if key in payload and payload.get(key) not in {None, ""}:
+                    compact[key] = payload.get(key)
+            raw_snippets = payload.get("snippets")
+            snippets_out: list[dict[str, object]] = []
+            if isinstance(raw_snippets, list):
+                for entry in raw_snippets[: max(1, max_snippets)]:
+                    if not isinstance(entry, Mapping):
+                        continue
+                    snippets_out.append(
+                        self._compact_snippet_for_prompt(
+                            entry,
+                            include_content=False,
+                            content_chars=0,
+                        )
+                    )
+            compact["snippets"] = snippets_out
+            compact["prompt_compact"] = True
+            return compact
+
+        if normalized_name == "read_document":
+            for key in ("document_id", "page", "mode", "mode_downgraded", "token_budget", "throttle_notice"):
+                if key in payload and payload.get(key) not in {None, ""}:
+                    compact[key] = payload.get(key)
+            raw_snippets = payload.get("snippets")
+            snippets_out = []
+            if isinstance(raw_snippets, list):
+                for entry in raw_snippets[: max(1, max_snippets)]:
+                    if not isinstance(entry, Mapping):
+                        continue
+                    snippets_out.append(
+                        self._compact_snippet_for_prompt(
+                            entry,
+                            include_content=True,
+                            content_chars=snippet_content_chars,
+                        )
+                    )
+            compact["snippets"] = snippets_out
+            compact["prompt_compact"] = True
+            return compact
+
+        if normalized_name == "table_aggregate":
+            for key in (
+                "document_id",
+                "mode",
+                "query",
+                "match_column",
+                "match_value",
+                "match_values",
+                "value_column",
+                "sheet_name",
+                "columns",
+                "match_count",
+            ):
+                if key in payload and payload.get(key) not in {None, ""}:
+                    compact[key] = payload.get(key)
+            raw_rows = payload.get("rows")
+            rows_out: list[dict[str, object]] = []
+            if isinstance(raw_rows, list):
+                for row in raw_rows[: max(1, max_rows)]:
+                    if not isinstance(row, Mapping):
+                        continue
+                    row_payload: dict[str, object] = {}
+                    for key in ("row_index", "table_order_index", "sheet_name"):
+                        if key in row and row.get(key) not in {None, ""}:
+                            row_payload[key] = row.get(key)
+                    cells = row.get("cells")
+                    if isinstance(cells, list) and cells:
+                        row_payload["cells"] = [
+                            {"column": cell.get("column"), "value": cell.get("value")}
+                            for cell in cells[:8]
+                            if isinstance(cell, Mapping)
+                        ]
+                    contributions = row.get("contributions")
+                    if isinstance(contributions, list) and contributions:
+                        row_payload["contributions"] = [
+                            {"column": entry.get("column"), "display": entry.get("display"), "value": entry.get("value")}
+                            for entry in contributions[: max(1, max_contributions)]
+                            if isinstance(entry, Mapping)
+                        ]
+                    rows_out.append(row_payload)
+            compact["rows"] = rows_out
+            compact["prompt_compact"] = True
+            return compact
+
+        raw_snippets = payload.get("snippets")
+        snippets_out = []
+        if isinstance(raw_snippets, list):
+            for entry in raw_snippets[: max(1, max_snippets)]:
+                if not isinstance(entry, Mapping):
+                    continue
+                snippets_out.append(
+                    self._compact_snippet_for_prompt(
+                        entry,
+                        include_content=normalized_name == "read_document",
+                        content_chars=snippet_content_chars,
+                    )
+                )
+        if snippets_out:
+            compact["snippets"] = snippets_out
+        compact["prompt_compact"] = True
+        return compact
+
+    def _compact_tool_messages_for_prompt(
+        self,
+        messages: Sequence[Mapping[str, object]],
+        *,
+        max_snippets: int,
+        snippet_content_chars: int,
+        max_rows: int,
+        max_contributions: int,
+    ) -> tuple[list[dict[str, object]], int]:
+        updated: list[dict[str, object]] = []
+        changed = 0
+        for entry in messages:
+            payload = dict(entry)
+            if payload.get("role") != "tool":
+                updated.append(payload)
+                continue
+            content = payload.get("content")
+            if not isinstance(content, str) or not content.strip():
+                updated.append(payload)
+                continue
+            try:
+                parsed = json.loads(content)
+            except json.JSONDecodeError:
+                updated.append(payload)
+                continue
+            if not isinstance(parsed, Mapping):
+                updated.append(payload)
+                continue
+            tool_name = str(payload.get("name") or parsed.get("tool") or "")
+            compacted = self._compact_tool_payload_for_prompt(
+                tool_name,
+                parsed,
+                max_snippets=max_snippets,
+                snippet_content_chars=snippet_content_chars,
+                max_rows=max_rows,
+                max_contributions=max_contributions,
+            )
+            new_content = json.dumps(compacted, ensure_ascii=False)
+            if new_content != content:
+                payload["content"] = new_content
+                changed += 1
+            updated.append(payload)
+        return updated, changed
+
+    def _govern_messages_for_budget(
+        self,
+        *,
+        conversation: Conversation,
+        stage: str,
+        messages: Sequence[Mapping[str, object]],
+        tools: Iterable[Mapping[str, object]] | None,
+        response_format: Mapping[str, object] | None,
+        on_stream_delta: Callable[[str], None] | None,
+    ) -> tuple[list[dict[str, object]], dict[str, object]]:
+        business = conversation.business_profile
+        max_input_tokens = self._max_input_tokens_for_business(business)
+        limits = {
+            "max_snippets": max(1, int(getattr(settings, "MCP_PROMPT_MAX_SNIPPETS", 4))),
+            "snippet_content_chars": max(200, int(getattr(settings, "MCP_PROMPT_SNIPPET_CONTENT_CHARS", 1200))),
+            "max_rows": max(3, int(getattr(settings, "MCP_PROMPT_TABLE_MAX_ROWS", 12))),
+            "max_contributions": max(5, int(getattr(settings, "MCP_PROMPT_TABLE_MAX_CONTRIBUTIONS", 25))),
+        }
+
+        original_size = self._estimate_request_tokens(messages=messages, tools=tools, response_format=response_format)
+        actions: list[str] = []
+        governed = [dict(entry) for entry in messages]
+
+        if original_size["tokens_est"] > max_input_tokens:
+            governed, dropped = self._strip_optional_system_messages(governed)
+            if dropped:
+                actions.append(f"dropped_system={dropped}")
+
+            governed, compacted = self._compact_tool_messages_for_prompt(governed, **limits)
+            if compacted:
+                actions.append(f"compacted_tools={compacted}")
+
+            other_count = sum(1 for entry in governed if entry.get("role") != "system")
+            trimmed_history_limit = None
+            for history_limit in range(other_count, 0, -1):
+                candidate = prompts.limit_messages_for_stage(
+                    governed,
+                    stage=stage,
+                    history_limit=history_limit,
+                )
+                candidate_size = self._estimate_request_tokens(
+                    messages=candidate,
+                    tools=tools,
+                    response_format=response_format,
+                )
+                if candidate_size["tokens_est"] <= max_input_tokens:
+                    if history_limit != other_count:
+                        trimmed_history_limit = history_limit
+                    governed = [dict(entry) for entry in candidate]
+                    break
+            if trimmed_history_limit is not None:
+                actions.append(f"history_limit={trimmed_history_limit}")
+
+        final_size = self._estimate_request_tokens(messages=governed, tools=tools, response_format=response_format)
+
+        if final_size["tokens_est"] > max_input_tokens:
+            system_entries = [entry for entry in governed if entry.get("role") == "system"]
+            last_user = None
+            for entry in reversed(governed):
+                if entry.get("role") == "user" and isinstance(entry.get("content"), str) and entry.get("content").strip():
+                    last_user = entry
+                    break
+            if last_user:
+                governed = [*system_entries, dict(last_user)]
+                actions.append("fallback=minimal_messages")
+                final_size = self._estimate_request_tokens(messages=governed, tools=tools, response_format=response_format)
+
+        detail: dict[str, object] = {
+            "stage": stage,
+            "max_input_tokens": max_input_tokens,
+            "tokens_est_before": original_size["tokens_est"],
+            "tokens_est_after": final_size["tokens_est"],
+            "total_chars_before": original_size["total_chars"],
+            "total_chars_after": final_size["total_chars"],
+            "message_chars_after": final_size["message_chars"],
+            "tool_chars_after": final_size["tool_chars"],
+            "response_chars_after": final_size["response_format_chars"],
+            "messages": len(governed),
+            "tools_enabled": bool(tools),
+            "streaming": bool(on_stream_delta),
+        }
+        if actions:
+            detail["actions"] = actions
+        level = logging.INFO if actions or final_size["tokens_est"] >= int(max_input_tokens * 0.9) else logging.DEBUG
+        structured_log(
+            "mcp",
+            "prompt.budget",
+            detail,
+            context={
+                "conversation": conversation.id,
+                "business": conversation.business_profile_id,
+            },
+            logger_obj=logger,
+            level=level,
+        )
+        telemetry: dict[str, object] = {
+            "max_input_tokens": max_input_tokens,
+            "tokens_est_before": original_size["tokens_est"],
+            "tokens_est_after": final_size["tokens_est"],
+            "actions": tuple(actions),
+        }
+        return governed, telemetry
+
+    def _chat_with_context_governor(
+        self,
+        *,
+        conversation: Conversation,
+        stage: str,
+        messages: Sequence[Mapping[str, object]],
+        tools: Iterable[Mapping[str, object]] | None,
+        on_stream_delta: Callable[[str], None] | None,
+        on_tool_call_start: Callable[[Mapping[str, object]], None] | None = None,
+        response_format: Mapping[str, object] | None = None,
+    ) -> Mapping[str, Any]:
+        if not self.provider:
+            raise PromptGenerationError("MCP provider is not configured.")
+
+        business = conversation.business_profile
+        enabled = self._context_governor_enabled_for_business(business)
+        governed_messages = [dict(entry) for entry in messages]
+        if enabled:
+            governed_messages, _ = self._govern_messages_for_budget(
+                conversation=conversation,
+                stage=stage,
+                messages=messages,
+                tools=tools,
+                response_format=response_format,
+                on_stream_delta=on_stream_delta,
+            )
+
+        try:
+            return self.provider.chat(
+                governed_messages,
+                tools=tools,
+                on_stream_delta=on_stream_delta,
+                on_tool_call_start=on_tool_call_start,
+                response_format=response_format,
+            )
+        except PromptGenerationError as exc:
+            err = str(exc).lower()
+            if not enabled or not tools:
+                raise
+            if "token" not in err and "context" not in err and "maximum" not in err:
+                raise
+
+            last_user = None
+            for entry in reversed(messages):
+                if entry.get("role") == "user":
+                    content = entry.get("content")
+                    if isinstance(content, str) and content.strip():
+                        last_user = content.strip()
+                        break
+            fallback_user = last_user or "Please clarify your request."
+            fallback_messages: list[Mapping[str, object]] = [
+                {
+                    "role": "system",
+                    "content": (
+                        "You cannot call tools right now due to context limits. Ask exactly one clarifying question "
+                        "to narrow the user's request. Keep it short. Do not mention token limits or tools."
+                    ),
+                },
+                {"role": "user", "content": fallback_user},
+            ]
+            structured_log(
+                "mcp",
+                "prompt.budget_fallback",
+                {"stage": stage, "error": str(exc)[:240]},
+                context={"conversation": conversation.id, "business": conversation.business_profile_id},
+                logger_obj=logger,
+                level=logging.WARNING,
+            )
+            return self.provider.chat(
+                fallback_messages,
+                tools=None,
+                on_stream_delta=on_stream_delta,
+                on_tool_call_start=None,
+                response_format=None,
+            )
 
     def _business_override(self, business_profile, key: str, default: int | float) -> int | float:
         metadata = getattr(business_profile, "metadata", None)
