@@ -680,12 +680,26 @@ class McpOrchestratorService:
                                             )
                         if knowledge_phase:
                             _emit_phase_complete(knowledge_phase, snippet_total=_snippet_count(tool_result))
+                        limits = self._prompt_compaction_limits()
+                        prompt_tool_result: object = tool_result
+                        if isinstance(tool_result, Mapping):
+                            prompt_tool_result = self._compact_tool_payload_for_prompt(
+                                tool_name,
+                                tool_result,
+                                **limits,
+                            )
+                        elif tool_result is not None:
+                            prompt_tool_result = {
+                                "tool": tool_name,
+                                "result": self._clip_text(tool_result, 2000),
+                                "prompt_compact": True,
+                            }
                         transcript.append(
                             {
                                 "role": "tool",
                                 "tool_call_id": tool_call.get("id"),
                                 "name": tool_name,
-                                "content": json.dumps(tool_result, ensure_ascii=False),
+                                "content": json.dumps(prompt_tool_result, ensure_ascii=False),
                             }
                         )
                         if tool_name == "table_aggregate":
@@ -2370,6 +2384,107 @@ class McpOrchestratorService:
             return text
         return text[: max(0, limit - 1)].rstrip() + "…"
 
+    @staticmethod
+    def _safe_int_setting(value: object, default: int) -> int:
+        try:
+            return int(value) if value is not None else default
+        except (TypeError, ValueError):
+            return default
+
+    def _prompt_compaction_limits(self) -> dict[str, int]:
+        return {
+            "max_snippets": max(
+                1,
+                self._safe_int_setting(getattr(settings, "MCP_PROMPT_MAX_SNIPPETS", 4), 4),
+            ),
+            "snippet_content_chars": max(
+                200,
+                self._safe_int_setting(getattr(settings, "MCP_PROMPT_SNIPPET_CONTENT_CHARS", 1200), 1200),
+            ),
+            "max_rows": max(
+                3,
+                self._safe_int_setting(getattr(settings, "MCP_PROMPT_TABLE_MAX_ROWS", 12), 12),
+            ),
+            "max_contributions": max(
+                5,
+                self._safe_int_setting(getattr(settings, "MCP_PROMPT_TABLE_MAX_CONTRIBUTIONS", 25), 25),
+            ),
+        }
+
+    def _compact_action_payload_for_prompt(
+        self,
+        payload: Mapping[str, object],
+        *,
+        max_string_chars: int = 500,
+        max_keys: int = 20,
+        max_list_items: int = 10,
+        max_nested_keys: int = 10,
+    ) -> dict[str, object]:
+        compact: dict[str, object] = {}
+        for key, value in payload.items():
+            if len(compact) >= max_keys:
+                break
+            if value is None:
+                continue
+            if isinstance(value, str):
+                trimmed = value.strip()
+                if trimmed:
+                    compact[key] = self._clip_text(trimmed, max_string_chars)
+                continue
+            if isinstance(value, (int, float, bool)):
+                compact[key] = value
+                continue
+            if isinstance(value, Mapping):
+                nested: dict[str, object] = {}
+                for nested_key, nested_value in value.items():
+                    if len(nested) >= max_nested_keys:
+                        break
+                    if nested_value is None:
+                        continue
+                    if isinstance(nested_value, str):
+                        trimmed = nested_value.strip()
+                        if trimmed:
+                            nested[nested_key] = self._clip_text(trimmed, max_string_chars)
+                        continue
+                    if isinstance(nested_value, (int, float, bool)):
+                        nested[nested_key] = nested_value
+                if nested:
+                    compact[key] = nested
+                continue
+            if isinstance(value, Sequence) and not isinstance(value, (str, bytes, bytearray)):
+                items: list[object] = []
+                for item in value[:max_list_items]:
+                    if item is None:
+                        continue
+                    if isinstance(item, str):
+                        trimmed = item.strip()
+                        if trimmed:
+                            items.append(self._clip_text(trimmed, max_string_chars))
+                        continue
+                    if isinstance(item, (int, float, bool)):
+                        items.append(item)
+                        continue
+                    if isinstance(item, Mapping):
+                        mini: dict[str, object] = {}
+                        for mini_key, mini_val in item.items():
+                            if len(mini) >= 6:
+                                break
+                            if mini_val is None:
+                                continue
+                            if isinstance(mini_val, str):
+                                trimmed = mini_val.strip()
+                                if trimmed:
+                                    mini[mini_key] = self._clip_text(trimmed, max_string_chars)
+                                continue
+                            if isinstance(mini_val, (int, float, bool)):
+                                mini[mini_key] = mini_val
+                        if mini:
+                            items.append(mini)
+                if items:
+                    compact[key] = items
+                continue
+        return compact
+
     def _strip_optional_system_messages(self, messages: Sequence[Mapping[str, object]]) -> tuple[list[dict[str, object]], int]:
         kept: list[dict[str, object]] = []
         dropped = 0
@@ -2478,15 +2593,48 @@ class McpOrchestratorService:
         if status is not None:
             compact["status"] = status
         for key in ("error", "error_code", "hint"):
-            if key in payload and payload.get(key) not in {None, ""}:
-                compact[key] = payload.get(key)
+            if key not in payload:
+                continue
+            value = payload.get(key)
+            if value is None:
+                continue
+            if isinstance(value, str) and not value.strip():
+                continue
+            if isinstance(value, (list, tuple, set, dict)) and not value:
+                continue
+            compact[key] = value
 
         if normalized_name == "search_knowledge":
-            for key in ("query", "intent"):
-                if key in payload and payload.get(key) not in {None, ""}:
-                    compact[key] = payload.get(key)
+            for key in ("query", "intent", "required_identifiers", "provided_identifiers", "match_policy"):
+                if key not in payload:
+                    continue
+                value = payload.get(key)
+                if value is None:
+                    continue
+                if isinstance(value, str) and not value.strip():
+                    continue
+                if isinstance(value, (list, tuple, set, dict)) and not value:
+                    continue
+                compact[key] = value
+            identifier_gate = payload.get("identifier_gate")
+            if isinstance(identifier_gate, Mapping):
+                gate_out: dict[str, object] = {}
+                for key in ("status", "match_policy", "required_keys", "provided_keys"):
+                    if key not in identifier_gate:
+                        continue
+                    value = identifier_gate.get(key)
+                    if value is None:
+                        continue
+                    if isinstance(value, str) and not value.strip():
+                        continue
+                    if isinstance(value, (list, tuple, set, dict)) and not value:
+                        continue
+                    gate_out[key] = value
+                if gate_out:
+                    compact["identifier_gate"] = gate_out
             raw_snippets = payload.get("snippets")
             snippets_out: list[dict[str, object]] = []
+            search_content_chars = max(200, min(600, int(snippet_content_chars)))
             if isinstance(raw_snippets, list):
                 for entry in raw_snippets[: max(1, max_snippets)]:
                     if not isinstance(entry, Mapping):
@@ -2494,8 +2642,8 @@ class McpOrchestratorService:
                     snippets_out.append(
                         self._compact_snippet_for_prompt(
                             entry,
-                            include_content=False,
-                            content_chars=0,
+                            include_content=True,
+                            content_chars=search_content_chars,
                         )
                     )
             compact["snippets"] = snippets_out
@@ -2536,8 +2684,16 @@ class McpOrchestratorService:
                 "columns",
                 "match_count",
             ):
-                if key in payload and payload.get(key) not in {None, ""}:
-                    compact[key] = payload.get(key)
+                if key not in payload:
+                    continue
+                value = payload.get(key)
+                if value is None:
+                    continue
+                if isinstance(value, str) and not value.strip():
+                    continue
+                if isinstance(value, (list, tuple, set, dict)) and not value:
+                    continue
+                compact[key] = value
             raw_rows = payload.get("rows")
             rows_out: list[dict[str, object]] = []
             if isinstance(raw_rows, list):
@@ -2567,6 +2723,55 @@ class McpOrchestratorService:
             compact["prompt_compact"] = True
             return compact
 
+        if normalized_name == "list_tables":
+            for key in ("query", "limit"):
+                if key in payload and payload.get(key) not in {None, ""}:
+                    compact[key] = payload.get(key)
+            raw_results = payload.get("results")
+            results_out: list[dict[str, object]] = []
+            if isinstance(raw_results, list):
+                for result in raw_results[: max(1, max_snippets)]:
+                    if not isinstance(result, Mapping):
+                        continue
+                    entry: dict[str, object] = {}
+                    for key in ("upload_id", "document_id", "display_name", "table_count", "updated_at"):
+                        if key in result and result.get(key) not in {None, ""}:
+                            entry[key] = result.get(key)
+                    sheet_names = result.get("sheet_names")
+                    if isinstance(sheet_names, list) and sheet_names:
+                        entry["sheet_names"] = [str(name) for name in sheet_names[:6] if name]
+                    raw_tables = result.get("tables")
+                    if isinstance(raw_tables, list) and raw_tables:
+                        tables_out: list[dict[str, object]] = []
+                        for table in raw_tables[:5]:
+                            if not isinstance(table, Mapping):
+                                continue
+                            table_entry: dict[str, object] = {}
+                            for key in ("table_id", "order_index", "title", "sheet_name", "column_count"):
+                                if key in table and table.get(key) not in {None, ""}:
+                                    table_entry[key] = table.get(key)
+                            if table_entry:
+                                tables_out.append(table_entry)
+                        if tables_out:
+                            entry["tables"] = tables_out
+                    if entry:
+                        results_out.append(entry)
+            compact["results"] = results_out
+            compact["prompt_compact"] = True
+            return compact
+
+        action_value = payload.get("action")
+        action_payload = payload.get("payload")
+        if action_value is not None or action_payload is not None:
+            if action_value is not None:
+                compact["action"] = action_value
+            if isinstance(action_payload, Mapping):
+                compact["payload"] = self._compact_action_payload_for_prompt(action_payload)
+            elif isinstance(action_payload, str) and action_payload.strip():
+                compact["payload"] = self._clip_text(action_payload.strip(), 800)
+            compact["prompt_compact"] = True
+            return compact
+
         raw_snippets = payload.get("snippets")
         snippets_out = []
         if isinstance(raw_snippets, list):
@@ -2582,6 +2787,46 @@ class McpOrchestratorService:
                 )
         if snippets_out:
             compact["snippets"] = snippets_out
+
+        scalar_limit = 12
+        for key, value in payload.items():
+            if key in {
+                "tool",
+                "status",
+                "error",
+                "error_code",
+                "hint",
+                "snippets",
+                "rows",
+                "results",
+                "action",
+                "payload",
+                "identifier_gate",
+            }:
+                continue
+            if len(compact) >= scalar_limit:
+                break
+            if value is None:
+                continue
+            if isinstance(value, (int, float, bool)):
+                compact[key] = value
+            elif isinstance(value, str):
+                trimmed = value.strip()
+                if trimmed:
+                    compact[key] = self._clip_text(trimmed, 200)
+            elif isinstance(value, Sequence) and not isinstance(value, (str, bytes, bytearray)):
+                items: list[object] = []
+                for item in value[:6]:
+                    if item is None:
+                        continue
+                    if isinstance(item, (int, float, bool)):
+                        items.append(item)
+                    elif isinstance(item, str):
+                        trimmed = item.strip()
+                        if trimmed:
+                            items.append(self._clip_text(trimmed, 120))
+                if items:
+                    compact[key] = items
         compact["prompt_compact"] = True
         return compact
 
@@ -2641,12 +2886,7 @@ class McpOrchestratorService:
     ) -> tuple[list[dict[str, object]], dict[str, object]]:
         business = conversation.business_profile
         max_input_tokens = self._max_input_tokens_for_business(business)
-        limits = {
-            "max_snippets": max(1, int(getattr(settings, "MCP_PROMPT_MAX_SNIPPETS", 4))),
-            "snippet_content_chars": max(200, int(getattr(settings, "MCP_PROMPT_SNIPPET_CONTENT_CHARS", 1200))),
-            "max_rows": max(3, int(getattr(settings, "MCP_PROMPT_TABLE_MAX_ROWS", 12))),
-            "max_contributions": max(5, int(getattr(settings, "MCP_PROMPT_TABLE_MAX_CONTRIBUTIONS", 25))),
-        }
+        limits = self._prompt_compaction_limits()
 
         original_size = self._estimate_request_tokens(messages=messages, tools=tools, response_format=response_format)
         actions: list[str] = []
