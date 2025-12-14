@@ -76,7 +76,6 @@ class ChatPortalClient {
     try {
       await this.bootstrapSession();
       this.renderExistingMessages();
-      this.hydrateTimestamps(); // Added this line
       this.setComposerAvailability(true);
 
       // Auto-focus input now that it is enabled
@@ -157,17 +156,6 @@ class ChatPortalClient {
         } catch (e) {
           console.warn('Failed to parse markdown for message', messageId, e);
         }
-      }
-    });
-  }
-
-  hydrateTimestamps() {
-    const container = this.elements.messagesInner || this.elements.messages;
-    if (!container) return;
-    const stamps = container.querySelectorAll(".message-timestamp[data-timestamp]");
-    stamps.forEach((el) => {
-      if (!el.textContent.trim()) {
-        el.textContent = this.formatTimestamp(el.dataset.timestamp);
       }
     });
   }
@@ -1007,6 +995,9 @@ class ChatPortalClient {
     }
 
     const message = this.normalizeMessage(raw);
+    // Transition layout if this is the first message
+    this.transitionToActiveLayout();
+
     const node = this.buildMessageNode(message);
 
     // Animation for AI messages
@@ -1076,11 +1067,9 @@ class ChatPortalClient {
     // Match message.html: reverse row for customer to keep author info aligned
     header.className = `flex items-baseline gap-2 mb-1 ${isCustomer ? "flex-row-reverse" : ""}`;
 
-    // Timestamp
-    const timestamp = document.createElement("span");
-    timestamp.className = "text-xs text-muted-foreground message-timestamp select-none";
-    timestamp.textContent = this.formatTimestamp(message.sentAt);
-    header.appendChild(timestamp);
+    // Timestamp removed
+    
+    content.appendChild(header);
 
     content.appendChild(header);
 
@@ -1466,6 +1455,78 @@ class ChatPortalClient {
     return html;
   }
 
+
+  transitionToActiveLayout() {
+    const inputArea = this.elements.inputArea;
+    const welcome = this.elements.welcome;
+    if (!inputArea) return;
+
+    // FLIP Animation Logic
+    // Target the content wrapper for the slide
+    const contentWrapper = inputArea.firstElementChild;
+
+    if (inputArea.classList.contains("inset-0") && contentWrapper) {
+        // 1. First: Measure start position
+        const startY = contentWrapper.getBoundingClientRect().top;
+
+        // 2. State Change: Swap layout classes
+        inputArea.classList.remove("inset-0", "flex", "flex-col", "justify-center", "bg-background", "transition-all", "duration-500", "ease-in-out");
+        inputArea.classList.add(
+            "bottom-0",
+            "left-0",
+            "right-0",
+            "pb-6",
+            "bg-gradient-to-t",
+            "from-background",
+            "via-background",
+            "to-transparent",
+            "transition-all", // keep transition for other props if needed
+            "duration-500",
+            "ease-in-out"
+        );
+
+        // 3. Last: Measure end position
+        const endY = contentWrapper.getBoundingClientRect().top;
+        const deltaY = startY - endY;
+
+        // 4. Invert: specific transform to emulate start position
+        // We use style directly to avoid CSS class conflicts
+        contentWrapper.style.transform = `translateY(${deltaY}px)`;
+        contentWrapper.style.transition = "none";
+
+        // Animate welcome out concurrently
+        if (welcome) {
+             welcome.classList.add("opacity-0", "transition-opacity", "duration-300");
+             setTimeout(() => welcome.classList.add("hidden"), 300);
+        }
+
+        // 5. Play: Clear transform to animate to end position
+        requestAnimationFrame(() => {
+            // Force reflow
+            void contentWrapper.offsetHeight; 
+            
+            contentWrapper.style.transition = "transform 500ms cubic-bezier(0.4, 0, 0.2, 1)";
+            contentWrapper.style.transform = "";
+            
+            // Cleanup after animation
+            setTimeout(() => {
+                contentWrapper.style.transition = "";
+            }, 500);
+        });
+
+    } else {
+        // Fallback
+        if (welcome) welcome.classList.add("hidden");
+    }
+    
+    // Ensure message container is visible
+    const messages = this.elements.messages;
+    if (messages) {
+        messages.classList.remove("hidden", "opacity-0", "translate-y-4");
+    }
+  }
+
+
   refreshStreamingView() {
     const stripped = this.stripInlineResponseBlocks(this.streamingRawBuffer || "");
     this.updateTableIntent(stripped);
@@ -1814,14 +1875,7 @@ class ChatPortalClient {
     }
   }
 
-  formatTimestamp(value) {
-    if (!value) return "";
-    try {
-      return new Date(value).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
-    } catch (_error) {
-      return "";
-    }
-  }
+
 
   formatStatus(status) {
     return status.replace(/_/g, " ").replace(/\b\w/g, (char) => char.toUpperCase());

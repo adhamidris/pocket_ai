@@ -237,7 +237,7 @@
     </div>
 
     <div
-      class="absolute inset-0 overflow-y-auto custom-scrollbar {% if not portal.messages %}opacity-0 group-hover:opacity-100{% endif %}"
+      class="absolute inset-0 overflow-y-auto custom-scrollbar"
       data-chat-messages>
       <div class="max-w-3xl mx-auto w-full px-4 pt-20 pb-40 space-y-6" data-chat-inner-container>
         {% for message in portal.messages %}
@@ -247,9 +247,6 @@
             class="flex-1 min-w-0 flex flex-col {% if message.sender|lower == 'customer' %}items-end{% else %}items-start{% endif %}">
             <div
               class="flex items-baseline gap-2 mb-1 {% if message.sender|lower == 'customer' %}flex-row-reverse{% endif %}">
-              <span class="text-xs text-muted-foreground message-timestamp select-none" data-timestamp="{{ message.sent_at }}">
-                {{ message.sent_at|date:"g:i A" }}
-              </span>
             </div>
             <div dir="auto"
               class="text-base leading-relaxed {% if message.sender|lower == 'customer' %}bg-muted text-foreground px-5 py-3 rounded-2xl rounded-tr-sm text-start inline-block shadow-sm{% else %}text-foreground text-start max-w-none break-words{% endif %}"
@@ -302,11 +299,11 @@
 
     <!-- Input Area -->
     <div
-      class="absolute bottom-0 left-0 right-0 z-20 p-4 pb-6 bg-gradient-to-t from-background via-background to-transparent"
+      class="{% if portal.messages %}absolute bottom-0 left-0 right-0 z-20 p-4 pb-6 bg-gradient-to-t from-background via-background to-transparent transition-all duration-500 ease-in-out{% else %}absolute inset-0 flex flex-col justify-center z-20 p-4 bg-background transition-all duration-500 ease-in-out{% endif %}"
       data-chat-input-area>
       <div class="max-w-3xl mx-auto w-full">
         <!-- Empty State Welcome -->
-        <div class="text-center mb-8 transition-all duration-500 ease-in-out {% if portal.messages %}hidden{% endif %}"
+        <div class="text-center mb-8 transition-all duration-500 ease-out {% if portal.messages %}hidden{% endif %}"
           data-chat-welcome>
           <h2 class="text-2xl font-semibold text-foreground">How can {{ portal.business.name }}'s assistant help you
             today?</h2>
