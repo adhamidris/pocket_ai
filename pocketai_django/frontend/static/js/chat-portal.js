@@ -200,24 +200,67 @@ class ChatPortalClient {
   }
 
   async transitionToActiveChat() {
-    // 1. Fade out welcome
-    if (this.elements.welcome && !this.elements.welcome.classList.contains("hidden")) {
-      this.elements.welcome.classList.add("opacity-0", "-translate-y-4");
-      await new Promise((resolve) => setTimeout(resolve, 300)); // Wait for fade out
-      this.elements.welcome.classList.add("hidden");
+    const inputArea = this.elements.inputArea;
+    const welcome = this.elements.welcome;
+    
+    // Only transition if we are in the initial centered state
+    if (!inputArea || !inputArea.classList.contains("inset-0")) {
+      return;
     }
 
-    // 2. Animate layout change (Input area moves down)
-    if (this.elements.inputArea) {
-      this.elements.inputArea.classList.remove("flex-1", "flex", "flex-col", "justify-center");
+    // 1. FLIP Start: Measure
+    const contentWrapper = inputArea.firstElementChild;
+    const startY = contentWrapper ? contentWrapper.getBoundingClientRect().top : 0;
+
+    // 2. Change State (Synchronous)
+    // Remove "centered" classes, add "bottom" classes
+    inputArea.classList.remove("inset-0", "flex", "flex-col", "justify-center", "bg-background", "transition-all", "duration-500", "ease-in-out");
+    inputArea.classList.add(
+        "bottom-0", 
+        "left-0", 
+        "right-0", 
+        "pb-6", 
+        "bg-gradient-to-t", 
+        "from-background", 
+        "via-background", 
+        "to-transparent",
+        "transition-all", "duration-500", "ease-in-out"
+    );
+
+    // Hide welcome message (animate out)
+    if (welcome) {
+        welcome.classList.add("opacity-0", "-translate-y-4", "transition-all", "duration-500");
+        setTimeout(() => welcome.classList.add("hidden"), 500);
     }
 
-    // 3. Fade in messages
+    // Show messages container immediately
     if (this.elements.messages) {
-      this.elements.messages.classList.remove("hidden");
-      // Force reflow
-      void this.elements.messages.offsetWidth;
-      this.elements.messages.classList.remove("opacity-0", "translate-y-4");
+        this.elements.messages.classList.remove("hidden");
+        // Remove initial hiding classes
+        this.elements.messages.classList.remove("opacity-0", "translate-y-4");
+    }
+
+    // 3. FLIP End: Measure & Animate
+    if (contentWrapper) {
+        const endY = contentWrapper.getBoundingClientRect().top;
+        const deltaY = startY - endY;
+
+        // Invert: transform to emulate start position
+        contentWrapper.style.transform = `translateY(${deltaY}px)`;
+        contentWrapper.style.transition = "none";
+
+        // Play: Animate to end position
+        requestAnimationFrame(() => {
+             // Force reflow
+             void contentWrapper.offsetHeight;
+             contentWrapper.style.transition = "transform 500ms cubic-bezier(0.4, 0, 0.2, 1)"; // Smooth ease
+             contentWrapper.style.transform = "";
+             
+             // Cleanup after animation
+             setTimeout(() => {
+                 contentWrapper.style.transition = "";
+             }, 500);
+        });
     }
   }
 
@@ -995,8 +1038,7 @@ class ChatPortalClient {
     }
 
     const message = this.normalizeMessage(raw);
-    // Transition layout if this is the first message
-    this.transitionToActiveLayout();
+
 
     const node = this.buildMessageNode(message);
 
@@ -1076,6 +1118,11 @@ class ChatPortalClient {
     // Message body
     const body = document.createElement("div");
     body.dir = "auto";
+    const cleanBody = this.stripInlineResponseBlocks(message.body || "");
+    body.innerHTML = this.renderMarkdown(cleanBody);
+    body.dataset.messageBody = "true";
+    body.dataset.messageBubble = "true";
+
     if (isCustomer) {
       body.className = "text-base leading-relaxed bg-muted text-foreground px-5 py-3 rounded-2xl rounded-tr-sm text-start inline-block shadow-sm";
     } else {
@@ -1089,10 +1136,6 @@ class ChatPortalClient {
       
       copyBtn.addEventListener("click", async (e) => {
         e.stopPropagation();
-        // Use cleanBody for copy content, but we might want the rendered text?
-        // Let's use cleanBody (markdown) as it is usually what people want.
-        // OR wrapper.innerText? Better to copy the source markdown if possible.
-        // But cleanBody variable is in local scope.
         try {
           await navigator.clipboard.writeText(cleanBody);
           const originalHtml = copyBtn.innerHTML;
@@ -1106,10 +1149,6 @@ class ChatPortalClient {
       });
       body.appendChild(copyBtn);
     }
-    body.dataset.messageBody = "true";
-    body.dataset.messageBubble = "true";
-    const cleanBody = this.stripInlineResponseBlocks(message.body || "");
-    body.innerHTML = this.renderMarkdown(cleanBody);
     const initialBlocks = Array.isArray(message.metadata?.response_blocks) ? message.metadata.response_blocks : [];
     if (initialBlocks.length) {
       this.renderResponseBlocks(body, initialBlocks);
@@ -1226,6 +1265,7 @@ class ChatPortalClient {
       this.streamingFinalBodyEl = finalEl;
       this.streamingTextEl = textEl;
       this.streamingBlocksEl = blocksEl;
+      this.injectCopyButton(this.streamingMessageBodyEl);
     }
 
     // Animation for streaming AI message entry
@@ -1456,75 +1496,7 @@ class ChatPortalClient {
   }
 
 
-  transitionToActiveLayout() {
-    const inputArea = this.elements.inputArea;
-    const welcome = this.elements.welcome;
-    if (!inputArea) return;
 
-    // FLIP Animation Logic
-    // Target the content wrapper for the slide
-    const contentWrapper = inputArea.firstElementChild;
-
-    if (inputArea.classList.contains("inset-0") && contentWrapper) {
-        // 1. First: Measure start position
-        const startY = contentWrapper.getBoundingClientRect().top;
-
-        // 2. State Change: Swap layout classes
-        inputArea.classList.remove("inset-0", "flex", "flex-col", "justify-center", "bg-background", "transition-all", "duration-500", "ease-in-out");
-        inputArea.classList.add(
-            "bottom-0",
-            "left-0",
-            "right-0",
-            "pb-6",
-            "bg-gradient-to-t",
-            "from-background",
-            "via-background",
-            "to-transparent",
-            "transition-all", // keep transition for other props if needed
-            "duration-500",
-            "ease-in-out"
-        );
-
-        // 3. Last: Measure end position
-        const endY = contentWrapper.getBoundingClientRect().top;
-        const deltaY = startY - endY;
-
-        // 4. Invert: specific transform to emulate start position
-        // We use style directly to avoid CSS class conflicts
-        contentWrapper.style.transform = `translateY(${deltaY}px)`;
-        contentWrapper.style.transition = "none";
-
-        // Animate welcome out concurrently
-        if (welcome) {
-             welcome.classList.add("opacity-0", "transition-opacity", "duration-300");
-             setTimeout(() => welcome.classList.add("hidden"), 300);
-        }
-
-        // 5. Play: Clear transform to animate to end position
-        requestAnimationFrame(() => {
-            // Force reflow
-            void contentWrapper.offsetHeight; 
-            
-            contentWrapper.style.transition = "transform 500ms cubic-bezier(0.4, 0, 0.2, 1)";
-            contentWrapper.style.transform = "";
-            
-            // Cleanup after animation
-            setTimeout(() => {
-                contentWrapper.style.transition = "";
-            }, 500);
-        });
-
-    } else {
-        // Fallback
-        if (welcome) welcome.classList.add("hidden");
-    }
-    
-    // Ensure message container is visible
-    const messages = this.elements.messages;
-    if (messages) {
-        messages.classList.remove("hidden", "opacity-0", "translate-y-4");
-    }
-  }
 
 
   refreshStreamingView() {
