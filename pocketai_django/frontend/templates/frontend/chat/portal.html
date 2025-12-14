@@ -15,6 +15,26 @@
     scrollbar-width: none;
   }
 
+  /* Custom Scrollbar */
+  .custom-scrollbar::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+  }
+  .custom-scrollbar::-webkit-scrollbar-track {
+    background: hsl(var(--muted) / 0.3);
+  }
+  .custom-scrollbar::-webkit-scrollbar-thumb {
+    background: hsl(var(--primary) / 0.2);
+    border-radius: 10px;
+  }
+  .custom-scrollbar::-webkit-scrollbar-thumb:hover {
+    background: hsl(var(--primary) / 0.5);
+  }
+  .custom-scrollbar {
+    scrollbar-width: thin;
+    scrollbar-color: hsl(var(--primary) / 0.2) transparent;
+  }
+
   /* Markdown content styling */
   [data-message-body] h1,
   [data-message-body] h2,
@@ -28,7 +48,7 @@
   [data-message-body] h3 { font-size: 1em; }
 
   [data-message-body] p {
-    margin-bottom: 0.75em;
+    margin-bottom: 0.35em;
   }
   [data-message-body] p:last-child {
     margin-bottom: 0;
@@ -104,7 +124,7 @@
 {% endblock %}
 
 {% block content %}
-<div class="h-screen flex overflow-hidden" data-chat-portal data-session-token="{{ portal.session_token }}"
+<div class="h-[100dvh] w-full flex overflow-hidden" data-chat-portal data-session-token="{{ portal.session_token }}"
   data-session-cache-key="{{ portal.session_storage_key }}" data-endpoint-bootstrap="{{ portal.endpoints.bootstrap }}"
   data-endpoint-messages="{{ portal.endpoints.messages }}"
   data-endpoint-stream-send="{{ portal.endpoints.stream_send }}" data-endpoint-events="{{ portal.endpoints.events }}"
@@ -171,7 +191,7 @@
   <main class="flex-1 flex flex-col min-w-0 bg-background" data-chat-main>
 
     <div
-      class="flex-1 overflow-y-auto {% if not portal.messages %}transition-all duration-700 ease-out hidden opacity-0 translate-y-4{% endif %}"
+      class="flex-1 overflow-y-auto custom-scrollbar {% if not portal.messages %}transition-all duration-700 ease-out hidden opacity-0 translate-y-4{% endif %}"
       data-chat-messages>
       <div class="max-w-3xl mx-auto w-full px-4 py-6 space-y-6" data-chat-inner-container>
         {% for message in portal.messages %}

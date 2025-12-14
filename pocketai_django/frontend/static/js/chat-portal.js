@@ -765,13 +765,10 @@ class ChatPortalClient {
       heading.textContent = block.heading;
       container.appendChild(heading);
     }
-    lines.forEach((line) => {
-      if (!line) return;
-      const paragraph = document.createElement("div");
-      paragraph.className = "text-sm leading-relaxed";
-      paragraph.innerHTML = this.renderMarkdown(line);
-      container.appendChild(paragraph);
-    });
+    const content = document.createElement("div");
+    content.className = "text-sm leading-relaxed";
+    content.innerHTML = this.renderMarkdown(lines.join("\n"));
+    container.appendChild(content);
     if (block.rtl) {
       container.dir = "rtl";
       container.classList.add("text-right");
