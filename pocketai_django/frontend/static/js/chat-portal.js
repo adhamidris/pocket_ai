@@ -71,10 +71,12 @@ class ChatPortalClient {
     this.configureMarked();
     this.bindSendForm();
     this.bindCsatForm();
+    this.bindScrollButton();
     this.setComposerAvailability(false);
     try {
       await this.bootstrapSession();
       this.renderExistingMessages();
+      this.hydrateTimestamps(); // Added this line
       this.setComposerAvailability(true);
 
       // Auto-focus input now that it is enabled
@@ -117,29 +119,96 @@ class ChatPortalClient {
     const container = this.elements.messagesInner || this.elements.messages;
     console.log('[DEBUG] renderExistingMessages called, container:', container);
     if (!container) return;
-    const messageBodies = container.querySelectorAll('[data-message-id]');
-    console.log('[DEBUG] Found message bodies with data-message-id:', messageBodies.length);
+    const messageBodies = container.querySelectorAll('[data-message-body]');
+    console.log('[DEBUG] Found message bodies:', messageBodies.length);
     messageBodies.forEach((el) => {
+      // We rely on data-message-body which is on the body div itself
+      // The dataset.messageId is typically on the wrapper or the body depending on template.
+      // Template: data-message-body data-message-id="{{ forloop.counter }}" is on the body div.
       const messageId = el.dataset.messageId;
       console.log('[DEBUG] Processing message ID:', messageId);
+      
+      // Inject Copy Button if it's an AI message (not customer)
+      // Check if it's customer by checking class or parent
+      // Template: if message.sender|lower != 'customer' -> data-message-body
+      // So if it has data-message-body, it is NOT customer (based on template line 220)
+      // "if message.sender|lower != 'customer' data-message-body ..." 
+      
+      // Add relative and group classes
+      el.classList.add("relative", "group", "pr-8"); // pr-8 to avoid text under button
+      
+      // Check if button already exists
+      if (!el.querySelector('button[data-copy-btn]')) {
+         this.injectCopyButton(el);
+      }
+
       if (!messageId) return;
       // Find the corresponding JSON script tag
       const scriptTag = document.getElementById(messageId);
-      console.log('[DEBUG] Script tag found:', !!scriptTag);
       if (scriptTag) {
         try {
           const rawMarkdown = JSON.parse(scriptTag.textContent);
-          console.log('[DEBUG] Raw markdown (first 100 chars):', rawMarkdown?.substring?.(0, 100));
+          // console.log('[DEBUG] Raw markdown:', rawMarkdown?.substring?.(0, 100));
           if (rawMarkdown) {
             const rendered = this.renderMarkdown(rawMarkdown);
-            console.log('[DEBUG] Rendered HTML (first 100 chars):', rendered?.substring?.(0, 100));
             el.innerHTML = rendered;
+            this.injectCopyButton(el); // Re-inject after innerHTML wipe
           }
         } catch (e) {
           console.warn('Failed to parse markdown for message', messageId, e);
         }
       }
     });
+  }
+
+  hydrateTimestamps() {
+    const container = this.elements.messagesInner || this.elements.messages;
+    if (!container) return;
+    const stamps = container.querySelectorAll(".message-timestamp[data-timestamp]");
+    stamps.forEach((el) => {
+      if (!el.textContent.trim()) {
+        el.textContent = this.formatTimestamp(el.dataset.timestamp);
+      }
+    });
+  }
+
+  injectCopyButton(container) {
+      if (container.querySelector('button[data-copy-btn]')) return;
+      
+      const copyBtn = document.createElement("button");
+      copyBtn.dataset.copyBtn = "true";
+      copyBtn.className = "absolute -bottom-6 w-fit right-0 px-2 py-1 rounded-lg text-xs text-muted-foreground/50 hover:text-foreground hover:bg-muted/50 transition-all flex items-center gap-1.5";
+      copyBtn.type = "button";
+      copyBtn.innerHTML = `<svg class="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>`;
+      
+      copyBtn.addEventListener("click", async (e) => {
+        e.stopPropagation();
+        // Since this is existing message, we might not have 'cleanBody' easily available in scope if we didn't re-render.
+        // We can get innerText or try to find the raw markdown from script tag again.
+        let textToCopy = "";
+        const messageId = container.dataset.messageId;
+        const scriptTag = messageId ? document.getElementById(messageId) : null;
+        if (scriptTag) {
+             try {
+                 textToCopy = JSON.parse(scriptTag.textContent);
+             } catch(e) {}
+        }
+        if (!textToCopy) {
+            textToCopy = container.innerText.replace("Copy", "").trim(); // Fallback
+        }
+
+        try {
+          await navigator.clipboard.writeText(textToCopy);
+          const originalHtml = copyBtn.innerHTML;
+          copyBtn.innerHTML = `<svg class="h-3 w-3 text-emerald-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"></polyline></svg> <span class="text-[10px] font-medium text-emerald-500">Copied</span>`;
+          setTimeout(() => {
+            copyBtn.innerHTML = originalHtml;
+          }, 2000);
+        } catch (err) {
+          console.warn("Clipboard write failed", err);
+        }
+      });
+      container.appendChild(copyBtn);
   }
 
   async transitionToActiveChat() {
@@ -162,6 +231,32 @@ class ChatPortalClient {
       void this.elements.messages.offsetWidth;
       this.elements.messages.classList.remove("opacity-0", "translate-y-4");
     }
+  }
+
+  bindScrollButton() {
+    const btn = document.querySelector("[data-scroll-bottom]");
+    const scroller = this.elements.messages;
+    
+    if (!btn || !scroller) return;
+
+    btn.addEventListener("click", () => {
+      this.scrollToBottom(true); // Ensure scrollToBottom supports smooth behavior fallback
+    });
+
+    scroller.addEventListener("scroll", () => {
+      const isNearBottom = scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight < 100;
+      if (isNearBottom) {
+        btn.classList.add("hidden", "opacity-0", "translate-y-4");
+        btn.classList.remove("flex");
+      } else {
+        btn.classList.remove("hidden");
+        // slight delay to allow display:flex to apply before transition
+        setTimeout(() => {
+             btn.classList.remove("opacity-0", "translate-y-4");
+             btn.classList.add("flex");
+        }, 10);
+      }
+    });
   }
 
   bindSendForm() {
@@ -758,7 +853,7 @@ class ChatPortalClient {
       return null;
     }
     const container = document.createElement("div");
-    container.className = "space-y-1 rounded-xl bg-background/60 px-3 py-2 border border-border/60";
+    container.className = "relative group space-y-1 rounded-xl bg-background/60 px-3 py-2 border border-border/60";
     if (block.heading) {
       const heading = document.createElement("p");
       heading.className = "text-sm font-semibold text-foreground";
@@ -769,9 +864,36 @@ class ChatPortalClient {
     content.className = "text-sm leading-relaxed";
     content.innerHTML = this.renderMarkdown(lines.join("\n"));
     container.appendChild(content);
+
+    // Copy Button
+    const copyBtn = document.createElement("button");
+    // Positioned absolute bottom-right, hidden by default until group hover
+    copyBtn.className = "absolute bottom-1 right-1 p-1.5 rounded-lg text-muted-foreground/50 hover:text-foreground hover:bg-muted/50 transition-all";
+    copyBtn.type = "button";
+    copyBtn.innerHTML = `<svg class="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>`;
+    
+    copyBtn.addEventListener("click", async (e) => {
+      e.stopPropagation();
+      const textToCopy = lines.join("\n");
+      try {
+        await navigator.clipboard.writeText(textToCopy);
+        const originalHtml = copyBtn.innerHTML;
+        copyBtn.innerHTML = `<svg class="h-3.5 w-3.5 text-emerald-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"></polyline></svg>`;
+        setTimeout(() => {
+          copyBtn.innerHTML = originalHtml;
+        }, 2000);
+      } catch (err) {
+        console.warn("Clipboard write failed", err);
+      }
+    });
+    
+    container.appendChild(copyBtn);
+
     if (block.rtl) {
       container.dir = "rtl";
       container.classList.add("text-right");
+      // Adjust button position for RTL if needed, or rely on absolute positioning which might need a flip
+      copyBtn.className = copyBtn.className.replace("right-1", "left-1");
     }
     return container;
   }
@@ -936,7 +1058,7 @@ class ChatPortalClient {
     const wrapper = document.createElement("div");
     // Match message.html structure: flex with conditional reverse for customer
     const isCustomer = message.sender === "customer";
-    wrapper.className = `flex gap-4 items-start py-2 ${isCustomer ? "flex-row-reverse" : ""}`;
+    wrapper.className = `flex gap-4 items-start py-2 message-row ${isCustomer ? "flex-row-reverse" : ""}`;
 
     if (message.id) {
       wrapper.dataset.messageId = message.id;
@@ -954,17 +1076,12 @@ class ChatPortalClient {
     // Match message.html: reverse row for customer to keep author info aligned
     header.className = `flex items-baseline gap-2 mb-1 ${isCustomer ? "flex-row-reverse" : ""}`;
 
-    // Author Removed
+    // Timestamp
+    const timestamp = document.createElement("span");
+    timestamp.className = "text-xs text-muted-foreground message-timestamp select-none";
+    timestamp.textContent = this.formatTimestamp(message.sentAt);
+    header.appendChild(timestamp);
 
-    // Timestamp Removed for all messages as requested
-    /*
-    if (!isCustomer) {
-      const timestamp = document.createElement("span");
-      timestamp.className = "text-xs text-muted-foreground";
-      timestamp.textContent = this.formatTimestamp(message.sentAt);
-      header.appendChild(timestamp);
-    }
-    */
     content.appendChild(header);
 
     // Message body
@@ -973,7 +1090,32 @@ class ChatPortalClient {
     if (isCustomer) {
       body.className = "text-sm leading-relaxed bg-muted text-foreground px-5 py-3 rounded-2xl rounded-tr-sm text-start inline-block shadow-sm";
     } else {
-      body.className = "text-sm leading-relaxed text-foreground text-start max-w-none break-words";
+      body.className = "relative group text-sm leading-relaxed text-foreground text-start max-w-none break-words";
+      
+      // Copy Button for whole message
+      const copyBtn = document.createElement("button");
+      copyBtn.className = "absolute -bottom-6 w-fit right-0 px-2 py-1 rounded-lg text-xs text-muted-foreground/50 hover:text-foreground hover:bg-muted/50 transition-all flex items-center gap-1.5";
+      copyBtn.type = "button";
+      copyBtn.innerHTML = `<svg class="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>`;
+      
+      copyBtn.addEventListener("click", async (e) => {
+        e.stopPropagation();
+        // Use cleanBody for copy content, but we might want the rendered text?
+        // Let's use cleanBody (markdown) as it is usually what people want.
+        // OR wrapper.innerText? Better to copy the source markdown if possible.
+        // But cleanBody variable is in local scope.
+        try {
+          await navigator.clipboard.writeText(cleanBody);
+          const originalHtml = copyBtn.innerHTML;
+          copyBtn.innerHTML = `<svg class="h-3 w-3 text-emerald-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"></polyline></svg> <span class="text-[10px] font-medium text-emerald-500">Copied</span>`;
+          setTimeout(() => {
+            copyBtn.innerHTML = originalHtml;
+          }, 2000);
+        } catch (err) {
+          console.warn("Clipboard write failed", err);
+        }
+      });
+      body.appendChild(copyBtn);
     }
     body.dataset.messageBody = "true";
     body.dataset.messageBubble = "true";
@@ -1049,7 +1191,7 @@ class ChatPortalClient {
     const node = this.buildMessageNode({
       sender: "ai",
       body: "",
-      sent_at: new Date().toISOString(),
+      sentAt: new Date().toISOString(),
       author: { name: this.agentName, initials: this.agentInitials },
     });
     if (messageId) {
@@ -1690,6 +1832,15 @@ class ChatPortalClient {
       "Content-Type": "application/json",
       "X-Requested-With": "XMLHttpRequest",
     };
+  }
+
+  scrollToBottom(smooth = false) {
+    const scroller = this.elements.messages;
+    if (!scroller) return;
+    scroller.scrollTo({
+      top: scroller.scrollHeight,
+      behavior: smooth ? "smooth" : "auto",
+    });
   }
 
   showToast(title, description, destructive = false) {
