@@ -52,7 +52,6 @@ class ChatPortalClient {
     this.pendingMessageId = null;
     this.pendingMetadataVersion = 0;
     this.usingStateMachine = false;
-    this.markdownRenderer = this.createMarkdownRenderer();
     this.workflowLocked = false;
     this.streamingActive = false;
     this.streamFinished = false;
@@ -68,11 +67,14 @@ class ChatPortalClient {
   }
 
   async init() {
+    await this.waitForDependencies();
+    this.configureMarked();
     this.bindSendForm();
     this.bindCsatForm();
     this.setComposerAvailability(false);
     try {
       await this.bootstrapSession();
+      this.renderExistingMessages();
       this.setComposerAvailability(true);
 
       // Auto-focus input now that it is enabled
@@ -85,6 +87,59 @@ class ChatPortalClient {
     } catch (error) {
       this.showToast("Unable to load chat", error.message || "Please refresh and try again.", true);
     }
+  }
+
+  async waitForDependencies() {
+    // Wait for marked and DOMPurify to be loaded (max 3 seconds)
+    const maxWait = 3000;
+    const interval = 50;
+    let waited = 0;
+    while (waited < maxWait) {
+      if (typeof marked !== 'undefined' && typeof DOMPurify !== 'undefined') {
+        return;
+      }
+      await new Promise(resolve => setTimeout(resolve, interval));
+      waited += interval;
+    }
+    console.warn('Markdown dependencies not loaded after', maxWait, 'ms');
+  }
+
+  configureMarked() {
+    if (typeof marked !== 'undefined') {
+      marked.setOptions({
+        breaks: true,
+        gfm: true,
+      });
+    }
+  }
+
+  renderExistingMessages() {
+    const container = this.elements.messagesInner || this.elements.messages;
+    console.log('[DEBUG] renderExistingMessages called, container:', container);
+    if (!container) return;
+    const messageBodies = container.querySelectorAll('[data-message-id]');
+    console.log('[DEBUG] Found message bodies with data-message-id:', messageBodies.length);
+    messageBodies.forEach((el) => {
+      const messageId = el.dataset.messageId;
+      console.log('[DEBUG] Processing message ID:', messageId);
+      if (!messageId) return;
+      // Find the corresponding JSON script tag
+      const scriptTag = document.getElementById(messageId);
+      console.log('[DEBUG] Script tag found:', !!scriptTag);
+      if (scriptTag) {
+        try {
+          const rawMarkdown = JSON.parse(scriptTag.textContent);
+          console.log('[DEBUG] Raw markdown (first 100 chars):', rawMarkdown?.substring?.(0, 100));
+          if (rawMarkdown) {
+            const rendered = this.renderMarkdown(rawMarkdown);
+            console.log('[DEBUG] Rendered HTML (first 100 chars):', rendered?.substring?.(0, 100));
+            el.innerHTML = rendered;
+          }
+        } catch (e) {
+          console.warn('Failed to parse markdown for message', messageId, e);
+        }
+      }
+    });
   }
 
   async transitionToActiveChat() {
@@ -613,7 +668,18 @@ class ChatPortalClient {
 
   renderMarkdown(text) {
     if (!text) return "";
-    return this.markdownRenderer.render(text);
+    if (typeof marked === 'undefined') {
+      // Fallback if marked not loaded
+      return text.replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    }
+    const html = marked.parse(text);
+    if (typeof DOMPurify !== 'undefined') {
+      return DOMPurify.sanitize(html, {
+        ADD_ATTR: ['target'],
+        FORBID_ATTR: ['style'],
+      });
+    }
+    return html;
   }
 
   renderResponseBlocks(bodyEl, blocks) {
@@ -910,7 +976,7 @@ class ChatPortalClient {
     if (isCustomer) {
       body.className = "text-sm leading-relaxed bg-muted text-foreground px-5 py-3 rounded-2xl rounded-tr-sm text-start inline-block shadow-sm";
     } else {
-      body.className = "text-sm text-foreground leading-relaxed text-start";
+      body.className = "text-sm leading-relaxed text-foreground text-start max-w-none break-words";
     }
     body.dataset.messageBody = "true";
     body.dataset.messageBubble = "true";
@@ -963,16 +1029,7 @@ class ChatPortalClient {
   }
 
   normalizeStreamingChunk(chunk) {
-    let text = chunk;
-    const buffer = this.streamingRawBuffer || "";
-    // If the previous buffer doesn't end with whitespace and the new chunk starts
-    // with alphanumeric text, prepend a space to avoid run-on sentences.
-    const lastChar = buffer ? buffer[buffer.length - 1] : "";
-    if (lastChar && /[.!?]/.test(lastChar) && /^[A-Za-z0-9]/.test(text)) {
-      text = ` ${text}`;
-    }
-
-    return text;
+    return chunk || "";
   }
 
   formatAssistantText(text) {
@@ -1530,389 +1587,6 @@ class ChatPortalClient {
     }
   }
 
-  createMarkdownRenderer() {
-    const escapeHtml = (value = "") =>
-      value
-        .replace(/&/g, "&amp;")
-        .replace(/</g, "&lt;")
-        .replace(/>/g, "&gt;")
-        .replace(/"/g, "&quot;")
-        .replace(/'/g, "&#39;");
-
-    const decodeHtmlEntities = (value = "") =>
-      value
-        .replace(/&amp;/g, "&")
-        .replace(/&lt;/g, "<")
-        .replace(/&gt;/g, ">")
-        .replace(/&quot;/g, '"')
-        .replace(/&#39;/g, "'");
-
-    const truncateText = (value = "", limit = 60) => (value.length > limit ? `${value.slice(0, limit - 1)}…` : value);
-
-    const prettifyLinkLabel = (rawUrl = "") => {
-      const cleaned = decodeHtmlEntities(rawUrl || "").trim();
-      if (!cleaned) return "";
-      try {
-        const parsed = new URL(cleaned);
-        const host = (parsed.hostname || "").replace(/^www\./i, "") || parsed.hostname;
-        const segments = parsed.pathname.split("/").filter(Boolean);
-        let pathLabel = "";
-        for (const segment of segments) {
-          const safeSegment = segment.length > 32 ? `${segment.slice(0, 29)}…` : segment;
-          const tentative = pathLabel ? `${pathLabel}/${safeSegment}` : safeSegment;
-          if (`${host}/${tentative}`.length > 60) {
-            pathLabel = pathLabel ? `${pathLabel}/…` : "…";
-            break;
-          }
-          pathLabel = tentative;
-        }
-        let label = host || parsed.hostname || cleaned;
-        if (pathLabel) {
-          label = `${label}/${pathLabel}`;
-        }
-        return truncateText(label, 60);
-      } catch (_error) {
-        return truncateText(cleaned.replace(/^https?:\/\//i, ""), 60);
-      }
-    };
-
-    const createPlaceholderToken = (prefix, collection, html) => {
-      const token = `@@${prefix}_${collection.length}@@`;
-      collection.push(html);
-      return token;
-    };
-
-    const restorePlaceholders = (text, prefix, collection) => {
-      if (!collection.length) {
-        return text;
-      }
-      let output = text;
-      collection.forEach((html, index) => {
-        const token = `@@${prefix}_${index}@@`;
-        output = output.split(token).join(html);
-      });
-      return output;
-    };
-
-    const buildAnchor = (href, label) =>
-      `<a href="${href}" target="_blank" rel="nofollow noopener noreferrer" class="text-primary underline">${label}</a>`;
-
-    const applyInlineFormatting = (value = "") => {
-      if (!value) return "";
-      const codePlaceholders = [];
-      const markdownLinkPlaceholders = [];
-
-      let working = value;
-
-      working = working.replace(/`([^`]+)`/g, (_, code) =>
-        createPlaceholderToken(
-          "CODE",
-          codePlaceholders,
-          `<code class="bg-muted/60 px-1 py-0.5 rounded text-xs font-mono">${escapeHtml(code)}</code>`
-        )
-      );
-
-      working = working.replace(/\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g, (_, label, url) => {
-        const displayLabel = (label || "").trim() || prettifyLinkLabel(url) || url;
-        const safeHref = escapeHtml(url);
-        const safeLabel = escapeHtml(displayLabel);
-        return createPlaceholderToken("LINK", markdownLinkPlaceholders, buildAnchor(safeHref, safeLabel));
-      });
-
-      let output = escapeHtml(working);
-
-      output = output.replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>");
-      output = output.replace(/__(.+?)__/g, "<strong>$1</strong>");
-      output = output.replace(/(\*|_)([^*_]+)\1/g, "<em>$2</em>");
-
-      output = output.replace(/(^|\s)(https?:\/\/[^\s<]+)/g, (match, prefix, url) => {
-        let normalizedUrl = url;
-        let trailing = "";
-        while (/[.,!?]$/.test(normalizedUrl)) {
-          trailing = normalizedUrl.slice(-1) + trailing;
-          normalizedUrl = normalizedUrl.slice(0, -1);
-        }
-        const decoded = decodeHtmlEntities(normalizedUrl);
-        if (!decoded) {
-          return match;
-        }
-        const safeHref = escapeHtml(decoded);
-        const safeLabel = escapeHtml(prettifyLinkLabel(decoded) || decoded);
-        const anchor = buildAnchor(safeHref, safeLabel);
-        return `${prefix || ""}${anchor}${trailing}`;
-      });
-
-      output = restorePlaceholders(output, "LINK", markdownLinkPlaceholders);
-      output = restorePlaceholders(output, "CODE", codePlaceholders);
-
-      return output;
-    };
-
-    const wrapList = (items, ordered) => {
-      if (!items.length) return "";
-      const tag = ordered ? "ol" : "ul";
-      const classes = ordered ? "list-decimal pl-5 space-y-1" : "list-disc pl-5 space-y-1";
-      const inner = items.map((item) => `<li>${applyInlineFormatting(item)}</li>`).join("");
-      return `<${tag} class="${classes}">${inner}</${tag}>`;
-    };
-
-    const splitTableRow = (line = "") => {
-      let text = line.trim();
-      if (!text) {
-        return [];
-      }
-      if (text.startsWith("|")) {
-        text = text.slice(1);
-      }
-      if (text.endsWith("|")) {
-        text = text.slice(0, -1);
-      }
-      return text.split("|").map((cell) => cell.trim());
-    };
-
-    const normalizeColumnAlignment = (token = "") => {
-      const trimmed = token.trim();
-      const starts = trimmed.startsWith(":");
-      const ends = trimmed.endsWith(":");
-      if (starts && ends) return "center";
-      if (ends) return "right";
-      return "left";
-    };
-
-    const isTableRowCandidate = (line = "") => {
-      if (!line || typeof line !== "string") {
-        return false;
-      }
-      if (/^\s*```/.test(line)) {
-        return false;
-      }
-      return (line.match(/\|/g) || []).length >= 2;
-    };
-
-    const isPartialTableRowLine = (line = "") => {
-      if (!line || typeof line !== "string") {
-        return false;
-      }
-      if (/^\s*```/.test(line)) {
-        return false;
-      }
-      const trimmed = line.trim();
-      if (!trimmed) {
-        return false;
-      }
-      return trimmed.startsWith("|");
-    };
-
-    const isTableSeparatorLine = (line = "") => {
-      const cells = splitTableRow(line);
-      if (!cells.length) return false;
-      return cells.every((cell) => /^:?-{2,}:?$/.test(cell.replace(/\s+/g, "")));
-    };
-
-    const isPotentialSeparatorLine = (line = "") => {
-      if (!line || typeof line !== "string") {
-        return false;
-      }
-      const cells = splitTableRow(line);
-      if (!cells.length) return false;
-      return cells.every((cell) => /^:?-*:?$/.test(cell.replace(/\s+/g, "")));
-    };
-
-    const containsRtlCharacters = (text = "") => /[\u0590-\u08FF]/.test(text);
-
-    const buildTableHtml = (headerCells, alignCells, rowLines, { placeholderOnly = false } = {}) => {
-      const columnMeta = headerCells.map((raw, idx) => {
-        const label = raw || `Column ${idx + 1}`;
-        const align = normalizeColumnAlignment(alignCells[idx] || "");
-        return {
-          label,
-          align,
-        };
-      });
-      const bodyRows = rowLines.map((row) => {
-        const cells = splitTableRow(row);
-        while (cells.length < columnMeta.length) {
-          cells.push("");
-        }
-        const rtl = containsRtlCharacters(row);
-        return {
-          cells: cells.slice(0, columnMeta.length),
-          rtl,
-        };
-      });
-      const wrapperClasses = "mt-3 overflow-hidden rounded-xl border border-border/60 bg-background/80 shadow-sm";
-      const tableClasses = "w-full border-collapse text-sm";
-      const headCells = columnMeta
-        .map((col) => {
-          const alignClass = col.align === "center" ? "text-center" : col.align === "right" ? "text-right" : "text-left";
-          return `<th class="px-3 py-2 font-medium ${alignClass}">${applyInlineFormatting(col.label)}</th>`;
-        })
-        .join("");
-      const bodyHtml =
-        bodyRows.length === 0
-          ? ""
-          : bodyRows
-            .map((row) => {
-              const rowAlign = row.rtl ? ' dir="rtl" class="text-right"' : "";
-              const cellsHtml = row.cells
-                .map((cell, idx) => {
-                  const alignClass =
-                    columnMeta[idx] && columnMeta[idx].align === "center"
-                      ? "text-center"
-                      : columnMeta[idx] && columnMeta[idx].align === "right"
-                        ? "text-right"
-                        : "text-left";
-                  return `<td class="px-3 py-2 ${alignClass}">${applyInlineFormatting(cell)}</td>`;
-                })
-                .join("");
-              return `<tr${rowAlign}>${cellsHtml}</tr>`;
-            })
-            .join("");
-      const placeholder =
-        placeholderOnly || bodyRows.length === 0
-          ? `<tr><td class="px-3 py-3 text-center text-xs text-muted-foreground" colspan="${columnMeta.length}">Formatting table…</td></tr>`
-          : "";
-      return `<div class="${wrapperClasses}"><table class="${tableClasses}"><thead class="bg-muted/40 text-muted-foreground"><tr>${headCells}</tr></thead><tbody>${bodyHtml || placeholder}</tbody></table></div>`;
-    };
-
-    const tryParseTable = (lines, startIndex, { intentActive } = {}) => {
-      const line = lines[startIndex];
-      if (!isTableRowCandidate(line)) {
-        return null;
-      }
-      const headerCells = splitTableRow(line);
-      if (headerCells.length < 2) {
-        return null;
-      }
-      if (startIndex + 1 >= lines.length) {
-        if (intentActive) {
-          return {
-            html: buildTableHtml(headerCells, [], [], { placeholderOnly: true }),
-            nextIndex: startIndex + 1,
-            awaitingSeparator: true,
-          };
-        }
-        return null;
-      }
-      const separatorLine = lines[startIndex + 1];
-      if (!isTableSeparatorLine(separatorLine)) {
-        const remainingLines = lines.slice(startIndex + 2);
-        const hasTrailingContent = remainingLines.some((nextLine) => nextLine.trim());
-        if (intentActive && !hasTrailingContent && (isPotentialSeparatorLine(separatorLine) || !separatorLine.trim())) {
-          return {
-            html: buildTableHtml(headerCells, [], [], { placeholderOnly: true }),
-            nextIndex: startIndex + 2,
-            awaitingSeparator: true,
-          };
-        }
-        return null;
-      }
-      const rowLines = [];
-      const headerTrimmed = (line || "").trim();
-      const headerHasOuterPipes = headerTrimmed.startsWith("|") || headerTrimmed.endsWith("|");
-      const allowOnePipeRows = headerCells.length === 2 && !headerHasOuterPipes;
-      let cursor = startIndex + 2;
-      while (cursor < lines.length) {
-        const rowLine = lines[cursor];
-        if (!rowLine.trim()) {
-          break;
-        }
-        const pipeCount = (rowLine.match(/\|/g) || []).length;
-        const isBodyRow =
-          isTableRowCandidate(rowLine) ||
-          isPartialTableRowLine(rowLine) ||
-          (allowOnePipeRows && pipeCount >= 1);
-        if (!isBodyRow) {
-          break;
-        }
-        rowLines.push(rowLine);
-        cursor += 1;
-      }
-      return {
-        html: buildTableHtml(headerCells, splitTableRow(separatorLine), rowLines),
-        nextIndex: cursor,
-      };
-    };
-
-    const renderBlocks = (input = "") => {
-      const lines = input.replace(/\r\n/g, "\n").split("\n");
-      const blocks = [];
-      let currentList = null;
-
-      const flushList = () => {
-        if (!currentList) return;
-        blocks.push(wrapList(currentList.items, currentList.ordered));
-        currentList = null;
-      };
-
-      let idx = 0;
-      while (idx < lines.length) {
-        const line = lines[idx];
-        const matchUnordered = line.match(/^\s*[-*+]\s+(.*)/);
-        const matchOrdered = line.match(/^\s*\d+\.\s+(.*)/);
-        if (matchUnordered) {
-          if (!currentList || currentList.ordered) {
-            flushList();
-            currentList = { ordered: false, items: [] };
-          }
-          currentList.items.push(matchUnordered[1]);
-          idx += 1;
-          continue;
-        }
-        if (matchOrdered) {
-          if (!currentList || !currentList.ordered) {
-            flushList();
-            currentList = { ordered: true, items: [] };
-          }
-          currentList.items.push(matchOrdered[1]);
-          idx += 1;
-          continue;
-        }
-
-        const trimmed = line.trim();
-        if (!trimmed) {
-          flushList();
-          idx += 1;
-          continue;
-        }
-
-        const tableCandidate = tryParseTable(lines, idx, { intentActive: this.tableIntentActive });
-        if (tableCandidate) {
-          flushList();
-          blocks.push(tableCandidate.html);
-          idx = tableCandidate.nextIndex;
-          if (tableCandidate.awaitingSeparator) {
-            break;
-          } else {
-            this.tableIntentActive = false;
-          }
-          continue;
-        }
-
-        flushList();
-        const heading = trimmed.match(/^(#{1,3})\s+(.*)$/);
-        if (heading) {
-          const level = heading[1].length;
-          const tag = level === 1 ? "h3" : level === 2 ? "h4" : "h5";
-          const classes = "font-semibold text-foreground";
-          blocks.push(`<${tag} class="${classes}">${applyInlineFormatting(heading[2])}</${tag}>`);
-          idx += 1;
-          continue;
-        }
-
-        blocks.push(`<p>${applyInlineFormatting(trimmed)}</p>`);
-        idx += 1;
-      }
-
-      flushList();
-      return blocks.join("") || applyInlineFormatting(input);
-    };
-
-    return {
-      render: renderBlocks,
-    };
-  }
-
   formatTimestamp(value) {
     if (!value) return "";
     try {
@@ -1959,3 +1633,4 @@ document.addEventListener("DOMContentLoaded", () => {
   const client = new ChatPortalClient(container);
   client.init();
 });
+

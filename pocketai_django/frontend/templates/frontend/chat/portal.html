@@ -1,5 +1,5 @@
 {% extends "frontend/base_app.html" %}
-{% load static ui_components markdown_extras %}
+{% load static ui_components %}
 
 {% block title %}Pocket AI Chat | {{ portal.agent.name }}{% endblock %}
 
@@ -13,6 +13,92 @@
   .no-scrollbar {
     -ms-overflow-style: none;
     scrollbar-width: none;
+  }
+
+  /* Markdown content styling */
+  [data-message-body] h1,
+  [data-message-body] h2,
+  [data-message-body] h3 {
+    font-weight: 600;
+    margin-top: 1em;
+    margin-bottom: 0.5em;
+  }
+  [data-message-body] h1 { font-size: 1.25em; }
+  [data-message-body] h2 { font-size: 1.125em; }
+  [data-message-body] h3 { font-size: 1em; }
+
+  [data-message-body] p {
+    margin-bottom: 0.75em;
+  }
+  [data-message-body] p:last-child {
+    margin-bottom: 0;
+  }
+
+  [data-message-body] ul,
+  [data-message-body] ol {
+    padding-left: 1.5em;
+    margin-bottom: 0.75em;
+  }
+  [data-message-body] ul { list-style-type: disc; }
+  [data-message-body] ol { list-style-type: decimal; }
+  [data-message-body] li { margin-bottom: 0.25em; }
+
+  [data-message-body] code {
+    background: hsl(var(--muted));
+    padding: 0.125em 0.25em;
+    border-radius: 0.25em;
+    font-size: 0.875em;
+    font-family: ui-monospace, monospace;
+  }
+  [data-message-body] pre {
+    background: hsl(var(--muted));
+    padding: 0.75em 1em;
+    border-radius: 0.5em;
+    overflow-x: auto;
+    margin-bottom: 0.75em;
+  }
+  [data-message-body] pre code {
+    background: none;
+    padding: 0;
+  }
+
+  [data-message-body] table {
+    width: 100%;
+    border-collapse: collapse;
+    margin-bottom: 0.75em;
+    font-size: 0.875em;
+  }
+  [data-message-body] th,
+  [data-message-body] td {
+    border: 1px solid hsl(var(--border));
+    padding: 0.5em;
+    text-align: left;
+  }
+  [data-message-body] th {
+    background: hsl(var(--muted));
+    font-weight: 600;
+  }
+
+  [data-message-body] blockquote {
+    border-left: 3px solid hsl(var(--border));
+    padding-left: 1em;
+    margin-left: 0;
+    margin-bottom: 0.75em;
+    color: hsl(var(--muted-foreground));
+  }
+
+  [data-message-body] a {
+    color: hsl(var(--primary));
+    text-decoration: underline;
+  }
+  [data-message-body] a:hover {
+    opacity: 0.8;
+  }
+
+  [data-message-body] hr {
+    border: none;
+    border-top: 1px solid hsl(var(--border));
+    margin: 1em 0;
   }
 </style>
 {% endblock %}
@@ -98,9 +184,13 @@
               <!-- Timestamp removed -->
             </div>
             <div dir="auto"
-              class="text-sm leading-relaxed {% if message.sender|lower == 'customer' %}bg-muted text-foreground px-5 py-3 rounded-2xl rounded-tr-sm text-start inline-block shadow-sm{% else %}text-foreground text-start{% endif %}">
-              {{ message.body|render_markdown|safe }}
+              class="text-sm leading-relaxed {% if message.sender|lower == 'customer' %}bg-muted text-foreground px-5 py-3 rounded-2xl rounded-tr-sm text-start inline-block shadow-sm{% else %}text-foreground text-start max-w-none break-words{% endif %}"
+              {% if message.sender|lower != 'customer' %}data-message-body data-message-id="{{ forloop.counter }}"{% endif %}>
+              {% if message.sender|lower == 'customer' %}{{ message.body }}{% endif %}
             </div>
+            {% if message.sender|lower != 'customer' %}
+            {{ message.body|json_script:forloop.counter }}
+            {% endif %}
           </div>
         </div>
         {% endfor %}
@@ -180,5 +270,7 @@
 
 {% block extra_js %}
 {{ portal.bootstrap_payload|json_script:portal.bootstrap_script_id }}
+<script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/dompurify@3.0.6/dist/purify.min.js"></script>
 <script src="{% static 'js/chat-portal.js' %}?v={{ portal.asset_version }}"></script>
 {% endblock %}
