@@ -1265,7 +1265,8 @@ class ChatPortalClient {
       this.streamingFinalBodyEl = finalEl;
       this.streamingTextEl = textEl;
       this.streamingBlocksEl = blocksEl;
-      this.injectCopyButton(this.streamingMessageBodyEl);
+      this.streamingBlocksEl = blocksEl;
+      // Do not inject copy button yet - wait for stream to finish
     }
 
     // Animation for streaming AI message entry
@@ -1296,6 +1297,11 @@ class ChatPortalClient {
 
     if (!this.streamingFinalBodyEl) {
       this.appendMessage({ sender: "ai", body: text, sent_at: new Date().toISOString() });
+    } else {
+      // Stream finished using existing node - now we can show the copy button
+      if (this.streamingMessageBodyEl) {
+        this.injectCopyButton(this.streamingMessageBodyEl);
+      }
     }
     this.resetStreamingState(false);
   }
@@ -1329,6 +1335,8 @@ class ChatPortalClient {
     } else {
       body.innerHTML = this.renderMarkdown(clean);
     }
+    // Ensure copy button is present after update
+    this.injectCopyButton(body);
   }
 
   getMessageBodyElement(messageId) {
