@@ -42,7 +42,7 @@ from apps.services.ai_orchestrator import ActionType, AiOrchestratorService, Kno
 from apps.services.rag_logging import structured_log
 from core.metrics import latency_monitor
 from .identifier_registry import IdentifierGuardrail, IdentifierRegistryService
-from .types import ToolExecutionContext
+from .types import ToolExecutionContext, CharacterBudgetExceeded
 
 
 logger = logging.getLogger(__name__)
@@ -188,7 +188,7 @@ TOOL_DEFINITIONS: tuple[Mapping[str, object], ...] = (
         name="table_aggregate",
         description=(
             "Aggregate numeric values from a structured table (per-column contributions). "
-            "Use it to retrieve numeric rows/columns; compute any totals yourself from rows[].contributions when needed."
+            "Returns per-row totals and an overall total; re-run with narrower match_values/sheet_name/columns if truncated."
         ),
         properties={
             "document_id": {
@@ -2253,6 +2253,49 @@ def _table_aggregate_handler(
             "error": "document not found for this business",
         }
 
+    guard = _identifier_guard(context, conversation)
+    decision = None
+    if guard and upload.id:
+        decision = guard.require_for_upload(str(upload.id))
+        _record_identifier_check(context, decision)
+        if decision.status != "ok":
+            structured_log(
+                "mcp",
+                "identifier.denied",
+                {
+                    "tool": "table_aggregate",
+                    "upload": str(upload.id),
+                    "required": list(decision.required_keys),
+                    "provided": list(decision.provided_keys),
+                },
+                context={"business": conversation.business_profile_id},
+                logger_obj=logger,
+                level=logging.WARNING,
+            )
+            _record_identifier_event_once(
+                context,
+                business_profile=conversation.business_profile,
+                decision=decision,
+                tool="table_aggregate",
+                conversation=conversation,
+                upload_ids=[str(upload.id)],
+            )
+            error_code = "identifier_required"
+            return {
+                "tool": "table_aggregate",
+                "document_id": str(upload.id),
+                "status": decision.status,
+                "error": error_code,
+                "error_code": error_code,
+                "rows": [],
+                "match_count": 0,
+                "identifier_gate": decision.as_dict(),
+                "required_identifiers": list(decision.required_keys),
+                "provided_identifiers": list(decision.provided_keys),
+                "hint": decision.hint,
+                "llm_hint": decision.hint,
+            }
+
     mode_raw = _coerce_str(arguments.get("mode")).strip().lower()
     value_column_input = _coerce_str(arguments.get("value_column")).strip()
     value_column_raw = _normalize_column_name(value_column_input)
@@ -2278,6 +2321,8 @@ def _table_aggregate_handler(
     match_value = _normalize_column_name(match_value_input)
     if match_value and match_value not in normalized_match_values:
         normalized_match_values.append(match_value)
+    if len(normalized_match_values) > 50:
+        normalized_match_values = normalized_match_values[:50]
     query_input = _coerce_str(arguments.get("query")).strip()
     query = _normalize_column_name(query_input)
     if not query and not match_column:
@@ -2300,6 +2345,14 @@ def _table_aggregate_handler(
             if candidate:
                 column_filters.append(candidate)
     normalized_column_filters = { _normalize_column_name(value) for value in column_filters if _normalize_column_name(value) }
+
+    def _clip_text(value: object, limit: int) -> str:
+        text = _coerce_str(value)
+        if limit <= 0:
+            return ""
+        if len(text) <= limit:
+            return text
+        return text[: max(0, limit - 1)].rstrip() + "…"
 
     total_value = 0.0
     matched_rows: list[dict[str, object]] = []
@@ -2369,6 +2422,8 @@ def _table_aggregate_handler(
 
         preview_cells: list[dict[str, object]] = []
         contributions: list[dict[str, object]] = []
+        value_numeric: float | None = None
+        value_display: str | None = None
         for cell in cells:
             column_label = cell.get("column") or f"column_{(cell.get('column_index') or 0) + 1}"
             cell_value = cell.get("raw_text") or ""
@@ -2380,23 +2435,32 @@ def _table_aggregate_handler(
             elif is_total_col:
                 include_in_preview = False
             if include_in_preview and len(preview_cells) < 12:
-                preview_cells.append({"column": column_label, "value": cell_value})
+                preview_cells.append(
+                    {
+                        "column": _clip_text(column_label, 80),
+                        "value": _clip_text(cell_value, 160),
+                    }
+                )
             numeric_candidate = cell.get("numeric")
             if numeric_candidate is not None:
                 numeric_float = float(numeric_candidate)
                 include_numeric = False
-                if normalized_column_filters:
+                if mode == "column_sum":
+                    include_numeric = bool(value_column_raw and normalized_label == value_column_raw)
+                elif normalized_column_filters:
                     include_numeric = normalized_label in normalized_column_filters
                 else:
                     include_numeric = not is_total_col
-                if mode == "column_sum" and value_column_raw and normalized_label == value_column_raw:
-                    include_numeric = True
                 if include_numeric:
+                    display_text = _clip_text(cell_value.strip() or _format_numeric_display(numeric_float), 60)
+                    if mode == "column_sum":
+                        value_numeric = numeric_float
+                        value_display = display_text
                     contributions.append(
                         {
-                            "column": column_label,
+                            "column": _clip_text(column_label, 80),
                             "value": numeric_float,
-                            "display": cell_value.strip() or _format_numeric_display(numeric_float),
+                            "display": display_text,
                             "is_total_column": is_total_col,
                         }
                     )
@@ -2413,22 +2477,26 @@ def _table_aggregate_handler(
         else:
             if not value_column_raw:
                 continue
-            candidate = column_map.get(value_column_raw)
-            candidate_text = candidate.get("raw_text") if isinstance(candidate, Mapping) else ""
-            numeric_value = _parse_numeric_value(candidate_text)
-            if numeric_value is None:
+            if value_numeric is None:
                 continue
-            display_value = _format_numeric_display(numeric_value, candidate_text)
+            numeric_value = float(value_numeric)
+            display_value = value_display or _format_numeric_display(numeric_value)
         total_value += numeric_value or 0.0
         contributions_sorted = sorted(contributions, key=lambda entry: abs(entry["value"]), reverse=True)
+        output_contributions = [
+            {"column": entry.get("column"), "value": entry.get("value"), "display": entry.get("display")}
+            for entry in contributions_sorted[:60]
+        ]
         matched_rows.append(
             {
                 "row_index": row_payload.get("row_index"),
                 "table_order_index": row_payload.get("table_order_index"),
                 "sheet_name": row_payload.get("sheet_name"),
                 "cells": preview_cells,
-                "contributions": contributions_sorted[:200],
+                "contributions": output_contributions,
                 "contribution_count": len(contributions_sorted),
+                "row_total": numeric_value,
+                "row_total_display": display_value,
             }
         )
         if len(matched_rows) >= row_limit:
@@ -2436,105 +2504,55 @@ def _table_aggregate_handler(
 
     status = "ok" if matched_rows else "not_found"
 
-    # Guardrail: extremely broad aggregates can explode prompt size. When the
-    # model omits `columns` and/or matches many rows, truncate the payload and
-    # emit a hint to narrow the next call.
-    truncation_notice: dict[str, object] | None = None
     original_match_count = len(matched_rows)
-    if matched_rows:
-        max_rows_for_prompt = 20
-        if not column_filters and len(matched_rows) > max_rows_for_prompt:
-            matched_rows = matched_rows[:max_rows_for_prompt]
-        max_total_contributions = 600
-        total_contributions = sum(
-            len(row.get("contributions") or ()) if isinstance(row.get("contributions"), list) else 0
-            for row in matched_rows
-        )
-        if total_contributions > max_total_contributions:
-            per_row_limit = max(3, max_total_contributions // max(1, len(matched_rows)))
-            for row in matched_rows:
-                contributions_list = row.get("contributions")
-                if isinstance(contributions_list, list) and len(contributions_list) > per_row_limit:
-                    row["contributions"] = contributions_list[:per_row_limit]
-            truncation_notice = {
-                "reason": "prompt_budget",
-                "message": (
-                    "Aggregate result truncated for prompt size. "
-                    "If you need a full breakdown, call table_aggregate again with a narrower "
-                    "match_column/match_values and/or an explicit columns list."
-                ),
-                "original_match_count": original_match_count,
-                "returned_match_count": len(matched_rows),
-                "original_contribution_rows": total_contributions,
-                "returned_contribution_rows": sum(
-                    len(row.get("contributions") or ()) if isinstance(row.get("contributions"), list) else 0
-                    for row in matched_rows
-                ),
-            }
+    throttle_notice: dict[str, object] | None = None
 
-    snippet_payloads: list[dict[str, object]] = []
-    if matched_rows:
-        snippet_payloads = [
-            _build_table_aggregate_snippet(
-                upload=upload,
-                row=row,
-                query=query_input,
-                match_column=match_column_input,
-                match_value=match_value_input,
-                columns=column_filters,
-            )
-            for row in matched_rows
-        ]
-    duration_ms = int((time.perf_counter() - start) * 1000)
-    structured_log(
-        "mcp",
-        "table.aggregate",
-        {
-            "document_id": str(upload.id),
-            "mode": mode,
-            "match_count": len(matched_rows),
-            "evaluated_rows": evaluated_rows,
-            "contribution_rows": sum(row.get("contribution_count", 0) for row in matched_rows),
-            "requested_columns": column_filters,
-            "duration_ms": duration_ms,
-            "row_limit": row_limit,
-            "match_column": match_column_input or None,
-            "match_value": match_value_input or None,
-            "query": query_input or None,
-            "sheet_name": sheet_name_input or None,
-            "cache_hit": cache_hit,
-        },
-        context={"business": conversation.business_profile_id},
-        logger_obj=logger,
-    )
-    if matched_rows:
-        structured_log(
-            "mcp",
-            "table.aggregate.payload",
-            {
-                "document_id": str(upload.id),
-                "mode": mode,
-                "match_count": len(matched_rows),
-                "total": total_value,
-                "rows": matched_rows,
-                "requested_columns": column_filters,
-                "duration_ms": duration_ms,
-                "row_limit": row_limit,
-                "match_column": match_column_input or None,
-                "match_value": match_value_input or None,
-                "match_values": normalized_match_values or None,
-                "query": query_input or None,
-                "sheet_name": sheet_name_input or None,
-                "cache_hit": cache_hit,
-            },
-            context={
-                "business": conversation.business_profile_id,
-                "conversation": conversation.id,
-            },
-            logger_obj=logger,
-        )
+    def _json_char_len(obj: object) -> int:
+        try:
+            return len(json.dumps(obj, ensure_ascii=False, separators=(",", ":"), default=str))
+        except Exception:
+            return len(str(obj))
 
-    return {
+    hard_char_cap = 12_000
+    remaining_turn = None
+    if context.char_budget_per_turn is not None:
+        remaining_turn = max(0, context.char_budget_per_turn - context.characters_used)
+    max_payload_chars = hard_char_cap if remaining_turn is None else min(hard_char_cap, remaining_turn)
+
+    prompt_rows_cap = max(3, int(getattr(settings, "MCP_PROMPT_TABLE_MAX_ROWS", 12)))
+    prompt_contrib_cap = max(5, int(getattr(settings, "MCP_PROMPT_TABLE_MAX_CONTRIBUTIONS", 25)))
+
+    def _row_payload(row: Mapping[str, object], *, max_cells: int, max_contributions: int) -> dict[str, object]:
+        payload: dict[str, object] = {
+            "row_index": row.get("row_index"),
+            "table_order_index": row.get("table_order_index"),
+            "sheet_name": row.get("sheet_name"),
+            "row_total": row.get("row_total"),
+            "row_total_display": row.get("row_total_display"),
+            "contribution_count": row.get("contribution_count"),
+        }
+        cells = row.get("cells") if isinstance(row.get("cells"), list) else []
+        if cells:
+            payload["cells"] = [dict(cell) for cell in cells[:max_cells] if isinstance(cell, Mapping)]
+        contributions = row.get("contributions") if isinstance(row.get("contributions"), list) else []
+        if contributions:
+            payload["contributions"] = [
+                {
+                    "column": entry.get("column"),
+                    "value": entry.get("value"),
+                    "display": entry.get("display"),
+                }
+                for entry in contributions[:max_contributions]
+                if isinstance(entry, Mapping)
+            ]
+        return {k: v for k, v in payload.items() if v not in {None, ""} and v != []}
+
+    if matched_rows:
+        # Soft cap for broad calls (no row filter + no explicit columns).
+        if not has_row_filters and not column_filters:
+            matched_rows = matched_rows[: max(5, min(prompt_rows_cap, 20))]
+
+    base_payload = {
         "tool": "table_aggregate",
         "status": status,
         "document_id": str(upload.id),
@@ -2546,97 +2564,81 @@ def _table_aggregate_handler(
         "value_column": value_column_input or None,
         "sheet_name": sheet_name_input or None,
         "columns": column_filters or None,
-        "match_count": len(matched_rows),
-        "rows": matched_rows,
-        "snippets": snippet_payloads,
-        "duration_ms": duration_ms,
         "evaluated_rows": evaluated_rows,
         "row_limit": row_limit,
         "cache_hit": cache_hit,
-        "hint": "No matching rows found." if not matched_rows else None,
     }
+    base_overhead = _json_char_len({k: v for k, v in base_payload.items() if v not in {None, ""} and v != []})
+    if max_payload_chars is not None and base_overhead >= max_payload_chars:
+        raise CharacterBudgetExceeded("Character budget too low to return table aggregate metadata.")
 
+    rows_out: list[dict[str, object]] = []
+    running_chars = base_overhead
+    for row in matched_rows:
+        if len(rows_out) >= max(1, prompt_rows_cap * 2):
+            break
+        row_out = _row_payload(row, max_cells=8, max_contributions=prompt_contrib_cap)
+        row_chars = _json_char_len(row_out) + 1
+        if rows_out and max_payload_chars is not None and running_chars + row_chars > max_payload_chars:
+            break
+        rows_out.append(row_out)
+        running_chars += row_chars
 
-def _build_table_aggregate_snippet(
-    *,
-    upload: KnowledgeUpload,
-    row: Mapping[str, object],
-    query: str | None,
-    match_column: str | None,
-    match_value: str | None,
-    columns: Sequence[str] | None = None,
-) -> dict[str, object]:
-    row_index = row.get("row_index")
-    table_idx = row.get("table_order_index")
-    sheet_name = row.get("sheet_name")
-    cells = row.get("cells") if isinstance(row.get("cells"), list) else []
-    contributions = row.get("contributions") if isinstance(row.get("contributions"), list) else []
-    primary_label = _table_row_label(cells, query)
-    snippet_id = f"table-aggregate:{upload.id}:{table_idx}:{row_index}"
-    summary = primary_label or "Table row"
-    contribution_lines: list[str] = []
-    for entry in contributions[:25]:
-        column = entry.get("column") or "Column"
-        display = entry.get("display") or _format_numeric_display(entry.get("value"))
-        contribution_lines.append(f"- {column}: {display or '—'}")
-    if len(contributions) > 25:
-        contribution_lines.append(f"...+{len(contributions) - 25} more columns")
-    structured_table = {
-        "row_index": row_index,
-        "table_order_index": table_idx,
-        "sheet_name": sheet_name,
-        "columns": [dict(entry) for entry in contributions],
+    if len(rows_out) < original_match_count:
+        throttle_notice = {
+            "reason": "prompt_budget",
+            "message": (
+                "Table aggregate rows were truncated to stay within prompt size limits. "
+                "Re-run table_aggregate with a narrower match_column/match_values, a sheet_name, and/or an explicit columns list."
+            ),
+            "original_match_count": original_match_count,
+            "returned_match_count": len(rows_out),
+        }
+    duration_ms = int((time.perf_counter() - start) * 1000)
+
+    payload = {
+        **base_payload,
+        "duration_ms": duration_ms,
+        "match_count": len(rows_out),
+        "rows": rows_out,
+        "total": total_value if original_match_count else None,
+        "display_total": _format_numeric_display(total_value) if original_match_count else None,
+        "hint": "No matching rows found." if original_match_count == 0 else None,
     }
-    diagnostics = {
-        "table_aggregate": True,
-        "table_row_index": row_index,
-        "table_order_index": table_idx,
-        "table_sheet_name": sheet_name,
-        "table_contribution_count": len(contributions),
-        "table_aggregate_query": query or None,
-        "table_match_column": match_column or None,
-        "table_match_value": match_value or None,
-        "table_requested_columns": list(columns or ()),
-    }
-    label_suffix = f" (sheet {sheet_name})" if sheet_name else ""
-    content_parts: list[str] = [summary]
-    if contribution_lines:
-        content_parts.extend(["", "Contributors:", *contribution_lines])
-    return {
-        "id": snippet_id,
-        "title": f"Table aggregate{label_suffix}".strip(),
-        "public_label": primary_label or f"Row {row_index}",
-        "summary": summary,
-        "content": "\n".join(content_parts),
-        "content_mode": "structured_table",
-        "read_state": "full",
-        "page_mode": "structured_table",
-        "structured_table_count": 1,
-        "is_table_chunk": True,
-        "structured_tables": [structured_table],
-        "source_diagnostics": diagnostics,
-        "upload_id": str(upload.id),
-        "chunk_id": None,
-        "status": "table_aggregate",
-        "entities": (),
-        "issues": (),
-        "topic_hints": (),
-        "coverage": (),
-        "row_index": row_index,
-    }
+    if throttle_notice:
+        payload["throttle_notice"] = throttle_notice
 
+    char_count = _json_char_len({k: v for k, v in payload.items() if v not in {None, ""} and v != []})
+    payload["char_count"] = char_count
+    payload["token_estimate"] = _estimate_tokens(char_count)
+    context.reserve_characters(char_count)
 
-def _table_row_label(cells: Sequence[Mapping[str, object]] | object, fallback: str | None) -> str | None:
-    if isinstance(cells, Sequence):
-        for cell in cells:
-            if not isinstance(cell, Mapping):
-                continue
-            value = cell.get("value")
-            if isinstance(value, str):
-                trimmed = value.strip()
-                if trimmed:
-                    return trimmed
-    return (fallback or "").strip() or None
+    structured_log(
+        "mcp",
+        "table.aggregate",
+        {
+            "document_id": str(upload.id),
+            "mode": mode,
+            "match_count": len(rows_out),
+            "original_match_count": original_match_count,
+            "evaluated_rows": evaluated_rows,
+            "contribution_rows": sum(row.get("contribution_count", 0) for row in rows_out),
+            "requested_columns": column_filters,
+            "duration_ms": duration_ms,
+            "row_limit": row_limit,
+            "match_column": match_column_input or None,
+            "match_value": match_value_input or None,
+            "query": query_input or None,
+            "sheet_name": sheet_name_input or None,
+            "cache_hit": cache_hit,
+            "char_count": char_count,
+            "token_estimate": payload.get("token_estimate"),
+            "truncated": bool(throttle_notice),
+        },
+        context={"business": conversation.business_profile_id},
+        logger_obj=logger,
+    )
+    return payload
 
 
 def _action_tool_result(action: ActionType, payload: Mapping[str, object]) -> Mapping[str, object]:

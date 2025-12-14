@@ -633,7 +633,9 @@ class McpOrchestratorService:
                         if tool_name == "table_aggregate":
                             self._record_table_column_hint(arguments, tool_context, tool_result)
                             if cached_table_result is None and table_cache_key:
-                                self._cache_table_result(tool_context, table_cache_key, tool_result)
+                                status_value = str(tool_result.get("status") or "").strip().lower()
+                                if status_value not in {"identifier_required", "constraint_error", "error"}:
+                                    self._cache_table_result(tool_context, table_cache_key, tool_result)
                             # If the aggregate returned nothing, drop any cached column
                             # filters so a follow-up call without explicit columns can
                             # broaden the search instead of repeating a too‑narrow set.
@@ -1517,6 +1519,8 @@ class McpOrchestratorService:
 
     @staticmethod
     def _record_knowledge_outputs(context: ToolExecutionContext, tool_result: Mapping[str, object]) -> None:
+        tool_name = str(tool_result.get("tool") or "").strip() if isinstance(tool_result, Mapping) else ""
+        table_aggregate_snippet_seen = False
         snippets = tool_result.get("snippets") if isinstance(tool_result, Mapping) else None
         if isinstance(snippets, list):
             for entry in snippets:
@@ -1538,6 +1542,7 @@ class McpOrchestratorService:
                     context.add_coverage_entry(coverage_entry)
                     diagnostics = entry.get("source_diagnostics") if isinstance(entry.get("source_diagnostics"), Mapping) else None
                     if diagnostics and diagnostics.get("table_aggregate") and entry.get("upload_id"):
+                        table_aggregate_snippet_seen = True
                         structured_tables = entry.get("structured_tables") or entry.get("structuredTables") or ()
                         first_table = None
                         if isinstance(structured_tables, Sequence) and structured_tables:
@@ -1572,6 +1577,70 @@ class McpOrchestratorService:
                             "row_index": diagnostics.get("table_row_index"),
                         }
                         context.add_knowledge_read({k: v for k, v in read_entry.items() if v is not None})
+
+        # table_aggregate no longer returns snippet-shaped results; derive compact diagnostics from rows instead.
+        if tool_name == "table_aggregate" and not table_aggregate_snippet_seen:
+            status_value = str(tool_result.get("status") or "").strip().lower()
+            if status_value == "identifier_required":
+                # Keep identifier-gated turns deterministic (no synthetic reads).
+                status_value = ""
+                rows = None
+                document_id = ""
+            else:
+                document_id = str(tool_result.get("document_id") or "").strip()
+                rows = tool_result.get("rows") if isinstance(tool_result, Mapping) else None
+            if document_id:
+                McpOrchestratorService._suppress_table_previews(context, upload_id=document_id)
+                McpOrchestratorService._mark_upload_as_satisfied(context, upload_id=document_id)
+
+            if isinstance(rows, list) and rows:
+                for row in rows[:20]:
+                    if not isinstance(row, Mapping):
+                        continue
+                    table_order_index = row.get("table_order_index")
+                    row_index = row.get("row_index")
+                    sheet_name = row.get("sheet_name")
+                    snippet_id = f"table-aggregate:{document_id}:{table_order_index}:{row_index}"
+                    cells = row.get("cells") if isinstance(row.get("cells"), list) else []
+                    cells_out = [
+                        {"column": cell.get("column"), "value": cell.get("value")}
+                        for cell in cells[:8]
+                        if isinstance(cell, Mapping)
+                    ]
+                    contributions = row.get("contributions") if isinstance(row.get("contributions"), list) else []
+                    contributions_out = [
+                        {"column": entry.get("column"), "value": entry.get("value"), "display": entry.get("display")}
+                        for entry in contributions[:25]
+                        if isinstance(entry, Mapping)
+                    ]
+                    table_details = {
+                        "snippet_id": snippet_id,
+                        "upload_id": document_id or None,
+                        "table_order_index": table_order_index,
+                        "row_index": row_index,
+                        "sheet_name": sheet_name,
+                        "row_total": row.get("row_total"),
+                        "row_total_display": row.get("row_total_display"),
+                        "cells": cells_out or None,
+                        "contributions": contributions_out or None,
+                    }
+                    context.table_aggregate_rows.append({k: v for k, v in table_details.items() if v is not None})
+                    read_entry = {
+                        "id": snippet_id,
+                        "label": f"Table row {row_index}" if row_index is not None else "Table row",
+                        "mode": "table_aggregate",
+                        "table_order_index": table_order_index,
+                        "row_index": row_index,
+                    }
+                    context.add_knowledge_read({k: v for k, v in read_entry.items() if v is not None})
+            elif document_id:
+                context.add_knowledge_read(
+                    {
+                        "id": f"table-aggregate:{document_id}",
+                        "label": "Table aggregate",
+                        "mode": "table_aggregate",
+                    }
+                )
         reads = tool_result.get("knowledge_reads") if isinstance(tool_result, Mapping) else None
         if isinstance(reads, list):
             for read in reads:
@@ -2683,6 +2752,9 @@ class McpOrchestratorService:
                 "sheet_name",
                 "columns",
                 "match_count",
+                "total",
+                "display_total",
+                "throttle_notice",
             ):
                 if key not in payload:
                     continue
@@ -2701,7 +2773,14 @@ class McpOrchestratorService:
                     if not isinstance(row, Mapping):
                         continue
                     row_payload: dict[str, object] = {}
-                    for key in ("row_index", "table_order_index", "sheet_name"):
+                    for key in (
+                        "row_index",
+                        "table_order_index",
+                        "sheet_name",
+                        "row_total",
+                        "row_total_display",
+                        "contribution_count",
+                    ):
                         if key in row and row.get(key) not in {None, ""}:
                             row_payload[key] = row.get(key)
                     cells = row.get("cells")
