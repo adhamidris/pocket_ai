@@ -548,12 +548,14 @@ class McpOrchestratorService:
                         iter_span.set_attribute("mcp.pending_tool_calls", len(current_tool_calls))
                         iter_span.set_attribute("mcp.transcript_length", len(transcript))
                     # Execute each tool_call and append tool results.
+                    table_tools_preferred = False
                     for tool_call in current_tool_calls:
                         tool_name = self._tool_name(tool_call)
                         arguments = self._tool_arguments(tool_call)
                         cached_table_result = None
                         table_cache_key = None
                         if tool_name == "table_aggregate":
+                            table_tools_preferred = True
                             arguments = dict(arguments)
                             self._apply_table_column_hint(arguments, tool_context)
                             table_cache_key = self._table_aggregate_cache_key(arguments)
@@ -572,8 +574,10 @@ class McpOrchestratorService:
                                         "conversation": conversation.id,
                                         "business": conversation.business_profile_id,
                                     },
-                                    logger_obj=logger,
-                                )
+                                     logger_obj=logger,
+                                 )
+                        if tool_name == "list_tables":
+                            table_tools_preferred = True
                         knowledge_phase: dict[str, object] | None = None
                         if self._is_knowledge_tool(tool_name):
                             knowledge_phase = _emit_phase_start(_knowledge_phase_payload(tool_name, arguments))
@@ -630,6 +634,8 @@ class McpOrchestratorService:
                                     tool_result = self._constraint_error_payload(tool_name, exc)
                                 finally:
                                     call_duration_ms = (time.perf_counter() - call_start) * 1000.0
+                        if tool_name == "search_knowledge" and isinstance(tool_result, Mapping):
+                            table_tools_preferred = table_tools_preferred or self._search_result_is_table(tool_result)
                         if tool_name == "table_aggregate":
                             self._record_table_column_hint(arguments, tool_context, tool_result)
                             if cached_table_result is None and table_cache_key:
@@ -731,11 +737,14 @@ class McpOrchestratorService:
                         extra_system_messages.append({"role": "system", "content": loop_note})
                     extra_system_messages.append(reminder)
                     loop_messages[insert_at:insert_at] = extra_system_messages
+                    tools_for_iteration = self.tool_definitions
+                    if table_tools_preferred:
+                        tools_for_iteration = self._exclude_tool_schemas({"read_document"})
                     payload = self._chat_with_context_governor(
                         conversation=conversation,
                         stage="tool_iteration",
                         messages=loop_messages,
-                        tools=self.tool_definitions,
+                        tools=tools_for_iteration,
                         on_stream_delta=_answer_stream_chunk,
                         on_tool_call_start=_on_stream_tool_call_start,
                     )
@@ -1516,6 +1525,49 @@ class McpOrchestratorService:
     @staticmethod
     def _is_knowledge_tool(name: str) -> bool:
         return name in {"search_knowledge", "read_document", "table_aggregate"}
+
+    @staticmethod
+    def _tool_schema_name(tool_def: Mapping[str, object]) -> str | None:
+        if not isinstance(tool_def, Mapping):
+            return None
+        func = tool_def.get("function")
+        if isinstance(func, Mapping):
+            name = func.get("name")
+            if isinstance(name, str) and name.strip():
+                return name.strip()
+        return None
+
+    def _exclude_tool_schemas(self, excluded_names: set[str]) -> list[Mapping[str, object]]:
+        if not excluded_names:
+            return list(self.tool_definitions)
+        filtered: list[Mapping[str, object]] = []
+        for tool_def in self.tool_definitions:
+            name = self._tool_schema_name(tool_def)
+            if name and name in excluded_names:
+                continue
+            filtered.append(tool_def)
+        return filtered
+
+    @staticmethod
+    def _search_result_is_table(tool_result: Mapping[str, object]) -> bool:
+        intent = str(tool_result.get("intent") or "").strip().lower()
+        if intent == "table":
+            return True
+        snippets = tool_result.get("snippets")
+        if not isinstance(snippets, list) or not snippets:
+            return False
+        table_snippets = 0
+        non_table_snippets = 0
+        for snippet in snippets:
+            if not isinstance(snippet, Mapping):
+                continue
+            if snippet.get("is_table_chunk"):
+                table_snippets += 1
+            else:
+                non_table_snippets += 1
+        if table_snippets and non_table_snippets == 0:
+            return True
+        return table_snippets > non_table_snippets
 
     @staticmethod
     def _record_knowledge_outputs(context: ToolExecutionContext, tool_result: Mapping[str, object]) -> None:

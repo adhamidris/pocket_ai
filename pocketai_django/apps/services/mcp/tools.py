@@ -148,7 +148,10 @@ TOOL_DEFINITIONS: tuple[Mapping[str, object], ...] = (
     ),
     _function_schema(
         name="read_document",
-        description="Load full document content or a chunk by ID so you can cite exact details.",
+        description=(
+            "Load non-table document content (text/PDF chunks) by ID so you can cite exact details. "
+            "For spreadsheets/structured tables, prefer table_aggregate."
+        ),
         properties={
             "document_id": {
                 "type": "string",
@@ -970,8 +973,11 @@ def _search_hint(
             return "No confident match; ask for the exact identifier or a page/section name instead of guessing."
         return "No strong matches yet; ask the visitor for a clearer identifier, product name, or page reference."
     diag = diagnostics or {}
-    if intent == "table" and len(snippets) <= 2:
-        return "If you still need exact rows/columns, request the specific page via read_document full_page."
+    if intent == "table":
+        return (
+            "These results look tabular. Use table_aggregate with the table upload document_id to retrieve exact rows/columns and totals "
+            "(narrow with match_column/match_values or query + sheet_name/columns). Avoid read_document for spreadsheets."
+        )
     if diag.get("path") == "fallback":
         return "Fallback snippets in use; confirm details with the visitor or narrow the request before citing specifics."
     return None
