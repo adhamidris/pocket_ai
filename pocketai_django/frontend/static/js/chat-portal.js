@@ -1279,6 +1279,14 @@ class ChatPortalClient {
     setTimeout(() => {
       node.classList.remove("transition-all", "duration-500", "ease-out");
     }, 500);
+
+    // Force scroll to show this new bubble
+    if (container.closest('[data-chat-messages]')) {
+        const scroller = container.closest('[data-chat-messages]');
+        scroller.scrollTo({ top: scroller.scrollHeight, behavior: "smooth" });
+    } else if (this.elements.messages) {
+        this.elements.messages.scrollTo({ top: this.elements.messages.scrollHeight, behavior: "smooth" });
+    }
   }
 
   finalizeStreamingMessage(finalText) {
