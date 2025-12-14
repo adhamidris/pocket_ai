@@ -162,27 +162,41 @@ class ChatPortalClient {
 
   injectCopyButton(container) {
       if (container.querySelector('button[data-copy-btn]')) return;
+
+      // Smart positioning: try to find the last paragraph to append inline
+      let target = container;
+      const streamingText = container.querySelector('[data-streaming-text]');
+      if (streamingText) {
+          target = streamingText;
+      }
       
+      // If the last child is a paragraph, list item, or similar text block, append to it
+      // to keep the icon inline/nearby the last word.
+      let inlineTarget = null;
+      if (target.lastElementChild && ["P", "LI", "SPAN", "STRONG", "EM"].includes(target.lastElementChild.tagName)) {
+         inlineTarget = target.lastElementChild;
+      }
+
       const copyBtn = document.createElement("button");
       copyBtn.dataset.copyBtn = "true";
-      copyBtn.className = "absolute -bottom-6 w-fit right-0 px-2 py-1 rounded-lg text-xs text-muted-foreground/50 hover:text-foreground hover:bg-muted/50 transition-all flex items-center gap-1.5";
+      // inline-flex for inline, ml-2 for spacing, align-middle to center with text
+      copyBtn.className = "inline-flex items-center gap-1.5 ml-2 px-2 py-1 align-bottom rounded-lg text-xs text-muted-foreground/50 hover:text-foreground hover:bg-muted/50 transition-all w-fit";
       copyBtn.type = "button";
       copyBtn.innerHTML = `<svg class="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>`;
       
       copyBtn.addEventListener("click", async (e) => {
         e.stopPropagation();
-        // Since this is existing message, we might not have 'cleanBody' easily available in scope if we didn't re-render.
-        // We can get innerText or try to find the raw markdown from script tag again.
         let textToCopy = "";
         const messageId = container.dataset.messageId;
         const scriptTag = messageId ? document.getElementById(messageId) : null;
+        
         if (scriptTag) {
              try {
                  textToCopy = JSON.parse(scriptTag.textContent);
              } catch(e) {}
         }
         if (!textToCopy) {
-            textToCopy = container.innerText.replace("Copy", "").trim(); // Fallback
+            textToCopy = container.innerText.replace("Copied", "").trim(); 
         }
 
         try {
@@ -196,7 +210,12 @@ class ChatPortalClient {
           console.warn("Clipboard write failed", err);
         }
       });
-      container.appendChild(copyBtn);
+      
+      if (inlineTarget) {
+          inlineTarget.appendChild(copyBtn);
+      } else {
+          container.appendChild(copyBtn);
+      }
   }
 
   async transitionToActiveChat() {
@@ -1130,7 +1149,7 @@ class ChatPortalClient {
       
       // Copy Button for whole message
       const copyBtn = document.createElement("button");
-      copyBtn.className = "absolute -bottom-6 w-fit right-0 px-2 py-1 rounded-lg text-xs text-muted-foreground/50 hover:text-foreground hover:bg-muted/50 transition-all flex items-center gap-1.5";
+      copyBtn.className = "inline-flex items-center gap-1.5 ml-2 px-2 py-1 align-bottom rounded-lg text-xs text-muted-foreground/50 hover:text-foreground hover:bg-muted/50 transition-all w-fit";
       copyBtn.type = "button";
       copyBtn.innerHTML = `<svg class="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>`;
       
