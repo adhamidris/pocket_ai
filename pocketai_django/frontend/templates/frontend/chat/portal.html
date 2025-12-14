@@ -48,7 +48,7 @@
   [data-message-body] h3 { font-size: 1em; }
 
   [data-message-body] p {
-    margin-bottom: 0.35em;
+    margin-bottom: 0.75em;
   }
   [data-message-body] p:last-child {
     margin-bottom: 0;
@@ -252,7 +252,7 @@
               </span>
             </div>
             <div dir="auto"
-              class="text-sm leading-relaxed {% if message.sender|lower == 'customer' %}bg-muted text-foreground px-5 py-3 rounded-2xl rounded-tr-sm text-start inline-block shadow-sm{% else %}text-foreground text-start max-w-none break-words{% endif %}"
+              class="text-base leading-relaxed {% if message.sender|lower == 'customer' %}bg-muted text-foreground px-5 py-3 rounded-2xl rounded-tr-sm text-start inline-block shadow-sm{% else %}text-foreground text-start max-w-none break-words{% endif %}"
               {% if message.sender|lower != 'customer' %}data-message-body data-message-id="{{ forloop.counter }}"{% endif %}>
               {% if message.sender|lower == 'customer' %}{{ message.body }}{% endif %}
             </div>

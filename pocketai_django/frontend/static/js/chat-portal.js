@@ -861,7 +861,7 @@ class ChatPortalClient {
       container.appendChild(heading);
     }
     const content = document.createElement("div");
-    content.className = "text-sm leading-relaxed";
+    content.className = "text-base leading-relaxed";
     content.innerHTML = this.renderMarkdown(lines.join("\n"));
     container.appendChild(content);
 
@@ -1088,9 +1088,9 @@ class ChatPortalClient {
     const body = document.createElement("div");
     body.dir = "auto";
     if (isCustomer) {
-      body.className = "text-sm leading-relaxed bg-muted text-foreground px-5 py-3 rounded-2xl rounded-tr-sm text-start inline-block shadow-sm";
+      body.className = "text-base leading-relaxed bg-muted text-foreground px-5 py-3 rounded-2xl rounded-tr-sm text-start inline-block shadow-sm";
     } else {
-      body.className = "relative group text-sm leading-relaxed text-foreground text-start max-w-none break-words";
+      body.className = "relative group text-base leading-relaxed text-foreground text-start max-w-none break-words";
       
       // Copy Button for whole message
       const copyBtn = document.createElement("button");
