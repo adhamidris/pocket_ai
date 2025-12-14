@@ -55,7 +55,7 @@
         <div class="grid md:grid-cols-3 gap-6 animate-fade-in">
           {% for plan in section.packages %}
             <div
-              class="relative overflow-visible rounded-2xl shadow-premium p-6 lg:p-8 flex flex-col transition-all duration-300 hover:-translate-y-1 hover:shadow-soft bg-primary/10 text-center md:text-left {% if plan.tier == 'Pro' %}ring-1 ring-primary/25 hover:ring-primary/40{% endif %}"
+              class="relative overflow-visible rounded-2xl shadow-premium p-6 lg:p-8 flex flex-col transition-all duration-300 hover:-translate-y-1 hover:shadow-soft bg-primary/10 text-center md:text-left ring-1 ring-primary/25 hover:ring-primary/40"
             >
               {% if plan.badge and plan.tier == "Pro" %}
                 <div class="absolute -top-3 left-1/2 -translate-x-1/2">
