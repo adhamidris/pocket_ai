@@ -285,7 +285,7 @@
             background-clip: initial;
     -webkit-text-fill-color: #fff;
     color: #fff;
-  }
+    }
   /* Adjust welcome prefix color for readability on light background */
   .register-welcome .welcome-prefix { color: hsl(var(--foreground)); }
   .dark .register-welcome .welcome-prefix { color: white; }
@@ -603,6 +603,8 @@
     -webkit-background-clip: text;
     -webkit-text-fill-color: transparent;
     background-clip: text;
+    background-size: 200% auto;
+    animation: gradientShift 6s ease infinite;
   }
   /* RTL helpers */
   html[dir='rtl'] .rtl-rotate-180 { transform: rotate(180deg); }
