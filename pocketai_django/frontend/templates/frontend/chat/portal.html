@@ -84,15 +84,27 @@
 
   [data-message-body] table {
     width: 100%;
-    border-collapse: collapse;
+    border-collapse: separate;
+    border-spacing: 0;
     margin-bottom: 0.75em;
     font-size: 0.875em;
+    border: 1px solid hsl(var(--border));
+    border-radius: 0.5em;
+    overflow: hidden;
   }
   [data-message-body] th,
   [data-message-body] td {
-    border: 1px solid hsl(var(--border));
+    border-bottom: 1px solid hsl(var(--border));
+    border-right: 1px solid hsl(var(--border));
     padding: 0.5em;
     text-align: left;
+  }
+  [data-message-body] th:last-child,
+  [data-message-body] td:last-child {
+    border-right: none;
+  }
+  [data-message-body] tr:last-child td {
+    border-bottom: none;
   }
   [data-message-body] th {
     background: hsl(var(--muted));

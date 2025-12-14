@@ -1223,17 +1223,105 @@ class ChatPortalClient {
   }
 
   renderStreamingText() {
+    let html = "";
+    if (this.streamingBuffer) {
+      // Check for partial table at the end
+      const lines = this.streamingBuffer.split("\n");
+      
+      let tableStartIndex = -1;
+
+      // Scan backwards for contiguous table lines
+      for (let i = lines.length - 1; i >= 0; i--) {
+        const line = lines[i].trim();
+        if (line.startsWith("|")) {
+          tableStartIndex = i;
+        } else if (line === "") {
+            // Gap might mean end of table block walking backwards
+            continue;
+        } else {
+          // Found non-table text
+          break;
+        }
+      }
+
+      // If we found a table block at the end
+      if (tableStartIndex !== -1) {
+        const safeLines = lines.slice(0, tableStartIndex);
+        const tableLines = lines.slice(tableStartIndex);
+        
+        // Only treat as table if we have at least one pipe-starting line
+        if (tableLines.some(l => l.trim().startsWith('|'))) {
+             const safeHtml = this.renderMarkdown(safeLines.join("\n"));
+             const tableHtml = this.renderProvisionalTable(tableLines);
+             html = safeHtml + tableHtml;
+        } else {
+             html = this.renderMarkdown(this.streamingBuffer);
+        }
+      } else {
+        html = this.renderMarkdown(this.streamingBuffer);
+      }
+    }
+
     if (this.streamingTextEl) {
-      this.streamingTextEl.innerHTML = this.renderMarkdown(this.streamingBuffer);
+      this.streamingTextEl.innerHTML = html;
       return;
     }
     if (this.streamingFinalBodyEl) {
-      this.streamingFinalBodyEl.innerHTML = this.renderMarkdown(this.streamingBuffer);
+      this.streamingFinalBodyEl.innerHTML = html;
       return;
     }
     if (this.streamingMessageBodyEl) {
-      this.streamingMessageBodyEl.innerHTML = this.renderMarkdown(this.streamingBuffer);
+      this.streamingMessageBodyEl.innerHTML = html;
     }
+  }
+
+  renderProvisionalTable(lines) {
+    if (!lines || !lines.length) return "";
+    let html = '<div class="overflow-x-auto mb-3"><table class="w-full text-sm">';
+    
+    const rows = lines.filter(l => l.trim().startsWith('|'));
+    
+    // Heuristic: Determine column count from the header (first row)
+    // | A | B | -> ["", " A ", " B ", ""] -> length 4, data columns = length - 2 (ignoring edges)?
+    // Let's count actual separators? Or just filtered split length?
+    let expectedColumns = 0;
+    if (rows.length > 0) {
+        const headerCells = rows[0].split("|");
+        // Filter out empty start/end cells caused by standard |...| syntax
+        // Or assume consistent syntax.
+        // Let's just track the max columns seen if header is weird
+        expectedColumns = headerCells.length; 
+    }
+
+    rows.forEach((line, index) => {
+      // Check for separator line (only - : | space)
+      if (/^[\s|:-]+$/.test(line)) return;
+
+      html += "<tr>";
+      let cells = line.split("|");
+      
+      // PAD ROW: If this row has fewer cells than expected (incomplete streaming), add empty ones.
+      // Note: we're operating on the raw split array which includes empty start/end strings for |..|
+      if (expectedColumns > 0 && cells.length < expectedColumns) {
+           const missing = expectedColumns - cells.length;
+           for(let k=0; k<missing; k++) {
+               cells.push("");
+           }
+      }
+
+      cells.forEach((cell, cIdx) => {
+        // Skip purely empty edge cells typical of MD syntax
+        if ((cIdx === 0 || cIdx === cells.length - 1) && cell.trim() === "") return;
+        
+        const isHeader = index === 0; 
+        const tag = isHeader ? "th" : "td";
+        html += `<${tag}>${this.renderMarkdown(cell.trim())}</${tag}>`;
+      });
+      html += "</tr>";
+    });
+
+    html += "</table></div>";
+    return html;
   }
 
   refreshStreamingView() {
