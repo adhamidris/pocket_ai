@@ -2551,7 +2551,7 @@ def _table_aggregate_handler(
                 for entry in contributions[:max_contributions]
                 if isinstance(entry, Mapping)
             ]
-        return {k: v for k, v in payload.items() if v not in {None, ""} and v != []}
+        return {k: v for k, v in payload.items() if v not in (None, "") and v != []}
 
     if matched_rows:
         # Soft cap for broad calls (no row filter + no explicit columns).
@@ -2574,7 +2574,7 @@ def _table_aggregate_handler(
         "row_limit": row_limit,
         "cache_hit": cache_hit,
     }
-    base_overhead = _json_char_len({k: v for k, v in base_payload.items() if v not in {None, ""} and v != []})
+    base_overhead = _json_char_len({k: v for k, v in base_payload.items() if v not in (None, "") and v != []})
     if max_payload_chars is not None and base_overhead >= max_payload_chars:
         raise CharacterBudgetExceeded("Character budget too low to return table aggregate metadata.")
 
@@ -2614,7 +2614,7 @@ def _table_aggregate_handler(
     if throttle_notice:
         payload["throttle_notice"] = throttle_notice
 
-    char_count = _json_char_len({k: v for k, v in payload.items() if v not in {None, ""} and v != []})
+    char_count = _json_char_len({k: v for k, v in payload.items() if v not in (None, "") and v != []})
     payload["char_count"] = char_count
     payload["token_estimate"] = _estimate_tokens(char_count)
     context.reserve_characters(char_count)
