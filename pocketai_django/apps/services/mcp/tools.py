@@ -45,6 +45,7 @@ from apps.accounts.models import (
 from apps.conversations.models import Conversation
 from apps.services.ai_orchestrator import ActionType, AiOrchestratorService, KnowledgeSearchService
 from apps.services.rag_logging import structured_log
+from apps.services.tabular_limits import enforce_tool_rate_limit, resolve_tabular_tool_limits
 from core.metrics import latency_monitor
 from .identifier_registry import IdentifierGuardrail, IdentifierRegistryService
 from .types import ToolExecutionContext, CharacterBudgetExceeded
@@ -2464,6 +2465,15 @@ def _table_aggregate_handler(
                 "llm_hint": decision.hint,
             }
 
+    tabular_limits = resolve_tabular_tool_limits(business_profile=conversation.business_profile, upload=upload)
+    tool_limits = tabular_limits.table_aggregate
+    enforce_tool_rate_limit(
+        business_profile=conversation.business_profile,
+        tool="table_aggregate",
+        rate_limit=tool_limits.rate_limit,
+        upload=upload,
+    )
+
     mode_raw = _coerce_str(arguments.get("mode")).strip().lower()
     value_column_input = _coerce_str(arguments.get("value_column")).strip()
     value_column_raw = _normalize_column_name(value_column_input)
@@ -2505,6 +2515,7 @@ def _table_aggregate_handler(
     except (TypeError, ValueError):
         row_limit = 50
     row_limit = max(1, min(200, row_limit))
+    row_limit = min(row_limit, int(tool_limits.max_rows_returned))
     raw_columns = arguments.get("columns")
     column_filters: list[str] = []
     if isinstance(raw_columns, (list, tuple)):
@@ -2512,6 +2523,8 @@ def _table_aggregate_handler(
             candidate = _coerce_str(entry).strip()
             if candidate:
                 column_filters.append(candidate)
+    if len(column_filters) > int(tool_limits.max_columns_returned):
+        column_filters = column_filters[: int(tool_limits.max_columns_returned)]
     normalized_column_filters = { _normalize_column_name(value) for value in column_filters if _normalize_column_name(value) }
 
     def _clip_text(value: object, limit: int) -> str:
@@ -3003,6 +3016,15 @@ def _dataset_query_handler(
             "error": "Dataset file missing on disk. Re-ingest the upload.",
         }
 
+    tabular_limits = resolve_tabular_tool_limits(business_profile=conversation.business_profile, upload=upload)
+    tool_limits = tabular_limits.dataset_query
+    enforce_tool_rate_limit(
+        business_profile=conversation.business_profile,
+        tool="dataset_query",
+        rate_limit=tool_limits.rate_limit,
+        upload=upload,
+    )
+
     query_input = _coerce_str(arguments.get("query")).strip()
     query_norm = query_input.lower().strip() if query_input else ""
 
@@ -3013,8 +3035,9 @@ def _dataset_query_handler(
             candidate = _coerce_str(entry).strip()
             if candidate:
                 select_columns_input.append(candidate)
-    if len(select_columns_input) > 25:
-        select_columns_input = select_columns_input[:25]
+    max_select_columns = max(25, int(tool_limits.max_columns_returned) * 4)
+    if len(select_columns_input) > max_select_columns:
+        select_columns_input = select_columns_input[:max_select_columns]
 
     raw_filters = arguments.get("filters")
     filters_input: list[dict[str, object]] = []
@@ -3050,6 +3073,7 @@ def _dataset_query_handler(
     except (TypeError, ValueError):
         limit = 20
     limit = max(1, min(50, limit))
+    limit = min(limit, int(tool_limits.max_rows_returned))
     try:
         offset = int(arguments.get("offset") or 0)
     except (TypeError, ValueError):
@@ -3068,15 +3092,12 @@ def _dataset_query_handler(
         top_groups = 20
     top_groups = max(1, min(50, top_groups))
 
-    max_seconds = float(getattr(settings, "DATASET_QUERY_MAX_SECONDS", 2.5) or 2.5)
-    if max_seconds <= 0:
-        max_seconds = 2.5
-    max_sort_window = int(getattr(settings, "DATASET_QUERY_MAX_SORT_WINDOW", 500) or 500)
-    max_sort_window = max(50, min(5000, max_sort_window))
-    default_column_cap = int(getattr(settings, "DATASET_QUERY_DEFAULT_COLUMNS", 8) or 8)
-    default_column_cap = max(3, min(20, default_column_cap))
-    cell_value_chars = int(getattr(settings, "DATASET_QUERY_CELL_VALUE_CHARS", 160) or 160)
-    cell_value_chars = max(40, min(400, cell_value_chars))
+    max_seconds = float(tool_limits.max_seconds)
+    max_sort_window = int(tool_limits.max_sort_window)
+    default_column_cap = int(tool_limits.default_columns)
+    cell_value_chars = int(tool_limits.cell_value_chars)
+    max_group_cap = int(tool_limits.max_groups)
+    max_column_cap = int(tool_limits.max_columns_returned)
 
     def _parse_datetime_value(value: str | None) -> float | None:
         if not isinstance(value, str):
@@ -3236,6 +3257,8 @@ def _dataset_query_handler(
                 actual = normalized_map.get(_normalize_column_name(name))
                 if actual and actual not in chosen:
                     chosen.append(actual)
+                if len(chosen) >= max_column_cap:
+                    break
             return chosen
 
         priority: list[str] = []
@@ -3260,11 +3283,15 @@ def _dataset_query_handler(
         for entry in priority:
             if entry not in chosen:
                 chosen.append(entry)
+                if len(chosen) >= max_column_cap:
+                    break
         for col in available_columns:
             if len(chosen) >= default_column_cap:
                 break
             if col not in chosen:
                 chosen.append(col)
+            if len(chosen) >= max_column_cap:
+                break
         return chosen
 
     def _matches_filters(row_map: Mapping[str, object]) -> bool:
@@ -3449,7 +3476,7 @@ def _dataset_query_handler(
                     elif len(values) > len(header):
                         values = values[: len(header)]
                     row_map = {header[i]: values[i] for i in range(len(header))}
-                    rows_out.append(_row_payload(row_index, row_map, columns=selected_columns[:12]))
+                    rows_out.append(_row_payload(row_index, row_map, columns=selected_columns[:max_column_cap]))
                     if len(rows_out) >= limit:
                         break
                 row_count_hint = sheet_meta.get("row_count") if isinstance(sheet_meta, Mapping) else None
@@ -3484,33 +3511,32 @@ def _dataset_query_handler(
                     if not _matches_filters(row_map):
                         continue
 
-                    matched_total += 1
-
-                    if aggregate_op:
-                        if aggregate_op == "count":
-                            continue
-                        if aggregate_op in {"sum", "min", "max"} and aggregate_column:
-                            numeric = _parse_numeric_value(_coerce_str(row_map.get(aggregate_column)))
-                            if numeric is None:
+                        matched_total += 1
+    
+                        if aggregate_op:
+                            if aggregate_op == "count":
                                 continue
-                            value = float(numeric)
-                            if aggregate_op == "sum":
-                                sum_total += value
-                                sum_count += 1
-                            elif aggregate_op == "min":
-                                min_value = value if min_value is None else min(min_value, value)
-                            elif aggregate_op == "max":
-                                max_value = value if max_value is None else max(max_value, value)
-                        elif aggregate_op == "group_by" and group_by_column and group_counter is not None:
-                            group_value = _clip_value(row_map.get(group_by_column, ""), 80)
-                            if not group_value:
-                                group_value = "<empty>"
-                            max_groups = int(getattr(settings, "DATASET_QUERY_MAX_GROUPS", 5000) or 5000)
-                            if group_value not in group_counter and len(group_counter) >= max_groups:
-                                overflow_group_count += 1
-                            else:
-                                group_counter[group_value] += 1
-                        continue
+                            if aggregate_op in {"sum", "min", "max"} and aggregate_column:
+                                numeric = _parse_numeric_value(_coerce_str(row_map.get(aggregate_column)))
+                                if numeric is None:
+                                    continue
+                                value = float(numeric)
+                                if aggregate_op == "sum":
+                                    sum_total += value
+                                    sum_count += 1
+                                elif aggregate_op == "min":
+                                    min_value = value if min_value is None else min(min_value, value)
+                                elif aggregate_op == "max":
+                                    max_value = value if max_value is None else max(max_value, value)
+                            elif aggregate_op == "group_by" and group_by_column and group_counter is not None:
+                                group_value = _clip_value(row_map.get(group_by_column, ""), 80)
+                                if not group_value:
+                                    group_value = "<empty>"
+                                if group_value not in group_counter and len(group_counter) >= max_group_cap:
+                                    overflow_group_count += 1
+                                else:
+                                    group_counter[group_value] += 1
+                            continue
 
                     if sort_column_actual:
                         sort_key = _coerce_sort_key(_coerce_str(row_map.get(sort_column_actual)))
@@ -3531,7 +3557,7 @@ def _dataset_query_handler(
                         continue
                     if len(rows_out) >= limit:
                         continue
-                    rows_out.append(_row_payload(row_index, row_map, columns=selected_columns[:12]))
+                    rows_out.append(_row_payload(row_index, row_map, columns=selected_columns[:max_column_cap]))
 
                 if sort_column_actual:
                     ordered = list(best_rows)
@@ -3540,7 +3566,7 @@ def _dataset_query_handler(
                     slice_rows = ordered[offset: offset + limit]
                     for row_index, values in slice_rows:
                         row_map = {header[i]: _coerce_str(values[i]) if i < len(values) else "" for i in range(len(header))}
-                        rows_out.append(_row_payload(row_index, row_map, columns=selected_columns[:12]))
+                        rows_out.append(_row_payload(row_index, row_map, columns=selected_columns[:max_column_cap]))
 
     else:  # jsonl_gz
         column_schema = []
@@ -3667,7 +3693,7 @@ def _dataset_query_handler(
                     if not isinstance(record, Mapping):
                         continue
                     row_map = {key: _coerce_str(record.get(key)) for key in column_schema}
-                    rows_out.append(_row_payload(row_index, row_map, columns=selected_columns[:12]))
+                    rows_out.append(_row_payload(row_index, row_map, columns=selected_columns[:max_column_cap]))
                     if len(rows_out) >= limit:
                         break
                     continue
@@ -3719,8 +3745,7 @@ def _dataset_query_handler(
                         group_value = _clip_value(record.get(group_by_column, ""), 80)
                         if not group_value:
                             group_value = "<empty>"
-                        max_groups = int(getattr(settings, "DATASET_QUERY_MAX_GROUPS", 5000) or 5000)
-                        if group_value not in group_counter and len(group_counter) >= max_groups:
+                        if group_value not in group_counter and len(group_counter) >= max_group_cap:
                             overflow_group_count += 1
                         else:
                             group_counter[group_value] += 1
@@ -3745,7 +3770,7 @@ def _dataset_query_handler(
                     continue
                 if len(rows_out) >= limit:
                     continue
-                rows_out.append(_row_payload(row_index, row_map, columns=selected_columns[:12]))
+                rows_out.append(_row_payload(row_index, row_map, columns=selected_columns[:max_column_cap]))
 
         if preview_only:
             matched_total = int(dataset_meta.get("row_count") or 0)
@@ -3757,7 +3782,7 @@ def _dataset_query_handler(
             slice_rows = ordered[offset: offset + limit]
             for row_index, record in slice_rows:
                 row_map = {key: _coerce_str(record.get(key)) for key in column_schema}
-                rows_out.append(_row_payload(row_index, row_map, columns=selected_columns[:12]))
+                rows_out.append(_row_payload(row_index, row_map, columns=selected_columns[:max_column_cap]))
 
     duration_ms = int((time.perf_counter() - start) * 1000)
 

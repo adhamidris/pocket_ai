@@ -35,6 +35,10 @@ class CharacterBudgetExceeded(ToolConstraintError):
     """Raised when the character/token budget is exhausted."""
 
 
+class ToolRateLimitExceeded(ToolConstraintError):
+    """Raised when a business/tool rate limit is exceeded."""
+
+
 @dataclasses.dataclass
 class ToolExecutionContext:
     """

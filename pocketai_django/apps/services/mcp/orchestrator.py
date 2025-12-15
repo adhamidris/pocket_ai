@@ -54,6 +54,7 @@ from .types import (
     ChunkReadBudgetExceeded,
     ChunkPageBudgetExceeded,
     CharacterBudgetExceeded,
+    ToolRateLimitExceeded,
 )
 from .identifier_registry import IdentifierGuardrail
 
@@ -3522,6 +3523,9 @@ class McpOrchestratorService:
         if isinstance(exc, CharacterBudgetExceeded):
             code = "char_budget_exceeded"
             hint = "Character budget exhausted; continue with existing excerpts or respond."
+        elif isinstance(exc, ToolRateLimitExceeded):
+            code = "rate_limited"
+            hint = "Tool rate limit reached; wait briefly or narrow the request."
         elif isinstance(exc, ChunkPageBudgetExceeded):
             code = "page_budget_exceeded"
             hint = "Page window budget exhausted; summarize what you already have."

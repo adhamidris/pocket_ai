@@ -226,7 +226,7 @@ def build_dataset_card_segment_payload(
 
 
 def refresh_dataset_card_chunk(*, upload: KnowledgeUpload) -> bool:
-    payload = build_dataset_card_segment_payload(upload=upload, ingestion_metadata=upload.metadata)
+    payload = build_dataset_card_segment_payload(upload=upload, ingestion_metadata=upload.ingestion_metadata)
     if not payload:
         return False
 
@@ -263,4 +263,3 @@ def refresh_dataset_card_chunk(*, upload: KnowledgeUpload) -> bool:
     chunk.token_count = len(content.split())
     chunk.save(update_fields=["content", "metadata", "token_count", "embedding", "updated_at"])
     return True
-
