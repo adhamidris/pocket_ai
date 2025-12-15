@@ -150,7 +150,8 @@ TOOL_DEFINITIONS: tuple[Mapping[str, object], ...] = (
         name="read_document",
         description=(
             "Load non-table document content (text/PDF chunks) by ID so you can cite exact details. "
-            "For spreadsheets/structured tables, prefer table_aggregate."
+            "Do NOT use for table snippets (`is_table_chunk=true`) or spreadsheet uploads (it returns constraint_error); "
+            "use table_aggregate (and list_tables if needed)."
         ),
         properties={
             "document_id": {
@@ -976,7 +977,8 @@ def _search_hint(
     if intent == "table":
         return (
             "These results look tabular. Use table_aggregate with the table upload document_id to retrieve exact rows/columns and totals "
-            "(narrow with match_column/match_values or query + sheet_name/columns). Avoid read_document for spreadsheets."
+            "(narrow with match_column/match_values or query + sheet_name/columns). If snippets have is_table_chunk=true, do NOT call read_document "
+            "(it returns constraint_error); use table_aggregate/list_tables instead."
         )
     if diag.get("path") == "fallback":
         return "Fallback snippets in use; confirm details with the visitor or narrow the request before citing specifics."
@@ -1692,6 +1694,60 @@ def _read_document_handler(
                 "snippets": [],
             }
         gating_upload_id = upload_record.id
+
+    if chunk_record:
+        chunk_meta = chunk_record.metadata if isinstance(getattr(chunk_record, "metadata", None), Mapping) else {}
+        if chunk_meta.get("is_table_chunk"):
+            upload_id = str(chunk_record.upload_id)
+            structured_log(
+                "mcp",
+                "read_document.wrong_tool_for_table",
+                {
+                    "document_id": document_id,
+                    "upload_id": upload_id,
+                    "chunk_id": str(chunk_record.id),
+                },
+                context={"conversation": conversation.id, "business": conversation.business_profile_id},
+                logger_obj=logger,
+                level=logging.WARNING,
+            )
+            return {
+                "tool": "read_document",
+                "document_id": document_id,
+                "upload_id": upload_id,
+                "status": "constraint_error",
+                "error": "wrong_tool_for_table",
+                "error_code": "wrong_tool_for_table",
+                "snippets": [],
+                "hint": (
+                    "This document is a structured table (`is_table_chunk=true`). `read_document` is for non-table text/PDF. "
+                    f"Use `table_aggregate` with document_id={upload_id} (or call `list_tables` to find the right table upload) "
+                    "and narrow with match_column/match_values or query + sheet_name/columns."
+                ),
+            }
+    if upload_record and upload_record.tables.exists() and not upload_record.pages.exists():
+        upload_id = str(upload_record.id)
+        structured_log(
+            "mcp",
+            "read_document.wrong_tool_for_spreadsheet",
+            {"document_id": document_id, "upload_id": upload_id},
+            context={"conversation": conversation.id, "business": conversation.business_profile_id},
+            logger_obj=logger,
+            level=logging.WARNING,
+        )
+        return {
+            "tool": "read_document",
+            "document_id": document_id,
+            "upload_id": upload_id,
+            "status": "constraint_error",
+            "error": "wrong_tool_for_table",
+            "error_code": "wrong_tool_for_table",
+            "snippets": [],
+            "hint": (
+                "This upload is a spreadsheet/structured table. `read_document` is for non-table text/PDF. "
+                f"Use `table_aggregate` with document_id={upload_id} (and call `list_tables` if you need sheet/table options)."
+            ),
+        }
 
     guard = _identifier_guard(context, conversation)
     locked = getattr(guard, "locked_identifier", None) if guard else None

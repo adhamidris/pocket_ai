@@ -540,6 +540,7 @@ class McpOrchestratorService:
             seen_tool_signatures: set[str] = set()
             duplicate_loop_streak = 0
             duplicate_loop_threshold = 2
+            table_only_workflow = False
 
             for iteration_index in range(self.max_tool_iterations):
                 current_tool_calls = list(assistant_message.get("tool_calls") or [])
@@ -551,14 +552,12 @@ class McpOrchestratorService:
                         iter_span.set_attribute("mcp.pending_tool_calls", len(current_tool_calls))
                         iter_span.set_attribute("mcp.transcript_length", len(transcript))
                     # Execute each tool_call and append tool results.
-                    table_tools_preferred = False
                     for tool_call in current_tool_calls:
                         tool_name = self._tool_name(tool_call)
                         arguments = self._tool_arguments(tool_call)
                         cached_table_result = None
                         table_cache_key = None
                         if tool_name == "table_aggregate":
-                            table_tools_preferred = True
                             arguments = dict(arguments)
                             self._apply_table_column_hint(arguments, tool_context)
                             table_cache_key = self._table_aggregate_cache_key(arguments)
@@ -577,10 +576,8 @@ class McpOrchestratorService:
                                         "conversation": conversation.id,
                                         "business": conversation.business_profile_id,
                                     },
-                                     logger_obj=logger,
-                                 )
-                        if tool_name == "list_tables":
-                            table_tools_preferred = True
+                                    logger_obj=logger,
+                                )
                         knowledge_phase: dict[str, object] | None = None
                         if self._is_knowledge_tool(tool_name):
                             knowledge_phase = _emit_phase_start(_knowledge_phase_payload(tool_name, arguments))
@@ -638,7 +635,9 @@ class McpOrchestratorService:
                                 finally:
                                     call_duration_ms = (time.perf_counter() - call_start) * 1000.0
                         if tool_name == "search_knowledge" and isinstance(tool_result, Mapping):
-                            table_tools_preferred = table_tools_preferred or self._search_result_is_table(tool_result)
+                            snippets = tool_result.get("snippets")
+                            if isinstance(snippets, list) and snippets:
+                                table_only_workflow = self._search_result_is_table(tool_result)
                         if tool_name == "table_aggregate":
                             self._record_table_column_hint(arguments, tool_context, tool_result)
                             if cached_table_result is None and table_cache_key:
@@ -741,7 +740,7 @@ class McpOrchestratorService:
                     extra_system_messages.append(reminder)
                     loop_messages[insert_at:insert_at] = extra_system_messages
                     tools_for_iteration = self.tool_definitions
-                    if table_tools_preferred:
+                    if table_only_workflow:
                         tools_for_iteration = self._exclude_tool_schemas({"read_document"})
                     payload = self._chat_with_context_governor(
                         conversation=conversation,
@@ -1553,9 +1552,6 @@ class McpOrchestratorService:
 
     @staticmethod
     def _search_result_is_table(tool_result: Mapping[str, object]) -> bool:
-        intent = str(tool_result.get("intent") or "").strip().lower()
-        if intent == "table":
-            return True
         snippets = tool_result.get("snippets")
         if not isinstance(snippets, list) or not snippets:
             return False
@@ -1568,9 +1564,7 @@ class McpOrchestratorService:
                 table_snippets += 1
             else:
                 non_table_snippets += 1
-        if table_snippets and non_table_snippets == 0:
-            return True
-        return table_snippets > non_table_snippets
+        return bool(table_snippets and non_table_snippets == 0)
 
     @staticmethod
     def _record_knowledge_outputs(context: ToolExecutionContext, tool_result: Mapping[str, object]) -> None:

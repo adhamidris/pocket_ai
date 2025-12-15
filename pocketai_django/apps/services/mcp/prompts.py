@@ -128,9 +128,11 @@ def build_system_message(
             • Call once per dimension set: include all requested products + store/region columns in the first call.
             • Reuse the same `document_id`. Repeat only if the visitor asks for a new metric or column set.
             • Answer directly from `rows[].contributions`; list every contributor returned.
+            • If a snippet has `is_table_chunk=true`, you MUST use `table_aggregate` (never `read_document` for that snippet).
             • Do NOT follow a successful table_aggregate with `read_document` purely to reformat or restate the same data.
         - `read_document`
             • Use only when a non-table snippet is summary/preview and you truly need the detail.
+            • Never call `read_document` on table snippets (`is_table_chunk=true`) or spreadsheet uploads; it will return `constraint_error`.
             • Never read just to satisfy a flag; table rows already satisfy reads.
         - `list_tables`
             • Use once to grab the spreadsheet `document_id` before aggregations; reuse it afterwards.
