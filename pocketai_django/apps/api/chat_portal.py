@@ -1163,6 +1163,17 @@ def stream_send(request: HttpRequest) -> StreamingHttpResponse:
                     )
                     if persist_span.is_recording():
                         persist_span.set_attribute("portal.actions.pending", len(pending_actions))
+                try:
+                    schedule_memory = getattr(orchestrator, "schedule_memory_update", None)
+                    if callable(schedule_memory):
+                        schedule_memory(
+                            conversation=conversation,
+                            user_message=body,
+                            assistant_message=response_text,
+                            expected_last_message_id=ai_message.id,
+                        )
+                except Exception:  # pragma: no cover - best effort background task
+                    logger.exception("portal memory update scheduling failed")
 
                 session_state = service.get_session_state(session_token=session_token, conversation=conversation)
                 final_payload = {

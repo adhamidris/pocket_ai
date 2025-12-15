@@ -144,6 +144,33 @@ try:
     )
 except (TypeError, ValueError):
     MCP_MAX_INPUT_TOKENS = max(1000, MCP_MAX_CONTEXT_TOKENS - MCP_RESPONSE_TOKEN_RESERVE)
+
+# MCP long-chat memory (rolling summary + pinned identifiers).
+MCP_LONG_CHAT_MEMORY_ENABLED = os.getenv("MCP_LONG_CHAT_MEMORY_ENABLED", "true").lower() in {"1", "true", "yes"}
+try:
+    MCP_MEMORY_RECENT_MESSAGES = int(os.getenv("MCP_MEMORY_RECENT_MESSAGES", "4"))
+except (TypeError, ValueError):
+    MCP_MEMORY_RECENT_MESSAGES = 4
+try:
+    MCP_MEMORY_UPDATE_AFTER_MESSAGES = int(os.getenv("MCP_MEMORY_UPDATE_AFTER_MESSAGES", "10"))
+except (TypeError, ValueError):
+    MCP_MEMORY_UPDATE_AFTER_MESSAGES = 10
+try:
+    MCP_MEMORY_SUMMARY_MAX_CHARS = int(os.getenv("MCP_MEMORY_SUMMARY_MAX_CHARS", "1600"))
+except (TypeError, ValueError):
+    MCP_MEMORY_SUMMARY_MAX_CHARS = 1600
+try:
+    MCP_MEMORY_TURN_MAX_CHARS = int(os.getenv("MCP_MEMORY_TURN_MAX_CHARS", "1200"))
+except (TypeError, ValueError):
+    MCP_MEMORY_TURN_MAX_CHARS = 1200
+try:
+    MCP_MEMORY_PIN_MAX_ITEMS = int(os.getenv("MCP_MEMORY_PIN_MAX_ITEMS", "6"))
+except (TypeError, ValueError):
+    MCP_MEMORY_PIN_MAX_ITEMS = 6
+try:
+    MCP_MEMORY_PIN_VALUE_CHARS = int(os.getenv("MCP_MEMORY_PIN_VALUE_CHARS", "80"))
+except (TypeError, ValueError):
+    MCP_MEMORY_PIN_VALUE_CHARS = 80
 RAG_TABLE_SIMILARITY_THRESHOLD = float(os.getenv("RAG_TABLE_SIMILARITY_THRESHOLD", "0.3"))
 RAG_TABLE_COLUMN_CACHE_SIZE = int(os.getenv("RAG_TABLE_COLUMN_CACHE_SIZE", "32"))
 RAG_TABLE_COLUMN_SAMPLE = int(os.getenv("RAG_TABLE_COLUMN_SAMPLE", "200"))
