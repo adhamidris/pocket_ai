@@ -19,7 +19,7 @@ logger = logging.getLogger(__name__)
 TRACER = otel_trace.get_tracer(__name__)
 
 PLACEHOLDER_TOOL_PATTERN = re.compile(
-    r"\b(search_knowledge|read_document|table_aggregate|list_tables|create_case|update_case_details)\b",
+    r"\b(search_knowledge|read_document|table_aggregate|dataset_query|list_tables|create_case|update_case_details)\b",
     re.IGNORECASE,
 )
 

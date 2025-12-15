@@ -1102,7 +1102,7 @@ class KnowledgeUploadPage(models.Model):
     rotation = models.IntegerField(default=0)
     text_density = models.FloatField(default=0.0)
     has_ocr_content = models.BooleanField(default=False)
-    content_type = models.CharField(max_length=32, blank=True, default="")
+    content_type = models.CharField(max_length=100, blank=True, default="")
     metadata = models.JSONField(default=dict, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)

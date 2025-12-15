@@ -12,16 +12,21 @@ touching unrelated parts of the codebase.
 from __future__ import annotations
 
 import copy
+import csv
+import gzip
 import hashlib
 import json
-import uuid
 import re
 import time
+import uuid
+from bisect import bisect_left
 from collections import Counter
+from datetime import datetime, timezone
 from functools import lru_cache
 import logging
 import math
 from concurrent.futures import ThreadPoolExecutor
+from pathlib import Path
 from typing import Any, Callable, Mapping, Sequence
 
 from django.db import models
@@ -246,6 +251,107 @@ TOOL_DEFINITIONS: tuple[Mapping[str, object], ...] = (
                 "type": "array",
                 "items": {"type": "string"},
                 "description": "Optional list of column/store names to include in the response.",
+            },
+        },
+        required=("document_id",),
+    ),
+    _function_schema(
+        name="dataset_query",
+        description=(
+            "Query a large dataset (CSV/XLSX/XLS/JSONL) stored in dataset mode. "
+            "Supports lookup/filter/sort/select columns and small aggregates; returns only a small page of rows."
+        ),
+        properties={
+            "document_id": {
+                "type": "string",
+                "description": "UUID of the upload returned by search_knowledge/list_tables.",
+            },
+            "sheet_name": {
+                "type": "string",
+                "description": "Optional sheet name for multi-sheet spreadsheets stored in dataset mode.",
+            },
+            "sheet_index": {
+                "type": "integer",
+                "description": "Optional sheet index (1-based) for multi-sheet spreadsheets stored in dataset mode.",
+                "minimum": 1,
+            },
+            "query": {
+                "type": "string",
+                "description": "Optional free-text search across all cells (case-insensitive substring).",
+            },
+            "select_columns": {
+                "type": "array",
+                "items": {"type": "string"},
+                "description": "Optional list of columns to return in rows (omit to return a capped subset).",
+            },
+            "filters": {
+                "type": "array",
+                "description": "Optional structured filters; all filters are ANDed.",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "column": {"type": "string", "description": "Column/key name."},
+                        "op": {
+                            "type": "string",
+                            "enum": ["eq", "contains", "startswith", "endswith", "gt", "gte", "lt", "lte", "in"],
+                            "description": "Filter operator.",
+                        },
+                        "value": {"type": "string", "description": "Single value for the filter (string form)."},
+                        "values": {
+                            "type": "array",
+                            "items": {"type": "string"},
+                            "description": "Multiple values for op=in.",
+                            "minItems": 1,
+                        },
+                        "case_sensitive": {
+                            "type": "boolean",
+                            "description": "Set true only when matching case-sensitive identifiers.",
+                            "default": False,
+                        },
+                    },
+                    "required": ["column", "op"],
+                },
+            },
+            "sort_by": {
+                "type": "string",
+                "description": "Optional column to sort by (best-effort; may be approximate when time-limited).",
+            },
+            "sort_direction": {
+                "type": "string",
+                "enum": ["asc", "desc"],
+                "default": "asc",
+            },
+            "limit": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 50,
+                "default": 20,
+                "description": "Maximum rows to return (1-50).",
+            },
+            "offset": {
+                "type": "integer",
+                "minimum": 0,
+                "default": 0,
+                "description": "Zero-based row offset within the matched results.",
+            },
+            "aggregate": {
+                "type": "object",
+                "description": "Optional aggregate instead of returning rows.",
+                "properties": {
+                    "operation": {
+                        "type": "string",
+                        "enum": ["count", "sum", "min", "max", "group_by"],
+                    },
+                    "column": {"type": "string", "description": "Target column for sum/min/max."},
+                    "group_by": {"type": "string", "description": "Column to group by when operation=group_by."},
+                    "top_groups": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "maximum": 50,
+                        "default": 20,
+                    },
+                },
+                "required": ["operation"],
             },
         },
         required=("document_id",),
@@ -2614,10 +2720,27 @@ def _table_aggregate_handler(
         if not has_row_filters and not column_filters:
             matched_rows = matched_rows[: max(5, min(prompt_rows_cap, 20))]
 
+    dataset_enabled = False
+    dataset_summary: dict[str, object] | None = None
+    metadata = upload.ingestion_metadata if isinstance(getattr(upload, "ingestion_metadata", None), Mapping) else {}
+    dataset_meta = metadata.get("dataset") if isinstance(metadata, Mapping) else None
+    if isinstance(dataset_meta, Mapping) and dataset_meta.get("enabled"):
+        dataset_enabled = True
+        sheets = dataset_meta.get("sheets")
+        sheet_count = len(sheets) if isinstance(sheets, list) else None
+        dataset_summary = {
+            "storage_format": dataset_meta.get("storage_format"),
+            "row_count": dataset_meta.get("row_count"),
+            "preview_rows_indexed": dataset_meta.get("preview_rows_indexed"),
+            "sheet_count": sheet_count,
+        }
+
     base_payload = {
         "tool": "table_aggregate",
         "status": status,
         "document_id": str(upload.id),
+        "dataset_mode": dataset_enabled or None,
+        "dataset": dataset_summary,
         "mode": mode,
         "query": query_input or None,
         "match_column": match_column_input or None,
@@ -2658,6 +2781,16 @@ def _table_aggregate_handler(
         }
     duration_ms = int((time.perf_counter() - start) * 1000)
 
+    hint = None
+    if original_match_count == 0:
+        if dataset_enabled:
+            hint = (
+                "No matching rows found in the indexed preview. This document is in dataset mode; "
+                "table_aggregate only searches preview rows."
+            )
+        else:
+            hint = "No matching rows found."
+
     payload = {
         **base_payload,
         "duration_ms": duration_ms,
@@ -2665,7 +2798,7 @@ def _table_aggregate_handler(
         "rows": rows_out,
         "total": total_value if original_match_count else None,
         "display_total": _format_numeric_display(total_value) if original_match_count else None,
-        "hint": "No matching rows found." if original_match_count == 0 else None,
+        "hint": hint,
     }
     if throttle_notice:
         payload["throttle_notice"] = throttle_notice
@@ -2696,6 +2829,1073 @@ def _table_aggregate_handler(
             "char_count": char_count,
             "token_estimate": payload.get("token_estimate"),
             "truncated": bool(throttle_notice),
+        },
+        context={"business": conversation.business_profile_id},
+        logger_obj=logger,
+    )
+    return payload
+
+
+def _dataset_query_handler(
+    arguments: Mapping[str, object],
+    conversation: Conversation,
+    context: ToolExecutionContext,
+) -> Mapping[str, object]:
+    start = time.perf_counter()
+    raw_id = _coerce_str(arguments.get("document_id")).strip()
+    if not raw_id:
+        return {"tool": "dataset_query", "status": "error", "error": "document_id is required"}
+    try:
+        identifier = uuid.UUID(raw_id)
+    except (TypeError, ValueError):
+        return {"tool": "dataset_query", "status": "error", "error": "document_id must be a valid UUID"}
+
+    upload = KnowledgeUpload.objects.filter(
+        id=identifier,
+        business_profile=conversation.business_profile,
+        status=KnowledgeStatus.ACTIVE,
+    ).first()
+    if not upload:
+        chunk = (
+            KnowledgeUploadChunk.objects.filter(
+                id=identifier,
+                business_profile=conversation.business_profile,
+                upload__status=KnowledgeStatus.ACTIVE,
+            )
+            .select_related("upload")
+            .first()
+        )
+        upload = chunk.upload if chunk else None
+    if not upload:
+        return {
+            "tool": "dataset_query",
+            "status": "not_found",
+            "error": "document not found for this business",
+        }
+
+    guard = _identifier_guard(context, conversation)
+    decision = None
+    if guard and upload.id:
+        decision = guard.require_for_upload(str(upload.id))
+        _record_identifier_check(context, decision)
+        if decision.status != "ok":
+            structured_log(
+                "mcp",
+                "identifier.denied",
+                {
+                    "tool": "dataset_query",
+                    "upload": str(upload.id),
+                    "required": list(decision.required_keys),
+                    "provided": list(decision.provided_keys),
+                },
+                context={"business": conversation.business_profile_id},
+                logger_obj=logger,
+                level=logging.WARNING,
+            )
+            _record_identifier_event_once(
+                context,
+                business_profile=conversation.business_profile,
+                decision=decision,
+                tool="dataset_query",
+                conversation=conversation,
+                upload_ids=[str(upload.id)],
+            )
+            error_code = "identifier_required"
+            return {
+                "tool": "dataset_query",
+                "document_id": str(upload.id),
+                "status": decision.status,
+                "error": error_code,
+                "error_code": error_code,
+                "rows": [],
+                "match_count": 0,
+                "identifier_gate": decision.as_dict(),
+                "required_identifiers": list(decision.required_keys),
+                "provided_identifiers": list(decision.provided_keys),
+                "hint": decision.hint,
+                "llm_hint": decision.hint,
+            }
+
+    ingestion_meta = upload.ingestion_metadata if isinstance(getattr(upload, "ingestion_metadata", None), Mapping) else {}
+    dataset_meta = ingestion_meta.get("dataset") if isinstance(ingestion_meta, Mapping) else None
+    if not isinstance(dataset_meta, Mapping) or not dataset_meta.get("enabled"):
+        return {
+            "tool": "dataset_query",
+            "document_id": str(upload.id),
+            "status": "constraint_error",
+            "error": "dataset_mode_required",
+            "error_code": "dataset_mode_required",
+            "hint": "This upload is not stored in dataset mode. Use table_aggregate for small tables or read_document for text documents.",
+        }
+
+    storage_format = str(dataset_meta.get("storage_format") or "").strip() or "csv_gz"
+    if storage_format not in {"csv_gz", "jsonl_gz"}:
+        return {
+            "tool": "dataset_query",
+            "document_id": str(upload.id),
+            "status": "error",
+            "error": f"Unsupported dataset storage_format={storage_format!r}",
+        }
+
+    sheet_name_input = _coerce_str(arguments.get("sheet_name")).strip()
+    try:
+        sheet_index_input = int(arguments.get("sheet_index")) if arguments.get("sheet_index") is not None else None
+    except (TypeError, ValueError):
+        sheet_index_input = None
+
+    sheet_meta: Mapping[str, object] | None = None
+    storage_rel_path: str | None = None
+    available_sheets = dataset_meta.get("sheets")
+    if isinstance(available_sheets, list) and available_sheets:
+        normalized_request = _normalize_column_name(sheet_name_input) if sheet_name_input else ""
+        for entry in available_sheets:
+            if not isinstance(entry, Mapping):
+                continue
+            if sheet_index_input and int(entry.get("sheet_index") or 0) == sheet_index_input:
+                sheet_meta = entry
+                break
+        if sheet_meta is None and normalized_request:
+            for entry in available_sheets:
+                if not isinstance(entry, Mapping):
+                    continue
+                candidate = _normalize_column_name(entry.get("sheet_name"))
+                if candidate and candidate == normalized_request:
+                    sheet_meta = entry
+                    break
+        if sheet_meta is None and normalized_request:
+            for entry in available_sheets:
+                if not isinstance(entry, Mapping):
+                    continue
+                candidate = _normalize_column_name(entry.get("sheet_name"))
+                if candidate and normalized_request in candidate:
+                    sheet_meta = entry
+                    break
+        if sheet_meta is None:
+            sheet_meta = next((entry for entry in available_sheets if isinstance(entry, Mapping)), None)
+        storage_rel_path = _coerce_str(sheet_meta.get("storage_path") if sheet_meta else None).strip() or None
+    else:
+        storage_rel_path = _coerce_str(dataset_meta.get("storage_path")).strip() or None
+
+    if not storage_rel_path:
+        return {
+            "tool": "dataset_query",
+            "document_id": str(upload.id),
+            "status": "error",
+            "error": "Dataset storage path missing. Re-ingest the upload.",
+        }
+
+    media_root = Path(getattr(settings, "MEDIA_ROOT", ".")).resolve()
+    abs_path = (media_root / Path(storage_rel_path)).resolve()
+    try:
+        abs_path.relative_to(media_root)
+    except ValueError:
+        return {
+            "tool": "dataset_query",
+            "document_id": str(upload.id),
+            "status": "error",
+            "error": "Dataset storage path escapes MEDIA_ROOT.",
+        }
+    if not abs_path.exists():
+        return {
+            "tool": "dataset_query",
+            "document_id": str(upload.id),
+            "status": "error",
+            "error": "Dataset file missing on disk. Re-ingest the upload.",
+        }
+
+    query_input = _coerce_str(arguments.get("query")).strip()
+    query_norm = query_input.lower().strip() if query_input else ""
+
+    raw_select_columns = arguments.get("select_columns")
+    select_columns_input: list[str] = []
+    if isinstance(raw_select_columns, (list, tuple)):
+        for entry in raw_select_columns:
+            candidate = _coerce_str(entry).strip()
+            if candidate:
+                select_columns_input.append(candidate)
+    if len(select_columns_input) > 25:
+        select_columns_input = select_columns_input[:25]
+
+    raw_filters = arguments.get("filters")
+    filters_input: list[dict[str, object]] = []
+    if isinstance(raw_filters, (list, tuple)):
+        for entry in raw_filters:
+            if not isinstance(entry, Mapping):
+                continue
+            column = _coerce_str(entry.get("column")).strip()
+            op = _coerce_str(entry.get("op")).strip().lower()
+            if not column or not op:
+                continue
+            payload: dict[str, object] = {"column": column, "op": op}
+            value = entry.get("value")
+            if value is not None:
+                payload["value"] = _coerce_str(value)
+            values = entry.get("values")
+            if isinstance(values, (list, tuple)):
+                payload["values"] = [_coerce_str(v) for v in values if _coerce_str(v).strip()]
+            case_sensitive = entry.get("case_sensitive")
+            if isinstance(case_sensitive, bool):
+                payload["case_sensitive"] = case_sensitive
+            filters_input.append(payload)
+    if len(filters_input) > 10:
+        filters_input = filters_input[:10]
+
+    sort_by_input = _coerce_str(arguments.get("sort_by")).strip()
+    sort_direction = _coerce_str(arguments.get("sort_direction")).strip().lower() or "asc"
+    if sort_direction not in {"asc", "desc"}:
+        sort_direction = "asc"
+
+    try:
+        limit = int(arguments.get("limit") or 20)
+    except (TypeError, ValueError):
+        limit = 20
+    limit = max(1, min(50, limit))
+    try:
+        offset = int(arguments.get("offset") or 0)
+    except (TypeError, ValueError):
+        offset = 0
+    offset = max(0, offset)
+
+    aggregate_input = arguments.get("aggregate") if isinstance(arguments.get("aggregate"), Mapping) else None
+    aggregate_op = _coerce_str(aggregate_input.get("operation") if aggregate_input else None).strip().lower()
+    if aggregate_op and aggregate_op not in {"count", "sum", "min", "max", "group_by"}:
+        aggregate_op = ""
+    aggregate_column = _coerce_str(aggregate_input.get("column") if aggregate_input else None).strip()
+    group_by_column = _coerce_str(aggregate_input.get("group_by") if aggregate_input else None).strip()
+    try:
+        top_groups = int(aggregate_input.get("top_groups") or 20) if aggregate_input else 20
+    except (TypeError, ValueError):
+        top_groups = 20
+    top_groups = max(1, min(50, top_groups))
+
+    max_seconds = float(getattr(settings, "DATASET_QUERY_MAX_SECONDS", 2.5) or 2.5)
+    if max_seconds <= 0:
+        max_seconds = 2.5
+    max_sort_window = int(getattr(settings, "DATASET_QUERY_MAX_SORT_WINDOW", 500) or 500)
+    max_sort_window = max(50, min(5000, max_sort_window))
+    default_column_cap = int(getattr(settings, "DATASET_QUERY_DEFAULT_COLUMNS", 8) or 8)
+    default_column_cap = max(3, min(20, default_column_cap))
+    cell_value_chars = int(getattr(settings, "DATASET_QUERY_CELL_VALUE_CHARS", 160) or 160)
+    cell_value_chars = max(40, min(400, cell_value_chars))
+
+    def _parse_datetime_value(value: str | None) -> float | None:
+        if not isinstance(value, str):
+            return None
+        text = value.strip()
+        if not text:
+            return None
+        normalized = text[:-1] + "+00:00" if text.endswith("Z") else text
+        try:
+            parsed = datetime.fromisoformat(normalized)
+        except ValueError:
+            return None
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=timezone.utc)
+        return parsed.timestamp()
+
+    def _coerce_sort_key(value: str | None) -> tuple[int, object]:
+        if not isinstance(value, str):
+            return (3, "")
+        text = value.strip()
+        if not text:
+            return (3, "")
+        numeric = _parse_numeric_value(text)
+        if numeric is not None:
+            return (0, float(numeric))
+        dt = _parse_datetime_value(text)
+        if dt is not None:
+            return (1, float(dt))
+        return (2, text.lower())
+
+    def _compare_values(left: str | None, right: str | None, *, op: str) -> bool:
+        left_text = _coerce_str(left)
+        right_text = _coerce_str(right)
+        left_numeric = _parse_numeric_value(left_text)
+        right_numeric = _parse_numeric_value(right_text)
+        if left_numeric is not None and right_numeric is not None:
+            if op == "gt":
+                return left_numeric > right_numeric
+            if op == "gte":
+                return left_numeric >= right_numeric
+            if op == "lt":
+                return left_numeric < right_numeric
+            if op == "lte":
+                return left_numeric <= right_numeric
+        left_dt = _parse_datetime_value(left_text)
+        right_dt = _parse_datetime_value(right_text)
+        if left_dt is not None and right_dt is not None:
+            if op == "gt":
+                return left_dt > right_dt
+            if op == "gte":
+                return left_dt >= right_dt
+            if op == "lt":
+                return left_dt < right_dt
+            if op == "lte":
+                return left_dt <= right_dt
+        if op == "gt":
+            return left_text > right_text
+        if op == "gte":
+            return left_text >= right_text
+        if op == "lt":
+            return left_text < right_text
+        if op == "lte":
+            return left_text <= right_text
+        return False
+
+    def _json_char_len(obj: object) -> int:
+        try:
+            return len(json.dumps(obj, ensure_ascii=False, separators=(",", ":"), default=str))
+        except Exception:
+            return len(str(obj))
+
+    hard_char_cap = 12_000
+    remaining_turn = None
+    if context.char_budget_per_turn is not None:
+        remaining_turn = max(0, context.char_budget_per_turn - context.characters_used)
+    max_payload_chars = hard_char_cap if remaining_turn is None else min(hard_char_cap, remaining_turn)
+
+    def _clip_value(value: object, limit: int) -> str:
+        text = _coerce_str(value)
+        text = " ".join(text.replace("\r", " ").replace("\n", " ").split())
+        if limit <= 0:
+            return ""
+        if len(text) <= limit:
+            return text
+        return text[: max(0, limit - 1)].rstrip() + "…"
+
+    dataset_summary: dict[str, object] = {
+        "storage_format": storage_format,
+        "row_count": dataset_meta.get("row_count"),
+        "preview_rows_indexed": dataset_meta.get("preview_rows_indexed") or dataset_meta.get("preview_rows"),
+    }
+    sheet_name_out = None
+    sheet_index_out = None
+    if sheet_meta:
+        sheet_name_out = sheet_meta.get("sheet_name")
+        sheet_index_out = sheet_meta.get("sheet_index")
+        dataset_summary["sheet_row_count"] = sheet_meta.get("row_count")
+        dataset_summary["sheet_preview_rows_indexed"] = sheet_meta.get("preview_rows_indexed")
+    if isinstance(available_sheets, list):
+        dataset_summary["sheet_count"] = len([s for s in available_sheets if isinstance(s, Mapping)])
+    suggested_keys = None
+    if isinstance(sheet_meta, Mapping):
+        suggested_keys = sheet_meta.get("suggested_key_columns")
+    if suggested_keys is None:
+        suggested_keys = dataset_meta.get("suggested_key_columns")
+    if isinstance(suggested_keys, list):
+        dataset_summary["suggested_keys"] = [
+            str(entry.get("column") or "")
+            for entry in suggested_keys[:6]
+            if isinstance(entry, Mapping) and str(entry.get("column") or "").strip()
+        ]
+
+    duration_ms = 0
+    scanned_rows = 0
+    matched_total = 0
+    truncated = False
+
+    aggregate_result: dict[str, object] | None = None
+    sum_total = 0.0
+    sum_count = 0
+    min_value: float | None = None
+    max_value: float | None = None
+    group_counter: Counter[str] | None = None
+    overflow_group_count = 0
+    if aggregate_op == "group_by":
+        group_counter = Counter()
+        overflow_group_count = 0
+
+    want_sort = bool(sort_by_input)
+    if want_sort and (offset + limit) > max_sort_window:
+        return {
+            "tool": "dataset_query",
+            "document_id": str(upload.id),
+            "status": "error",
+            "error": "offset_too_large_for_sort",
+            "error_code": "offset_too_large_for_sort",
+            "hint": f"offset+limit is too large to sort safely (max window {max_sort_window}). Narrow the query or reduce offset.",
+        }
+
+    sort_window = max(1, min(max_sort_window, offset + limit))
+    best_keys: list[tuple[tuple[int, object], int]] = []
+    best_rows: list[tuple[int, object]] = []
+
+    rows_out: list[dict[str, object]] = []
+
+    def _row_payload(row_index: int, row_map: Mapping[str, object], *, columns: Sequence[str]) -> dict[str, object]:
+        cells: list[dict[str, str]] = []
+        for col in columns:
+            cells.append({"column": col, "value": _clip_value(row_map.get(col, ""), cell_value_chars)})
+        return {"row_index": row_index, "cells": cells}
+
+    def _choose_columns(available_columns: Sequence[str], *, requested: Sequence[str] | None = None) -> list[str]:
+        normalized_map = {_normalize_column_name(name): name for name in available_columns if _normalize_column_name(name)}
+        chosen: list[str] = []
+        if requested:
+            for name in requested:
+                actual = normalized_map.get(_normalize_column_name(name))
+                if actual and actual not in chosen:
+                    chosen.append(actual)
+            return chosen
+
+        priority: list[str] = []
+        for flt in filters_input:
+            col = _coerce_str(flt.get("column")).strip()
+            actual = normalized_map.get(_normalize_column_name(col))
+            if actual and actual not in priority:
+                priority.append(actual)
+        if sort_by_input:
+            actual = normalized_map.get(_normalize_column_name(sort_by_input))
+            if actual and actual not in priority:
+                priority.append(actual)
+        if aggregate_column:
+            actual = normalized_map.get(_normalize_column_name(aggregate_column))
+            if actual and actual not in priority:
+                priority.append(actual)
+        if group_by_column:
+            actual = normalized_map.get(_normalize_column_name(group_by_column))
+            if actual and actual not in priority:
+                priority.append(actual)
+
+        for entry in priority:
+            if entry not in chosen:
+                chosen.append(entry)
+        for col in available_columns:
+            if len(chosen) >= default_column_cap:
+                break
+            if col not in chosen:
+                chosen.append(col)
+        return chosen
+
+    def _matches_filters(row_map: Mapping[str, object]) -> bool:
+        if not filters_input:
+            return True
+        for flt in filters_input:
+            column = _coerce_str(flt.get("column")).strip()
+            op = _coerce_str(flt.get("op")).strip().lower()
+            if not column or not op:
+                continue
+            case_sensitive = bool(flt.get("case_sensitive"))
+            raw_value = row_map.get(column)
+            cell_value = _coerce_str(raw_value)
+            if not case_sensitive:
+                cell_cmp = cell_value.lower()
+            else:
+                cell_cmp = cell_value
+
+            if op == "in":
+                values = flt.get("values") if isinstance(flt.get("values"), list) else []
+                candidates = []
+                for entry in values[:50]:
+                    text = _coerce_str(entry).strip()
+                    if text:
+                        candidates.append(text if case_sensitive else text.lower())
+                if not candidates:
+                    continue
+                if cell_cmp not in candidates:
+                    return False
+                continue
+
+            value = _coerce_str(flt.get("value")).strip()
+            target = value if case_sensitive else value.lower()
+            if op == "eq":
+                if cell_cmp != target:
+                    return False
+            elif op == "contains":
+                if target and target not in cell_cmp:
+                    return False
+            elif op == "startswith":
+                if target and not cell_cmp.startswith(target):
+                    return False
+            elif op == "endswith":
+                if target and not cell_cmp.endswith(target):
+                    return False
+            elif op in {"gt", "gte", "lt", "lte"}:
+                if not _compare_values(cell_value, value, op=op):
+                    return False
+            else:
+                return False
+        return True
+
+    deadline = start + max_seconds
+
+    def _should_stop() -> bool:
+        return time.perf_counter() >= deadline
+
+    if storage_format == "csv_gz":
+        with gzip.open(abs_path, "rt", encoding="utf-8", errors="ignore", newline="") as handle:
+            reader = csv.reader(handle)
+            header_row = next(reader, None)
+            if not header_row:
+                return {
+                    "tool": "dataset_query",
+                    "document_id": str(upload.id),
+                    "status": "error",
+                    "error": "Dataset CSV header row missing.",
+                }
+            header = [str(value or "").strip() or f"column_{idx + 1}" for idx, value in enumerate(header_row)]
+            if header and isinstance(header[0], str):
+                header[0] = header[0].lstrip("\ufeff")
+
+            normalized_header_map: dict[str, str] = {}
+            for col in header:
+                norm = _normalize_column_name(col)
+                if norm and norm not in normalized_header_map:
+                    normalized_header_map[norm] = col
+
+            resolved_filters: list[dict[str, object]] = []
+            for flt in filters_input:
+                col_input = _coerce_str(flt.get("column")).strip()
+                norm = _normalize_column_name(col_input)
+                actual = normalized_header_map.get(norm)
+                if not actual:
+                    return {
+                        "tool": "dataset_query",
+                        "document_id": str(upload.id),
+                        "status": "error",
+                        "error": "unknown_column",
+                        "error_code": "unknown_column",
+                        "hint": f"Unknown column {col_input!r}.",
+                        "available_columns": header[:50],
+                    }
+                resolved = dict(flt)
+                resolved["column"] = actual
+                resolved_filters.append(resolved)
+            filters_input = resolved_filters
+
+            sort_column_actual: str | None = None
+            if sort_by_input:
+                sort_column_actual = normalized_header_map.get(_normalize_column_name(sort_by_input))
+                if not sort_column_actual:
+                    return {
+                        "tool": "dataset_query",
+                        "document_id": str(upload.id),
+                        "status": "error",
+                        "error": "unknown_sort_column",
+                        "error_code": "unknown_sort_column",
+                        "hint": f"Unknown sort_by column {sort_by_input!r}.",
+                        "available_columns": header[:50],
+                    }
+
+            if aggregate_op in {"sum", "min", "max"}:
+                if not aggregate_column:
+                    return {
+                        "tool": "dataset_query",
+                        "document_id": str(upload.id),
+                        "status": "error",
+                        "error": "aggregate_column_required",
+                        "error_code": "aggregate_column_required",
+                        "hint": f"aggregate.column is required when operation={aggregate_op}.",
+                    }
+                actual = normalized_header_map.get(_normalize_column_name(aggregate_column))
+                if not actual:
+                    return {
+                        "tool": "dataset_query",
+                        "document_id": str(upload.id),
+                        "status": "error",
+                        "error": "unknown_aggregate_column",
+                        "error_code": "unknown_aggregate_column",
+                        "hint": f"Unknown aggregate column {aggregate_column!r}.",
+                        "available_columns": header[:50],
+                    }
+                aggregate_column = actual
+
+            if aggregate_op == "group_by":
+                if not group_by_column:
+                    return {
+                        "tool": "dataset_query",
+                        "document_id": str(upload.id),
+                        "status": "error",
+                        "error": "group_by_required",
+                        "error_code": "group_by_required",
+                        "hint": "aggregate.group_by is required when operation=group_by.",
+                    }
+                actual = normalized_header_map.get(_normalize_column_name(group_by_column))
+                if not actual:
+                    return {
+                        "tool": "dataset_query",
+                        "document_id": str(upload.id),
+                        "status": "error",
+                        "error": "unknown_group_by_column",
+                        "error_code": "unknown_group_by_column",
+                        "hint": f"Unknown group_by column {group_by_column!r}.",
+                        "available_columns": header[:50],
+                    }
+                group_by_column = actual
+
+            selected_columns = _choose_columns(header, requested=select_columns_input if select_columns_input else None)
+            if select_columns_input and not selected_columns:
+                return {
+                    "tool": "dataset_query",
+                    "document_id": str(upload.id),
+                    "status": "error",
+                    "error": "no_selectable_columns",
+                    "error_code": "no_selectable_columns",
+                    "hint": "None of the requested select_columns exist in this dataset.",
+                    "available_columns": header[:50],
+                }
+
+            preview_only = not (filters_input or query_norm or aggregate_op or sort_column_actual)
+            if preview_only:
+                for row_index, row in enumerate(reader, start=1):
+                    if _should_stop():
+                        truncated = True
+                        break
+                    if row_index <= offset:
+                        continue
+                    values = [str(item or "") for item in row]
+                    if len(values) < len(header):
+                        values.extend([""] * (len(header) - len(values)))
+                    elif len(values) > len(header):
+                        values = values[: len(header)]
+                    row_map = {header[i]: values[i] for i in range(len(header))}
+                    rows_out.append(_row_payload(row_index, row_map, columns=selected_columns[:12]))
+                    if len(rows_out) >= limit:
+                        break
+                row_count_hint = sheet_meta.get("row_count") if isinstance(sheet_meta, Mapping) else None
+                if row_count_hint is None:
+                    row_count_hint = dataset_meta.get("row_count")
+                try:
+                    matched_total = int(row_count_hint or 0)
+                except (TypeError, ValueError):
+                    matched_total = 0
+            else:
+                for row_index, row in enumerate(reader, start=1):
+                    scanned_rows += 1
+                    if _should_stop():
+                        truncated = True
+                        break
+                    values = [str(item or "") for item in row]
+                    if len(values) < len(header):
+                        values.extend([""] * (len(header) - len(values)))
+                    elif len(values) > len(header):
+                        values = values[: len(header)]
+                    row_map = {header[i]: values[i] for i in range(len(header))}
+
+                    if query_norm:
+                        hit = False
+                        for val in values:
+                            if query_norm in str(val or "").lower():
+                                hit = True
+                                break
+                        if not hit:
+                            continue
+
+                    if not _matches_filters(row_map):
+                        continue
+
+                    matched_total += 1
+
+                    if aggregate_op:
+                        if aggregate_op == "count":
+                            continue
+                        if aggregate_op in {"sum", "min", "max"} and aggregate_column:
+                            numeric = _parse_numeric_value(_coerce_str(row_map.get(aggregate_column)))
+                            if numeric is None:
+                                continue
+                            value = float(numeric)
+                            if aggregate_op == "sum":
+                                sum_total += value
+                                sum_count += 1
+                            elif aggregate_op == "min":
+                                min_value = value if min_value is None else min(min_value, value)
+                            elif aggregate_op == "max":
+                                max_value = value if max_value is None else max(max_value, value)
+                        elif aggregate_op == "group_by" and group_by_column and group_counter is not None:
+                            group_value = _clip_value(row_map.get(group_by_column, ""), 80)
+                            if not group_value:
+                                group_value = "<empty>"
+                            max_groups = int(getattr(settings, "DATASET_QUERY_MAX_GROUPS", 5000) or 5000)
+                            if group_value not in group_counter and len(group_counter) >= max_groups:
+                                overflow_group_count += 1
+                            else:
+                                group_counter[group_value] += 1
+                        continue
+
+                    if sort_column_actual:
+                        sort_key = _coerce_sort_key(_coerce_str(row_map.get(sort_column_actual)))
+                        full_key = (sort_key, row_index)
+                        pos = bisect_left(best_keys, full_key)
+                        best_keys.insert(pos, full_key)
+                        best_rows.insert(pos, (row_index, list(values)))
+                        if len(best_rows) > sort_window:
+                            if sort_direction == "asc":
+                                best_keys.pop()
+                                best_rows.pop()
+                            else:
+                                best_keys.pop(0)
+                                best_rows.pop(0)
+                        continue
+
+                    if matched_total <= offset:
+                        continue
+                    if len(rows_out) >= limit:
+                        continue
+                    rows_out.append(_row_payload(row_index, row_map, columns=selected_columns[:12]))
+
+                if sort_column_actual:
+                    ordered = list(best_rows)
+                    if sort_direction == "desc":
+                        ordered = list(reversed(ordered))
+                    slice_rows = ordered[offset: offset + limit]
+                    for row_index, values in slice_rows:
+                        row_map = {header[i]: _coerce_str(values[i]) if i < len(values) else "" for i in range(len(header))}
+                        rows_out.append(_row_payload(row_index, row_map, columns=selected_columns[:12]))
+
+    else:  # jsonl_gz
+        column_schema = []
+        if isinstance(sheet_meta, Mapping) and isinstance(sheet_meta.get("column_schema"), list):
+            column_schema = [str(col or "").strip() for col in sheet_meta.get("column_schema") if str(col or "").strip()]
+        if not column_schema and isinstance(dataset_meta.get("column_schema"), list):
+            column_schema = [str(col or "").strip() for col in dataset_meta.get("column_schema") if str(col or "").strip()]
+        column_schema = column_schema[:200]
+
+        normalized_schema_map: dict[str, str] = {}
+        for col in column_schema:
+            norm = _normalize_column_name(col)
+            if norm and norm not in normalized_schema_map:
+                normalized_schema_map[norm] = col
+
+        resolved_filters: list[dict[str, object]] = []
+        for flt in filters_input:
+            col_input = _coerce_str(flt.get("column")).strip()
+            norm = _normalize_column_name(col_input)
+            actual = normalized_schema_map.get(norm)
+            if not actual:
+                return {
+                    "tool": "dataset_query",
+                    "document_id": str(upload.id),
+                    "status": "error",
+                    "error": "unknown_column",
+                    "error_code": "unknown_column",
+                    "hint": f"Unknown column {col_input!r}.",
+                    "available_columns": column_schema[:50],
+                }
+            resolved = dict(flt)
+            resolved["column"] = actual
+            resolved_filters.append(resolved)
+        filters_input = resolved_filters
+
+        sort_key_field = ""
+        if sort_by_input:
+            sort_key_field = normalized_schema_map.get(_normalize_column_name(sort_by_input)) or ""
+            if not sort_key_field:
+                return {
+                    "tool": "dataset_query",
+                    "document_id": str(upload.id),
+                    "status": "error",
+                    "error": "unknown_sort_column",
+                    "error_code": "unknown_sort_column",
+                    "hint": f"Unknown sort_by column {sort_by_input!r}.",
+                    "available_columns": column_schema[:50],
+                }
+
+        if aggregate_op in {"sum", "min", "max"}:
+            if not aggregate_column:
+                return {
+                    "tool": "dataset_query",
+                    "document_id": str(upload.id),
+                    "status": "error",
+                    "error": "aggregate_column_required",
+                    "error_code": "aggregate_column_required",
+                    "hint": f"aggregate.column is required when operation={aggregate_op}.",
+                }
+            actual = normalized_schema_map.get(_normalize_column_name(aggregate_column))
+            if not actual:
+                return {
+                    "tool": "dataset_query",
+                    "document_id": str(upload.id),
+                    "status": "error",
+                    "error": "unknown_aggregate_column",
+                    "error_code": "unknown_aggregate_column",
+                    "hint": f"Unknown aggregate column {aggregate_column!r}.",
+                    "available_columns": column_schema[:50],
+                }
+            aggregate_column = actual
+
+        if aggregate_op == "group_by":
+            if not group_by_column:
+                return {
+                    "tool": "dataset_query",
+                    "document_id": str(upload.id),
+                    "status": "error",
+                    "error": "group_by_required",
+                    "error_code": "group_by_required",
+                    "hint": "aggregate.group_by is required when operation=group_by.",
+                }
+            actual = normalized_schema_map.get(_normalize_column_name(group_by_column))
+            if not actual:
+                return {
+                    "tool": "dataset_query",
+                    "document_id": str(upload.id),
+                    "status": "error",
+                    "error": "unknown_group_by_column",
+                    "error_code": "unknown_group_by_column",
+                    "hint": f"Unknown group_by column {group_by_column!r}.",
+                    "available_columns": column_schema[:50],
+                }
+            group_by_column = actual
+
+        selected_columns = _choose_columns(column_schema, requested=select_columns_input if select_columns_input else None)
+        if select_columns_input and not selected_columns:
+            return {
+                "tool": "dataset_query",
+                "document_id": str(upload.id),
+                "status": "error",
+                "error": "no_selectable_columns",
+                "error_code": "no_selectable_columns",
+                "hint": "None of the requested select_columns exist in this dataset schema.",
+                "available_columns": column_schema[:50],
+            }
+
+        preview_only = not (filters_input or query_norm or aggregate_op or sort_key_field)
+
+        with gzip.open(abs_path, "rt", encoding="utf-8", errors="ignore") as handle:
+            for row_index, line in enumerate(handle, start=1):
+                if preview_only:
+                    if _should_stop():
+                        truncated = True
+                        break
+                    if row_index <= offset:
+                        continue
+                    if not line.strip():
+                        continue
+                    try:
+                        record = json.loads(line)
+                    except Exception:
+                        continue
+                    if not isinstance(record, Mapping):
+                        continue
+                    row_map = {key: _coerce_str(record.get(key)) for key in column_schema}
+                    rows_out.append(_row_payload(row_index, row_map, columns=selected_columns[:12]))
+                    if len(rows_out) >= limit:
+                        break
+                    continue
+
+                scanned_rows += 1
+                if _should_stop():
+                    truncated = True
+                    break
+                if not line.strip():
+                    continue
+                try:
+                    record = json.loads(line)
+                except Exception:
+                    continue
+                if not isinstance(record, Mapping):
+                    continue
+                row_map = {key: _coerce_str(record.get(key)) for key in column_schema}
+
+                if query_norm:
+                    hit = False
+                    for val in record.values():
+                        if query_norm in _coerce_str(val).lower():
+                            hit = True
+                            break
+                    if not hit:
+                        continue
+
+                if not _matches_filters(row_map):
+                    continue
+
+                matched_total += 1
+
+                if aggregate_op:
+                    if aggregate_op == "count":
+                        continue
+                    if aggregate_op in {"sum", "min", "max"} and aggregate_column:
+                        numeric = _parse_numeric_value(_coerce_str(record.get(aggregate_column)))
+                        if numeric is None:
+                            continue
+                        value = float(numeric)
+                        if aggregate_op == "sum":
+                            sum_total += value
+                            sum_count += 1
+                        elif aggregate_op == "min":
+                            min_value = value if min_value is None else min(min_value, value)
+                        elif aggregate_op == "max":
+                            max_value = value if max_value is None else max(max_value, value)
+                    elif aggregate_op == "group_by" and group_by_column and group_counter is not None:
+                        group_value = _clip_value(record.get(group_by_column, ""), 80)
+                        if not group_value:
+                            group_value = "<empty>"
+                        max_groups = int(getattr(settings, "DATASET_QUERY_MAX_GROUPS", 5000) or 5000)
+                        if group_value not in group_counter and len(group_counter) >= max_groups:
+                            overflow_group_count += 1
+                        else:
+                            group_counter[group_value] += 1
+                    continue
+
+                if sort_key_field:
+                    sort_key = _coerce_sort_key(_coerce_str(record.get(sort_key_field)))
+                    full_key = (sort_key, row_index)
+                    pos = bisect_left(best_keys, full_key)
+                    best_keys.insert(pos, full_key)
+                    best_rows.insert(pos, (row_index, dict(record)))
+                    if len(best_rows) > sort_window:
+                        if sort_direction == "asc":
+                            best_keys.pop()
+                            best_rows.pop()
+                        else:
+                            best_keys.pop(0)
+                            best_rows.pop(0)
+                    continue
+
+                if matched_total <= offset:
+                    continue
+                if len(rows_out) >= limit:
+                    continue
+                rows_out.append(_row_payload(row_index, row_map, columns=selected_columns[:12]))
+
+        if preview_only:
+            matched_total = int(dataset_meta.get("row_count") or 0)
+
+        if sort_key_field:
+            ordered = list(best_rows)
+            if sort_direction == "desc":
+                ordered = list(reversed(ordered))
+            slice_rows = ordered[offset: offset + limit]
+            for row_index, record in slice_rows:
+                row_map = {key: _coerce_str(record.get(key)) for key in column_schema}
+                rows_out.append(_row_payload(row_index, row_map, columns=selected_columns[:12]))
+
+    duration_ms = int((time.perf_counter() - start) * 1000)
+
+    status = "ok" if (rows_out or aggregate_op) else "not_found"
+
+    hint = None
+    if isinstance(available_sheets, list) and available_sheets and not sheet_name_input and sheet_index_input is None:
+        sheet_names = [str(entry.get("sheet_name") or "") for entry in available_sheets[:6] if isinstance(entry, Mapping)]
+        sheet_names = [name for name in sheet_names if name.strip()]
+        if sheet_names:
+            hint = "Multiple sheets detected. Specify sheet_name or sheet_index for more precise answers."
+
+    if not hint and not filters_input and not query_norm and not aggregate_op:
+        row_count_hint = sheet_meta.get("row_count") if isinstance(sheet_meta, Mapping) else dataset_meta.get("row_count")
+        if row_count_hint and int(row_count_hint) > 20000:
+            hint = "This is a large dataset. For accurate lookups, provide a specific identifier (e.g., order_id / ticket_id / email) and the column to match."
+
+    payload: dict[str, object] = {
+        "tool": "dataset_query",
+        "status": status,
+        "document_id": str(upload.id),
+        "dataset_mode": True,
+        "dataset": dataset_summary,
+        "storage_format": storage_format,
+        "storage_path": storage_rel_path,
+        "sheet_name": sheet_name_out,
+        "sheet_index": sheet_index_out,
+        "query": query_input or None,
+        "filters": filters_input or None,
+        "select_columns": select_columns_input or None,
+        "sort_by": sort_by_input or None,
+        "sort_direction": sort_direction,
+        "offset": offset,
+        "limit": limit,
+        "rows": rows_out,
+        "match_count": len(rows_out),
+        "total_matches": matched_total,
+        "scanned_rows": scanned_rows,
+        "duration_ms": duration_ms,
+        "truncated": truncated or None,
+        "hint": hint,
+    }
+
+    if aggregate_op:
+        if aggregate_op == "count":
+            aggregate_result = {"operation": "count", "count": matched_total}
+        elif aggregate_op == "sum":
+            aggregate_result = {
+                "operation": "sum",
+                "column": aggregate_column or None,
+                "sum": sum_total,
+                "sum_display": _format_numeric_display(sum_total),
+                "numeric_match_count": sum_count,
+            }
+        elif aggregate_op == "min":
+            aggregate_result = {
+                "operation": "min",
+                "column": aggregate_column or None,
+                "min": min_value,
+                "min_display": _format_numeric_display(min_value) if min_value is not None else None,
+            }
+        elif aggregate_op == "max":
+            aggregate_result = {
+                "operation": "max",
+                "column": aggregate_column or None,
+                "max": max_value,
+                "max_display": _format_numeric_display(max_value) if max_value is not None else None,
+            }
+        elif aggregate_op == "group_by" and group_counter is not None:
+            most_common = group_counter.most_common(top_groups)
+            aggregate_result = {
+                "operation": "group_by",
+                "group_by": group_by_column or None,
+                "groups": [{"value": key, "count": count} for key, count in most_common],
+                "overflow_group_count": overflow_group_count or None,
+                "tracked_groups": len(group_counter),
+            }
+        payload["aggregate_result"] = aggregate_result
+
+    base_payload = dict(payload)
+    base_payload.pop("rows", None)
+    base_overhead = _json_char_len({k: v for k, v in base_payload.items() if v not in (None, "") and v != []})
+    if max_payload_chars is not None and base_overhead >= max_payload_chars:
+        raise CharacterBudgetExceeded("Character budget too low to return dataset query metadata.")
+
+    # Re-trim rows if needed to fit into the remaining character budget.
+    raw_rows = payload.get("rows") if isinstance(payload.get("rows"), list) else []
+    if raw_rows and max_payload_chars is not None:
+        trimmed_rows: list[dict[str, object]] = []
+        running = base_overhead
+        for row in raw_rows:
+            if not isinstance(row, Mapping):
+                continue
+            row_payload = dict(row)
+            row_chars = _json_char_len(row_payload) + 1
+            if trimmed_rows and running + row_chars > max_payload_chars:
+                break
+            trimmed_rows.append(row_payload)
+            running += row_chars
+        if len(trimmed_rows) < len(raw_rows):
+            payload["rows"] = trimmed_rows
+            payload["match_count"] = len(trimmed_rows)
+            payload["throttle_notice"] = {
+                "reason": "prompt_budget",
+                "message": (
+                    "Dataset rows were truncated to stay within prompt size limits. "
+                    "Re-run dataset_query with narrower filters or fewer columns."
+                ),
+                "returned_match_count": len(trimmed_rows),
+            }
+
+    char_count = _json_char_len({k: v for k, v in payload.items() if v not in (None, "") and v != []})
+    payload["char_count"] = char_count
+    payload["token_estimate"] = _estimate_tokens(char_count)
+    context.reserve_characters(char_count)
+
+    structured_log(
+        "mcp",
+        "dataset.query",
+        {
+            "document_id": str(upload.id),
+            "storage_format": storage_format,
+            "sheet_index": sheet_index_out,
+            "sheet_name": sheet_name_out,
+            "filters_count": len(filters_input),
+            "query": query_input or None,
+            "sort_by": sort_by_input or None,
+            "sort_direction": sort_direction,
+            "limit": limit,
+            "offset": offset,
+            "match_count": payload.get("match_count"),
+            "total_matches": matched_total,
+            "scanned_rows": scanned_rows,
+            "aggregate_op": aggregate_op or None,
+            "duration_ms": duration_ms,
+            "truncated": bool(payload.get("truncated")),
+            "char_count": char_count,
+            "token_estimate": payload.get("token_estimate"),
         },
         context={"business": conversation.business_profile_id},
         logger_obj=logger,
@@ -2917,6 +4117,7 @@ _TOOL_HANDLERS: dict[str, ToolHandler] = {
     "read_document": _read_document_handler,
     "list_tables": _list_tables_handler,
     "table_aggregate": _table_aggregate_handler,
+    "dataset_query": _dataset_query_handler,
     "create_case": _create_case_handler,
     "update_case_status": _update_case_status_handler,
     "update_case_details": _update_case_details_handler,

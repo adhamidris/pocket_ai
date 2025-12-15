@@ -2,12 +2,14 @@ from __future__ import annotations
 
 from collections import deque
 import csv
+import gzip
 import json
 import logging
 import math
 import mimetypes
 import io
 import re
+import shutil
 import statistics
 import uuid
 from dataclasses import dataclass, field
@@ -18,6 +20,7 @@ from django.conf import settings
 from django.db import transaction
 from django.db.models import Case, IntegerField, Value, When
 from django.utils import timezone
+from django.utils.text import slugify
 from opentelemetry import trace as otel_trace
 
 from apps.accounts.models import (
@@ -1544,6 +1547,13 @@ def queue_ingestion_job(upload: KnowledgeUpload, *, trigger: str = "upload", for
     if upload.source_type not in SUPPORTED_SOURCE_TYPES:
         return None
 
+    try:
+        from apps.services.knowledge_preflight import ensure_upload_preflight
+
+        ensure_upload_preflight(upload, trigger=trigger)
+    except Exception:  # pragma: no cover - preflight must never block ingestion
+        logger.exception("knowledge.preflight.enqueue_failed upload=%s", getattr(upload, "id", None))
+
     existing = KnowledgeIngestionJob.objects.filter(
         upload=upload,
         status__in=(KnowledgeIngestionJobStatus.QUEUED, KnowledgeIngestionJobStatus.RUNNING),
@@ -1631,6 +1641,22 @@ class KnowledgeIngestionService:
         self.default_table_max_rows = max(1, int(getattr(settings, "TABLE_MAX_ROWS_DEFAULT", 5000)))
         self.default_table_max_columns = max(0, int(getattr(settings, "TABLE_MAX_COLUMNS_DEFAULT", 0) or 0))
         self.alias_warning_threshold = int(getattr(settings, "INGEST_ALIAS_WARNING_THRESHOLD", 2000))
+        self.dataset_mode_enabled = bool(getattr(settings, "DATASET_MODE_ENABLED", True))
+        self.dataset_row_threshold = max(
+            1,
+            int(
+                getattr(
+                    settings,
+                    "DATASET_MODE_ROW_THRESHOLD",
+                    getattr(settings, "RAG_TABLE_LARGE_ROW_LIMIT", 20000),
+                )
+            ),
+        )
+        self.dataset_preview_rows = max(5, int(getattr(settings, "DATASET_MODE_PREVIEW_ROWS", 200)))
+        self.dataset_sample_rows = max(1, int(getattr(settings, "DATASET_MODE_SAMPLE_ROWS", 20)))
+        self.dataset_storage_format = str(getattr(settings, "DATASET_STORAGE_FORMAT", "csv_gz") or "csv_gz").strip()
+        if self.dataset_storage_format not in {"csv_gz"}:
+            self.dataset_storage_format = "csv_gz"
 
     # ------------------------------------------------------------------
     # Job coordination
@@ -2013,6 +2039,8 @@ class KnowledgeIngestionService:
         if not format_hint:
             raise UnsupportedFormatError(f"Unsupported file type {format_hint or 'unknown'}.")
         logger.info("extract.file.start path=%s format=%s", absolute, format_hint)
+        if format_hint == "jsonl":
+            return self._extract_jsonl_dataset(absolute, file_detail=file_detail, upload=upload)
         if format_hint == "json":
             limit = entity_limit or self.default_json_entity_limit
             return self._extract_json(absolute, entity_limit=limit)
@@ -2885,6 +2913,30 @@ class KnowledgeIngestionService:
         KnowledgeUploadTable.objects.filter(upload=upload).delete()
         KnowledgeUploadIssue.objects.filter(upload=upload).delete()
 
+        page_content_type_max = getattr(KnowledgeUploadPage._meta.get_field("content_type"), "max_length", 100) or 100
+        block_section_heading_max = getattr(
+            KnowledgeUploadPageBlock._meta.get_field("section_heading"),
+            "max_length",
+            255,
+        ) or 255
+        block_language_max = getattr(
+            KnowledgeUploadPageBlock._meta.get_field("detected_language"),
+            "max_length",
+            32,
+        ) or 32
+        table_title_max = getattr(KnowledgeUploadTable._meta.get_field("title"), "max_length", 255) or 255
+        table_section_heading_max = getattr(
+            KnowledgeUploadTable._meta.get_field("section_heading"),
+            "max_length",
+            255,
+        ) or 255
+        issue_code_max = getattr(KnowledgeUploadIssue._meta.get_field("issue_code"), "max_length", 120) or 120
+        cell_column_key_max = getattr(
+            KnowledgeUploadTableCell._meta.get_field("column_key"),
+            "max_length",
+            160,
+        ) or 160
+
         page_lookup: dict[int, KnowledgeUploadPage] = {}
         block_objects: list[KnowledgeUploadPageBlock] = []
         page_summaries: list[dict[str, Any]] = []
@@ -2898,7 +2950,7 @@ class KnowledgeIngestionService:
                 rotation=page_payload.rotation,
                 text_density=page_payload.text_density,
                 has_ocr_content=page_payload.has_ocr_content,
-                content_type=page_payload.content_type,
+                content_type=self._clamp_text(page_payload.content_type, page_content_type_max),
                 metadata=page_payload.metadata,
             )
             page_lookup[page_payload.page_number] = page_obj
@@ -2930,12 +2982,12 @@ class KnowledgeIngestionService:
                         order_index=block_payload.order_index,
                         text=self._sanitize_text(block_payload.text),
                         bbox=block_payload.bbox,
-                        section_heading=self._sanitize_text(block_payload.section_heading),
+                        section_heading=self._clamp_text(block_payload.section_heading, block_section_heading_max),
                         heading_path=[
                             self._sanitize_text(item)
                             for item in (block_payload.heading_path or [])
                         ],
-                        detected_language=block_payload.detected_language,
+                        detected_language=self._clamp_text(block_payload.detected_language, block_language_max),
                         confidence=block_payload.confidence,
                         metadata=block_payload.metadata,
                     )
@@ -2955,8 +3007,8 @@ class KnowledgeIngestionService:
                 upload=upload,
                 page=page_obj,
                 source_block=None,
-                title=table_payload.title,
-                section_heading=table_payload.section_heading,
+                title=self._clamp_text(table_payload.title, table_title_max),
+                section_heading=self._clamp_text(table_payload.section_heading, table_section_heading_max),
                 order_index=table_payload.order_index,
                 bbox=table_payload.bbox,
                 column_schema=table_payload.column_schema,
@@ -2988,7 +3040,7 @@ class KnowledgeIngestionService:
                         table=table_obj,
                         row=row_obj,
                         column_index=cell_payload.column_index,
-                        column_key=cell_payload.column_key,
+                        column_key=self._clamp_text(cell_payload.column_key, cell_column_key_max),
                         raw_text=cell_payload.raw_text,
                         normalized_value=cell_payload.normalized_value,
                         bbox=cell_payload.bbox,
@@ -3027,7 +3079,7 @@ class KnowledgeIngestionService:
                     table=table_obj,
                     table_row=row_obj,
                     table_cell=cell_obj,
-                    issue_code=issue.code,
+                    issue_code=self._clamp_text(issue.code, issue_code_max),
                     severity=severity_value,
                     description=issue.description,
                     details=issue.details,
@@ -3215,7 +3267,9 @@ class KnowledgeIngestionService:
             return "pdf"
         if suffix in {".docx", ".dotx"} or "word" in content_type or "officedocument.wordprocessingml" in content_type:
             return "docx"
-        if suffix in {".json", ".jsonl", ".ndjson"} or "json" in content_type or "json" in (guessed or ""):
+        if suffix in {".jsonl", ".ndjson"} or "jsonl" in content_type or "ndjson" in content_type:
+            return "jsonl"
+        if suffix == ".json" or "json" in content_type or "json" in (guessed or ""):
             return "json"
         if suffix in {".csv", ".tsv"} or "csv" in content_type or "csv" in (guessed or ""):
             return "tsv" if suffix == ".tsv" or "tsv" in content_type or "tsv" in (guessed or "") else "csv"
@@ -3277,6 +3331,194 @@ class KnowledgeIngestionService:
         except Exception as exc:
             raise KnowledgeIngestionError(f"Unable to extract DOCX text: {exc}") from exc
 
+    def _should_use_dataset_mode(self, *, estimated_rows: int | None) -> bool:
+        if not self.dataset_mode_enabled:
+            return False
+        if estimated_rows is None:
+            return False
+        return int(estimated_rows) >= int(self.dataset_row_threshold)
+
+    def _dataset_storage_directory(self, upload: KnowledgeUpload) -> tuple[Path, Path]:
+        rel_dir = Path("datasets") / str(upload.business_profile_id) / str(upload.id)
+        abs_dir = (self.media_root / rel_dir).resolve()
+        abs_dir.relative_to(self.media_root)
+        return abs_dir, rel_dir
+
+    def _reset_dataset_storage(self, upload: KnowledgeUpload) -> tuple[Path, Path]:
+        abs_dir, rel_dir = self._dataset_storage_directory(upload)
+        if abs_dir.exists():
+            try:
+                shutil.rmtree(abs_dir)
+            except OSError as exc:
+                logger.warning("dataset.cleanup_failed upload=%s error=%s", upload.id, exc)
+        abs_dir.mkdir(parents=True, exist_ok=True)
+        return abs_dir, rel_dir
+
+    @staticmethod
+    def _stringify_dataset_cell(value: Any) -> str:
+        if value is None:
+            return ""
+        if isinstance(value, bool):
+            return "true" if value else "false"
+        if hasattr(value, "isoformat"):
+            try:
+                return value.isoformat()  # datetime/date-like
+            except Exception:
+                pass
+        text = str(value)
+        if "\x00" in text:
+            text = text.replace("\x00", " ")
+        return text
+
+    @staticmethod
+    def _estimate_delimited_row_count(path: Path, *, sample_bytes: int = 250_000) -> int | None:
+        try:
+            file_size = path.stat().st_size
+        except OSError:
+            return None
+        if file_size <= 0:
+            return 0
+        try:
+            with path.open("rb") as handle:
+                sample = handle.read(sample_bytes)
+        except OSError:
+            return None
+        lines = sample.count(b"\n")
+        if lines <= 1:
+            return 1 if file_size else 0
+        avg = len(sample) / float(lines)
+        if avg <= 0:
+            return None
+        return max(0, int(file_size / avg))
+
+    def _suggest_dataset_key_columns(
+        self,
+        *,
+        column_schema: Sequence[str],
+        sample_rows: Sequence[Sequence[str]],
+        max_candidates: int = 8,
+    ) -> list[dict[str, Any]]:
+        if not column_schema or not sample_rows:
+            return []
+        candidates: list[dict[str, Any]] = []
+        sample_count = len(sample_rows)
+        min_samples = min(10, sample_count)
+
+        for idx, column in enumerate(column_schema):
+            name = str(column or "").strip()
+            canonical = self._canonical_column_name(name)
+            if not canonical:
+                continue
+            values = [
+                str(row[idx]).strip()
+                for row in sample_rows
+                if idx < len(row) and str(row[idx]).strip()
+            ]
+            non_empty = len(values)
+            if non_empty < max(3, min_samples):
+                continue
+            unique = len(set(values))
+            unique_ratio = unique / float(non_empty) if non_empty else 0.0
+            keyword_match = any(key in canonical for key in ALIAS_KEYWORDS) or canonical.endswith("_id")
+            score = (1.0 if keyword_match else 0.0) + unique_ratio
+            candidates.append(
+                {
+                    "column": name,
+                    "normalized": canonical,
+                    "non_empty": non_empty,
+                    "unique": unique,
+                    "unique_ratio": round(unique_ratio, 4),
+                    "keyword_match": bool(keyword_match),
+                    "score": round(score, 4),
+                }
+            )
+
+        candidates.sort(key=lambda item: (item.get("score", 0), item.get("non_empty", 0)), reverse=True)
+        return candidates[: max_candidates]
+
+    def _build_dataset_preview_table(
+        self,
+        *,
+        order_index: int,
+        sheet_name: str,
+        sheet_index: int | None,
+        column_schema: list[str],
+        preview_rows: Sequence[tuple[int, Sequence[str]]],
+        file_detail: KnowledgeUploadFile,
+        source_label: str,
+        content_type: str,
+        rules: Mapping[str, Any] | None,
+    ) -> tuple[TablePayload, PageLayout]:
+        visible_mask = [
+            not self._column_is_sensitive(column, rules)
+            for column in column_schema
+        ] if rules else [True] * len(column_schema)
+        rows: list[TableRowPayload] = []
+        for row_index, values in preview_rows:
+            attributes = {column_schema[i]: (values[i] if i < len(values) else "") for i in range(len(column_schema))}
+            if rules and self._row_is_internal(attributes, rules):
+                continue
+            cells: list[TableCellPayload] = []
+            row_values: list[str] = []
+            for col_idx, column_key in enumerate(column_schema):
+                if col_idx >= len(values):
+                    cell_value = ""
+                else:
+                    cell_value = str(values[col_idx] or "")
+                if visible_mask[col_idx]:
+                    cells.append(
+                        TableCellPayload(
+                            row_index=row_index,
+                            column_index=col_idx,
+                            column_key=column_key,
+                            raw_text=cell_value,
+                        )
+                    )
+                    row_values.append(cell_value)
+            rows.append(
+                TableRowPayload(
+                    row_index=row_index,
+                    page_number=sheet_index,
+                    raw_text="\t".join(row_values),
+                    metadata={"source": source_label, "sheet": sheet_name},
+                    cells=cells,
+                )
+            )
+
+        table = TablePayload(
+            order_index=order_index,
+            title=sheet_name,
+            section_heading=sheet_name,
+            page_number=sheet_index,
+            column_schema=column_schema,
+            metadata={
+                "source": source_label,
+                "sheet_name": sheet_name,
+                "filename": file_detail.filename,
+            },
+            rows=rows,
+        )
+        preview = self._table_preview_text([table], rules=rules)
+        page_layout = PageLayout(
+            page_number=sheet_index or order_index,
+            width=612,
+            height=792,
+            rotation=0,
+            text_density=len(preview.strip()) / float(612 * 792),
+            has_ocr_content=False,
+            content_type=content_type,
+            blocks=[
+                PageBlockPayload(
+                    block_type=KnowledgeBlockType.TABLE,
+                    order_index=order_index,
+                    text=preview,
+                    metadata={"source": source_label, "sheet": sheet_name},
+                )
+            ],
+            metadata={"sheet_name": sheet_name, "dataset_mode": True},
+        )
+        return table, page_layout
+
     def _extract_csv(
         self,
         path: Path,
@@ -3285,6 +3527,16 @@ class KnowledgeIngestionService:
         file_detail: KnowledgeUploadFile,
         upload: KnowledgeUpload | None = None,
     ) -> ExtractionResult:
+        estimated_rows = self._estimate_delimited_row_count(path)
+        if upload and self._should_use_dataset_mode(estimated_rows=estimated_rows):
+            return self._extract_delimited_dataset(
+                path,
+                format_hint=format_hint,
+                file_detail=file_detail,
+                upload=upload,
+                estimated_rows=estimated_rows,
+            )
+
         raw_text = self._extract_text_file(path)
         normalized = raw_text.lstrip("\ufeff")
         if not normalized.strip():
@@ -3409,6 +3661,196 @@ class KnowledgeIngestionService:
             entities=table_entities,
         )
 
+    def _extract_delimited_dataset(
+        self,
+        path: Path,
+        *,
+        format_hint: str,
+        file_detail: KnowledgeUploadFile,
+        upload: KnowledgeUpload,
+        estimated_rows: int | None,
+    ) -> ExtractionResult:
+        if not upload:
+            raise KnowledgeIngestionError("Dataset mode requires an upload record.")
+
+        dataset_root, dataset_root_rel = self._reset_dataset_storage(upload)
+        timestamp = timezone.now().strftime("%Y%m%d%H%M%S")
+        display_name = (file_detail.filename or "Dataset").strip() or "Dataset"
+        safe_label = slugify(Path(display_name).stem) or "dataset"
+        dataset_filename = f"{timestamp}_{safe_label}.csv.gz"
+        dataset_path = dataset_root / dataset_filename
+        dataset_rel_path = (dataset_root_rel / dataset_filename).as_posix()
+
+        rules = self._table_privacy_rules(upload)
+        preview_row_cap = int(self.dataset_preview_rows)
+        sample_row_cap = int(self.dataset_sample_rows)
+
+        try:
+            with path.open("rb") as handle:
+                sample_bytes = handle.read(64 * 1024)
+        except OSError as exc:
+            raise KnowledgeIngestionError(f"Unable to read dataset sample: {exc}") from exc
+
+        sample_text = sample_bytes.decode("utf-8", errors="ignore")
+        delimiter = "\t" if format_hint == "tsv" else ","
+        try:
+            dialect = csv.Sniffer().sniff(sample_text[:4096], delimiters=[",", ";", "\t", "|"])
+            delimiter = getattr(dialect, "delimiter", delimiter) or delimiter
+        except Exception:
+            dialect = csv.excel
+
+        preview_rows: list[tuple[int, list[str]]] = []
+        sample_rows: list[list[str]] = []
+        sample_visible_rows: list[dict[str, str]] = []
+        row_count = 0
+        internal_skipped = 0
+
+        with path.open("rb") as raw_in:
+            reader_stream = io.TextIOWrapper(raw_in, encoding="utf-8", errors="ignore", newline="")
+            reader = csv.reader(reader_stream, delimiter=delimiter)
+            try:
+                raw_header = next(reader)
+            except StopIteration:
+                raise KnowledgeIngestionError("Dataset did not contain a header row.")
+
+            if raw_header and isinstance(raw_header[0], str):
+                raw_header[0] = raw_header[0].lstrip("\ufeff")
+
+            column_schema: list[str] = []
+            for idx, value in enumerate(raw_header):
+                label = str(value or "").strip()
+                column_schema.append(label or f"column_{idx + 1}")
+            if not column_schema:
+                raise KnowledgeIngestionError("Dataset did not contain any columns.")
+
+            visible_mask = [
+                not self._column_is_sensitive(column, rules)
+                for column in column_schema
+            ] if rules else [True] * len(column_schema)
+
+            dataset_path.parent.mkdir(parents=True, exist_ok=True)
+            with gzip.open(dataset_path, "wt", encoding="utf-8", newline="") as out_handle:
+                writer = csv.writer(out_handle)
+                writer.writerow(column_schema)
+
+                for row in reader:
+                    values = [str(item or "") for item in row]
+                    if len(values) < len(column_schema):
+                        values.extend([""] * (len(column_schema) - len(values)))
+                    elif len(values) > len(column_schema):
+                        values = values[: len(column_schema)]
+
+                    if not any(value.strip() for value in values):
+                        continue
+
+                    attributes = {column_schema[i]: values[i] for i in range(len(column_schema))}
+                    if rules and self._row_is_internal(attributes, rules):
+                        internal_skipped += 1
+                        continue
+
+                    row_count += 1
+                    writer.writerow(values)
+
+                    if len(preview_rows) < preview_row_cap:
+                        preview_rows.append((row_count, values))
+                    if len(sample_rows) < max(sample_row_cap, 25):
+                        sample_rows.append(values)
+                    if len(sample_visible_rows) < sample_row_cap:
+                        sample_visible_rows.append(
+                            {
+                                column_schema[i]: values[i]
+                                for i in range(len(column_schema))
+                                if visible_mask[i]
+                            }
+                        )
+
+        try:
+            dataset_size = dataset_path.stat().st_size
+        except OSError:
+            dataset_size = 0
+
+        suggested_keys = self._suggest_dataset_key_columns(column_schema=column_schema, sample_rows=sample_rows)
+
+        table, page = self._build_dataset_preview_table(
+            order_index=1,
+            sheet_name=display_name,
+            sheet_index=None,
+            column_schema=column_schema,
+            preview_rows=preview_rows,
+            file_detail=file_detail,
+            source_label="dataset_csv",
+            content_type="text/csv",
+            rules=rules,
+        )
+        tables = [table]
+        preview_text = self._table_preview_text(tables, rules=rules)
+
+        issues: list[IssuePayload] = []
+        issues.append(
+            IssuePayload(
+                code="dataset_mode_enabled",
+                severity=KnowledgeIssueSeverity.INFO.value,
+                description="Large dataset stored in dataset mode (file-backed). Only a small preview is indexed into Postgres.",
+                details={
+                    "estimated_rows": estimated_rows,
+                    "rows_stored": row_count,
+                    "preview_rows_indexed": len(table.rows),
+                    "internal_rows_skipped": internal_skipped,
+                    "dataset_storage_format": self.dataset_storage_format,
+                },
+            )
+        )
+
+        dataset_metadata = {
+            "enabled": True,
+            "storage_format": self.dataset_storage_format,
+            "storage_path": dataset_rel_path,
+            "size_bytes": dataset_size,
+            "row_count": row_count,
+            "estimated_row_count": estimated_rows,
+            "column_schema": column_schema,
+            "sample_rows": sample_visible_rows,
+            "suggested_key_columns": suggested_keys,
+            "delimiter": delimiter,
+        }
+
+        table_stats = self._table_stats_summary(
+            total_rows=row_count,
+            indexed_rows=len(table.rows),
+            row_cap=len(table.rows),
+            source_row_count=self._integration_row_count(upload),
+            table_count=1,
+            partial_tables=1 if row_count > len(table.rows) else 0,
+            row_tier="large" if estimated_rows and estimated_rows >= self.dataset_row_threshold else "medium",
+        )
+        metadata = {
+            "format": format_hint,
+            "filename": file_detail.filename,
+            "content_type": file_detail.content_type or "",
+            "storage_path": file_detail.storage_path,
+            "table_count": 1,
+            "table_truncation": {
+                "truncated_tables": 0,
+                "truncated_rows": max(0, row_count - len(table.rows)),
+                "truncated_columns": 0,
+            },
+            "table_stats": table_stats,
+            "dataset": dataset_metadata,
+        }
+        return ExtractionResult(
+            text=preview_text,
+            format_hint=format_hint,
+            metadata=metadata,
+            pages=[page],
+            tables=tables,
+            issues=issues,
+            entities=self._table_row_entities(
+                tables,
+                business_profile=getattr(upload, "business_profile", None),
+                upload=upload,
+            ),
+        )
+
     def _build_table_from_normalized_sheet(
         self,
         normalized: NormalizedSheet,
@@ -3495,18 +3937,39 @@ class KnowledgeIngestionService:
             raise KnowledgeIngestionError(f"Unable to open XLSX file: {exc}") from exc
 
         policy = resolve_normalization_policy(upload)
-        diagnostics: list[SheetNormalizationDiagnostics] = []
-        tables: list[TablePayload] = []
-        pages: list[PageLayout] = []
-        order_index = 1
         rules = self._table_privacy_rules(upload)
+
+        allowed_sheets: list[tuple[int, str, Any]] = []
+        estimated_rows = 0
+        policy_skipped: list[str] = []
         for sheet_idx, sheet in enumerate(workbook.worksheets, start=1):
             sheet_name = sheet.title or f"Sheet {sheet_idx}"
             if not sheet_is_allowed(sheet_name, policy):
-                diagnostics.append(
-                    SheetNormalizationDiagnostics(sheet_name=sheet_name, skipped=True, skip_reason="policy")
-                )
+                policy_skipped.append(sheet_name)
                 continue
+            allowed_sheets.append((sheet_idx, sheet_name, sheet))
+            try:
+                estimated_rows += int(getattr(sheet, "max_row", 0) or 0)
+            except (TypeError, ValueError):
+                continue
+
+        if upload and self._should_use_dataset_mode(estimated_rows=estimated_rows):
+            return self._extract_xlsx_dataset_mode(
+                file_detail=file_detail,
+                upload=upload,
+                sheets=allowed_sheets,
+                policy_skipped=policy_skipped,
+                estimated_rows=estimated_rows,
+            )
+
+        diagnostics: list[SheetNormalizationDiagnostics] = [
+            SheetNormalizationDiagnostics(sheet_name=name, skipped=True, skip_reason="policy")
+            for name in policy_skipped
+        ]
+        tables: list[TablePayload] = []
+        pages: list[PageLayout] = []
+        order_index = 1
+        for sheet_idx, sheet_name, sheet in allowed_sheets:
             normalized = normalize_sheet_rows(
                 sheet.iter_rows(values_only=True),
                 sheet_name=sheet_name,
@@ -3574,6 +4037,230 @@ class KnowledgeIngestionService:
             entities=table_entities,
         )
 
+    def _extract_xlsx_dataset_mode(
+        self,
+        *,
+        file_detail: KnowledgeUploadFile,
+        upload: KnowledgeUpload,
+        sheets: Sequence[tuple[int, str, Any]],
+        policy_skipped: Sequence[str],
+        estimated_rows: int,
+    ) -> ExtractionResult:
+        dataset_root, dataset_root_rel = self._reset_dataset_storage(upload)
+        timestamp = timezone.now().strftime("%Y%m%d%H%M%S")
+        rules = self._table_privacy_rules(upload)
+        preview_row_cap = int(self.dataset_preview_rows)
+        sample_row_cap = int(self.dataset_sample_rows)
+
+        tables: list[TablePayload] = []
+        pages: list[PageLayout] = []
+        issues: list[IssuePayload] = []
+        dataset_sheets: list[dict[str, Any]] = []
+
+        total_rows = 0
+        total_preview_rows = 0
+        internal_skipped_total = 0
+
+        for order_index, (sheet_idx, sheet_name, sheet) in enumerate(sheets, start=1):
+            try:
+                max_col = int(getattr(sheet, "max_column", 0) or 0)
+            except (TypeError, ValueError):
+                max_col = 0
+
+            rows_iter = sheet.iter_rows(values_only=True)
+            header_values: list[str] | None = None
+            for raw_row in rows_iter:
+                candidate = [self._stringify_dataset_cell(val) for val in raw_row]
+                if any(str(value).strip() for value in candidate):
+                    header_values = candidate
+                    break
+            if header_values is None:
+                continue
+
+            if max_col <= 0:
+                max_col = len(header_values)
+            if len(header_values) < max_col:
+                header_values.extend([""] * (max_col - len(header_values)))
+
+            column_schema: list[str] = []
+            for idx in range(max_col):
+                label = header_values[idx] if idx < len(header_values) else ""
+                column_schema.append(str(label or "").strip() or f"column_{idx + 1}")
+
+            visible_mask = [
+                not self._column_is_sensitive(column, rules)
+                for column in column_schema
+            ] if rules else [True] * len(column_schema)
+
+            sheet_slug = slugify(sheet_name) or f"sheet_{sheet_idx}"
+            dataset_filename = f"{timestamp}_sheet{sheet_idx}_{sheet_slug}.csv.gz"
+            dataset_path = dataset_root / dataset_filename
+            dataset_rel_path = (dataset_root_rel / dataset_filename).as_posix()
+
+            preview_rows: list[tuple[int, list[str]]] = []
+            sample_rows: list[list[str]] = []
+            sample_visible_rows: list[dict[str, str]] = []
+            row_count = 0
+            internal_skipped = 0
+
+            dataset_path.parent.mkdir(parents=True, exist_ok=True)
+            with gzip.open(dataset_path, "wt", encoding="utf-8", newline="") as out_handle:
+                writer = csv.writer(out_handle)
+                writer.writerow(column_schema)
+                for raw_row in rows_iter:
+                    values = [self._stringify_dataset_cell(val) for val in raw_row]
+                    if len(values) < len(column_schema):
+                        values.extend([""] * (len(column_schema) - len(values)))
+                    elif len(values) > len(column_schema):
+                        values = values[: len(column_schema)]
+
+                    if not any(str(value).strip() for value in values):
+                        continue
+
+                    attributes = {column_schema[i]: str(values[i] or "") for i in range(len(column_schema))}
+                    if rules and self._row_is_internal(attributes, rules):
+                        internal_skipped += 1
+                        continue
+
+                    row_count += 1
+                    writer.writerow([str(value or "") for value in values])
+
+                    if len(preview_rows) < preview_row_cap:
+                        preview_rows.append((row_count, [str(value or "") for value in values]))
+                    if len(sample_rows) < max(sample_row_cap, 25):
+                        sample_rows.append([str(value or "") for value in values])
+                    if len(sample_visible_rows) < sample_row_cap:
+                        sample_visible_rows.append(
+                            {
+                                column_schema[i]: str(values[i] or "")
+                                for i in range(len(column_schema))
+                                if visible_mask[i]
+                            }
+                        )
+
+            try:
+                dataset_size = dataset_path.stat().st_size
+            except OSError:
+                dataset_size = 0
+
+            suggested_keys = self._suggest_dataset_key_columns(column_schema=column_schema, sample_rows=sample_rows)
+            table, page_layout = self._build_dataset_preview_table(
+                order_index=order_index,
+                sheet_name=sheet_name,
+                sheet_index=sheet_idx,
+                column_schema=column_schema,
+                preview_rows=preview_rows,
+                file_detail=file_detail,
+                source_label="dataset_xlsx",
+                content_type="text/csv",
+                rules=rules,
+            )
+            tables.append(table)
+            pages.append(page_layout)
+            total_preview_rows += len(table.rows)
+            total_rows += row_count
+            internal_skipped_total += internal_skipped
+
+            dataset_sheets.append(
+                {
+                    "sheet_index": sheet_idx,
+                    "sheet_name": sheet_name,
+                    "storage_path": dataset_rel_path,
+                    "size_bytes": dataset_size,
+                    "row_count": row_count,
+                    "estimated_row_count": int(getattr(sheet, "max_row", 0) or 0),
+                    "column_schema": column_schema,
+                    "sample_rows": sample_visible_rows,
+                    "suggested_key_columns": suggested_keys,
+                    "preview_rows_indexed": len(table.rows),
+                    "internal_rows_skipped": internal_skipped,
+                }
+            )
+            if row_count > len(table.rows):
+                issues.append(
+                    IssuePayload(
+                        code="dataset_preview_truncated",
+                        severity=KnowledgeIssueSeverity.INFO.value,
+                        description="Only a small preview of this dataset sheet was indexed into Postgres.",
+                        page_number=sheet_idx,
+                        table_order_index=order_index,
+                        details={
+                            "rows_stored": row_count,
+                            "preview_rows_indexed": len(table.rows),
+                            "storage_path": dataset_rel_path,
+                        },
+                    )
+                )
+
+        if not tables:
+            raise KnowledgeIngestionError("XLSX workbook did not contain any populated sheets.")
+
+        partial_tables = sum(1 for sheet in dataset_sheets if sheet.get("row_count", 0) > sheet.get("preview_rows_indexed", 0))
+        table_stats = self._table_stats_summary(
+            total_rows=total_rows,
+            indexed_rows=total_preview_rows,
+            row_cap=preview_row_cap,
+            source_row_count=self._integration_row_count(upload),
+            table_count=len(tables),
+            partial_tables=partial_tables,
+            row_tier="large",
+        )
+        metadata = {
+            "format": "xlsx",
+            "filename": file_detail.filename,
+            "content_type": file_detail.content_type or "",
+            "storage_path": file_detail.storage_path,
+            "table_count": len(tables),
+            "table_truncation": {
+                "truncated_tables": 0,
+                "truncated_rows": max(0, total_rows - total_preview_rows),
+                "truncated_columns": 0,
+            },
+            "table_stats": table_stats,
+            "dataset": {
+                "enabled": True,
+                "storage_format": self.dataset_storage_format,
+                "row_count": total_rows,
+                "estimated_row_count": estimated_rows,
+                "preview_rows_indexed": total_preview_rows,
+                "internal_rows_skipped": internal_skipped_total,
+                "policy_skipped_sheets": list(policy_skipped),
+                "sheets": dataset_sheets,
+            },
+        }
+
+        issues.insert(
+            0,
+            IssuePayload(
+                code="dataset_mode_enabled",
+                severity=KnowledgeIssueSeverity.INFO.value,
+                description="Large spreadsheet stored in dataset mode (file-backed). Only a small preview is indexed into Postgres.",
+                details={
+                    "estimated_rows": estimated_rows,
+                    "rows_stored": total_rows,
+                    "preview_rows_indexed": total_preview_rows,
+                    "internal_rows_skipped": internal_skipped_total,
+                    "sheet_count": len(dataset_sheets),
+                },
+            ),
+        )
+
+        preview_text = self._table_preview_text(tables, rules=rules)
+        table_entities = self._table_row_entities(
+            tables,
+            business_profile=getattr(upload, "business_profile", None),
+            upload=upload,
+        )
+        return ExtractionResult(
+            text=preview_text,
+            format_hint="xlsx",
+            metadata=metadata,
+            pages=pages,
+            tables=tables,
+            issues=issues,
+            entities=table_entities,
+        )
+
     def _extract_xls(
         self,
         path: Path,
@@ -3584,24 +4271,47 @@ class KnowledgeIngestionService:
         if xlrd is None:
             raise KnowledgeIngestionError("XLS ingestion requires the xlrd package.")
         try:
-            workbook = xlrd.open_workbook(filename=str(path))
+            workbook = xlrd.open_workbook(filename=str(path), on_demand=True)
         except Exception as exc:
             raise KnowledgeIngestionError(f"Unable to open XLS file: {exc}") from exc
 
         policy = resolve_normalization_policy(upload)
-        diagnostics: list[SheetNormalizationDiagnostics] = []
-        tables: list[TablePayload] = []
-        pages: list[PageLayout] = []
-        order_index = 1
         rules = self._table_privacy_rules(upload)
-        for sheet_idx in range(1, workbook.nsheets + 1):
+
+        allowed_sheets: list[tuple[int, str, Any]] = []
+        estimated_rows = 0
+        policy_skipped: list[str] = []
+        for sheet_idx in range(1, (getattr(workbook, "nsheets", 0) or 0) + 1):
             sheet = workbook.sheet_by_index(sheet_idx - 1)
             sheet_name = getattr(sheet, "name", None) or f"Sheet {sheet_idx}"
             if not sheet_is_allowed(sheet_name, policy):
-                diagnostics.append(
-                    SheetNormalizationDiagnostics(sheet_name=sheet_name, skipped=True, skip_reason="policy")
-                )
+                policy_skipped.append(sheet_name)
                 continue
+            allowed_sheets.append((sheet_idx, sheet_name, sheet))
+            try:
+                estimated_rows += int(getattr(sheet, "nrows", 0) or 0)
+            except (TypeError, ValueError):
+                continue
+
+        if upload and self._should_use_dataset_mode(estimated_rows=estimated_rows):
+            return self._extract_xls_dataset_mode(
+                workbook=workbook,
+                file_detail=file_detail,
+                upload=upload,
+                sheets=allowed_sheets,
+                policy_skipped=policy_skipped,
+                estimated_rows=estimated_rows,
+            )
+
+        diagnostics: list[SheetNormalizationDiagnostics] = [
+            SheetNormalizationDiagnostics(sheet_name=name, skipped=True, skip_reason="policy")
+            for name in policy_skipped
+        ]
+        tables: list[TablePayload] = []
+        pages: list[PageLayout] = []
+        order_index = 1
+
+        for sheet_idx, sheet_name, sheet in allowed_sheets:
             raw_rows: list[list[Any]] = []
             nrows = getattr(sheet, "nrows", 0) or 0
             ncols = getattr(sheet, "ncols", 0) or 0
@@ -3690,6 +4400,443 @@ class KnowledgeIngestionService:
             tables=tables,
             issues=limit_issues,
             entities=table_entities,
+        )
+
+    def _extract_xls_dataset_mode(
+        self,
+        *,
+        workbook: Any,
+        file_detail: KnowledgeUploadFile,
+        upload: KnowledgeUpload,
+        sheets: Sequence[tuple[int, str, Any]],
+        policy_skipped: Sequence[str],
+        estimated_rows: int,
+    ) -> ExtractionResult:
+        dataset_root, dataset_root_rel = self._reset_dataset_storage(upload)
+        timestamp = timezone.now().strftime("%Y%m%d%H%M%S")
+        rules = self._table_privacy_rules(upload)
+        preview_row_cap = int(self.dataset_preview_rows)
+        sample_row_cap = int(self.dataset_sample_rows)
+
+        tables: list[TablePayload] = []
+        pages: list[PageLayout] = []
+        issues: list[IssuePayload] = []
+        dataset_sheets: list[dict[str, Any]] = []
+
+        total_rows = 0
+        total_preview_rows = 0
+        internal_skipped_total = 0
+
+        for order_index, (sheet_idx, sheet_name, sheet) in enumerate(sheets, start=1):
+            nrows = int(getattr(sheet, "nrows", 0) or 0)
+            ncols = int(getattr(sheet, "ncols", 0) or 0)
+            if nrows <= 0 or ncols <= 0:
+                continue
+
+            header_row_idx: int | None = None
+            header_values: list[str] | None = None
+            scan_limit = min(nrows, 50)
+            for idx in range(scan_limit):
+                raw_values = list(getattr(sheet, "row_values")(idx))
+                candidate = [self._stringify_dataset_cell(val) for val in raw_values[:ncols]]
+                if any(str(value).strip() for value in candidate):
+                    header_row_idx = idx
+                    header_values = candidate
+                    break
+            if header_row_idx is None or header_values is None:
+                continue
+            if len(header_values) < ncols:
+                header_values.extend([""] * (ncols - len(header_values)))
+
+            column_schema: list[str] = []
+            for idx in range(ncols):
+                label = header_values[idx] if idx < len(header_values) else ""
+                column_schema.append(str(label or "").strip() or f"column_{idx + 1}")
+
+            visible_mask = [
+                not self._column_is_sensitive(column, rules)
+                for column in column_schema
+            ] if rules else [True] * len(column_schema)
+
+            sheet_slug = slugify(sheet_name) or f"sheet_{sheet_idx}"
+            dataset_filename = f"{timestamp}_sheet{sheet_idx}_{sheet_slug}.csv.gz"
+            dataset_path = dataset_root / dataset_filename
+            dataset_rel_path = (dataset_root_rel / dataset_filename).as_posix()
+
+            preview_rows: list[tuple[int, list[str]]] = []
+            sample_rows: list[list[str]] = []
+            sample_visible_rows: list[dict[str, str]] = []
+            row_count = 0
+            internal_skipped = 0
+
+            dataset_path.parent.mkdir(parents=True, exist_ok=True)
+            with gzip.open(dataset_path, "wt", encoding="utf-8", newline="") as out_handle:
+                writer = csv.writer(out_handle)
+                writer.writerow(column_schema)
+
+                for row_idx in range(header_row_idx + 1, nrows):
+                    raw_values = list(getattr(sheet, "row_values")(row_idx))
+                    raw_types = list(getattr(sheet, "row_types")(row_idx))
+                    values: list[str] = []
+                    for col_idx in range(ncols):
+                        cell_value = raw_values[col_idx] if col_idx < len(raw_values) else ""
+                        cell_type = raw_types[col_idx] if col_idx < len(raw_types) else None
+                        if cell_type == xlrd.XL_CELL_DATE:
+                            try:
+                                cell_value = xlrd.xldate_as_datetime(cell_value, workbook.datemode)
+                            except Exception:
+                                cell_value = ""
+                        elif cell_type == xlrd.XL_CELL_BOOLEAN:
+                            cell_value = bool(cell_value)
+                        elif cell_type == xlrd.XL_CELL_ERROR:
+                            cell_value = ""
+                        values.append(self._stringify_dataset_cell(cell_value))
+
+                    if not any(str(value).strip() for value in values):
+                        continue
+
+                    attributes = {column_schema[i]: str(values[i] or "") for i in range(len(column_schema))}
+                    if rules and self._row_is_internal(attributes, rules):
+                        internal_skipped += 1
+                        continue
+
+                    row_count += 1
+                    writer.writerow(values)
+
+                    if len(preview_rows) < preview_row_cap:
+                        preview_rows.append((row_count, list(values)))
+                    if len(sample_rows) < max(sample_row_cap, 25):
+                        sample_rows.append(list(values))
+                    if len(sample_visible_rows) < sample_row_cap:
+                        sample_visible_rows.append(
+                            {
+                                column_schema[i]: str(values[i] or "")
+                                for i in range(len(column_schema))
+                                if visible_mask[i]
+                            }
+                        )
+
+            try:
+                dataset_size = dataset_path.stat().st_size
+            except OSError:
+                dataset_size = 0
+
+            suggested_keys = self._suggest_dataset_key_columns(column_schema=column_schema, sample_rows=sample_rows)
+            table, page_layout = self._build_dataset_preview_table(
+                order_index=order_index,
+                sheet_name=sheet_name,
+                sheet_index=sheet_idx,
+                column_schema=column_schema,
+                preview_rows=preview_rows,
+                file_detail=file_detail,
+                source_label="dataset_xls",
+                content_type="text/csv",
+                rules=rules,
+            )
+            tables.append(table)
+            pages.append(page_layout)
+            total_preview_rows += len(table.rows)
+            total_rows += row_count
+            internal_skipped_total += internal_skipped
+
+            dataset_sheets.append(
+                {
+                    "sheet_index": sheet_idx,
+                    "sheet_name": sheet_name,
+                    "storage_path": dataset_rel_path,
+                    "size_bytes": dataset_size,
+                    "row_count": row_count,
+                    "estimated_row_count": nrows,
+                    "column_schema": column_schema,
+                    "sample_rows": sample_visible_rows,
+                    "suggested_key_columns": suggested_keys,
+                    "preview_rows_indexed": len(table.rows),
+                    "internal_rows_skipped": internal_skipped,
+                }
+            )
+            if row_count > len(table.rows):
+                issues.append(
+                    IssuePayload(
+                        code="dataset_preview_truncated",
+                        severity=KnowledgeIssueSeverity.INFO.value,
+                        description="Only a small preview of this dataset sheet was indexed into Postgres.",
+                        page_number=sheet_idx,
+                        table_order_index=order_index,
+                        details={
+                            "rows_stored": row_count,
+                            "preview_rows_indexed": len(table.rows),
+                            "storage_path": dataset_rel_path,
+                        },
+                    )
+                )
+
+        if not tables:
+            raise KnowledgeIngestionError("XLS workbook did not contain any populated sheets.")
+
+        partial_tables = sum(1 for sheet in dataset_sheets if sheet.get("row_count", 0) > sheet.get("preview_rows_indexed", 0))
+        table_stats = self._table_stats_summary(
+            total_rows=total_rows,
+            indexed_rows=total_preview_rows,
+            row_cap=preview_row_cap,
+            source_row_count=self._integration_row_count(upload),
+            table_count=len(tables),
+            partial_tables=partial_tables,
+            row_tier="large",
+        )
+        metadata = {
+            "format": "xls",
+            "filename": file_detail.filename,
+            "content_type": file_detail.content_type or "",
+            "storage_path": file_detail.storage_path,
+            "table_count": len(tables),
+            "table_truncation": {
+                "truncated_tables": 0,
+                "truncated_rows": max(0, total_rows - total_preview_rows),
+                "truncated_columns": 0,
+            },
+            "table_stats": table_stats,
+            "dataset": {
+                "enabled": True,
+                "storage_format": self.dataset_storage_format,
+                "row_count": total_rows,
+                "estimated_row_count": estimated_rows,
+                "preview_rows_indexed": total_preview_rows,
+                "internal_rows_skipped": internal_skipped_total,
+                "policy_skipped_sheets": list(policy_skipped),
+                "sheets": dataset_sheets,
+            },
+        }
+
+        issues.insert(
+            0,
+            IssuePayload(
+                code="dataset_mode_enabled",
+                severity=KnowledgeIssueSeverity.INFO.value,
+                description="Large spreadsheet stored in dataset mode (file-backed). Only a small preview is indexed into Postgres.",
+                details={
+                    "estimated_rows": estimated_rows,
+                    "rows_stored": total_rows,
+                    "preview_rows_indexed": total_preview_rows,
+                    "internal_rows_skipped": internal_skipped_total,
+                    "sheet_count": len(dataset_sheets),
+                },
+            ),
+        )
+
+        preview_text = self._table_preview_text(tables, rules=rules)
+        table_entities = self._table_row_entities(
+            tables,
+            business_profile=getattr(upload, "business_profile", None),
+            upload=upload,
+        )
+        return ExtractionResult(
+            text=preview_text,
+            format_hint="xls",
+            metadata=metadata,
+            pages=pages,
+            tables=tables,
+            issues=issues,
+            entities=table_entities,
+        )
+
+    def _extract_jsonl_dataset(
+        self,
+        path: Path,
+        *,
+        file_detail: KnowledgeUploadFile,
+        upload: KnowledgeUpload | None = None,
+    ) -> ExtractionResult:
+        if upload is None:
+            raise KnowledgeIngestionError("JSONL dataset ingestion requires an upload record.")
+
+        dataset_root, dataset_root_rel = self._reset_dataset_storage(upload)
+        timestamp = timezone.now().strftime("%Y%m%d%H%M%S")
+        display_name = (file_detail.filename or "Dataset").strip() or "Dataset"
+        safe_label = slugify(Path(display_name).stem) or "dataset"
+        dataset_filename = f"{timestamp}_{safe_label}.jsonl.gz"
+        dataset_path = dataset_root / dataset_filename
+        dataset_rel_path = (dataset_root_rel / dataset_filename).as_posix()
+
+        rules = self._table_privacy_rules(upload)
+        preview_row_cap = int(self.dataset_preview_rows)
+        sample_row_cap = int(self.dataset_sample_rows)
+
+        row_count = 0
+        sample_lines: list[bytes] = []
+        dataset_path.parent.mkdir(parents=True, exist_ok=True)
+        with path.open("rb") as raw_in, gzip.open(dataset_path, "wb") as out_handle:
+            for line in raw_in:
+                if not line:
+                    continue
+                out_handle.write(line)
+                if not line.strip():
+                    continue
+                row_count += 1
+                if len(sample_lines) < max(sample_row_cap, 25):
+                    sample_lines.append(line)
+
+        try:
+            dataset_size = dataset_path.stat().st_size
+        except OSError:
+            dataset_size = 0
+
+        records: list[dict[str, Any]] = []
+        keys: set[str] = set()
+        parse_errors = 0
+        for line in sample_lines:
+            try:
+                decoded = line.decode("utf-8", errors="ignore")
+                obj = json.loads(decoded)
+            except Exception:
+                parse_errors += 1
+                continue
+            if isinstance(obj, dict):
+                records.append(obj)
+                for key in obj.keys():
+                    if key is None:
+                        continue
+                    keys.add(str(key))
+
+        if not keys:
+            preview_text = "\n".join(line.decode("utf-8", errors="ignore").strip() for line in sample_lines[:5]).strip()
+            issues = [
+                IssuePayload(
+                    code="dataset_mode_enabled",
+                    severity=KnowledgeIssueSeverity.INFO.value,
+                    description="JSONL dataset stored in dataset mode (file-backed). No structured preview was indexed.",
+                    details={
+                        "rows_stored": row_count,
+                        "sample_parse_errors": parse_errors,
+                        "dataset_storage_format": "jsonl_gz",
+                    },
+                )
+            ]
+            metadata = {
+                "format": "jsonl",
+                "filename": file_detail.filename,
+                "content_type": file_detail.content_type or "",
+                "storage_path": file_detail.storage_path,
+                "dataset": {
+                    "enabled": True,
+                    "storage_format": "jsonl_gz",
+                    "storage_path": dataset_rel_path,
+                    "size_bytes": dataset_size,
+                    "row_count": row_count,
+                    "sample_parse_errors": parse_errors,
+                },
+            }
+            return ExtractionResult(
+                text=preview_text,
+                format_hint="jsonl",
+                metadata=metadata,
+                pages=[],
+                tables=[],
+                issues=issues,
+                entities=[],
+            )
+
+        column_schema = sorted(keys)[:200]
+        visible_mask = [
+            not self._column_is_sensitive(column, rules)
+            for column in column_schema
+        ] if rules else [True] * len(column_schema)
+
+        preview_rows: list[tuple[int, list[str]]] = []
+        sample_rows: list[list[str]] = []
+        sample_visible_rows: list[dict[str, str]] = []
+
+        for idx, record in enumerate(records, start=1):
+            values: list[str] = []
+            for key in column_schema:
+                values.append(self._stringify_dataset_cell(record.get(key)))
+            preview_rows.append((idx, values))
+            if len(sample_rows) < max(sample_row_cap, 25):
+                sample_rows.append(values)
+            if len(sample_visible_rows) < sample_row_cap:
+                sample_visible_rows.append(
+                    {
+                        column_schema[i]: values[i]
+                        for i in range(len(column_schema))
+                        if visible_mask[i]
+                    }
+                )
+            if len(preview_rows) >= preview_row_cap:
+                break
+
+        suggested_keys = self._suggest_dataset_key_columns(column_schema=column_schema, sample_rows=sample_rows)
+        table, page = self._build_dataset_preview_table(
+            order_index=1,
+            sheet_name=display_name,
+            sheet_index=None,
+            column_schema=column_schema,
+            preview_rows=preview_rows,
+            file_detail=file_detail,
+            source_label="dataset_jsonl",
+            content_type="application/x-ndjson",
+            rules=rules,
+        )
+        tables = [table]
+        preview_text = self._table_preview_text(tables, rules=rules)
+
+        issues = [
+            IssuePayload(
+                code="dataset_mode_enabled",
+                severity=KnowledgeIssueSeverity.INFO.value,
+                description="JSONL dataset stored in dataset mode (file-backed). Only a small preview is indexed into Postgres.",
+                details={
+                    "rows_stored": row_count,
+                    "preview_rows_indexed": len(table.rows),
+                    "sample_parse_errors": parse_errors,
+                    "dataset_storage_format": "jsonl_gz",
+                },
+            )
+        ]
+        dataset_metadata = {
+            "enabled": True,
+            "storage_format": "jsonl_gz",
+            "storage_path": dataset_rel_path,
+            "size_bytes": dataset_size,
+            "row_count": row_count,
+            "column_schema": column_schema,
+            "sample_rows": sample_visible_rows,
+            "suggested_key_columns": suggested_keys,
+            "sample_parse_errors": parse_errors,
+        }
+        table_stats = self._table_stats_summary(
+            total_rows=row_count,
+            indexed_rows=len(table.rows),
+            row_cap=len(table.rows),
+            source_row_count=self._integration_row_count(upload),
+            table_count=1,
+            partial_tables=1 if row_count > len(table.rows) else 0,
+            row_tier="large" if row_count >= self.dataset_row_threshold else "medium",
+        )
+        metadata = {
+            "format": "jsonl",
+            "filename": file_detail.filename,
+            "content_type": file_detail.content_type or "",
+            "storage_path": file_detail.storage_path,
+            "table_count": 1,
+            "table_truncation": {
+                "truncated_tables": 0,
+                "truncated_rows": max(0, row_count - len(table.rows)),
+                "truncated_columns": 0,
+            },
+            "table_stats": table_stats,
+            "dataset": dataset_metadata,
+        }
+        return ExtractionResult(
+            text=preview_text,
+            format_hint="jsonl",
+            metadata=metadata,
+            pages=[page],
+            tables=tables,
+            issues=issues,
+            entities=self._table_row_entities(
+                tables,
+                business_profile=getattr(upload, "business_profile", None),
+                upload=upload,
+            ),
         )
 
     def _extract_json(self, path: Path, *, entity_limit: int | None = None) -> ExtractionResult:
@@ -4832,6 +5979,15 @@ class KnowledgeIngestionService:
         text = str(value)
         if "\x00" in text:
             return text.replace("\x00", " ")
+        return text
+
+    @staticmethod
+    def _clamp_text(value: Any, max_length: int) -> str:
+        text = KnowledgeIngestionService._sanitize_text(value)
+        if max_length <= 0:
+            return text
+        if len(text) > max_length:
+            return text[:max_length]
         return text
 
     @staticmethod

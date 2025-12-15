@@ -229,6 +229,12 @@ class McpOrchestratorService:
                 label = "Reading table data"
                 meta = {"document_id": doc_id} if doc_id else {}
                 return {"code": "reading", "label": label, "meta": meta, "compat_code": "reading_document"}
+            if tool_name == "dataset_query":
+                raw_id = arguments.get("document_id")
+                doc_id = str(raw_id).strip() if raw_id is not None else ""
+                label = "Querying dataset"
+                meta = {"document_id": doc_id} if doc_id else {}
+                return {"code": "reading", "label": label, "meta": meta, "compat_code": "reading_document"}
             return None
 
         def _emit_phase_start(phase: Mapping[str, object] | None) -> dict[str, object] | None:
@@ -1526,7 +1532,7 @@ class McpOrchestratorService:
 
     @staticmethod
     def _is_knowledge_tool(name: str) -> bool:
-        return name in {"search_knowledge", "read_document", "table_aggregate"}
+        return name in {"search_knowledge", "read_document", "table_aggregate", "dataset_query"}
 
     @staticmethod
     def _tool_schema_name(tool_def: Mapping[str, object]) -> str | None:
@@ -2847,6 +2853,57 @@ class McpOrchestratorService:
                             if isinstance(entry, Mapping)
                         ]
                     rows_out.append(row_payload)
+            compact["rows"] = rows_out
+            compact["prompt_compact"] = True
+            return compact
+
+        if normalized_name == "dataset_query":
+            for key in (
+                "document_id",
+                "sheet_name",
+                "sheet_index",
+                "query",
+                "filters",
+                "select_columns",
+                "sort_by",
+                "sort_direction",
+                "offset",
+                "limit",
+                "match_count",
+                "total_matches",
+                "aggregate_result",
+                "throttle_notice",
+            ):
+                if key not in payload:
+                    continue
+                value = payload.get(key)
+                if value is None:
+                    continue
+                if isinstance(value, str) and not value.strip():
+                    continue
+                if isinstance(value, (list, tuple, set, dict)) and not value:
+                    continue
+                compact[key] = value
+            if "dataset" in payload and isinstance(payload.get("dataset"), Mapping):
+                compact["dataset"] = payload.get("dataset")
+            raw_rows = payload.get("rows")
+            rows_out: list[dict[str, object]] = []
+            if isinstance(raw_rows, list):
+                for row in raw_rows[: max(1, max_rows)]:
+                    if not isinstance(row, Mapping):
+                        continue
+                    row_payload: dict[str, object] = {}
+                    if "row_index" in row and row.get("row_index") not in {None, ""}:
+                        row_payload["row_index"] = row.get("row_index")
+                    cells = row.get("cells")
+                    if isinstance(cells, list) and cells:
+                        row_payload["cells"] = [
+                            {"column": cell.get("column"), "value": cell.get("value")}
+                            for cell in cells[:12]
+                            if isinstance(cell, Mapping)
+                        ]
+                    if row_payload:
+                        rows_out.append(row_payload)
             compact["rows"] = rows_out
             compact["prompt_compact"] = True
             return compact

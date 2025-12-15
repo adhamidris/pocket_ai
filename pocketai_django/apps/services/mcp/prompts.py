@@ -130,6 +130,11 @@ def build_system_message(
             • Answer directly from `rows[].contributions`; list every contributor returned.
             • If a snippet has `is_table_chunk=true`, you MUST use `table_aggregate` (never `read_document` for that snippet).
             • Do NOT follow a successful table_aggregate with `read_document` purely to reformat or restate the same data.
+        - `dataset_query`
+            • Use for dataset-mode uploads (large sheets/CSVs/JSONL) when you need lookups/filters/sorts (order status, ticket timestamps, flights, etc.).
+            • Prefer precise filters (identifier column + value). If the visitor is vague, ask a clarifying question before querying.
+            • Keep outputs small: request only the columns you need; default limit is 20 rows.
+            • If you hit `identifier_required`, `throttle_notice`, or `truncated=true`, narrow filters or request the missing identifier.
         - `read_document`
             • Use only when a non-table snippet is summary/preview and you truly need the detail.
             • Never call `read_document` on table snippets (`is_table_chunk=true`) or spreadsheet uploads; it will return `constraint_error`.

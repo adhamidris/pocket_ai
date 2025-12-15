@@ -1252,6 +1252,10 @@ python manage.py process_knowledge_ingestion --watch</pre>
               <div class="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Retention policy</div>
               <pre class="mt-2 whitespace-pre-wrap text-xs text-muted-foreground" data-document-retention>{"empty": true}</pre>
             </div>
+            <div class="rounded-xl border border-border/70 bg-card/95 p-4">
+              <div class="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Ingestion / preflight</div>
+              <pre class="mt-2 whitespace-pre-wrap text-xs text-muted-foreground" data-document-ingestion>{"empty": true}</pre>
+            </div>
           </section>
 
           <section class="space-y-4 px-6">
@@ -1731,6 +1735,7 @@ python manage.py process_knowledge_ingestion --watch</pre>
     var fieldCollections = panel.querySelector("[data-document-collections]");
     var fieldMetadata = panel.querySelector("[data-document-metadata]");
     var fieldRetention = panel.querySelector("[data-document-retention]");
+    var fieldIngestion = panel.querySelector("[data-document-ingestion]");
     var fileSection = panel.querySelector("[data-document-file-section]");
     var fileField = panel.querySelector("[data-document-file]");
     var urlSection = panel.querySelector("[data-document-url-section]");
@@ -1979,6 +1984,7 @@ python manage.py process_knowledge_ingestion --watch</pre>
       if (fieldSummary) fieldSummary.textContent = "Loading summary…";
       if (fieldMetadata) fieldMetadata.textContent = "{}";
       if (fieldRetention) fieldRetention.textContent = "{}";
+      if (fieldIngestion) fieldIngestion.textContent = "{}";
       renderBadges(fieldTags, [], "No tags.");
       renderBadges(fieldCollections, [], "Not assigned to collections.");
       if (fileSection) fileSection.classList.add("hidden");
@@ -2030,6 +2036,17 @@ python manage.py process_knowledge_ingestion --watch</pre>
       renderBadges(fieldCollections, summary.collections || [], "Not assigned to collections.");
       if (fieldMetadata) fieldMetadata.textContent = stringifyJSON(detail.metadata);
       if (fieldRetention) fieldRetention.textContent = stringifyJSON(detail.retentionPolicy);
+      if (fieldIngestion) {
+        var ingestionMeta = detail.ingestionMetadata || {};
+        var compact = {};
+        if (ingestionMeta.format) compact.format = ingestionMeta.format;
+        if (ingestionMeta.preflight) compact.preflight = ingestionMeta.preflight;
+        if (ingestionMeta.dataset) compact.dataset = ingestionMeta.dataset;
+        if (ingestionMeta.table_stats) compact.table_stats = ingestionMeta.table_stats;
+        if (ingestionMeta.table_truncation) compact.table_truncation = ingestionMeta.table_truncation;
+        if (ingestionMeta.normalization) compact.normalization = ingestionMeta.normalization;
+        fieldIngestion.textContent = stringifyJSON(compact);
+      }
 
       if (detail.file) {
         if (fileSection) fileSection.classList.remove("hidden");

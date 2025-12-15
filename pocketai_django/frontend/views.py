@@ -2133,6 +2133,12 @@ def _create_text_upload(
         last_ingested_at=timezone.now(),
     )
     KnowledgeUploadText.objects.create(upload=upload, content=normalized_content)
+    try:
+        from apps.services.knowledge_preflight import ensure_upload_preflight
+
+        ensure_upload_preflight(upload, trigger="dashboard_text_upload")
+    except Exception:
+        logger.exception("knowledge.preflight.text_failed upload=%s", getattr(upload, "id", None))
     return upload
 
 

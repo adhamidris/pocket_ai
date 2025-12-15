@@ -4,6 +4,7 @@ import csv
 import io
 import logging
 import re
+import shutil
 import time
 import uuid
 from dataclasses import dataclass
@@ -604,15 +605,36 @@ def delete_document(*, business_profile: BusinessProfile, document_id: uuid.UUID
     upload.delete()
     logger.info("knowledge_document_delete business=%s document=%s", business_profile.id, document_id)
 
-    if not storage_path:
-        return
-
     media_root = getattr(settings, "MEDIA_ROOT", "")
     if not media_root:
         return
 
+    root = None
     try:
         root = Path(media_root).resolve()
+    except OSError:
+        return
+
+    dataset_dir = (root / "datasets" / str(business_profile.id) / str(document_id)).resolve()
+    try:
+        dataset_dir.relative_to(root)
+    except (OSError, ValueError):
+        dataset_dir = None
+    if dataset_dir and dataset_dir.exists():
+        try:
+            shutil.rmtree(dataset_dir)
+        except OSError as exc:
+            logger.warning(
+                "knowledge_document_dataset_delete_failed business=%s document=%s error=%s",
+                business_profile.id,
+                document_id,
+                exc,
+            )
+
+    if not storage_path:
+        return
+
+    try:
         candidate = (root / Path(storage_path)).resolve()
         candidate.relative_to(root)
     except (OSError, ValueError):
