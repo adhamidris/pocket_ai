@@ -809,6 +809,64 @@ def _normalize_column_name(value: object) -> str:
     return re.sub(r"\s+", " ", value.strip().lower())
 
 
+def _normalize_identifier_value(value: object) -> str:
+    """
+    Normalize identifier-like values (invoice/order/ticket IDs) for strict matching.
+
+    We remove whitespace and lowercase to avoid common ingestion artefacts like
+    padding while preserving punctuation/hyphens.
+    """
+
+    if value is None:
+        return ""
+    text = str(value).strip()
+    if not text:
+        return ""
+    return re.sub(r"\s+", "", text).lower()
+
+
+def _column_suggests_identifier(column: object) -> bool:
+    normalized = _normalize_column_name(column)
+    if not normalized:
+        return False
+    if any(term in normalized for term in ("email", "e-mail", "mail")):
+        return True
+    if any(term in normalized for term in ("phone", "mobile", "msisdn")):
+        return True
+    if any(term in normalized for term in ("invoice", "order", "ticket")):
+        if any(term in normalized for term in ("id", "serial", "number", "no", "ref", "reference", "#")):
+            return True
+        return True
+    if "serial" in normalized or "reference" in normalized or re.search(r"(?:^|[\\s_\\-])ref(?:$|[\\s_\\-])", normalized):
+        return True
+    if re.search(r"(?:^|[\\s_\\-])id(?:$|[\\s_\\-])", normalized):
+        return True
+    if " code" in normalized or normalized.endswith("code") or "sku" in normalized:
+        return True
+    if "number" in normalized or normalized.endswith(" no") or normalized.endswith(" #"):
+        return True
+    return False
+
+
+def _should_force_exact_identifier_match(column: object, value: object) -> bool:
+    """
+    Decide whether we should force op=eq (and reject contains/prefix) for this filter.
+    """
+
+    normalized = _normalize_identifier_value(value)
+    if not normalized:
+        return False
+    if "@" in normalized:
+        return True
+    if normalized.isdigit() and len(normalized) >= 6:
+        return True
+    if len(normalized) >= 8 and any(ch.isdigit() for ch in normalized):
+        return True
+    if _column_suggests_identifier(column) and len(normalized) >= 4:
+        return True
+    return False
+
+
 def _parse_numeric_value(value: str | None) -> float | None:
     if not isinstance(value, str):
         return None
@@ -2497,6 +2555,9 @@ def _table_aggregate_handler(
     if len(column_filters) > int(tool_limits.max_columns_returned):
         column_filters = column_filters[: int(tool_limits.max_columns_returned)]
     normalized_column_filters = { _normalize_column_name(value) for value in column_filters if _normalize_column_name(value) }
+    match_policy = "contains"
+    if match_column and normalized_match_values and _column_suggests_identifier(match_column_input):
+        match_policy = "eq"
 
     def _clip_text(value: object, limit: int) -> str:
         text = _coerce_str(value)
@@ -2561,8 +2622,12 @@ def _table_aggregate_handler(
         if match_column and normalized_match_values:
             candidate = column_map.get(match_column)
             candidate_value = candidate.get("normalized_value") if isinstance(candidate, Mapping) else None
-            if not candidate_value or not any(value and value in candidate_value for value in normalized_match_values):
-                row_matches = False
+            if match_policy == "eq":
+                if not candidate_value or not any(value and value == candidate_value for value in normalized_match_values):
+                    row_matches = False
+            else:
+                if not candidate_value or not any(value and value in candidate_value for value in normalized_match_values):
+                    row_matches = False
         elif query:
             row_text = str(row_payload.get("row_text") or "")
             cell_text = " ".join(str(cell.get("raw_text") or "") for cell in cells)
@@ -4049,6 +4114,7 @@ def _read_knowledge_handler(
         requested_document_id: str,
         resolved_chunk_id: str | None,
         resolved_document_id_used: str,
+        identifier_diagnostics: Mapping[str, object] | None = None,
     ) -> dict[str, object]:
         status_value = str(result.get("status") or "").strip() if isinstance(result, Mapping) else ""
         status_value = status_value or "ok"
@@ -4067,6 +4133,11 @@ def _read_knowledge_handler(
             "resolved_document_id_used": resolved_document_id_used,
             "engine_tool": engine_tool,
         }
+        if identifier_diagnostics:
+            try:
+                diagnostics.update(dict(identifier_diagnostics))
+            except Exception:
+                pass
 
         identifier_gate = result.get("identifier_gate") if isinstance(result.get("identifier_gate"), Mapping) else None
         if identifier_gate:
@@ -4182,10 +4253,74 @@ def _read_knowledge_handler(
 
         return envelope
 
+    def _row_cell_value(row: Mapping[str, object], *, column_norm: str) -> str | None:
+        if not column_norm:
+            return None
+        cells = row.get("cells") if isinstance(row.get("cells"), list) else []
+        for cell in cells:
+            if not isinstance(cell, Mapping):
+                continue
+            label = _normalize_column_name(cell.get("column"))
+            if not label:
+                continue
+            if label != column_norm:
+                continue
+            value = cell.get("value")
+            text = str(value).strip() if value is not None else ""
+            return text or None
+        return None
+
+    def _collect_identifier_values(rows: Sequence[Mapping[str, object]], *, column: str) -> list[str]:
+        column_norm = _normalize_column_name(column)
+        if not column_norm:
+            return []
+        seen: set[str] = set()
+        values_out: list[str] = []
+        for row in rows:
+            if not isinstance(row, Mapping):
+                continue
+            value = _row_cell_value(row, column_norm=column_norm)
+            if not value:
+                continue
+            norm_val = _normalize_identifier_value(value)
+            if not norm_val or norm_val in seen:
+                continue
+            seen.add(norm_val)
+            values_out.append(value.strip())
+            if len(values_out) >= 12:
+                break
+        return values_out
+
+    def _filter_rows_by_identifier(
+        rows: Sequence[Mapping[str, object]],
+        *,
+        column: str,
+        allowed_values: Sequence[str],
+    ) -> list[dict[str, object]]:
+        column_norm = _normalize_column_name(column)
+        allowed_norm = {_normalize_identifier_value(v) for v in allowed_values if _normalize_identifier_value(v)}
+        if not column_norm or not allowed_norm:
+            return [dict(row) for row in rows if isinstance(row, Mapping)]
+        filtered: list[dict[str, object]] = []
+        for row in rows:
+            if not isinstance(row, Mapping):
+                continue
+            cell_value = _row_cell_value(row, column_norm=column_norm)
+            if not cell_value:
+                continue
+            if _normalize_identifier_value(cell_value) in allowed_norm:
+                filtered.append(dict(row))
+        return filtered
+
     if wants_table and not wants_text:
         # Dataset mode can answer lookups/filters/sorts precisely across all rows.
         if dataset_enabled or is_dataset_card:
             dataset_args: dict[str, object] = {"document_id": str(upload_record.id)}
+            identifier_diag: dict[str, object] = {}
+            requested_identifier_column = ""
+            requested_identifier_values: list[str] = []
+            requested_identifier_policy = ""
+
             sheet_name = _coerce_str(table_args.get("sheet_name")).strip()
             if sheet_name:
                 dataset_args["sheet_name"] = sheet_name
@@ -4196,29 +4331,103 @@ def _read_knowledge_handler(
             if sheet_index:
                 dataset_args["sheet_index"] = sheet_index
 
-            filters = table_args.get("filters")
-            if isinstance(filters, list) and filters:
-                dataset_args["filters"] = filters
-            else:
-                match_column = _coerce_str(table_args.get("match_column")).strip()
-                match_value = _coerce_str(table_args.get("match_value")).strip()
-                match_values = table_args.get("match_values") if isinstance(table_args.get("match_values"), list) else []
-                if match_column and match_values:
+            match_column = _coerce_str(table_args.get("match_column")).strip()
+            match_value = _coerce_str(table_args.get("match_value")).strip()
+            match_values = table_args.get("match_values") if isinstance(table_args.get("match_values"), list) else []
+            match_values_clean = [_coerce_str(v).strip() for v in match_values if _coerce_str(v).strip()]
+            if match_column and match_value:
+                requested_identifier_column = match_column
+                requested_identifier_values = [match_value]
+                requested_identifier_policy = "eq"
+            elif match_column and match_values_clean:
+                requested_identifier_column = match_column
+                requested_identifier_values = match_values_clean
+                requested_identifier_policy = "in"
+
+            filters_input = table_args.get("filters")
+            filters_out: list[dict[str, object]] = []
+            if isinstance(filters_input, list) and filters_input:
+                for entry in filters_input:
+                    if not isinstance(entry, Mapping):
+                        continue
+                    column = _coerce_str(entry.get("column")).strip()
+                    op = _coerce_str(entry.get("op")).strip().lower()
+                    if not column or not op:
+                        continue
+                    value = _coerce_str(entry.get("value")).strip() if entry.get("value") is not None else ""
+                    values = entry.get("values") if isinstance(entry.get("values"), list) else []
+                    values_clean = [_coerce_str(v).strip() for v in values if _coerce_str(v).strip()]
+                    case_sensitive = bool(entry.get("case_sensitive") or False)
+
+                    if _column_suggests_identifier(column) and op not in {"eq", "in"}:
+                        if value and _should_force_exact_identifier_match(column, value):
+                            op = "eq"
+                        else:
+                            identifier_diag = {
+                                "requested_identifier": {"column": column, "values": [value] if value else [], "policy": "eq"},
+                                "match_policy": "eq_required",
+                            }
+                            return _envelope(
+                                engine="file_dataset",
+                                engine_tool="dataset_query",
+                                result={
+                                    "status": "disambiguation_required",
+                                    "error": "identifier_exact_match_required",
+                                    "error_code": "identifier_exact_match_required",
+                                    "rows": [],
+                                    "match_count": 0,
+                                    "total_matches": 0,
+                                    "hint": (
+                                        f"Provide the exact {column} value (full identifier) to look up a single record. "
+                                        "Partial/contains matching is not allowed for identifiers."
+                                    ),
+                                },
+                                resolved_upload_id=str(upload_record.id),
+                                requested_document_id=raw_id,
+                                resolved_chunk_id=str(chunk_record.id) if chunk_record else None,
+                                resolved_document_id_used=str(upload_record.id),
+                                identifier_diagnostics=identifier_diag,
+                            )
+
+                    filter_payload: dict[str, object] = {"column": column, "op": op}
+                    if op == "in":
+                        if values_clean:
+                            filter_payload["values"] = values_clean
+                        elif value:
+                            filter_payload["values"] = [value]
+                    else:
+                        if value:
+                            filter_payload["value"] = value
+                        filter_payload["case_sensitive"] = case_sensitive
+
+                    if filter_payload.get("values") or filter_payload.get("value"):
+                        filters_out.append(filter_payload)
+
+                    if not requested_identifier_column and _column_suggests_identifier(column):
+                        if op == "eq" and value:
+                            requested_identifier_column = column
+                            requested_identifier_values = [value]
+                            requested_identifier_policy = "eq"
+                        elif op == "in" and values_clean:
+                            requested_identifier_column = column
+                            requested_identifier_values = values_clean
+                            requested_identifier_policy = "in"
+
+                if filters_out:
+                    dataset_args["filters"] = filters_out
+            elif requested_identifier_column and requested_identifier_values:
+                if requested_identifier_policy == "in" and len(requested_identifier_values) > 1:
                     dataset_args["filters"] = [
-                        {
-                            "column": match_column,
-                            "op": "in",
-                            "values": [_coerce_str(v).strip() for v in match_values if _coerce_str(v).strip()],
-                        }
+                        {"column": requested_identifier_column, "op": "in", "values": requested_identifier_values}
                     ]
-                elif match_column and match_value:
+                elif requested_identifier_policy == "in":
                     dataset_args["filters"] = [
-                        {
-                            "column": match_column,
-                            "op": "eq",
-                            "value": match_value,
-                            "case_sensitive": False,
-                        }
+                        {"column": requested_identifier_column, "op": "eq", "value": requested_identifier_values[0], "case_sensitive": False}
+                    ]
+                    requested_identifier_policy = "eq"
+                else:
+                    dataset_args["filters"] = [
+                        {"column": requested_identifier_column, "op": "eq", "value": requested_identifier_values[0], "case_sensitive": False}
                     ]
 
             query = _coerce_str(table_args.get("query")).strip()
@@ -4229,7 +4438,10 @@ def _read_knowledge_handler(
             if not isinstance(select_columns, list) or not select_columns:
                 select_columns = table_args.get("columns")
             if isinstance(select_columns, list) and select_columns:
-                dataset_args["select_columns"] = [_coerce_str(c).strip() for c in select_columns if _coerce_str(c).strip()]
+                chosen = [_coerce_str(c).strip() for c in select_columns if _coerce_str(c).strip()]
+                if requested_identifier_column and requested_identifier_column not in chosen:
+                    chosen.insert(0, requested_identifier_column)
+                dataset_args["select_columns"] = chosen
 
             sort_by = _coerce_str(table_args.get("sort_by")).strip()
             if sort_by:
@@ -4260,18 +4472,72 @@ def _read_knowledge_handler(
                     dataset_args["aggregate"] = {"operation": "sum", "column": value_column}
 
             result = _dataset_query_handler(dataset_args, conversation=conversation, context=context)
+            result_out = dict(result) if isinstance(result, Mapping) else {"status": "error", "error": "invalid_result"}
+
+            if requested_identifier_column and requested_identifier_values:
+                identifier_diag["requested_identifier"] = {
+                    "column": requested_identifier_column,
+                    "values": requested_identifier_values[:12],
+                    "policy": requested_identifier_policy or "eq",
+                }
+                rows = result_out.get("rows") if isinstance(result_out.get("rows"), list) else []
+                status_value = str(result_out.get("status") or "").strip().lower()
+                filtered_rows = (
+                    _filter_rows_by_identifier(
+                        rows,
+                        column=requested_identifier_column,
+                        allowed_values=requested_identifier_values,
+                    )
+                    if status_value == "ok"
+                    else [dict(row) for row in rows if isinstance(row, Mapping)]
+                )
+                identifier_diag["matched_identifiers"] = _collect_identifier_values(
+                    filtered_rows,
+                    column=requested_identifier_column,
+                )
+
+                if status_value == "ok":
+                    if not filtered_rows:
+                        result_out["status"] = "not_found"
+                        result_out["error"] = "identifier_not_found"
+                        result_out["error_code"] = "identifier_not_found"
+                        result_out["rows"] = []
+                        result_out["match_count"] = 0
+                        result_out["total_matches"] = 0
+                        result_out["hint"] = (
+                            f"No rows found for {requested_identifier_column}={requested_identifier_values[0]!r}. "
+                            "Double-check the exact identifier and the column name."
+                        )
+                    else:
+                        result_out["rows"] = filtered_rows
+                        result_out["match_count"] = len(filtered_rows)
+
             return _envelope(
                 engine="file_dataset",
                 engine_tool="dataset_query",
-                result=result,
+                result=result_out,
                 resolved_upload_id=str(upload_record.id),
                 requested_document_id=raw_id,
                 resolved_chunk_id=str(chunk_record.id) if chunk_record else None,
                 resolved_document_id_used=str(upload_record.id),
+                identifier_diagnostics=identifier_diag or None,
             )
 
         # Non-dataset tables fall back to the preview/aggregate engine.
         table_agg_args: dict[str, object] = {"document_id": str(upload_record.id)}
+        identifier_diag: dict[str, object] = {}
+        requested_identifier_column = _coerce_str(table_args.get("match_column")).strip()
+        requested_identifier_values: list[str] = []
+        requested_identifier_policy = ""
+        match_value = _coerce_str(table_args.get("match_value")).strip()
+        match_values = table_args.get("match_values") if isinstance(table_args.get("match_values"), list) else []
+        match_values_clean = [_coerce_str(v).strip() for v in match_values if _coerce_str(v).strip()]
+        if requested_identifier_column and match_value:
+            requested_identifier_values = [match_value]
+            requested_identifier_policy = "eq"
+        elif requested_identifier_column and match_values_clean:
+            requested_identifier_values = match_values_clean
+            requested_identifier_policy = "in"
         for key in ("query", "match_column", "match_value", "match_values", "sheet_name", "table_order_index", "value_column"):
             value = table_args.get(key)
             if value is None:
@@ -4286,7 +4552,10 @@ def _read_knowledge_handler(
         if not isinstance(columns, list) or not columns:
             columns = table_args.get("columns")
         if isinstance(columns, list) and columns:
-            table_agg_args["columns"] = [_coerce_str(c).strip() for c in columns if _coerce_str(c).strip()]
+            chosen = [_coerce_str(c).strip() for c in columns if _coerce_str(c).strip()]
+            if requested_identifier_column and requested_identifier_column not in chosen:
+                chosen.insert(0, requested_identifier_column)
+            table_agg_args["columns"] = chosen
 
         aggregate = table_args.get("aggregate") if isinstance(table_args.get("aggregate"), Mapping) else None
         if aggregate and _coerce_str(aggregate.get("operation")).strip().lower() == "sum":
@@ -4312,14 +4581,56 @@ def _read_knowledge_handler(
             table_agg_args["max_rows"] = max_rows
 
         result = _table_aggregate_handler(table_agg_args, conversation=conversation, context=context)
+        result_out = dict(result) if isinstance(result, Mapping) else {"status": "error", "error": "invalid_result"}
+
+        if requested_identifier_column and requested_identifier_values and _column_suggests_identifier(requested_identifier_column):
+            identifier_diag["requested_identifier"] = {
+                "column": requested_identifier_column,
+                "values": requested_identifier_values[:12],
+                "policy": requested_identifier_policy or "eq",
+            }
+            rows = result_out.get("rows") if isinstance(result_out.get("rows"), list) else []
+            status_value = str(result_out.get("status") or "").strip().lower()
+            filtered_rows = (
+                _filter_rows_by_identifier(
+                    rows,
+                    column=requested_identifier_column,
+                    allowed_values=requested_identifier_values,
+                )
+                if status_value == "ok"
+                else [dict(row) for row in rows if isinstance(row, Mapping)]
+            )
+            identifier_diag["matched_identifiers"] = _collect_identifier_values(
+                filtered_rows,
+                column=requested_identifier_column,
+            )
+
+            if status_value == "ok":
+                if not filtered_rows:
+                    result_out["status"] = "not_found"
+                    result_out["error"] = "identifier_not_found"
+                    result_out["error_code"] = "identifier_not_found"
+                    result_out["rows"] = []
+                    result_out["match_count"] = 0
+                    result_out["original_match_count"] = 0
+                    result_out["hint"] = (
+                        f"No rows found for {requested_identifier_column}={requested_identifier_values[0]!r}. "
+                        "Double-check the exact identifier and the column name."
+                    )
+                else:
+                    result_out["rows"] = filtered_rows
+                    result_out["match_count"] = len(filtered_rows)
+                    result_out["original_match_count"] = len(filtered_rows)
+
         return _envelope(
             engine="table_preview",
             engine_tool="table_aggregate",
-            result=result,
+            result=result_out,
             resolved_upload_id=str(upload_record.id),
             requested_document_id=raw_id,
             resolved_chunk_id=str(chunk_record.id) if chunk_record else None,
             resolved_document_id_used=str(upload_record.id),
+            identifier_diagnostics=identifier_diag or None,
         )
 
     # Text excerpt path (default).

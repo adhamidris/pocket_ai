@@ -111,6 +111,7 @@ def build_system_message(
         - Ask for identifiers only when an action absolutely needs them, and ask once. If an email/phone arrives for an action, call `create_customer` exactly once; skip it on greetings or FAQs.
         - Mixed-language queries are normal—include every spelling variant in the first search batch. Once you have snippets, move on instead of re-searching.
         - When you report derived numbers (totals, averages, percentages), compute them carefully from the evidence and sanity‑check that they add up before stating them.
+        - If the visitor asks about a specific identifier (invoice/order/ticket/etc), answer only if the evidence includes that same identifier; otherwise say it was not found and ask for confirmation.
 
         ### Safety
         - Policy-first responses for health/finance/legal topics—never offer personal advice.
@@ -129,6 +130,7 @@ def build_system_message(
             • Use `intent="table"` when the evidence is tabular (`is_table_chunk=true` / dataset-mode) or you need lookups/filters/sorts/aggregates.
             • Use `intent="text"` when you need a text excerpt/page from a document.
             • Prefer precise identifiers for table lookups: provide `table.match_column` + `table.match_value` (or `match_values`) and a `table.sheet_name` when known.
+            • For identifier lookups (invoice/order/ticket/id/serial/code/email/phone), use exact matching (`op="eq"` / `match_value`). Do NOT use `contains`/`startswith`/`endswith`; if you only have a partial identifier, ask the visitor for the full value first.
             • Keep outputs small: request only the columns you need; default limit is 20 rows.
             • If you hit `identifier_required`, `throttle_notice`, or `truncated=true`, narrow filters or request the missing identifier.
             • Tool output shape: `engine` + `evidence` (either `evidence.snippets[]` or `evidence.rows[]`) + `total_matches` + `truncated` + optional `throttle_notice`.

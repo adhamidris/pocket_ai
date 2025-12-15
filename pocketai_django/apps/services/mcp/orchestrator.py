@@ -791,11 +791,13 @@ class McpOrchestratorService:
 
                         if tool_name == "table_aggregate":
                             document_id = str(arguments.get("document_id") or tool_result.get("document_id") or "").strip()
-                            if document_id:
+                            status_value = str(tool_result.get("status") or "").strip().lower()
+                            if document_id and status_value == "ok":
                                 self._satisfy_transcript_snippets(transcript, document_id, tool_context)
                         elif tool_name == "read_knowledge" and isinstance(tool_result, Mapping):
                             engine = str(tool_result.get("engine") or "").strip()
-                            if engine in {"table_preview", "file_dataset", "db_preview"}:
+                            status_value = str(tool_result.get("status") or "").strip().lower() or "ok"
+                            if status_value == "ok" and engine in {"table_preview", "file_dataset", "db_preview"}:
                                 document_id = str(tool_result.get("document_id") or "").strip()
                                 if document_id:
                                     self._satisfy_transcript_snippets(transcript, document_id, tool_context)
@@ -1717,7 +1719,8 @@ class McpOrchestratorService:
 
         if tool_name == "read_knowledge" and engine in {"table_preview", "file_dataset", "db_preview"}:
             document_id = str(tool_result.get("document_id") or diagnostics.get("resolved_upload_id") or "").strip()
-            if document_id:
+            status_value = str(tool_result.get("status") or "").strip().lower() or "ok"
+            if document_id and status_value == "ok":
                 McpOrchestratorService._suppress_table_previews(context, upload_id=document_id)
                 McpOrchestratorService._mark_upload_as_satisfied(context, upload_id=document_id)
 
@@ -1783,7 +1786,7 @@ class McpOrchestratorService:
             else:
                 document_id = str(tool_result.get("document_id") or "").strip()
                 rows = tool_result.get("rows") if isinstance(tool_result, Mapping) else None
-            if document_id:
+            if document_id and status_value == "ok":
                 McpOrchestratorService._suppress_table_previews(context, upload_id=document_id)
                 McpOrchestratorService._mark_upload_as_satisfied(context, upload_id=document_id)
 
@@ -2998,6 +3001,30 @@ class McpOrchestratorService:
                 value = diagnostics_in.get(key)
                 if isinstance(value, list) and value:
                     diagnostics_out[key] = value[:12]
+            requested_identifier = (
+                diagnostics_in.get("requested_identifier")
+                if isinstance(diagnostics_in.get("requested_identifier"), Mapping)
+                else None
+            )
+            if requested_identifier:
+                requested_out: dict[str, object] = {}
+                column = requested_identifier.get("column")
+                if isinstance(column, str) and column.strip():
+                    requested_out["column"] = column.strip()
+                values = requested_identifier.get("values")
+                if isinstance(values, list) and values:
+                    requested_out["values"] = [str(item) for item in values[:6] if str(item).strip()]
+                policy = requested_identifier.get("policy")
+                if isinstance(policy, str) and policy.strip():
+                    requested_out["policy"] = policy.strip()
+                if requested_out:
+                    diagnostics_out["requested_identifier"] = requested_out
+            matched_identifiers = diagnostics_in.get("matched_identifiers")
+            if isinstance(matched_identifiers, list) and matched_identifiers:
+                diagnostics_out["matched_identifiers"] = [str(item) for item in matched_identifiers[:12] if str(item).strip()]
+            match_policy = diagnostics_in.get("match_policy")
+            if isinstance(match_policy, str) and match_policy.strip():
+                diagnostics_out["match_policy"] = match_policy.strip()
 
             if engine == "text_page":
                 for key in ("page", "mode", "mode_downgraded", "token_budget"):

@@ -1,7 +1,0 @@
-  - RAG_SNIPPET_RERANK_ENABLED (default True) to toggle snippet rerank
-  - RAG_SNIPPET_RERANK_POOL (default 20) to set how many top snippets to rerank
-
-
-
-  - Set LLM_LOG_TOKEN_ESTIMATE=true and turn on DEBUG logs to see token estimates.
-  - Set LLM_DEBUG_PAYLOADS=true to dump full request payloads when debugging.
