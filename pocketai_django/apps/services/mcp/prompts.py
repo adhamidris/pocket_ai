@@ -102,7 +102,7 @@ def build_system_message(
         ### Markdown Formatting Contract
         - Use clean, reader-friendly Markdown. For short single-fact answers, reply naturally without headings. Use level-2 headings (`##`) or bold labels only when there are multiple products/topics or the visitor explicitly asks for a structured breakdown.
         - Use a short bullet/numbered list only when there are one or two metrics to highlight; for three or more rows switch entirely to a Markdown table and skip repeating the same numbers in bullets or paragraphs.
-        - When comparing more than two stores/products, emit a Markdown table with headers. Use only the data already returned by tools (especially `table_aggregate`)—never call `read_document` solely to improve formatting, and do not restate the exact table cells elsewhere in the answer.
+        - When comparing more than two stores/products, emit a Markdown table with headers. Use only the data already returned by tools (especially tabular rows returned by `read_knowledge`)—never call tools solely to improve formatting, and do not restate the exact table cells elsewhere in the answer.
         - When a table is required (three or more items), present the underlying numbers only once inside that table; skip serialised product-by-product paragraphs before it. If needed, follow the table with a brief “Key observations” paragraph instead of repeating the raw values.
         - Ensure all Markdown markers are balanced—never leave stray `**`, `_`, or ``` fences. If the model cannot format a section cleanly, fall back to plain text for that section only.
         ### Evidence Rules
@@ -124,21 +124,13 @@ def build_system_message(
             • HARD LIMIT: Call at most once per assistant turn.
             • Put every alias/spelling in `queries[]` so the backend runs one batched search.
             • Only search again if the visitor adds a new constraint. If you have snippets, use them immediately.
-        - `table_aggregate`
-            • Call once per dimension set: include all requested products + store/region columns in the first call.
-            • Reuse the same `document_id`. Repeat only if the visitor asks for a new metric or column set.
-            • Answer directly from `rows[].contributions`; list every contributor returned.
-            • If a snippet has `is_table_chunk=true`, you MUST use `table_aggregate` (never `read_document` for that snippet).
-            • Do NOT follow a successful table_aggregate with `read_document` purely to reformat or restate the same data.
-        - `dataset_query`
-            • Use for dataset-mode uploads (large sheets/CSVs/JSONL) when you need lookups/filters/sorts (order status, ticket timestamps, flights, etc.).
-            • Prefer precise filters (identifier column + value). If the visitor is vague, ask a clarifying question before querying.
+        - `read_knowledge`
+            • One retrieval tool for both documents and tables/datasets.
+            • Use `intent="table"` when the evidence is tabular (`is_table_chunk=true` / dataset-mode) or you need lookups/filters/sorts/aggregates.
+            • Use `intent="text"` when you need a text excerpt/page from a document.
+            • Prefer precise identifiers for table lookups: provide `table.match_column` + `table.match_value` (or `match_values`) and a `table.sheet_name` when known.
             • Keep outputs small: request only the columns you need; default limit is 20 rows.
             • If you hit `identifier_required`, `throttle_notice`, or `truncated=true`, narrow filters or request the missing identifier.
-        - `read_document`
-            • Use only when a non-table snippet is summary/preview and you truly need the detail.
-            • Never call `read_document` on table snippets (`is_table_chunk=true`) or spreadsheet uploads; it will return `constraint_error`.
-            • Never read just to satisfy a flag; table rows already satisfy reads.
         - `list_tables`
             • Use once to grab the spreadsheet `document_id` before aggregations; reuse it afterwards.
         - Tool loop cadence
@@ -333,21 +325,19 @@ def build_cached_table_messages(
             continue
         seen.add(dedupe_key)
         call_id = f"cached_table_{uuid.uuid4().hex[:8]}"
-        arguments_payload = {
-            "cache_hit": True,
-            "upload_id": snippet.get("upload_id"),
-            "chunk_id": snippet.get("chunk_id"),
-            "row_index": snippet.get("source_diagnostics", {}).get("table_row_index")
-            if isinstance(snippet.get("source_diagnostics"), Mapping)
-            else None,
-        }
         tool_calls.append(
             {
                 "id": call_id,
                 "type": "function",
                 "function": {
-                    "name": "table_aggregate",
-                    "arguments": json.dumps({k: v for k, v in arguments_payload.items() if v is not None}, ensure_ascii=False),
+                    "name": "read_knowledge",
+                    "arguments": json.dumps(
+                        {
+                            "document_id": snippet.get("upload_id") or snippet.get("chunk_id"),
+                            "intent": "table",
+                        },
+                        ensure_ascii=False,
+                    ),
                 },
             }
         )
@@ -355,9 +345,10 @@ def build_cached_table_messages(
             {
                 "role": "tool",
                 "tool_call_id": call_id,
-                "name": "table_aggregate",
+                "name": "read_knowledge",
                 "content": json.dumps(
                     {
+                        "tool": "read_knowledge",
                         "status": "ok",
                         "mode": "cached",
                         "snippets": [snippet],

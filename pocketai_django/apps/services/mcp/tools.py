@@ -153,206 +153,177 @@ TOOL_DEFINITIONS: tuple[Mapping[str, object], ...] = (
         },
     ),
     _function_schema(
-        name="read_document",
+        name="read_knowledge",
         description=(
-            "Load non-table document content (text/PDF chunks) by ID so you can cite exact details. "
-            "Do NOT use for table snippets (`is_table_chunk=true`) or spreadsheet uploads (it returns constraint_error); "
-            "use table_aggregate (and list_tables if needed)."
+            "Read or query knowledge by ID (single retrieval tool). "
+            "Routes automatically to text excerpt vs table aggregation vs dataset lookup based on the document type and the parameters you provide."
         ),
         properties={
             "document_id": {
                 "type": "string",
-                "description": "UUID of the upload or chunk returned by search_knowledge.",
+                "description": "UUID of the upload or chunk returned by search_knowledge/list_tables.",
             },
-            "page": {
-                "type": "integer",
-                "minimum": 1,
-                "description": "Page window to load (1 = first chunk).",
-                "default": 1,
-            },
-            "offset": {
-                "type": "integer",
-                "description": "Optional zero-based chunk index override when requesting specific spans.",
-            },
-            "mode": {
+            "intent": {
                 "type": "string",
-                "enum": ["excerpt", "full_page"],
-                "description": "excerpt keeps responses small; full_page returns the entire inline limit.",
-                "default": "excerpt",
+                "enum": ["auto", "text", "table"],
+                "description": "Optional hint; leave as auto unless you need to force text vs table routing.",
+                "default": "auto",
             },
-            "token_budget": {
-                "type": "integer",
-                "description": "Approximate token budget for this page window (used to lower the char cap).",
-            },
-            "chunk_neighbor": {
-                "type": "integer",
-                "minimum": 0,
-                "maximum": 3,
-                "description": "Number of neighbor chunks to stitch around the requested page.",
-                "default": 1,
-            },
-        },
-        required=("document_id",),
-    ),
-    _function_schema(
-        name="table_aggregate",
-        description=(
-            "Aggregate numeric values from a structured table (per-column contributions). "
-            "Returns per-row totals and an overall total; re-run with narrower match_values/sheet_name/columns if truncated."
-        ),
-        properties={
-            "document_id": {
-                "type": "string",
-                "description": "UUID of the upload returned by search_knowledge/read_document.",
-            },
-            "query": {
-                "type": "string",
-                "description": "Optional text snippet to match rows (case-insensitive substring).",
-            },
-            "match_column": {
-                "type": "string",
-                "description": "Column name to check when filtering rows (normalized, case-insensitive).",
-            },
-            "match_value": {
-                "type": "string",
-                "description": "Expected value for match_column (substring match).",
-            },
-            "match_values": {
-                "type": "array",
-                "items": {"type": "string"},
-                "description": "Batch version of match_value; pass multiple row identifiers to retrieve them in one call.",
-                "minItems": 1,
-            },
-            "value_column": {
-                "type": "string",
-                "description": "Column to sum when mode=column_sum. Defaults to row totals.",
-            },
-            "mode": {
-                "type": "string",
-                "enum": ["row_total", "column_sum"],
-                "description": "row_total sums every numeric cell in the row; column_sum sums a single column.",
-                "default": "row_total",
-            },
-            "table_order_index": {
-                "type": "integer",
-                "description": "Optional table index within the upload (1-based).",
-            },
-            "sheet_name": {
-                "type": "string",
-                "description": "Optional sheet name/section heading to scope the aggregation.",
-            },
-            "max_rows": {
-                "type": "integer",
-                "minimum": 1,
-                "maximum": 200,
-                "description": "Maximum number of matching rows to include in the response.",
-                "default": 50,
-            },
-            "columns": {
-                "type": "array",
-                "items": {"type": "string"},
-                "description": "Optional list of column/store names to include in the response.",
-            },
-        },
-        required=("document_id",),
-    ),
-    _function_schema(
-        name="dataset_query",
-        description=(
-            "Query a large dataset (CSV/XLSX/XLS/JSONL) stored in dataset mode. "
-            "Supports lookup/filter/sort/select columns and small aggregates; returns only a small page of rows."
-        ),
-        properties={
-            "document_id": {
-                "type": "string",
-                "description": "UUID of the upload returned by search_knowledge/list_tables.",
-            },
-            "sheet_name": {
-                "type": "string",
-                "description": "Optional sheet name for multi-sheet spreadsheets stored in dataset mode.",
-            },
-            "sheet_index": {
-                "type": "integer",
-                "description": "Optional sheet index (1-based) for multi-sheet spreadsheets stored in dataset mode.",
-                "minimum": 1,
-            },
-            "query": {
-                "type": "string",
-                "description": "Optional free-text search across all cells (case-insensitive substring).",
-            },
-            "select_columns": {
-                "type": "array",
-                "items": {"type": "string"},
-                "description": "Optional list of columns to return in rows (omit to return a capped subset).",
-            },
-            "filters": {
-                "type": "array",
-                "description": "Optional structured filters; all filters are ANDed.",
-                "items": {
-                    "type": "object",
-                    "properties": {
-                        "column": {"type": "string", "description": "Column/key name."},
-                        "op": {
-                            "type": "string",
-                            "enum": ["eq", "contains", "startswith", "endswith", "gt", "gte", "lt", "lte", "in"],
-                            "description": "Filter operator.",
-                        },
-                        "value": {"type": "string", "description": "Single value for the filter (string form)."},
-                        "values": {
-                            "type": "array",
-                            "items": {"type": "string"},
-                            "description": "Multiple values for op=in.",
-                            "minItems": 1,
-                        },
-                        "case_sensitive": {
-                            "type": "boolean",
-                            "description": "Set true only when matching case-sensitive identifiers.",
-                            "default": False,
-                        },
+            "text": {
+                "type": "object",
+                "description": "Text/PDF excerpt options (ignored for tabular queries).",
+                "properties": {
+                    "page": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "description": "Page window to load (1 = first chunk).",
+                        "default": 1,
                     },
-                    "required": ["column", "op"],
+                    "offset": {
+                        "type": "integer",
+                        "minimum": 0,
+                        "description": "Optional zero-based chunk index override when requesting specific spans.",
+                    },
+                    "mode": {
+                        "type": "string",
+                        "enum": ["excerpt", "full_page"],
+                        "description": "excerpt keeps responses small; full_page returns the entire inline limit.",
+                        "default": "excerpt",
+                    },
+                    "token_budget": {
+                        "type": "integer",
+                        "description": "Approximate token budget for this page window (used to lower the char cap).",
+                    },
+                    "chunk_neighbor": {
+                        "type": "integer",
+                        "minimum": 0,
+                        "maximum": 3,
+                        "description": "Number of neighbor chunks to stitch around the requested page.",
+                        "default": 1,
+                    },
                 },
             },
-            "sort_by": {
-                "type": "string",
-                "description": "Optional column to sort by (best-effort; may be approximate when time-limited).",
-            },
-            "sort_direction": {
-                "type": "string",
-                "enum": ["asc", "desc"],
-                "default": "asc",
-            },
-            "limit": {
-                "type": "integer",
-                "minimum": 1,
-                "maximum": 50,
-                "default": 20,
-                "description": "Maximum rows to return (1-50).",
-            },
-            "offset": {
-                "type": "integer",
-                "minimum": 0,
-                "default": 0,
-                "description": "Zero-based row offset within the matched results.",
-            },
-            "aggregate": {
+            "table": {
                 "type": "object",
-                "description": "Optional aggregate instead of returning rows.",
+                "description": "Tabular query options (CSV/XLSX/XLS/JSONL or table uploads).",
                 "properties": {
-                    "operation": {
+                    "sheet_name": {
                         "type": "string",
-                        "enum": ["count", "sum", "min", "max", "group_by"],
+                        "description": "Optional sheet name for spreadsheets.",
                     },
-                    "column": {"type": "string", "description": "Target column for sum/min/max."},
-                    "group_by": {"type": "string", "description": "Column to group by when operation=group_by."},
-                    "top_groups": {
+                    "sheet_index": {
+                        "type": "integer",
+                        "description": "Optional sheet index (1-based) for spreadsheets.",
+                        "minimum": 1,
+                    },
+                    "table_order_index": {
+                        "type": "integer",
+                        "description": "Optional table index within the upload (1-based).",
+                        "minimum": 1,
+                    },
+                    "match_column": {
+                        "type": "string",
+                        "description": "Column name to match when filtering rows (case-insensitive).",
+                    },
+                    "match_value": {
+                        "type": "string",
+                        "description": "Exact value for match_column (preferred for IDs).",
+                    },
+                    "match_values": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "Batch match values (op=in).",
+                        "minItems": 1,
+                    },
+                    "query": {
+                        "type": "string",
+                        "description": "Optional free-text search across cells (case-insensitive substring).",
+                    },
+                    "filters": {
+                        "type": "array",
+                        "description": "Optional structured filters; all filters are ANDed.",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "column": {"type": "string", "description": "Column/key name."},
+                                "op": {
+                                    "type": "string",
+                                    "enum": ["eq", "contains", "startswith", "endswith", "gt", "gte", "lt", "lte", "in"],
+                                    "description": "Filter operator.",
+                                },
+                                "value": {"type": "string", "description": "Single value for the filter (string form)."},
+                                "values": {
+                                    "type": "array",
+                                    "items": {"type": "string"},
+                                    "description": "Multiple values for op=in.",
+                                    "minItems": 1,
+                                },
+                                "case_sensitive": {
+                                    "type": "boolean",
+                                    "description": "Set true only when matching case-sensitive identifiers.",
+                                    "default": False,
+                                },
+                            },
+                            "required": ["column", "op"],
+                        },
+                    },
+                    "select_columns": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "Optional list of columns to return in rows.",
+                    },
+                    "sort_by": {
+                        "type": "string",
+                        "description": "Optional column to sort by (best-effort).",
+                    },
+                    "sort_direction": {
+                        "type": "string",
+                        "enum": ["asc", "desc"],
+                        "default": "asc",
+                    },
+                    "limit": {
                         "type": "integer",
                         "minimum": 1,
                         "maximum": 50,
                         "default": 20,
+                        "description": "Maximum rows to return (1-50).",
+                    },
+                    "offset": {
+                        "type": "integer",
+                        "minimum": 0,
+                        "default": 0,
+                        "description": "Zero-based row offset within the matched results.",
+                    },
+                    "aggregate": {
+                        "type": "object",
+                        "description": "Optional aggregate instead of returning rows.",
+                        "properties": {
+                            "operation": {
+                                "type": "string",
+                                "enum": ["count", "sum", "min", "max", "group_by"],
+                            },
+                            "column": {"type": "string", "description": "Target column for sum/min/max."},
+                            "group_by": {"type": "string", "description": "Column to group by when operation=group_by."},
+                            "top_groups": {
+                                "type": "integer",
+                                "minimum": 1,
+                                "maximum": 50,
+                                "default": 20,
+                            },
+                        },
+                        "required": ["operation"],
+                    },
+                    "mode": {
+                        "type": "string",
+                        "enum": ["rows", "row_total", "column_sum"],
+                        "description": "rows returns matching rows; row_total sums numeric cells per row; column_sum sums a single column.",
+                        "default": "rows",
+                    },
+                    "value_column": {
+                        "type": "string",
+                        "description": "Column to sum when mode=column_sum.",
                     },
                 },
-                "required": ["operation"],
             },
         },
         required=("document_id",),
@@ -1083,9 +1054,9 @@ def _search_hint(
     diag = diagnostics or {}
     if intent == "table":
         return (
-            "These results look tabular. Use table_aggregate with the table upload document_id to retrieve exact rows/columns and totals "
-            "(narrow with match_column/match_values or query + sheet_name/columns). If snippets have is_table_chunk=true, do NOT call read_document "
-            "(it returns constraint_error); use table_aggregate/list_tables instead."
+            "These results look tabular. Use read_knowledge with intent=table and the table upload document_id to retrieve exact rows/columns and totals "
+            "(narrow with table.match_column + match_value(s) or table.query + sheet_name/select_columns). If snippets have is_table_chunk=true, do NOT request text excerpts; "
+            "use read_knowledge intent=table (and call list_tables once if you need sheet/table options)."
         )
     if diag.get("path") == "fallback":
         return "Fallback snippets in use; confirm details with the visitor or narrow the request before citing specifics."
@@ -1827,9 +1798,9 @@ def _read_document_handler(
                 "error_code": "wrong_tool_for_table",
                 "snippets": [],
                 "hint": (
-                    "This document is a structured table (`is_table_chunk=true`). `read_document` is for non-table text/PDF. "
-                    f"Use `table_aggregate` with document_id={upload_id} (or call `list_tables` to find the right table upload) "
-                    "and narrow with match_column/match_values or query + sheet_name/columns."
+                    "This document is a structured table (`is_table_chunk=true`). Use `read_knowledge` with `intent=table` and "
+                    f"document_id={upload_id} (or call `list_tables` to find the right table upload), then narrow with "
+                    "`table.match_column` + `match_value(s)` or `table.query` + `sheet_name`/`select_columns`."
                 ),
             }
     if upload_record and upload_record.tables.exists() and not upload_record.pages.exists():
@@ -1851,8 +1822,8 @@ def _read_document_handler(
             "error_code": "wrong_tool_for_table",
             "snippets": [],
             "hint": (
-                "This upload is a spreadsheet/structured table. `read_document` is for non-table text/PDF. "
-                f"Use `table_aggregate` with document_id={upload_id} (and call `list_tables` if you need sheet/table options)."
+                "This upload is a spreadsheet/structured table. Use `read_knowledge` with `intent=table` and "
+                f"document_id={upload_id} (and call `list_tables` if you need sheet/table options)."
             ),
         }
 
@@ -2787,7 +2758,7 @@ def _table_aggregate_handler(
             "reason": "prompt_budget",
             "message": (
                 "Table aggregate rows were truncated to stay within prompt size limits. "
-                "Re-run table_aggregate with a narrower match_column/match_values, a sheet_name, and/or an explicit columns list."
+                "Re-run read_knowledge with intent=table and a narrower table.match_column/match_value(s), plus table.sheet_name and/or table.select_columns."
             ),
             "original_match_count": original_match_count,
             "returned_match_count": len(rows_out),
@@ -2799,7 +2770,7 @@ def _table_aggregate_handler(
         if dataset_enabled:
             hint = (
                 "No matching rows found in the indexed preview. This document is in dataset mode; "
-                "table_aggregate only searches preview rows."
+                "tabular preview search only covers indexed preview rows."
             )
         else:
             hint = "No matching rows found."
@@ -2938,7 +2909,7 @@ def _dataset_query_handler(
             "status": "constraint_error",
             "error": "dataset_mode_required",
             "error_code": "dataset_mode_required",
-            "hint": "This upload is not stored in dataset mode. Use table_aggregate for small tables or read_document for text documents.",
+            "hint": "This upload is not stored in dataset mode. Use read_knowledge with intent=table for tabular queries, or intent=text for document excerpts.",
         }
 
     storage_format = str(dataset_meta.get("storage_format") or "").strip() or "csv_gz"
@@ -3511,32 +3482,32 @@ def _dataset_query_handler(
                     if not _matches_filters(row_map):
                         continue
 
-                        matched_total += 1
-    
-                        if aggregate_op:
-                            if aggregate_op == "count":
-                                continue
-                            if aggregate_op in {"sum", "min", "max"} and aggregate_column:
-                                numeric = _parse_numeric_value(_coerce_str(row_map.get(aggregate_column)))
-                                if numeric is None:
-                                    continue
-                                value = float(numeric)
-                                if aggregate_op == "sum":
-                                    sum_total += value
-                                    sum_count += 1
-                                elif aggregate_op == "min":
-                                    min_value = value if min_value is None else min(min_value, value)
-                                elif aggregate_op == "max":
-                                    max_value = value if max_value is None else max(max_value, value)
-                            elif aggregate_op == "group_by" and group_by_column and group_counter is not None:
-                                group_value = _clip_value(row_map.get(group_by_column, ""), 80)
-                                if not group_value:
-                                    group_value = "<empty>"
-                                if group_value not in group_counter and len(group_counter) >= max_group_cap:
-                                    overflow_group_count += 1
-                                else:
-                                    group_counter[group_value] += 1
+                    matched_total += 1
+
+                    if aggregate_op:
+                        if aggregate_op == "count":
                             continue
+                        if aggregate_op in {"sum", "min", "max"} and aggregate_column:
+                            numeric = _parse_numeric_value(_coerce_str(row_map.get(aggregate_column)))
+                            if numeric is None:
+                                continue
+                            value = float(numeric)
+                            if aggregate_op == "sum":
+                                sum_total += value
+                                sum_count += 1
+                            elif aggregate_op == "min":
+                                min_value = value if min_value is None else min(min_value, value)
+                            elif aggregate_op == "max":
+                                max_value = value if max_value is None else max(max_value, value)
+                        elif aggregate_op == "group_by" and group_by_column and group_counter is not None:
+                            group_value = _clip_value(row_map.get(group_by_column, ""), 80)
+                            if not group_value:
+                                group_value = "<empty>"
+                            if group_value not in group_counter and len(group_counter) >= max_group_cap:
+                                overflow_group_count += 1
+                            else:
+                                group_counter[group_value] += 1
+                        continue
 
                     if sort_column_actual:
                         sort_key = _coerce_sort_key(_coerce_str(row_map.get(sort_column_actual)))
@@ -3889,7 +3860,7 @@ def _dataset_query_handler(
                 "reason": "prompt_budget",
                 "message": (
                     "Dataset rows were truncated to stay within prompt size limits. "
-                    "Re-run dataset_query with narrower filters or fewer columns."
+                    "Re-run read_knowledge with intent=table and narrower filters or fewer columns."
                 ),
                 "returned_match_count": len(trimmed_rows),
             }
@@ -3926,6 +3897,292 @@ def _dataset_query_handler(
         logger_obj=logger,
     )
     return payload
+
+
+def _read_knowledge_handler(
+    arguments: Mapping[str, object],
+    conversation: Conversation,
+    context: ToolExecutionContext,
+) -> Mapping[str, object]:
+    """
+    Single LLM-facing retrieval tool.
+
+    Routes to one of:
+    - _read_document_handler (text/PDF excerpts)
+    - _table_aggregate_handler (small/preview tables)
+    - _dataset_query_handler (dataset-mode uploads)
+    """
+
+    raw_id = _coerce_str(arguments.get("document_id")).strip()
+    if not raw_id:
+        return {"tool": "read_knowledge", "status": "error", "error": "document_id is required"}
+    try:
+        identifier = uuid.UUID(raw_id)
+    except (TypeError, ValueError):
+        return {"tool": "read_knowledge", "status": "error", "error": "document_id must be a valid UUID"}
+
+    business = conversation.business_profile
+    chunk_record = (
+        KnowledgeUploadChunk.objects.filter(
+            id=identifier,
+            business_profile=business,
+            upload__status=KnowledgeStatus.ACTIVE,
+        )
+        .select_related("upload")
+        .first()
+    )
+    upload_record: KnowledgeUpload | None = chunk_record.upload if chunk_record else None
+    if upload_record is None:
+        upload_record = KnowledgeUpload.objects.filter(
+            id=identifier,
+            business_profile=business,
+            status=KnowledgeStatus.ACTIVE,
+        ).first()
+
+    if upload_record is None:
+        return {
+            "tool": "read_knowledge",
+            "status": "not_found",
+            "error": "document not found for this business",
+        }
+
+    chunk_meta = chunk_record.metadata if chunk_record and isinstance(getattr(chunk_record, "metadata", None), Mapping) else {}
+    ingestion_meta = (
+        upload_record.ingestion_metadata
+        if isinstance(getattr(upload_record, "ingestion_metadata", None), Mapping)
+        else {}
+    )
+    dataset_meta = ingestion_meta.get("dataset") if isinstance(ingestion_meta, Mapping) else None
+    dataset_enabled = bool(isinstance(dataset_meta, Mapping) and dataset_meta.get("enabled"))
+    upload_has_tables = bool(upload_record.tables.exists())
+
+    intent = _coerce_str(arguments.get("intent") or "auto").strip().lower() or "auto"
+    raw_text_args = arguments.get("text") if isinstance(arguments.get("text"), Mapping) else {}
+    raw_table_args = arguments.get("table") if isinstance(arguments.get("table"), Mapping) else {}
+    text_args: dict[str, object] = dict(raw_text_args) if isinstance(raw_text_args, Mapping) else {}
+    table_args: dict[str, object] = dict(raw_table_args) if isinstance(raw_table_args, Mapping) else {}
+
+    # Backwards-compatible: accept legacy flat args when models omit nested objects.
+    for key in ("page", "offset", "mode", "token_budget", "chunk_neighbor"):
+        if key in arguments and key not in text_args:
+            text_args[key] = arguments.get(key)
+    for key in (
+        "sheet_name",
+        "sheet_index",
+        "table_order_index",
+        "match_column",
+        "match_value",
+        "match_values",
+        "query",
+        "filters",
+        "select_columns",
+        "columns",
+        "sort_by",
+        "sort_direction",
+        "limit",
+        "offset",
+        "aggregate",
+        "mode",
+        "value_column",
+        "max_rows",
+    ):
+        if key in arguments and key not in table_args:
+            table_args[key] = arguments.get(key)
+
+    is_table_chunk = bool(chunk_meta.get("is_table_chunk"))
+    is_dataset_card = bool(
+        chunk_meta.get("is_dataset_card")
+        or chunk_meta.get("strategy") == "dataset_card"
+        or chunk_meta.get("dataset_mode")
+    )
+
+    def _has_table_signal(payload: Mapping[str, object]) -> bool:
+        for key in (
+            "match_column",
+            "match_value",
+            "match_values",
+            "filters",
+            "query",
+            "select_columns",
+            "columns",
+            "sort_by",
+            "aggregate",
+            "sheet_name",
+            "sheet_index",
+            "table_order_index",
+            "value_column",
+        ):
+            value = payload.get(key)
+            if value is None:
+                continue
+            if isinstance(value, str) and not value.strip():
+                continue
+            if isinstance(value, (list, tuple, set, dict)) and not value:
+                continue
+            return True
+        return False
+
+    wants_table = False
+    wants_text = False
+    if intent == "table":
+        wants_table = True
+    elif intent == "text":
+        wants_text = True
+
+    if is_table_chunk or is_dataset_card:
+        wants_table = True
+
+    if _has_table_signal(table_args):
+        wants_table = True
+
+    if not wants_text and not wants_table:
+        # Auto routing: prefer tabular engines when the upload is tabular.
+        wants_table = upload_has_tables or dataset_enabled
+        wants_text = not wants_table
+
+    def _wrap(engine: str, result: Mapping[str, object]) -> dict[str, object]:
+        payload = dict(result) if isinstance(result, Mapping) else {"result": result}
+        payload["tool"] = "read_knowledge"
+        payload["engine"] = engine
+        payload["engine_tool"] = _coerce_str(result.get("tool") if isinstance(result, Mapping) else engine).strip()
+        return payload
+
+    if wants_table and not wants_text:
+        # Dataset mode can answer lookups/filters/sorts precisely across all rows.
+        if dataset_enabled or is_dataset_card:
+            dataset_args: dict[str, object] = {"document_id": str(upload_record.id)}
+            sheet_name = _coerce_str(table_args.get("sheet_name")).strip()
+            if sheet_name:
+                dataset_args["sheet_name"] = sheet_name
+            try:
+                sheet_index = int(table_args.get("sheet_index")) if table_args.get("sheet_index") is not None else None
+            except (TypeError, ValueError):
+                sheet_index = None
+            if sheet_index:
+                dataset_args["sheet_index"] = sheet_index
+
+            filters = table_args.get("filters")
+            if isinstance(filters, list) and filters:
+                dataset_args["filters"] = filters
+            else:
+                match_column = _coerce_str(table_args.get("match_column")).strip()
+                match_value = _coerce_str(table_args.get("match_value")).strip()
+                match_values = table_args.get("match_values") if isinstance(table_args.get("match_values"), list) else []
+                if match_column and match_values:
+                    dataset_args["filters"] = [
+                        {
+                            "column": match_column,
+                            "op": "in",
+                            "values": [_coerce_str(v).strip() for v in match_values if _coerce_str(v).strip()],
+                        }
+                    ]
+                elif match_column and match_value:
+                    dataset_args["filters"] = [
+                        {
+                            "column": match_column,
+                            "op": "eq",
+                            "value": match_value,
+                            "case_sensitive": False,
+                        }
+                    ]
+
+            query = _coerce_str(table_args.get("query")).strip()
+            if query:
+                dataset_args["query"] = query
+
+            select_columns = table_args.get("select_columns")
+            if not isinstance(select_columns, list) or not select_columns:
+                select_columns = table_args.get("columns")
+            if isinstance(select_columns, list) and select_columns:
+                dataset_args["select_columns"] = [_coerce_str(c).strip() for c in select_columns if _coerce_str(c).strip()]
+
+            sort_by = _coerce_str(table_args.get("sort_by")).strip()
+            if sort_by:
+                dataset_args["sort_by"] = sort_by
+            sort_direction = _coerce_str(table_args.get("sort_direction")).strip().lower()
+            if sort_direction in {"asc", "desc"}:
+                dataset_args["sort_direction"] = sort_direction
+            try:
+                limit = int(table_args.get("limit")) if table_args.get("limit") is not None else None
+            except (TypeError, ValueError):
+                limit = None
+            if limit:
+                dataset_args["limit"] = limit
+            try:
+                offset = int(table_args.get("offset")) if table_args.get("offset") is not None else None
+            except (TypeError, ValueError):
+                offset = None
+            if offset is not None:
+                dataset_args["offset"] = max(0, offset)
+
+            aggregate = table_args.get("aggregate") if isinstance(table_args.get("aggregate"), Mapping) else None
+            if aggregate:
+                dataset_args["aggregate"] = dict(aggregate)
+            else:
+                mode = _coerce_str(table_args.get("mode")).strip().lower()
+                value_column = _coerce_str(table_args.get("value_column")).strip()
+                if mode == "column_sum" and value_column:
+                    dataset_args["aggregate"] = {"operation": "sum", "column": value_column}
+
+            result = _dataset_query_handler(dataset_args, conversation=conversation, context=context)
+            return _wrap("dataset_query", result)
+
+        # Non-dataset tables fall back to the preview/aggregate engine.
+        table_agg_args: dict[str, object] = {"document_id": str(upload_record.id)}
+        for key in ("query", "match_column", "match_value", "match_values", "sheet_name", "table_order_index", "value_column"):
+            value = table_args.get(key)
+            if value is None:
+                continue
+            if isinstance(value, str) and not value.strip():
+                continue
+            if isinstance(value, (list, tuple, set, dict)) and not value:
+                continue
+            table_agg_args[key] = value
+
+        columns = table_args.get("select_columns")
+        if not isinstance(columns, list) or not columns:
+            columns = table_args.get("columns")
+        if isinstance(columns, list) and columns:
+            table_agg_args["columns"] = [_coerce_str(c).strip() for c in columns if _coerce_str(c).strip()]
+
+        aggregate = table_args.get("aggregate") if isinstance(table_args.get("aggregate"), Mapping) else None
+        if aggregate and _coerce_str(aggregate.get("operation")).strip().lower() == "sum":
+            col = _coerce_str(aggregate.get("column")).strip()
+            if col:
+                table_agg_args["mode"] = "column_sum"
+                table_agg_args["value_column"] = col
+        else:
+            mode = _coerce_str(table_args.get("mode")).strip().lower()
+            if mode in {"row_total", "column_sum"}:
+                table_agg_args["mode"] = mode
+
+        try:
+            max_rows = int(table_args.get("max_rows")) if table_args.get("max_rows") is not None else None
+        except (TypeError, ValueError):
+            max_rows = None
+        if not max_rows:
+            try:
+                max_rows = int(table_args.get("limit")) if table_args.get("limit") is not None else None
+            except (TypeError, ValueError):
+                max_rows = None
+        if max_rows:
+            table_agg_args["max_rows"] = max_rows
+
+        result = _table_aggregate_handler(table_agg_args, conversation=conversation, context=context)
+        return _wrap("table_aggregate", result)
+
+    # Text excerpt path (default).
+    read_id = str(chunk_record.id if chunk_record else upload_record.id)
+    read_args: dict[str, object] = {"document_id": read_id}
+    for key in ("page", "offset", "mode", "token_budget", "chunk_neighbor"):
+        value = text_args.get(key)
+        if value is None:
+            continue
+        if isinstance(value, str) and not value.strip():
+            continue
+        read_args[key] = value
+    result = _read_document_handler(read_args, conversation=conversation, context=context)
+    return _wrap("read_document", result)
 
 
 def _action_tool_result(action: ActionType, payload: Mapping[str, object]) -> Mapping[str, object]:
@@ -4139,6 +4396,7 @@ def _enforce_single_chunk_read(context: ToolExecutionContext) -> None:
 
 _TOOL_HANDLERS: dict[str, ToolHandler] = {
     "search_knowledge": _search_knowledge_handler,
+    "read_knowledge": _read_knowledge_handler,
     "read_document": _read_document_handler,
     "list_tables": _list_tables_handler,
     "table_aggregate": _table_aggregate_handler,

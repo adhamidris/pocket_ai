@@ -216,6 +216,42 @@ class McpOrchestratorService:
                 if query:
                     meta["query"] = query[:200]
                 return {"code": "searching", "label": label, "meta": meta, "compat_code": "searching_knowledge"}
+
+            if tool_name == "read_knowledge":
+                raw_id = arguments.get("document_id")
+                doc_id = str(raw_id).strip() if raw_id is not None else ""
+                short_id = f"{doc_id[:8]}…" if doc_id else ""
+
+                intent_hint = str(arguments.get("intent") or "").strip().lower()
+                table_args = arguments.get("table") if isinstance(arguments.get("table"), Mapping) else {}
+                table_signal = intent_hint == "table"
+
+                if not table_signal and isinstance(table_args, Mapping):
+                    for key in (
+                        "match_column",
+                        "match_value",
+                        "match_values",
+                        "filters",
+                        "query",
+                        "select_columns",
+                        "sort_by",
+                        "aggregate",
+                    ):
+                        value = table_args.get(key)
+                        if value is None:
+                            continue
+                        if isinstance(value, str) and not value.strip():
+                            continue
+                        if isinstance(value, (list, tuple, set, dict)) and not value:
+                            continue
+                        table_signal = True
+                        break
+
+                base_label = "Reading table data" if table_signal else "Reading document"
+                label = base_label if table_signal or not short_id else f"Reading: {short_id}"
+                meta = {"document_id": doc_id, "intent": "table" if table_signal else "text"} if doc_id else {}
+                return {"code": "reading", "label": label, "meta": meta, "compat_code": "reading_document"}
+
             if tool_name == "read_document":
                 raw_id = arguments.get("document_id")
                 doc_id = str(raw_id).strip() if raw_id is not None else ""
@@ -224,18 +260,21 @@ class McpOrchestratorService:
                 label = f"Reading: {short_id}" if short_id else base_label
                 meta = {"document_id": doc_id} if doc_id else {}
                 return {"code": "reading", "label": label, "meta": meta, "compat_code": "reading_document"}
+
             if tool_name == "table_aggregate":
                 raw_id = arguments.get("document_id")
                 doc_id = str(raw_id).strip() if raw_id is not None else ""
                 label = "Reading table data"
                 meta = {"document_id": doc_id} if doc_id else {}
                 return {"code": "reading", "label": label, "meta": meta, "compat_code": "reading_document"}
+
             if tool_name == "dataset_query":
                 raw_id = arguments.get("document_id")
                 doc_id = str(raw_id).strip() if raw_id is not None else ""
                 label = "Querying dataset"
                 meta = {"document_id": doc_id} if doc_id else {}
                 return {"code": "reading", "label": label, "meta": meta, "compat_code": "reading_document"}
+
             return None
 
         def _emit_phase_start(phase: Mapping[str, object] | None) -> dict[str, object] | None:
@@ -660,41 +699,43 @@ class McpOrchestratorService:
                                     tool_context.table_column_filters.pop(document_id_hint, None)
                         if tool_name == "search_knowledge" and not duplicate_result:
                             self._record_search_history(tool_context, arguments, tool_result)
-                        tool_context.add_tool_trace(
-                            {
-                                "tool": tool_name,
-                                "arguments": arguments,
-                                "result_keys": sorted(tool_result.keys()),
-                                "status": tool_result.get("status"),
-                                "error_code": tool_result.get("error_code"),
-                                "hint": tool_result.get("hint"),
-                                "mode": tool_result.get("mode"),
-                                "page": tool_result.get("page"),
-                                "token_budget": tool_result.get("token_budget"),
-                                "throttle_notice": bool(tool_result.get("throttle_notice")),
-                                "duration_ms": int(call_duration_ms) if call_duration_ms is not None else 0,
-                                "origin": call_origin,
-                                "cache_hit": cache_hit,
-                                "duplicate_short_circuit": bool(duplicate_result),
-                            }
-                        )
-                        if self._is_knowledge_tool(tool_name):
-                            self._record_knowledge_outputs(tool_context, tool_result)
-                            if tool_name == "read_document":
-                                snippets = tool_result.get("snippets") if isinstance(tool_result, Mapping) else None
-                                if isinstance(snippets, list) and snippets:
-                                    first = snippets[0]
-                                    if isinstance(first, Mapping):
-                                        label_source = (
-                                            first.get("public_label")
-                                            or first.get("title")
-                                            or first.get("source")
-                                        )
-                                        if isinstance(label_source, str) and label_source.strip():
-                                            _status_event(
-                                                "reading_document",
-                                                f"Reading: {label_source.strip()[:80]}",
+                            tool_context.add_tool_trace(
+                                {
+                                    "tool": tool_name,
+                                    "arguments": arguments,
+                                    "result_keys": sorted(tool_result.keys()),
+                                    "status": tool_result.get("status"),
+                                    "error_code": tool_result.get("error_code"),
+                                    "hint": tool_result.get("hint"),
+                                    "engine": tool_result.get("engine"),
+                                    "engine_tool": tool_result.get("engine_tool"),
+                                    "mode": tool_result.get("mode"),
+                                    "page": tool_result.get("page"),
+                                    "token_budget": tool_result.get("token_budget"),
+                                    "throttle_notice": bool(tool_result.get("throttle_notice")),
+                                    "duration_ms": int(call_duration_ms) if call_duration_ms is not None else 0,
+                                    "origin": call_origin,
+                                    "cache_hit": cache_hit,
+                                    "duplicate_short_circuit": bool(duplicate_result),
+                                }
+                            )
+                            if self._is_knowledge_tool(tool_name):
+                                self._record_knowledge_outputs(tool_context, tool_result)
+                                if tool_name in {"read_document", "read_knowledge"}:
+                                    snippets = tool_result.get("snippets") if isinstance(tool_result, Mapping) else None
+                                    if isinstance(snippets, list) and snippets:
+                                        first = snippets[0]
+                                        if isinstance(first, Mapping):
+                                            label_source = (
+                                                first.get("public_label")
+                                                or first.get("title")
+                                                or first.get("source")
                                             )
+                                            if isinstance(label_source, str) and label_source.strip():
+                                                _status_event(
+                                                    "reading_document",
+                                                    f"Reading: {label_source.strip()[:80]}",
+                                                )
                         if knowledge_phase:
                             _emit_phase_complete(knowledge_phase, snippet_total=_snippet_count(tool_result))
                         limits = self._prompt_compaction_limits()
@@ -711,21 +752,27 @@ class McpOrchestratorService:
                                 "result": self._clip_text(tool_result, 2000),
                                 "prompt_compact": True,
                             }
-                        transcript.append(
-                            {
-                                "role": "tool",
-                                "tool_call_id": tool_call.get("id"),
-                                "name": tool_name,
-                                "content": json.dumps(prompt_tool_result, ensure_ascii=False),
-                            }
-                        )
-                        if tool_name == "table_aggregate":
-                            document_id = str(arguments.get("document_id") or tool_result.get("document_id") or "").strip()
-                            if document_id:
-                                self._satisfy_transcript_snippets(transcript, document_id, tool_context)
+                            transcript.append(
+                                {
+                                    "role": "tool",
+                                    "tool_call_id": tool_call.get("id"),
+                                    "name": tool_name,
+                                    "content": json.dumps(prompt_tool_result, ensure_ascii=False),
+                                }
+                            )
+                            if tool_name == "table_aggregate":
+                                document_id = str(arguments.get("document_id") or tool_result.get("document_id") or "").strip()
+                                if document_id:
+                                    self._satisfy_transcript_snippets(transcript, document_id, tool_context)
+                            elif tool_name == "read_knowledge" and isinstance(tool_result, Mapping):
+                                engine_tool = str(tool_result.get("engine_tool") or tool_result.get("engine") or "").strip()
+                                if engine_tool in {"table_aggregate", "dataset_query"}:
+                                    document_id = str(tool_result.get("document_id") or "").strip()
+                                    if document_id:
+                                        self._satisfy_transcript_snippets(transcript, document_id, tool_context)
 
-                    # Ask the model again with tools enabled to see if more tool_calls are needed.
-                    # Trim tool-loop prompts so each call focuses on the newest inputs.
+                        # Ask the model again with tools enabled to see if more tool_calls are needed.
+                        # Trim tool-loop prompts so each call focuses on the newest inputs.
                     loop_messages = prompts.limit_messages_for_stage(transcript, stage="tool_iteration")
                     reminder = {
                         "role": "system",
@@ -1533,7 +1580,7 @@ class McpOrchestratorService:
 
     @staticmethod
     def _is_knowledge_tool(name: str) -> bool:
-        return name in {"search_knowledge", "read_document", "table_aggregate", "dataset_query"}
+        return name in {"search_knowledge", "read_knowledge", "read_document", "table_aggregate", "dataset_query"}
 
     @staticmethod
     def _tool_schema_name(tool_def: Mapping[str, object]) -> str | None:
@@ -2001,7 +2048,7 @@ class McpOrchestratorService:
             "snippet_count": len(snippets),
             "read_required": read_required,
             "snippet_ids": snippet_ids,
-            "hint": hint_text or "Existing snippets already require read_document; use the provided read_hint.",
+            "hint": hint_text or "Existing snippets already require read_knowledge; use the provided read_hint.",
         }
         for query_value in queries_to_record:
             history.append(
@@ -2037,7 +2084,8 @@ class McpOrchestratorService:
             if not entry.get("snippet_count"):
                 continue
             snippet_ids = entry.get("snippet_ids") or []
-            hint = entry.get("hint") or "Use read_document with the existing read_hint from the earlier search."
+            hint = entry.get("hint") or "Use read_knowledge with the existing read_hint from the earlier search."
+            hint = hint.replace("read_document", "read_knowledge")
             structured_log(
                 "mcp",
                 "search.duplicate_short_circuit",
@@ -2340,10 +2388,40 @@ class McpOrchestratorService:
             tool_name = str(entry.get("tool") or "tool")
             status = str(entry.get("status") or entry.get("error_code") or "").strip()
             args = entry.get("arguments") if isinstance(entry.get("arguments"), Mapping) else {}
+
             if tool_name == "search_knowledge":
                 query = args.get("query") or args.get("queries") or ""
                 lines.append(f"- search_knowledge(query={_clean_list(query)}) -> {status or 'done'}")
-            elif tool_name == "table_aggregate":
+                continue
+
+            if tool_name == "read_knowledge":
+                doc_id = args.get("document_id") or ""
+                intent = str(args.get("intent") or "").strip().lower()
+                table_args = args.get("table") if isinstance(args.get("table"), Mapping) else {}
+                text_args = args.get("text") if isinstance(args.get("text"), Mapping) else {}
+                if intent == "table" or (isinstance(table_args, Mapping) and table_args):
+                    match_col = table_args.get("match_column") or ""
+                    match_vals = table_args.get("match_values") or table_args.get("match_value") or table_args.get("query") or ""
+                    sheet_name = table_args.get("sheet_name") or ""
+                    lines.append(
+                        "- read_knowledge(table "
+                        f"doc={_clean(doc_id, 40)}, "
+                        f"sheet={_clean(sheet_name, 40)}, "
+                        f"match_column={_clean(match_col, 60)}, "
+                        f"match_values={_clean_list(match_vals)}"
+                        f") -> {status or 'done'}"
+                    )
+                else:
+                    page = text_args.get("page") or ""
+                    mode = text_args.get("mode") or ""
+                    lines.append(
+                        "- read_knowledge(text "
+                        f"doc={_clean(doc_id, 40)}, page={_clean(page, 20)}, mode={_clean(mode, 20)}"
+                        f") -> {status or 'done'}"
+                    )
+                continue
+
+            if tool_name == "table_aggregate":
                 doc_id = args.get("document_id") or ""
                 match_col = args.get("match_column") or ""
                 match_vals = args.get("match_values") or args.get("match_value") or args.get("query") or ""
@@ -2356,15 +2434,29 @@ class McpOrchestratorService:
                     f"columns={_clean_list(columns)}"
                     f") -> {status or 'done'}"
                 )
-            elif tool_name == "read_document":
+                continue
+
+            if tool_name == "dataset_query":
+                doc_id = args.get("document_id") or ""
+                sheet_name = args.get("sheet_name") or ""
+                filters = args.get("filters") or []
+                lines.append(
+                    "- dataset_query("
+                    f"doc={_clean(doc_id, 40)}, sheet={_clean(sheet_name, 40)}, filters={_clean_list(filters, limit_items=2, per_item=80)}"
+                    f") -> {status or 'done'}"
+                )
+                continue
+
+            if tool_name == "read_document":
                 doc_id = args.get("document_id") or ""
                 page = args.get("page") or ""
                 mode = args.get("mode") or ""
                 lines.append(
                     f"- read_document(doc={_clean(doc_id, 40)}, page={_clean(page, 20)}, mode={_clean(mode, 20)}) -> {status or 'done'}"
                 )
-            else:
-                lines.append(f"- {tool_name} -> {status or 'done'}")
+                continue
+
+            lines.append(f"- {tool_name} -> {status or 'done'}")
 
         return "\n".join(lines)
 
@@ -2772,6 +2864,156 @@ class McpOrchestratorService:
                         )
                     )
             compact["snippets"] = snippets_out
+            compact["prompt_compact"] = True
+            return compact
+
+        if normalized_name == "read_knowledge":
+            for key in ("engine", "engine_tool"):
+                if key in payload and payload.get(key) not in {None, ""}:
+                    compact[key] = payload.get(key)
+            engine_tool = str(payload.get("engine_tool") or payload.get("engine") or "").strip()
+
+            if engine_tool == "read_document":
+                for key in ("document_id", "page", "mode", "mode_downgraded", "token_budget", "throttle_notice"):
+                    if key in payload and payload.get(key) not in {None, ""}:
+                        compact[key] = payload.get(key)
+                raw_snippets = payload.get("snippets")
+                snippets_out: list[dict[str, object]] = []
+                if isinstance(raw_snippets, list):
+                    for entry in raw_snippets[: max(1, max_snippets)]:
+                        if not isinstance(entry, Mapping):
+                            continue
+                        snippets_out.append(
+                            self._compact_snippet_for_prompt(
+                                entry,
+                                include_content=True,
+                                content_chars=snippet_content_chars,
+                            )
+                        )
+                compact["snippets"] = snippets_out
+                compact["prompt_compact"] = True
+                return compact
+
+            if engine_tool == "table_aggregate":
+                for key in (
+                    "document_id",
+                    "mode",
+                    "query",
+                    "match_column",
+                    "match_value",
+                    "match_values",
+                    "value_column",
+                    "sheet_name",
+                    "columns",
+                    "match_count",
+                    "total",
+                    "display_total",
+                    "throttle_notice",
+                ):
+                    if key not in payload:
+                        continue
+                    value = payload.get(key)
+                    if value is None:
+                        continue
+                    if isinstance(value, str) and not value.strip():
+                        continue
+                    if isinstance(value, (list, tuple, set, dict)) and not value:
+                        continue
+                    compact[key] = value
+                raw_rows = payload.get("rows")
+                rows_out: list[dict[str, object]] = []
+                if isinstance(raw_rows, list):
+                    for row in raw_rows[: max(1, max_rows)]:
+                        if not isinstance(row, Mapping):
+                            continue
+                        row_payload: dict[str, object] = {}
+                        for key in (
+                            "row_index",
+                            "table_order_index",
+                            "sheet_name",
+                            "row_total",
+                            "row_total_display",
+                            "contribution_count",
+                        ):
+                            if key in row and row.get(key) not in {None, ""}:
+                                row_payload[key] = row.get(key)
+                        cells = row.get("cells")
+                        if isinstance(cells, list) and cells:
+                            row_payload["cells"] = [
+                                {"column": cell.get("column"), "value": cell.get("value")}
+                                for cell in cells[:8]
+                                if isinstance(cell, Mapping)
+                            ]
+                        contributions = row.get("contributions")
+                        if isinstance(contributions, list) and contributions:
+                            row_payload["contributions"] = [
+                                {"column": entry.get("column"), "display": entry.get("display"), "value": entry.get("value")}
+                                for entry in contributions[: max(1, max_contributions)]
+                                if isinstance(entry, Mapping)
+                            ]
+                        rows_out.append(row_payload)
+                compact["rows"] = rows_out
+                compact["prompt_compact"] = True
+                return compact
+
+            if engine_tool == "dataset_query":
+                for key in (
+                    "document_id",
+                    "sheet_name",
+                    "sheet_index",
+                    "query",
+                    "filters",
+                    "select_columns",
+                    "sort_by",
+                    "sort_direction",
+                    "offset",
+                    "limit",
+                    "match_count",
+                    "total_matches",
+                    "aggregate_result",
+                    "throttle_notice",
+                ):
+                    if key not in payload:
+                        continue
+                    value = payload.get(key)
+                    if value is None:
+                        continue
+                    if isinstance(value, str) and not value.strip():
+                        continue
+                    if isinstance(value, (list, tuple, set, dict)) and not value:
+                        continue
+                    compact[key] = value
+                if "dataset" in payload and isinstance(payload.get("dataset"), Mapping):
+                    compact["dataset"] = payload.get("dataset")
+                raw_rows = payload.get("rows")
+                rows_out: list[dict[str, object]] = []
+                if isinstance(raw_rows, list):
+                    for row in raw_rows[: max(1, max_rows)]:
+                        if not isinstance(row, Mapping):
+                            continue
+                        row_payload: dict[str, object] = {}
+                        if "row_index" in row and row.get("row_index") not in {None, ""}:
+                            row_payload["row_index"] = row.get("row_index")
+                        cells = row.get("cells")
+                        if isinstance(cells, list) and cells:
+                            row_payload["cells"] = [
+                                {"column": cell.get("column"), "value": cell.get("value")}
+                                for cell in cells[:12]
+                                if isinstance(cell, Mapping)
+                            ]
+                        if row_payload:
+                            rows_out.append(row_payload)
+                compact["rows"] = rows_out
+                compact["prompt_compact"] = True
+                return compact
+
+            raw_snippets = payload.get("snippets")
+            if isinstance(raw_snippets, list) and raw_snippets:
+                compact["snippets"] = [
+                    self._compact_snippet_for_prompt(entry, include_content=True, content_chars=snippet_content_chars)
+                    for entry in raw_snippets[: max(1, max_snippets)]
+                    if isinstance(entry, Mapping)
+                ]
             compact["prompt_compact"] = True
             return compact
 
