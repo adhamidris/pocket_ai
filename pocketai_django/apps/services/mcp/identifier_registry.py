@@ -23,6 +23,7 @@ from apps.accounts.models import (
 )
 from apps.conversations.models import Conversation, ConversationSender, IdentifierEvent, ConversationMessage
 from apps.services.mcp.identifier_detection import ValueAwareIdentifierDetector
+from apps.services.dataset_cards import refresh_dataset_card_chunk
 
 
 class IdentifierRegistryError(ValueError):
@@ -226,9 +227,13 @@ class IdentifierGuardrail:
             business_profile=self.business_profile,
             status=IdentifierColumnStatus.ACTIVE,
             identifier__status=IdentifierSchemaStatus.ACTIVE,
-            identifier__is_required=True,
         )
         for mapping in qs:
+            is_required = mapping.is_required
+            if is_required is None:
+                is_required = bool(getattr(mapping.identifier, "is_required", False))
+            if not is_required:
+                continue
             key = mapping.identifier.key
             upload_id = str(mapping.upload_id) if mapping.upload_id else "*"
             bucket = mapping_index.setdefault(upload_id, set())
@@ -417,6 +422,8 @@ class IdentifierRegistryService:
                     "status": col.status,
                     "source": col.source,
                     "confidence": col.confidence,
+                    "is_required": col.is_required if col.is_required is not None else schema.is_required,
+                    "is_required_override": col.is_required,
                     "metadata": col.metadata or {},
                     "created_at": col.created_at.isoformat(),
                     "updated_at": col.updated_at.isoformat(),
@@ -483,6 +490,21 @@ class IdentifierRegistryService:
             updated_at=timezone.now(),
         )
         cls._remember_active_mappings(schema)
+        try:
+            upload_ids = list(
+                schema.column_mappings.exclude(upload__isnull=True)
+                .values_list("upload_id", flat=True)
+                .distinct()
+            )
+            if upload_ids:
+                for upload in KnowledgeUpload.objects.filter(
+                    business_profile=schema.business_profile,
+                    id__in=upload_ids,
+                ):
+                    refresh_dataset_card_chunk(upload=upload)
+        except Exception:
+            # Dataset-card refresh is best-effort and should not block approvals.
+            pass
         return schema
 
     @classmethod
@@ -497,6 +519,21 @@ class IdentifierRegistryService:
             status=IdentifierColumnStatus.DISABLED,
             updated_at=timezone.now(),
         )
+        try:
+            upload_ids = list(
+                schema.column_mappings.exclude(upload__isnull=True)
+                .values_list("upload_id", flat=True)
+                .distinct()
+            )
+            if upload_ids:
+                for upload in KnowledgeUpload.objects.filter(
+                    business_profile=schema.business_profile,
+                    id__in=upload_ids,
+                ):
+                    refresh_dataset_card_chunk(upload=upload)
+        except Exception:
+            # Dataset-card refresh is best-effort and should not block rejects.
+            pass
         return schema
 
     @classmethod
@@ -602,6 +639,11 @@ class IdentifierRegistryService:
             created_or_updated.append(schema)
 
         if upload and proposals:
+            try:
+                refresh_dataset_card_chunk(upload=upload)
+            except Exception:
+                # Dataset-card refresh is best-effort and should not block proposals.
+                pass
             detection_payload = [
                 {
                     "key": proposal.get("key"),
@@ -662,6 +704,15 @@ class IdentifierRegistryService:
             if source_value not in IdentifierSchemaSource.values:
                 raise IdentifierRegistryError("Invalid column source; must be user|ai.")
             sheet_name = str(column.get("sheet_name") or column.get("sheetName") or "").strip()
+            is_required_override: bool | None = None
+            if "is_required" in column or "isRequired" in column:
+                raw_required = column.get("is_required", column.get("isRequired"))
+                if raw_required is None:
+                    is_required_override = None
+                elif isinstance(raw_required, str):
+                    is_required_override = raw_required.strip().lower() not in {"false", "0", "no", "off"}
+                else:
+                    is_required_override = bool(raw_required)
             mapping, _created = IdentifierColumnMapping.objects.update_or_create(
                 business_profile=schema.business_profile,
                 identifier=schema,
@@ -673,11 +724,18 @@ class IdentifierRegistryService:
                     "status": status_value,
                     "source": source_value,
                     "confidence": column.get("confidence"),
+                    "is_required": is_required_override,
                     "metadata": column.get("metadata") or {},
                 },
             )
             if mapping.status == IdentifierColumnStatus.ACTIVE:
                 cls._remember_mapping(mapping=mapping, proposal=None)
+        for upload in uploads.values():
+            try:
+                refresh_dataset_card_chunk(upload=upload)
+            except Exception:
+                # Dataset-card refresh is best-effort and should not block mapping writes.
+                continue
         # Refresh columns for serialization
         schema.refresh_from_db()
         schema.column_mappings.all()  # prime cache

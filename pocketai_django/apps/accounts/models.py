@@ -1006,6 +1006,15 @@ class IdentifierColumnMapping(models.Model):
         default=IdentifierSchemaSource.USER,
     )
     confidence = models.FloatField(null=True, blank=True)
+    is_required = models.BooleanField(
+        null=True,
+        blank=True,
+        default=None,
+        help_text=(
+            "Override for identifier.is_required. When true, queries for this upload must be scoped by this "
+            "identifier; when false, it is optional for this upload."
+        ),
+    )
     metadata = models.JSONField(default=dict, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
