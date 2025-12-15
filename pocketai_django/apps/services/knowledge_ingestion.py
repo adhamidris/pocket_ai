@@ -3580,7 +3580,7 @@ class KnowledgeIngestionService:
             "text": text,
             "metadata": {
                 "strategy": "dataset_card",
-                "is_table_chunk": True,
+                "is_table_chunk": False,
                 "is_dataset_card": True,
                 "dataset_mode": True,
                 "visibility": getattr(upload, "visibility", KnowledgeVisibility.PRIVATE),
