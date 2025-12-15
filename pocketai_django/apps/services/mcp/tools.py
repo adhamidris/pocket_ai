@@ -4040,12 +4040,147 @@ def _read_knowledge_handler(
         wants_table = upload_has_tables or dataset_enabled
         wants_text = not wants_table
 
-    def _wrap(engine: str, result: Mapping[str, object]) -> dict[str, object]:
-        payload = dict(result) if isinstance(result, Mapping) else {"result": result}
-        payload["tool"] = "read_knowledge"
-        payload["engine"] = engine
-        payload["engine_tool"] = _coerce_str(result.get("tool") if isinstance(result, Mapping) else engine).strip()
-        return payload
+    def _envelope(
+        *,
+        engine: str,
+        engine_tool: str,
+        result: Mapping[str, object],
+        resolved_upload_id: str,
+        requested_document_id: str,
+        resolved_chunk_id: str | None,
+        resolved_document_id_used: str,
+    ) -> dict[str, object]:
+        status_value = str(result.get("status") or "").strip() if isinstance(result, Mapping) else ""
+        status_value = status_value or "ok"
+
+        throttle_notice = result.get("throttle_notice") if isinstance(result.get("throttle_notice"), Mapping) else None
+        truncated_flag = bool(result.get("truncated")) if isinstance(result.get("truncated"), bool) else False
+        truncated_flag = bool(truncated_flag or throttle_notice)
+
+        evidence: dict[str, object] = {"snippets": [], "rows": []}
+        total_matches: int | None = None
+
+        diagnostics: dict[str, object] = {
+            "requested_document_id": requested_document_id,
+            "resolved_upload_id": resolved_upload_id,
+            "resolved_chunk_id": resolved_chunk_id,
+            "resolved_document_id_used": resolved_document_id_used,
+            "engine_tool": engine_tool,
+        }
+
+        identifier_gate = result.get("identifier_gate") if isinstance(result.get("identifier_gate"), Mapping) else None
+        if identifier_gate:
+            diagnostics["identifier_gate"] = identifier_gate
+        required_identifiers = result.get("required_identifiers") if isinstance(result.get("required_identifiers"), list) else None
+        if required_identifiers:
+            diagnostics["required_identifiers"] = [str(item) for item in required_identifiers[:12] if str(item).strip()]
+        provided_identifiers = result.get("provided_identifiers") if isinstance(result.get("provided_identifiers"), list) else None
+        if provided_identifiers:
+            diagnostics["provided_identifiers"] = [str(item) for item in provided_identifiers[:12] if str(item).strip()]
+
+        if engine == "text_page":
+            snippets = result.get("snippets") if isinstance(result.get("snippets"), list) else []
+            evidence["snippets"] = snippets
+            total_matches = len(snippets)
+            for key in ("document_id", "page", "mode", "mode_downgraded", "token_budget", "chunk_neighbor"):
+                value = result.get(key)
+                if value not in (None, "", []):
+                    diagnostics[key] = value
+            reads = result.get("knowledge_reads") if isinstance(result.get("knowledge_reads"), list) else None
+            if reads:
+                diagnostics["knowledge_reads"] = reads
+            warnings = result.get("ingestion_warnings") if isinstance(result.get("ingestion_warnings"), list) else None
+            if warnings:
+                diagnostics["ingestion_warnings"] = warnings
+        elif engine in {"table_preview", "db_preview"}:
+            rows = result.get("rows") if isinstance(result.get("rows"), list) else []
+            evidence["rows"] = rows
+            original_count = result.get("original_match_count")
+            if isinstance(original_count, int):
+                total_matches = original_count
+            elif isinstance(result.get("total_matches"), int):
+                total_matches = int(result.get("total_matches"))
+            elif isinstance(result.get("match_count"), int):
+                total_matches = int(result.get("match_count"))
+            else:
+                total_matches = len(rows)
+            for key in (
+                "mode",
+                "query",
+                "match_column",
+                "match_value",
+                "match_values",
+                "value_column",
+                "sheet_name",
+                "columns",
+                "evaluated_rows",
+                "row_limit",
+                "match_count",
+                "total",
+                "display_total",
+            ):
+                value = result.get(key)
+                if value not in (None, "", []):
+                    diagnostics[key] = value
+            if "total" in result and result.get("total") is not None:
+                evidence["total"] = result.get("total")
+            if "display_total" in result and result.get("display_total") not in (None, ""):
+                evidence["display_total"] = result.get("display_total")
+        elif engine == "file_dataset":
+            rows = result.get("rows") if isinstance(result.get("rows"), list) else []
+            evidence["rows"] = rows
+            if isinstance(result.get("total_matches"), int):
+                total_matches = int(result.get("total_matches"))
+            elif isinstance(result.get("match_count"), int):
+                total_matches = int(result.get("match_count"))
+            else:
+                total_matches = len(rows)
+            aggregate_result = result.get("aggregate_result") if isinstance(result.get("aggregate_result"), Mapping) else None
+            if aggregate_result:
+                evidence["aggregate_result"] = dict(aggregate_result)
+            for key in (
+                "sheet_name",
+                "sheet_index",
+                "query",
+                "filters",
+                "select_columns",
+                "sort_by",
+                "sort_direction",
+                "offset",
+                "limit",
+                "match_count",
+                "total_matches",
+                "scanned_rows",
+                "duration_ms",
+                "dataset",
+            ):
+                value = result.get(key)
+                if value not in (None, "", []):
+                    diagnostics[key] = value
+
+        envelope: dict[str, object] = {
+            "tool": "read_knowledge",
+            "status": status_value,
+            "engine": engine,
+            "document_id": resolved_upload_id,
+            "evidence": evidence,
+            "total_matches": total_matches,
+            "truncated": truncated_flag,
+            "throttle_notice": throttle_notice,
+            "diagnostics": diagnostics,
+        }
+
+        for key in ("error", "error_code", "hint"):
+            value = result.get(key)
+            if value is None:
+                continue
+            if isinstance(value, str) and not value.strip():
+                continue
+            if isinstance(value, (list, tuple, set, dict)) and not value:
+                continue
+            envelope[key] = value
+
+        return envelope
 
     if wants_table and not wants_text:
         # Dataset mode can answer lookups/filters/sorts precisely across all rows.
@@ -4125,7 +4260,15 @@ def _read_knowledge_handler(
                     dataset_args["aggregate"] = {"operation": "sum", "column": value_column}
 
             result = _dataset_query_handler(dataset_args, conversation=conversation, context=context)
-            return _wrap("dataset_query", result)
+            return _envelope(
+                engine="file_dataset",
+                engine_tool="dataset_query",
+                result=result,
+                resolved_upload_id=str(upload_record.id),
+                requested_document_id=raw_id,
+                resolved_chunk_id=str(chunk_record.id) if chunk_record else None,
+                resolved_document_id_used=str(upload_record.id),
+            )
 
         # Non-dataset tables fall back to the preview/aggregate engine.
         table_agg_args: dict[str, object] = {"document_id": str(upload_record.id)}
@@ -4169,7 +4312,15 @@ def _read_knowledge_handler(
             table_agg_args["max_rows"] = max_rows
 
         result = _table_aggregate_handler(table_agg_args, conversation=conversation, context=context)
-        return _wrap("table_aggregate", result)
+        return _envelope(
+            engine="table_preview",
+            engine_tool="table_aggregate",
+            result=result,
+            resolved_upload_id=str(upload_record.id),
+            requested_document_id=raw_id,
+            resolved_chunk_id=str(chunk_record.id) if chunk_record else None,
+            resolved_document_id_used=str(upload_record.id),
+        )
 
     # Text excerpt path (default).
     read_id = str(chunk_record.id if chunk_record else upload_record.id)
@@ -4182,7 +4333,15 @@ def _read_knowledge_handler(
             continue
         read_args[key] = value
     result = _read_document_handler(read_args, conversation=conversation, context=context)
-    return _wrap("read_document", result)
+    return _envelope(
+        engine="text_page",
+        engine_tool="read_document",
+        result=result,
+        resolved_upload_id=str(upload_record.id),
+        requested_document_id=raw_id,
+        resolved_chunk_id=str(chunk_record.id) if chunk_record else None,
+        resolved_document_id_used=read_id,
+    )
 
 
 def _action_tool_result(action: ActionType, payload: Mapping[str, object]) -> Mapping[str, object]:

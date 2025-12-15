@@ -131,6 +131,7 @@ def build_system_message(
             • Prefer precise identifiers for table lookups: provide `table.match_column` + `table.match_value` (or `match_values`) and a `table.sheet_name` when known.
             • Keep outputs small: request only the columns you need; default limit is 20 rows.
             • If you hit `identifier_required`, `throttle_notice`, or `truncated=true`, narrow filters or request the missing identifier.
+            • Tool output shape: `engine` + `evidence` (either `evidence.snippets[]` or `evidence.rows[]`) + `total_matches` + `truncated` + optional `throttle_notice`.
         - `list_tables`
             • Use once to grab the spreadsheet `document_id` before aggregations; reuse it afterwards.
         - Tool loop cadence

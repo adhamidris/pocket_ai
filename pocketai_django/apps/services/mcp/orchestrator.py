@@ -205,6 +205,11 @@ class McpOrchestratorService:
             snippets = payload.get("snippets")
             if isinstance(snippets, Sequence) and not isinstance(snippets, (str, bytes, bytearray)):
                 return len(snippets)
+            evidence = payload.get("evidence")
+            if isinstance(evidence, Mapping):
+                snippets = evidence.get("snippets")
+                if isinstance(snippets, Sequence) and not isinstance(snippets, (str, bytes, bytearray)):
+                    return len(snippets)
             return 0
 
         def _knowledge_phase_payload(tool_name: str, arguments: Mapping[str, object]) -> dict[str, object] | None:
@@ -697,8 +702,21 @@ class McpOrchestratorService:
                                 document_id_hint = str(arguments.get("document_id") or tool_result.get("document_id") or "").strip()
                                 if document_id_hint:
                                     tool_context.table_column_filters.pop(document_id_hint, None)
+
                         if tool_name == "search_knowledge" and not duplicate_result:
                             self._record_search_history(tool_context, arguments, tool_result)
+
+                        if isinstance(tool_result, Mapping):
+                            diagnostics = (
+                                tool_result.get("diagnostics")
+                                if isinstance(tool_result.get("diagnostics"), Mapping)
+                                else {}
+                            )
+                            engine_tool = tool_result.get("engine_tool") or diagnostics.get("engine_tool")
+                            mode = tool_result.get("mode") or diagnostics.get("mode")
+                            page = tool_result.get("page") or diagnostics.get("page")
+                            token_budget = tool_result.get("token_budget") or diagnostics.get("token_budget")
+
                             tool_context.add_tool_trace(
                                 {
                                     "tool": tool_name,
@@ -708,10 +726,10 @@ class McpOrchestratorService:
                                     "error_code": tool_result.get("error_code"),
                                     "hint": tool_result.get("hint"),
                                     "engine": tool_result.get("engine"),
-                                    "engine_tool": tool_result.get("engine_tool"),
-                                    "mode": tool_result.get("mode"),
-                                    "page": tool_result.get("page"),
-                                    "token_budget": tool_result.get("token_budget"),
+                                    "engine_tool": engine_tool,
+                                    "mode": mode,
+                                    "page": page,
+                                    "token_budget": token_budget,
                                     "throttle_notice": bool(tool_result.get("throttle_notice")),
                                     "duration_ms": int(call_duration_ms) if call_duration_ms is not None else 0,
                                     "origin": call_origin,
@@ -719,17 +737,26 @@ class McpOrchestratorService:
                                     "duplicate_short_circuit": bool(duplicate_result),
                                 }
                             )
+
                             if self._is_knowledge_tool(tool_name):
                                 self._record_knowledge_outputs(tool_context, tool_result)
+
                                 if tool_name in {"read_document", "read_knowledge"}:
-                                    snippets = tool_result.get("snippets") if isinstance(tool_result, Mapping) else None
+                                    snippets = None
+                                    if tool_name == "read_document":
+                                        snippets = tool_result.get("snippets")
+                                    else:
+                                        evidence = (
+                                            tool_result.get("evidence")
+                                            if isinstance(tool_result.get("evidence"), Mapping)
+                                            else {}
+                                        )
+                                        snippets = evidence.get("snippets")
                                     if isinstance(snippets, list) and snippets:
                                         first = snippets[0]
                                         if isinstance(first, Mapping):
                                             label_source = (
-                                                first.get("public_label")
-                                                or first.get("title")
-                                                or first.get("source")
+                                                first.get("public_label") or first.get("title") or first.get("source")
                                             )
                                             if isinstance(label_source, str) and label_source.strip():
                                                 _status_event(
@@ -739,37 +766,39 @@ class McpOrchestratorService:
                         if knowledge_phase:
                             _emit_phase_complete(knowledge_phase, snippet_total=_snippet_count(tool_result))
                         limits = self._prompt_compaction_limits()
-                        prompt_tool_result: object = tool_result
+                        prompt_tool_result: object
                         if isinstance(tool_result, Mapping):
                             prompt_tool_result = self._compact_tool_payload_for_prompt(
                                 tool_name,
                                 tool_result,
                                 **limits,
                             )
-                        elif tool_result is not None:
+                        else:
                             prompt_tool_result = {
                                 "tool": tool_name,
-                                "result": self._clip_text(tool_result, 2000),
+                                "result": self._clip_text(tool_result, 2000) if tool_result is not None else None,
                                 "prompt_compact": True,
                             }
-                            transcript.append(
-                                {
-                                    "role": "tool",
-                                    "tool_call_id": tool_call.get("id"),
-                                    "name": tool_name,
-                                    "content": json.dumps(prompt_tool_result, ensure_ascii=False),
-                                }
-                            )
-                            if tool_name == "table_aggregate":
-                                document_id = str(arguments.get("document_id") or tool_result.get("document_id") or "").strip()
+
+                        transcript.append(
+                            {
+                                "role": "tool",
+                                "tool_call_id": tool_call.get("id"),
+                                "name": tool_name,
+                                "content": json.dumps(prompt_tool_result, ensure_ascii=False),
+                            }
+                        )
+
+                        if tool_name == "table_aggregate":
+                            document_id = str(arguments.get("document_id") or tool_result.get("document_id") or "").strip()
+                            if document_id:
+                                self._satisfy_transcript_snippets(transcript, document_id, tool_context)
+                        elif tool_name == "read_knowledge" and isinstance(tool_result, Mapping):
+                            engine = str(tool_result.get("engine") or "").strip()
+                            if engine in {"table_preview", "file_dataset", "db_preview"}:
+                                document_id = str(tool_result.get("document_id") or "").strip()
                                 if document_id:
                                     self._satisfy_transcript_snippets(transcript, document_id, tool_context)
-                            elif tool_name == "read_knowledge" and isinstance(tool_result, Mapping):
-                                engine_tool = str(tool_result.get("engine_tool") or tool_result.get("engine") or "").strip()
-                                if engine_tool in {"table_aggregate", "dataset_query"}:
-                                    document_id = str(tool_result.get("document_id") or "").strip()
-                                    if document_id:
-                                        self._satisfy_transcript_snippets(transcript, document_id, tool_context)
 
                         # Ask the model again with tools enabled to see if more tool_calls are needed.
                         # Trim tool-loop prompts so each call focuses on the newest inputs.
@@ -1623,8 +1652,13 @@ class McpOrchestratorService:
     @staticmethod
     def _record_knowledge_outputs(context: ToolExecutionContext, tool_result: Mapping[str, object]) -> None:
         tool_name = str(tool_result.get("tool") or "").strip() if isinstance(tool_result, Mapping) else ""
+        engine = str(tool_result.get("engine") or "").strip() if isinstance(tool_result, Mapping) else ""
+        diagnostics = tool_result.get("diagnostics") if isinstance(tool_result.get("diagnostics"), Mapping) else {}
+        evidence = tool_result.get("evidence") if isinstance(tool_result.get("evidence"), Mapping) else {}
         table_aggregate_snippet_seen = False
         snippets = tool_result.get("snippets") if isinstance(tool_result, Mapping) else None
+        if tool_name == "read_knowledge":
+            snippets = evidence.get("snippets")
         if isinstance(snippets, list):
             for entry in snippets:
                 if isinstance(entry, Mapping):
@@ -1680,6 +1714,63 @@ class McpOrchestratorService:
                             "row_index": diagnostics.get("table_row_index"),
                         }
                         context.add_knowledge_read({k: v for k, v in read_entry.items() if v is not None})
+
+        if tool_name == "read_knowledge" and engine in {"table_preview", "file_dataset", "db_preview"}:
+            document_id = str(tool_result.get("document_id") or diagnostics.get("resolved_upload_id") or "").strip()
+            if document_id:
+                McpOrchestratorService._suppress_table_previews(context, upload_id=document_id)
+                McpOrchestratorService._mark_upload_as_satisfied(context, upload_id=document_id)
+
+            rows = evidence.get("rows")
+            if isinstance(rows, list) and rows:
+                for row in rows[:20]:
+                    if not isinstance(row, Mapping):
+                        continue
+                    table_order_index = row.get("table_order_index")
+                    row_index = row.get("row_index")
+                    sheet_name = row.get("sheet_name")
+                    snippet_id = f"read-knowledge:{engine}:{document_id}:{table_order_index}:{row_index}"
+                    cells = row.get("cells") if isinstance(row.get("cells"), list) else []
+                    cells_out = [
+                        {"column": cell.get("column"), "value": cell.get("value")}
+                        for cell in cells[:8]
+                        if isinstance(cell, Mapping)
+                    ]
+                    contributions = row.get("contributions") if isinstance(row.get("contributions"), list) else []
+                    contributions_out = [
+                        {"column": entry.get("column"), "value": entry.get("value"), "display": entry.get("display")}
+                        for entry in contributions[:25]
+                        if isinstance(entry, Mapping)
+                    ]
+                    if engine == "table_preview":
+                        table_details = {
+                            "snippet_id": snippet_id,
+                            "upload_id": document_id or None,
+                            "table_order_index": table_order_index,
+                            "row_index": row_index,
+                            "sheet_name": sheet_name,
+                            "row_total": row.get("row_total"),
+                            "row_total_display": row.get("row_total_display"),
+                            "cells": cells_out or None,
+                            "contributions": contributions_out or None,
+                        }
+                        context.table_aggregate_rows.append({k: v for k, v in table_details.items() if v is not None})
+                    read_entry = {
+                        "id": snippet_id,
+                        "label": f"Row {row_index}" if row_index is not None else "Table row",
+                        "mode": "tabular_query",
+                        "table_order_index": table_order_index,
+                        "row_index": row_index,
+                    }
+                    context.add_knowledge_read({k: v for k, v in read_entry.items() if v is not None})
+            elif document_id:
+                context.add_knowledge_read(
+                    {
+                        "id": f"read-knowledge:{engine}:{document_id}",
+                        "label": "Tabular query",
+                        "mode": "tabular_query",
+                    }
+                )
 
         # table_aggregate no longer returns snippet-shaped results; derive compact diagnostics from rows instead.
         if tool_name == "table_aggregate" and not table_aggregate_snippet_seen:
@@ -1745,11 +1836,15 @@ class McpOrchestratorService:
                     }
                 )
         reads = tool_result.get("knowledge_reads") if isinstance(tool_result, Mapping) else None
+        if not isinstance(reads, list):
+            reads = diagnostics.get("knowledge_reads") if isinstance(diagnostics.get("knowledge_reads"), list) else None
         if isinstance(reads, list):
             for read in reads:
                 if isinstance(read, Mapping):
                     context.add_knowledge_read(read)
         warnings = tool_result.get("ingestion_warnings") if isinstance(tool_result, Mapping) else None
+        if not isinstance(warnings, list):
+            warnings = diagnostics.get("ingestion_warnings") if isinstance(diagnostics.get("ingestion_warnings"), list) else None
         if isinstance(warnings, list):
             for warning in warnings:
                 if isinstance(warning, Mapping):
@@ -2868,16 +2963,114 @@ class McpOrchestratorService:
             return compact
 
         if normalized_name == "read_knowledge":
-            for key in ("engine", "engine_tool"):
-                if key in payload and payload.get(key) not in {None, ""}:
-                    compact[key] = payload.get(key)
-            engine_tool = str(payload.get("engine_tool") or payload.get("engine") or "").strip()
+            engine = str(payload.get("engine") or "").strip()
+            if engine:
+                compact["engine"] = engine
+            for key in ("total_matches", "truncated", "throttle_notice"):
+                if key not in payload:
+                    continue
+                value = payload.get(key)
+                if value is None:
+                    continue
+                if isinstance(value, str) and not value.strip():
+                    continue
+                if isinstance(value, (list, tuple, set, dict)) and not value:
+                    continue
+                compact[key] = value
 
-            if engine_tool == "read_document":
-                for key in ("document_id", "page", "mode", "mode_downgraded", "token_budget", "throttle_notice"):
-                    if key in payload and payload.get(key) not in {None, ""}:
-                        compact[key] = payload.get(key)
-                raw_snippets = payload.get("snippets")
+            diagnostics_in = payload.get("diagnostics") if isinstance(payload.get("diagnostics"), Mapping) else {}
+            diagnostics_out: dict[str, object] = {}
+            identifier_gate = diagnostics_in.get("identifier_gate") if isinstance(diagnostics_in.get("identifier_gate"), Mapping) else None
+            if identifier_gate:
+                gate_out: dict[str, object] = {}
+                for key in ("status", "match_policy", "required_keys", "provided_keys"):
+                    value = identifier_gate.get(key)
+                    if value is None:
+                        continue
+                    if isinstance(value, str) and not value.strip():
+                        continue
+                    if isinstance(value, (list, tuple, set, dict)) and not value:
+                        continue
+                    gate_out[key] = value
+                if gate_out:
+                    diagnostics_out["identifier_gate"] = gate_out
+            for key in ("required_identifiers", "provided_identifiers"):
+                value = diagnostics_in.get(key)
+                if isinstance(value, list) and value:
+                    diagnostics_out[key] = value[:12]
+
+            if engine == "text_page":
+                for key in ("page", "mode", "mode_downgraded", "token_budget"):
+                    value = diagnostics_in.get(key)
+                    if value is None or value == "":
+                        continue
+                    diagnostics_out[key] = value
+            elif engine == "table_preview":
+                for key in (
+                    "sheet_name",
+                    "match_column",
+                    "match_value",
+                    "match_values",
+                    "query",
+                    "columns",
+                    "mode",
+                    "match_count",
+                    "total",
+                    "display_total",
+                ):
+                    value = diagnostics_in.get(key)
+                    if value is None:
+                        continue
+                    if isinstance(value, str) and not value.strip():
+                        continue
+                    if isinstance(value, (list, tuple, set, dict)) and not value:
+                        continue
+                    diagnostics_out[key] = value
+            elif engine in {"file_dataset", "db_preview"}:
+                for key in (
+                    "sheet_name",
+                    "sheet_index",
+                    "query",
+                    "filters",
+                    "select_columns",
+                    "sort_by",
+                    "sort_direction",
+                    "offset",
+                    "limit",
+                    "match_count",
+                    "total_matches",
+                    "scanned_rows",
+                ):
+                    value = diagnostics_in.get(key)
+                    if value is None:
+                        continue
+                    if isinstance(value, str) and not value.strip():
+                        continue
+                    if isinstance(value, (list, tuple, set, dict)) and not value:
+                        continue
+                    diagnostics_out[key] = value
+                dataset = diagnostics_in.get("dataset") if isinstance(diagnostics_in.get("dataset"), Mapping) else None
+                if dataset:
+                    dataset_out: dict[str, object] = {}
+                    for key in ("row_count", "sheet_row_count", "preview_rows_indexed", "sheet_count", "suggested_keys"):
+                        value = dataset.get(key)
+                        if value is None:
+                            continue
+                        if isinstance(value, str) and not value.strip():
+                            continue
+                        if isinstance(value, (list, tuple, set, dict)) and not value:
+                            continue
+                        dataset_out[key] = value
+                    if dataset_out:
+                        diagnostics_out["dataset"] = dataset_out
+
+            if diagnostics_out:
+                compact["diagnostics"] = diagnostics_out
+
+            evidence_in = payload.get("evidence") if isinstance(payload.get("evidence"), Mapping) else {}
+            evidence_out: dict[str, object] = {"snippets": [], "rows": []}
+            if engine == "text_page":
+                raw_snippets = evidence_in.get("snippets")
                 snippets_out: list[dict[str, object]] = []
                 if isinstance(raw_snippets, list):
                     for entry in raw_snippets[: max(1, max_snippets)]:
@@ -2890,58 +3083,25 @@ class McpOrchestratorService:
                                 content_chars=snippet_content_chars,
                             )
                         )
-                compact["snippets"] = snippets_out
-                compact["prompt_compact"] = True
-                return compact
-
-            if engine_tool == "table_aggregate":
-                for key in (
-                    "document_id",
-                    "mode",
-                    "query",
-                    "match_column",
-                    "match_value",
-                    "match_values",
-                    "value_column",
-                    "sheet_name",
-                    "columns",
-                    "match_count",
-                    "total",
-                    "display_total",
-                    "throttle_notice",
-                ):
-                    if key not in payload:
-                        continue
-                    value = payload.get(key)
-                    if value is None:
-                        continue
-                    if isinstance(value, str) and not value.strip():
-                        continue
-                    if isinstance(value, (list, tuple, set, dict)) and not value:
-                        continue
-                    compact[key] = value
-                raw_rows = payload.get("rows")
+                evidence_out["snippets"] = snippets_out
+            else:
+                raw_rows = evidence_in.get("rows")
                 rows_out: list[dict[str, object]] = []
                 if isinstance(raw_rows, list):
                     for row in raw_rows[: max(1, max_rows)]:
                         if not isinstance(row, Mapping):
                             continue
                         row_payload: dict[str, object] = {}
-                        for key in (
-                            "row_index",
-                            "table_order_index",
-                            "sheet_name",
-                            "row_total",
-                            "row_total_display",
-                            "contribution_count",
-                        ):
+                        if "row_index" in row and row.get("row_index") not in {None, ""}:
+                            row_payload["row_index"] = row.get("row_index")
+                        for key in ("table_order_index", "sheet_name", "row_total", "row_total_display", "contribution_count"):
                             if key in row and row.get(key) not in {None, ""}:
                                 row_payload[key] = row.get(key)
                         cells = row.get("cells")
                         if isinstance(cells, list) and cells:
                             row_payload["cells"] = [
                                 {"column": cell.get("column"), "value": cell.get("value")}
-                                for cell in cells[:8]
+                                for cell in cells[:12]
                                 if isinstance(cell, Mapping)
                             ]
                         contributions = row.get("contributions")
@@ -2951,69 +3111,19 @@ class McpOrchestratorService:
                                 for entry in contributions[: max(1, max_contributions)]
                                 if isinstance(entry, Mapping)
                             ]
-                        rows_out.append(row_payload)
-                compact["rows"] = rows_out
-                compact["prompt_compact"] = True
-                return compact
-
-            if engine_tool == "dataset_query":
-                for key in (
-                    "document_id",
-                    "sheet_name",
-                    "sheet_index",
-                    "query",
-                    "filters",
-                    "select_columns",
-                    "sort_by",
-                    "sort_direction",
-                    "offset",
-                    "limit",
-                    "match_count",
-                    "total_matches",
-                    "aggregate_result",
-                    "throttle_notice",
-                ):
-                    if key not in payload:
-                        continue
-                    value = payload.get(key)
-                    if value is None:
-                        continue
-                    if isinstance(value, str) and not value.strip():
-                        continue
-                    if isinstance(value, (list, tuple, set, dict)) and not value:
-                        continue
-                    compact[key] = value
-                if "dataset" in payload and isinstance(payload.get("dataset"), Mapping):
-                    compact["dataset"] = payload.get("dataset")
-                raw_rows = payload.get("rows")
-                rows_out: list[dict[str, object]] = []
-                if isinstance(raw_rows, list):
-                    for row in raw_rows[: max(1, max_rows)]:
-                        if not isinstance(row, Mapping):
-                            continue
-                        row_payload: dict[str, object] = {}
-                        if "row_index" in row and row.get("row_index") not in {None, ""}:
-                            row_payload["row_index"] = row.get("row_index")
-                        cells = row.get("cells")
-                        if isinstance(cells, list) and cells:
-                            row_payload["cells"] = [
-                                {"column": cell.get("column"), "value": cell.get("value")}
-                                for cell in cells[:12]
-                                if isinstance(cell, Mapping)
-                            ]
                         if row_payload:
                             rows_out.append(row_payload)
-                compact["rows"] = rows_out
-                compact["prompt_compact"] = True
-                return compact
+                evidence_out["rows"] = rows_out
 
-            raw_snippets = payload.get("snippets")
-            if isinstance(raw_snippets, list) and raw_snippets:
-                compact["snippets"] = [
-                    self._compact_snippet_for_prompt(entry, include_content=True, content_chars=snippet_content_chars)
-                    for entry in raw_snippets[: max(1, max_snippets)]
-                    if isinstance(entry, Mapping)
-                ]
+                aggregate_result = evidence_in.get("aggregate_result") if isinstance(evidence_in.get("aggregate_result"), Mapping) else None
+                if aggregate_result:
+                    evidence_out["aggregate_result"] = dict(aggregate_result)
+                if evidence_in.get("total") is not None:
+                    evidence_out["total"] = evidence_in.get("total")
+                if evidence_in.get("display_total") not in (None, ""):
+                    evidence_out["display_total"] = evidence_in.get("display_total")
+
+            compact["evidence"] = evidence_out
             compact["prompt_compact"] = True
             return compact
 
