@@ -2450,7 +2450,26 @@ def _load_table_rows_for_cache(
     if match_values:
         normalized_values = [value for value in match_values if value]
         if normalized_values:
-            rows_qs = rows_qs.filter(cells__raw_text__iregex="|".join(re.escape(value) for value in normalized_values))
+            if match_column and _column_suggests_identifier(match_column):
+                patterns: list[str] = []
+                for value in normalized_values[:12]:
+                    cleaned = _normalize_identifier_value(value)
+                    if not cleaned:
+                        continue
+                    if len(cleaned) > 64:
+                        cleaned = cleaned[:64]
+                    escaped = [re.escape(ch) for ch in cleaned]
+                    if not escaped:
+                        continue
+                    patterns.append(r"\s*".join(escaped))
+                if patterns:
+                    rows_qs = rows_qs.filter(cells__raw_text__iregex="|".join(patterns))
+                else:
+                    rows_qs = rows_qs.filter(
+                        cells__raw_text__iregex="|".join(re.escape(value) for value in normalized_values)
+                    )
+            else:
+                rows_qs = rows_qs.filter(cells__raw_text__iregex="|".join(re.escape(value) for value in normalized_values))
     rows_qs = rows_qs.select_related("table").only(
         "id",
         "row_index",
@@ -2635,16 +2654,25 @@ def _table_aggregate_handler(
     raw_match_values = arguments.get("match_values")
     match_column = _normalize_column_name(match_column_input)
     normalized_match_values: list[str] = []
+    identifier_match_values: list[str] = []
     if isinstance(raw_match_values, (list, tuple)):
         for candidate in raw_match_values:
             normalized = _normalize_column_name(candidate)
             if normalized:
                 normalized_match_values.append(normalized)
+            normalized_identifier = _normalize_identifier_value(candidate)
+            if normalized_identifier:
+                identifier_match_values.append(normalized_identifier)
     match_value = _normalize_column_name(match_value_input)
     if match_value and match_value not in normalized_match_values:
         normalized_match_values.append(match_value)
+    match_value_identifier = _normalize_identifier_value(match_value_input)
+    if match_value_identifier and match_value_identifier not in identifier_match_values:
+        identifier_match_values.append(match_value_identifier)
     if len(normalized_match_values) > 50:
         normalized_match_values = normalized_match_values[:50]
+    if len(identifier_match_values) > 50:
+        identifier_match_values = identifier_match_values[:50]
     query_input = _coerce_str(arguments.get("query")).strip()
     query = _normalize_column_name(query_input)
     if not query and not match_column:
@@ -2673,6 +2701,12 @@ def _table_aggregate_handler(
     match_policy = "contains"
     if match_column and normalized_match_values and _column_suggests_identifier(match_column_input):
         match_policy = "eq"
+    allowed_identifier_values: set[str] = set()
+    if match_policy == "eq" and match_column and normalized_match_values:
+        allowed_identifier_values = set(
+            identifier_match_values
+            or [_normalize_identifier_value(v) for v in normalized_match_values if _normalize_identifier_value(v)]
+        )
 
     def _clip_text(value: object, limit: int) -> str:
         text = _coerce_str(value)
@@ -2736,11 +2770,16 @@ def _table_aggregate_handler(
         row_matches = True
         if match_column and normalized_match_values:
             candidate = column_map.get(match_column)
-            candidate_value = candidate.get("normalized_value") if isinstance(candidate, Mapping) else None
             if match_policy == "eq":
-                if not candidate_value or not any(value and value == candidate_value for value in normalized_match_values):
+                candidate_value = (
+                    _normalize_identifier_value(candidate.get("raw_text"))
+                    if isinstance(candidate, Mapping)
+                    else ""
+                )
+                if not candidate_value or candidate_value not in allowed_identifier_values:
                     row_matches = False
             else:
+                candidate_value = candidate.get("normalized_value") if isinstance(candidate, Mapping) else None
                 if not candidate_value or not any(value and value in candidate_value for value in normalized_match_values):
                     row_matches = False
         elif query:
