@@ -844,7 +844,100 @@ def _normalize_identifier_value(value: object) -> str:
     text = str(value).strip()
     if not text:
         return ""
+    text = text.strip("`\"'")
     return re.sub(r"\s+", "", text).lower()
+
+
+_IDENTIFIER_EMAIL_RE = re.compile(r"^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$")
+
+
+def _extract_identifier_candidate(text: object) -> str | None:
+    raw = _coerce_str(text).strip()
+    if not raw:
+        return None
+    cleaned = raw.strip("`\"'")
+    if not cleaned:
+        return None
+    if _IDENTIFIER_EMAIL_RE.match(cleaned):
+        return cleaned
+    if cleaned.isdigit() and len(cleaned) >= 6:
+        return cleaned
+    digit_runs = re.findall(r"\\d{6,}", cleaned)
+    if digit_runs:
+        return max(digit_runs, key=len)
+    token_runs = re.findall(r"[A-Za-z0-9][A-Za-z0-9\\-_/]{7,}", cleaned)
+    if token_runs:
+        return max(token_runs, key=len)
+    return None
+
+
+def _pick_best_identifier_column(
+    columns: Sequence[str],
+    *,
+    query_text: str,
+    identifier_value: str,
+) -> str | None:
+    candidates: list[str] = []
+    for col in columns:
+        if not isinstance(col, str):
+            continue
+        col_clean = col.strip()
+        if not col_clean:
+            continue
+        if _column_suggests_identifier(col_clean):
+            candidates.append(col_clean)
+    if not candidates:
+        return None
+    if len(candidates) == 1:
+        return candidates[0]
+
+    query_norm = _normalize_column_name(query_text)
+    ident_norm = _normalize_identifier_value(identifier_value)
+    is_email = "@" in ident_norm
+    is_digits = ident_norm.isdigit()
+
+    best: str | None = None
+    best_score = -1
+    for col in candidates:
+        col_norm = _normalize_column_name(col)
+        if not col_norm:
+            continue
+        score = 0
+
+        if is_email:
+            if any(term in col_norm for term in ("email", "e-mail", "mail")):
+                score += 200
+        if is_digits:
+            if "invoice" in col_norm:
+                score += 80
+            if "serial" in col_norm:
+                score += 50
+            if "order" in col_norm:
+                score += 60
+            if "ticket" in col_norm:
+                score += 60
+        if "invoice" in query_norm and "invoice" in col_norm:
+            score += 60
+        if "order" in query_norm and "order" in col_norm:
+            score += 60
+        if "ticket" in query_norm and "ticket" in col_norm:
+            score += 60
+        if "serial" in query_norm and "serial" in col_norm:
+            score += 25
+        if any(term in query_norm for term in ("id", "ref", "#")) and any(term in col_norm for term in ("id", "ref", "#")):
+            score += 15
+        if any(term in col_norm for term in ("id", "ref", "reference", "number", "no", "#")):
+            score += 10
+
+        if score > best_score:
+            best_score = score
+            best = col
+
+    if best is None:
+        return None
+    if best_score >= 20:
+        return best
+    return None
 
 
 def _column_suggests_identifier(column: object) -> bool:
@@ -3155,7 +3248,32 @@ def _dataset_query_handler(
     default_column_cap = int(tool_limits.default_columns)
     cell_value_chars = int(tool_limits.cell_value_chars)
     max_group_cap = int(tool_limits.max_groups)
-    max_column_cap = int(tool_limits.max_columns_returned)
+    max_column_cap_default = int(tool_limits.max_columns_returned)
+    max_column_cap_exact = int(getattr(tool_limits, "max_columns_returned_exact", max_column_cap_default))
+
+    def _should_expand_columns_for_exact_lookup() -> bool:
+        if query_norm or aggregate_op:
+            return False
+        if not filters_input:
+            return False
+        for flt in filters_input:
+            column = _coerce_str(flt.get("column")).strip()
+            if not column or not _column_suggests_identifier(column):
+                continue
+            op = _coerce_str(flt.get("op")).strip().lower()
+            if op == "eq":
+                value = _coerce_str(flt.get("value")).strip()
+                if value and _should_force_exact_identifier_match(column, value):
+                    return True
+            elif op == "in":
+                values = flt.get("values") if isinstance(flt.get("values"), list) else []
+                values_clean = [_coerce_str(v).strip() for v in values if _coerce_str(v).strip()]
+                for candidate in values_clean[:3]:
+                    if _should_force_exact_identifier_match(column, candidate):
+                        return True
+        return False
+
+    max_column_cap = max_column_cap_exact if _should_expand_columns_for_exact_lookup() else max_column_cap_default
 
     def _parse_datetime_value(value: str | None) -> float | None:
         if not isinstance(value, str):
@@ -3564,7 +3682,7 @@ def _dataset_query_handler(
                         or_parts: list[str] = []
                         for col in search_columns:
                             col_ref = f"lower(base.{_sql_ident(col)})"
-                            or_parts.append(f"{col_ref} like ? escape '\\\\'")
+                            or_parts.append(f"{col_ref} like ? escape '\\'")
                             params.append(query_pattern)
                         if or_parts:
                             where_parts.append("(" + " or ".join(or_parts) + ")")
@@ -3611,7 +3729,7 @@ def _dataset_query_handler(
                                 pattern = f"{escaped}%"
                             else:
                                 pattern = f"%{escaped}"
-                            where_parts.append(f"{col_cmp} like ? escape '\\\\'")
+                            where_parts.append(f"{col_cmp} like ? escape '\\'")
                             params.append(pattern)
                             continue
 
@@ -4767,17 +4885,118 @@ def _read_knowledge_handler(
                     ]
 
             query = _coerce_str(table_args.get("query")).strip()
+            if query and not dataset_args.get("filters") and not requested_identifier_column:
+                identifier_candidate = _extract_identifier_candidate(query)
+                if identifier_candidate and _should_force_exact_identifier_match("id", identifier_candidate):
+                    column_schema: list[str] = []
+                    available_sheets = dataset_meta.get("sheets") if isinstance(dataset_meta, Mapping) else None
+                    sheet_meta: Mapping[str, object] | None = None
+                    normalized_request = _normalize_column_name(sheet_name) if sheet_name else ""
+                    if isinstance(available_sheets, list) and available_sheets:
+                        if sheet_index:
+                            for entry in available_sheets:
+                                if not isinstance(entry, Mapping):
+                                    continue
+                                if int(entry.get("sheet_index") or 0) == sheet_index:
+                                    sheet_meta = entry
+                                    break
+                        if sheet_meta is None and normalized_request:
+                            for entry in available_sheets:
+                                if not isinstance(entry, Mapping):
+                                    continue
+                                candidate = _normalize_column_name(entry.get("sheet_name"))
+                                if candidate and candidate == normalized_request:
+                                    sheet_meta = entry
+                                    break
+                        if sheet_meta is None:
+                            sheet_meta = next((entry for entry in available_sheets if isinstance(entry, Mapping)), None)
+                        if sheet_meta and isinstance(sheet_meta.get("column_schema"), list):
+                            column_schema = [
+                                str(col or "").strip()
+                                for col in sheet_meta.get("column_schema")  # type: ignore[arg-type]
+                                if str(col or "").strip()
+                            ]
+                    if not column_schema and isinstance(dataset_meta, Mapping) and isinstance(dataset_meta.get("column_schema"), list):
+                        column_schema = [
+                            str(col or "").strip()
+                            for col in dataset_meta.get("column_schema")  # type: ignore[arg-type]
+                            if str(col or "").strip()
+                        ]
+                    chosen_identifier_col = _pick_best_identifier_column(
+                        column_schema,
+                        query_text=query,
+                        identifier_value=identifier_candidate,
+                    )
+                    if chosen_identifier_col:
+                        requested_identifier_column = chosen_identifier_col
+                        requested_identifier_values = [identifier_candidate]
+                        requested_identifier_policy = "eq"
+                        dataset_args["filters"] = [
+                            {
+                                "column": chosen_identifier_col,
+                                "op": "eq",
+                                "value": identifier_candidate,
+                                "case_sensitive": False,
+                            }
+                        ]
+                        query = ""
+
             if query:
                 dataset_args["query"] = query
 
-            select_columns = table_args.get("select_columns")
-            if not isinstance(select_columns, list) or not select_columns:
-                select_columns = table_args.get("columns")
-            if isinstance(select_columns, list) and select_columns:
-                chosen = [_coerce_str(c).strip() for c in select_columns if _coerce_str(c).strip()]
-                if requested_identifier_column and requested_identifier_column not in chosen:
-                    chosen.insert(0, requested_identifier_column)
-                dataset_args["select_columns"] = chosen
+            selected_from_schema = False
+            if requested_identifier_column and requested_identifier_values and requested_identifier_policy == "eq":
+                column_schema: list[str] = []
+                available_sheets = dataset_meta.get("sheets") if isinstance(dataset_meta, Mapping) else None
+                sheet_meta: Mapping[str, object] | None = None
+                if isinstance(available_sheets, list) and available_sheets:
+                    normalized_request = _normalize_column_name(sheet_name) if sheet_name else ""
+                    if sheet_index:
+                        for entry in available_sheets:
+                            if not isinstance(entry, Mapping):
+                                continue
+                            if int(entry.get("sheet_index") or 0) == sheet_index:
+                                sheet_meta = entry
+                                break
+                    if sheet_meta is None and normalized_request:
+                        for entry in available_sheets:
+                            if not isinstance(entry, Mapping):
+                                continue
+                            candidate = _normalize_column_name(entry.get("sheet_name"))
+                            if candidate and candidate == normalized_request:
+                                sheet_meta = entry
+                                break
+                    if sheet_meta is None:
+                        sheet_meta = next((entry for entry in available_sheets if isinstance(entry, Mapping)), None)
+                    if sheet_meta and isinstance(sheet_meta.get("column_schema"), list):
+                        column_schema = [
+                            str(col or "").strip()
+                            for col in sheet_meta.get("column_schema")  # type: ignore[arg-type]
+                            if str(col or "").strip()
+                        ]
+                if not column_schema and isinstance(dataset_meta, Mapping) and isinstance(dataset_meta.get("column_schema"), list):
+                    column_schema = [
+                        str(col or "").strip()
+                        for col in dataset_meta.get("column_schema")  # type: ignore[arg-type]
+                        if str(col or "").strip()
+                    ]
+                if column_schema:
+                    max_columns_exact = int(getattr(settings, "DATASET_QUERY_MAX_COLUMNS_RETURNED_EXACT", 50) or 50)
+                    max_columns_exact = max(3, min(50, max_columns_exact))
+                    if len(column_schema) > max_columns_exact:
+                        column_schema = column_schema[:max_columns_exact]
+                    dataset_args["select_columns"] = column_schema
+                    selected_from_schema = True
+
+            if not selected_from_schema:
+                select_columns = table_args.get("select_columns")
+                if not isinstance(select_columns, list) or not select_columns:
+                    select_columns = table_args.get("columns")
+                if isinstance(select_columns, list) and select_columns:
+                    chosen = [_coerce_str(c).strip() for c in select_columns if _coerce_str(c).strip()]
+                    if requested_identifier_column and requested_identifier_column not in chosen:
+                        chosen.insert(0, requested_identifier_column)
+                    dataset_args["select_columns"] = chosen
 
             sort_by = _coerce_str(table_args.get("sort_by")).strip()
             if sort_by:

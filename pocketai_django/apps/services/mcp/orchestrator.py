@@ -2693,6 +2693,14 @@ class McpOrchestratorService:
                 5,
                 self._safe_int_setting(getattr(settings, "MCP_PROMPT_TABLE_MAX_CONTRIBUTIONS", 25), 25),
             ),
+            "max_cells": max(
+                4,
+                self._safe_int_setting(getattr(settings, "MCP_PROMPT_TABLE_MAX_CELLS", 12), 12),
+            ),
+            "max_cells_exact": max(
+                4,
+                self._safe_int_setting(getattr(settings, "MCP_PROMPT_TABLE_MAX_CELLS_EXACT", 60), 60),
+            ),
         }
 
     def _compact_action_payload_for_prompt(
@@ -2870,6 +2878,8 @@ class McpOrchestratorService:
         snippet_content_chars: int,
         max_rows: int,
         max_contributions: int,
+        max_cells: int = 12,
+        max_cells_exact: int = 60,
     ) -> dict[str, object]:
         normalized_name = (tool_name or payload.get("tool") or "").strip()
         compact: dict[str, object] = {"tool": normalized_name or payload.get("tool") or tool_name}
@@ -3081,6 +3091,28 @@ class McpOrchestratorService:
                         )
                 evidence_out["snippets"] = snippets_out
             else:
+                cell_cap = max(1, int(max_cells))
+                if engine in {"table_preview", "file_dataset", "db_preview"}:
+                    total_matches = payload.get("total_matches")
+                    if not isinstance(total_matches, int):
+                        total_matches = None
+                    requested_identifier = (
+                        diagnostics_in.get("requested_identifier")
+                        if isinstance(diagnostics_in.get("requested_identifier"), Mapping)
+                        else None
+                    )
+                    policy = str(requested_identifier.get("policy") or "").strip().lower() if requested_identifier else ""
+                    values = requested_identifier.get("values") if requested_identifier else None
+                    has_values = isinstance(values, list) and any(str(item).strip() for item in values)
+                    status_value = str(payload.get("status") or "ok").strip().lower()
+                    if (
+                        status_value == "ok"
+                        and total_matches is not None
+                        and total_matches <= max(1, int(max_rows))
+                        and policy in {"eq", "in"}
+                        and has_values
+                    ):
+                        cell_cap = max(cell_cap, int(max_cells_exact))
                 raw_rows = evidence_in.get("rows")
                 rows_out: list[dict[str, object]] = []
                 if isinstance(raw_rows, list):
@@ -3097,7 +3129,7 @@ class McpOrchestratorService:
                         if isinstance(cells, list) and cells:
                             row_payload["cells"] = [
                                 {"column": cell.get("column"), "value": cell.get("value")}
-                                for cell in cells[:12]
+                                for cell in cells[: max(1, cell_cap)]
                                 if isinstance(cell, Mapping)
                             ]
                         contributions = row.get("contributions")

@@ -28,6 +28,7 @@ class DatasetQueryLimits:
     max_groups: int
     max_rows_returned: int
     max_columns_returned: int
+    max_columns_returned_exact: int
     default_columns: int
     cell_value_chars: int
     rate_limit: ToolRateLimit
@@ -153,6 +154,13 @@ def resolve_tabular_tool_limits(
         max_cols = _coerce_int(getattr(settings, "DATASET_QUERY_MAX_COLUMNS_RETURNED", 12))
     max_cols = 12 if max_cols is None else max(3, min(50, max_cols))
 
+    max_cols_exact = _coerce_int(
+        _override_value(upload, business_profile, "dataset_query_max_columns_returned_exact", None)
+    )
+    if max_cols_exact is None:
+        max_cols_exact = _coerce_int(getattr(settings, "DATASET_QUERY_MAX_COLUMNS_RETURNED_EXACT", 50))
+    max_cols_exact = max_cols if max_cols_exact is None else max(max_cols, min(50, max_cols_exact))
+
     default_cols = _coerce_int(_override_value(upload, business_profile, "dataset_query_default_columns", None))
     if default_cols is None:
         default_cols = int(getattr(settings, "DATASET_QUERY_DEFAULT_COLUMNS", 8) or 8)
@@ -181,6 +189,7 @@ def resolve_tabular_tool_limits(
             max_groups=max_groups,
             max_rows_returned=max_rows,
             max_columns_returned=max_cols,
+            max_columns_returned_exact=max_cols_exact,
             default_columns=default_cols,
             cell_value_chars=cell_value_chars,
             rate_limit=ToolRateLimit(
@@ -237,4 +246,3 @@ def enforce_tool_rate_limit(
         # Rate limiting must never break the request flow.
         logger.exception("tabular.rate_limit.failed tool=%s business=%s", tool, business_profile.id)
         return
-
