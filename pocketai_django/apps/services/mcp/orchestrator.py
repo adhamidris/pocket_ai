@@ -1830,7 +1830,7 @@ class McpOrchestratorService:
                         "row_index": row_index,
                     }
                     context.add_knowledge_read({k: v for k, v in read_entry.items() if v is not None})
-            elif document_id:
+            elif document_id and status_value == "ok":
                 context.add_knowledge_read(
                     {
                         "id": f"table-aggregate:{document_id}",
