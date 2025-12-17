@@ -3685,87 +3685,89 @@ class McpOrchestratorService:
     ) -> None:
         close_old_connections()
         try:
-            conversation = Conversation.objects.select_related("business_profile").get(id=conversation_id)
-        except Conversation.DoesNotExist:
-            return
+            try:
+                conversation = Conversation.objects.select_related("business_profile").get(id=conversation_id)
+            except Conversation.DoesNotExist:
+                return
 
-        try:
-            latest_id = (
-                conversation.messages.order_by("-sent_at", "-created_at")
-                .values_list("id", flat=True)
-                .first()
+            try:
+                latest_id = (
+                    conversation.messages.order_by("-sent_at", "-created_at")
+                    .values_list("id", flat=True)
+                    .first()
+                )
+            except Exception:
+                latest_id = None
+            if not latest_id or str(latest_id) != str(expected_last_message_id):
+                return
+
+            metadata = conversation.metadata if isinstance(conversation.metadata, Mapping) else {}
+            memory_meta = metadata.get("memory") if isinstance(metadata.get("memory"), Mapping) else {}
+            if str(memory_meta.get("last_summarized_message_id") or "") == str(expected_last_message_id):
+                return
+
+            try:
+                summary = self._generate_memory_summary(
+                    conversation=conversation,
+                    user_message=user_message,
+                    assistant_message=assistant_message,
+                )
+            except Exception as exc:  # pragma: no cover - best effort background task
+                structured_log(
+                    "mcp",
+                    "memory.summary.failed",
+                    {"error": str(exc)[:240]},
+                    context={"conversation": conversation.id, "business": conversation.business_profile_id},
+                    logger_obj=logger,
+                    level=logging.WARNING,
+                )
+                return
+            if not summary:
+                return
+
+            summary_max_chars = self._safe_int_setting(getattr(settings, "MCP_MEMORY_SUMMARY_MAX_CHARS", 1600), 1600)
+            clean_summary = sanitize_text(summary.strip())
+            clean_summary = self._clip_text(clean_summary, summary_max_chars) if summary_max_chars else clean_summary
+            if not clean_summary:
+                return
+
+            updated_meta = dict(metadata)
+            updated_memory = dict(memory_meta) if isinstance(memory_meta, Mapping) else {}
+            updated_memory.update(
+                {
+                    "last_summarized_message_id": str(expected_last_message_id),
+                    "summary_updated_at": timezone.now().isoformat(),
+                    "summary_chars": len(clean_summary),
+                }
             )
-        except Exception:
-            latest_id = None
-        if not latest_id or str(latest_id) != str(expected_last_message_id):
-            return
+            updated_meta["memory"] = updated_memory
+            conversation.summary = clean_summary
+            conversation.metadata = updated_meta
+            try:
+                conversation.save(update_fields=["summary", "metadata"])
+            except Exception as exc:  # pragma: no cover - best effort background task
+                structured_log(
+                    "mcp",
+                    "memory.summary.persist_failed",
+                    {"error": str(exc)[:240]},
+                    context={"conversation": conversation.id, "business": conversation.business_profile_id},
+                    logger_obj=logger,
+                    level=logging.WARNING,
+                )
+                return
 
-        metadata = conversation.metadata if isinstance(conversation.metadata, Mapping) else {}
-        memory_meta = metadata.get("memory") if isinstance(metadata.get("memory"), Mapping) else {}
-        if str(memory_meta.get("last_summarized_message_id") or "") == str(expected_last_message_id):
-            return
-
-        try:
-            summary = self._generate_memory_summary(
-                conversation=conversation,
-                user_message=user_message,
-                assistant_message=assistant_message,
-            )
-        except Exception as exc:  # pragma: no cover - best effort background task
             structured_log(
                 "mcp",
-                "memory.summary.failed",
-                {"error": str(exc)[:240]},
+                "memory.summary.updated",
+                {
+                    "summary_chars": len(clean_summary),
+                    "last_message_id": str(expected_last_message_id),
+                },
                 context={"conversation": conversation.id, "business": conversation.business_profile_id},
                 logger_obj=logger,
-                level=logging.WARNING,
             )
-            return
-        if not summary:
-            return
-
-        summary_max_chars = self._safe_int_setting(getattr(settings, "MCP_MEMORY_SUMMARY_MAX_CHARS", 1600), 1600)
-        clean_summary = sanitize_text(summary.strip())
-        clean_summary = self._clip_text(clean_summary, summary_max_chars) if summary_max_chars else clean_summary
-        if not clean_summary:
-            return
-
-        updated_meta = dict(metadata)
-        updated_memory = dict(memory_meta) if isinstance(memory_meta, Mapping) else {}
-        updated_memory.update(
-            {
-                "last_summarized_message_id": str(expected_last_message_id),
-                "summary_updated_at": timezone.now().isoformat(),
-                "summary_chars": len(clean_summary),
-            }
-        )
-        updated_meta["memory"] = updated_memory
-        conversation.summary = clean_summary
-        conversation.metadata = updated_meta
-        try:
-            conversation.save(update_fields=["summary", "metadata"])
-        except Exception as exc:  # pragma: no cover - best effort background task
-            structured_log(
-                "mcp",
-                "memory.summary.persist_failed",
-                {"error": str(exc)[:240]},
-                context={"conversation": conversation.id, "business": conversation.business_profile_id},
-                logger_obj=logger,
-                level=logging.WARNING,
-            )
-            return
-
-        structured_log(
-            "mcp",
-            "memory.summary.updated",
-            {
-                "summary_chars": len(clean_summary),
-                "last_message_id": str(expected_last_message_id),
-            },
-            context={"conversation": conversation.id, "business": conversation.business_profile_id},
-            logger_obj=logger,
-        )
-        close_old_connections()
+        finally:
+            close_old_connections()
 
     def _generate_memory_summary(
         self,
