@@ -2986,7 +2986,8 @@ def _table_aggregate_handler(
             "reason": "prompt_budget",
             "message": (
                 "Table aggregate rows were truncated to stay within prompt size limits. "
-                "Re-run read_knowledge with intent=table and a narrower table.match_column/match_value(s), plus table.sheet_name and/or table.select_columns."
+                "Narrow the tabular query by providing an exact identifier filter (match_column + match_value or filters), "
+                "and optionally sheet_name and select_columns, then retry."
             ),
             "original_match_count": original_match_count,
             "returned_match_count": len(rows_out),
