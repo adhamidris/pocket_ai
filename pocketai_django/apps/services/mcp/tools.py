@@ -2956,7 +2956,16 @@ def _table_aggregate_handler(
         "row_limit": row_limit,
         "cache_hit": cache_hit,
     }
-    base_overhead = _json_char_len({k: v for k, v in base_payload.items() if v not in (None, "") and v != []})
+    minimal_payload = {
+        **base_payload,
+        "duration_ms": 0,
+        "match_count": 0,
+        "rows": [],
+        "total": None,
+        "display_total": None,
+        "hint": None,
+    }
+    base_overhead = _json_char_len({k: v for k, v in minimal_payload.items() if v not in (None, "") and v != []})
     if max_payload_chars is not None and base_overhead >= max_payload_chars:
         raise CharacterBudgetExceeded("Character budget too low to return table aggregate metadata.")
 
@@ -3006,7 +3015,42 @@ def _table_aggregate_handler(
     if throttle_notice:
         payload["throttle_notice"] = throttle_notice
 
-    char_count = _json_char_len({k: v for k, v in payload.items() if v not in (None, "") and v != []})
+    def _payload_char_count(value: Mapping[str, object]) -> int:
+        return _json_char_len({k: v for k, v in value.items() if v not in (None, "") and v != []})
+
+    char_count = _payload_char_count(payload)
+    if max_payload_chars is not None and char_count > max_payload_chars:
+        notice = payload.get("throttle_notice") if isinstance(payload.get("throttle_notice"), Mapping) else None
+        if notice:
+            original_message = str(notice.get("message") or "").strip()
+            for limit in (240, 160, 100, 60, 0):
+                updated_notice = dict(notice)
+                if limit <= 0:
+                    updated_notice.pop("message", None)
+                else:
+                    updated_notice["message"] = _clip_text(original_message, limit)
+                cleaned_notice = {k: v for k, v in updated_notice.items() if v not in (None, "") and v != []}
+                if cleaned_notice:
+                    payload["throttle_notice"] = cleaned_notice
+                else:
+                    payload.pop("throttle_notice", None)
+                char_count = _payload_char_count(payload)
+                if char_count <= max_payload_chars:
+                    break
+
+        if char_count > max_payload_chars and rows_out:
+            while rows_out and char_count > max_payload_chars:
+                rows_out.pop()
+                payload["rows"] = rows_out
+                payload["match_count"] = len(rows_out)
+                notice = payload.get("throttle_notice") if isinstance(payload.get("throttle_notice"), Mapping) else None
+                if notice:
+                    notice_out = dict(notice)
+                    if "returned_match_count" in notice_out:
+                        notice_out["returned_match_count"] = len(rows_out)
+                    payload["throttle_notice"] = notice_out
+                char_count = _payload_char_count(payload)
+
     payload["char_count"] = char_count
     payload["token_estimate"] = _estimate_tokens(char_count)
     context.reserve_characters(char_count)
