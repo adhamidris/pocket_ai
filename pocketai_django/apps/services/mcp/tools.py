@@ -1450,6 +1450,7 @@ def _search_knowledge_handler(
         diag = dict(diagnostics or {})
         snippet_count = len(snippets)
         diag.setdefault("snippet_count", snippet_count)
+        warn_ms = int(getattr(settings, "MCP_SLO_SEARCH_WARN_MS", 1200) or 0)
         detail = {
             "status": status,
             "intent": intent,
@@ -1472,6 +1473,15 @@ def _search_knowledge_handler(
         }
         if note:
             detail["note"] = note
+        total_ms = detail.get("total_ms")
+        slow = bool(
+            warn_ms
+            and isinstance(total_ms, (int, float))
+            and float(total_ms) >= float(warn_ms)
+        )
+        if slow:
+            detail["slo"] = "slow"
+            detail["slo_warn_ms"] = warn_ms
         structured_log(
             "mcp",
             "search.performance",
@@ -1480,6 +1490,7 @@ def _search_knowledge_handler(
                 "business": conversation.business_profile_id,
                 "conversation": conversation.id,
             },
+            level=logging.WARNING if slow else logging.INFO,
         )
 
     def _execute_single_query(
@@ -3062,6 +3073,7 @@ def _table_aggregate_handler(
         {
             "document_id": str(upload.id),
             "mode": mode,
+            "status": payload.get("status"),
             "match_count": len(rows_out),
             "original_match_count": original_match_count,
             "evaluated_rows": evaluated_rows,
@@ -3078,8 +3090,21 @@ def _table_aggregate_handler(
             "token_estimate": payload.get("token_estimate"),
             "truncated": bool(throttle_notice),
         },
-        context={"business": conversation.business_profile_id},
+        context={
+            "business": conversation.business_profile_id,
+            "conversation": conversation.id,
+            "document_id": str(upload.id),
+        },
         logger_obj=logger,
+        level=(
+            logging.WARNING
+            if (
+                int(duration_ms or 0)
+                >= int(getattr(settings, "MCP_SLO_TABLE_AGGREGATE_WARN_MS", 1200) or 0)
+                and int(getattr(settings, "MCP_SLO_TABLE_AGGREGATE_WARN_MS", 1200) or 0) > 0
+            )
+            else logging.INFO
+        ),
     )
     return payload
 
@@ -4023,7 +4048,11 @@ def _dataset_query_handler(
                             "storage_format": storage_format,
                             "error": str(exc)[:200],
                         },
-                        context={"business": conversation.business_profile_id},
+                        context={
+                            "business": conversation.business_profile_id,
+                            "conversation": conversation.id,
+                            "document_id": str(upload.id),
+                        },
                         logger_obj=logger,
                         level=logging.WARNING,
                     )
@@ -4487,6 +4516,7 @@ def _dataset_query_handler(
             "sort_direction": sort_direction,
             "limit": limit,
             "offset": offset,
+            "status": payload.get("status"),
             "match_count": payload.get("match_count"),
             "total_matches": matched_total,
             "scanned_rows": scanned_rows,
@@ -4496,8 +4526,21 @@ def _dataset_query_handler(
             "char_count": char_count,
             "token_estimate": payload.get("token_estimate"),
         },
-        context={"business": conversation.business_profile_id},
+        context={
+            "business": conversation.business_profile_id,
+            "conversation": conversation.id,
+            "document_id": str(upload.id),
+        },
         logger_obj=logger,
+        level=(
+            logging.WARNING
+            if (
+                int(duration_ms or 0)
+                >= int(getattr(settings, "MCP_SLO_DATASET_QUERY_WARN_MS", 1500) or 0)
+                and int(getattr(settings, "MCP_SLO_DATASET_QUERY_WARN_MS", 1500) or 0) > 0
+            )
+            else logging.INFO
+        ),
     )
     return payload
 
@@ -4516,6 +4559,7 @@ def _read_knowledge_handler(
     - _dataset_query_handler (dataset-mode uploads)
     """
 
+    start = time.perf_counter()
     raw_id = _coerce_str(arguments.get("document_id")).strip()
     if not raw_id:
         return {"tool": "read_knowledge", "status": "error", "error": "document_id is required"}
@@ -4543,11 +4587,34 @@ def _read_knowledge_handler(
         ).first()
 
     if upload_record is None:
-        return {
+        payload = {
             "tool": "read_knowledge",
             "status": "not_found",
             "error": "document not found for this business",
         }
+        duration_ms = int((time.perf_counter() - start) * 1000.0)
+        warn_ms = int(getattr(settings, "MCP_SLO_READ_KNOWLEDGE_WARN_MS", 1500) or 0)
+        slow = bool(warn_ms and duration_ms >= warn_ms)
+        structured_log(
+            "mcp",
+            "read_knowledge.performance",
+            {
+                "status": payload.get("status"),
+                "engine": None,
+                "engine_tool": None,
+                "duration_ms": duration_ms,
+                "requested_document_id": raw_id,
+                "slo": "slow" if slow else None,
+                "slo_warn_ms": warn_ms if slow else None,
+            },
+            context={
+                "business": conversation.business_profile_id,
+                "conversation": conversation.id,
+            },
+            logger_obj=logger,
+            level=logging.WARNING,
+        )
+        return payload
 
     chunk_meta = chunk_record.metadata if chunk_record and isinstance(getattr(chunk_record, "metadata", None), Mapping) else {}
     ingestion_meta = (
@@ -4642,6 +4709,54 @@ def _read_knowledge_handler(
         # Auto routing: prefer tabular engines when the upload is tabular.
         wants_table = upload_has_tables or dataset_enabled
         wants_text = not wants_table
+
+    def _log_read_knowledge_performance(envelope: Mapping[str, object]) -> None:
+        duration_ms = int((time.perf_counter() - start) * 1000.0)
+        warn_ms = int(getattr(settings, "MCP_SLO_READ_KNOWLEDGE_WARN_MS", 1500) or 0)
+        status_value = str(envelope.get("status") or "").strip().lower() or "ok"
+        slow = bool(warn_ms and duration_ms >= warn_ms)
+        resolved_upload_id = str(envelope.get("document_id") or upload_record.id)
+
+        diagnostics = envelope.get("diagnostics")
+        if isinstance(diagnostics, dict):
+            diagnostics["read_knowledge_duration_ms"] = duration_ms
+
+        detail: dict[str, object] = {
+            "status": envelope.get("status"),
+            "engine": envelope.get("engine"),
+            "engine_tool": (
+                diagnostics.get("engine_tool") if isinstance(diagnostics, Mapping) else None
+            ),
+            "duration_ms": duration_ms,
+            "total_matches": envelope.get("total_matches"),
+            "truncated": envelope.get("truncated"),
+            "intent": intent,
+            "wants_table": wants_table,
+            "wants_text": wants_text,
+            "dataset_enabled": dataset_enabled,
+            "upload_has_tables": upload_has_tables,
+            "is_table_chunk": is_table_chunk,
+            "is_dataset_card": is_dataset_card,
+        }
+        error_code = envelope.get("error_code")
+        if error_code not in (None, ""):
+            detail["error_code"] = error_code
+        if slow:
+            detail["slo"] = "slow"
+            detail["slo_warn_ms"] = warn_ms
+
+        structured_log(
+            "mcp",
+            "read_knowledge.performance",
+            detail,
+            context={
+                "business": conversation.business_profile_id,
+                "conversation": conversation.id,
+                "document_id": resolved_upload_id,
+            },
+            logger_obj=logger,
+            level=logging.WARNING if slow or status_value in {"error", "constraint_error"} else logging.INFO,
+        )
 
     def _envelope(
         *,
@@ -4905,7 +5020,7 @@ def _read_knowledge_handler(
                                 "requested_identifier": {"column": column, "values": [value] if value else [], "policy": "eq"},
                                 "match_policy": "eq_required",
                             }
-                            return _envelope(
+                            envelope = _envelope(
                                 engine="file_dataset",
                                 engine_tool="dataset_query",
                                 result={
@@ -4926,6 +5041,8 @@ def _read_knowledge_handler(
                                 resolved_document_id_used=str(upload_record.id),
                                 identifier_diagnostics=identifier_diag,
                             )
+                            _log_read_knowledge_performance(envelope)
+                            return envelope
 
                     filter_payload: dict[str, object] = {"column": column, "op": op}
                     if op == "in":
@@ -5168,7 +5285,7 @@ def _read_knowledge_handler(
                             result_out["rows"] = filtered_rows
                             result_out["match_count"] = len(filtered_rows)
 
-            return _envelope(
+            envelope = _envelope(
                 engine="file_dataset",
                 engine_tool="dataset_query",
                 result=result_out,
@@ -5178,6 +5295,8 @@ def _read_knowledge_handler(
                 resolved_document_id_used=str(upload_record.id),
                 identifier_diagnostics=identifier_diag or None,
             )
+            _log_read_knowledge_performance(envelope)
+            return envelope
 
         # Non-dataset tables fall back to the preview/aggregate engine.
         table_agg_args: dict[str, object] = {"document_id": str(upload_record.id)}
@@ -5295,7 +5414,7 @@ def _read_knowledge_handler(
                         result_out["match_count"] = len(filtered_rows)
                         result_out["original_match_count"] = len(filtered_rows)
 
-        return _envelope(
+        envelope = _envelope(
             engine="table_preview",
             engine_tool="table_aggregate",
             result=result_out,
@@ -5305,6 +5424,8 @@ def _read_knowledge_handler(
             resolved_document_id_used=str(upload_record.id),
             identifier_diagnostics=identifier_diag or None,
         )
+        _log_read_knowledge_performance(envelope)
+        return envelope
 
     # Text excerpt path (default).
     read_id = str(chunk_record.id if chunk_record else upload_record.id)
@@ -5317,7 +5438,7 @@ def _read_knowledge_handler(
             continue
         read_args[key] = value
     result = _read_document_handler(read_args, conversation=conversation, context=context)
-    return _envelope(
+    envelope = _envelope(
         engine="text_page",
         engine_tool="read_document",
         result=result,
@@ -5326,6 +5447,8 @@ def _read_knowledge_handler(
         resolved_chunk_id=str(chunk_record.id) if chunk_record else None,
         resolved_document_id_used=read_id,
     )
+    _log_read_knowledge_performance(envelope)
+    return envelope
 
 
 def _action_tool_result(action: ActionType, payload: Mapping[str, object]) -> Mapping[str, object]:

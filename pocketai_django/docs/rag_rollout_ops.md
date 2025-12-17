@@ -104,6 +104,28 @@ power admin views. Each snapshot includes:
 Because snapshots are pure queries, you can expose them over an admin API, send
 them to Grafana, or run them in scheduled reports.
 
+### MCP / Tool-RAG Logs (Chat Portal)
+
+In MCP mode, additional structured logs are emitted for per-turn and per-tool visibility:
+
+- `mcp.trace stage=turn.summary` — turn duration, tool count, tool error codes, throttle hits, and budget usage.
+- `mcp.trace stage=search.performance` — latency breakdown for `search_knowledge` (warns when it exceeds `MCP_SLO_SEARCH_WARN_MS`).
+- `mcp.trace stage=read_knowledge.performance` — unified retrieval latency + routing flags (engine, dataset/table/text, truncation).
+- `mcp.trace stage=dataset.query` / `mcp.trace stage=table.aggregate` — tabular query timing, row counts, truncation; headers include `conversation=` + `document_id=` for easy grep.
+
+Common quick checks:
+
+- Slow turns: `rg \"stage=turn\\.summary\" var/logs/rag.log | rg \"slo=slow\" | tail`
+- Slow retrieval: `rg \"stage=read_knowledge\\.performance\" var/logs/rag.log | rg \"slo=slow\" | tail`
+- Dataset query engine fallback: `rg \"stage=dataset\\.duckdb_fallback\" var/logs/rag.log | tail`
+
+### Ingestion Job Logs
+
+Ingestion now emits structured job markers in addition to the existing plain logs:
+
+- `rag.trace stage=ingest.job_start` — upload/job metadata at start.
+- `rag.trace stage=ingest.job_done` — duration, output sizing, dataset-mode flags, and SLO warnings (`INGEST_SLO_WARN_MS`).
+
 ## Phase 1 Recall Knobs (Config-Only)
 
 - Defaults now favor recall: `RAG_ALIAS_FTS_THRESHOLD=0.25` and `RAG_VECTOR_DISTANCE_CEILING=0.5`.

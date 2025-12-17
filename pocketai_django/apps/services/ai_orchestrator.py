@@ -673,9 +673,9 @@ class KnowledgeSearchService:
         return max(2, int(override))
 
     def _lexical_threshold_for_business(self, business_profile, traits: QueryTraits) -> float:
-        short_default = 0.25
-        mid_default = 0.2
-        long_default = 0.15
+        short_default = float(getattr(settings, "RAG_LEXICAL_THRESHOLD_SHORT", 0.25))
+        mid_default = float(getattr(settings, "RAG_LEXICAL_THRESHOLD_MEDIUM", 0.2))
+        long_default = float(getattr(settings, "RAG_LEXICAL_THRESHOLD_LONG", 0.15))
         if traits.token_count <= 3:
             return float(self._business_override(business_profile, "lexical_threshold_short", short_default))
         if traits.token_count <= 6:
@@ -2041,10 +2041,18 @@ class KnowledgeSearchService:
         if not distances:
             return {}
         average = sum(distances) / len(distances)
+        similarities = [1.0 - distance for distance in distances]
+        sim_average = sum(similarities) / len(similarities)
+        clamped_scores = [max(-1.0, min(1.0, sim)) for sim in similarities]
+        score_average = sum(clamped_scores) / len(clamped_scores)
         return {
             "vector_distance_min": min(distances),
             "vector_distance_max": max(distances),
             "vector_distance_mean": round(average, 5),
+            "vector_similarity_min": round(min(similarities), 5),
+            "vector_similarity_max": round(max(similarities), 5),
+            "vector_similarity_mean": round(sim_average, 5),
+            "vector_score_mean": round(score_average, 5),
         }
 
     def _condensed_query_for_fts(self, business_profile, traits: QueryTraits) -> str:
@@ -2349,7 +2357,7 @@ class KnowledgeSearchService:
             if query_vector:
                 if cand.vector_distance is not None:
                     try:
-                        vector_score = max(0.0, 1.0 - float(cand.vector_distance))
+                        vector_score = 1.0 - float(cand.vector_distance)
                     except (TypeError, ValueError):
                         vector_score = 0.0
                 else:
@@ -3146,6 +3154,15 @@ class KnowledgeSearchService:
         )
         if len(query_preview) > 200:
             query_preview = f"{query_preview[:200]}..."
+        top_score = None
+        top_diag: Mapping[str, object] = {}
+        top_breakdown: Mapping[str, object] = {}
+        if result.snippets:
+            top_score = result.snippets[0].confidence_score
+            top_diag = result.snippets[0].source_diagnostics or {}
+            maybe_breakdown = top_diag.get("score_breakdown") if isinstance(top_diag, Mapping) else None
+            if isinstance(maybe_breakdown, Mapping):
+                top_breakdown = maybe_breakdown
         _rag_log(
             "search.summary",
             {
@@ -3169,6 +3186,24 @@ class KnowledgeSearchService:
                 "tables_available": diagnostics.get("tables_available"),
                 "table_reason": diagnostics.get("table_reason"),
                 "vector_ceiling": diagnostics.get("vector_distance_ceiling"),
+                "vector_distance_min": diagnostics.get("vector_distance_min"),
+                "vector_distance_mean": diagnostics.get("vector_distance_mean"),
+                "vector_distance_max": diagnostics.get("vector_distance_max"),
+                "vector_similarity_min": diagnostics.get("vector_similarity_min"),
+                "vector_similarity_mean": diagnostics.get("vector_similarity_mean"),
+                "vector_similarity_max": diagnostics.get("vector_similarity_max"),
+                "top_score": top_score,
+                "top_vector": top_breakdown.get("vector"),
+                "top_lexical": top_breakdown.get("lexical"),
+                "top_alias": top_breakdown.get("alias"),
+                "top_entity": top_breakdown.get("entity"),
+                "top_recency": top_breakdown.get("recency"),
+                "mmr_lambda": self.mmr_lambda,
+                "w_vector": self.rerank_weights.get("vector"),
+                "w_lexical": self.rerank_weights.get("lexical"),
+                "w_alias": self.rerank_weights.get("alias"),
+                "w_entity": self.rerank_weights.get("entity"),
+                "w_recency": self.rerank_weights.get("recency"),
                 "alias_threshold": diagnostics.get("alias_fts_threshold"),
                 "query": query_preview,
             },

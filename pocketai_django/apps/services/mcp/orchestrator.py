@@ -1123,6 +1123,7 @@ class McpOrchestratorService:
         on_stream_complete: Callable[[], None] | None = None,
         on_spinner_update: Callable[[str], None] | None = None,
     ) -> StreamingTurnContext:
+        turn_start = time.perf_counter()
         result = self._execute_turn(
             conversation=conversation,
             user_message=user_message,
@@ -1131,6 +1132,7 @@ class McpOrchestratorService:
             on_placeholder_response=on_placeholder_response,
             on_spinner_update=on_spinner_update,
         )
+        turn_duration_ms = int((time.perf_counter() - turn_start) * 1000.0)
         streamed_chunks = tuple(result.get("streamed_chunks") or ())
         clean_answer_text = str(result.get("clean_answer_text") or "")
         tool_context = result.get("tool_context")
@@ -1198,6 +1200,61 @@ class McpOrchestratorService:
                     }
                     for name, stats in tool_metrics.items()
                 ]
+
+            tool_calls = len(trace_entries)
+            tool_total_ms = 0.0
+            tool_errors = 0
+            throttle_hits = 0
+            error_code_counts: dict[str, int] = {}
+            for entry in trace_entries:
+                if not isinstance(entry, Mapping):
+                    continue
+                duration = entry.get("duration_ms")
+                if isinstance(duration, (int, float)):
+                    tool_total_ms += max(0.0, float(duration))
+                status_value = str(entry.get("status") or "").strip().lower()
+                if status_value in {"error", "constraint_error"}:
+                    tool_errors += 1
+                if entry.get("throttle_notice"):
+                    throttle_hits += 1
+                error_code = entry.get("error_code")
+                if error_code:
+                    key = str(error_code)
+                    error_code_counts[key] = error_code_counts.get(key, 0) + 1
+
+            warn_ms = int(getattr(settings, "MCP_SLO_TURN_WARN_MS", 15000) or 0)
+            warn_tools = int(getattr(settings, "MCP_SLO_TOOL_CALLS_WARN", 6) or 0)
+            slow_turn = bool(warn_ms and turn_duration_ms >= warn_ms)
+            noisy_tools = bool(warn_tools and tool_calls >= warn_tools)
+            structured_log(
+                "mcp",
+                "turn.summary",
+                {
+                    "llm_strategy": strategy,
+                    "duration_ms": turn_duration_ms,
+                    "answer_chars": len(clean_answer_text),
+                    "streamed_chunks": len(streamed_chunks),
+                    "tools": tool_calls,
+                    "tool_total_ms": round(tool_total_ms, 2),
+                    "tool_errors": tool_errors,
+                    "throttle_hits": throttle_hits,
+                    "error_codes": error_code_counts,
+                    "char_budget_turn": tool_context.char_budget_per_turn,
+                    "char_budget_minute": tool_context.char_budget_per_minute,
+                    "char_used": tool_context.characters_used,
+                    "chunk_reads_used": tool_context.chunk_reads_used,
+                    "chunk_pages_used": tool_context.chunk_pages_used,
+                    "slo": "slow" if slow_turn else None,
+                    "slo_warn_ms": warn_ms if slow_turn else None,
+                    "slo_tool_calls_warn": warn_tools if noisy_tools else None,
+                },
+                context={
+                    "business": conversation.business_profile_id,
+                    "conversation": conversation.id,
+                },
+                logger_obj=logger,
+                level=logging.WARNING if slow_turn or noisy_tools or tool_errors else logging.INFO,
+            )
         llm_source = "provider"
         if diagnostics.get("llm_strategy"):
             llm_source = str(diagnostics.get("llm_strategy"))

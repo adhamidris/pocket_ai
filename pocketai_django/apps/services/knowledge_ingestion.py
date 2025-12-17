@@ -11,6 +11,7 @@ import io
 import re
 import shutil
 import statistics
+import time
 import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -50,6 +51,7 @@ from apps.services.dataset_cards import build_dataset_card_segment_payload
 from apps.services.embeddings import LocalEmbeddingService, build_embedding_service, EmbeddingProviderError
 from apps.services.feature_flags import FeatureFlagService
 from apps.services.quality_monitor import QualityMonitor
+from apps.services.rag_logging import structured_log
 from apps.services.table_normalization import (
     NormalizedSheet,
     SheetNormalizationDiagnostics,
@@ -1834,7 +1836,20 @@ class KnowledgeIngestionService:
                     result = self._process_embedding_job(job)
                 else:
                     upload = job.upload
+                    job_started_at = time.perf_counter()
                     logger.info("ingest.start upload=%s job=%s source_type=%s", upload.id, job.id, upload.source_type)
+                    structured_log(
+                        "rag",
+                        "ingest.job_start",
+                        {
+                            "job_id": str(job.id),
+                            "upload_id": str(upload.id),
+                            "source_type": upload.source_type,
+                            "size_bytes": getattr(upload, "size_bytes", None),
+                        },
+                        context={"business": upload.business_profile_id, "upload": upload.id, "job": job.id},
+                        logger_obj=logger,
+                    )
                     try:
                         with TRACER.start_as_current_span("ingest.extract") as extract_span:
                             extraction = self._extract_upload(upload)
@@ -1854,6 +1869,45 @@ class KnowledgeIngestionService:
                             characters,
                             extraction.format_hint,
                         )
+                        duration_ms = int((time.perf_counter() - job_started_at) * 1000.0)
+                        warn_ms = int(getattr(settings, "INGEST_SLO_WARN_MS", 60000) or 0)
+                        slow = bool(warn_ms and duration_ms >= warn_ms)
+                        ingestion_meta = upload.ingestion_metadata if isinstance(upload.ingestion_metadata, dict) else {}
+                        dataset_meta = ingestion_meta.get("dataset") if isinstance(ingestion_meta, dict) else None
+                        dataset_enabled = bool(isinstance(dataset_meta, dict) and dataset_meta.get("enabled"))
+                        sheet_count = None
+                        row_count = None
+                        storage_format = None
+                        if isinstance(dataset_meta, dict):
+                            storage_format = dataset_meta.get("storage_format")
+                            row_count = dataset_meta.get("row_count")
+                            sheets = dataset_meta.get("sheets")
+                            if isinstance(sheets, list):
+                                sheet_count = len([s for s in sheets if isinstance(s, dict)])
+
+                        structured_log(
+                            "rag",
+                            "ingest.job_done",
+                            {
+                                "job_id": str(job.id),
+                                "upload_id": str(upload.id),
+                                "status": "completed",
+                                "duration_ms": duration_ms,
+                                "format": extraction.format_hint,
+                                "chars": characters,
+                                "chunk_count": getattr(upload, "chunk_count", None),
+                                "token_count": getattr(upload, "token_count", None),
+                                "dataset_enabled": dataset_enabled,
+                                "dataset_storage_format": storage_format,
+                                "dataset_row_count": row_count,
+                                "dataset_sheet_count": sheet_count,
+                                "slo": "slow" if slow else None,
+                                "slo_warn_ms": warn_ms if slow else None,
+                            },
+                            context={"business": upload.business_profile_id, "upload": upload.id, "job": job.id},
+                            logger_obj=logger,
+                            level=logging.WARNING if slow else logging.INFO,
+                        )
 
                         result = IngestionJobResult(
                             job_id=job.id,
@@ -1865,6 +1919,21 @@ class KnowledgeIngestionService:
                     except KnowledgeIngestionError as exc:
                         self._handle_failure(job, str(exc))
                         logger.warning("Ingestion failed upload=%s job=%s error=%s", upload.id, job.id, exc)
+                        duration_ms = int((time.perf_counter() - job_started_at) * 1000.0)
+                        structured_log(
+                            "rag",
+                            "ingest.job_done",
+                            {
+                                "job_id": str(job.id),
+                                "upload_id": str(upload.id),
+                                "status": "failed",
+                                "duration_ms": duration_ms,
+                                "error": str(exc)[:200],
+                            },
+                            context={"business": upload.business_profile_id, "upload": upload.id, "job": job.id},
+                            logger_obj=logger,
+                            level=logging.WARNING,
+                        )
                         result = IngestionJobResult(
                             job_id=job.id,
                             upload_id=upload.id,
@@ -1881,6 +1950,23 @@ class KnowledgeIngestionService:
                 "ingest.unexpected_error upload=%s job=%s", getattr(job, "upload_id", None), getattr(job, "id", None)
             )
             self._handle_failure(job, f"unexpected ingestion error: {exc}")
+            structured_log(
+                "rag",
+                "ingest.job_done",
+                {
+                    "job_id": str(getattr(job, "id", "")),
+                    "upload_id": str(getattr(job, "upload_id", "")),
+                    "status": "failed",
+                    "error": str(exc)[:200],
+                },
+                context={
+                    "business": getattr(job, "business_profile_id", None),
+                    "upload": getattr(job, "upload_id", None),
+                    "job": getattr(job, "id", None),
+                },
+                logger_obj=logger,
+                level=logging.ERROR,
+            )
             return IngestionJobResult(
                 job_id=job.id,
                 upload_id=job.upload_id,
