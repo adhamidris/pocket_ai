@@ -3404,6 +3404,8 @@ class McpOrchestratorService:
         snippet_content_chars: int,
         max_rows: int,
         max_contributions: int,
+        max_cells: int,
+        max_cells_exact: int,
     ) -> tuple[list[dict[str, object]], int]:
         updated: list[dict[str, object]] = []
         changed = 0
@@ -3432,6 +3434,8 @@ class McpOrchestratorService:
                 snippet_content_chars=snippet_content_chars,
                 max_rows=max_rows,
                 max_contributions=max_contributions,
+                max_cells=max_cells,
+                max_cells_exact=max_cells_exact,
             )
             new_content = json.dumps(compacted, ensure_ascii=False)
             if new_content != content:
