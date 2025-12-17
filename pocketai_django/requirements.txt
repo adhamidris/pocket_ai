@@ -8,6 +8,8 @@ PyMuPDF>=1.24,<2.0
 openpyxl>=3.1,<4.0
 xlrd>=2.0,<3.0
 
+duckdb>=1.0,<2.0
+
 pgvector>=0.2
 fastembed>=0.3
 numpy>=1.26,<2.0

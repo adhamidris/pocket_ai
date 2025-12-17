@@ -197,6 +197,9 @@ try:
 except (TypeError, ValueError):
     DATASET_MODE_SAMPLE_ROWS = 20
 DATASET_STORAGE_FORMAT = os.getenv("DATASET_STORAGE_FORMAT", "csv_gz").strip() or "csv_gz"
+DATASET_QUERY_ENGINE = (os.getenv("DATASET_QUERY_ENGINE", "duckdb") or "duckdb").strip().lower() or "duckdb"
+if DATASET_QUERY_ENGINE not in {"duckdb", "python", "auto"}:
+    DATASET_QUERY_ENGINE = "duckdb"
 try:
     DATASET_QUERY_MAX_SECONDS = float(os.getenv("DATASET_QUERY_MAX_SECONDS", "2.5"))
 except (TypeError, ValueError):

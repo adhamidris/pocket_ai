@@ -17,6 +17,7 @@ import gzip
 import hashlib
 import json
 import re
+import threading
 import time
 import uuid
 from bisect import bisect_left
@@ -49,6 +50,11 @@ from apps.services.tabular_limits import enforce_tool_rate_limit, resolve_tabula
 from core.metrics import latency_monitor
 from .identifier_registry import IdentifierGuardrail, IdentifierRegistryService
 from .types import ToolExecutionContext, CharacterBudgetExceeded
+
+try:
+    import duckdb  # type: ignore
+except Exception:  # pragma: no cover
+    duckdb = None  # type: ignore
 
 
 logger = logging.getLogger(__name__)
@@ -462,9 +468,25 @@ def execute_tool(
     matter which tool the LLM selects.
     """
 
-    handler = _TOOL_HANDLERS.get(name)
+    normalized_name = (name or "").strip()
+    if normalized_name in {"read_document", "table_aggregate", "dataset_query"}:
+        return {
+            "tool": normalized_name,
+            "status": "error",
+            "error": "deprecated_tool",
+            "error_code": "deprecated_tool",
+            "hint": "This tool is deprecated. Use read_knowledge instead (it routes internally to the right engine).",
+        }
+
+    handler = _TOOL_HANDLERS.get(normalized_name)
     if not handler:
-        raise ValueError(f"Unsupported MCP tool: {name}")
+        return {
+            "tool": normalized_name or "unknown_tool",
+            "status": "error",
+            "error": "unsupported_tool",
+            "error_code": "unsupported_tool",
+            "hint": "Unsupported tool. Use search_knowledge, read_knowledge, or list_tables.",
+        }
     ctx = context or ToolExecutionContext()
     return handler(arguments, conversation=conversation, context=ctx)
 
@@ -3250,6 +3272,7 @@ def _dataset_query_handler(
     scanned_rows = 0
     matched_total = 0
     truncated = False
+    query_engine = "python"
 
     aggregate_result: dict[str, object] | None = None
     sum_total = 0.0
@@ -3499,6 +3522,315 @@ def _dataset_query_handler(
                 }
 
             preview_only = not (filters_input or query_norm or aggregate_op or sort_column_actual)
+            dataset_query_engine = str(getattr(settings, "DATASET_QUERY_ENGINE", "duckdb") or "duckdb").strip().lower() or "duckdb"
+            use_duckdb = bool(
+                duckdb is not None
+                and dataset_query_engine in {"duckdb", "auto"}
+                and not preview_only
+            )
+            if use_duckdb:
+                con = None
+                try:
+                    def _sql_ident(name: str) -> str:
+                        return '"' + name.replace('"', '""') + '"'
+
+                    def _escape_like(value: str) -> str:
+                        return (
+                            value.replace("\\", "\\\\")
+                            .replace("%", "\\%")
+                            .replace("_", "\\_")
+                        )
+
+                    def _numeric_expr(col_ref: str) -> str:
+                        return (
+                            "try_cast(replace(regexp_replace("
+                            + col_ref
+                            + ", '[^0-9\\-,\\.]', '', 'g'), ',', '') as double)"
+                        )
+
+                    path_sql = str(abs_path).replace("'", "''")
+                    base_from = (
+                        "(select row_number() over () as __row_index, * "
+                        f"from read_csv_auto('{path_sql}', header=true, all_varchar=true)) as base"
+                    )
+                    row_index_ref = f"base.{_sql_ident('__row_index')}"
+
+                    where_parts: list[str] = []
+                    params: list[object] = []
+
+                    if query_norm:
+                        search_columns = list(selected_columns or header)[:32]
+                        query_pattern = f"%{_escape_like(query_norm)}%"
+                        or_parts: list[str] = []
+                        for col in search_columns:
+                            col_ref = f"lower(base.{_sql_ident(col)})"
+                            or_parts.append(f"{col_ref} like ? escape '\\\\'")
+                            params.append(query_pattern)
+                        if or_parts:
+                            where_parts.append("(" + " or ".join(or_parts) + ")")
+
+                    op_map = {"gt": ">", "gte": ">=", "lt": "<", "lte": "<="}
+                    for flt in filters_input:
+                        column = _coerce_str(flt.get("column")).strip()
+                        op = _coerce_str(flt.get("op")).strip().lower()
+                        if not column or not op:
+                            continue
+                        col_raw = f"base.{_sql_ident(column)}"
+                        case_sensitive = bool(flt.get("case_sensitive"))
+                        col_cmp = col_raw if case_sensitive else f"lower({col_raw})"
+
+                        if op == "in":
+                            values = flt.get("values") if isinstance(flt.get("values"), list) else []
+                            candidates: list[str] = []
+                            for entry in values[:50]:
+                                text = _coerce_str(entry).strip()
+                                if text:
+                                    candidates.append(text if case_sensitive else text.lower())
+                            if not candidates:
+                                continue
+                            placeholders = ", ".join(["?"] * len(candidates))
+                            where_parts.append(f"{col_cmp} in ({placeholders})")
+                            params.extend(candidates)
+                            continue
+
+                        value_text = _coerce_str(flt.get("value")).strip()
+                        value_cmp = value_text if case_sensitive else value_text.lower()
+
+                        if op == "eq":
+                            where_parts.append(f"{col_cmp} = ?")
+                            params.append(value_cmp)
+                            continue
+
+                        if op in {"contains", "startswith", "endswith"}:
+                            if not value_text:
+                                continue
+                            escaped = _escape_like(value_cmp)
+                            if op == "contains":
+                                pattern = f"%{escaped}%"
+                            elif op == "startswith":
+                                pattern = f"{escaped}%"
+                            else:
+                                pattern = f"%{escaped}"
+                            where_parts.append(f"{col_cmp} like ? escape '\\\\'")
+                            params.append(pattern)
+                            continue
+
+                        if op in {"gt", "gte", "lt", "lte"}:
+                            comparator = op_map.get(op)
+                            if not comparator:
+                                continue
+                            numeric_rhs = _parse_numeric_value(value_text)
+                            if numeric_rhs is not None:
+                                num_expr = _numeric_expr(col_raw)
+                                where_parts.append(
+                                    f"(case when {num_expr} is not null then {num_expr} {comparator} ? "
+                                    f"else {col_raw} {comparator} ? end)"
+                                )
+                                params.append(float(numeric_rhs))
+                                params.append(value_text)
+                                continue
+                            dt_rhs = _parse_datetime_value(value_text)
+                            if dt_rhs is not None:
+                                dt_expr = f"try_cast({col_raw} as timestamp)"
+                                where_parts.append(
+                                    f"(case when {dt_expr} is not null then {dt_expr} {comparator} try_cast(? as timestamp) "
+                                    f"else {col_raw} {comparator} ? end)"
+                                )
+                                params.append(value_text)
+                                params.append(value_text)
+                                continue
+                            where_parts.append(f"{col_raw} {comparator} ?")
+                            params.append(value_text)
+                            continue
+
+                        # Unknown operator; let the python fallback handle it.
+                        raise ValueError(f"Unsupported filter op={op!r} for duckdb engine.")
+
+                    where_sql = " and ".join(where_parts) if where_parts else "true"
+
+                    order_sql = f"order by {row_index_ref} asc"
+                    if sort_column_actual:
+                        sort_col = f"base.{_sql_ident(sort_column_actual)}"
+                        num_expr = _numeric_expr(sort_col)
+                        dt_expr = f"try_cast({sort_col} as timestamp)"
+                        type_expr = f"(case when {num_expr} is not null then 0 when {dt_expr} is not null then 1 else 2 end)"
+                        direction = "desc" if sort_direction == "desc" else "asc"
+                        order_sql = (
+                            "order by "
+                            f"{type_expr} {direction}, "
+                            f"{num_expr} {direction}, "
+                            f"{dt_expr} {direction}, "
+                            f"lower({sort_col}) {direction}, "
+                            f"{row_index_ref} {direction}"
+                        )
+
+                    con = duckdb.connect(database=":memory:")  # type: ignore[misc]
+                    try:
+                        con.execute("set enable_progress_bar=false")
+                    except Exception:
+                        pass
+
+                    def _fetchone(sql: str, query_params: Sequence[object]) -> tuple | None:
+                        remaining = max(0.05, deadline - time.perf_counter())
+                        timer = None
+                        if hasattr(con, "interrupt") and remaining > 0:
+                            timer = threading.Timer(remaining, con.interrupt)
+                            timer.daemon = True
+                            timer.start()
+                        try:
+                            return con.execute(sql, list(query_params)).fetchone()
+                        finally:
+                            if timer:
+                                timer.cancel()
+
+                    def _fetchall(sql: str, query_params: Sequence[object]) -> list[tuple]:
+                        remaining = max(0.05, deadline - time.perf_counter())
+                        timer = None
+                        if hasattr(con, "interrupt") and remaining > 0:
+                            timer = threading.Timer(remaining, con.interrupt)
+                            timer.daemon = True
+                            timer.start()
+                        try:
+                            return list(con.execute(sql, list(query_params)).fetchall())
+                        finally:
+                            if timer:
+                                timer.cancel()
+
+                    row_count_hint = sheet_meta.get("row_count") if isinstance(sheet_meta, Mapping) else dataset_meta.get("row_count")
+                    try:
+                        scanned_rows = int(row_count_hint or 0)
+                    except (TypeError, ValueError):
+                        scanned_rows = 0
+
+                    if aggregate_op:
+                        if aggregate_op == "count":
+                            count_row = _fetchone(
+                                f"select count(*) from {base_from} where {where_sql}",
+                                params,
+                            )
+                            matched_total = int((count_row or (0,))[0] or 0)
+                            aggregate_result = {"operation": "count", "count": matched_total}
+                        elif aggregate_op == "sum":
+                            if not aggregate_column:
+                                raise ValueError("aggregate_column_required")
+                            col_raw = f"base.{_sql_ident(aggregate_column)}"
+                            num_expr = _numeric_expr(col_raw)
+                            agg_row = _fetchone(
+                                f"select count(*) as matched_total, sum({num_expr}) as sum_total, count({num_expr}) as sum_count "
+                                f"from {base_from} where {where_sql}",
+                                params,
+                            )
+                            matched_total = int((agg_row or (0, 0, 0))[0] or 0)
+                            sum_total = float((agg_row or (0, 0, 0))[1] or 0.0)
+                            sum_count = int((agg_row or (0, 0, 0))[2] or 0)
+                            aggregate_result = {
+                                "operation": "sum",
+                                "column": aggregate_column or None,
+                                "sum": sum_total,
+                                "sum_display": _format_numeric_display(sum_total),
+                                "numeric_match_count": sum_count,
+                            }
+                        elif aggregate_op in {"min", "max"}:
+                            if not aggregate_column:
+                                raise ValueError("aggregate_column_required")
+                            col_raw = f"base.{_sql_ident(aggregate_column)}"
+                            num_expr = _numeric_expr(col_raw)
+                            func = "min" if aggregate_op == "min" else "max"
+                            agg_row = _fetchone(
+                                f"select count(*) as matched_total, {func}({num_expr}) as value "
+                                f"from {base_from} where {where_sql}",
+                                params,
+                            )
+                            matched_total = int((agg_row or (0, None))[0] or 0)
+                            extremum = (agg_row or (0, None))[1]
+                            extremum_value = float(extremum) if extremum is not None else None
+                            aggregate_result = {
+                                "operation": aggregate_op,
+                                "column": aggregate_column or None,
+                                aggregate_op: extremum_value,
+                                f"{aggregate_op}_display": _format_numeric_display(extremum_value) if extremum_value is not None else None,
+                            }
+                        elif aggregate_op == "group_by":
+                            if not group_by_column:
+                                raise ValueError("group_by_required")
+                            col_raw = f"base.{_sql_ident(group_by_column)}"
+                            group_expr = (
+                                "case when trim(coalesce(" + col_raw + ", '')) = '' "
+                                "then '<empty>' else substr(" + col_raw + ", 1, 80) end"
+                            )
+                            count_row = _fetchone(
+                                f"select count(*) from {base_from} where {where_sql}",
+                                params,
+                            )
+                            matched_total = int((count_row or (0,))[0] or 0)
+                            groups_rows = _fetchall(
+                                f"select {group_expr} as value, count(*) as count "
+                                f"from {base_from} where {where_sql} group by value order by count desc limit ?",
+                                [*params, int(top_groups)],
+                            )
+                            groups_out = [{"value": _coerce_str(val), "count": int(cnt or 0)} for val, cnt in groups_rows]
+                            distinct_row = _fetchone(
+                                f"select count(*) from (select distinct {group_expr} as value from {base_from} where {where_sql} limit ?) t",
+                                [*params, int(max_group_cap) + 1],
+                            )
+                            distinct_count = int((distinct_row or (0,))[0] or 0)
+                            overflow_group_count = 1 if distinct_count > max_group_cap else 0
+                            aggregate_result = {
+                                "operation": "group_by",
+                                "group_by": group_by_column or None,
+                                "groups": groups_out,
+                                "overflow_group_count": overflow_group_count or None,
+                                "tracked_groups": min(distinct_count, max_group_cap),
+                            }
+                        query_engine = "duckdb"
+                    else:
+                        cols_sql = ", ".join([f"base.{_sql_ident(col)}" for col in selected_columns[:max_column_cap]])
+                        select_cols_sql = f"{row_index_ref} as row_index" + (f", {cols_sql}" if cols_sql else "")
+                        rows_sql = (
+                            f"select {select_cols_sql} from {base_from} where {where_sql} "
+                            f"{order_sql} limit ? offset ?"
+                        )
+                        rows_data = _fetchall(rows_sql, [*params, int(limit), int(offset)])
+                        for row in rows_data:
+                            if not row:
+                                continue
+                            row_index = int(row[0] or 0)
+                            row_map = {
+                                selected_columns[i]: _coerce_str(row[i + 1]) if (i + 1) < len(row) else ""
+                                for i in range(len(selected_columns[:max_column_cap]))
+                            }
+                            rows_out.append(_row_payload(row_index, row_map, columns=selected_columns[:max_column_cap]))
+                        try:
+                            count_row = _fetchone(
+                                f"select count(*) from {base_from} where {where_sql}",
+                                params,
+                            )
+                            matched_total = int((count_row or (0,))[0] or 0)
+                        except Exception:
+                            truncated = True
+                            matched_total = max(offset + len(rows_out), len(rows_out))
+                        query_engine = "duckdb"
+                except Exception as exc:
+                    use_duckdb = False
+                    query_engine = "python"
+                    structured_log(
+                        "mcp",
+                        "dataset.duckdb_fallback",
+                        {
+                            "document_id": str(upload.id),
+                            "storage_format": storage_format,
+                            "error": str(exc)[:200],
+                        },
+                        context={"business": conversation.business_profile_id},
+                        logger_obj=logger,
+                        level=logging.WARNING,
+                    )
+                finally:
+                    if con is not None:
+                        try:
+                            con.close()
+                        except Exception:
+                            pass
             if preview_only:
                 for row_index, row in enumerate(reader, start=1):
                     if _should_stop():
@@ -3522,7 +3854,7 @@ def _dataset_query_handler(
                     matched_total = int(row_count_hint or 0)
                 except (TypeError, ValueError):
                     matched_total = 0
-            else:
+            elif not use_duckdb:
                 for row_index, row in enumerate(reader, start=1):
                     scanned_rows += 1
                     if _should_stop():
@@ -3842,6 +4174,7 @@ def _dataset_query_handler(
         "document_id": str(upload.id),
         "dataset_mode": True,
         "dataset": dataset_summary,
+        "query_engine": query_engine,
         "storage_format": storage_format,
         "storage_path": storage_rel_path,
         "sheet_name": sheet_name_out,
@@ -3863,40 +4196,42 @@ def _dataset_query_handler(
     }
 
     if aggregate_op:
-        if aggregate_op == "count":
-            aggregate_result = {"operation": "count", "count": matched_total}
-        elif aggregate_op == "sum":
-            aggregate_result = {
-                "operation": "sum",
-                "column": aggregate_column or None,
-                "sum": sum_total,
-                "sum_display": _format_numeric_display(sum_total),
-                "numeric_match_count": sum_count,
-            }
-        elif aggregate_op == "min":
-            aggregate_result = {
-                "operation": "min",
-                "column": aggregate_column or None,
-                "min": min_value,
-                "min_display": _format_numeric_display(min_value) if min_value is not None else None,
-            }
-        elif aggregate_op == "max":
-            aggregate_result = {
-                "operation": "max",
-                "column": aggregate_column or None,
-                "max": max_value,
-                "max_display": _format_numeric_display(max_value) if max_value is not None else None,
-            }
-        elif aggregate_op == "group_by" and group_counter is not None:
-            most_common = group_counter.most_common(top_groups)
-            aggregate_result = {
-                "operation": "group_by",
-                "group_by": group_by_column or None,
-                "groups": [{"value": key, "count": count} for key, count in most_common],
-                "overflow_group_count": overflow_group_count or None,
-                "tracked_groups": len(group_counter),
-            }
-        payload["aggregate_result"] = aggregate_result
+        if aggregate_result is None:
+            if aggregate_op == "count":
+                aggregate_result = {"operation": "count", "count": matched_total}
+            elif aggregate_op == "sum":
+                aggregate_result = {
+                    "operation": "sum",
+                    "column": aggregate_column or None,
+                    "sum": sum_total,
+                    "sum_display": _format_numeric_display(sum_total),
+                    "numeric_match_count": sum_count,
+                }
+            elif aggregate_op == "min":
+                aggregate_result = {
+                    "operation": "min",
+                    "column": aggregate_column or None,
+                    "min": min_value,
+                    "min_display": _format_numeric_display(min_value) if min_value is not None else None,
+                }
+            elif aggregate_op == "max":
+                aggregate_result = {
+                    "operation": "max",
+                    "column": aggregate_column or None,
+                    "max": max_value,
+                    "max_display": _format_numeric_display(max_value) if max_value is not None else None,
+                }
+            elif aggregate_op == "group_by" and group_counter is not None:
+                most_common = group_counter.most_common(top_groups)
+                aggregate_result = {
+                    "operation": "group_by",
+                    "group_by": group_by_column or None,
+                    "groups": [{"value": key, "count": count} for key, count in most_common],
+                    "overflow_group_count": overflow_group_count or None,
+                    "tracked_groups": len(group_counter),
+                }
+        if aggregate_result is not None:
+            payload["aggregate_result"] = aggregate_result
 
     base_payload = dict(payload)
     base_payload.pop("rows", None)
@@ -3940,6 +4275,7 @@ def _dataset_query_handler(
         "dataset.query",
         {
             "document_id": str(upload.id),
+            "query_engine": query_engine,
             "storage_format": storage_format,
             "sheet_index": sheet_index_out,
             "sheet_name": sheet_name_out,

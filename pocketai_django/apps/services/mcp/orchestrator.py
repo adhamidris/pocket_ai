@@ -2519,39 +2519,8 @@ class McpOrchestratorService:
                     )
                 continue
 
-            if tool_name == "table_aggregate":
-                doc_id = args.get("document_id") or ""
-                match_col = args.get("match_column") or ""
-                match_vals = args.get("match_values") or args.get("match_value") or args.get("query") or ""
-                columns = args.get("columns") or []
-                lines.append(
-                    "- table_aggregate("
-                    f"doc={_clean(doc_id, 40)}, "
-                    f"match_column={_clean(match_col, 60)}, "
-                    f"match_values={_clean_list(match_vals)}, "
-                    f"columns={_clean_list(columns)}"
-                    f") -> {status or 'done'}"
-                )
-                continue
-
-            if tool_name == "dataset_query":
-                doc_id = args.get("document_id") or ""
-                sheet_name = args.get("sheet_name") or ""
-                filters = args.get("filters") or []
-                lines.append(
-                    "- dataset_query("
-                    f"doc={_clean(doc_id, 40)}, sheet={_clean(sheet_name, 40)}, filters={_clean_list(filters, limit_items=2, per_item=80)}"
-                    f") -> {status or 'done'}"
-                )
-                continue
-
-            if tool_name == "read_document":
-                doc_id = args.get("document_id") or ""
-                page = args.get("page") or ""
-                mode = args.get("mode") or ""
-                lines.append(
-                    f"- read_document(doc={_clean(doc_id, 40)}, page={_clean(page, 20)}, mode={_clean(mode, 20)}) -> {status or 'done'}"
-                )
+            if tool_name in {"read_document", "table_aggregate", "dataset_query"}:
+                lines.append(f"- deprecated_retrieval_tool(use read_knowledge) -> {status or 'done'}")
                 continue
 
             lines.append(f"- {tool_name} -> {status or 'done'}")

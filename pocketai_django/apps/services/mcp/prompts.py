@@ -156,8 +156,6 @@ def build_system_message(
 
         {provider_suffix}
 
-        {builder.CHUNK_READ_NUDGE}
-
         {tool_section}
         """
     ).strip()
