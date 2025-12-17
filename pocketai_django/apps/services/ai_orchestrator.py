@@ -17,6 +17,7 @@ from datetime import datetime
 from enum import Enum
 from types import SimpleNamespace
 import re
+import unicodedata
 from contextvars import ContextVar
 from typing import Any, Callable, Iterable, Mapping, MutableMapping, Sequence
 from zoneinfo import ZoneInfo
@@ -300,9 +301,13 @@ class ChunkResult:
 
 
 class QueryNormalizer:
-    _TOKEN_SPLIT = re.compile(r"[^a-z0-9]+")
+    _TOKEN_SPLIT = re.compile(r"[^\w]+", flags=re.UNICODE)
     _SPACE_PATTERN = re.compile(r"\s+")
     _IDENTIFIER_PATTERN = re.compile(r"[a-z0-9][a-z0-9_\\-]{2,}")
+    _ARABIC_DIGIT_TRANSLATION = str.maketrans(
+        "٠١٢٣٤٥٦٧٨٩" + "۰۱۲۳۴۵۶۷۸۹",
+        "0123456789" * 2,
+    )
     _ALIAS_FILLER_BASE = {
         "the",
         "a",
@@ -349,7 +354,8 @@ class QueryNormalizer:
     @classmethod
     def normalize(cls, query: str, *, filler_tokens: Sequence[str] | None = None) -> QueryTraits:
         original = (query or "").strip()
-        lowered = original.lower()
+        normalized_source = cls._normalize_query_text(original)
+        lowered = normalized_source.lower()
         collapsed = cls._SPACE_PATTERN.sub(" ", lowered).strip()
         tokens = tuple(token for token in cls._TOKEN_SPLIT.split(collapsed) if token)
         alias_candidates = cls._alias_candidates(original, tokens, filler_tokens=filler_tokens)
@@ -363,7 +369,7 @@ class QueryNormalizer:
             has_dashes=has_dashes,
             has_underscores=has_underscores,
         )
-        normalized = collapsed or original
+        normalized = collapsed or normalized_source or original
         return QueryTraits(
             original=original,
             normalized=normalized,
@@ -408,13 +414,23 @@ class QueryNormalizer:
         return tuple(ordered.keys())
 
     @classmethod
+    def _normalize_query_text(cls, value: str) -> str:
+        if not value:
+            return ""
+        text = unicodedata.normalize("NFKC", value)
+        text = text.translate(cls._ARABIC_DIGIT_TRANSLATION)
+        text = text.replace("\u0640", "")  # tatweel
+        text = text.replace("\u200c", "").replace("\u200d", "").replace("\ufeff", "")
+        return text
+
+    @classmethod
     def _canonical_alias(cls, value: str) -> str:
         if not value:
             return ""
-        lowered = value.strip().lower()
+        lowered = cls._normalize_query_text(value).strip().lower()
         if not lowered:
             return ""
-        sanitized = re.sub(r"[^a-z0-9\\-_\\s]", "", lowered)
+        sanitized = re.sub(r"[^\w\\-\\s]", "", lowered, flags=re.UNICODE)
         sanitized = sanitized.replace("_", "-")
         sanitized = cls._SPACE_PATTERN.sub("-", sanitized)
         sanitized = re.sub(r"-{2,}", "-", sanitized)
@@ -2084,7 +2100,12 @@ class KnowledgeSearchService:
             condensed_query = self._condensed_query_for_fts(business_profile, traits)
             threshold = self._lexical_threshold_for_business(business_profile, traits)
             token_min_length = self._significant_token_min_length(business_profile)
-            condensed_tokens = tuple(token for token in re.split(r"[^a-z0-9]+", condensed_query.lower()) if token)
+            condensed_tokens = tuple(
+                token for token in QueryNormalizer._TOKEN_SPLIT.split(
+                    QueryNormalizer._normalize_query_text(condensed_query).lower()
+                )
+                if token
+            )
             token_filter = self._build_fts_token_filter(condensed_tokens or traits.tokens, min_length=token_min_length)
             fts_base = base_qs.filter(token_filter) if token_filter else base_qs
             N = max(limit * 8, 40)
@@ -2226,7 +2247,8 @@ class KnowledgeSearchService:
     def _extract_query_tokens(query: str) -> tuple[str, ...]:
         if not query:
             return tuple()
-        tokens = [token for token in re.split(r"[^a-z0-9]+", query.lower()) if len(token) >= 3]
+        normalized = QueryNormalizer._normalize_query_text(query).lower()
+        tokens = [token for token in QueryNormalizer._TOKEN_SPLIT.split(normalized) if len(token) >= 3]
         seen: dict[str, None] = {}
         for token in tokens:
             if token and token not in seen:
@@ -4926,8 +4948,8 @@ class AiOrchestratorService:
 
 
     def _is_table_critical_query(self, query: str) -> bool:
-        q = (query or "").lower()
-        tokens = set(re.split(r"[^a-z0-9]+", q))
+        normalized = QueryNormalizer._normalize_query_text(query).lower()
+        tokens = {token for token in QueryNormalizer._TOKEN_SPLIT.split(normalized) if token}
         fee_tokens = set(TOPIC_KEYWORD_MAP.get("fees", ()))
         limit_tokens = set(TOPIC_KEYWORD_MAP.get("limits", ()))
         apr_tokens = set(TOPIC_KEYWORD_MAP.get("apr", ()))
@@ -4960,7 +4982,7 @@ class AiOrchestratorService:
         knowledge_payload: Sequence[Mapping[str, object]],
         loaded_content_ids: set[str],
     ) -> list[str]:
-        normalized = (query or "").strip().lower()
+        normalized = QueryNormalizer._normalize_query_text(query).strip().lower()
         if not normalized:
             return []
         aggregate_tokens = {"all", "overall", "entire", "whole", "total", "everything"}
@@ -4976,11 +4998,7 @@ class AiOrchestratorService:
         phrase_hit = any(phrase in normalized for phrase in aggregate_phrases)
         if not (token_hit or phrase_hit):
             return []
-        token_set = {
-            token
-            for token in re.split(r"[^a-z0-9]+", normalized)
-            if token
-        }
+        token_set = {token for token in QueryNormalizer._TOKEN_SPLIT.split(normalized) if token}
 
         forced: list[str] = []
         seen: set[str] = set()
@@ -5093,8 +5111,8 @@ class AiOrchestratorService:
     ) -> tuple[set[str], bool]:
         mentions: set[str] = set()
         updated = False
-        normalized_query = (query or "").lower()
-        tokenized = set(re.split(r"[^a-z0-9]+", normalized_query))
+        normalized_query = QueryNormalizer._normalize_query_text(query).lower()
+        tokenized = {token for token in QueryNormalizer._TOKEN_SPLIT.split(normalized_query) if token}
         for identifier, entry in cached_entries.items():
             keywords = self._extract_snippet_keywords(entry)
             if not keywords:
@@ -5113,7 +5131,8 @@ class AiOrchestratorService:
         for field in ("public_label", "title"):
             label = entry.get(field)
             if isinstance(label, str) and label.strip():
-                for token in re.split(r"[^a-z0-9]+", label.lower()):
+                normalized = QueryNormalizer._normalize_query_text(label).lower()
+                for token in QueryNormalizer._TOKEN_SPLIT.split(normalized):
                     if token and len(token) >= 4:
                         keywords.add(token)
         topic_hints = entry.get("topic_hints")
@@ -5155,8 +5174,8 @@ class AiOrchestratorService:
         return merged
 
     def _infer_topics_from_text(self, text: str) -> tuple[str, ...]:
-        normalized_text = (text or "").lower()
-        tokens = set(re.split(r"[^a-z0-9]+", normalized_text))
+        normalized_text = QueryNormalizer._normalize_query_text(text).lower()
+        tokens = {token for token in QueryNormalizer._TOKEN_SPLIT.split(normalized_text) if token}
         matches: list[str] = []
         for topic, keywords in TOPIC_KEYWORD_MAP.items():
             if self._text_mentions_keywords(normalized_text, tokens, set(keywords)):
@@ -5176,8 +5195,9 @@ class AiOrchestratorService:
         label = (snapshot.get("public_label") or snapshot.get("title") or "").strip()
         if not label:
             return None
-        normalized_query = (query or "").lower()
-        tokens = [token for token in re.split(r"[^a-z0-9]+", label.lower()) if len(token) >= 4]
+        normalized_query = QueryNormalizer._normalize_query_text(query).lower()
+        normalized_label = QueryNormalizer._normalize_query_text(label).lower()
+        tokens = [token for token in QueryNormalizer._TOKEN_SPLIT.split(normalized_label) if len(token) >= 4]
         if not tokens:
             return None
         for token in tokens:

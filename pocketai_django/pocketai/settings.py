@@ -108,7 +108,9 @@ if redis_url:
     }
 
 EMBED_PROVIDER = os.getenv("EMBED_PROVIDER", "local")
-EMBED_MODEL = os.getenv("EMBED_MODEL", "BAAI/bge-small-en-v1.5")
+# Default to a multilingual FastEmbed model so Arabic/mixed-language tenants work out of the box.
+# Keep `EMBED_DIM=384` unless you intentionally migrate the `VectorField` dimension in Postgres.
+EMBED_MODEL = os.getenv("EMBED_MODEL", "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2")
 EMBED_DIM = int(os.getenv("EMBED_DIM", "384"))
 EMBED_DISTANCE = os.getenv("EMBED_DISTANCE", "cosine")  # 'cosine'|'l2'|'ip'
 INGEST_MAX_JSON_ENTITIES_DEFAULT = int(os.getenv("INGEST_MAX_JSON_ENTITIES_DEFAULT", "1000"))

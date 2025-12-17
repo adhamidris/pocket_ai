@@ -20,15 +20,34 @@ class LocalEmbeddingError(RuntimeError):
 
 @dataclass
 class LocalEmbeddingService:
-    """Local CPU embeddings via FastEmbed (bge-small by default)."""
+    """Local CPU embeddings via FastEmbed (multilingual by default)."""
     model: str | None = None
 
     def __post_init__(self):
         if TextEmbedding is None:
             raise EmbeddingProviderError("Install `fastembed` to enable local embeddings.")
-        self.model = self.model or os.getenv("EMBED_MODEL", "BAAI/bge-small-en-v1.5")
-        # FastEmbed downloads on first use; keep instance around
-        self._embedder = TextEmbedding(model_name=self.model)
+        self.model = self.model or os.getenv(
+            "EMBED_MODEL",
+            "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2",
+        )
+        # FastEmbed downloads on first use; keep instance around.
+        # Fall back to the legacy English model if the configured model cannot be loaded
+        # (e.g., missing cache or unsupported fastembed build) so retrieval stays online.
+        try:
+            self._embedder = TextEmbedding(model_name=self.model)
+        except Exception as exc:
+            fallback_model = "BAAI/bge-small-en-v1.5"
+            logger.warning("FastEmbed init failed model=%s; error=%s", self.model, exc)
+            if self.model and self.model != fallback_model:
+                try:
+                    self._embedder = TextEmbedding(model_name=fallback_model)
+                except Exception as exc2:
+                    raise EmbeddingProviderError(f"FastEmbed init failed: {exc2}") from exc2
+                else:
+                    logger.warning("FastEmbed falling back to model=%s", fallback_model)
+                    self.model = fallback_model
+            else:
+                raise EmbeddingProviderError(f"FastEmbed init failed: {exc}") from exc
 
     def embed_texts(self, texts: Sequence[str]) -> list[list[float]]:
         if not texts:

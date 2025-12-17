@@ -8,7 +8,7 @@ from django.conf import settings
 from django.core.management.base import BaseCommand, CommandError
 from django.utils import timezone
 
-from apps.accounts.models import KnowledgeUpload, KnowledgeUploadChunk
+from apps.accounts.models import BusinessProfile, KnowledgeUpload, KnowledgeUploadChunk
 from apps.services.embeddings import EmbeddingProviderError, build_embedding_service
 
 
@@ -16,7 +16,7 @@ logger = logging.getLogger(__name__)
 
 
 class Command(BaseCommand):
-    help = "Re-embed knowledge chunks that are missing vector representations."
+    help = "Re-embed knowledge chunks (missing-only by default)."
 
     def add_arguments(self, parser) -> None:
         parser.add_argument(
@@ -42,12 +42,41 @@ class Command(BaseCommand):
             action="store_true",
             help="Report how many chunks would be re-embedded without making changes.",
         )
+        parser.add_argument(
+            "--all",
+            action="store_true",
+            help="Re-embed all chunks (not only missing embeddings).",
+        )
+        parser.add_argument(
+            "--business",
+            dest="business",
+            help="Optional business UUID or slug to scope the re-embed run.",
+        )
+        parser.add_argument(
+            "--upload",
+            dest="upload",
+            help="Optional upload UUID to scope the re-embed run.",
+        )
+        parser.add_argument(
+            "--force",
+            action="store_true",
+            help="Confirm running with --all without a scope filter.",
+        )
 
     def handle(self, *args, **options):
         limit = options["limit"]
         batch_size = max(1, options["batch_size"])
         provider = options["provider"]
         dry_run = bool(options["dry_run"])
+        reembed_all = bool(options.get("all"))
+        business_filter = options.get("business")
+        upload_filter = options.get("upload")
+        force = bool(options.get("force"))
+        business_id = self._resolve_business_id(business_filter) if business_filter else None
+        upload_id = self._resolve_uuid(upload_filter) if upload_filter else None
+
+        if reembed_all and not force and not (business_id or upload_id):
+            raise CommandError("--all without --business/--upload requires --force to confirm.")
 
         try:
             service = build_embedding_service(None if provider == "auto" else provider)
@@ -57,15 +86,22 @@ class Command(BaseCommand):
         if service is None:
             raise CommandError("Embedding provider is not configured. Check EMBED_PROVIDER or install fastembed.")
 
-        qs = (
-            KnowledgeUploadChunk.objects.filter(embedding__isnull=True)
-            .order_by("updated_at", "id")
-        )
+        qs = KnowledgeUploadChunk.objects.order_by("updated_at", "id")
+        if business_id:
+            qs = qs.filter(business_profile_id=business_id)
+        if upload_id:
+            qs = qs.filter(upload_id=upload_id)
+        if not reembed_all:
+            qs = qs.filter(embedding__isnull=True)
         if limit:
             qs = qs[:limit]
 
         if not qs.exists():
-            self.stdout.write(self.style.SUCCESS("No knowledge chunks are missing embeddings."))
+            if reembed_all:
+                message = "No knowledge chunks matched the requested scope."
+            else:
+                message = "No knowledge chunks are missing embeddings."
+            self.stdout.write(self.style.SUCCESS(message))
             return
 
         total_attempted = 0
@@ -163,3 +199,23 @@ class Command(BaseCommand):
             if changed:
                 upload.ingestion_metadata = metadata
                 upload.save(update_fields=["ingestion_metadata", "updated_at"])
+
+    @staticmethod
+    def _resolve_uuid(value: str | None) -> uuid.UUID | None:
+        if not value:
+            return None
+        try:
+            return uuid.UUID(str(value))
+        except (TypeError, ValueError):
+            return None
+
+    def _resolve_business_id(self, value: str | None) -> uuid.UUID | None:
+        if not value:
+            return None
+        parsed = self._resolve_uuid(value)
+        if parsed:
+            return parsed
+        business = BusinessProfile.objects.filter(slug=str(value).strip()).only("id").first()
+        if not business:
+            raise CommandError(f"Unknown business '{value}'. Provide a UUID or slug.")
+        return business.id

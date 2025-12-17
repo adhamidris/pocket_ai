@@ -35,20 +35,20 @@ part of `BusinessProfile.save` keeps it versioned alongside the tenant record.
   initialize the embedding backend before serving traffic.
 - Run `python manage.py warm_embeddings` during deploy/build steps to populate
   the FastEmbed cache (or trigger the remote provider) and bake the resulting
-  `~/.cache/fastembed/BAAI-bge-small-en-v1.5` directory into your container
+  `~/.cache/fastembed/` directory (keyed by `EMBED_MODEL`) into your container
   image or shared volume.
 - This warmup path is provider-agnostic; when `EMBED_PROVIDER=openai`, the
   command simply instantiates the OpenAI client and exits, while local
   FastEmbed backends reuse the cached weights at runtime.
 - MCP now short-circuits duplicate `search_knowledge` calls when a prior
   search already produced read-required snippets, prompting the model to issue
-  `read_document` instead of re-running the same query.
+  `read_knowledge` instead of re-running the same query.
 - Prompt guidance now instructs the agent to pack bilingual (Arabic/English)
   variants into the first `search_knowledge` call and to go straight to
-  `read_document` whenever snippets set `read_required`, so redundant searches
+  `read_knowledge` whenever snippets set `read_required`, so redundant searches
   are avoided unless the visitor provides new constraints.
 - Multi-product/store sales queries now prioritize `table_aggregate` before
-  `read_document`, so the model fetches deterministic row totals in one call
+  `read_knowledge`, so the model fetches deterministic row totals in one call
   instead of reading many spreadsheet pages.
 - A new `list_tables` tool lets the model enumerate active spreadsheet uploads (names + sheet hints) per tenant, so it can grab the correct `document_id` once and reuse it across every aggregation instead of running another `search_knowledge`.
 - The `table_aggregate` tool accepts a `columns` array so the agent can request
@@ -56,6 +56,15 @@ part of `BusinessProfile.save` keeps it versioned alongside the tenant record.
   low while reusing cached rows for follow-up questions in the same turn.
 - `table_aggregate` now supports a `match_values` array so the LLM can batch multiple products/stores in one call instead of issuing sequential aggregations for each item.
 - Table scans are cached per upload for the rest of the turn, so once the model looks at a sheet it can reuse the hydrated rows for subsequent `table_aggregate` calls without hitting the ORM again.
+
+### Embedding Model Changes (Multilingual)
+
+- Default deployments now use a multilingual `EMBED_MODEL` so Arabic/mixed-language tenants work out of the box.
+- Keep `EMBED_DIM=384` unless you intentionally migrate the `VectorField` dimension in Postgres.
+- When changing `EMBED_MODEL`, re-embed existing chunks so vector search stays consistent:
+  - Whole instance: `python manage.py reembed_missing_chunks --all --force --batch-size 32`
+  - Single tenant: `python manage.py reembed_missing_chunks --all --business <uuid|slug> --batch-size 32`
+  - Single upload: `python manage.py reembed_missing_chunks --all --upload <uuid> --batch-size 32`
 
 ## Backfill Workflow
 
