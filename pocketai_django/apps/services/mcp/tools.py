@@ -952,9 +952,9 @@ def _column_suggests_identifier(column: object) -> bool:
         if any(term in normalized for term in ("id", "serial", "number", "no", "ref", "reference", "#")):
             return True
         return True
-    if "serial" in normalized or "reference" in normalized or re.search(r"(?:^|[\\s_\\-])ref(?:$|[\\s_\\-])", normalized):
+    if "serial" in normalized or "reference" in normalized or re.search(r"(?:^|[\s_-])ref(?:$|[\s_-])", normalized):
         return True
-    if re.search(r"(?:^|[\\s_\\-])id(?:$|[\\s_\\-])", normalized):
+    if re.search(r"(?:^|[\s_-])id(?:$|[\s_-])", normalized):
         return True
     if " code" in normalized or normalized.endswith("code") or "sku" in normalized:
         return True
@@ -5064,8 +5064,25 @@ def _read_knowledge_handler(
                             "Double-check the exact identifier and the column name."
                         )
                     else:
-                        result_out["rows"] = filtered_rows
-                        result_out["match_count"] = len(filtered_rows)
+                        matched_values = identifier_diag.get("matched_identifiers")
+                        if (
+                            len(requested_identifier_values) == 1
+                            and isinstance(matched_values, list)
+                            and len(matched_values) > 1
+                        ):
+                            result_out["status"] = "disambiguation_required"
+                            result_out["error"] = "identifier_ambiguous"
+                            result_out["error_code"] = "identifier_ambiguous"
+                            result_out["rows"] = []
+                            result_out["match_count"] = 0
+                            result_out["total_matches"] = len(matched_values)
+                            result_out["hint"] = (
+                                f"Multiple {requested_identifier_column} values matched {requested_identifier_values[0]!r}. "
+                                f"Choose one exact identifier: {', '.join(str(v) for v in matched_values[:8])}."
+                            )
+                        else:
+                            result_out["rows"] = filtered_rows
+                            result_out["match_count"] = len(filtered_rows)
 
             return _envelope(
                 engine="file_dataset",
@@ -5173,9 +5190,26 @@ def _read_knowledge_handler(
                         "Double-check the exact identifier and the column name."
                     )
                 else:
-                    result_out["rows"] = filtered_rows
-                    result_out["match_count"] = len(filtered_rows)
-                    result_out["original_match_count"] = len(filtered_rows)
+                    matched_values = identifier_diag.get("matched_identifiers")
+                    if (
+                        len(requested_identifier_values) == 1
+                        and isinstance(matched_values, list)
+                        and len(matched_values) > 1
+                    ):
+                        result_out["status"] = "disambiguation_required"
+                        result_out["error"] = "identifier_ambiguous"
+                        result_out["error_code"] = "identifier_ambiguous"
+                        result_out["rows"] = []
+                        result_out["match_count"] = 0
+                        result_out["original_match_count"] = 0
+                        result_out["hint"] = (
+                            f"Multiple {requested_identifier_column} values matched {requested_identifier_values[0]!r}. "
+                            f"Choose one exact identifier: {', '.join(str(v) for v in matched_values[:8])}."
+                        )
+                    else:
+                        result_out["rows"] = filtered_rows
+                        result_out["match_count"] = len(filtered_rows)
+                        result_out["original_match_count"] = len(filtered_rows)
 
         return _envelope(
             engine="table_preview",
