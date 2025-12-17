@@ -389,11 +389,21 @@ INGEST_MAX_ACTIVE_JOBS_PER_BUSINESS = int(os.getenv("INGEST_MAX_ACTIVE_JOBS_PER_
 INGEST_SYNC_EMBED_CHUNK_LIMIT = int(os.getenv("INGEST_SYNC_EMBED_CHUNK_LIMIT", "200"))
 INGEST_EMBED_BATCH_SIZE = int(os.getenv("INGEST_EMBED_BATCH_SIZE", "64"))
 INGEST_EMBEDDING_BACKLOG_THRESHOLD = int(os.getenv("INGEST_EMBEDDING_BACKLOG_THRESHOLD", "500"))
+try:
+    RAG_EVAL_TOP_K = int(os.getenv("RAG_EVAL_TOP_K", "3"))
+except (TypeError, ValueError):
+    RAG_EVAL_TOP_K = 3
+if RAG_EVAL_TOP_K < 1:
+    RAG_EVAL_TOP_K = 1
+if RAG_EVAL_TOP_K > 20:
+    RAG_EVAL_TOP_K = 20
 RAG_EVAL_THRESHOLDS = {
     "minimums": {
         "identifier_top1": float(os.getenv("RAG_EVAL_IDENTIFIER_TOP1", "0.9")),
         "not_found_accuracy": float(os.getenv("RAG_EVAL_NOT_FOUND_ACC", "0.95")),
         "mrr": float(os.getenv("RAG_EVAL_MRR", "0.92")),
+        "source_accuracy": float(os.getenv("RAG_EVAL_SOURCE_ACC", "0.97")),
+        "behavior_accuracy": float(os.getenv("RAG_EVAL_BEHAVIOR_ACC", "0.9")),
     },
     "maximums": {
         "vector.p95": float(os.getenv("RAG_EVAL_VECTOR_P95_MS", "350")),

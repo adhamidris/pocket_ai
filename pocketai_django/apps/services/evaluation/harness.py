@@ -40,10 +40,17 @@ class QueryObservation:
     text: str
     query_type: str
     expected_behavior: str
+    has_targets: bool
     status: str
     path: str | None
+    behavior_correct: bool
+    wrong_source: bool
     top_entities: tuple[str, ...]
     top_chunk_ids: tuple[str, ...]
+    top_upload_ids: tuple[str, ...]
+    top_fixtures: tuple[str, ...]
+    top_score_breakdown: Mapping[str, Any]
+    top_vector_distance: float | None
     match_rank: int | None
     reciprocal_rank: float
     precision_at_k: float
@@ -98,6 +105,7 @@ class RAGEvaluationHarness:
         self.enforce_thresholds = enforce_thresholds
         self.media_root = Path(getattr(settings, "MEDIA_ROOT"))
         self.media_root.mkdir(parents=True, exist_ok=True)
+        self._upload_fixture_cache: dict[uuid.UUID, str] = {}
 
     # ------------------------------------------------------------------
     # Public API
@@ -399,30 +407,62 @@ class RAGEvaluationHarness:
         )
         total_latency_ms = int((time.perf_counter() - alias_start) * 1000)
         snippets = tuple(result.snippets or ())
+        has_targets = bool(query.target_entities)
         entity_lookup = tuple((snippet.entity_name or "").strip() for snippet in snippets)
+        top_score_breakdown: dict[str, Any] = {}
+        top_vector_distance = None
+        if snippets:
+            top_diag = snippets[0].source_diagnostics
+            if isinstance(top_diag, Mapping):
+                maybe_breakdown = top_diag.get("score_breakdown")
+                if isinstance(maybe_breakdown, Mapping):
+                    top_score_breakdown = dict(maybe_breakdown)
+                maybe_distance = top_diag.get("vector_distance")
+                if isinstance(maybe_distance, (int, float)):
+                    top_vector_distance = float(maybe_distance)
+        upload_ids = tuple(str(snippet.upload_id) for snippet in snippets if snippet.upload_id)
+        fixtures = tuple(self._fixture_name_for_upload_id(snippet.upload_id) for snippet in snippets if snippet.upload_id)
         rank = self._match_rank(snippets, query.target_entities)
         reciprocal_rank = 1.0 / rank if rank else 0.0
         precision = self._precision(snippets, query.target_entities, top_k)
         top1 = rank == 1
         top3 = bool(rank and rank <= 3)
         classification_correct = self._classification_correct(query, result)
+        alias_short_circuit = bool(alias_result.short_circuit and alias_result.hits)
+        path = result.diagnostics.get("path")
+        behavior_correct = self._behavior_correct(
+            query,
+            status=result.status,
+            path=path,
+            alias_short_circuit=alias_short_circuit,
+            alias_hits=alias_hits,
+            match_rank=rank,
+        )
+        wrong_source = bool(has_targets and result.status == "ok" and rank is None)
 
         observation = QueryObservation(
             query_id=query.query_id,
             text=query.text,
             query_type=query.query_type,
             expected_behavior=query.expected_behavior,
+            has_targets=has_targets,
             status=result.status,
-            path=result.diagnostics.get("path"),
+            path=path,
+            behavior_correct=behavior_correct,
+            wrong_source=wrong_source,
             top_entities=entity_lookup,
             top_chunk_ids=tuple(str(snippet.id) for snippet in snippets),
+            top_upload_ids=upload_ids,
+            top_fixtures=fixtures,
+            top_score_breakdown=top_score_breakdown,
+            top_vector_distance=top_vector_distance,
             match_rank=rank,
             reciprocal_rank=reciprocal_rank,
             precision_at_k=precision,
             top1=top1,
             top3=top3,
             classification_correct=classification_correct,
-            alias_short_circuit=bool(alias_result.short_circuit and alias_result.hits),
+            alias_short_circuit=alias_short_circuit,
             alias_hits=alias_hits,
             alias_latency_ms=int(alias_latency_ms) if alias_latency_ms is not None else None,
             vector_latency_ms=int(vector_latency_ms) if vector_latency_ms is not None else None,
@@ -432,6 +472,48 @@ class RAGEvaluationHarness:
             diagnostics=result.diagnostics,
         )
         return observation
+
+    def _fixture_name_for_upload_id(self, upload_id: uuid.UUID) -> str:
+        cached = self._upload_fixture_cache.get(upload_id)
+        if cached is not None:
+            return cached
+        try:
+            upload = KnowledgeUpload.objects.only("id", "metadata").get(id=upload_id)
+        except KnowledgeUpload.DoesNotExist:
+            self._upload_fixture_cache[upload_id] = ""
+            return ""
+        metadata = upload.metadata if isinstance(upload.metadata, dict) else {}
+        fixture_name = str(metadata.get("rag_eval_fixture") or "")
+        self._upload_fixture_cache[upload_id] = fixture_name
+        return fixture_name
+
+    @staticmethod
+    def _behavior_correct(
+        query: GoldenQuery,
+        *,
+        status: str,
+        path: str | None,
+        alias_short_circuit: bool,
+        alias_hits: Sequence[str],
+        match_rank: int | None,
+    ) -> bool:
+        expected = (query.expected_behavior or "").strip().lower()
+        path_value = (path or "").strip().lower()
+        if expected == "not_found":
+            if status == "not_found":
+                return True
+            return path_value == "fallback"
+        if expected == "alias_exact":
+            return alias_short_circuit or path_value == "alias_exact"
+        if expected == "alias_fallback":
+            return (not alias_short_circuit) and bool(alias_hits)
+        if expected == "hybrid":
+            if path_value in {"hybrid", "table_direct", "table_blended"}:
+                return True
+            if match_rank is not None:
+                return True
+            return status == "ok"
+        return True
 
     @staticmethod
     def _match_rank(snippets: Sequence[KnowledgeSnippet], targets: Sequence[str]) -> int | None:
@@ -485,6 +567,11 @@ class RAGEvaluationHarness:
         mrr = sum(obs.reciprocal_rank for obs in evaluated_obs) / denominator
         precision = sum(obs.precision_at_k for obs in evaluated_obs) / denominator if evaluated_obs else 0.0
         not_found_obs = [obs for obs in observations if obs.query_type == "not_found"]
+        expected_hit_obs = [obs for obs in observations if obs.has_targets and obs.query_type != "not_found"]
+        wrong_source_count = sum(1 for obs in expected_hit_obs if obs.wrong_source)
+        wrong_source_rate = wrong_source_count / max(1, len(expected_hit_obs)) if expected_hit_obs else 0.0
+        source_accuracy = 1.0 - wrong_source_rate
+        behavior_accuracy = sum(1 for obs in observations if obs.behavior_correct) / max(1, len(observations))
         fallback_accuracy = (
             sum(1 for obs in not_found_obs if obs.classification_correct) / max(1, len(not_found_obs))
             if not_found_obs
@@ -500,6 +587,9 @@ class RAGEvaluationHarness:
             "precision_at_k": round(precision, 4),
             "identifier_top1": round(len(identifier_hits) / identifier_count, 4),
             "identifier_mrr": round(identifier_mrr, 4),
+            "source_accuracy": round(source_accuracy, 4),
+            "wrong_source_rate": round(wrong_source_rate, 4),
+            "behavior_accuracy": round(behavior_accuracy, 4),
             "natural_query_count": len(natural_obs),
             "not_found_accuracy": round(fallback_accuracy, 4),
             "alias_short_circuit_rate": round(alias_short_circuit, 4),

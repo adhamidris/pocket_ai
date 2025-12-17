@@ -53,7 +53,8 @@ class Command(BaseCommand):
             self.stdout.write(
                 self.style.SUCCESS(
                     f"[{report.slug}] status={report.status} top1={metrics['top1_recall']:.2f} top3={metrics['top3_recall']:.2f} "
-                    f"mrr={metrics['mrr']:.2f} not_found_acc={metrics['not_found_accuracy']:.2f}"
+                    f"mrr={metrics['mrr']:.2f} src_acc={metrics.get('source_accuracy', 0):.2f} "
+                    f"beh_acc={metrics.get('behavior_accuracy', 0):.2f} not_found_acc={metrics['not_found_accuracy']:.2f}"
                 )
             )
         self.stdout.write(self.style.SUCCESS(f"Exported evaluation artifacts to {output_path}"))

@@ -16,9 +16,9 @@
 - Full results (metrics, latencies, violations, per-query diagnostics) are written to JSON and persisted to `accounts_rag_evaluation_run` for dashboards.
 
 ## Metrics & Thresholds
-- Core minimums: `identifier_top1 >= 0.90`, `not_found_accuracy >= 0.95`, `mrr >= 0.92`.
+- Core minimums: `identifier_top1 >= 0.90`, `not_found_accuracy >= 0.95`, `mrr >= 0.92`, `source_accuracy >= 0.97`, `behavior_accuracy >= 0.90`.
 - Latency ceiling: `vector.p95 <= 350ms`.
-- Additional telemetry recorded per run: precision@k, alias short-circuit rate, latency percentiles.
+- Additional telemetry recorded per run: precision@k, alias short-circuit rate, wrong-source rate, behavior accuracy, latency percentiles.
 - Threshold config lives in `RAG_EVAL_THRESHOLDS` (settings/env). Adjust env vars to tune gates.
 
 ## Drift Monitoring
