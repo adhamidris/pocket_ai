@@ -848,7 +848,7 @@ def _normalize_identifier_value(value: object) -> str:
     return re.sub(r"\s+", "", text).lower()
 
 
-_IDENTIFIER_EMAIL_RE = re.compile(r"^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$")
+_IDENTIFIER_EMAIL_RE = re.compile(r"^[^\s@]+@[^\s@]+\.[^\s@]+$")
 
 
 def _extract_identifier_candidate(text: object) -> str | None:
@@ -862,10 +862,10 @@ def _extract_identifier_candidate(text: object) -> str | None:
         return cleaned
     if cleaned.isdigit() and len(cleaned) >= 6:
         return cleaned
-    digit_runs = re.findall(r"\\d{6,}", cleaned)
+    digit_runs = re.findall(r"\d{6,}", cleaned)
     if digit_runs:
         return max(digit_runs, key=len)
-    token_runs = re.findall(r"[A-Za-z0-9][A-Za-z0-9\\-_/]{7,}", cleaned)
+    token_runs = re.findall(r"[A-Za-z0-9][A-Za-z0-9_/-]{7,}", cleaned)
     if token_runs:
         return max(token_runs, key=len)
     return None
