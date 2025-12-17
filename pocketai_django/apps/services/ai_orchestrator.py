@@ -6,7 +6,7 @@ from django.conf import settings
 from django.core.cache import cache
 from django.db.models.expressions import F
 from pgvector.django import CosineDistance  # if using cosine
-from django.contrib.postgres.search import TrigramSimilarity
+from django.contrib.postgres.search import SearchQuery, SearchRank, SearchVector, TrigramSimilarity
 
 import time
 import hashlib
@@ -2096,6 +2096,118 @@ class KnowledgeSearchService:
         traits: QueryTraits,
         limit: int,
     ) -> tuple[list[ChunkResult], int, dict[str, object]]:
+        if getattr(settings, "RAG_FTS_ENABLED", True) and connection.vendor == "postgresql":
+            hits, duration_ms, diag = self._fts_candidates(
+                business_profile=business_profile,
+                base_qs=base_qs,
+                traits=traits,
+                limit=limit,
+            )
+            if hits:
+                return hits, duration_ms, diag
+            fallback_hits, fallback_ms, fallback_diag = self._trigram_candidates(
+                business_profile=business_profile,
+                base_qs=base_qs,
+                traits=traits,
+                limit=limit,
+            )
+            fallback_diag.update(
+                {
+                    "lexical_strategy": "fts+trigram",
+                    "fts_fallback": True,
+                    "fts_duration_ms": duration_ms,
+                    "fts_candidates": diag.get("fts_candidates", 0),
+                    "fts_rank_max": diag.get("fts_rank_max", 0.0),
+                    "fts_error": diag.get("fts_error"),
+                    "fts_config": diag.get("fts_config"),
+                    "fts_search_type": diag.get("fts_search_type"),
+                }
+            )
+            total_ms = duration_ms + fallback_ms
+            return fallback_hits, total_ms, fallback_diag
+
+        return self._trigram_candidates(
+            business_profile=business_profile,
+            base_qs=base_qs,
+            traits=traits,
+            limit=limit,
+        )
+
+    def _fts_candidates(
+        self,
+        *,
+        business_profile,
+        base_qs,
+        traits: QueryTraits,
+        limit: int,
+    ) -> tuple[list[ChunkResult], int, dict[str, object]]:
+        with TRACER.start_as_current_span("knowledge.lexical_candidates") as span:
+            condensed_query = self._condensed_query_for_fts(business_profile, traits)
+            start = time.perf_counter()
+            N = max(limit * 8, 40)
+            config = "simple"
+            search_type = "websearch"
+            vector = SearchVector("content", config=config)
+            query = SearchQuery(condensed_query, search_type=search_type, config=config)
+            try:
+                fts_qs = (
+                    base_qs.annotate(rank=SearchRank(vector, query, cover_density=True))
+                    .filter(rank__gt=0)
+                    .order_by("-rank")[:N]
+                )
+                rows = [(chunk, float(getattr(chunk, "rank", 0.0) or 0.0)) for chunk in fts_qs]
+            except Exception as exc:  # pragma: no cover - DB / config edge cases
+                duration_ms = int((time.perf_counter() - start) * 1000)
+                diag: dict[str, object] = {
+                    "lexical_strategy": "fts_error",
+                    "fts_config": config,
+                    "fts_search_type": search_type,
+                    "fts_error": str(exc)[:200],
+                }
+                if span.is_recording():
+                    span.set_attribute("knowledge.lexical_hits", 0)
+                    span.set_attribute("knowledge.lexical_duration_ms", duration_ms)
+                return [], duration_ms, diag
+
+            max_rank = max((rank for _, rank in rows), default=0.0)
+            hits: list[ChunkResult] = []
+            for chunk, rank in rows:
+                normalized_rank = (rank / max_rank) if max_rank > 0 else 0.0
+                hits.append(
+                    ChunkResult(
+                        chunk=chunk,
+                        source_stage="content_fts",
+                        lexical_score=min(1.0, max(0.0, normalized_rank)),
+                        recency_score=self._recency_score(chunk.upload),
+                        diagnostics={
+                            "stage": "content_fts",
+                            "fts_rank": round(rank, 6),
+                            "fts_rank_norm": round(normalized_rank, 6),
+                        },
+                    )
+                )
+            duration_ms = int((time.perf_counter() - start) * 1000)
+            diag = {
+                "lexical_strategy": "fts",
+                "fts_config": config,
+                "fts_search_type": search_type,
+                "fts_condensed_query": condensed_query,
+                "fts_candidates": len(hits),
+                "fts_rank_max": round(max_rank, 6) if max_rank else 0.0,
+            }
+            if span.is_recording():
+                span.set_attribute("knowledge.lexical_hits", len(hits))
+                span.set_attribute("knowledge.lexical_duration_ms", duration_ms)
+            return hits, duration_ms, diag
+
+    def _trigram_candidates(
+        self,
+        *,
+        business_profile,
+        base_qs,
+        traits: QueryTraits,
+        limit: int,
+    ) -> tuple[list[ChunkResult], int, dict[str, object]]:
         with TRACER.start_as_current_span("knowledge.lexical_candidates") as span:
             condensed_query = self._condensed_query_for_fts(business_profile, traits)
             threshold = self._lexical_threshold_for_business(business_profile, traits)
@@ -2121,18 +2233,19 @@ class KnowledgeSearchService:
                 hits.append(
                     ChunkResult(
                         chunk=chunk,
-                        source_stage="content_fts",
+                        source_stage="content_trigram",
                         lexical_score=float(sim),
                         recency_score=self._recency_score(chunk.upload),
-                        diagnostics={"stage": "content_fts"},
+                        diagnostics={"stage": "content_trigram"},
                     )
                 )
             duration_ms = int((time.perf_counter() - start) * 1000)
             diag = {
-                "fts_threshold": threshold,
-                "fts_condensed_query": condensed_query,
-                "fts_tokens_used": condensed_tokens[:5],
-                "fts_token_filter_min_length": token_min_length,
+                "lexical_strategy": "trigram",
+                "trigram_threshold": threshold,
+                "trigram_condensed_query": condensed_query,
+                "trigram_tokens_used": condensed_tokens[:5],
+                "trigram_token_filter_min_length": token_min_length,
             }
             if span.is_recording():
                 span.set_attribute("knowledge.lexical_hits", len(hits))
