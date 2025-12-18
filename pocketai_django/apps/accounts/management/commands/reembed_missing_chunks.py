@@ -73,7 +73,11 @@ class Command(BaseCommand):
         upload_filter = options.get("upload")
         force = bool(options.get("force"))
         business_id = self._resolve_business_id(business_filter) if business_filter else None
-        upload_id = self._resolve_uuid(upload_filter) if upload_filter else None
+        upload_id = None
+        if upload_filter is not None:
+            upload_id = self._resolve_uuid(str(upload_filter).strip())
+            if upload_id is None:
+                raise CommandError(f"Invalid upload UUID '{upload_filter}'.")
 
         if reembed_all and not force and not (business_id or upload_id):
             raise CommandError("--all without --business/--upload requires --force to confirm.")
