@@ -506,7 +506,13 @@ class RAGEvaluationHarness:
         if expected == "alias_exact":
             return alias_short_circuit or path_value == "alias_exact"
         if expected == "alias_fallback":
-            return (not alias_short_circuit) and bool(alias_hits)
+            if alias_short_circuit or not alias_hits:
+                return False
+            if status != "ok":
+                return False
+            if query.target_entities and match_rank is None:
+                return False
+            return True
         if expected == "hybrid":
             if path_value in {"hybrid", "table_direct", "table_blended"}:
                 return True
