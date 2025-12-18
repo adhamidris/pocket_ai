@@ -154,6 +154,11 @@ MCP_LOG_SNIPPET_PREVIEWS = os.getenv("MCP_LOG_SNIPPET_PREVIEWS", "false").lower(
 # results are stored/re-injected into prompts.
 MCP_TABULAR_PRIVACY_ENABLED = os.getenv("MCP_TABULAR_PRIVACY_ENABLED", "true").lower() in {"1", "true", "yes"}
 MCP_TABULAR_PII_REDACTION_ENABLED = os.getenv("MCP_TABULAR_PII_REDACTION_ENABLED", "true").lower() in {"1", "true", "yes"}
+# Verified lookup mode: require a verified conversation context before returning
+# tabular PII fields (addresses/phones/emails/etc) from tools like read_knowledge.
+MCP_VERIFIED_LOOKUP_ENABLED = os.getenv("MCP_VERIFIED_LOOKUP_ENABLED", "true").lower() in {"1", "true", "yes"}
+MCP_VERIFIED_LOOKUP_REQUIRE_FOR_PII = os.getenv("MCP_VERIFIED_LOOKUP_REQUIRE_FOR_PII", "true").lower() in {"1", "true", "yes"}
+MCP_VERIFIED_LOOKUP_ALLOW_CUSTOMER_MATCH = os.getenv("MCP_VERIFIED_LOOKUP_ALLOW_CUSTOMER_MATCH", "true").lower() in {"1", "true", "yes"}
 # MCP prompt/context governor. Defaults are conservative to avoid provider context overflows.
 MCP_CONTEXT_GOVERNOR_ENABLED = os.getenv("MCP_CONTEXT_GOVERNOR_ENABLED", "true").lower() in {"1", "true", "yes"}
 MCP_MAX_CONTEXT_TOKENS = int(os.getenv("MCP_MAX_CONTEXT_TOKENS", "8192"))

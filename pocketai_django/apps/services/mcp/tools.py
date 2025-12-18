@@ -1118,6 +1118,99 @@ def _tabular_pii_redaction_enabled() -> bool:
     return bool(getattr(settings, "MCP_TABULAR_PII_REDACTION_ENABLED", True))
 
 
+def _verified_lookup_policy(conversation: Conversation) -> dict[str, object]:
+    """
+    Resolve verified-lookup policy.
+
+    Global defaults come from settings, but tenants can override via
+    BusinessProfile.metadata["verified_lookup"] (or "verified_lookup_policy").
+    """
+
+    enabled = bool(getattr(settings, "MCP_VERIFIED_LOOKUP_ENABLED", True))
+    require_for_pii = bool(getattr(settings, "MCP_VERIFIED_LOOKUP_REQUIRE_FOR_PII", True))
+    allow_customer_match = bool(getattr(settings, "MCP_VERIFIED_LOOKUP_ALLOW_CUSTOMER_MATCH", True))
+
+    business = getattr(conversation, "business_profile", None)
+    meta = getattr(business, "metadata", None) if business else None
+    if isinstance(meta, Mapping):
+        cfg = meta.get("verified_lookup") or meta.get("verified_lookup_policy") or {}
+        if isinstance(cfg, Mapping):
+            if cfg.get("enabled") is not None:
+                enabled = bool(cfg.get("enabled"))
+            if cfg.get("require_for_pii") is not None:
+                require_for_pii = bool(cfg.get("require_for_pii"))
+            if cfg.get("requireForPii") is not None:
+                require_for_pii = bool(cfg.get("requireForPii"))
+            if cfg.get("allow_customer_match") is not None:
+                allow_customer_match = bool(cfg.get("allow_customer_match"))
+            if cfg.get("allowCustomerMatch") is not None:
+                allow_customer_match = bool(cfg.get("allowCustomerMatch"))
+
+    return {
+        "enabled": enabled,
+        "require_for_pii": require_for_pii,
+        "allow_customer_match": allow_customer_match,
+    }
+
+
+def _conversation_is_verified_for_lookup(
+    conversation: Conversation,
+    *,
+    allow_customer_match: bool,
+) -> tuple[bool, str | None]:
+    metadata = conversation.metadata if isinstance(getattr(conversation, "metadata", None), Mapping) else {}
+    marker = metadata.get("verified_lookup") if isinstance(metadata, Mapping) else None
+    if marker is True:
+        return True, "metadata_flag"
+    if isinstance(marker, Mapping):
+        status = str(marker.get("status") or marker.get("state") or "").strip().lower()
+        if status in {"verified", "ok", "passed"}:
+            return True, "metadata_status"
+        if marker.get("verified") is True:
+            return True, "metadata_verified"
+    if allow_customer_match and getattr(conversation, "customer_id", None):
+        return True, "customer_match"
+    return False, None
+
+
+def _column_is_sensitive(column: str) -> bool:
+    return bool(column_suggests_pii(column) or _column_suggests_person_name(column))
+
+
+def _extract_requested_columns(table_args: Mapping[str, object]) -> list[str]:
+    columns: list[str] = []
+
+    def _push(value: object) -> None:
+        text = _coerce_str(value).strip()
+        if text and text not in columns:
+            columns.append(text)
+
+    for key in ("select_columns", "columns"):
+        raw = table_args.get(key)
+        if isinstance(raw, (list, tuple)):
+            for entry in raw[:100]:
+                _push(entry)
+
+    for key in ("match_column", "sort_by", "value_column"):
+        if key in table_args:
+            _push(table_args.get(key))
+
+    aggregate = table_args.get("aggregate") if isinstance(table_args.get("aggregate"), Mapping) else None
+    if aggregate:
+        _push(aggregate.get("column"))
+        _push(aggregate.get("group_by"))
+        _push(aggregate.get("groupBy"))
+
+    filters = table_args.get("filters")
+    if isinstance(filters, list):
+        for entry in filters[:50]:
+            if not isinstance(entry, Mapping):
+                continue
+            _push(entry.get("column"))
+
+    return columns
+
+
 def _normalize_column_set(values: object) -> set[str]:
     if values is None:
         return set()
@@ -1230,6 +1323,8 @@ def _sanitize_tabular_rows_for_prompt(
     rows: Sequence[Mapping[str, object]],
     *,
     upload: KnowledgeUpload,
+    verified: bool,
+    strict_pii: bool,
 ) -> list[dict[str, object]]:
     if not _tabular_privacy_enabled():
         return [dict(row) for row in rows if isinstance(row, Mapping)]
@@ -1258,8 +1353,23 @@ def _sanitize_tabular_rows_for_prompt(
             column_norm = _normalize_column_name(column)
             if not _column_allowed(column_norm, allow=allow, deny=deny):
                 continue
+            always_mask = column_norm in force_mask
+            sensitive = _column_is_sensitive(column)
             cell_out = dict(cell)
-            if _column_should_mask(column, column_norm=column_norm, force_mask=force_mask):
+            if strict_pii:
+                if not verified and (always_mask or sensitive):
+                    continue
+                if always_mask:
+                    if "raw_text" in cell_out:
+                        cell_out["raw_text"] = _mask_cell_value(cell_out.get("raw_text"), column_name=column)
+                        if "normalized_value" in cell_out:
+                            cell_out["normalized_value"] = _normalize_column_name(cell_out.get("raw_text"))
+                        if "numeric" in cell_out:
+                            cell_out["numeric"] = None
+                    if "value" in cell_out:
+                        cell_out["value"] = _mask_cell_value(cell_out.get("value"), column_name=column)
+                    cell_out["masked"] = True
+            elif always_mask or sensitive:
                 if "raw_text" in cell_out:
                     cell_out["raw_text"] = _mask_cell_value(cell_out.get("raw_text"), column_name=column)
                     if "normalized_value" in cell_out:
@@ -1285,7 +1395,18 @@ def _sanitize_tabular_rows_for_prompt(
                 if not _column_allowed(column_norm, allow=allow, deny=deny):
                     continue
                 entry_out = dict(entry)
-                if _column_should_mask(column, column_norm=column_norm, force_mask=force_mask):
+                always_mask = column_norm in force_mask
+                sensitive = _column_is_sensitive(column)
+                if strict_pii:
+                    if not verified and (always_mask or sensitive):
+                        continue
+                    if always_mask:
+                        entry_out["value"] = _mask_cell_value(entry_out.get("value"), column_name=column)
+                        entry_out["display"] = _mask_cell_value(
+                            entry_out.get("display") or entry_out.get("value"), column_name=column
+                        )
+                        entry_out["masked"] = True
+                elif always_mask or sensitive:
                     entry_out["value"] = _mask_cell_value(entry_out.get("value"), column_name=column)
                     entry_out["display"] = _mask_cell_value(
                         entry_out.get("display") or entry_out.get("value"), column_name=column
@@ -1302,6 +1423,8 @@ def _sanitize_dataset_aggregate_for_prompt(
     aggregate_result: Mapping[str, object],
     *,
     upload: KnowledgeUpload,
+    verified: bool,
+    strict_pii: bool,
 ) -> dict[str, object]:
     if not aggregate_result:
         return {}
@@ -1326,7 +1449,27 @@ def _sanitize_dataset_aggregate_for_prompt(
         out["redacted"] = True
         return out
 
-    if _column_should_mask(group_by, column_norm=group_norm, force_mask=force_mask):
+    always_mask = group_norm in force_mask
+    sensitive = _column_is_sensitive(group_by)
+    if strict_pii:
+        if not verified and (always_mask or sensitive):
+            out["groups"] = []
+            out["redacted"] = True
+            return out
+        if always_mask:
+            groups_in = out.get("groups") if isinstance(out.get("groups"), list) else []
+            groups_out: list[dict[str, object]] = []
+            for entry in groups_in:
+                if not isinstance(entry, Mapping):
+                    continue
+                entry_out = dict(entry)
+                entry_out["value"] = _mask_cell_value(entry_out.get("value"), column_name=group_by)
+                entry_out["masked"] = True
+                groups_out.append(entry_out)
+            out["groups"] = groups_out
+        return out
+
+    if always_mask or sensitive:
         groups_in = out.get("groups") if isinstance(out.get("groups"), list) else []
         groups_out: list[dict[str, object]] = []
         for entry in groups_in:
@@ -5507,15 +5650,33 @@ def _read_knowledge_handler(
                     diagnostics[key] = value
 
         if engine in {"table_preview", "db_preview", "file_dataset"} and _tabular_privacy_enabled():
+            verified_policy = _verified_lookup_policy(conversation)
+            strict_pii = bool(verified_policy.get("enabled")) and bool(verified_policy.get("require_for_pii"))
+            verified_lookup, verified_source = _conversation_is_verified_for_lookup(
+                conversation,
+                allow_customer_match=bool(verified_policy.get("allow_customer_match")),
+            )
+            diagnostics["verified_lookup"] = {
+                "verified": bool(verified_lookup),
+                "source": verified_source,
+                "pii_requires_verification": bool(strict_pii),
+            }
             rows_in = evidence.get("rows") if isinstance(evidence.get("rows"), list) else []
             evidence["rows"] = _sanitize_tabular_rows_for_prompt(
                 [row for row in rows_in if isinstance(row, Mapping)],
                 upload=upload_record,
+                verified=bool(verified_lookup),
+                strict_pii=bool(strict_pii),
             )
             if engine == "file_dataset":
                 aggregate_in = evidence.get("aggregate_result") if isinstance(evidence.get("aggregate_result"), Mapping) else None
                 if aggregate_in:
-                    evidence["aggregate_result"] = _sanitize_dataset_aggregate_for_prompt(aggregate_in, upload=upload_record)
+                    evidence["aggregate_result"] = _sanitize_dataset_aggregate_for_prompt(
+                        aggregate_in,
+                        upload=upload_record,
+                        verified=bool(verified_lookup),
+                        strict_pii=bool(strict_pii),
+                    )
             diagnostics["privacy_applied"] = True
 
         envelope: dict[str, object] = {
@@ -5602,6 +5763,50 @@ def _read_knowledge_handler(
         return filtered
 
     if wants_table and not wants_text:
+        verified_policy = _verified_lookup_policy(conversation)
+        verified_lookup, verified_source = _conversation_is_verified_for_lookup(
+            conversation,
+            allow_customer_match=bool(verified_policy.get("allow_customer_match")),
+        )
+        requested_columns = _extract_requested_columns(table_args)
+        requested_sensitive_columns = [col for col in requested_columns if _column_is_sensitive(col)]
+
+        if (
+            bool(verified_policy.get("enabled"))
+            and bool(verified_policy.get("require_for_pii"))
+            and requested_sensitive_columns
+            and not verified_lookup
+        ):
+            engine = "file_dataset" if (dataset_enabled or is_dataset_card) else "table_preview"
+            engine_tool = "dataset_query" if engine == "file_dataset" else "table_aggregate"
+            diag = {
+                "verified_lookup": {"verified": False, "source": verified_source, "required": True},
+                "requested_sensitive_columns": requested_sensitive_columns[:12],
+            }
+            envelope = _envelope(
+                engine=engine,
+                engine_tool=engine_tool,
+                result={
+                    "status": "verification_required",
+                    "error": "verification_required",
+                    "error_code": "verification_required",
+                    "rows": [],
+                    "match_count": 0,
+                    "total_matches": 0,
+                    "hint": (
+                        "This request includes sensitive fields (PII) and requires identity verification before I can share them. "
+                        "Verify the customer (OTP/email verification or an authenticated customer match) and retry."
+                    ),
+                },
+                resolved_upload_id=str(upload_record.id),
+                requested_document_id=raw_id,
+                resolved_chunk_id=str(chunk_record.id) if chunk_record else None,
+                resolved_document_id_used=str(upload_record.id),
+                identifier_diagnostics=diag,
+            )
+            _log_read_knowledge_performance(envelope)
+            return envelope
+
         # Dataset mode can answer lookups/filters/sorts precisely across all rows.
         if dataset_enabled or is_dataset_card:
             dataset_args: dict[str, object] = {"document_id": str(upload_record.id)}
