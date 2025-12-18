@@ -131,11 +131,11 @@ def find_datasets_for_identifier(
             status=KnowledgeStatus.ACTIVE,
             ingestion_metadata__dataset__enabled=True,
         )
-    ).only("id", "display_name", "filename", "ingestion_metadata")
+    ).only("id", "display_name", "source_name", "external_reference", "ingestion_metadata")
 
     hits: list[DatasetKeyIndexHit] = []
     for upload in uploads:
-        upload_name = (upload.display_name or upload.filename or str(upload.id)).strip()
+        upload_name = (upload.display_name or upload.source_name or upload.external_reference or str(upload.id)).strip()
         for entry in _iter_upload_key_indexes(upload):
             storage_path = str(entry.get("storage_path") or "").strip()
             try:
@@ -193,7 +193,7 @@ def match_upload_for_identifier(
             max_hits = 8
     max_hits = max(1, min(50, int(max_hits)))
 
-    upload_name = (upload.display_name or upload.filename or str(upload.id)).strip()
+    upload_name = (upload.display_name or upload.source_name or upload.external_reference or str(upload.id)).strip()
     hits: list[DatasetKeyIndexHit] = []
     for entry in _iter_upload_key_indexes(upload):
         storage_path = str(entry.get("storage_path") or "").strip()

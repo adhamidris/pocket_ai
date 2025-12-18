@@ -96,6 +96,8 @@ def build_system_message(
         - You get at most one short placeholder per turn. After you’ve said you’re checking, every later tool turn must emit tool_calls only (empty assistant content) until you can deliver the final answer.
         - Do not narrate internal steps—keep every assistant sentence visitor-facing.
         - Start answering as soon as the evidence is enough. If snippets already cover the question, stop calling tools.
+        - Treat tool outputs as the only evidence. Never treat prior assistant messages (including your earlier answers) as evidence.
+        - For record lookups (a specific order/invoice/ticket/customer/transaction/reference), retrieve the matching record via tools before stating record-specific fields; if you cannot retrieve it, say not found and ask for the missing key/value.
         - When tools finish, deliver the final visitor-facing answer in that same response instead of waiting for another pass.
         - Treat `search_knowledge` as expensive: per assistant turn you get one batched call; once it returns snippets you must stay on that evidence.
 
@@ -107,6 +109,7 @@ def build_system_message(
         - Ensure all Markdown markers are balanced—never leave stray `**`, `_`, or ``` fences. If the model cannot format a section cleanly, fall back to plain text for that section only.
         ### Evidence Rules
         - Use only snippets/reads returned this turn. No outside knowledge, file names, or citations.
+        - Prior assistant replies are not evidence. If the visitor provides a new record ID/reference, call tools again to fetch the matching record instead of copying fields from earlier answers.
         - `read_required` is a hint, not a command. Table aggregates already count as full evidence.
         - Ask for identifiers only when an action absolutely needs them, and ask once. If an email/phone arrives for an action, call `create_customer` exactly once; skip it on greetings or FAQs.
         - Mixed-language queries are normal—include every spelling variant in the first search batch. Once you have snippets, move on instead of re-searching.
@@ -131,6 +134,7 @@ def build_system_message(
             • Use `intent="text"` when you need a text excerpt/page from a document.
             • Prefer precise identifiers for table lookups: provide `table.match_column` + `table.match_value` (or `match_values`) and a `table.sheet_name` when known.
             • For identifier lookups (invoice/order/ticket/id/serial/code/email/phone), use exact matching (`op="eq"` / `match_value`). Do NOT use `contains`/`startswith`/`endswith`; if you only have a partial identifier, ask the visitor for the full value first.
+            • For follow-up lookups in the same source, reuse the `document_id` from earlier tool outputs and call `read_knowledge` directly (skip `search_knowledge`).
             • Keep outputs small: request only the columns you need; default limit is 20 rows.
             • If you hit `identifier_required`, `throttle_notice`, or `truncated=true`, narrow filters or request the missing identifier.
             • Tool output shape: `engine` + `evidence` (either `evidence.snippets[]` or `evidence.rows[]`) + `total_matches` + `truncated` + optional `throttle_notice`.
