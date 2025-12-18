@@ -139,7 +139,7 @@ class McpOrchestratorService:
                 setup_span.set_attribute("business.id", str(conversation.business_profile_id))
             messages = prompts.build_messages(conversation=conversation, user_message=user_message)
             filter_level = self._filter_level_for_conversation(conversation)
-            initial_stream_filter_level = "friendly"
+            initial_stream_filter_level = filter_level
             char_turn_limit = self._char_budget_per_turn(conversation.business_profile)
             char_minute_limit = self._char_budget_per_minute(conversation.business_profile)
             minute_reserver = self._build_minute_budget_reserver(conversation.business_profile, char_minute_limit)
