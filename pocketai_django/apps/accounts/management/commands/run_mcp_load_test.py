@@ -1,14 +1,18 @@
 from __future__ import annotations
 
+import json
 import math
 import statistics
 import time
 import uuid
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
+from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any, Mapping, Sequence
 
-from django.core.management.base import BaseCommand
+from django.conf import settings
+from django.core.management.base import BaseCommand, CommandError
 from django.db import close_old_connections
 
 from apps.accounts.models import AgentProfile, BusinessProfile
@@ -58,18 +62,41 @@ class Command(BaseCommand):
         parser.add_argument("--concurrency", type=int, default=8, help="Number of threads.")
         parser.add_argument("--document-id", type=str, default="", help="Required for read_knowledge mode.")
         parser.add_argument("--intent", type=str, default="auto", help="read_knowledge intent (auto|text|table).")
+        parser.add_argument("--output", type=str, default="", help="Optional JSON output path.")
+        parser.add_argument(
+            "--enforce",
+            action="store_true",
+            help="Fail (non-zero exit) when thresholds are violated.",
+        )
+        parser.add_argument(
+            "--p95-max-ms",
+            type=int,
+            default=0,
+            help="Maximum allowed p95 latency in ms (0 = use settings default).",
+        )
+        parser.add_argument(
+            "--max-error-rate",
+            type=float,
+            default=-1.0,
+            help="Maximum allowed error rate, as fraction 0..1 (-1 = use settings default).",
+        )
+        parser.add_argument(
+            "--max-throttled-rate",
+            type=float,
+            default=-1.0,
+            help="Maximum allowed throttled rate, as fraction 0..1 (-1 = use settings default).",
+        )
 
     def handle(self, *args, **options):
+        started_at = datetime.now(tz=timezone.utc)
         business_id_raw = str(options.get("business_id") or "").strip()
         try:
             business_id = uuid.UUID(business_id_raw)
         except (TypeError, ValueError):
-            self.stderr.write(self.style.ERROR("Invalid --business-id"))
-            return
+            raise CommandError("Invalid --business-id") from None
         business = BusinessProfile.objects.filter(id=business_id).first()
         if not business:
-            self.stderr.write(self.style.ERROR("BusinessProfile not found."))
-            return
+            raise CommandError("BusinessProfile not found.")
 
         agent = AgentProfile.objects.filter(business_profile=business).order_by("created_at").first()
         conversation = Conversation.objects.create(
@@ -92,13 +119,11 @@ class Command(BaseCommand):
         intent = str(options.get("intent") or "auto").strip().lower() or "auto"
         if mode == "read_knowledge":
             if not document_id_raw:
-                self.stderr.write(self.style.ERROR("--document-id is required for mode=read_knowledge"))
-                return
+                raise CommandError("--document-id is required for mode=read_knowledge")
             try:
                 uuid.UUID(document_id_raw)
             except (TypeError, ValueError):
-                self.stderr.write(self.style.ERROR("Invalid --document-id UUID"))
-                return
+                raise CommandError("Invalid --document-id UUID") from None
 
         def _run_one(index: int) -> LoadResult:
             close_old_connections()
@@ -164,6 +189,7 @@ class Command(BaseCommand):
                 except Exception:
                     results.append(LoadResult(duration_ms=0, status="error", tool="unknown", error_code="exception"))
 
+        ended_at = datetime.now(tz=timezone.utc)
         durations = [r.duration_ms for r in results if r.duration_ms > 0]
         statuses: dict[str, int] = {}
         error_codes: dict[str, int] = {}
@@ -174,9 +200,74 @@ class Command(BaseCommand):
             if r.error_code:
                 error_codes[r.error_code] = error_codes.get(r.error_code, 0) + 1
 
+        p50 = _percentile(durations, 50) if durations else 0.0
+        p95 = _percentile(durations, 95) if durations else 0.0
+        mean = float(statistics.mean(durations)) if durations else 0.0
+        max_latency = max(durations) if durations else 0
+
+        error_count = int(statuses.get("error", 0) + statuses.get("unknown", 0))
+        throttled_count = int(statuses.get("throttled", 0))
+        error_rate = float(error_count) / float(iterations) if iterations else 1.0
+        throttled_rate = float(throttled_count) / float(iterations) if iterations else 1.0
+
+        max_p95_ms = int(options.get("p95_max_ms") or 0)
+        if max_p95_ms <= 0:
+            max_p95_ms = int(getattr(settings, "MCP_LOAD_TEST_P95_MAX_MS", 1500) or 1500)
+        max_error_rate = float(options.get("max_error_rate") if options.get("max_error_rate") is not None else -1.0)
+        if max_error_rate < 0:
+            max_error_rate = float(getattr(settings, "MCP_LOAD_TEST_MAX_ERROR_RATE", 0.02) or 0.02)
+        max_throttled_rate = float(
+            options.get("max_throttled_rate") if options.get("max_throttled_rate") is not None else -1.0
+        )
+        if max_throttled_rate < 0:
+            max_throttled_rate = float(getattr(settings, "MCP_LOAD_TEST_MAX_THROTTLED_RATE", 0.02) or 0.02)
+
+        violations: dict[str, Mapping[str, object]] = {}
+        if durations:
+            if float(p95) > float(max_p95_ms):
+                violations["p95_latency_ms"] = {"observed": float(p95), "maximum": float(max_p95_ms)}
+        else:
+            violations["p95_latency_ms"] = {"observed": None, "maximum": float(max_p95_ms)}
+
+        if error_rate > float(max_error_rate):
+            violations["error_rate"] = {"observed": error_rate, "maximum": float(max_error_rate)}
+        if throttled_rate > float(max_throttled_rate):
+            violations["throttled_rate"] = {"observed": throttled_rate, "maximum": float(max_throttled_rate)}
+
+        report: dict[str, object] = {
+            "type": "mcp_load_test",
+            "started_at": started_at.isoformat(),
+            "ended_at": ended_at.isoformat(),
+            "business_id": str(business.id),
+            "conversation_id": str(conversation.id),
+            "mode": mode,
+            "queries": queries,
+            "iterations": iterations,
+            "concurrency": concurrency,
+            "document_id": document_id_raw or None,
+            "intent": intent,
+            "rate_limits_disabled": bool(getattr(settings, "MCP_DISABLE_TOOL_RATE_LIMITS", False)),
+            "tool_counts": tool_counts,
+            "statuses": statuses,
+            "error_codes": error_codes,
+            "latency_ms": {"p50": p50, "p95": p95, "mean": mean, "max": max_latency},
+            "rates": {"error_rate": error_rate, "throttled_rate": throttled_rate},
+            "thresholds": {
+                "p95_max_ms": max_p95_ms,
+                "max_error_rate": max_error_rate,
+                "max_throttled_rate": max_throttled_rate,
+            },
+            "violations": violations,
+        }
+
+        output_path_raw = str(options.get("output") or "").strip()
+        output_path = Path(output_path_raw) if output_path_raw else self._default_output_path()
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        output_path.write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
+
         self.stdout.write(self.style.SUCCESS("MCP load test completed"))
         self.stdout.write(f"business_id={business.id} conversation_id={conversation.id} mode={mode}")
-        self.stdout.write(f"iterations={iterations} concurrency={concurrency}")
+        self.stdout.write(f"iterations={iterations} concurrency={concurrency} rate_limits_disabled={report['rate_limits_disabled']}")
         self.stdout.write(f"tool_counts={tool_counts}")
         self.stdout.write(f"statuses={statuses}")
         if error_codes:
@@ -184,11 +275,21 @@ class Command(BaseCommand):
         if durations:
             self.stdout.write(
                 "latency_ms:"
-                f" p50={_percentile(durations, 50):.1f}"
-                f" p95={_percentile(durations, 95):.1f}"
-                f" mean={statistics.mean(durations):.1f}"
-                f" max={max(durations)}"
+                f" p50={p50:.1f}"
+                f" p95={p95:.1f}"
+                f" mean={mean:.1f}"
+                f" max={max_latency}"
             )
         else:
             self.stdout.write("latency_ms: no samples")
+        self.stdout.write(self.style.SUCCESS(f"Exported load test artifacts to {output_path}"))
 
+        if bool(options.get("enforce")) and violations:
+            for key, info in violations.items():
+                self.stderr.write(self.style.ERROR(f"{key} violated (obs={info.get('observed')} max={info.get('maximum')})"))
+            raise CommandError("MCP load test thresholds failed")
+
+    @staticmethod
+    def _default_output_path() -> Path:
+        base = getattr(settings, "LOG_DIR", Path(settings.BASE_DIR) / "var" / "logs")
+        return Path(base) / "mcp_load_test_latest.json"

@@ -44,6 +44,15 @@
 3. Inspect `var/logs/rag_eval_latest.json` and the `accounts_rag_evaluation_run` admin for diff vs last run.
 4. CI jobs should upload the JSON artifact so regressions are diffable without a DB.
 
+## Production Gates
+To run quality + latency gates in one command:
+
+```bash
+python manage.py run_production_gates --set travel --iterations 200 --concurrency 8 --queries "pricing" --mode search_read
+```
+
+This runs `run_rag_eval` first (exports `var/logs/rag_eval_latest.json`), then runs `run_mcp_load_test --enforce` (exports `var/logs/mcp_load_test_latest.json`).
+
 ## Developer Tips
 - Harness runs both the alias path and free-text pipeline; use the per-query diagnostics to inspect latency, path selection, and reranker outcomes.
 - When adding a new industry, start with at least 3 identifier queries, 2 natural questions, and 1 explicit not-found case.

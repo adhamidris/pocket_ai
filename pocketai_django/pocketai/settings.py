@@ -377,6 +377,9 @@ except (TypeError, ValueError):
 if MCP_LIST_TABLES_CALLS_PER_MINUTE < 0:
     MCP_LIST_TABLES_CALLS_PER_MINUTE = 0
 
+# Disable cache-backed tool rate limits (useful for CI/load tests).
+MCP_DISABLE_TOOL_RATE_LIMITS = os.getenv("MCP_DISABLE_TOOL_RATE_LIMITS", "false").lower() in {"1", "true", "yes"}
+
 # MCP/orchestrator hard caps (cost controls).
 try:
     MCP_MAX_TOOL_ITERATIONS = int(os.getenv("MCP_MAX_TOOL_ITERATIONS", "10"))
@@ -599,6 +602,21 @@ RAG_EVAL_THRESHOLDS = {
         "vector.p95": float(os.getenv("RAG_EVAL_VECTOR_P95_MS", "350")),
     },
 }
+try:
+    MCP_LOAD_TEST_P95_MAX_MS = int(os.getenv("MCP_LOAD_TEST_P95_MAX_MS", "1500"))
+except (TypeError, ValueError):
+    MCP_LOAD_TEST_P95_MAX_MS = 1500
+MCP_LOAD_TEST_P95_MAX_MS = max(1, min(120_000, MCP_LOAD_TEST_P95_MAX_MS))
+try:
+    MCP_LOAD_TEST_MAX_ERROR_RATE = float(os.getenv("MCP_LOAD_TEST_MAX_ERROR_RATE", "0.02"))
+except (TypeError, ValueError):
+    MCP_LOAD_TEST_MAX_ERROR_RATE = 0.02
+MCP_LOAD_TEST_MAX_ERROR_RATE = max(0.0, min(1.0, MCP_LOAD_TEST_MAX_ERROR_RATE))
+try:
+    MCP_LOAD_TEST_MAX_THROTTLED_RATE = float(os.getenv("MCP_LOAD_TEST_MAX_THROTTLED_RATE", "0.02"))
+except (TypeError, ValueError):
+    MCP_LOAD_TEST_MAX_THROTTLED_RATE = 0.02
+MCP_LOAD_TEST_MAX_THROTTLED_RATE = max(0.0, min(1.0, MCP_LOAD_TEST_MAX_THROTTLED_RATE))
 RAG_DRIFT_TRUNCATION_THRESHOLD = float(os.getenv("RAG_DRIFT_TRUNCATION_THRESHOLD", "0.2"))
 RAG_DRIFT_ALIAS_HIT_THRESHOLD = float(os.getenv("RAG_DRIFT_ALIAS_HIT_THRESHOLD", "0.85"))
 RAG_DRIFT_NOT_FOUND_THRESHOLD = float(os.getenv("RAG_DRIFT_NOT_FOUND_THRESHOLD", "0.3"))

@@ -10,6 +10,14 @@ Run a basic concurrent test against MCP tools:
 python manage.py run_mcp_load_test --business-id <uuid> --mode search --iterations 200 --concurrency 8 --queries "invoice 9125779195" "refund policy"
 ```
 
+By default the command exports a JSON artifact to `var/logs/mcp_load_test_latest.json` (override via `--output`).
+
+To use it as a CI/release gate, pass `--enforce` (non-zero exit when thresholds are violated):
+
+```bash
+python manage.py run_mcp_load_test --business-id <uuid> --mode search_read --iterations 200 --concurrency 8 --queries "pricing" --enforce
+```
+
 Modes:
 - `search`: calls `search_knowledge`.
 - `search_read`: calls `search_knowledge` then `read_knowledge` on the top snippet (if any).
@@ -28,6 +36,7 @@ The assistant should stop looping and ask the user to narrow the request or retr
 
 Tool rate limits (per business/tenant):
 - `MCP_TOOL_RATE_LIMIT_WINDOW_SECONDS`
+- `MCP_DISABLE_TOOL_RATE_LIMITS` (set `true` for CI load tests to avoid throttling skew)
 - `MCP_SEARCH_KNOWLEDGE_CALLS_PER_MINUTE`
 - `MCP_READ_KNOWLEDGE_CALLS_PER_MINUTE`
 - `MCP_LIST_TABLES_CALLS_PER_MINUTE`
@@ -46,3 +55,7 @@ Privacy-safe logging (default off):
 - `MCP_LOG_PII=false`
 - `MCP_LOG_SNIPPET_PREVIEWS=false`
 
+Load test threshold gates (used when `--enforce` is passed):
+- `MCP_LOAD_TEST_P95_MAX_MS`
+- `MCP_LOAD_TEST_MAX_ERROR_RATE`
+- `MCP_LOAD_TEST_MAX_THROTTLED_RATE`

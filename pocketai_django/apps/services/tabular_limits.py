@@ -217,6 +217,9 @@ def enforce_tool_rate_limit(
     rate_limit: ToolRateLimit,
     upload: KnowledgeUpload | None = None,
 ) -> None:
+    if bool(getattr(settings, "MCP_DISABLE_TOOL_RATE_LIMITS", False)):
+        return
+
     calls_per_minute = rate_limit.calls_per_minute
     if calls_per_minute is None or calls_per_minute <= 0:
         return
