@@ -49,7 +49,7 @@ from apps.conversations.models import Conversation
 from apps.services.ai_orchestrator import ActionType, AiOrchestratorService, KnowledgeSearchService, KnowledgeSnippet
 from apps.services.dataset_router import find_datasets_for_identifier, match_upload_for_identifier
 from apps.services.knowledge_access import apply_customer_visible_chunks, apply_customer_visible_uploads
-from apps.services.privacy import redact_free_text, sha256_hex
+from apps.services.privacy import column_suggests_pii, redact_free_text, redact_value_for_preview, sha256_hex
 from apps.services.rag_logging import structured_log
 from apps.services.tabular_limits import ToolRateLimit, enforce_tool_rate_limit, resolve_tabular_tool_limits
 from core.metrics import latency_monitor
@@ -1108,6 +1108,236 @@ def _should_force_exact_identifier_match(column: object, value: object) -> bool:
     if _column_suggests_identifier(column) and len(normalized) >= 4:
         return True
     return False
+
+
+def _tabular_privacy_enabled() -> bool:
+    return bool(getattr(settings, "MCP_TABULAR_PRIVACY_ENABLED", True))
+
+
+def _tabular_pii_redaction_enabled() -> bool:
+    return bool(getattr(settings, "MCP_TABULAR_PII_REDACTION_ENABLED", True))
+
+
+def _normalize_column_set(values: object) -> set[str]:
+    if values is None:
+        return set()
+    if isinstance(values, str):
+        values = [part.strip() for part in values.split(",")]
+    if not isinstance(values, (list, tuple, set)):
+        return set()
+    out: set[str] = set()
+    for value in values:
+        normalized = _normalize_column_name(_coerce_str(value))
+        if normalized:
+            out.add(normalized)
+    return out
+
+
+def _resolve_tabular_column_policy(upload: KnowledgeUpload) -> dict[str, object]:
+    """
+    Resolve per-upload column privacy rules for tabular outputs.
+
+    Returns a dict with:
+      - allow: optional set[str] of normalized column names (shared allowlist)
+      - deny: set[str] of normalized column names (internal/excluded)
+      - force_mask: set[str] of normalized column names (business policy)
+    """
+
+    allow: set[str] = set()
+    deny: set[str] = set()
+    force_mask: set[str] = set()
+
+    ingestion_meta = upload.ingestion_metadata if isinstance(getattr(upload, "ingestion_metadata", None), Mapping) else {}
+    column_privacy = ingestion_meta.get("column_privacy") if isinstance(ingestion_meta, Mapping) else None
+    if isinstance(column_privacy, Mapping):
+        allow |= _normalize_column_set(column_privacy.get("shared_columns"))
+        deny |= _normalize_column_set(column_privacy.get("internal_only_columns"))
+        deny |= _normalize_column_set(column_privacy.get("excluded_columns"))
+
+    upload_meta = upload.metadata if isinstance(getattr(upload, "metadata", None), Mapping) else {}
+    table_privacy = upload_meta.get("table_privacy") if isinstance(upload_meta, Mapping) else None
+    if isinstance(table_privacy, Mapping):
+        allow |= _normalize_column_set(table_privacy.get("shared_columns"))
+        deny |= _normalize_column_set(table_privacy.get("internal_only_columns"))
+        deny |= _normalize_column_set(table_privacy.get("excluded_columns"))
+        deny |= _normalize_column_set(table_privacy.get("sensitive_columns"))
+
+    business = getattr(upload, "business_profile", None)
+    if business and hasattr(business, "table_privacy_policy"):
+        try:
+            policy = business.table_privacy_policy() or {}
+        except Exception:
+            policy = {}
+        if isinstance(policy, Mapping):
+            force_mask |= _normalize_column_set(policy.get("required_columns"))
+
+    return {"allow": allow or None, "deny": deny, "force_mask": force_mask}
+
+
+def _column_suggests_person_name(column: str) -> bool:
+    normalized = _normalize_column_name(column)
+    if not normalized or "name" not in normalized:
+        return False
+    # Avoid masking business/entity labels like vendor/branch/product names.
+    if any(token in normalized for token in ("vendor", "branch", "product", "material", "item")):
+        return False
+    if any(token in normalized for token in ("first name", "last name", "full name")):
+        return True
+    if any(token in normalized for token in ("customer", "client", "contact", "user", "person", "employee")):
+        return True
+    return False
+
+
+def _redact_person_name(value: object) -> str:
+    text = _coerce_str(value).strip()
+    if not text:
+        return ""
+    # Keep the first character as a hint without leaking the full name.
+    return text[:1] + "…"
+
+
+def _mask_cell_value(value: object, *, column_name: str) -> str:
+    if not _tabular_pii_redaction_enabled():
+        return _coerce_str(value)
+    if _column_suggests_person_name(column_name):
+        return _redact_person_name(value)
+    return redact_value_for_preview(value, column_name=column_name)
+
+
+def _column_allowed(column_norm: str, *, allow: set[str] | None, deny: set[str]) -> bool:
+    if not column_norm:
+        return False
+    if allow is not None and column_norm not in allow:
+        return False
+    if column_norm in deny:
+        return False
+    return True
+
+
+def _column_should_mask(column: str, *, column_norm: str, force_mask: set[str]) -> bool:
+    if not column_norm:
+        return False
+    if column_norm in force_mask:
+        return True
+    if column_suggests_pii(column):
+        return True
+    if _column_suggests_person_name(column):
+        return True
+    return False
+
+
+def _sanitize_tabular_rows_for_prompt(
+    rows: Sequence[Mapping[str, object]],
+    *,
+    upload: KnowledgeUpload,
+) -> list[dict[str, object]]:
+    if not _tabular_privacy_enabled():
+        return [dict(row) for row in rows if isinstance(row, Mapping)]
+
+    policy = _resolve_tabular_column_policy(upload)
+    allow = policy.get("allow") if isinstance(policy.get("allow"), set) else None
+    deny = policy.get("deny") if isinstance(policy.get("deny"), set) else set()
+    force_mask = policy.get("force_mask") if isinstance(policy.get("force_mask"), set) else set()
+
+    sanitized: list[dict[str, object]] = []
+    for row in rows:
+        if not isinstance(row, Mapping):
+            continue
+        row_out = dict(row)
+        # Avoid leaking full row concatenations; the model should rely on cells.
+        row_out.pop("row_text", None)
+
+        cells_in = row.get("cells") if isinstance(row.get("cells"), list) else []
+        cells_out: list[dict[str, object]] = []
+        for cell in cells_in:
+            if not isinstance(cell, Mapping):
+                continue
+            column = _coerce_str(cell.get("column")).strip()
+            if not column:
+                continue
+            column_norm = _normalize_column_name(column)
+            if not _column_allowed(column_norm, allow=allow, deny=deny):
+                continue
+            cell_out = dict(cell)
+            if _column_should_mask(column, column_norm=column_norm, force_mask=force_mask):
+                if "raw_text" in cell_out:
+                    cell_out["raw_text"] = _mask_cell_value(cell_out.get("raw_text"), column_name=column)
+                    if "normalized_value" in cell_out:
+                        cell_out["normalized_value"] = _normalize_column_name(cell_out.get("raw_text"))
+                    if "numeric" in cell_out:
+                        cell_out["numeric"] = None
+                if "value" in cell_out:
+                    cell_out["value"] = _mask_cell_value(cell_out.get("value"), column_name=column)
+                cell_out["masked"] = True
+            cells_out.append(cell_out)
+        row_out["cells"] = cells_out
+
+        contributions_in = row.get("contributions") if isinstance(row.get("contributions"), list) else []
+        if contributions_in:
+            contributions_out: list[dict[str, object]] = []
+            for entry in contributions_in:
+                if not isinstance(entry, Mapping):
+                    continue
+                column = _coerce_str(entry.get("column")).strip()
+                if not column:
+                    continue
+                column_norm = _normalize_column_name(column)
+                if not _column_allowed(column_norm, allow=allow, deny=deny):
+                    continue
+                entry_out = dict(entry)
+                if _column_should_mask(column, column_norm=column_norm, force_mask=force_mask):
+                    entry_out["value"] = _mask_cell_value(entry_out.get("value"), column_name=column)
+                    entry_out["display"] = _mask_cell_value(
+                        entry_out.get("display") or entry_out.get("value"), column_name=column
+                    )
+                    entry_out["masked"] = True
+                contributions_out.append(entry_out)
+            row_out["contributions"] = contributions_out
+
+        sanitized.append(row_out)
+    return sanitized
+
+
+def _sanitize_dataset_aggregate_for_prompt(
+    aggregate_result: Mapping[str, object],
+    *,
+    upload: KnowledgeUpload,
+) -> dict[str, object]:
+    if not aggregate_result:
+        return {}
+    if not _tabular_privacy_enabled():
+        return dict(aggregate_result)
+
+    policy = _resolve_tabular_column_policy(upload)
+    allow = policy.get("allow") if isinstance(policy.get("allow"), set) else None
+    deny = policy.get("deny") if isinstance(policy.get("deny"), set) else set()
+    force_mask = policy.get("force_mask") if isinstance(policy.get("force_mask"), set) else set()
+
+    out = dict(aggregate_result)
+    op = _coerce_str(out.get("operation")).strip().lower()
+    if op != "group_by":
+        return out
+    group_by = _coerce_str(out.get("group_by")).strip()
+    group_norm = _normalize_column_name(group_by)
+    if not group_by:
+        return out
+    if not _column_allowed(group_norm, allow=allow, deny=deny):
+        out["groups"] = []
+        out["redacted"] = True
+        return out
+
+    if _column_should_mask(group_by, column_norm=group_norm, force_mask=force_mask):
+        groups_in = out.get("groups") if isinstance(out.get("groups"), list) else []
+        groups_out: list[dict[str, object]] = []
+        for entry in groups_in:
+            if not isinstance(entry, Mapping):
+                continue
+            entry_out = dict(entry)
+            entry_out["value"] = _mask_cell_value(entry_out.get("value"), column_name=group_by)
+            entry_out["masked"] = True
+            groups_out.append(entry_out)
+        out["groups"] = groups_out
+    return out
 
 
 def _parse_numeric_value(value: str | None) -> float | None:
@@ -5275,6 +5505,18 @@ def _read_knowledge_handler(
                 value = result.get(key)
                 if value not in (None, "", []):
                     diagnostics[key] = value
+
+        if engine in {"table_preview", "db_preview", "file_dataset"} and _tabular_privacy_enabled():
+            rows_in = evidence.get("rows") if isinstance(evidence.get("rows"), list) else []
+            evidence["rows"] = _sanitize_tabular_rows_for_prompt(
+                [row for row in rows_in if isinstance(row, Mapping)],
+                upload=upload_record,
+            )
+            if engine == "file_dataset":
+                aggregate_in = evidence.get("aggregate_result") if isinstance(evidence.get("aggregate_result"), Mapping) else None
+                if aggregate_in:
+                    evidence["aggregate_result"] = _sanitize_dataset_aggregate_for_prompt(aggregate_in, upload=upload_record)
+            diagnostics["privacy_applied"] = True
 
         envelope: dict[str, object] = {
             "tool": "read_knowledge",
