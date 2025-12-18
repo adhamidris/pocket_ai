@@ -2151,8 +2151,13 @@ class KnowledgeSearchService:
             query = SearchQuery(condensed_query, search_type=search_type, config=config)
             try:
                 fts_qs = (
-                    base_qs.annotate(rank=SearchRank(vector, query, cover_density=True))
-                    .filter(rank__gt=0)
+                    base_qs.annotate(
+                        fts_vector=vector,
+                        rank=SearchRank(vector, query, cover_density=True),
+                    )
+                    # Apply @@ filter so Postgres can use the GIN index on
+                    # `to_tsvector('simple', coalesce(content,''))`.
+                    .filter(fts_vector=query)
                     .order_by("-rank")[:N]
                 )
                 rows = [(chunk, float(getattr(chunk, "rank", 0.0) or 0.0)) for chunk in fts_qs]
@@ -2242,6 +2247,12 @@ class KnowledgeSearchService:
             duration_ms = int((time.perf_counter() - start) * 1000)
             diag = {
                 "lexical_strategy": "trigram",
+                # Keep legacy `fts_*` keys for downstream diagnostics consumers.
+                "fts_threshold": threshold,
+                "fts_condensed_query": condensed_query,
+                "fts_tokens_used": condensed_tokens[:5],
+                "fts_token_filter_min_length": token_min_length,
+                # Trigram-specific keys for richer observability.
                 "trigram_threshold": threshold,
                 "trigram_condensed_query": condensed_query,
                 "trigram_tokens_used": condensed_tokens[:5],
