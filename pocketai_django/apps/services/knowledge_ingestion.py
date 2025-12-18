@@ -60,6 +60,7 @@ from apps.services.dataset_key_index import (
 )
 from apps.services.embeddings import LocalEmbeddingService, build_embedding_service, EmbeddingProviderError
 from apps.services.feature_flags import FeatureFlagService
+from apps.services.privacy import redact_mapping_preview
 from apps.services.quality_monitor import QualityMonitor
 from apps.services.rag_logging import structured_log
 from apps.services.table_normalization import (
@@ -4269,13 +4270,12 @@ class KnowledgeIngestionService:
                     if len(sample_rows) < sample_target:
                         sample_rows.append(values)
                     if len(sample_visible_rows) < sample_row_cap:
-                        sample_visible_rows.append(
-                            {
-                                column_schema[i]: values[i]
-                                for i in range(len(column_schema))
-                                if visible_mask[i]
-                            }
-                        )
+                        row_preview = {
+                            column_schema[i]: values[i]
+                            for i in range(len(column_schema))
+                            if visible_mask[i]
+                        }
+                        sample_visible_rows.append(redact_mapping_preview(row_preview))
 
                     if key_index_enabled and not key_indexes and len(sample_rows) >= sample_target:
                         suggested_preview = self._suggest_dataset_key_columns(column_schema=column_schema, sample_rows=sample_rows)
@@ -4737,13 +4737,12 @@ class KnowledgeIngestionService:
                     if len(sample_rows) < sample_target:
                         sample_rows.append([str(value or "") for value in values])
                     if len(sample_visible_rows) < sample_row_cap:
-                        sample_visible_rows.append(
-                            {
-                                column_schema[i]: str(values[i] or "")
-                                for i in range(len(column_schema))
-                                if visible_mask[i]
-                            }
-                        )
+                        row_preview = {
+                            column_schema[i]: str(values[i] or "")
+                            for i in range(len(column_schema))
+                            if visible_mask[i]
+                        }
+                        sample_visible_rows.append(redact_mapping_preview(row_preview))
 
                     if key_index_enabled and not sheet_key_indexes and len(sample_rows) >= sample_target:
                         suggested_preview = self._suggest_dataset_key_columns(column_schema=column_schema, sample_rows=sample_rows)
@@ -5197,13 +5196,12 @@ class KnowledgeIngestionService:
                     if len(sample_rows) < max(sample_row_cap, 25):
                         sample_rows.append(list(values))
                     if len(sample_visible_rows) < sample_row_cap:
-                        sample_visible_rows.append(
-                            {
-                                column_schema[i]: str(values[i] or "")
-                                for i in range(len(column_schema))
-                                if visible_mask[i]
-                            }
-                        )
+                        row_preview = {
+                            column_schema[i]: str(values[i] or "")
+                            for i in range(len(column_schema))
+                            if visible_mask[i]
+                        }
+                        sample_visible_rows.append(redact_mapping_preview(row_preview))
 
             try:
                 dataset_size = dataset_path.stat().st_size
@@ -5442,13 +5440,12 @@ class KnowledgeIngestionService:
             if len(sample_rows) < max(sample_row_cap, 25):
                 sample_rows.append(values)
             if len(sample_visible_rows) < sample_row_cap:
-                sample_visible_rows.append(
-                    {
-                        column_schema[i]: values[i]
-                        for i in range(len(column_schema))
-                        if visible_mask[i]
-                    }
-                )
+                row_preview = {
+                    column_schema[i]: values[i]
+                    for i in range(len(column_schema))
+                    if visible_mask[i]
+                }
+                sample_visible_rows.append(redact_mapping_preview(row_preview))
             if len(preview_rows) >= preview_row_cap:
                 break
 

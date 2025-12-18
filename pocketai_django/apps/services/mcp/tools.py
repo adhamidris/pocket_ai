@@ -36,6 +36,8 @@ from django.core.cache import cache
 from django.conf import settings
 
 from apps.accounts.models import (
+    KnowledgeAuditAction,
+    KnowledgeAuditEvent,
     KnowledgeStatus,
     KnowledgeUpload,
     KnowledgeUploadChunk,
@@ -46,11 +48,19 @@ from apps.accounts.models import (
 from apps.conversations.models import Conversation
 from apps.services.ai_orchestrator import ActionType, AiOrchestratorService, KnowledgeSearchService, KnowledgeSnippet
 from apps.services.dataset_router import find_datasets_for_identifier, match_upload_for_identifier
+from apps.services.privacy import redact_free_text, sha256_hex
 from apps.services.rag_logging import structured_log
-from apps.services.tabular_limits import enforce_tool_rate_limit, resolve_tabular_tool_limits
+from apps.services.tabular_limits import ToolRateLimit, enforce_tool_rate_limit, resolve_tabular_tool_limits
 from core.metrics import latency_monitor
 from .identifier_registry import IdentifierGuardrail, IdentifierRegistryService
-from .types import ToolExecutionContext, CharacterBudgetExceeded
+from .types import (
+    ChunkPageBudgetExceeded,
+    ChunkReadBudgetExceeded,
+    ToolConstraintError,
+    ToolExecutionContext,
+    ToolRateLimitExceeded,
+    CharacterBudgetExceeded,
+)
 
 try:
     import duckdb  # type: ignore
@@ -61,6 +71,85 @@ except Exception:  # pragma: no cover
 logger = logging.getLogger(__name__)
 IDENTIFIER_MAPPING_CACHE_TTL = 300
 DEFAULT_MAX_SEARCH_QUERY_VARIANTS = 4
+MCP_LOG_PII_DEFAULT = False
+MCP_LOG_SNIPPET_PREVIEWS_DEFAULT = False
+
+
+def _mcp_log_pii_enabled() -> bool:
+    return bool(getattr(settings, "MCP_LOG_PII", MCP_LOG_PII_DEFAULT))
+
+
+def _mcp_log_snippet_previews_enabled() -> bool:
+    return bool(getattr(settings, "MCP_LOG_SNIPPET_PREVIEWS", MCP_LOG_SNIPPET_PREVIEWS_DEFAULT))
+
+
+def _log_safe_text_fields(field: str, value: str | None) -> dict[str, object]:
+    if value is None:
+        return {}
+    text = str(value)
+    if not text:
+        return {}
+    if _mcp_log_pii_enabled():
+        return {field: text, f"{field}_len": len(text)}
+    return {f"{field}_sha256": sha256_hex(text), f"{field}_len": len(text)}
+
+
+def _record_knowledge_audit_event_once(
+    *,
+    context: ToolExecutionContext,
+    conversation: Conversation,
+    upload: KnowledgeUpload,
+    action: str,
+    engine: str | None,
+    status: str | None,
+    metadata: Mapping[str, object] | None = None,
+) -> None:
+    if not upload or not upload.id:
+        return
+    action_value = str(action or "").strip() or KnowledgeAuditAction.READ
+    engine_value = str(engine or "").strip()
+    status_value = str(status or "").strip()
+    fingerprint = (str(conversation.id), str(upload.id), action_value)
+    try:
+        if fingerprint in context.audit_event_fingerprints:
+            return
+        context.audit_event_fingerprints.add(fingerprint)
+    except Exception:
+        pass
+    safe_metadata: dict[str, object] = {
+        "tool": "read_knowledge",
+        "engine": engine_value or None,
+        "status": status_value or None,
+        "conversation_id": str(conversation.id),
+    }
+    if metadata:
+        for key, value in dict(metadata).items():
+            if value in (None, "", [], {}):
+                continue
+            safe_metadata[key] = value
+    try:
+        KnowledgeAuditEvent.objects.create(
+            business_profile=upload.business_profile,
+            upload=upload,
+            actor_agent=conversation.agent_profile,
+            action=action_value,
+            description="Knowledge accessed via tool call.",
+            metadata=safe_metadata,
+        )
+    except Exception:
+        logger.exception(
+            "knowledge.audit_event_failed business=%s upload=%s action=%s",
+            getattr(upload, "business_profile_id", None),
+            getattr(upload, "id", None),
+            action_value,
+        )
+
+
+def _has_prompt_evidence(envelope: Mapping[str, object]) -> bool:
+    evidence = envelope.get("evidence") if isinstance(envelope.get("evidence"), Mapping) else {}
+    rows = evidence.get("rows") if isinstance(evidence.get("rows"), list) else []
+    snippets = evidence.get("snippets") if isinstance(evidence.get("snippets"), list) else []
+    return bool(rows or snippets)
 
 
 def _function_schema(
@@ -489,7 +578,44 @@ def execute_tool(
             "hint": "Unsupported tool. Use search_knowledge, read_knowledge, or list_tables.",
         }
     ctx = context or ToolExecutionContext()
-    return handler(arguments, conversation=conversation, context=ctx)
+    try:
+        return handler(arguments, conversation=conversation, context=ctx)
+    except ToolConstraintError as exc:
+        status = "constraint_error"
+        error_code = "constraint_error"
+        if isinstance(exc, ToolRateLimitExceeded):
+            status = "throttled"
+            error_code = "rate_limited"
+        elif isinstance(exc, CharacterBudgetExceeded):
+            status = "throttled"
+            error_code = "prompt_budget_exceeded"
+        elif isinstance(exc, ChunkReadBudgetExceeded):
+            status = "throttled"
+            error_code = "chunk_read_budget_exceeded"
+        elif isinstance(exc, ChunkPageBudgetExceeded):
+            status = "throttled"
+            error_code = "chunk_page_budget_exceeded"
+        return {
+            "tool": normalized_name,
+            "status": status,
+            "error": error_code,
+            "error_code": error_code,
+            "hint": str(exc) or "Tool constraint exceeded. Narrow the request and try again.",
+        }
+    except Exception:
+        logger.exception(
+            "mcp.tool_failed tool=%s business=%s conversation=%s",
+            normalized_name,
+            getattr(conversation, "business_profile_id", None),
+            getattr(conversation, "id", None),
+        )
+        return {
+            "tool": normalized_name,
+            "status": "error",
+            "error": "tool_failed",
+            "error_code": "tool_failed",
+            "hint": "Tool execution failed unexpectedly. Try a narrower request.",
+        }
 
 
 # ---------------------------------------------------------------------------
@@ -1152,9 +1278,21 @@ def _log_snippet_payloads(
     meta: Mapping[str, object] | None = None,
 ) -> None:
     preview_items: list[dict[str, object]] = []
+    include_previews = _mcp_log_snippet_previews_enabled()
+    include_pii = _mcp_log_pii_enabled()
     for payload in snippet_payloads[:5]:
         upload_id = payload.get("upload_id")
         chunk_id = payload.get("chunk_id") or payload.get("id")
+        preview_text = _snippet_preview_text(payload) if include_previews else ""
+        preview: str | None = None
+        preview_hash: str | None = None
+        preview_len: int | None = None
+        if preview_text:
+            preview_len = len(preview_text)
+            if include_pii:
+                preview = preview_text
+            else:
+                preview_hash = sha256_hex(preview_text)
         preview_items.append(
             {
                 "label": payload.get("public_label") or payload.get("title") or payload.get("label"),
@@ -1164,13 +1302,18 @@ def _log_snippet_payloads(
                 "read_required": bool(payload.get("read_required")),
                 "is_table_chunk": bool(payload.get("is_table_chunk")),
                 "score": payload.get("score"),
-                "preview": _snippet_preview_text(payload),
+                "preview": redact_free_text(preview) if preview and not include_pii else preview,
+                "preview_sha256": preview_hash,
+                "preview_len": preview_len,
             }
         )
     detail = dict(meta or {})
+    if "query" in detail:
+        query_value = _coerce_str(detail.pop("query")).strip()
+        detail.update(_log_safe_text_fields("query", query_value or None))
     detail["snippet_count"] = len(snippet_payloads)
     if preview_items:
-        detail["snippets"] = preview_items
+        detail["snippets"] = [{k: v for k, v in entry.items() if v not in (None, "")} for entry in preview_items]
     structured_log(
         "mcp",
         f"{tool}.snippets",
@@ -1363,6 +1506,33 @@ def _search_knowledge_handler(
             "status": "error",
             "error": "query is required",
             "snippets": [],
+        }
+
+    window_seconds = int(getattr(settings, "MCP_TOOL_RATE_LIMIT_WINDOW_SECONDS", 60) or 60)
+    try:
+        calls_per_minute = int(getattr(settings, "MCP_SEARCH_KNOWLEDGE_CALLS_PER_MINUTE", 120) or 0)
+    except (TypeError, ValueError):
+        calls_per_minute = 120
+    calls_per_minute = 0 if calls_per_minute < 0 else calls_per_minute
+    try:
+        enforce_tool_rate_limit(
+            business_profile=conversation.business_profile,
+            tool="search_knowledge",
+            rate_limit=ToolRateLimit(
+                calls_per_minute=None if calls_per_minute <= 0 else calls_per_minute,
+                window_seconds=window_seconds,
+                scope="business",
+            ),
+        )
+    except ToolRateLimitExceeded as exc:
+        return {
+            "tool": "search_knowledge",
+            "status": "throttled",
+            "error": "rate_limited",
+            "error_code": "rate_limited",
+            "snippets": [],
+            "throttle_notice": {"type": "rate_limited", "message": str(exc)},
+            "hint": str(exc),
         }
 
     raw_limit = arguments.get("limit")
@@ -2296,7 +2466,19 @@ def _read_document_handler(
             "snippet_count": len(snippet_payloads),
         },
     )
-    context.reserve_characters(int(metrics.get("char_count", 0)))
+    try:
+        context.reserve_characters(int(metrics.get("char_count", 0)))
+    except CharacterBudgetExceeded as exc:
+        return {
+            "tool": "read_document",
+            "document_id": document_id,
+            "status": "throttled",
+            "error": "prompt_budget_exceeded",
+            "error_code": "prompt_budget_exceeded",
+            "snippets": [],
+            "throttle_notice": {"type": "prompt_budget", "message": str(exc)},
+            "hint": "Prompt budget exceeded. Ask a narrower question or request fewer pages.",
+        }
     _log_snippet_payloads(
         tool="read_document",
         conversation=conversation,
@@ -2340,6 +2522,33 @@ def _list_tables_handler(
     except (TypeError, ValueError):
         limit = 5
     limit = max(1, min(10, limit))
+
+    window_seconds = int(getattr(settings, "MCP_TOOL_RATE_LIMIT_WINDOW_SECONDS", 60) or 60)
+    try:
+        calls_per_minute = int(getattr(settings, "MCP_LIST_TABLES_CALLS_PER_MINUTE", 120) or 0)
+    except (TypeError, ValueError):
+        calls_per_minute = 120
+    calls_per_minute = 0 if calls_per_minute < 0 else calls_per_minute
+    try:
+        enforce_tool_rate_limit(
+            business_profile=conversation.business_profile,
+            tool="list_tables",
+            rate_limit=ToolRateLimit(
+                calls_per_minute=None if calls_per_minute <= 0 else calls_per_minute,
+                window_seconds=window_seconds,
+                scope="business",
+            ),
+        )
+    except ToolRateLimitExceeded as exc:
+        return {
+            "tool": "list_tables",
+            "status": "throttled",
+            "error": "rate_limited",
+            "error_code": "rate_limited",
+            "results": [],
+            "throttle_notice": {"type": "rate_limited", "message": str(exc)},
+            "hint": str(exc),
+        }
 
     uploads_qs = (
         KnowledgeUpload.objects.filter(
@@ -2436,7 +2645,7 @@ def _list_tables_handler(
         "mcp",
         "table.list",
         {
-            "query": query_input or None,
+            **_log_safe_text_fields("query", query_input or None),
             "limit": limit,
             "matched_uploads": len(results),
         },
@@ -2712,12 +2921,25 @@ def _table_aggregate_handler(
 
     tabular_limits = resolve_tabular_tool_limits(business_profile=conversation.business_profile, upload=upload)
     tool_limits = tabular_limits.table_aggregate
-    enforce_tool_rate_limit(
-        business_profile=conversation.business_profile,
-        tool="table_aggregate",
-        rate_limit=tool_limits.rate_limit,
-        upload=upload,
-    )
+    try:
+        enforce_tool_rate_limit(
+            business_profile=conversation.business_profile,
+            tool="table_aggregate",
+            rate_limit=tool_limits.rate_limit,
+            upload=upload,
+        )
+    except ToolRateLimitExceeded as exc:
+        return {
+            "tool": "table_aggregate",
+            "document_id": str(upload.id),
+            "status": "throttled",
+            "error": "rate_limited",
+            "error_code": "rate_limited",
+            "rows": [],
+            "match_count": 0,
+            "throttle_notice": {"type": "rate_limited", "message": str(exc)},
+            "hint": str(exc),
+        }
 
     mode_raw = _coerce_str(arguments.get("mode")).strip().lower()
     value_column_input = _coerce_str(arguments.get("value_column")).strip()
@@ -3136,7 +3358,20 @@ def _table_aggregate_handler(
 
     payload["char_count"] = char_count
     payload["token_estimate"] = _estimate_tokens(char_count)
-    context.reserve_characters(char_count)
+    try:
+        context.reserve_characters(char_count)
+    except CharacterBudgetExceeded as exc:
+        return {
+            "tool": "table_aggregate",
+            "document_id": str(upload.id),
+            "status": "throttled",
+            "error": "prompt_budget_exceeded",
+            "error_code": "prompt_budget_exceeded",
+            "rows": [],
+            "match_count": 0,
+            "throttle_notice": {"type": "prompt_budget", "message": str(exc)},
+            "hint": "Prompt budget exceeded. Narrow filters/select_columns and retry.",
+        }
 
     structured_log(
         "mcp",
@@ -3153,8 +3388,8 @@ def _table_aggregate_handler(
             "duration_ms": duration_ms,
             "row_limit": row_limit,
             "match_column": match_column_input or None,
-            "match_value": match_value_input or None,
-            "query": query_input or None,
+            **_log_safe_text_fields("match_value", match_value_input or None),
+            **_log_safe_text_fields("query", query_input or None),
             "sheet_name": sheet_name_input or None,
             "cache_hit": cache_hit,
             "char_count": char_count,
@@ -3349,12 +3584,26 @@ def _dataset_query_handler(
 
     tabular_limits = resolve_tabular_tool_limits(business_profile=conversation.business_profile, upload=upload)
     tool_limits = tabular_limits.dataset_query
-    enforce_tool_rate_limit(
-        business_profile=conversation.business_profile,
-        tool="dataset_query",
-        rate_limit=tool_limits.rate_limit,
-        upload=upload,
-    )
+    try:
+        enforce_tool_rate_limit(
+            business_profile=conversation.business_profile,
+            tool="dataset_query",
+            rate_limit=tool_limits.rate_limit,
+            upload=upload,
+        )
+    except ToolRateLimitExceeded as exc:
+        return {
+            "tool": "dataset_query",
+            "document_id": str(upload.id),
+            "status": "throttled",
+            "error": "rate_limited",
+            "error_code": "rate_limited",
+            "rows": [],
+            "match_count": 0,
+            "total_matches": 0,
+            "throttle_notice": {"type": "rate_limited", "message": str(exc)},
+            "hint": str(exc),
+        }
 
     query_input = _coerce_str(arguments.get("query")).strip()
     query_norm = query_input.lower().strip() if query_input else ""
@@ -4570,7 +4819,21 @@ def _dataset_query_handler(
     char_count = _json_char_len({k: v for k, v in payload.items() if v not in (None, "") and v != []})
     payload["char_count"] = char_count
     payload["token_estimate"] = _estimate_tokens(char_count)
-    context.reserve_characters(char_count)
+    try:
+        context.reserve_characters(char_count)
+    except CharacterBudgetExceeded as exc:
+        return {
+            "tool": "dataset_query",
+            "document_id": str(upload.id),
+            "status": "throttled",
+            "error": "prompt_budget_exceeded",
+            "error_code": "prompt_budget_exceeded",
+            "rows": [],
+            "match_count": 0,
+            "total_matches": matched_total,
+            "throttle_notice": {"type": "prompt_budget", "message": str(exc)},
+            "hint": "Prompt budget exceeded. Narrow filters/select_columns and retry.",
+        }
 
     structured_log(
         "mcp",
@@ -4582,7 +4845,7 @@ def _dataset_query_handler(
             "sheet_index": sheet_index_out,
             "sheet_name": sheet_name_out,
             "filters_count": len(filters_input),
-            "query": query_input or None,
+            **_log_safe_text_fields("query", query_input or None),
             "sort_by": sort_by_input or None,
             "sort_direction": sort_direction,
             "limit": limit,
@@ -4638,6 +4901,37 @@ def _read_knowledge_handler(
         identifier = uuid.UUID(raw_id)
     except (TypeError, ValueError):
         return {"tool": "read_knowledge", "status": "error", "error": "document_id must be a valid UUID"}
+
+    window_seconds = int(getattr(settings, "MCP_TOOL_RATE_LIMIT_WINDOW_SECONDS", 60) or 60)
+    try:
+        calls_per_minute = int(getattr(settings, "MCP_READ_KNOWLEDGE_CALLS_PER_MINUTE", 120) or 0)
+    except (TypeError, ValueError):
+        calls_per_minute = 120
+    calls_per_minute = 0 if calls_per_minute < 0 else calls_per_minute
+    try:
+        enforce_tool_rate_limit(
+            business_profile=conversation.business_profile,
+            tool="read_knowledge",
+            rate_limit=ToolRateLimit(
+                calls_per_minute=None if calls_per_minute <= 0 else calls_per_minute,
+                window_seconds=window_seconds,
+                scope="business",
+            ),
+        )
+    except ToolRateLimitExceeded as exc:
+        return {
+            "tool": "read_knowledge",
+            "status": "throttled",
+            "engine": None,
+            "document_id": raw_id,
+            "evidence": {"snippets": [], "rows": []},
+            "total_matches": 0,
+            "truncated": False,
+            "throttle_notice": {"type": "rate_limited", "message": str(exc)},
+            "error": "rate_limited",
+            "error_code": "rate_limited",
+            "hint": str(exc),
+        }
 
     business = conversation.business_profile
     chunk_record = (
@@ -5432,6 +5726,16 @@ def _read_knowledge_handler(
                 identifier_diagnostics=identifier_diag or None,
             )
             _log_read_knowledge_performance(envelope)
+            if envelope.get("status") == "ok" and _has_prompt_evidence(envelope):
+                _record_knowledge_audit_event_once(
+                    context=context,
+                    conversation=conversation,
+                    upload=upload_record,
+                    action=KnowledgeAuditAction.READ,
+                    engine=_coerce_str(envelope.get("engine")).strip(),
+                    status=_coerce_str(envelope.get("status")).strip(),
+                    metadata={"engine_tool": "dataset_query"},
+                )
             return envelope
 
         # Non-dataset tables fall back to the preview/aggregate engine.
@@ -5561,6 +5865,16 @@ def _read_knowledge_handler(
             identifier_diagnostics=identifier_diag or None,
         )
         _log_read_knowledge_performance(envelope)
+        if envelope.get("status") == "ok" and _has_prompt_evidence(envelope):
+            _record_knowledge_audit_event_once(
+                context=context,
+                conversation=conversation,
+                upload=upload_record,
+                action=KnowledgeAuditAction.READ,
+                engine=_coerce_str(envelope.get("engine")).strip(),
+                status=_coerce_str(envelope.get("status")).strip(),
+                metadata={"engine_tool": "table_aggregate"},
+            )
         return envelope
 
     # Text excerpt path (default).
@@ -5584,6 +5898,16 @@ def _read_knowledge_handler(
         resolved_document_id_used=read_id,
     )
     _log_read_knowledge_performance(envelope)
+    if envelope.get("status") == "ok" and _has_prompt_evidence(envelope):
+        _record_knowledge_audit_event_once(
+            context=context,
+            conversation=conversation,
+            upload=upload_record,
+            action=KnowledgeAuditAction.READ,
+            engine=_coerce_str(envelope.get("engine")).strip(),
+            status=_coerce_str(envelope.get("status")).strip(),
+            metadata={"engine_tool": "read_document"},
+        )
     return envelope
 
 

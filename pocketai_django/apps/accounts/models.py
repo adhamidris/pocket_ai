@@ -522,6 +522,8 @@ class KnowledgeAuditAction(models.TextChoices):
     CREATED = "created", "Created"
     UPDATED = "updated", "Updated"
     INGESTED = "ingested", "Ingested"
+    READ = "read", "Read"
+    EXPORTED = "exported", "Exported"
     PERMISSION_GRANTED = "permission_granted", "Permission Granted"
     PERMISSION_REVOKED = "permission_revoked", "Permission Revoked"
     ARCHIVED = "archived", "Archived"

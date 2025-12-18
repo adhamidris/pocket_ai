@@ -23,6 +23,8 @@ from apps.accounts.models import (
     BusinessProfile,
     IntegrationSyncFrequency,
     IntegrationCredentialEventType,
+    KnowledgeAuditAction,
+    KnowledgeAuditEvent,
     KnowledgeIntegration,
     KnowledgeIntegrationStatus,
     KnowledgeIntegrationType,
@@ -1797,6 +1799,25 @@ def knowledge_document_download(request: HttpRequest, document_id: uuid.UUID):
         document_id,
         download,
     )
+    try:
+        KnowledgeAuditEvent.objects.create(
+            business_profile=business,
+            upload=upload,
+            actor_user=request.user,
+            action=KnowledgeAuditAction.EXPORTED,
+            description="Knowledge document downloaded.",
+            metadata={
+                "endpoint": "knowledge_document_download",
+                "as_attachment": bool(download),
+            },
+        )
+    except Exception:
+        logger.exception(
+            "knowledge.audit_export_failed user=%s business=%s document=%s",
+            getattr(request.user, "id", None),
+            business.id,
+            document_id,
+        )
     return response
 
 

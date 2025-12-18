@@ -147,6 +147,9 @@ MCP_PROMPT_TABLE_MAX_ROWS = int(os.getenv("MCP_PROMPT_TABLE_MAX_ROWS", "12"))
 MCP_PROMPT_TABLE_MAX_CONTRIBUTIONS = int(os.getenv("MCP_PROMPT_TABLE_MAX_CONTRIBUTIONS", "25"))
 MCP_PROMPT_TABLE_MAX_CELLS = int(os.getenv("MCP_PROMPT_TABLE_MAX_CELLS", "12"))
 MCP_PROMPT_TABLE_MAX_CELLS_EXACT = int(os.getenv("MCP_PROMPT_TABLE_MAX_CELLS_EXACT", "60"))
+# Logging privacy toggles (default: safe/no PII in logs).
+MCP_LOG_PII = os.getenv("MCP_LOG_PII", "false").lower() in {"1", "true", "yes"}
+MCP_LOG_SNIPPET_PREVIEWS = os.getenv("MCP_LOG_SNIPPET_PREVIEWS", "false").lower() in {"1", "true", "yes"}
 # MCP prompt/context governor. Defaults are conservative to avoid provider context overflows.
 MCP_CONTEXT_GOVERNOR_ENABLED = os.getenv("MCP_CONTEXT_GOVERNOR_ENABLED", "true").lower() in {"1", "true", "yes"}
 MCP_MAX_CONTEXT_TOKENS = int(os.getenv("MCP_MAX_CONTEXT_TOKENS", "8192"))
@@ -346,6 +349,56 @@ except (TypeError, ValueError):
     MCP_TABLE_AGGREGATE_CALLS_PER_MINUTE = 60
 if MCP_TABLE_AGGREGATE_CALLS_PER_MINUTE < 0:
     MCP_TABLE_AGGREGATE_CALLS_PER_MINUTE = 0
+try:
+    MCP_SEARCH_KNOWLEDGE_CALLS_PER_MINUTE = int(os.getenv("MCP_SEARCH_KNOWLEDGE_CALLS_PER_MINUTE", "120"))
+except (TypeError, ValueError):
+    MCP_SEARCH_KNOWLEDGE_CALLS_PER_MINUTE = 120
+if MCP_SEARCH_KNOWLEDGE_CALLS_PER_MINUTE < 0:
+    MCP_SEARCH_KNOWLEDGE_CALLS_PER_MINUTE = 0
+try:
+    MCP_READ_KNOWLEDGE_CALLS_PER_MINUTE = int(os.getenv("MCP_READ_KNOWLEDGE_CALLS_PER_MINUTE", "120"))
+except (TypeError, ValueError):
+    MCP_READ_KNOWLEDGE_CALLS_PER_MINUTE = 120
+if MCP_READ_KNOWLEDGE_CALLS_PER_MINUTE < 0:
+    MCP_READ_KNOWLEDGE_CALLS_PER_MINUTE = 0
+try:
+    MCP_LIST_TABLES_CALLS_PER_MINUTE = int(os.getenv("MCP_LIST_TABLES_CALLS_PER_MINUTE", "120"))
+except (TypeError, ValueError):
+    MCP_LIST_TABLES_CALLS_PER_MINUTE = 120
+if MCP_LIST_TABLES_CALLS_PER_MINUTE < 0:
+    MCP_LIST_TABLES_CALLS_PER_MINUTE = 0
+
+# MCP/orchestrator hard caps (cost controls).
+try:
+    MCP_MAX_TOOL_ITERATIONS = int(os.getenv("MCP_MAX_TOOL_ITERATIONS", "10"))
+except (TypeError, ValueError):
+    MCP_MAX_TOOL_ITERATIONS = 10
+MCP_MAX_TOOL_ITERATIONS = max(1, min(50, MCP_MAX_TOOL_ITERATIONS))
+try:
+    RAG_MAX_CHUNK_READS_PER_TURN = int(os.getenv("RAG_MAX_CHUNK_READS_PER_TURN", "3"))
+except (TypeError, ValueError):
+    RAG_MAX_CHUNK_READS_PER_TURN = 3
+RAG_MAX_CHUNK_READS_PER_TURN = max(1, min(20, RAG_MAX_CHUNK_READS_PER_TURN))
+try:
+    RAG_MAX_CHUNK_PAGES_PER_TURN = int(os.getenv("RAG_MAX_CHUNK_PAGES_PER_TURN", "3"))
+except (TypeError, ValueError):
+    RAG_MAX_CHUNK_PAGES_PER_TURN = 3
+RAG_MAX_CHUNK_PAGES_PER_TURN = max(1, min(20, RAG_MAX_CHUNK_PAGES_PER_TURN))
+try:
+    RAG_MAX_CHAR_BUDGET_PER_TURN = int(os.getenv("RAG_MAX_CHAR_BUDGET_PER_TURN", "48000"))
+except (TypeError, ValueError):
+    RAG_MAX_CHAR_BUDGET_PER_TURN = 48000
+RAG_MAX_CHAR_BUDGET_PER_TURN = max(4000, min(200000, RAG_MAX_CHAR_BUDGET_PER_TURN))
+try:
+    RAG_MAX_CHAR_BUDGET_PER_MINUTE = int(os.getenv("RAG_MAX_CHAR_BUDGET_PER_MINUTE", "64000"))
+except (TypeError, ValueError):
+    RAG_MAX_CHAR_BUDGET_PER_MINUTE = 64000
+RAG_MAX_CHAR_BUDGET_PER_MINUTE = max(4000, min(500000, RAG_MAX_CHAR_BUDGET_PER_MINUTE))
+try:
+    RAG_CHAR_BUDGET_WINDOW_SECONDS = int(os.getenv("RAG_CHAR_BUDGET_WINDOW_SECONDS", "60"))
+except (TypeError, ValueError):
+    RAG_CHAR_BUDGET_WINDOW_SECONDS = 60
+RAG_CHAR_BUDGET_WINDOW_SECONDS = max(30, min(600, RAG_CHAR_BUDGET_WINDOW_SECONDS))
 
 # Observability / SLO thresholds (used for warning-level structured logs).
 try:
