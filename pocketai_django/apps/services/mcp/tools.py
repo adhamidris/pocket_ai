@@ -4493,10 +4493,10 @@ def _dataset_query_handler(
                             + ", '[^0-9\\-,\\.]', '', 'g'), ',', '') as double)"
                         )
 
-                    path_sql = str(abs_path).replace("'", "''")
+                    path_sql = abs_path.as_posix().replace("'", "''")
                     base_from = (
                         "(select row_number() over () as __row_index, * "
-                        f"from read_csv_auto('{path_sql}', header=true, all_varchar=true)) as base"
+                        f"from read_csv('{path_sql}', header=true, all_varchar=true, delim=',', encoding='utf-8', ignore_errors=true)) as base"
                     )
                     row_index_ref = f"base.{_sql_ident('__row_index')}"
 
@@ -4509,7 +4509,7 @@ def _dataset_query_handler(
                         or_parts: list[str] = []
                         for col in search_columns:
                             col_ref = f"lower(base.{_sql_ident(col)})"
-                            or_parts.append(f"{col_ref} like ? escape '\\'")
+                            or_parts.append(f"{col_ref} like ? escape '\\\\'")
                             params.append(query_pattern)
                         if or_parts:
                             where_parts.append("(" + " or ".join(or_parts) + ")")
@@ -4556,7 +4556,7 @@ def _dataset_query_handler(
                                 pattern = f"{escaped}%"
                             else:
                                 pattern = f"%{escaped}"
-                            where_parts.append(f"{col_cmp} like ? escape '\\'")
+                            where_parts.append(f"{col_cmp} like ? escape '\\\\'")
                             params.append(pattern)
                             continue
 
