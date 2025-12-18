@@ -5730,6 +5730,7 @@ class AiOrchestratorService:
             "alias_fts": 2,
             "vector_ann": 3,
             "content_fts": 4,
+            "content_trigram": 4,
             "fallback": 5,
         }
         ranked = sorted(
