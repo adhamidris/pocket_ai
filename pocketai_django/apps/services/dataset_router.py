@@ -7,7 +7,8 @@ from typing import Any, Mapping, Sequence
 
 from django.conf import settings
 
-from apps.accounts.models import KnowledgeStatus, KnowledgeUpload
+from apps.accounts.models import KnowledgeStatus, KnowledgeUpload, KnowledgeVisibility
+from apps.services.knowledge_access import apply_customer_visible_uploads
 from apps.services.dataset_key_index import BloomFilter, normalize_identifier_value
 
 logger = logging.getLogger(__name__)
@@ -124,10 +125,12 @@ def find_datasets_for_identifier(
             max_hits = 8
     max_hits = max(1, min(50, int(max_hits)))
 
-    uploads = KnowledgeUpload.objects.filter(
-        business_profile=business_profile,
-        status=KnowledgeStatus.ACTIVE,
-        ingestion_metadata__dataset__enabled=True,
+    uploads = apply_customer_visible_uploads(
+        KnowledgeUpload.objects.filter(
+            business_profile=business_profile,
+            status=KnowledgeStatus.ACTIVE,
+            ingestion_metadata__dataset__enabled=True,
+        )
     ).only("id", "display_name", "filename", "ingestion_metadata")
 
     hits: list[DatasetKeyIndexHit] = []
@@ -178,6 +181,8 @@ def match_upload_for_identifier(
     identifier_value: str,
     max_hits: int | None = None,
 ) -> list[DatasetKeyIndexHit]:
+    if getattr(upload, "visibility", None) == KnowledgeVisibility.INTERNAL:
+        return []
     normalized = normalize_identifier_value(identifier_value)
     if not normalized:
         return []

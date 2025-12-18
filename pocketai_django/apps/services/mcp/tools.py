@@ -48,6 +48,7 @@ from apps.accounts.models import (
 from apps.conversations.models import Conversation
 from apps.services.ai_orchestrator import ActionType, AiOrchestratorService, KnowledgeSearchService, KnowledgeSnippet
 from apps.services.dataset_router import find_datasets_for_identifier, match_upload_for_identifier
+from apps.services.knowledge_access import apply_customer_visible_chunks, apply_customer_visible_uploads
 from apps.services.privacy import redact_free_text, sha256_hex
 from apps.services.rag_logging import structured_log
 from apps.services.tabular_limits import ToolRateLimit, enforce_tool_rate_limit, resolve_tabular_tool_limits
@@ -1753,11 +1754,13 @@ def _search_knowledge_handler(
                     ]
                     upload_ids = {hit.upload_id for hit in hits}
                     card_chunks = list(
-                        KnowledgeUploadChunk.objects.filter(
-                            business_profile=conversation.business_profile,
-                            upload_id__in=upload_ids,
-                            metadata__strategy="dataset_card",
-                            upload__status=KnowledgeStatus.ACTIVE,
+                        apply_customer_visible_chunks(
+                            KnowledgeUploadChunk.objects.filter(
+                                business_profile=conversation.business_profile,
+                                upload_id__in=upload_ids,
+                                metadata__strategy="dataset_card",
+                                upload__status=KnowledgeStatus.ACTIVE,
+                            )
                         )
                         .select_related("upload")
                         .order_by("-updated_at")[:8]
@@ -2174,20 +2177,28 @@ def _read_document_handler(
         }
     business = conversation.business_profile
 
-    chunk_record = KnowledgeUploadChunk.objects.filter(
-        id=identifier,
-        business_profile=business,
-        upload__status=KnowledgeStatus.ACTIVE,
-    ).select_related("upload").first()
+    chunk_record = (
+        apply_customer_visible_chunks(
+            KnowledgeUploadChunk.objects.filter(
+                id=identifier,
+                business_profile=business,
+                upload__status=KnowledgeStatus.ACTIVE,
+            )
+        )
+        .select_related("upload")
+        .first()
+    )
     upload_record = None
     gating_upload_id = None
     if chunk_record:
         gating_upload_id = chunk_record.upload_id
     else:
-        upload_record = KnowledgeUpload.objects.filter(
-            id=identifier,
-            business_profile=business,
-            status=KnowledgeStatus.ACTIVE,
+        upload_record = apply_customer_visible_uploads(
+            KnowledgeUpload.objects.filter(
+                id=identifier,
+                business_profile=business,
+                status=KnowledgeStatus.ACTIVE,
+            )
         ).first()
         if not upload_record:
             return {
@@ -2551,10 +2562,12 @@ def _list_tables_handler(
         }
 
     uploads_qs = (
-        KnowledgeUpload.objects.filter(
-            business_profile=conversation.business_profile,
-            status=KnowledgeStatus.ACTIVE,
-            tables__isnull=False,
+        apply_customer_visible_uploads(
+            KnowledgeUpload.objects.filter(
+                business_profile=conversation.business_profile,
+                status=KnowledgeStatus.ACTIVE,
+                tables__isnull=False,
+            )
         )
         .only(
             "id",
@@ -2857,17 +2870,25 @@ def _table_aggregate_handler(
             "status": "error",
             "error": "document_id must be a valid UUID",
         }
-    upload = KnowledgeUpload.objects.filter(
-        id=identifier,
-        business_profile=conversation.business_profile,
-        status=KnowledgeStatus.ACTIVE,
-    ).first()
-    if not upload:
-        chunk = KnowledgeUploadChunk.objects.filter(
+    upload = apply_customer_visible_uploads(
+        KnowledgeUpload.objects.filter(
             id=identifier,
             business_profile=conversation.business_profile,
-            upload__status=KnowledgeStatus.ACTIVE,
-        ).select_related("upload").first()
+            status=KnowledgeStatus.ACTIVE,
+        )
+    ).first()
+    if not upload:
+        chunk = (
+            apply_customer_visible_chunks(
+                KnowledgeUploadChunk.objects.filter(
+                    id=identifier,
+                    business_profile=conversation.business_profile,
+                    upload__status=KnowledgeStatus.ACTIVE,
+                )
+            )
+            .select_related("upload")
+            .first()
+        )
         upload = chunk.upload if chunk else None
     if not upload:
         return {
@@ -3429,17 +3450,21 @@ def _dataset_query_handler(
     except (TypeError, ValueError):
         return {"tool": "dataset_query", "status": "error", "error": "document_id must be a valid UUID"}
 
-    upload = KnowledgeUpload.objects.filter(
-        id=identifier,
-        business_profile=conversation.business_profile,
-        status=KnowledgeStatus.ACTIVE,
+    upload = apply_customer_visible_uploads(
+        KnowledgeUpload.objects.filter(
+            id=identifier,
+            business_profile=conversation.business_profile,
+            status=KnowledgeStatus.ACTIVE,
+        )
     ).first()
     if not upload:
         chunk = (
-            KnowledgeUploadChunk.objects.filter(
-                id=identifier,
-                business_profile=conversation.business_profile,
-                upload__status=KnowledgeStatus.ACTIVE,
+            apply_customer_visible_chunks(
+                KnowledgeUploadChunk.objects.filter(
+                    id=identifier,
+                    business_profile=conversation.business_profile,
+                    upload__status=KnowledgeStatus.ACTIVE,
+                )
             )
             .select_related("upload")
             .first()
@@ -4935,20 +4960,24 @@ def _read_knowledge_handler(
 
     business = conversation.business_profile
     chunk_record = (
-        KnowledgeUploadChunk.objects.filter(
-            id=identifier,
-            business_profile=business,
-            upload__status=KnowledgeStatus.ACTIVE,
+        apply_customer_visible_chunks(
+            KnowledgeUploadChunk.objects.filter(
+                id=identifier,
+                business_profile=business,
+                upload__status=KnowledgeStatus.ACTIVE,
+            )
         )
         .select_related("upload")
         .first()
     )
     upload_record: KnowledgeUpload | None = chunk_record.upload if chunk_record else None
     if upload_record is None:
-        upload_record = KnowledgeUpload.objects.filter(
-            id=identifier,
-            business_profile=business,
-            status=KnowledgeStatus.ACTIVE,
+        upload_record = apply_customer_visible_uploads(
+            KnowledgeUpload.objects.filter(
+                id=identifier,
+                business_profile=business,
+                status=KnowledgeStatus.ACTIVE,
+            )
         ).first()
 
     if upload_record is None:

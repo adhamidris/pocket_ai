@@ -51,6 +51,11 @@ from apps.customers.models import Customer, CustomerRecordOrigin
 from apps.services.ai_prompt_builder import PromptBuilder, PromptBundle
 from apps.services.embeddings import build_embedding_service, EmbeddingProviderError
 from apps.services.feature_flags import FeatureFlagService, FeatureState
+from apps.services.knowledge_access import (
+    CUSTOMER_VISIBILITY_POLICY_KEY,
+    apply_customer_visible_chunks,
+    apply_customer_visible_uploads,
+)
 from apps.services.llm_provider import BaseLLMProvider, PromptGenerationError
 from apps.services.quality_monitor import QualityMonitor
 from apps.services.rag_logging import rag_log
@@ -1611,6 +1616,8 @@ class KnowledgeSearchService:
                 chunk = entity.chunk if entity else None
                 if not chunk or not chunk.upload or chunk.upload.business_profile_id != business_profile.id:
                     continue
+                if chunk.upload.visibility == KnowledgeVisibility.INTERNAL:
+                    continue
                 entry = {
                     "chunk_id": str(chunk.id),
                     "entity_name": entity.entity_name,
@@ -1673,6 +1680,8 @@ class KnowledgeSearchService:
             entity = record.entity
             chunk = entity.chunk if entity else None
             if not chunk or not chunk.upload or chunk.upload.business_profile_id != business_profile.id:
+                continue
+            if chunk.upload.visibility == KnowledgeVisibility.INTERNAL:
                 continue
             if chunk.id in seen:
                 continue
@@ -1829,6 +1838,7 @@ class KnowledgeSearchService:
                 str(business_profile.id),
                 str(version),
                 str(qvec_version),
+                CUSTOMER_VISIBILITY_POLICY_KEY,
                 model_name,
                 normalized_query,
                 str(limit),
@@ -1941,7 +1951,7 @@ class KnowledgeSearchService:
     ) -> dict[uuid.UUID, KnowledgeUploadChunk]:
         if not chunk_ids:
             return {}
-        qs = (
+        qs = apply_customer_visible_chunks(
             KnowledgeUploadChunk.objects.filter(
                 business_profile=business_profile,
                 upload__status=KnowledgeStatus.ACTIVE,
@@ -1952,7 +1962,7 @@ class KnowledgeSearchService:
         return {chunk.id: chunk for chunk in qs}
 
     def _base_chunk_queryset(self, business_profile):
-        return (
+        return apply_customer_visible_chunks(
             KnowledgeUploadChunk.objects.filter(
                 business_profile=business_profile,
                 upload__status=KnowledgeStatus.ACTIVE,
@@ -3109,13 +3119,12 @@ class KnowledgeSearchService:
                 break
         if len(snippets) < limit:
             remaining = limit - len(snippets)
-            uploads = (
+            uploads = apply_customer_visible_uploads(
                 KnowledgeUpload.objects.filter(
                     business_profile=business_profile,
                     status=KnowledgeStatus.ACTIVE,
                 )
-                .order_by("-updated_at")[:remaining]
-            )
+            ).order_by("-updated_at")[:remaining]
             for upload in uploads:
                 trunc_metrics = self._truncation_metrics(upload)
                 label = self._public_label(upload)
@@ -3384,10 +3393,12 @@ class KnowledgeSearchService:
             queryset=KnowledgeUploadIssue.objects.order_by("-created_at").select_related("page", "table", "table_row", "table_cell"),
         )
         qs = (
-            KnowledgeUpload.objects.filter(
-                business_profile=business_profile,
-                status=KnowledgeStatus.ACTIVE,
-                id__in=normalized,
+            apply_customer_visible_uploads(
+                KnowledgeUpload.objects.filter(
+                    business_profile=business_profile,
+                    status=KnowledgeStatus.ACTIVE,
+                    id__in=normalized,
+                )
             )
             .select_related("text_detail")
             .prefetch_related(table_prefetch, issue_prefetch)
@@ -3482,11 +3493,13 @@ class KnowledgeSearchService:
         """
 
         target_index = max(0, page_index - 1)
-        base_qs = KnowledgeUploadChunk.objects.filter(
-            upload__business_profile=business_profile,
-            upload__status=KnowledgeStatus.ACTIVE,
-            upload_id=upload_id,
-        ).select_related("upload")
+        base_qs = apply_customer_visible_chunks(
+            KnowledgeUploadChunk.objects.filter(
+                upload__business_profile=business_profile,
+                upload__status=KnowledgeStatus.ACTIVE,
+                upload_id=upload_id,
+            ).select_related("upload")
+        )
 
         try:
             chunk = base_qs.get(chunk_index=target_index)
@@ -3563,7 +3576,9 @@ class KnowledgeSearchService:
             if upload_ids:
                 upload_lookup = {
                     obj.id: obj
-                    for obj in KnowledgeUpload.objects.filter(id__in=upload_ids).only("id", "ingestion_metadata")
+                    for obj in apply_customer_visible_uploads(
+                        KnowledgeUpload.objects.filter(id__in=upload_ids)
+                    ).only("id", "ingestion_metadata")
                 }
         for snippet in snippets:
             actual_page = page_index
@@ -3628,10 +3643,12 @@ class KnowledgeSearchService:
 
         # Pull requested chunks with their uploads
         chunks: list[KnowledgeUploadChunk] = list(
-            KnowledgeUploadChunk.objects.filter(
-                id__in=normalized,
-                business_profile=business_profile,
-                upload__status=KnowledgeStatus.ACTIVE,
+            apply_customer_visible_chunks(
+                KnowledgeUploadChunk.objects.filter(
+                    id__in=normalized,
+                    business_profile=business_profile,
+                    upload__status=KnowledgeStatus.ACTIVE,
+                )
             )
             .select_related("upload")
             .order_by("upload_id", "chunk_index")
@@ -4501,10 +4518,14 @@ class AiOrchestratorService:
 
             try:
                 chunk_uuid_list = list(
-                    KnowledgeUploadChunk.objects.filter(id__in=pending_requests).values_list("id", flat=True)
+                    apply_customer_visible_chunks(
+                        KnowledgeUploadChunk.objects.filter(id__in=pending_requests)
+                    ).values_list("id", flat=True)
                 )
                 upload_uuid_list = list(
-                    KnowledgeUpload.objects.filter(id__in=pending_requests).values_list("id", flat=True)
+                    apply_customer_visible_uploads(
+                        KnowledgeUpload.objects.filter(id__in=pending_requests)
+                    ).values_list("id", flat=True)
                 )
                 if self.max_chunk_reads_per_turn and len(chunk_uuid_list) > self.max_chunk_reads_per_turn:
                     exceeded = len(chunk_uuid_list) - self.max_chunk_reads_per_turn
