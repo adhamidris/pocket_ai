@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import logging
 import time
 
+from django.conf import settings
 from django.core.management.base import BaseCommand
 
 from apps.accounts.models import (
@@ -11,7 +13,8 @@ from apps.accounts.models import (
     KnowledgeStatus,
     KnowledgeUpload,
 )
-from apps.services.knowledge_ingestion import KnowledgeIngestionService, queue_ingestion_job
+from apps.services.knowledge_ingestion import KnowledgeIngestionService, get_ingestion_queue_health, queue_ingestion_job
+from apps.services.rag_logging import structured_log
 
 
 class Command(BaseCommand):
@@ -40,6 +43,12 @@ class Command(BaseCommand):
             action="store_true",
             help="Queue ingestion jobs for uploads missing extracted text.",
         )
+        parser.add_argument(
+            "--health-interval",
+            type=float,
+            default=None,
+            help="Seconds between queue health logs when --watch is set (defaults to INGEST_WORKER_HEALTH_INTERVAL_SECONDS).",
+        )
 
     def handle(self, *args, **options):
         if options.get("requeue_missing"):
@@ -50,13 +59,22 @@ class Command(BaseCommand):
         max_jobs = options.get("max_jobs")
         watch = bool(options.get("watch"))
         sleep_seconds = options.get("sleep") or 0.0
+        health_interval = options.get("health_interval")
         if watch and sleep_seconds <= 0:
             sleep_seconds = 2.0
+        if watch and health_interval is None:
+            health_interval = float(getattr(settings, "INGEST_WORKER_HEALTH_INTERVAL_SECONDS", 60.0) or 60.0)
+        if not watch:
+            health_interval = 0.0
         processed = 0
+        last_health_logged = 0.0
 
         while True:
             if max_jobs is not None and processed >= max_jobs:
                 break
+            if health_interval and (time.time() - last_health_logged) >= float(health_interval):
+                self._log_queue_health()
+                last_health_logged = time.time()
 
             result = service.process_next_job()
             if result is None:
@@ -92,6 +110,50 @@ class Command(BaseCommand):
                 )
             if sleep_seconds and watch:
                 time.sleep(sleep_seconds)
+
+    def _log_queue_health(self) -> None:
+        health = get_ingestion_queue_health()
+        warn_backlog = int(getattr(settings, "INGEST_QUEUE_WARN_BACKLOG", 0) or 0)
+        warn_oldest = int(getattr(settings, "INGEST_QUEUE_WARN_OLDEST_SECONDS", 0) or 0)
+        warn_failed = int(getattr(settings, "INGEST_QUEUE_WARN_FAILED_LAST_HOUR", 0) or 0)
+
+        pending = int(health.get("pending") or 0)
+        oldest_s = health.get("oldest_pending_age_s")
+        failed_hour = int(health.get("failed_last_hour") or 0)
+
+        should_warn = False
+        if warn_backlog and pending >= warn_backlog:
+            should_warn = True
+        if warn_oldest and isinstance(oldest_s, int) and oldest_s >= warn_oldest:
+            should_warn = True
+        if warn_failed and failed_hour >= warn_failed:
+            should_warn = True
+
+        structured_log(
+            "rag",
+            "ingest.queue_health",
+            {
+                "pending": pending,
+                "queued": health.get("queued"),
+                "deferred": health.get("deferred"),
+                "running": health.get("running"),
+                "failed_last_hour": failed_hour,
+                "oldest_pending_age_s": oldest_s,
+                "warn_backlog": warn_backlog or None,
+                "warn_oldest_age_s": warn_oldest or None,
+                "warn_failed_last_hour": warn_failed or None,
+            },
+            context={"worker": "process_knowledge_ingestion"},
+            level=(logging.WARNING if should_warn else logging.INFO),
+        )
+        line = (
+            f"Queue health: pending={pending} queued={health.get('queued')} deferred={health.get('deferred')} "
+            f"running={health.get('running')} failed_last_hour={failed_hour} oldest_pending_age_s={oldest_s}"
+        )
+        if should_warn:
+            self.stdout.write(self.style.WARNING(line))
+        else:
+            self.stdout.write(line)
 
     def _requeue_missing(self) -> int:
         uploads = (

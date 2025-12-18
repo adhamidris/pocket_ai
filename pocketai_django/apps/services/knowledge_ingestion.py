@@ -22,7 +22,7 @@ from typing import Any, Callable, Iterable, Mapping, Optional, Sequence
 from django.conf import settings
 from django.db import connection
 from django.db import transaction
-from django.db.models import Case, IntegerField, Q, Value, When
+from django.db.models import Case, Count, IntegerField, Min, Q, Value, When
 from django.utils import timezone
 from django.utils.text import slugify
 from opentelemetry import trace as otel_trace
@@ -1640,6 +1640,73 @@ def queue_ingestion_job(upload: KnowledgeUpload, *, trigger: str = "upload", for
         job_status,
     )
     return job
+
+
+def get_ingestion_queue_health(
+    *,
+    business_profile_id: uuid.UUID | None = None,
+) -> dict[str, object]:
+    """
+    Lightweight queue health snapshot for ops dashboards/alerts.
+
+    Intended to be called from long-running workers (e.g., process_knowledge_ingestion --watch).
+    """
+
+    qs = KnowledgeIngestionJob.objects.all()
+    if business_profile_id:
+        qs = qs.filter(business_profile_id=business_profile_id)
+
+    status_counts: dict[str, int] = {}
+    for row in qs.values("status").annotate(count=Count("id")):
+        status = str(row.get("status") or "")
+        if not status:
+            continue
+        status_counts[status] = int(row.get("count") or 0)
+
+    by_type: dict[str, dict[str, int]] = {}
+    for row in qs.values("job_type", "status").annotate(count=Count("id")):
+        job_type = str(row.get("job_type") or "")
+        status = str(row.get("status") or "")
+        if not job_type or not status:
+            continue
+        by_type.setdefault(job_type, {})[status] = int(row.get("count") or 0)
+
+    now = timezone.now()
+    pending_qs = qs.filter(status__in=(KnowledgeIngestionJobStatus.QUEUED, KnowledgeIngestionJobStatus.DEFERRED))
+    oldest_pending = pending_qs.aggregate(oldest=Min("created_at")).get("oldest")
+    oldest_pending_age_s: int | None = None
+    if oldest_pending:
+        try:
+            oldest_pending_age_s = max(0, int((now - oldest_pending).total_seconds()))
+        except Exception:
+            oldest_pending_age_s = None
+
+    failed_last_hour = qs.filter(
+        status=KnowledgeIngestionJobStatus.FAILED,
+        finished_at__gte=(now - timedelta(hours=1)),
+    ).count()
+    running_lease_expired = qs.filter(
+        status=KnowledgeIngestionJobStatus.RUNNING,
+        lease_expires_at__isnull=False,
+        lease_expires_at__lt=now,
+    ).count()
+
+    pending_count = int(status_counts.get(KnowledgeIngestionJobStatus.QUEUED, 0)) + int(
+        status_counts.get(KnowledgeIngestionJobStatus.DEFERRED, 0)
+    )
+    return {
+        "pending": pending_count,
+        "queued": int(status_counts.get(KnowledgeIngestionJobStatus.QUEUED, 0)),
+        "deferred": int(status_counts.get(KnowledgeIngestionJobStatus.DEFERRED, 0)),
+        "running": int(status_counts.get(KnowledgeIngestionJobStatus.RUNNING, 0)),
+        "failed": int(status_counts.get(KnowledgeIngestionJobStatus.FAILED, 0)),
+        "failed_last_hour": int(failed_last_hour),
+        "running_lease_expired": int(running_lease_expired),
+        "oldest_pending_age_s": oldest_pending_age_s,
+        "status_counts": status_counts,
+        "by_type": by_type,
+        "observed_at": now.isoformat(),
+    }
 
 
 class KnowledgeIngestionService:
@@ -3640,6 +3707,30 @@ class KnowledgeIngestionService:
                 return None
             lease = now + timedelta(seconds=self.job_lease_seconds)
             defaults = self._job_max_attempts(job)
+            if job.job_type == KnowledgeIngestionJobType.INGEST:
+                cancelled = (
+                    KnowledgeIngestionJob.objects.filter(
+                        upload_id=job.upload_id,
+                        job_type=KnowledgeIngestionJobType.INGEST,
+                        status__in=(
+                            KnowledgeIngestionJobStatus.QUEUED,
+                            KnowledgeIngestionJobStatus.DEFERRED,
+                        ),
+                    )
+                    .exclude(id=job.id)
+                    .update(
+                        status=KnowledgeIngestionJobStatus.CANCELLED,
+                        finished_at=now,
+                        error_detail="auto-cancel: duplicate ingestion job",
+                    )
+                )
+                if cancelled:
+                    logger.warning(
+                        "ingest.job_dedupe_cancelled upload=%s kept_job=%s cancelled=%s",
+                        job.upload_id,
+                        job.id,
+                        cancelled,
+                    )
             job.status = KnowledgeIngestionJobStatus.RUNNING
             job.started_at = now
             job.run_after = None

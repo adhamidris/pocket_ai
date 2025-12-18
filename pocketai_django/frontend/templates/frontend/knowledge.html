@@ -471,11 +471,11 @@
                         Manage sheets
                       </button>
                     </div>
-                    <div class="rounded-md border border-border/50 bg-muted/40 px-3 py-2 text-xs text-muted-foreground">
+                      <div class="rounded-md border border-border/50 bg-muted/40 px-3 py-2 text-xs text-muted-foreground">
                       After saving your sheet selections, run the sync worker or launch it from the modal:
                       <pre class="mt-1 overflow-x-auto rounded bg-background px-2 py-1 text-[11px] font-mono text-foreground">python manage.py sync_knowledge_integrations --integration-id {{ integration.id }} --ignore-schedule
 python manage.py reset_stalled_ingestion_jobs --older-than 15 --requeue --requeue-missing
-python manage.py process_knowledge_ingestion --watch</pre>
+python manage.py knowledge_ingestion_worker</pre>
                     </div>
                   {% endif %}
                 </div>
