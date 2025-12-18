@@ -1568,14 +1568,36 @@ def queue_ingestion_job(upload: KnowledgeUpload, *, trigger: str = "upload", for
     except Exception:  # pragma: no cover - preflight must never block ingestion
         logger.exception("knowledge.preflight.enqueue_failed upload=%s", getattr(upload, "id", None))
 
-    existing = KnowledgeIngestionJob.objects.filter(
+    pending_jobs = KnowledgeIngestionJob.objects.filter(
         upload=upload,
-        status__in=(KnowledgeIngestionJobStatus.QUEUED, KnowledgeIngestionJobStatus.RUNNING),
+        status__in=(
+            KnowledgeIngestionJobStatus.QUEUED,
+            KnowledgeIngestionJobStatus.RUNNING,
+            KnowledgeIngestionJobStatus.DEFERRED,
+        ),
         job_type=KnowledgeIngestionJobType.INGEST,
-    ).first()
+    )
+    existing = (
+        pending_jobs.filter(status=KnowledgeIngestionJobStatus.RUNNING).order_by("created_at").first()
+        or pending_jobs.filter(status=KnowledgeIngestionJobStatus.QUEUED).order_by("created_at").first()
+        or pending_jobs.filter(status=KnowledgeIngestionJobStatus.DEFERRED).order_by("created_at").first()
+    )
     if existing:
+        duplicate_count = pending_jobs.exclude(id=existing.id).exclude(status=KnowledgeIngestionJobStatus.RUNNING).update(
+            status=KnowledgeIngestionJobStatus.CANCELLED,
+        )
+        if duplicate_count:
+            logger.warning(
+                "Cancelled duplicate ingestion jobs upload=%s kept_job=%s cancelled=%s",
+                upload.id,
+                existing.id,
+                duplicate_count,
+            )
+        if existing.status == KnowledgeIngestionJobStatus.RUNNING:
+            logger.info("Ingestion job already running upload=%s job=%s", upload.id, existing.id)
+            return existing
         if not force:
-            logger.info("Ingestion job already queued upload=%s job=%s", upload.id, existing.id)
+            logger.info("Ingestion job already scheduled upload=%s job=%s status=%s", upload.id, existing.id, existing.status)
             return existing
         KnowledgeIngestionJob.objects.filter(id=existing.id).update(status=KnowledgeIngestionJobStatus.CANCELLED)
         logger.info("Cancelled stale ingestion job upload=%s job=%s", upload.id, existing.id)
