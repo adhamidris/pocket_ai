@@ -1834,6 +1834,10 @@ class KnowledgeIngestionJob(models.Model):
     )
     job_type = models.CharField(max_length=24, choices=KnowledgeIngestionJobType.choices)
     status = models.CharField(max_length=24, choices=KnowledgeIngestionJobStatus.choices, default=KnowledgeIngestionJobStatus.QUEUED)
+    attempt_count = models.PositiveIntegerField(default=0)
+    max_attempts = models.PositiveIntegerField(default=3)
+    run_after = models.DateTimeField(null=True, blank=True)
+    lease_expires_at = models.DateTimeField(null=True, blank=True)
     payload = models.JSONField(default=dict, blank=True)
     started_at = models.DateTimeField(null=True, blank=True)
     finished_at = models.DateTimeField(null=True, blank=True)
@@ -1847,6 +1851,8 @@ class KnowledgeIngestionJob(models.Model):
         indexes = [
             models.Index(fields=["business_profile", "status"], name="knowledge_job_status_idx"),
             models.Index(fields=["upload", "job_type"], name="knowledge_job_type_idx"),
+            models.Index(fields=["status", "run_after"], name="knowledge_job_run_after_idx"),
+            models.Index(fields=["status", "lease_expires_at"], name="knowledge_job_lease_idx"),
         ]
 
     def __str__(self) -> str:

@@ -78,6 +78,12 @@ class Command(BaseCommand):
                         f"Processed {result.job_type} job {result.job_id} for upload {result.upload_id} ({result.characters} {units})."
                     )
                 )
+            elif result.status == KnowledgeIngestionJobStatus.QUEUED:
+                self.stdout.write(
+                    self.style.WARNING(
+                        f"Requeued {result.job_type} job {result.job_id} for upload {result.upload_id}: {result.error or 'retry scheduled'}"
+                    )
+                )
             else:
                 self.stdout.write(
                     self.style.ERROR(

@@ -178,11 +178,13 @@ def _preflight_file(upload: KnowledgeUpload, file_detail: KnowledgeUploadFile) -
     fmt = _detect_format(filename, content_type)
     warnings: list[str] = []
     recommendations: list[str] = []
+    status = "ok"
 
     absolute_path = None
     try:
         absolute_path = _resolve_media_path(file_detail.storage_path)
     except Exception as exc:
+        status = "error"
         warnings.append(f"Storage path is invalid: {exc}")
 
     size_bytes = int(file_detail.size_bytes or getattr(upload, "size_bytes", 0) or 0)
@@ -192,6 +194,7 @@ def _preflight_file(upload: KnowledgeUpload, file_detail: KnowledgeUploadFile) -
         except OSError:
             pass
     elif absolute_path:
+        status = "error"
         warnings.append("File is missing from storage; ingestion cannot read it.")
 
     metrics: dict[str, Any] = {
@@ -206,6 +209,7 @@ def _preflight_file(upload: KnowledgeUpload, file_detail: KnowledgeUploadFile) -
         limits = _table_limits_snapshot(upload)
         metrics.update(_table_size_warnings(metrics, limits, warnings, recommendations))
         return {
+            "status": status,
             "format": fmt,
             "suggested_kind": "dataset",
             "limits": {"table_limits": limits},
@@ -215,11 +219,16 @@ def _preflight_file(upload: KnowledgeUpload, file_detail: KnowledgeUploadFile) -
         }
 
     if fmt in {"xlsx", "xls"}:
+        if fmt == "xlsx" and load_workbook is None:
+            status = "error"
+        if fmt == "xls" and xlrd is None:
+            status = "error"
         metrics.update(_preflight_excel_like(absolute_path, fmt, warnings))
         limits = _table_limits_snapshot(upload)
         metrics.update(_table_size_warnings(metrics, limits, warnings, recommendations))
         recommendations.append("For very large sheets, prefer CSV exports or split by time/region/product.")
         return {
+            "status": status,
             "format": fmt,
             "suggested_kind": "dataset",
             "limits": {"table_limits": limits},
@@ -237,6 +246,7 @@ def _preflight_file(upload: KnowledgeUpload, file_detail: KnowledgeUploadFile) -
         if size_bytes > 25 * 1024 * 1024:
             warnings.append("Large file size (25MB+); ingestion can be slow.")
         return {
+            "status": status,
             "format": fmt,
             "suggested_kind": "document",
             "metrics": metrics,
@@ -248,6 +258,7 @@ def _preflight_file(upload: KnowledgeUpload, file_detail: KnowledgeUploadFile) -
         if size_bytes > 10 * 1024 * 1024:
             warnings.append("Large text document (10MB+); consider splitting for better retrieval.")
         return {
+            "status": status,
             "format": fmt,
             "suggested_kind": "document",
             "metrics": metrics,
@@ -261,6 +272,7 @@ def _preflight_file(upload: KnowledgeUpload, file_detail: KnowledgeUploadFile) -
             limits = _table_limits_snapshot(upload)
             metrics.update(_table_size_warnings(metrics, limits, warnings, recommendations))
         return {
+            "status": status,
             "format": fmt,
             "suggested_kind": "dataset",
             "metrics": metrics,
@@ -270,6 +282,7 @@ def _preflight_file(upload: KnowledgeUpload, file_detail: KnowledgeUploadFile) -
 
     warnings.append("Unknown file type; ingestion may fail or produce poor retrieval.")
     return {
+        "status": status,
         "format": fmt or "",
         "suggested_kind": "document",
         "metrics": metrics,

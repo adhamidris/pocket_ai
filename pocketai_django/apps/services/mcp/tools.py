@@ -44,7 +44,8 @@ from apps.accounts.models import (
     KnowledgeUploadTableCell,
 )
 from apps.conversations.models import Conversation
-from apps.services.ai_orchestrator import ActionType, AiOrchestratorService, KnowledgeSearchService
+from apps.services.ai_orchestrator import ActionType, AiOrchestratorService, KnowledgeSearchService, KnowledgeSnippet
+from apps.services.dataset_router import find_datasets_for_identifier, match_upload_for_identifier
 from apps.services.rag_logging import structured_log
 from apps.services.tabular_limits import enforce_tool_rate_limit, resolve_tabular_tool_limits
 from core.metrics import latency_monitor
@@ -1556,7 +1557,69 @@ def _search_knowledge_handler(
                 limit=limit_for_run,
                 identifier_filter=identifier_filter,
             )
-        snippet_payloads = _serialize_snippets(result.snippets)
+        dataset_candidates: list[dict[str, object]] = []
+        combined_snippets: list[object] = []
+        routing_enabled = str(getattr(settings, "DATASET_KEY_INDEX_ROUTING_ENABLED", "true")).lower() in {"1", "true", "yes"}
+        if routing_enabled and intent == "identifier":
+            identifier_candidate = _extract_identifier_candidate(query_text)
+            if identifier_candidate:
+                hits = find_datasets_for_identifier(
+                    business_profile=conversation.business_profile,
+                    identifier_value=identifier_candidate,
+                )
+                if hits:
+                    dataset_candidates = [
+                        {
+                            "upload_id": hit.upload_id,
+                            "upload_name": hit.upload_name,
+                            "sheet_name": hit.sheet_name,
+                            "sheet_index": hit.sheet_index,
+                            "column": hit.column,
+                            "identifier_key": hit.identifier_key,
+                            "identifier_required": hit.identifier_required,
+                            "source": hit.source,
+                        }
+                        for hit in hits
+                    ]
+                    upload_ids = {hit.upload_id for hit in hits}
+                    card_chunks = list(
+                        KnowledgeUploadChunk.objects.filter(
+                            business_profile=conversation.business_profile,
+                            upload_id__in=upload_ids,
+                            metadata__strategy="dataset_card",
+                            upload__status=KnowledgeStatus.ACTIVE,
+                        )
+                        .select_related("upload")
+                        .order_by("-updated_at")[:8]
+                    )
+                    hit_by_upload = {hit.upload_id: hit for hit in hits}
+                    for chunk in card_chunks:
+                        upload = chunk.upload
+                        label = (getattr(upload, "display_name", None) or getattr(upload, "filename", None) or str(upload.id)).strip()
+                        match = hit_by_upload.get(str(upload.id))
+                        combined_snippets.append(
+                            KnowledgeSnippet(
+                                id=chunk.id,
+                                title=label,
+                                summary="Dataset candidate (key index match).",
+                                source="dataset_key_index",
+                                content=chunk.content or "",
+                                public_label=label,
+                                upload_id=upload.id,
+                                chunk_id=chunk.id,
+                                chunk_index=getattr(chunk, "chunk_index", None),
+                                search_stage="dataset_key_index",
+                                confidence_score=1.0,
+                                source_diagnostics={
+                                    "dataset_key_index": True,
+                                    "matched_column": getattr(match, "column", None),
+                                    "matched_sheet": getattr(match, "sheet_name", None),
+                                    "matched_sheet_index": getattr(match, "sheet_index", None),
+                                },
+                            )
+                        )
+        combined_snippets.extend(list(getattr(result, "snippets", []) or []))
+        snippet_payloads = _serialize_snippets(combined_snippets)
         if locked_key and locked_value:
             locked_val_norm = str(locked_value).strip()
             filtered_snippets = []
@@ -1733,6 +1796,14 @@ def _search_knowledge_handler(
             "snippets": snippet_payloads,
             "hint": _search_hint(result.status, intent, snippet_payloads, result.diagnostics),
         }
+        if dataset_candidates:
+            payload["dataset_candidates"] = dataset_candidates
+            unique_uploads = {str(item.get("upload_id") or "") for item in dataset_candidates if item.get("upload_id")}
+            if len([uid for uid in unique_uploads if uid]) > 1:
+                payload["hint"] = (
+                    "Multiple datasets may match this identifier. Ask which dataset/sheet to use or request one more "
+                    "field (date/customer/etc.) to disambiguate before reading."
+                )
         if search_cache_key:
             _bounded_cache_store(context.search_cache, search_cache_key, copy.deepcopy(payload))
         return payload
@@ -5152,13 +5223,78 @@ def _read_knowledge_handler(
                 sheet_meta: Mapping[str, object] | None = None
                 if isinstance(available_sheets, list) and available_sheets:
                     normalized_request = _normalize_column_name(sheet_name) if sheet_name else ""
-                    if sheet_index:
-                        for entry in available_sheets:
-                            if not isinstance(entry, Mapping):
-                                continue
-                            if int(entry.get("sheet_index") or 0) == sheet_index:
-                                sheet_meta = entry
-                                break
+                    if not sheet_index and not normalized_request:
+                        hits = match_upload_for_identifier(
+                            upload=upload_record,
+                            identifier_value=requested_identifier_values[0],
+                        )
+                        unique_sheets = {(hit.sheet_index, hit.sheet_name) for hit in hits if hit.sheet_index or hit.sheet_name}
+                        if len(unique_sheets) == 1:
+                            target_index, target_name = next(iter(unique_sheets))
+                            if target_index is not None:
+                                for entry in available_sheets:
+                                    if not isinstance(entry, Mapping):
+                                        continue
+                                    if int(entry.get("sheet_index") or 0) == int(target_index):
+                                        sheet_meta = entry
+                                        break
+                            if sheet_meta is None and target_name:
+                                target_norm = _normalize_column_name(target_name)
+                                for entry in available_sheets:
+                                    if not isinstance(entry, Mapping):
+                                        continue
+                                    if _normalize_column_name(entry.get("sheet_name")) == target_norm:
+                                        sheet_meta = entry
+                                        break
+                        elif len(unique_sheets) > 1:
+                            options = sorted(
+                                unique_sheets,
+                                key=lambda pair: (
+                                    int(pair[0] or 0),
+                                    str(pair[1] or ""),
+                                ),
+                            )[:8]
+                            envelope = _envelope(
+                                engine="file_dataset",
+                                engine_tool="dataset_query",
+                                result={
+                                    "status": "disambiguation_required",
+                                    "error": "sheet_disambiguation_required",
+                                    "error_code": "sheet_disambiguation_required",
+                                    "rows": [],
+                                    "match_count": 0,
+                                    "total_matches": 0,
+                                    "hint": (
+                                        "This identifier may exist in multiple dataset sheets. Specify sheet_name or "
+                                        "sheet_index before querying."
+                                    ),
+                                    "sheet_options": [
+                                        {"sheet_index": idx, "sheet_name": name}
+                                        for idx, name in options
+                                    ],
+                                },
+                                resolved_upload_id=str(upload_record.id),
+                                requested_document_id=raw_id,
+                                resolved_chunk_id=str(chunk_record.id) if chunk_record else None,
+                                resolved_document_id_used=str(upload_record.id),
+                                identifier_diagnostics={
+                                    "requested_identifier": {
+                                        "column": requested_identifier_column,
+                                        "values": list(requested_identifier_values),
+                                        "policy": requested_identifier_policy,
+                                    },
+                                    "match_policy": "sheet_disambiguation_required",
+                                },
+                            )
+                            _log_read_knowledge_performance(envelope)
+                            return envelope
+                        if sheet_index:
+                            for entry in available_sheets:
+                                if not isinstance(entry, Mapping):
+                                    continue
+                                if int(entry.get("sheet_index") or 0) == sheet_index:
+                                    sheet_meta = entry
+                                    break
                     if sheet_meta is None and normalized_request:
                         for entry in available_sheets:
                             if not isinstance(entry, Mapping):

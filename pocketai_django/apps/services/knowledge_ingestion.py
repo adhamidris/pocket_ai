@@ -8,18 +8,21 @@ import logging
 import math
 import mimetypes
 import io
+import random
 import re
 import shutil
 import statistics
 import time
 import uuid
+from datetime import timedelta
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Iterable, Mapping, Optional, Sequence
 
 from django.conf import settings
+from django.db import connection
 from django.db import transaction
-from django.db.models import Case, IntegerField, Value, When
+from django.db.models import Case, IntegerField, Q, Value, When
 from django.utils import timezone
 from django.utils.text import slugify
 from opentelemetry import trace as otel_trace
@@ -48,6 +51,13 @@ from apps.accounts.models import (
 )
 from apps.services.documents import DocumentScrapeError, scrape_document_source
 from apps.services.dataset_cards import build_dataset_card_segment_payload
+from apps.services.dataset_key_index import (
+    BloomFilter,
+    bloom_spec_for_items,
+    normalize_identifier_value,
+    resolve_key_index_storage_path,
+    write_bloom_filter,
+)
 from apps.services.embeddings import LocalEmbeddingService, build_embedding_service, EmbeddingProviderError
 from apps.services.feature_flags import FeatureFlagService
 from apps.services.quality_monitor import QualityMonitor
@@ -1577,10 +1587,14 @@ def queue_ingestion_job(upload: KnowledgeUpload, *, trigger: str = "upload", for
     job_status = KnowledgeIngestionJobStatus.QUEUED
     payload: dict[str, object] = {"trigger": trigger}
     if active_limit:
+        now = timezone.now()
+        eligible = Q(run_after__isnull=True) | Q(run_after__lte=now)
         active_jobs = KnowledgeIngestionJob.objects.filter(
             business_profile=upload.business_profile,
-            status__in=(KnowledgeIngestionJobStatus.QUEUED, KnowledgeIngestionJobStatus.RUNNING),
             job_type=KnowledgeIngestionJobType.INGEST,
+        ).filter(
+            Q(status=KnowledgeIngestionJobStatus.RUNNING)
+            | (Q(status=KnowledgeIngestionJobStatus.QUEUED) & eligible)
         ).count()
         if active_jobs >= active_limit:
             job_status = KnowledgeIngestionJobStatus.DEFERRED
@@ -1591,6 +1605,7 @@ def queue_ingestion_job(upload: KnowledgeUpload, *, trigger: str = "upload", for
         upload=upload,
         job_type=KnowledgeIngestionJobType.INGEST,
         status=job_status,
+        max_attempts=max(1, int(getattr(settings, "INGEST_JOB_MAX_ATTEMPTS", 3))),
         payload=payload,
     )
 
@@ -1660,9 +1675,184 @@ class KnowledgeIngestionService:
         self.dataset_storage_format = str(getattr(settings, "DATASET_STORAGE_FORMAT", "csv_gz") or "csv_gz").strip()
         if self.dataset_storage_format not in {"csv_gz"}:
             self.dataset_storage_format = "csv_gz"
+        self.job_lease_seconds = max(60, int(getattr(settings, "INGEST_JOB_LEASE_SECONDS", 1800)))
+        self.job_retry_base_seconds = max(1.0, float(getattr(settings, "INGEST_JOB_RETRY_BASE_SECONDS", 5.0)))
+        self.job_retry_max_seconds = max(
+            self.job_retry_base_seconds,
+            float(getattr(settings, "INGEST_JOB_RETRY_MAX_SECONDS", 300.0)),
+        )
+        self.job_retry_jitter_seconds = max(0.0, float(getattr(settings, "INGEST_JOB_RETRY_JITTER_SECONDS", 2.0)))
+        self.ingest_job_max_attempts = max(1, int(getattr(settings, "INGEST_JOB_MAX_ATTEMPTS", 3)))
+        self.embed_job_max_attempts = max(1, int(getattr(settings, "INGEST_EMBED_JOB_MAX_ATTEMPTS", 5)))
+        self.requeue_stale_jobs = bool(getattr(settings, "INGEST_JOB_REQUEUE_STALE_ENABLED", True))
 
     # ------------------------------------------------------------------
     # Job coordination
+
+    def _job_max_attempts(self, job: KnowledgeIngestionJob) -> int:
+        configured = int(getattr(job, "max_attempts", 0) or 0)
+        if configured > 0:
+            return configured
+        if job.job_type == KnowledgeIngestionJobType.EMBED:
+            return self.embed_job_max_attempts
+        return self.ingest_job_max_attempts
+
+    def _job_retry_delay_seconds(self, attempt_count: int, job: KnowledgeIngestionJob) -> float:
+        normalized_attempt = max(1, int(attempt_count))
+        if job.job_type == KnowledgeIngestionJobType.EMBED:
+            base = max(1.0, float(getattr(settings, "INGEST_EMBED_JOB_RETRY_BASE_SECONDS", self.job_retry_base_seconds)))
+        else:
+            base = self.job_retry_base_seconds
+        delay = min(self.job_retry_max_seconds, base * (2 ** (normalized_attempt - 1)))
+        jitter = 0.0
+        if self.job_retry_jitter_seconds:
+            jitter = random.uniform(0.0, self.job_retry_jitter_seconds)
+        return delay + jitter
+
+    def _heartbeat_job(self, job: KnowledgeIngestionJob, *, now: timezone.datetime | None = None) -> None:
+        if not job or getattr(job, "status", None) != KnowledgeIngestionJobStatus.RUNNING:
+            return
+        current = now or timezone.now()
+        lease = current + timedelta(seconds=self.job_lease_seconds)
+        KnowledgeIngestionJob.objects.filter(id=job.id, status=KnowledgeIngestionJobStatus.RUNNING).update(
+            lease_expires_at=lease
+        )
+
+    def _requeue_job_with_backoff(self, job: KnowledgeIngestionJob, message: str, *, reason: str) -> bool:
+        """Return True when a retry was scheduled, False when the job is now terminal."""
+        now = timezone.now()
+        max_attempts = self._job_max_attempts(job)
+        next_attempt = max(0, int(getattr(job, "attempt_count", 0) or 0)) + 1
+        payload = dict(job.payload or {})
+        attempt_events = payload.get("attempts")
+        if not isinstance(attempt_events, list):
+            attempt_events = []
+        attempt_events.append(
+            {
+                "attempt": next_attempt,
+                "at": now.isoformat(),
+                "reason": reason,
+                "error": (message or "")[:400],
+            }
+        )
+        payload["attempts"] = attempt_events[-10:]
+        payload["last_error_at"] = now.isoformat()
+        payload["last_error_reason"] = reason
+
+        if next_attempt < max_attempts:
+            delay = self._job_retry_delay_seconds(next_attempt, job)
+            run_after = now + timedelta(seconds=float(delay))
+            KnowledgeIngestionJob.objects.filter(id=job.id).update(
+                status=KnowledgeIngestionJobStatus.QUEUED,
+                attempt_count=next_attempt,
+                run_after=run_after,
+                started_at=None,
+                lease_expires_at=None,
+                error_detail=message,
+                payload=payload,
+            )
+            logger.warning(
+                "ingest.job_retry_scheduled job=%s upload=%s type=%s attempt=%s/%s run_after=%s reason=%s error=%s",
+                job.id,
+                job.upload_id,
+                job.job_type,
+                next_attempt,
+                max_attempts,
+                run_after.isoformat(),
+                reason,
+                (message or "")[:200],
+            )
+            return True
+
+        KnowledgeIngestionJob.objects.filter(id=job.id).update(
+            status=KnowledgeIngestionJobStatus.FAILED,
+            attempt_count=next_attempt,
+            finished_at=now,
+            lease_expires_at=None,
+            run_after=None,
+            error_detail=message,
+            payload=payload,
+        )
+        logger.error(
+            "ingest.job_retry_exhausted job=%s upload=%s type=%s attempts=%s error=%s",
+            job.id,
+            job.upload_id,
+            job.job_type,
+            next_attempt,
+            (message or "")[:200],
+        )
+        return False
+
+    def _mark_job_failed_terminal(self, job: KnowledgeIngestionJob, message: str, *, reason: str) -> None:
+        now = timezone.now()
+        next_attempt = max(0, int(getattr(job, "attempt_count", 0) or 0)) + 1
+        payload = dict(job.payload or {})
+        attempt_events = payload.get("attempts")
+        if not isinstance(attempt_events, list):
+            attempt_events = []
+        attempt_events.append(
+            {
+                "attempt": next_attempt,
+                "at": now.isoformat(),
+                "reason": reason,
+                "error": (message or "")[:400],
+            }
+        )
+        payload["attempts"] = attempt_events[-10:]
+        payload["last_error_at"] = now.isoformat()
+        payload["last_error_reason"] = reason
+        KnowledgeIngestionJob.objects.filter(id=job.id).update(
+            status=KnowledgeIngestionJobStatus.FAILED,
+            attempt_count=next_attempt,
+            finished_at=now,
+            lease_expires_at=None,
+            run_after=None,
+            error_detail=message,
+            payload=payload,
+        )
+
+    def _requeue_stale_running_jobs(self, *, limit: int = 25) -> int:
+        if not self.requeue_stale_jobs:
+            return 0
+        now = timezone.now()
+        cutoff = now - timedelta(seconds=self.job_lease_seconds)
+        stale_jobs = list(
+            KnowledgeIngestionJob.objects.filter(status=KnowledgeIngestionJobStatus.RUNNING)
+            .filter(
+                Q(lease_expires_at__lt=now)
+                | Q(lease_expires_at__isnull=True, started_at__lt=cutoff)
+            )
+            .select_related("upload")
+            .order_by("started_at")[: max(1, int(limit))]
+        )
+        if not stale_jobs:
+            return 0
+        for job in stale_jobs:
+            scheduled = self._requeue_job_with_backoff(job, "auto-requeue: ingestion job lease expired", reason="lease_expired")
+            if not scheduled:
+                upload = job.upload
+                if job.job_type == KnowledgeIngestionJobType.EMBED:
+                    metadata = dict(upload.ingestion_metadata or {})
+                    embedding_meta = metadata.get("embedding")
+                    if not isinstance(embedding_meta, dict):
+                        embedding_meta = {}
+                    embedding_meta.update(
+                        {
+                            "status": "failed",
+                            "job_id": str(job.id),
+                            "failed_at": now.isoformat(),
+                            "error": "auto-requeue: ingestion job lease expired",
+                        }
+                    )
+                    metadata["embedding"] = embedding_meta
+                    upload.ingestion_metadata = metadata
+                    upload.save(update_fields=["ingestion_metadata", "updated_at"])
+                else:
+                    upload.ingestion_error = "auto-requeue: ingestion job lease expired"
+                    upload.status = KnowledgeStatus.FAILED
+                    upload.save(update_fields=["ingestion_error", "status", "updated_at"])
+        logger.warning("ingest.job_requeued_stale count=%s", len(stale_jobs))
+        return len(stale_jobs)
 
     def _json_entity_limit(self, business_profile) -> int:
         if not business_profile:
@@ -1851,6 +2041,28 @@ class KnowledgeIngestionService:
                         logger_obj=logger,
                     )
                     try:
+                        from apps.services.knowledge_preflight import ensure_upload_preflight
+
+                        preflight = ensure_upload_preflight(upload, trigger="ingest_job_start")
+                        if isinstance(preflight, dict):
+                            payload = dict(job.payload or {})
+                            payload["preflight"] = {
+                                "status": preflight.get("status"),
+                                "format": preflight.get("format"),
+                                "suggested_kind": preflight.get("suggested_kind"),
+                                "warnings": list(preflight.get("warnings") or [])[:8],
+                            }
+                            KnowledgeIngestionJob.objects.filter(id=job.id).update(payload=payload)
+                            job.payload = payload
+                            if str(preflight.get("status") or "").lower() == "error":
+                                warnings = preflight.get("warnings") or []
+                                description = "; ".join([str(w) for w in warnings if w])[:400] if warnings else "Preflight blocked ingestion."
+                                raise KnowledgeIngestionError(f"preflight: {description}")
+                    except KnowledgeIngestionError:
+                        raise
+                    except Exception as exc:  # pragma: no cover - preflight must not block ingestion
+                        logger.warning("knowledge.preflight.job_start_failed upload=%s error=%s", upload.id, exc)
+                    try:
                         with TRACER.start_as_current_span("ingest.extract") as extract_span:
                             extraction = self._extract_upload(upload)
                             characters = len(extraction.text)
@@ -1917,9 +2129,10 @@ class KnowledgeIngestionService:
                             characters=characters,
                         )
                     except KnowledgeIngestionError as exc:
-                        self._handle_failure(job, str(exc))
+                        self._handle_failure(job, str(exc), exc=exc)
                         logger.warning("Ingestion failed upload=%s job=%s error=%s", upload.id, job.id, exc)
                         duration_ms = int((time.perf_counter() - job_started_at) * 1000.0)
+                        job.refresh_from_db(fields=["status"])
                         structured_log(
                             "rag",
                             "ingest.job_done",
@@ -1938,7 +2151,7 @@ class KnowledgeIngestionService:
                             job_id=job.id,
                             upload_id=upload.id,
                             job_type=job.job_type,
-                            status=KnowledgeIngestionJobStatus.FAILED,
+                            status=job.status,
                             characters=0,
                             error=str(exc),
                         )
@@ -1949,7 +2162,8 @@ class KnowledgeIngestionService:
             logger.exception(
                 "ingest.unexpected_error upload=%s job=%s", getattr(job, "upload_id", None), getattr(job, "id", None)
             )
-            self._handle_failure(job, f"unexpected ingestion error: {exc}")
+            self._handle_failure(job, f"unexpected ingestion error: {exc}", exc=exc)
+            job.refresh_from_db(fields=["status"])
             structured_log(
                 "rag",
                 "ingest.job_done",
@@ -1971,7 +2185,7 @@ class KnowledgeIngestionService:
                 job_id=job.id,
                 upload_id=job.upload_id,
                 job_type=job.job_type,
-                status=KnowledgeIngestionJobStatus.FAILED,
+                status=job.status,
                 characters=0,
                 error=str(exc),
             )
@@ -2015,12 +2229,13 @@ class KnowledgeIngestionService:
             provider = self.embedding_service or self._get_fallback_embedding_service()
             if not provider:
                 error = "Embedding backend unavailable"
-                self._handle_failure(job, error)
+                self._handle_failure(job, error, retryable=True)
+                job.refresh_from_db(fields=["status"])
                 return IngestionJobResult(
                     job_id=job.id,
                     upload_id=job.upload_id,
                     job_type=job.job_type,
-                    status=KnowledgeIngestionJobStatus.FAILED,
+                    status=job.status,
                     characters=0,
                     error=error,
                 )
@@ -2039,22 +2254,24 @@ class KnowledgeIngestionService:
                         if batch_span.is_recording():
                             batch_span.set_attribute("ingest.embed.batch_size", len(batch))
                 except EmbeddingProviderError as exc:
-                    self._handle_failure(job, f"Embedding batch failed: {exc}")
+                    self._handle_failure(job, f"Embedding batch failed: {exc}", exc=exc)
+                    job.refresh_from_db(fields=["status"])
                     return IngestionJobResult(
                         job_id=job.id,
                         upload_id=job.upload_id,
                         job_type=job.job_type,
-                        status=KnowledgeIngestionJobStatus.FAILED,
+                        status=job.status,
                         characters=processed,
                         error=str(exc),
                     )
                 except Exception as exc:  # pragma: no cover - defensive
-                    self._handle_failure(job, f"Embedding batch exception: {exc}")
+                    self._handle_failure(job, f"Embedding batch exception: {exc}", exc=exc)
+                    job.refresh_from_db(fields=["status"])
                     return IngestionJobResult(
                         job_id=job.id,
                         upload_id=job.upload_id,
                         job_type=job.job_type,
-                        status=KnowledgeIngestionJobStatus.FAILED,
+                        status=job.status,
                         characters=processed,
                         error=str(exc),
                     )
@@ -2870,6 +3087,7 @@ class KnowledgeIngestionService:
                 upload=upload,
                 job_type=KnowledgeIngestionJobType.EMBED,
                 status=KnowledgeIngestionJobStatus.QUEUED,
+                max_attempts=self.embed_job_max_attempts,
                 payload={"chunk_ids": batch},
             )
             logger.info("Queued embedding job upload=%s job=%s chunks=%s", upload.id, job.id, len(batch))
@@ -2920,10 +3138,14 @@ class KnowledgeIngestionService:
     def _release_deferred_jobs(self, business_id: uuid.UUID) -> None:
         if not self.ingest_concurrency_limit:
             return
+        now = timezone.now()
+        eligible = Q(run_after__isnull=True) | Q(run_after__lte=now)
         active = KnowledgeIngestionJob.objects.filter(
             business_profile_id=business_id,
-            status__in=(KnowledgeIngestionJobStatus.QUEUED, KnowledgeIngestionJobStatus.RUNNING),
             job_type=KnowledgeIngestionJobType.INGEST,
+        ).filter(
+            Q(status=KnowledgeIngestionJobStatus.RUNNING)
+            | (Q(status=KnowledgeIngestionJobStatus.QUEUED) & eligible)
         ).count()
         available = self.ingest_concurrency_limit - active
         if available <= 0:
@@ -3295,32 +3517,82 @@ class KnowledgeIngestionService:
         KnowledgeIngestionJob.objects.filter(id=job.id).update(
             status=KnowledgeIngestionJobStatus.COMPLETED,
             finished_at=finished,
+            run_after=None,
+            lease_expires_at=None,
             payload=payload,
         )
         self._invalidate_alias_cache(job.business_profile_id)
         self._release_deferred_jobs(job.business_profile_id)
 
-    def _handle_failure(self, job: KnowledgeIngestionJob, message: str) -> None:
-        finished = timezone.now()
-        KnowledgeIngestionJob.objects.filter(id=job.id).update(
-            status=KnowledgeIngestionJobStatus.FAILED,
-            finished_at=finished,
-            error_detail=message,
-        )
+    def _handle_failure(
+        self,
+        job: KnowledgeIngestionJob,
+        message: str,
+        *,
+        exc: Exception | None = None,
+        retryable: bool | None = None,
+    ) -> None:
+        error_message = (message or "").strip() or "ingestion failed"
+
+        is_retryable = retryable
+        if is_retryable is None:
+            is_retryable = True
+            if isinstance(exc, UnsupportedFormatError):
+                is_retryable = False
+            if job.job_type == KnowledgeIngestionJobType.INGEST:
+                lowered = error_message.lower()
+                if "extracted document is empty" in lowered or "unsupported file type" in lowered:
+                    is_retryable = False
+                if "is not installed" in lowered and "ingestion is not available" in lowered:
+                    is_retryable = False
+
+        if is_retryable:
+            scheduled = self._requeue_job_with_backoff(job, error_message, reason="error")
+            if scheduled:
+                if job.job_type == KnowledgeIngestionJobType.INGEST:
+                    upload = job.upload
+                    upload.ingestion_error = error_message[:400]
+                    upload.status = KnowledgeStatus.PROCESSING
+                    upload.save(update_fields=["ingestion_error", "status", "updated_at"])
+                self._release_deferred_jobs(job.business_profile_id)
+                return
+        else:
+            self._mark_job_failed_terminal(job, error_message, reason="fatal")
+        now = timezone.now()
         upload = job.upload
-        upload.ingestion_error = message
-        upload.status = KnowledgeStatus.FAILED
-        upload.save(update_fields=["ingestion_error", "status", "updated_at"])
+        if job.job_type == KnowledgeIngestionJobType.EMBED:
+            metadata = dict(upload.ingestion_metadata or {})
+            embedding_meta = metadata.get("embedding")
+            if not isinstance(embedding_meta, dict):
+                embedding_meta = {}
+            embedding_meta.update(
+                {
+                    "status": "failed",
+                    "job_id": str(job.id),
+                    "failed_at": now.isoformat(),
+                    "error": error_message[:400],
+                }
+            )
+            metadata["embedding"] = embedding_meta
+            upload.ingestion_metadata = metadata
+            upload.save(update_fields=["ingestion_metadata", "updated_at"])
+        else:
+            upload.ingestion_error = error_message
+            upload.status = KnowledgeStatus.FAILED
+            upload.save(update_fields=["ingestion_error", "status", "updated_at"])
         self._release_deferred_jobs(job.business_profile_id)
 
     # ------------------------------------------------------------------
     # Helpers
 
     def _claim_next_job(self) -> KnowledgeIngestionJob | None:
-        job = (
-            KnowledgeIngestionJob.objects.filter(
-                status=KnowledgeIngestionJobStatus.QUEUED,
-            )
+        self._requeue_stale_running_jobs()
+
+        now = timezone.now()
+        eligible = Q(run_after__isnull=True) | Q(run_after__lte=now)
+        qs = (
+            KnowledgeIngestionJob.objects.filter(status=KnowledgeIngestionJobStatus.QUEUED)
+            .filter(eligible)
             .annotate(
                 priority=Case(
                     When(job_type=KnowledgeIngestionJobType.INGEST, then=Value(0)),
@@ -3331,23 +3603,28 @@ class KnowledgeIngestionService:
             )
             .select_related("upload__file_detail", "upload__url_detail", "upload__business_profile")
             .order_by("priority", "created_at")
-            .first()
         )
-        if not job:
-            return None
 
-        claimed = KnowledgeIngestionJob.objects.filter(
-            id=job.id,
-            status=KnowledgeIngestionJobStatus.QUEUED,
-        ).update(
-            status=KnowledgeIngestionJobStatus.RUNNING,
-            started_at=timezone.now(),
+        supports_skip_locked = bool(
+            getattr(connection.features, "has_select_for_update", False)
+            and getattr(connection.features, "has_select_for_update_skip_locked", False)
         )
-        if not claimed:
-            return None
 
-        job.refresh_from_db()
-        return job
+        with transaction.atomic():
+            locked = qs.select_for_update(skip_locked=True) if supports_skip_locked else qs.select_for_update()
+            job = locked.first()
+            if not job:
+                return None
+            lease = now + timedelta(seconds=self.job_lease_seconds)
+            defaults = self._job_max_attempts(job)
+            job.status = KnowledgeIngestionJobStatus.RUNNING
+            job.started_at = now
+            job.run_after = None
+            job.lease_expires_at = lease
+            if not job.max_attempts:
+                job.max_attempts = defaults
+            job.save(update_fields=["status", "started_at", "run_after", "lease_expires_at", "max_attempts", "updated_at"])
+            return job
 
     @staticmethod
     def _detect_format(file_detail: KnowledgeUploadFile) -> str | None:
@@ -3528,6 +3805,135 @@ class KnowledgeIngestionService:
 
         candidates.sort(key=lambda item: (item.get("score", 0), item.get("non_empty", 0)), reverse=True)
         return candidates[: max_candidates]
+
+    @staticmethod
+    def _identifier_mapping_is_required(mapping: Any) -> bool:
+        override = getattr(mapping, "is_required", None)
+        if override is not None:
+            return bool(override)
+        identifier = getattr(mapping, "identifier", None)
+        return bool(getattr(identifier, "is_required", False))
+
+    def _dataset_key_index_columns(
+        self,
+        *,
+        upload: KnowledgeUpload,
+        sheet_name: str | None,
+        column_schema: Sequence[str],
+        suggested_keys: Sequence[Mapping[str, Any]] | None,
+        rules: Mapping[str, Any] | None,
+    ) -> list[dict[str, Any]]:
+        """
+        Decide which columns should receive a dataset key index (Bloom filter).
+
+        Preference order:
+        1) Active IdentifierColumnMapping columns (tenant-defined).
+        2) Suggested key columns from sampling.
+        3) Fallback heuristics on column names.
+        """
+
+        max_columns = int(getattr(settings, "DATASET_KEY_INDEX_MAX_COLUMNS", 4) or 4)
+        max_columns = max(0, min(20, max_columns))
+        if max_columns <= 0:
+            return []
+
+        allow_sensitive = str(getattr(settings, "DATASET_KEY_INDEX_ALLOW_SENSITIVE", "false")).lower() in {
+            "1",
+            "true",
+            "yes",
+        }
+        min_suggested_score = float(getattr(settings, "DATASET_KEY_INDEX_SUGGESTED_MIN_SCORE", 0.9) or 0.9)
+        min_suggested_score = max(0.0, min(10.0, min_suggested_score))
+
+        schema_canon: list[str] = [self._canonical_column_name(col) for col in column_schema]
+        index_map = {canon: idx for idx, canon in enumerate(schema_canon) if canon}
+        name_map = {canon: col for canon, col in zip(schema_canon, column_schema) if canon and col}
+
+        def _eligible(column_name: str) -> bool:
+            if not column_name:
+                return False
+            if allow_sensitive or not rules:
+                return True
+            return not self._column_is_sensitive(column_name, rules)
+
+        chosen: list[dict[str, Any]] = []
+        seen: set[str] = set()
+
+        def _add(*, column: str, source: str, **extra: Any) -> None:
+            canon = self._canonical_column_name(column)
+            if not canon or canon in seen:
+                return
+            idx = index_map.get(canon)
+            if idx is None:
+                return
+            actual = name_map.get(canon) or column
+            if not _eligible(actual):
+                return
+            seen.add(canon)
+            chosen.append(
+                {
+                    "column": actual,
+                    "column_index": idx,
+                    "source": source,
+                    **extra,
+                }
+            )
+
+        try:
+            from apps.accounts.models import IdentifierColumnMapping, IdentifierColumnStatus, IdentifierSchemaStatus
+
+            mapping_qs = IdentifierColumnMapping.objects.select_related("identifier").filter(
+                business_profile=upload.business_profile,
+                upload=upload,
+                status=IdentifierColumnStatus.ACTIVE,
+                identifier__status=IdentifierSchemaStatus.ACTIVE,
+            )
+            if sheet_name:
+                mapping_qs = mapping_qs.filter(sheet_name__iexact=str(sheet_name).strip())
+            for mapping in mapping_qs:
+                identifier = getattr(mapping, "identifier", None)
+                key = getattr(identifier, "key", None)
+                _add(
+                    column=str(getattr(mapping, "column_name", "") or "").strip(),
+                    source="identifier_mapping",
+                    identifier_key=str(key or "").strip() or None,
+                    identifier_required=self._identifier_mapping_is_required(mapping),
+                )
+                if len(chosen) >= max_columns:
+                    break
+        except Exception:  # pragma: no cover - optional for early deployments
+            pass
+
+        if suggested_keys:
+            for entry in suggested_keys:
+                col = str(entry.get("column") or "").strip()
+                if not col:
+                    continue
+                try:
+                    score = float(entry.get("score") or 0.0)
+                except (TypeError, ValueError):
+                    score = 0.0
+                if score < min_suggested_score:
+                    continue
+                _add(column=col, source="suggested", suggested_score=score, suggested_keyword_match=bool(entry.get("keyword_match")))
+                if len(chosen) >= max_columns:
+                    break
+
+        if len(chosen) >= max_columns:
+            return chosen[:max_columns]
+
+        heuristic_terms = ("invoice", "order", "ticket", "serial", "reference", "ref", "email", "phone", "mobile", "code", "sku")
+        for col in column_schema:
+            canon = self._canonical_column_name(col)
+            if not canon or canon in seen:
+                continue
+            if not any(term in canon for term in heuristic_terms):
+                continue
+            _add(column=str(col or "").strip(), source="heuristic")
+            if len(chosen) >= max_columns:
+                break
+
+        return chosen[:max_columns]
 
     def _build_dataset_card_segment_payload(
         self,
@@ -3805,6 +4211,12 @@ class KnowledgeIngestionService:
         sample_visible_rows: list[dict[str, str]] = []
         row_count = 0
         internal_skipped = 0
+        sample_target = max(sample_row_cap, 25)
+
+        key_index_enabled = str(getattr(settings, "DATASET_KEY_INDEX_ENABLED", "true")).lower() in {"1", "true", "yes"}
+        key_index_max_bytes = int(getattr(settings, "DATASET_KEY_INDEX_MAX_BYTES", 2_000_000) or 2_000_000)
+        key_index_max_bytes = max(4096, min(25_000_000, key_index_max_bytes))
+        key_indexes: list[dict[str, Any]] = []
 
         with path.open("rb") as raw_in:
             reader_stream = io.TextIOWrapper(raw_in, encoding="utf-8", errors="ignore", newline="")
@@ -3854,7 +4266,7 @@ class KnowledgeIngestionService:
 
                     if len(preview_rows) < preview_row_cap:
                         preview_rows.append((row_count, values))
-                    if len(sample_rows) < max(sample_row_cap, 25):
+                    if len(sample_rows) < sample_target:
                         sample_rows.append(values)
                     if len(sample_visible_rows) < sample_row_cap:
                         sample_visible_rows.append(
@@ -3865,12 +4277,94 @@ class KnowledgeIngestionService:
                             }
                         )
 
+                    if key_index_enabled and not key_indexes and len(sample_rows) >= sample_target:
+                        suggested_preview = self._suggest_dataset_key_columns(column_schema=column_schema, sample_rows=sample_rows)
+                        chosen_columns = self._dataset_key_index_columns(
+                            upload=upload,
+                            sheet_name=None,
+                            column_schema=column_schema,
+                            suggested_keys=suggested_preview,
+                            rules=rules,
+                        )
+                        expected_items = int(estimated_rows or row_count or 1)
+                        spec = bloom_spec_for_items(expected_items)
+                        for entry in chosen_columns:
+                            bits = spec.bits
+                            byte_len = (bits + 7) // 8
+                            if byte_len > key_index_max_bytes:
+                                bits = key_index_max_bytes * 8
+                            bloom = BloomFilter(bits=bits, hashes=spec.hashes)
+                            key_indexes.append(
+                                {
+                                    "column": entry.get("column"),
+                                    "column_index": int(entry.get("column_index")),
+                                    "source": entry.get("source"),
+                                    "identifier_key": entry.get("identifier_key"),
+                                    "identifier_required": entry.get("identifier_required"),
+                                    "bloom": bloom,
+                                    "value_count": 0,
+                                }
+                            )
+                        if key_indexes:
+                            for sample in sample_rows:
+                                for info in key_indexes:
+                                    idx = int(info["column_index"])
+                                    if idx >= len(sample):
+                                        continue
+                                    normalized = normalize_identifier_value(sample[idx])
+                                    if not normalized:
+                                        continue
+                                    info["bloom"].add(normalized)
+                                    info["value_count"] += 1
+                    elif key_indexes:
+                        for info in key_indexes:
+                            idx = int(info["column_index"])
+                            if idx >= len(values):
+                                continue
+                            normalized = normalize_identifier_value(values[idx])
+                            if not normalized:
+                                continue
+                            info["bloom"].add(normalized)
+                            info["value_count"] += 1
+
         try:
             dataset_size = dataset_path.stat().st_size
         except OSError:
             dataset_size = 0
 
         suggested_keys = self._suggest_dataset_key_columns(column_schema=column_schema, sample_rows=sample_rows)
+        key_index_payloads: list[dict[str, Any]] = []
+        if key_indexes:
+            for info in key_indexes:
+                column_name = str(info.get("column") or "").strip()
+                if not column_name:
+                    continue
+                index_rel_path = resolve_key_index_storage_path(dataset_rel_path=dataset_rel_path, column_name=column_name)
+                abs_index_path = (self.media_root / Path(index_rel_path)).resolve()
+                try:
+                    abs_index_path.relative_to(self.media_root)
+                except ValueError:
+                    continue
+                bloom = info.get("bloom")
+                if not isinstance(bloom, BloomFilter):
+                    continue
+                try:
+                    written_bytes = write_bloom_filter(abs_index_path, bloom)
+                except OSError:
+                    continue
+                key_index_payloads.append(
+                    {
+                        "column": column_name,
+                        "storage_path": index_rel_path,
+                        "bits": int(bloom.bits),
+                        "hashes": int(bloom.hashes),
+                        "bytes": int(written_bytes),
+                        "values_indexed": int(info.get("value_count") or 0),
+                        "source": info.get("source"),
+                        "identifier_key": info.get("identifier_key"),
+                        "identifier_required": info.get("identifier_required"),
+                    }
+                )
 
         table, page = self._build_dataset_preview_table(
             order_index=1,
@@ -3913,6 +4407,7 @@ class KnowledgeIngestionService:
             "sample_rows": sample_visible_rows,
             "suggested_key_columns": suggested_keys,
             "delimiter": delimiter,
+            "key_indexes": key_index_payloads,
         }
 
         table_stats = self._table_stats_summary(
@@ -4152,6 +4647,11 @@ class KnowledgeIngestionService:
         rules = self._table_privacy_rules(upload)
         preview_row_cap = int(self.dataset_preview_rows)
         sample_row_cap = int(self.dataset_sample_rows)
+        sample_target = max(sample_row_cap, 25)
+
+        key_index_enabled = str(getattr(settings, "DATASET_KEY_INDEX_ENABLED", "true")).lower() in {"1", "true", "yes"}
+        key_index_max_bytes = int(getattr(settings, "DATASET_KEY_INDEX_MAX_BYTES", 2_000_000) or 2_000_000)
+        key_index_max_bytes = max(4096, min(25_000_000, key_index_max_bytes))
 
         tables: list[TablePayload] = []
         pages: list[PageLayout] = []
@@ -4203,6 +4703,12 @@ class KnowledgeIngestionService:
             sample_visible_rows: list[dict[str, str]] = []
             row_count = 0
             internal_skipped = 0
+            expected_items = 0
+            try:
+                expected_items = int(getattr(sheet, "max_row", 0) or 0)
+            except (TypeError, ValueError):
+                expected_items = 0
+            sheet_key_indexes: list[dict[str, Any]] = []
 
             dataset_path.parent.mkdir(parents=True, exist_ok=True)
             with gzip.open(dataset_path, "wt", encoding="utf-8", newline="") as out_handle:
@@ -4228,7 +4734,7 @@ class KnowledgeIngestionService:
 
                     if len(preview_rows) < preview_row_cap:
                         preview_rows.append((row_count, [str(value or "") for value in values]))
-                    if len(sample_rows) < max(sample_row_cap, 25):
+                    if len(sample_rows) < sample_target:
                         sample_rows.append([str(value or "") for value in values])
                     if len(sample_visible_rows) < sample_row_cap:
                         sample_visible_rows.append(
@@ -4239,12 +4745,93 @@ class KnowledgeIngestionService:
                             }
                         )
 
+                    if key_index_enabled and not sheet_key_indexes and len(sample_rows) >= sample_target:
+                        suggested_preview = self._suggest_dataset_key_columns(column_schema=column_schema, sample_rows=sample_rows)
+                        chosen_columns = self._dataset_key_index_columns(
+                            upload=upload,
+                            sheet_name=sheet_name,
+                            column_schema=column_schema,
+                            suggested_keys=suggested_preview,
+                            rules=rules,
+                        )
+                        spec = bloom_spec_for_items(int(expected_items or estimated_rows or row_count or 1))
+                        for entry in chosen_columns:
+                            bits = spec.bits
+                            byte_len = (bits + 7) // 8
+                            if byte_len > key_index_max_bytes:
+                                bits = key_index_max_bytes * 8
+                            bloom = BloomFilter(bits=bits, hashes=spec.hashes)
+                            sheet_key_indexes.append(
+                                {
+                                    "column": entry.get("column"),
+                                    "column_index": int(entry.get("column_index")),
+                                    "source": entry.get("source"),
+                                    "identifier_key": entry.get("identifier_key"),
+                                    "identifier_required": entry.get("identifier_required"),
+                                    "bloom": bloom,
+                                    "value_count": 0,
+                                }
+                            )
+                        if sheet_key_indexes:
+                            for sample in sample_rows:
+                                for info in sheet_key_indexes:
+                                    idx = int(info["column_index"])
+                                    if idx >= len(sample):
+                                        continue
+                                    normalized = normalize_identifier_value(sample[idx])
+                                    if not normalized:
+                                        continue
+                                    info["bloom"].add(normalized)
+                                    info["value_count"] += 1
+                    elif sheet_key_indexes:
+                        for info in sheet_key_indexes:
+                            idx = int(info["column_index"])
+                            if idx >= len(values):
+                                continue
+                            normalized = normalize_identifier_value(values[idx])
+                            if not normalized:
+                                continue
+                            info["bloom"].add(normalized)
+                            info["value_count"] += 1
+
             try:
                 dataset_size = dataset_path.stat().st_size
             except OSError:
                 dataset_size = 0
 
             suggested_keys = self._suggest_dataset_key_columns(column_schema=column_schema, sample_rows=sample_rows)
+            key_index_payloads: list[dict[str, Any]] = []
+            if sheet_key_indexes:
+                for info in sheet_key_indexes:
+                    column_name = str(info.get("column") or "").strip()
+                    if not column_name:
+                        continue
+                    index_rel_path = resolve_key_index_storage_path(dataset_rel_path=dataset_rel_path, column_name=column_name)
+                    abs_index_path = (self.media_root / Path(index_rel_path)).resolve()
+                    try:
+                        abs_index_path.relative_to(self.media_root)
+                    except ValueError:
+                        continue
+                    bloom = info.get("bloom")
+                    if not isinstance(bloom, BloomFilter):
+                        continue
+                    try:
+                        written_bytes = write_bloom_filter(abs_index_path, bloom)
+                    except OSError:
+                        continue
+                    key_index_payloads.append(
+                        {
+                            "column": column_name,
+                            "storage_path": index_rel_path,
+                            "bits": int(bloom.bits),
+                            "hashes": int(bloom.hashes),
+                            "bytes": int(written_bytes),
+                            "values_indexed": int(info.get("value_count") or 0),
+                            "source": info.get("source"),
+                            "identifier_key": info.get("identifier_key"),
+                            "identifier_required": info.get("identifier_required"),
+                        }
+                    )
             table, page_layout = self._build_dataset_preview_table(
                 order_index=order_index,
                 sheet_name=sheet_name,
@@ -4273,6 +4860,7 @@ class KnowledgeIngestionService:
                     "column_schema": column_schema,
                     "sample_rows": sample_visible_rows,
                     "suggested_key_columns": suggested_keys,
+                    "key_indexes": key_index_payloads,
                     "preview_rows_indexed": len(table.rows),
                     "internal_rows_skipped": internal_skipped,
                 }
