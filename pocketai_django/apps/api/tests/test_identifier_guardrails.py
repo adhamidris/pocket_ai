@@ -18,7 +18,7 @@ from apps.accounts.models import (
     User,
 )
 from apps.conversations.models import Conversation
-from apps.services.mcp.identifier_registry import IdentifierGuardrail, IdentifierRegistryService
+from apps.mcp.identifier_registry import IdentifierGuardrail, IdentifierRegistryService
 
 
 class IdentifierGuardrailsApiTests(TestCase):

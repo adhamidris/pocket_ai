@@ -9,7 +9,7 @@ from django.core.management.base import BaseCommand, CommandError
 from django.utils import timezone
 
 from apps.accounts.models import BusinessProfile, KnowledgeUpload, KnowledgeUploadChunk
-from apps.services.embeddings import EmbeddingProviderError, build_embedding_service
+from apps.rag.embeddings import EmbeddingProviderError, build_embedding_service
 
 
 logger = logging.getLogger(__name__)

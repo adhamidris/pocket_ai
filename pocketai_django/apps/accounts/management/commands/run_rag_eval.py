@@ -5,7 +5,7 @@ from pathlib import Path
 from django.conf import settings
 from django.core.management.base import BaseCommand, CommandError
 
-from apps.services.evaluation.harness import EvaluationThresholdError, RAGEEvaluationHarness
+from apps.rag.evaluation.harness import EvaluationThresholdError, RAGEEvaluationHarness
 
 
 class Command(BaseCommand):

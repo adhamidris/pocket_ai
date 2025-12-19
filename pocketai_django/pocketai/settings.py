@@ -80,7 +80,11 @@ INSTALLED_APPS = [
     "apps.cases",
     "apps.customers",
     "apps.conversations",
-    "apps.services",
+    "apps.integrations.apps.IntegrationsConfig",
+    "apps.knowledge.apps.KnowledgeConfig",
+    "apps.llm.apps.LlmConfig",
+    "apps.mcp.apps.McpConfig",
+    "apps.rag.apps.RagConfig",
     "frontend",
     #Vectorizing
     "pgvector.django",
@@ -748,12 +752,12 @@ LOGGING = {
             "formatter": "verbose",
         },
     },
-    "loggers": {
-        "apps.services.llm_provider": {"handlers": ["console", "deepseek_file"], "level": "INFO", "propagate": False},
-        "apps.services.knowledge_ingestion": {"handlers": ["console"], "level": "INFO", "propagate": False},
-        "apps.services.ai_orchestrator": {"handlers": ["console"], "level": "INFO", "propagate": False},
-        "apps.services.mcp.tools": {"handlers": ["console", "rag_file"], "level": "INFO", "propagate": False},
-        "apps.services.mcp.orchestrator": {"handlers": ["console", "rag_file"], "level": "INFO", "propagate": False},
+"loggers": {
+        "apps.llm.llm_provider": {"handlers": ["console", "deepseek_file"], "level": "INFO", "propagate": False},
+        "apps.knowledge.knowledge_ingestion": {"handlers": ["console"], "level": "INFO", "propagate": False},
+        "apps.rag.ai_orchestrator": {"handlers": ["console"], "level": "INFO", "propagate": False},
+        "apps.mcp.tools": {"handlers": ["console", "rag_file"], "level": "INFO", "propagate": False},
+        "apps.mcp.orchestrator": {"handlers": ["console", "rag_file"], "level": "INFO", "propagate": False},
         "apps.api.chat_portal": {"handlers": ["console"], "level": "INFO", "propagate": False},
     },
 }

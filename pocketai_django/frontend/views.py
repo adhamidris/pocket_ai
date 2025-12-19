@@ -45,7 +45,7 @@ from apps.accounts.models import (
 from apps.cases.models import Case, CaseStatus
 from apps.conversations.models import Conversation, ConversationSender, IdentifierEvent
 from apps.customers.models import Customer
-from apps.services.agents import (
+from apps.accounts.agents import (
     AgentListValidationError,
     agent_identifier,
     display_role_label,
@@ -53,11 +53,11 @@ from apps.services.agents import (
     initials_from_name,
     list_agents,
 )
-from apps.services.cases import list_cases
-from apps.services.customers import list_customers
-from apps.services.documents import DocumentListValidationError, list_documents
-from apps.services.knowledge_ingestion import queue_ingestion_job
-from apps.services.mcp.identifier_registry import IdentifierRegistryService
+from apps.cases.services import list_cases
+from apps.customers.services import list_customers
+from apps.knowledge.documents import DocumentListValidationError, list_documents
+from apps.knowledge.knowledge_ingestion import queue_ingestion_job
+from apps.mcp.identifier_registry import IdentifierRegistryService
 from apps.api.chat_portal import bootstrap_session as bootstrap_session_view
 from apps.api.views import start_google_drive_oauth as start_google_drive_oauth_view
 
@@ -2134,7 +2134,7 @@ def _create_text_upload(
     )
     KnowledgeUploadText.objects.create(upload=upload, content=normalized_content)
     try:
-        from apps.services.knowledge_preflight import ensure_upload_preflight
+        from apps.knowledge.knowledge_preflight import ensure_upload_preflight
 
         ensure_upload_preflight(upload, trigger="dashboard_text_upload")
     except Exception:

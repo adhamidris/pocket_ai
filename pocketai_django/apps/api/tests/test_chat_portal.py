@@ -9,7 +9,7 @@ from django.test import RequestFactory, TestCase, override_settings
 
 from apps.api import chat_portal
 from apps.conversations.models import ConversationSender
-from apps.services.ai_orchestrator import AiOrchestratorPlan, KnowledgeSnippet, StreamingTurnContext
+from apps.rag.ai_orchestrator import AiOrchestratorPlan, KnowledgeSnippet, StreamingTurnContext
 
 
 class StubPortalService:

@@ -22,14 +22,14 @@ from opentelemetry import trace as otel_trace
 
 from apps.accounts.models import BusinessProfile
 from apps.conversations.models import ConversationSender
-from apps.services.ai_orchestrator import (
+from apps.rag.ai_orchestrator import (
     ActionDispatcher,
     AiOrchestratorService,
     StreamingTurnContext,
 )
-from apps.services.mcp.sanitizer import sanitize_placeholder_thinking, sanitize_text, sanitize_with_diagnostics
-from apps.services.llm_provider import _emit_stream_chunks, load_default_provider
-from apps.services.chat_portal import (
+from apps.mcp.sanitizer import sanitize_placeholder_thinking, sanitize_text, sanitize_with_diagnostics
+from apps.llm.llm_provider import _emit_stream_chunks, load_default_provider
+from apps.conversations.portal import (
     ChatPortalService,
     PortalAgentSummary,
     PortalBusinessSummary,
@@ -607,8 +607,8 @@ def stream_send(request: HttpRequest) -> StreamingHttpResponse:
         return provider_obj.__class__.__name__
 
     if use_mcp:
-        from apps.services.llm_provider import load_mcp_provider
-        from apps.services.mcp import McpOrchestratorService
+        from apps.llm.llm_provider import load_mcp_provider
+        from apps.mcp.orchestrator import McpOrchestratorService
 
         provider = load_mcp_provider()
         orchestrator = McpOrchestratorService(agent=agent, provider=provider)

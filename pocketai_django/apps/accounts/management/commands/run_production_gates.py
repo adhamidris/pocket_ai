@@ -7,7 +7,7 @@ from django.conf import settings
 from django.core.management import call_command
 from django.core.management.base import BaseCommand, CommandError
 
-from apps.services.evaluation.harness import EvaluationThresholdError, RAGEEvaluationHarness
+from apps.rag.evaluation.harness import EvaluationThresholdError, RAGEEvaluationHarness
 
 
 class Command(BaseCommand):
@@ -135,4 +135,3 @@ class Command(BaseCommand):
     def _default_load_output() -> Path:
         base = getattr(settings, "LOG_DIR", Path(settings.BASE_DIR) / "var" / "logs")
         return Path(base) / "mcp_load_test_latest.json"
-

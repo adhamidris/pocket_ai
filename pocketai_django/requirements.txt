@@ -11,7 +11,7 @@ xlrd>=2.0,<3.0
 duckdb>=1.0,<2.0
 
 pgvector>=0.2
-fastembed>=0.3
+fastembed==0.5.1
 numpy>=1.26,<2.0
 psycopg2-binary>=2.9
 django-redis>=5.4

@@ -12,7 +12,7 @@ from apps.accounts.models import (
     KnowledgeStatus,
     KnowledgeUpload,
 )
-from apps.services.knowledge_ingestion import queue_ingestion_job
+from apps.knowledge.knowledge_ingestion import queue_ingestion_job
 
 
 class Command(BaseCommand):

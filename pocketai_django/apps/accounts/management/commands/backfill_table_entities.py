@@ -6,7 +6,7 @@ from django.core.management.base import BaseCommand
 from django.db import transaction
 
 from apps.accounts.models import KnowledgeUpload
-from apps.services.knowledge_ingestion import (
+from apps.knowledge.knowledge_ingestion import (
     KnowledgeIngestionService,
     TableCellPayload,
     TablePayload,

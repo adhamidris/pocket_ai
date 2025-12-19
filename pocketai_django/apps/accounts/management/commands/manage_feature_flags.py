@@ -3,7 +3,7 @@ from __future__ import annotations
 from django.core.management.base import BaseCommand, CommandError
 
 from apps.accounts.models import BusinessProfile
-from apps.services.feature_flags import FeatureFlagService
+from apps.accounts.feature_flags import FeatureFlagService
 
 
 class Command(BaseCommand):

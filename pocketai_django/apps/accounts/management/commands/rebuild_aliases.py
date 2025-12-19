@@ -3,7 +3,7 @@ from __future__ import annotations
 from django.core.management.base import BaseCommand, CommandError
 
 from apps.accounts.models import KnowledgeUpload
-from apps.services.knowledge_ingestion import KnowledgeIngestionError, KnowledgeIngestionService
+from apps.knowledge.knowledge_ingestion import KnowledgeIngestionError, KnowledgeIngestionService
 
 
 class Command(BaseCommand):

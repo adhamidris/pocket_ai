@@ -17,8 +17,8 @@ from django.db import close_old_connections
 
 from apps.accounts.models import AgentProfile, BusinessProfile
 from apps.conversations.models import Conversation, ConversationChannel, ConversationStatus
-from apps.services.mcp import tools as mcp_tools
-from apps.services.mcp.types import ToolExecutionContext
+from apps.mcp import tools as mcp_tools
+from apps.mcp.types import ToolExecutionContext
 
 
 @dataclass(frozen=True)

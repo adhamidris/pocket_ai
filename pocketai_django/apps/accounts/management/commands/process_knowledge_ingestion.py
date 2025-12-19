@@ -13,8 +13,12 @@ from apps.accounts.models import (
     KnowledgeStatus,
     KnowledgeUpload,
 )
-from apps.services.knowledge_ingestion import KnowledgeIngestionService, get_ingestion_queue_health, queue_ingestion_job
-from apps.services.rag_logging import structured_log
+from apps.knowledge.knowledge_ingestion import (
+    KnowledgeIngestionService,
+    get_ingestion_queue_health,
+    queue_ingestion_job,
+)
+from apps.rag.rag_logging import structured_log
 
 
 class Command(BaseCommand):

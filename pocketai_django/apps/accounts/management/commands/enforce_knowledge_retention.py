@@ -15,7 +15,7 @@ from apps.accounts.models import (
     KnowledgeStatus,
     KnowledgeUpload,
 )
-from apps.services.documents import delete_document
+from apps.knowledge.documents import delete_document
 
 
 logger = logging.getLogger(__name__)

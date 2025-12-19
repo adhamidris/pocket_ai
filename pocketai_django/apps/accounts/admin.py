@@ -26,7 +26,7 @@ from .models import (
     RegistrationSession,
     User,
 )
-from apps.services.evaluation.harness import RAGEvaluationHarness
+from apps.rag.evaluation.harness import RAGEvaluationHarness
 
 
 admin.site.site_header = "PocketAI Operations Console"

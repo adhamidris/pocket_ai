@@ -35,8 +35,8 @@ from apps.accounts.models import (
 from apps.conversations.models import IdentifierEvent
 from apps.cases.models import Case, CaseMessage, CasePriority, CaseStatus
 from apps.customers.models import Customer, CustomerNoteAuthor
-from apps.services.action_controls import list_action_settings, set_action_setting
-from apps.services.agents import (
+from apps.accounts.action_controls import list_action_settings, set_action_setting
+from apps.accounts.agents import (
     AgentListValidationError,
     agent_identifier,
     display_role_label,
@@ -44,7 +44,7 @@ from apps.services.agents import (
     get_agent_detail,
     list_agents,
 )
-from apps.services.cases import (
+from apps.cases.services import (
     CaseDetail,
     CaseListResult,
     CaseSummary,
@@ -57,8 +57,8 @@ from apps.services.cases import (
     list_cases,
     update_case,
 )
-from apps.services.customers import CustomerDetail as CustomerDetailData, CustomerSummary, get_customer_detail
-from apps.services.documents import (
+from apps.customers.services import CustomerDetail as CustomerDetailData, CustomerSummary, get_customer_detail
+from apps.knowledge.documents import (
     CsvPreviewError,
     delete_document as delete_knowledge_document,
     DocumentDetail,
@@ -70,8 +70,8 @@ from apps.services.documents import (
     preview_csv_upload,
     scrape_document_source,
 )
-from apps.services.integration_sync import IntegrationSyncError, IntegrationSyncService
-from apps.services.integrations.google_drive import (
+from apps.integrations.integration_sync import IntegrationSyncError, IntegrationSyncService
+from apps.integrations.google_drive import (
     GoogleOAuthError,
     GoogleSheetsDiscoveryError,
     build_google_authorization_url,
@@ -79,7 +79,7 @@ from apps.services.integrations.google_drive import (
     exchange_google_authorization_code,
     fetch_google_account_profile,
 )
-from apps.services.registration import (
+from apps.accounts.registration import (
     AgentProfileError,
     AgentProfileResult,
     BusinessProfileError,
@@ -94,8 +94,8 @@ from apps.services.registration import (
     start_registration as start_registration_service,
     upsert_business_profile,
 )
-from apps.services.mcp.identifier_eval import IdentifierEvalCase, IdentifierEvalHarness
-from apps.services.mcp.identifier_registry import IdentifierRegistryError, IdentifierRegistryService
+from apps.mcp.identifier_eval import IdentifierEvalCase, IdentifierEvalHarness
+from apps.mcp.identifier_registry import IdentifierRegistryError, IdentifierRegistryService
 
 logger = logging.getLogger(__name__)
 
