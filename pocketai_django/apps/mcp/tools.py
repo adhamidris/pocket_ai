@@ -3405,6 +3405,10 @@ def _table_aggregate_handler(
             identifier_match_values
             or [_normalize_identifier_value(v) for v in normalized_match_values if _normalize_identifier_value(v)]
         )
+    prompt_cells_cap = max(4, int(getattr(settings, "MCP_PROMPT_TABLE_MAX_CELLS", 12) or 12))
+    prompt_cells_exact = max(4, int(getattr(settings, "MCP_PROMPT_TABLE_MAX_CELLS_EXACT", 60) or 60))
+    has_exact_identifier_filter = bool(match_policy == "eq" and match_column and normalized_match_values)
+    row_cell_cap = max(prompt_cells_cap, prompt_cells_exact) if has_exact_identifier_filter else prompt_cells_cap
 
     def _clip_text(value: object, limit: int) -> str:
         text = _coerce_str(value)
@@ -3490,26 +3494,35 @@ def _table_aggregate_handler(
             continue
 
         preview_cells: list[dict[str, object]] = []
+        preview_column_norms: set[str] = set()
         contributions: list[dict[str, object]] = []
         value_numeric: float | None = None
         value_display: str | None = None
+        match_cell_index: int | None = None
         for cell in cells:
             column_label = cell.get("column") or f"column_{(cell.get('column_index') or 0) + 1}"
             cell_value = cell.get("raw_text") or ""
             normalized_label = cell.get("normalized") or _normalize_column_name(column_label)
+            if match_column and normalized_label == match_column:
+                try:
+                    match_cell_index = int(cell.get("column_index"))
+                except (TypeError, ValueError):
+                    match_cell_index = None
             is_total_col = bool(cell.get("is_total_column"))
             include_in_preview = True
             if normalized_column_filters:
                 include_in_preview = normalized_label in normalized_column_filters
             elif is_total_col:
                 include_in_preview = False
-            if include_in_preview and len(preview_cells) < 12:
+            if include_in_preview and len(preview_cells) < row_cell_cap:
                 preview_cells.append(
                     {
                         "column": _clip_text(column_label, 80),
                         "value": _clip_text(cell_value, 160),
                     }
                 )
+                if normalized_label:
+                    preview_column_norms.add(normalized_label)
             numeric_candidate = cell.get("numeric")
             if numeric_candidate is not None:
                 numeric_float = float(numeric_candidate)
@@ -3533,6 +3546,56 @@ def _table_aggregate_handler(
                             "is_total_column": is_total_col,
                         }
                     )
+
+        # If only the identifier column matched, include adjacent cells for context (e.g., unlabeled name columns).
+        if has_exact_identifier_filter and match_cell_index is not None:
+            has_non_match = any(
+                _normalize_column_name(entry.get("column")) != match_column
+                for entry in preview_cells
+                if isinstance(entry, Mapping)
+            )
+            if not has_non_match:
+                cells_by_index = {
+                    int(cell.get("column_index")): cell
+                    for cell in cells
+                    if cell.get("column_index") is not None
+                }
+                neighbor_candidates: list[Mapping[str, object]] = []
+                for delta in (-1, 1, -2, 2):
+                    neighbor = cells_by_index.get(match_cell_index + delta)
+                    if isinstance(neighbor, Mapping):
+                        neighbor_candidates.append(neighbor)
+
+                def _append_neighbors(*, require_text: bool) -> None:
+                    for neighbor in neighbor_candidates:
+                        if len(preview_cells) >= row_cell_cap:
+                            break
+                        raw_text = _coerce_str(neighbor.get("raw_text")).strip()
+                        if not raw_text:
+                            continue
+                        if require_text and neighbor.get("numeric") is not None:
+                            continue
+                        column_label = neighbor.get("column") or f"column_{(neighbor.get('column_index') or 0) + 1}"
+                        normalized_label = _normalize_column_name(column_label)
+                        if normalized_label and normalized_label in preview_column_norms:
+                            continue
+                        preview_cells.append(
+                            {
+                                "column": _clip_text(column_label, 80),
+                                "value": _clip_text(raw_text, 160),
+                            }
+                        )
+                        if normalized_label:
+                            preview_column_norms.add(normalized_label)
+
+                _append_neighbors(require_text=True)
+                has_non_match = any(
+                    _normalize_column_name(entry.get("column")) != match_column
+                    for entry in preview_cells
+                    if isinstance(entry, Mapping)
+                )
+                if not has_non_match:
+                    _append_neighbors(require_text=False)
 
         numeric_value: float | None = None
         display_value: str | None = None
@@ -3672,7 +3735,7 @@ def _table_aggregate_handler(
     for row in matched_rows:
         if len(rows_out) >= max(1, prompt_rows_cap * 2):
             break
-        row_out = _row_payload(row, max_cells=8, max_contributions=prompt_contrib_cap)
+        row_out = _row_payload(row, max_cells=row_cell_cap, max_contributions=prompt_contrib_cap)
         row_chars = _json_char_len(row_out) + 1
         if rows_out and max_payload_chars is not None and running_chars + row_chars > max_payload_chars:
             break

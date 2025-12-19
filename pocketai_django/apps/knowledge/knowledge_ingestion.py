@@ -3699,9 +3699,16 @@ class KnowledgeIngestionService:
             getattr(connection.features, "has_select_for_update", False)
             and getattr(connection.features, "has_select_for_update_skip_locked", False)
         )
+        supports_for_update_of = bool(getattr(connection.features, "has_select_for_update_of", False))
 
         with transaction.atomic():
-            locked = qs.select_for_update(skip_locked=True) if supports_skip_locked else qs.select_for_update()
+            # Lock only the ingestion job row to avoid FOR UPDATE errors on nullable outer joins.
+            for_update_kwargs: dict[str, Any] = {}
+            if supports_skip_locked:
+                for_update_kwargs["skip_locked"] = True
+            if supports_for_update_of:
+                for_update_kwargs["of"] = ("self",)
+            locked = qs.select_for_update(**for_update_kwargs)
             job = locked.first()
             if not job:
                 return None

@@ -41,12 +41,12 @@ STAGE_HISTORY_DEFAULTS: Mapping[str, int] = {
 
 
 TONE_STYLE_HINTS: Mapping[str, str] = {
-    "friendly": "Keep a {tone_label} voice—warm, conversational, and encouraging. Adjust length naturally so detailed questions receive detailed answers.",
-    "professional": "Use a {tone_label} tone: clear, confident, and thorough. Provide as much detail as the visitor needs, even if it takes multiple sentences.",
+    "friendly": "Keep a {tone_label} voice—warm, conversational, and encouraging.",
+    "professional": "Use a {tone_label} tone: clear, confident, and composed.",
     "empathetic": "Maintain an {tone_label} tone that acknowledges the visitor's concerns before explaining facts or next steps with care.",
     "casual": "Stay {tone_label} with relaxed phrasing, contractions, and natural flow; mirror the visitor's energy while remaining factual.",
     "playful": "Adopt a {tone_label} tone with upbeat language, but keep policy and data accurate—fun but trustworthy.",
-    "formal": "Use a {tone_label} tone with precise language and full sentences; deliver complete explanations without sounding stiff.",
+    "formal": "Use a {tone_label} tone with precise language and full sentences; avoid slang while remaining readable.",
 }
 
 
@@ -58,8 +58,7 @@ def _tone_instruction(agent: AgentProfile | None) -> str:
     if hint:
         return hint.format(tone_label=resolved_label)
     return (
-        f"Maintain a {resolved_label} tone that matches the visitor's request—stay concise when they only need a quick fact, "
-        "and expand fully when they ask for details or complete lists."
+        f"Maintain a {resolved_label} tone that matches the visitor's request."
     )
 
 
@@ -92,6 +91,7 @@ def build_system_message(
         """
         ### Guardrails
         - {tone_instruction}
+        - Answer only what the visitor asked for. If they might want more detail, offer to expand rather than adding extra information unprompted.
         - Speak only when you have substance. During tool calls output nothing; no “checking/searching” narration.
         - You get at most one short placeholder per turn. After you’ve said you’re checking, every later tool turn must emit tool_calls only (empty assistant content) until you can deliver the final answer.
         - Do not narrate internal steps—keep every assistant sentence visitor-facing.
