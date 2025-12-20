@@ -7,11 +7,25 @@ from urllib.parse import urlparse
 
 from django.core.exceptions import ValidationError
 from django.core.validators import URLValidator
+import logging
+
 from django.db import transaction
+from django.db.models import Q
 from django.utils import timezone
 from django.utils.text import slugify
 
-from apps.accounts.models import AgentProfile, BusinessProfile, KnowledgeUpload, RegistrationSession, User
+from apps.accounts.models import (
+    AgentProfile,
+    BusinessProfile,
+    KnowledgeSourceType,
+    KnowledgeStatus,
+    KnowledgeUpload,
+    KnowledgeUploadUrl,
+    RegistrationSession,
+    User,
+)
+
+logger = logging.getLogger(__name__)
 
 
 class RegistrationError(Exception):
@@ -262,6 +276,24 @@ def _display_resource_label(resource_type: str) -> str:
     return label.title()
 
 
+REGISTRATION_MATERIAL_LABELS = {
+    "vision": "Vision",
+    "mission": "Mission",
+    "catalog": "Products & Services Catalog",
+    "faqs": "FAQs",
+    "kb": "Knowledge Base",
+    "sops": "SOPs",
+    "tc": "T&C",
+}
+
+
+def _material_label(material_key: str) -> str:
+    key = (material_key or "").strip().lower()
+    if not key:
+        return "Knowledge"
+    return REGISTRATION_MATERIAL_LABELS.get(key, _display_resource_label(key))
+
+
 def _build_upload_slug(resource_type: str, url: str) -> str:
     digest = hashlib.sha256(url.encode("utf-8")).hexdigest()[:12]
     base = slugify(f"{resource_type}-{digest}")
@@ -356,6 +388,9 @@ def finalize_knowledge_uploads(
                 field="materials",
             )
 
+    uploads: list[KnowledgeUpload] = []
+    uploads_for_ingestion: list[KnowledgeUpload] = []
+
     with transaction.atomic():
         try:
             business = (
@@ -369,34 +404,58 @@ def finalize_knowledge_uploads(
         session = business.registration_session
         user = business.user
 
-        existing_uploads = {
-            (upload.resource_type, upload.url): upload
-            for upload in KnowledgeUpload.objects.select_for_update().filter(
-                business_profile=business
+        if not skip_processing:
+            existing_registration_uploads = (
+                KnowledgeUpload.objects.select_for_update()
+                .filter(business_profile=business, source_type=KnowledgeSourceType.LINK)
+                .filter(Q(metadata__uploaded_via="registration") | Q(metadata__submitted_via="registration"))
             )
-        }
+            existing_lookup: dict[tuple[str, str], KnowledgeUpload] = {}
+            for upload in existing_registration_uploads:
+                metadata = upload.metadata if isinstance(upload.metadata, dict) else {}
+                material = str(metadata.get("registration_material") or "").strip().lower()
+                url = (upload.legacy_url or "").strip()
+                if material and url:
+                    existing_lookup[(material, url)] = upload
 
-        uploads: list[KnowledgeUpload] = []
-
-        if skip_processing:
-            uploads = list(existing_uploads.values())
-        else:
-            for resource_type, urls in sanitized_links.items():
+            for material, urls in sanitized_links.items():
+                label = _material_label(material)
                 for url in urls:
-                    key = (resource_type, url)
-                    upload = existing_uploads.pop(key, None)
-                    slug = _build_upload_slug(resource_type, url)
+                    slug = _build_upload_slug(material, url)
                     source_name = _infer_source_name(url)
+                    display_name = f"{label} ({source_name})" if source_name else label
+                    upload = existing_lookup.get((material, url))
+
                     if upload:
+                        metadata = upload.metadata if isinstance(upload.metadata, dict) else {}
+                        metadata.update(
+                            {
+                                "uploaded_via": "registration",
+                                "registration_material": material,
+                                "registration_material_label": label,
+                            }
+                        )
                         fields_to_update: list[str] = []
+                        if upload.display_name != display_name:
+                            upload.display_name = display_name[:255]
+                            fields_to_update.append("display_name")
                         if upload.slug != slug:
                             upload.slug = slug
                             fields_to_update.append("slug")
+                        if upload.category != label:
+                            upload.category = label[:64]
+                            fields_to_update.append("category")
                         if upload.source_name != source_name:
-                            upload.source_name = source_name
+                            upload.source_name = source_name[:255]
                             fields_to_update.append("source_name")
-                        if upload.status != "pending":
-                            upload.status = "pending"
+                        if upload.legacy_url != url:
+                            upload.legacy_url = url
+                            fields_to_update.append("legacy_url")
+                        if upload.metadata != metadata:
+                            upload.metadata = metadata
+                            fields_to_update.append("metadata")
+                        if upload.status in {KnowledgeStatus.FAILED, KnowledgeStatus.ARCHIVED}:
+                            upload.status = KnowledgeStatus.PROCESSING
                             fields_to_update.append("status")
                         if fields_to_update:
                             upload.save(update_fields=fields_to_update + ["updated_at"])
@@ -404,20 +463,44 @@ def finalize_knowledge_uploads(
                         upload = KnowledgeUpload.objects.create(
                             business_profile=business,
                             user=user,
-                            resource_type=resource_type,
-                            url=url,
-                            metadata={"submitted_via": "registration"},
-                            source_name=source_name,
+                            display_name=display_name[:255],
+                            source_type=KnowledgeSourceType.LINK,
+                            status=KnowledgeStatus.PROCESSING,
+                            source_name=source_name[:255],
+                            legacy_url=url,
+                            category=label[:64],
+                            metadata={
+                                "uploaded_via": "registration",
+                                "registration_material": material,
+                                "registration_material_label": label,
+                            },
                             slug=slug,
-                            status="pending",
                         )
-                    uploads.append(upload)
 
-            # Remove uploads no longer selected to keep sources in sync.
-            if existing_uploads:
-                KnowledgeUpload.objects.filter(
-                    id__in=[upload.id for upload in existing_uploads.values()]
-                ).delete()
+                    try:
+                        url_detail = upload.url_detail
+                    except KnowledgeUploadUrl.DoesNotExist:
+                        url_detail = None
+
+                    if isinstance(url_detail, KnowledgeUploadUrl):
+                        fields_to_update = []
+                        if url_detail.url != url:
+                            url_detail.url = url
+                            fields_to_update.append("url")
+                        if url_detail.normalized_host != source_name:
+                            url_detail.normalized_host = source_name[:120]
+                            fields_to_update.append("normalized_host")
+                        if fields_to_update:
+                            url_detail.save(update_fields=fields_to_update + ["updated_at"])
+                    else:
+                        KnowledgeUploadUrl.objects.get_or_create(
+                            upload=upload,
+                            defaults={"url": url, "normalized_host": source_name[:120]},
+                        )
+
+                    uploads.append(upload)
+                    if upload.status not in {KnowledgeStatus.READY, KnowledgeStatus.ACTIVE}:
+                        uploads_for_ingestion.append(upload)
 
         # Update registration session markers.
         session.current_step = "uploads"
@@ -441,5 +524,13 @@ def finalize_knowledge_uploads(
             agent_profile.status = "active"
             agent_profile.save(update_fields=["status", "updated_at"])
 
-    uploads.sort(key=lambda item: (item.resource_type, item.created_at))
+    uploads.sort(key=lambda item: (item.category or "", item.created_at))
+    if uploads_for_ingestion:
+        try:
+            from apps.knowledge.knowledge_ingestion import queue_ingestion_job
+
+            for upload in uploads_for_ingestion:
+                queue_ingestion_job(upload, trigger="registration_link_upload")
+        except Exception:  # pragma: no cover - ingestion scheduling should not block registration
+            logger.exception("registration.uploads.ingestion_enqueue_failed business=%s", business_id)
     return KnowledgeUploadResult(business=business, session=session, uploads=uploads)

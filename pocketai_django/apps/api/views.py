@@ -3116,8 +3116,14 @@ def finalize_uploads(request: HttpRequest, business_id: str) -> JsonResponse:
         "uploads": [
             {
                 "id": str(upload.id),
-                "resourceType": upload.resource_type,
-                "url": upload.url,
+                "resourceType": (
+                    (upload.metadata or {}).get("registration_material")
+                    if isinstance(upload.metadata, dict)
+                    else None
+                ),
+                "sourceType": upload.source_type,
+                "category": upload.category,
+                "url": upload.legacy_url,
                 "status": upload.status,
                 "sourceName": upload.source_name,
             }

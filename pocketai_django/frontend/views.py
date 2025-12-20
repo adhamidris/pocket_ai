@@ -18,7 +18,7 @@ from django.contrib import messages
 from django.contrib.auth.decorators import login_required
 from django.core.exceptions import ValidationError
 from django.core.validators import URLValidator
-from django.db.models import Count, Q
+from django.db.models import Count, Prefetch, Q
 from django.http import Http404, HttpRequest, HttpResponse, JsonResponse
 from django.middleware.csrf import get_token
 from django.shortcuts import redirect, render
@@ -56,6 +56,7 @@ from apps.accounts.agents import (
     initials_from_name,
     list_agents,
 )
+from apps.accounts.action_controls import list_action_settings
 from apps.accounts.registration import KnowledgeUploadError
 from apps.cases.services import list_cases
 from apps.customers.services import list_customers
@@ -840,6 +841,8 @@ def landing(request: HttpRequest) -> HttpResponse:
 
 def register(request: HttpRequest) -> HttpResponse:
     """Registration page – initial step mirrored from the React experience."""
+
+    get_token(request)
 
     industries = [
         "E-commerce & Retail",
@@ -1731,6 +1734,7 @@ def dashboard_agents(request: HttpRequest) -> HttpResponse:
     total_agents = 0
     has_error = False
     business = request.user.business_profiles.order_by("-created_at").first() if request.user.is_authenticated else None
+    agent_ids: list[uuid.UUID] = []
 
     def _format_duration(seconds: float | None) -> str | None:
         if not seconds:
@@ -1756,6 +1760,7 @@ def dashboard_agents(request: HttpRequest) -> HttpResponse:
             total_agents = result.total
             business_slug = slugify(business.name)
             for item in result.items:
+                agent_ids.append(item.id)
                 initials = initials_from_name(item.name)
                 identifier = agent_identifier(item.id)
                 role_label = display_role_label(item.role)
@@ -1794,6 +1799,99 @@ def dashboard_agents(request: HttpRequest) -> HttpResponse:
             has_error = True
         except Exception:
             has_error = True
+
+        if agent_ids:
+            profile_lookup = {
+                str(profile.id): profile
+                for profile in AgentProfile.objects.filter(business_profile=business, id__in=agent_ids)
+                .select_related("business_profile")
+                .prefetch_related(
+                    "action_permissions",
+                    Prefetch(
+                        "allowed_documents",
+                        queryset=KnowledgeUpload.objects.filter(business_profile=business).only("id", "status", "is_active"),
+                    ),
+                )
+                .only("id", "escalation_rule", "business_profile__name", "business_profile__slug")
+            }
+            active_knowledge_qs = (
+                KnowledgeUpload.objects.filter(business_profile=business, is_active=True)
+                .exclude(status=KnowledgeStatus.ARCHIVED)
+            )
+            knowledge_total = active_knowledge_qs.count()
+            knowledge_status_counts = {
+                row["status"]: row["count"]
+                for row in active_knowledge_qs.values("status").annotate(count=Count("id"))
+            }
+            knowledge_processing_total = knowledge_status_counts.get(KnowledgeStatus.PENDING, 0) + knowledge_status_counts.get(
+                KnowledgeStatus.PROCESSING,
+                0,
+            )
+            knowledge_failed_total = knowledge_status_counts.get(KnowledgeStatus.FAILED, 0)
+
+            for agent in agents:
+                profile = profile_lookup.get(str(agent.get("uuid") or ""))
+                if not profile:
+                    continue
+
+                allowed_docs = list(getattr(profile, "allowed_documents", []).all())
+                selected_docs = [
+                    doc
+                    for doc in allowed_docs
+                    if getattr(doc, "is_active", True) and getattr(doc, "status", "") != KnowledgeStatus.ARCHIVED
+                ]
+                selected_processing = sum(
+                    1
+                    for doc in selected_docs
+                    if getattr(doc, "status", "") in {KnowledgeStatus.PENDING, KnowledgeStatus.PROCESSING}
+                )
+                selected_failed = sum(1 for doc in selected_docs if getattr(doc, "status", "") == KnowledgeStatus.FAILED)
+
+                if knowledge_total == 0:
+                    agent["knowledge_mode"] = "missing"
+                    agent["knowledge_total"] = 0
+                    agent["knowledge_processing"] = 0
+                    agent["knowledge_failed"] = 0
+                elif allowed_docs:
+                    agent["knowledge_mode"] = "select"
+                    agent["knowledge_total"] = len(selected_docs)
+                    agent["knowledge_processing"] = selected_processing
+                    agent["knowledge_failed"] = selected_failed
+                else:
+                    agent["knowledge_mode"] = "all"
+                    agent["knowledge_total"] = knowledge_total
+                    agent["knowledge_processing"] = knowledge_processing_total
+                    agent["knowledge_failed"] = knowledge_failed_total
+
+                action_settings = list_action_settings(profile)
+                enabled_lookup = {setting.key: setting.enabled for setting in action_settings}
+
+                def _enabled(key: str) -> bool:
+                    return bool(enabled_lookup.get(key))
+
+                knowledge_enabled = _enabled("read_knowledge")
+                cases_enabled = _enabled("create_case")
+                customers_enabled = _enabled("create_customer") or _enabled("update_customer")
+                leads_enabled = _enabled("create_lead")
+                appointments_enabled = _enabled("create_appointment")
+                escalation_enabled = _enabled("flag_escalation")
+
+                capability_flags = [
+                    ("Knowledge", knowledge_enabled),
+                    ("Cases", cases_enabled),
+                    ("Customers", customers_enabled),
+                    ("Leads", leads_enabled),
+                    ("Appointments", appointments_enabled),
+                    ("Escalation", escalation_enabled),
+                ]
+                enabled_labels = [label for label, enabled in capability_flags if enabled]
+                highlights = enabled_labels[:3]
+                agent["capabilities_enabled"] = sum(1 for _label, enabled in capability_flags if enabled)
+                agent["capabilities_total"] = len(capability_flags)
+                agent["capabilities_highlights"] = highlights
+                agent["capabilities_more"] = max(0, len(enabled_labels) - len(highlights))
+                agent["escalation_enabled"] = escalation_enabled
+                agent["escalation_rule"] = profile.escalation_rule or ""
 
         active_agents = AgentProfile.objects.filter(business_profile=business, status="active").count()
         total_recorded_agents = AgentProfile.objects.filter(business_profile=business).count()
@@ -1844,7 +1942,7 @@ def dashboard_agents(request: HttpRequest) -> HttpResponse:
         "agents_has_prev": False,
         "agents_has_next": bool(total_agents and total_agents > len(agents)),
         "agents_panel_empty_title": "No agent selected",
-        "agents_panel_empty_message": "Choose an agent from the table to preview configuration and analytics.",
+        "agents_panel_empty_message": "Choose an agent from the cards to preview configuration and analytics.",
         "agents_modal_roles": [
             "Support Agent",
             "Sales Associate",

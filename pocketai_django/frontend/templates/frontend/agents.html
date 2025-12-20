@@ -104,209 +104,179 @@
       </section>
 
       <section class="space-y-4">
-        <div class="relative border border-border/70 bg-card text-card-foreground shadow-lg shadow-black/5 backdrop-blur hover:border-primary/35 transition-colors dark:border-slate-700/50 dark:bg-slate-800/70 dark:shadow-black/25 rounded-xl overflow-hidden">
-          <div class="absolute inset-x-0 top-0 h-px bg-gradient-to-r from-primary/35 via-primary/20 to-transparent"></div>
-          <div class="relative overflow-x-auto overflow-y-auto max-h-[70vh]">
-            <table
-              class="w-full caption-bottom text-sm rounded-xl border border-border/70 bg-background/60 shadow-sm backdrop-blur [&_th]:px-3 [&_td]:px-3 [&_th:first-child]:pl-4 [&_td:first-child]:pl-4 [&_th:last-child]:pr-4 [&_td:last-child]:pr-4 [&_th]:py-3 [&_td]:py-3"
-              data-agents-table
-            >
-              <thead class="sticky top-0 z-10 bg-muted/70 backdrop-blur border-b border-border/80">
-                <tr class="border-b transition-colors hover:bg-transparent">
-                  <th scope="col" class="h-12 text-left align-middle font-medium text-muted-foreground w-[240px]">Name / ID</th>
-                  <th scope="col" class="h-12 text-left align-middle font-medium text-muted-foreground w-[220px]">Roles</th>
-                  <th scope="col" class="h-12 text-left align-middle font-medium text-muted-foreground w-[120px]">Status</th>
-                  <th scope="col" class="h-12 text-right align-middle font-medium text-muted-foreground w-[120px]">Conversations</th>
-                  <th scope="col" class="h-12 text-right align-middle font-medium text-muted-foreground w-[120px]">CSAT</th>
-                  <th scope="col" class="h-12 text-right align-middle font-medium text-muted-foreground w-[120px]">AHT</th>
-                  <th scope="col" class="h-12 text-right align-middle font-medium text-muted-foreground w-[120px]">Escalations</th>
-                  <th scope="col" class="h-12 text-left align-middle font-medium text-muted-foreground w-[160px]">Updated</th>
-                  <th scope="col" class="h-12 text-right align-middle font-medium text-muted-foreground w-10"></th>
-                </tr>
-              </thead>
-              <tbody class="[&_tr:last-child]:border-0">
-                {% if agents_backend_notice %}
-                  <tr class="border-b transition-colors hover:bg-transparent">
-                    <td colspan="9" class="py-12 text-center text-sm text-muted-foreground">{{ agents_backend_notice }}</td>
-                  </tr>
-                {% elif agents_auth_notice %}
-                  <tr class="border-b transition-colors hover:bg-transparent">
-                    <td colspan="9" class="py-12 text-center text-sm text-muted-foreground">{{ agents_auth_notice }}</td>
-                  </tr>
-                {% elif agents_loading %}
-                  {% for _ in skeleton_rows %}
-                    <tr class="border-b transition-colors hover:bg-muted/50">
-                      <td class="py-4">
-                        <div class="flex items-center gap-3">
-                          <span class="inline-flex h-10 w-10 items-center justify-center rounded-full border border-border/60 bg-muted/50 text-xs font-semibold uppercase text-muted-foreground" aria-hidden="true">AI</span>
-                          <div class="space-y-2">
-                            <span class="block h-3 w-32 rounded bg-muted/60 animate-pulse" aria-hidden="true"></span>
-                            <span class="block h-3 w-24 rounded bg-muted/40 animate-pulse" aria-hidden="true"></span>
-                          </div>
-                        </div>
-                      </td>
-                      <td class="py-4">
-                        <span class="block h-3 w-28 rounded bg-muted/50 animate-pulse" aria-hidden="true"></span>
-                      </td>
-                      <td class="py-4">
-                        <span class="inline-flex h-5 w-16 rounded-full bg-muted/50 animate-pulse" aria-hidden="true"></span>
-                      </td>
-                      <td class="py-4 text-right">
-                        <span class="inline-block h-3 w-12 rounded bg-muted/50 animate-pulse" aria-hidden="true"></span>
-                      </td>
-                      <td class="py-4 text-right">
-                        <span class="inline-block h-3 w-12 rounded bg-muted/50 animate-pulse" aria-hidden="true"></span>
-                      </td>
-                      <td class="py-4 text-right">
-                        <span class="inline-block h-3 w-12 rounded bg-muted/50 animate-pulse" aria-hidden="true"></span>
-                      </td>
-                      <td class="py-4 text-right">
-                        <span class="inline-block h-3 w-12 rounded bg-muted/50 animate-pulse" aria-hidden="true"></span>
-                      </td>
-                      <td class="py-4">
-                        <span class="block h-3 w-32 rounded bg-muted/50 animate-pulse" aria-hidden="true"></span>
-                      </td>
-                      <td class="py-4 text-right">
-                        <span class="inline-flex h-8 w-8 items-center justify-center rounded-full bg-muted/40 animate-pulse" aria-hidden="true"></span>
-                      </td>
-                    </tr>
-                  {% endfor %}
-                {% elif agents_error_message %}
-                  <tr class="border-b transition-colors hover:bg-transparent">
-                    <td colspan="9" class="py-12 text-center text-sm text-muted-foreground">{{ agents_error_message }}</td>
-                  </tr>
-                {% elif agents %}
-                  {% for agent in agents %}
-                    <tr
-                      class="border-b transition-colors hover:bg-muted/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40 focus-visible:ring-offset-2 cursor-pointer"
-                      data-agent-row
-                      data-agent-uuid="{{ agent.uuid }}"
-                      data-agent-name="{{ agent.name|default:'Unnamed agent'|escape }}"
-                      data-agent-initials="{{ agent.initials|default:'AI'|escape }}"
-                      data-agent-identifier="{{ agent.identifier|default:'AG-0000' }}"
-                      data-agent-status="{{ agent.status_code|default:''|lower }}"
-                      data-agent-status-label="{{ agent.status|default:'Draft'|escape }}"
-                      data-agent-role="{{ agent.primary_role|default:'Support Agent'|escape }}"
-                      data-agent-tone="{{ agent.tone_label|default:'—'|escape }}"
-                      data-agent-tone-code="{{ agent.tone_code|default:''|lower }}"
-                      data-agent-roles="{{ agent.roles|join:', ' }}"
-                      data-agent-conversations="{{ agent.conversations|default:0 }}"
-                      data-agent-escalations="{{ agent.escalations|default:0 }}"
-                      data-agent-aht-seconds="{{ agent.aht_seconds|default:0 }}"
-                      data-agent-aht="{{ agent.aht|default:'' }}"
-                      data-agent-updated="{{ agent.updated|default:''|escape }}"
-                      data-agent-updated-iso="{{ agent.updated_iso|default:'' }}"
-                      data-agent-last-active="{{ agent.last_active_iso|default:'' }}"
-                      data-agent-shareable="{{ agent.shareable_path|default:'' }}"
-                      data-agent-public-slug="{{ agent.public_slug|default:'' }}"
-                      tabindex="0"
-                      aria-expanded="false"
-                    >
-                      <td class="py-4">
-                        <div class="flex items-center gap-3">
-                          <span class="inline-flex h-10 w-10 items-center justify-center rounded-full border border-border/70 bg-muted/50 text-xs font-semibold uppercase text-muted-foreground">
-                            {{ agent.initials|default:"AI" }}
-                          </span>
-                          <div class="space-y-1">
-                            <div class="text-sm font-semibold text-foreground">{{ agent.name|default:"Unnamed agent" }}</div>
-                            <div class="text-xs text-muted-foreground">ID: {{ agent.identifier|default:"AG-0000" }}</div>
-                          </div>
-                        </div>
-                      </td>
-                      <td class="py-4">
-                        <div class="flex flex-wrap gap-1">
-                          {% for role in agent.roles %}
-                            <span class="inline-flex items-center rounded-full border border-border/70 bg-muted/40 px-2 py-0.5 text-[11px] font-medium text-muted-foreground">{{ role }}</span>
-                          {% empty %}
-                            <span class="text-xs text-muted-foreground">—</span>
-                          {% endfor %}
-                        </div>
-                      </td>
-                      <td class="py-4">
-                        {% with status_code=agent.status_code|default:""|lower %}
-                          <span class="text-[11px] font-semibold capitalize {% if status_code == 'active' %}text-emerald-600{% elif status_code == 'review' %}text-amber-600{% elif status_code == 'draft' %}text-slate-500{% else %}text-slate-500{% endif %}">
-                            {{ agent.status|default:"Draft" }}
-                          </span>
-                        {% endwith %}
-                      </td>
-                      <td class="py-4 text-right">
-                        <div class="text-sm font-medium text-foreground">{{ agent.conversations|default:"—" }}</div>
-                      </td>
-                      <td class="py-4 text-right">
-                        <div class="text-sm font-medium text-foreground">
-                          {% if agent.satisfaction %}
-                            {{ agent.satisfaction }}
-                          {% else %}
-                            —
-                          {% endif %}
-                        </div>
-                      </td>
-                      <td class="py-4 text-right">
-                        <div class="text-sm font-medium text-foreground">
-                          {% if agent.aht %}
-                            {{ agent.aht }}
-                          {% else %}
-                            —
-                          {% endif %}
-                        </div>
-                      </td>
-                      <td class="py-4 text-right">
-                        <div class="text-sm font-medium text-foreground">{{ agent.escalations|default:"—" }}</div>
-                      </td>
-                      <td class="py-4">
-                        <div class="text-sm text-muted-foreground">{{ agent.updated|default:"—" }}</div>
-                      </td>
-                      <td class="py-4 text-right">
-                        <button
-                          type="button"
-                          class="inline-flex h-8 w-8 items-center justify-center rounded-full border border-input bg-background hover:bg-accent hover:text-accent-foreground transition-colors"
-                          data-agent-trigger
-                          aria-label="Open agent detail"
-                        >
-                          <svg class="h-4 w-4 text-muted-foreground" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor">
-                            <path stroke-linecap="round" stroke-linejoin="round" d="M12 6v6h4.5M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z" />
-                          </svg>
-                        </button>
-                      </td>
-                    </tr>
-                  {% endfor %}
-                {% else %}
-                  <tr class="border-b transition-colors hover:bg-transparent">
-                    <td colspan="9" class="py-12 text-center text-sm text-muted-foreground">{{ agents_empty_message }}</td>
-                  </tr>
-                {% endif %}
-              </tbody>
-            </table>
-          </div>
-          <div class="flex flex-col gap-3 md:flex-row md:items-center md:justify-between border-t border-border/70 px-4 py-3 text-xs text-muted-foreground">
-            <div>
-              Showing {{ agents_showing_count|default:0 }} of {{ agents_total|default:0 }} agents
-            </div>
-            <div class="flex items-center gap-2">
-              <button
-                type="button"
-                class="inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-md text-xs font-medium ring-offset-background transition-all duration-300 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-40 border border-input bg-background hover:bg-accent hover:text-accent-foreground h-8 px-3 py-1"
-                {% if not agents_has_prev %}disabled{% endif %}
-                data-page="prev"
-              >
-                Previous
-              </button>
-              <button
-                type="button"
-                class="inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-md text-xs font-medium ring-offset-background transition-all duration-300 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-40 border border-input bg-background hover:bg-accent hover:text-accent-foreground h-8 px-3 py-1"
-                {% if not agents_has_next %}disabled{% endif %}
-                data-page="next"
-              >
-                Next
-              </button>
-              {% if agents_loading %}
-                <svg class="h-3.5 w-3.5 animate-spin text-muted-foreground" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
-                  <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
-                  <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 0 1 8-8v4a4 4 0 0 0-4 4H4Z"></path>
-                </svg>
-              {% endif %}
-            </div>
-          </div>
+        <div data-agents-grid>
+          {% if agents_backend_notice %}
+            <div class="py-12 text-center text-sm text-muted-foreground">{{ agents_backend_notice }}</div>
+          {% elif agents_auth_notice %}
+            <div class="py-12 text-center text-sm text-muted-foreground">{{ agents_auth_notice }}</div>
+          {% elif agents_error_message %}
+            <div class="py-12 text-center text-sm text-muted-foreground">{{ agents_error_message }}</div>
+	          {% elif agents_loading %}
+	            <div class="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-4">
+	              {% for _ in skeleton_rows %}
+	                <div class="rounded-xl border border-border/70 bg-background/60 p-5 shadow-sm">
+	                  <div class="flex items-start justify-between gap-4">
+	                    <div class="flex items-center gap-3 min-w-0">
+	                      <span class="inline-flex h-11 w-11 items-center justify-center rounded-full border border-border/60 bg-muted/50 text-sm font-semibold uppercase text-muted-foreground" aria-hidden="true">AI</span>
+	                      <div class="min-w-0 space-y-2">
+	                        <span class="block h-3.5 w-32 rounded bg-muted/60 animate-pulse" aria-hidden="true"></span>
+	                        <span class="block h-3 w-24 rounded bg-muted/40 animate-pulse" aria-hidden="true"></span>
+	                      </div>
+	                    </div>
+	                    <span class="block h-3 w-14 rounded bg-muted/50 animate-pulse" aria-hidden="true"></span>
+	                  </div>
+	                  <div class="mt-4 grid grid-cols-2 gap-3">
+	                    <div class="rounded-lg border border-border/60 bg-muted/30 px-3 py-2">
+	                      <span class="block h-3 w-16 rounded bg-muted/50 animate-pulse" aria-hidden="true"></span>
+	                      <span class="mt-2 block h-4 w-24 rounded bg-muted/60 animate-pulse" aria-hidden="true"></span>
+	                      <span class="mt-1.5 block h-3 w-20 rounded bg-muted/40 animate-pulse" aria-hidden="true"></span>
+	                    </div>
+	                    <div class="rounded-lg border border-border/60 bg-muted/30 px-3 py-2">
+	                      <span class="block h-3 w-16 rounded bg-muted/50 animate-pulse" aria-hidden="true"></span>
+	                      <span class="mt-2 block h-4 w-16 rounded bg-muted/60 animate-pulse" aria-hidden="true"></span>
+	                      <span class="mt-1.5 block h-3 w-24 rounded bg-muted/40 animate-pulse" aria-hidden="true"></span>
+	                    </div>
+	                  </div>
+	                  <div class="mt-4 flex items-center justify-between gap-3 border-t border-border/60 pt-3">
+	                    <span class="block h-3 w-24 rounded bg-muted/40 animate-pulse" aria-hidden="true"></span>
+	                    <span class="block h-7 w-20 rounded bg-muted/50 animate-pulse" aria-hidden="true"></span>
+	                  </div>
+	                </div>
+	              {% endfor %}
+	            </div>
+	          {% elif agents %}
+	            <div class="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-4">
+	              {% for agent in agents %}
+	                <article
+	                  class="group rounded-xl border border-border/70 bg-background/60 p-5 shadow-sm transition-all hover:border-primary/35 hover:bg-muted/40 hover:shadow-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40 focus-visible:ring-offset-2 cursor-pointer"
+	                  role="button"
+	                  tabindex="0"
+	                  aria-expanded="false"
+                  data-agent-row
+                  data-agent-uuid="{{ agent.uuid }}"
+                  data-agent-name="{{ agent.name|default:'Unnamed agent'|escape }}"
+                  data-agent-initials="{{ agent.initials|default:'AI'|escape }}"
+                  data-agent-identifier="{{ agent.identifier|default:'AG-0000' }}"
+                  data-agent-status="{{ agent.status_code|default:''|lower }}"
+                  data-agent-status-label="{{ agent.status|default:'Draft'|escape }}"
+                  data-agent-role="{{ agent.primary_role|default:'Support Agent'|escape }}"
+                  data-agent-tone="{{ agent.tone_label|default:'—'|escape }}"
+                  data-agent-tone-code="{{ agent.tone_code|default:''|lower }}"
+                  data-agent-roles="{{ agent.roles|join:', ' }}"
+                  data-agent-conversations="{{ agent.conversations|default:0 }}"
+                  data-agent-escalations="{{ agent.escalations|default:0 }}"
+                  data-agent-aht-seconds="{{ agent.aht_seconds|default:0 }}"
+                  data-agent-aht="{{ agent.aht|default:'' }}"
+                  data-agent-updated="{{ agent.updated|default:''|escape }}"
+                  data-agent-updated-iso="{{ agent.updated_iso|default:'' }}"
+                  data-agent-last-active="{{ agent.last_active_iso|default:'' }}"
+                  data-agent-shareable="{{ agent.shareable_path|default:'' }}"
+                  data-agent-public-slug="{{ agent.public_slug|default:'' }}"
+                >
+	                  <div class="flex items-start justify-between gap-4">
+	                    <div class="flex items-center gap-3 min-w-0">
+	                      <span class="inline-flex h-11 w-11 items-center justify-center rounded-full border border-border/70 bg-muted/50 text-sm font-semibold uppercase text-muted-foreground">
+	                        {{ agent.initials|default:"AI" }}
+	                      </span>
+	                      <div class="min-w-0">
+	                        <div class="truncate text-base font-semibold text-foreground">{{ agent.name|default:"Unnamed agent" }}</div>
+	                        <div class="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground">
+	                          <span class="truncate">{{ agent.primary_role|default:"Support Agent" }}</span>
+	                          <span aria-hidden="true">•</span>
+	                          <span class="truncate">ID: {{ agent.identifier|default:"AG-0000" }}</span>
+	                          {% if agent.tone_label and agent.tone_label != '—' %}
+	                            <span aria-hidden="true">•</span>
+	                            <span class="truncate">{{ agent.tone_label }}</span>
+	                          {% endif %}
+	                        </div>
+	                      </div>
+	                    </div>
+	                    <div class="shrink-0 text-right">
+	                      {% with status_code=agent.status_code|default:""|lower %}
+	                        <div class="text-xs font-semibold capitalize {% if status_code == 'active' %}text-emerald-600{% elif status_code == 'review' %}text-amber-600{% elif status_code == 'draft' %}text-slate-500{% else %}text-slate-500{% endif %}">
+	                          {{ agent.status|default:"Draft" }}
+	                        </div>
+	                      {% endwith %}
+	                      <div class="mt-1 text-[11px] text-muted-foreground">{{ agent.updated|default:"—" }}</div>
+	                    </div>
+	                  </div>
+
+	                  <div class="mt-4 grid grid-cols-2 gap-3">
+	                    <div class="rounded-lg border border-border/60 bg-muted/30 px-3 py-2">
+	                      <div class="text-[11px] font-medium text-muted-foreground">Knowledge</div>
+	                      <div class="mt-1 text-sm font-semibold leading-tight">
+	                        {% if agent.knowledge_mode == 'missing' %}
+	                          <span class="text-rose-600">Missing</span>
+	                        {% elif agent.knowledge_mode == 'select' %}
+	                          <span class="text-foreground">Selected</span>
+	                          <span class="font-medium text-muted-foreground">({{ agent.knowledge_total|default:0 }})</span>
+	                        {% else %}
+	                          <span class="text-foreground">All docs</span>
+	                          <span class="font-medium text-muted-foreground">({{ agent.knowledge_total|default:0 }})</span>
+	                        {% endif %}
+	                      </div>
+	                      <div class="mt-1 text-[11px]">
+	                        {% if agent.knowledge_mode == 'missing' %}
+	                          <span class="text-muted-foreground">No docs attached</span>
+	                        {% elif agent.knowledge_failed %}
+	                          <span class="text-rose-600">{{ agent.knowledge_failed }} failed</span>
+	                        {% elif agent.knowledge_processing %}
+	                          <span class="text-amber-600">{{ agent.knowledge_processing }} processing</span>
+	                        {% else %}
+	                          <span class="text-muted-foreground">Up to date</span>
+	                        {% endif %}
+	                      </div>
+	                    </div>
+	                    <div class="rounded-lg border border-border/60 bg-muted/30 px-3 py-2 min-w-0">
+	                      <div class="text-[11px] font-medium text-muted-foreground">Tools</div>
+	                      <div class="mt-1 text-sm font-semibold text-foreground leading-tight">
+	                        {{ agent.capabilities_enabled|default:0 }}/{{ agent.capabilities_total|default:0 }}
+	                        <span class="text-xs font-medium text-muted-foreground">enabled</span>
+	                      </div>
+	                      <div class="mt-1 truncate text-[11px] text-muted-foreground">
+	                        {% if agent.capabilities_highlights %}
+	                          {{ agent.capabilities_highlights|join:", " }}{% if agent.capabilities_more %} +{{ agent.capabilities_more }} more{% endif %}
+	                        {% else %}
+	                          No tools enabled
+	                        {% endif %}
+	                      </div>
+	                    </div>
+	                  </div>
+
+	                  <div class="mt-4 flex items-center justify-between gap-3 border-t border-border/60 pt-3 text-xs">
+	                    <div class="flex flex-wrap items-center gap-2 text-muted-foreground">
+	                      {% if agent.shareable_path %}
+	                        <span class="font-medium text-foreground">Chat link ready</span>
+	                      {% else %}
+	                        <span>Not published</span>
+	                      {% endif %}
+	                      {% if agent.escalation_enabled %}
+	                        <span aria-hidden="true">•</span>
+	                        <span>Escalation on</span>
+	                      {% endif %}
+	                    </div>
+	                    <div class="flex items-center gap-2">
+	                      {% if agent.shareable_path %}
+	                        <button
+	                          type="button"
+	                          class="inline-flex items-center justify-center rounded-md border border-input bg-background px-2.5 py-1.5 text-[11px] font-semibold text-muted-foreground hover:bg-accent hover:text-accent-foreground transition-colors"
+	                          data-agent-copy-link
+	                        >
+	                          Copy link
+	                        </button>
+	                      {% endif %}
+	                      <span class="text-muted-foreground opacity-0 transition-opacity group-hover:opacity-100">Open</span>
+	                      <svg class="h-4 w-4 text-muted-foreground opacity-0 transition-opacity group-hover:opacity-100" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" aria-hidden="true">
+	                        <path stroke-linecap="round" stroke-linejoin="round" d="m9 18 6-6-6-6" />
+	                      </svg>
+	                    </div>
+	                  </div>
+	                </article>
+	              {% endfor %}
+	            </div>
+	          {% else %}
+            <div class="py-12 text-center text-sm text-muted-foreground">{{ agents_empty_message }}</div>
+          {% endif %}
         </div>
       </section>
     </div>
@@ -353,7 +323,7 @@
             </div>
             <h2 class="text-base font-semibold text-foreground">{{ agents_panel_empty_title|default:"No agent selected" }}</h2>
             <p class="text-sm text-muted-foreground">
-              {{ agents_panel_empty_message|default:"Choose an agent from the table to preview configuration and analytics." }}
+              {{ agents_panel_empty_message|default:"Choose an agent from the cards to preview configuration and analytics." }}
             </p>
           </div>
         </div>
@@ -565,10 +535,10 @@
 {% block extra_js %}
 <script>
   document.addEventListener("DOMContentLoaded", function () {
-    var table = document.querySelector("[data-agents-table]");
+    var grid = document.querySelector("[data-agents-grid]");
     var panel = document.querySelector("[data-agent-panel]");
     var overlay = document.querySelector("[data-agent-overlay]");
-    if (!table || !panel) {
+    if (!grid || !panel) {
       return;
     }
 
@@ -1292,41 +1262,72 @@
         }
       });
     }
-    document.addEventListener("keydown", function (event) {
-      if (event.key === "Escape" && isPanelOpen) {
-        event.preventDefault();
-        closePanel();
-      }
-    });
+	    document.addEventListener("keydown", function (event) {
+	      if (event.key === "Escape" && isPanelOpen) {
+	        event.preventDefault();
+	        closePanel();
+	      }
+	    });
 
-    if (shareableCopy) {
-      shareableCopy.addEventListener("click", function () {
-        if (!shareableLinkValue) {
-          return;
-        }
-        var link = shareableLinkValue;
-        if (link.startsWith("/")) {
-          var origin = window.location.origin.replace(/\/$/, "");
-          link = origin + shareableLinkValue;
-        }
-        if (navigator.clipboard && navigator.clipboard.writeText) {
-          navigator.clipboard.writeText(link).catch(function (error) {
-            console.warn("Clipboard copy failed", error);
-          });
-        } else {
-          var helper = document.createElement("input");
-          helper.value = link;
-          document.body.appendChild(helper);
-          helper.select();
-          try {
-            document.execCommand("copy");
-          } catch (_err) {
-            console.warn("Fallback copy failed");
-          }
-          document.body.removeChild(helper);
-        }
-      });
-    }
+	    function copyShareableLink(value) {
+	      if (!value) {
+	        return;
+	      }
+	      var link = value;
+	      if (link.startsWith("/")) {
+	        var origin = window.location.origin.replace(/\/$/, "");
+	        link = origin + value;
+	      }
+	      if (navigator.clipboard && navigator.clipboard.writeText) {
+	        navigator.clipboard.writeText(link).catch(function (error) {
+	          console.warn("Clipboard copy failed", error);
+	        });
+	        return;
+	      }
+	      var helper = document.createElement("input");
+	      helper.value = link;
+	      document.body.appendChild(helper);
+	      helper.select();
+	      try {
+	        document.execCommand("copy");
+	      } catch (_err) {
+	        console.warn("Fallback copy failed");
+	      }
+	      document.body.removeChild(helper);
+	    }
+
+	    if (grid) {
+	      grid.addEventListener("click", function (event) {
+	        var target = event.target;
+	        if (!target || typeof target.closest !== "function") {
+	          return;
+	        }
+	        var trigger = target.closest("[data-agent-copy-link]");
+	        if (!trigger) {
+	          return;
+	        }
+	        event.preventDefault();
+	        event.stopPropagation();
+	        var card = trigger.closest("[data-agent-row]");
+	        if (!card) {
+	          return;
+	        }
+	        var shareable = card.getAttribute("data-agent-shareable") || "";
+	        copyShareableLink(shareable);
+	        var original = trigger.getAttribute("data-original-label") || trigger.textContent.trim() || "Copy link";
+	        trigger.setAttribute("data-original-label", original);
+	        trigger.textContent = "Copied";
+	        window.setTimeout(function () {
+	          trigger.textContent = original;
+	        }, 1100);
+	      });
+	    }
+
+	    if (shareableCopy) {
+	      shareableCopy.addEventListener("click", function () {
+	        copyShareableLink(shareableLinkValue);
+	      });
+	    }
 
     resetActionArea();
     setActionStateLabel("idle");
