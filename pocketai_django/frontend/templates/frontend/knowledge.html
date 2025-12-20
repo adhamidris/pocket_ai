@@ -52,9 +52,12 @@
   {% include "frontend/components/dashboard/sidebar.html" with active="knowledge" user_name=user_name %}
   <main class="flex-1 overflow-auto">
     <div class="w-full px-4 md:px-6 lg:px-8 py-6 space-y-6">
-      <header class="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
-        <h1 class="text-xl md:text-2xl font-semibold text-gradient-hero">Knowledge</h1>
-        <div class="flex flex-wrap items-center gap-2">
+      <header class="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+        <div class="space-y-1.5">
+          <h1 class="text-xl md:text-2xl font-semibold text-gradient-hero">Knowledge</h1>
+          <p class="text-sm text-muted-foreground">Upload documents, connect integrations, and organize collections for retrieval.</p>
+        </div>
+        <div class="flex flex-wrap items-center justify-start md:justify-end gap-2">
           <a
             href="{% if knowledge_dump_enabled %}{% url 'frontend:dashboard-knowledge-dump' %}{% else %}#{% endif %}"
             class="inline-flex items-center gap-2 rounded-lg border border-input bg-background px-4 py-2 text-sm font-medium transition-all duration-300 hover:bg-accent hover:text-accent-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 {% if not knowledge_dump_enabled %}opacity-40 pointer-events-none{% endif %}"
@@ -255,9 +258,9 @@
             </div>
           </div>
 
-          <div class="relative border border-border/70 bg-card shadow-lg shadow-black/5 backdrop-blur transition-colors hover:border-primary/35 dark:border-slate-700/50 dark:bg-slate-800/70 dark:shadow-black/25 rounded-xl">
+          <div class="relative border border-border/70 bg-card text-card-foreground shadow-lg shadow-black/5 backdrop-blur hover:border-primary/35 transition-colors dark:border-slate-700/50 dark:bg-slate-800/70 dark:shadow-black/25 rounded-xl overflow-hidden">
             <div class="absolute inset-x-0 top-0 h-px bg-gradient-to-r from-primary/35 via-primary/20 to-transparent"></div>
-            <div class="relative max-h-[65vh] overflow-auto">
+            <div class="relative overflow-x-auto overflow-y-auto max-h-[70vh]">
               <table
                 class="w-full caption-bottom text-sm rounded-xl border border-border/70 bg-background/60 shadow-sm backdrop-blur [&_th]:px-3 [&_td]:px-3 [&_th:first-child]:pl-4 [&_td:first-child]:pl-4 [&_th:last-child]:pr-4 [&_td:last-child]:pr-4 [&_th]:py-3 [&_td]:py-3"
                 data-documents-table
@@ -382,7 +385,7 @@
                 </tbody>
               </table>
             </div>
-            <div class="border-t border-border/60 bg-background/95 backdrop-blur px-4 py-3 text-xs text-muted-foreground flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+            <div class="flex flex-col gap-3 md:flex-row md:items-center md:justify-between border-t border-border/70 px-4 py-3 text-xs text-muted-foreground">
               <div data-documents-count data-documents-showing="{{ knowledge_documents_showing|default:0 }}" data-documents-total="{{ knowledge_documents_total|default:0 }}">
                 Showing {{ knowledge_documents_showing|default:0 }} of {{ knowledge_documents_total|default:0 }} documents
               </div>
