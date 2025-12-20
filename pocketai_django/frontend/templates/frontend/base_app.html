@@ -9,6 +9,26 @@
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="{% static 'css/main.css' %}">
+    <style>
+      ::-webkit-scrollbar {
+        width: 6px;
+        height: 6px;
+      }
+      ::-webkit-scrollbar-track {
+        background: hsl(var(--muted) / 0.3);
+      }
+      ::-webkit-scrollbar-thumb {
+        background: hsl(var(--primary) / 0.2);
+        border-radius: 10px;
+      }
+      ::-webkit-scrollbar-thumb:hover {
+        background: hsl(var(--primary) / 0.5);
+      }
+      * {
+        scrollbar-width: thin;
+        scrollbar-color: hsl(var(--primary) / 0.2) transparent;
+      }
+    </style>
     {% block extra_head %}{% endblock %}
   </head>
   <body class="min-h-screen bg-background text-foreground antialiased">

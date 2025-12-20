@@ -1,60 +1,172 @@
 {% load static %}
-<aside class="hidden md:flex w-56 shrink-0 border-r border-border/70 bg-card/60 backdrop-blur-sm min-h-screen sticky top-0 sidebar-card-chrome">
+<style>
+  [data-sidebar] {
+    transition: width 0.2s ease;
+  }
+  [data-sidebar][data-collapsed="true"] {
+    width: 4.25rem;
+  }
+  [data-sidebar][data-collapsed="true"] .sidebar-title,
+  [data-sidebar][data-collapsed="true"] .sidebar-version,
+  [data-sidebar][data-collapsed="true"] .sidebar-label,
+  [data-sidebar][data-collapsed="true"] .sidebar-subtitle,
+  [data-sidebar][data-collapsed="true"] .sidebar-caret,
+  [data-sidebar][data-collapsed="true"] .sidebar-account-details,
+  [data-sidebar][data-collapsed="true"] .sidebar-brand-text {
+    opacity: 0;
+    max-width: 0;
+    transform: translateX(-6px);
+    pointer-events: none;
+  }
+  [data-sidebar][data-collapsed="true"] .sidebar-link,
+  [data-sidebar][data-collapsed="true"] .sidebar-account {
+    gap: 0;
+  }
+  [data-sidebar][data-collapsed="true"] .sidebar-header {
+    justify-content: center;
+  }
+  [data-sidebar][data-collapsed="true"] .sidebar-brand {
+    gap: 0;
+  }
+  [data-sidebar][data-collapsed="true"] .sidebar-icon {
+    width: 1.25rem;
+    height: 1.25rem;
+  }
+  [data-sidebar][data-collapsed="true"] .sidebar-account-details {
+    flex: 0 0 0;
+  }
+  .sidebar-title,
+  .sidebar-version,
+  .sidebar-label,
+  .sidebar-subtitle,
+  .sidebar-caret,
+  .sidebar-account-details,
+  .sidebar-brand-text {
+    transition: opacity 0.2s ease, transform 0.2s ease, max-width 0.2s ease;
+  }
+  .sidebar-label,
+  .sidebar-account-details,
+  .sidebar-title,
+  .sidebar-brand-text {
+    overflow: hidden;
+    white-space: nowrap;
+  }
+  [data-sidebar][data-collapsed="true"] .sidebar-link {
+    justify-content: center;
+  }
+  [data-sidebar][data-collapsed="true"] .sidebar-account {
+    justify-content: center;
+  }
+  [data-sidebar] .sidebar-logo-collapsed {
+    display: none;
+  }
+  [data-sidebar][data-collapsed="true"] .sidebar-logo-collapsed {
+    display: inline-flex;
+  }
+  [data-sidebar][data-collapsed="true"] .sidebar-toggle-icon {
+    transform: rotate(180deg);
+  }
+  .sidebar-toggle {
+    transform: translateX(50%);
+  }
+</style>
+<aside class="relative hidden md:flex w-56 shrink-0 border-r border-border/70 bg-card/60 backdrop-blur-sm min-h-screen sticky top-0 sidebar-card-chrome overflow-visible" data-sidebar data-collapsed="false">
   <div class="flex flex-col w-full p-3 gap-2">
-    <div class="px-2 py-3 text-lg font-semibold">
-      Dashboard <span class="text-xs align-top text-muted-foreground">v0.1</span>
+    <div class="sidebar-header flex items-center justify-between px-2 py-3">
+      <div class="sidebar-brand flex items-center gap-2 text-lg font-semibold">
+        <span class="sidebar-brand-text flex items-center gap-2">
+          <span class="sidebar-title">Dashboard</span>
+          <span class="sidebar-version text-xs align-top text-muted-foreground">v0.1</span>
+        </span>
+        <span class="sidebar-logo-collapsed text-sm font-semibold text-primary">PA</span>
+      </div>
+      <button
+        type="button"
+        class="sidebar-toggle absolute right-0 top-1/2 z-20 inline-flex h-8 w-9 -translate-y-1/2 items-center justify-center rounded-md border border-border/70 bg-background/90 text-muted-foreground transition hover:text-foreground hover:border-primary/40 focus:outline-none focus:ring-0"
+        data-sidebar-toggle
+        aria-label="Collapse sidebar"
+        aria-pressed="false"
+      >
+        <svg class="sidebar-toggle-icon h-4 w-4 transition-transform" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 20 20" stroke-width="1.5" stroke="currentColor">
+          <path stroke-linecap="round" stroke-linejoin="round" d="M12.5 5 7.5 10l5 5" />
+        </svg>
+      </button>
     </div>
     <nav class="mt-1 flex-1 space-y-1">
       <a
         href="{% url 'frontend:dashboard' %}"
-        class="w-full block text-left px-3 py-2 rounded-md text-sm flex items-center justify-between {% if active == 'home' %}bg-primary/10 text-primary{% else %}hover:bg-muted/60{% endif %}"
+        class="sidebar-link w-full block text-left px-3 py-2 rounded-md text-sm flex items-center gap-3 {% if active == 'home' %}bg-primary/10 text-primary{% else %}hover:bg-muted/60{% endif %}"
+        title="Home"
       >
-        <span>Home</span>
+        <svg class="sidebar-icon h-4 w-4 {% if active == 'home' %}text-primary{% else %}text-muted-foreground{% endif %}" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor">
+          <path stroke-linecap="round" stroke-linejoin="round" d="m2.25 12 8.954-8.955a1.125 1.125 0 0 1 1.592 0L21.75 12M4.5 9.75v10.125A1.125 1.125 0 0 0 5.625 21h4.125v-4.875A1.125 1.125 0 0 1 10.875 15h2.25A1.125 1.125 0 0 1 14.25 16.125V21h4.125A1.125 1.125 0 0 0 19.5 19.875V9.75" />
+        </svg>
+        <span class="sidebar-label">Home</span>
       </a>
       <a
         href="{% url 'frontend:dashboard-cases' %}"
-        class="w-full block text-left px-3 py-2 rounded-md text-sm flex items-center justify-between {% if active == 'cases' %}bg-primary/10 text-primary{% else %}hover:bg-muted/60{% endif %}"
+        class="sidebar-link w-full block text-left px-3 py-2 rounded-md text-sm flex items-center gap-3 {% if active == 'cases' %}bg-primary/10 text-primary{% else %}hover:bg-muted/60{% endif %}"
+        title="Cases"
       >
-        <span>Cases</span>
+        <svg class="sidebar-icon h-4 w-4 {% if active == 'cases' %}text-primary{% else %}text-muted-foreground{% endif %}" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor">
+          <path stroke-linecap="round" stroke-linejoin="round" d="M3.75 4.5h16.5a1.5 1.5 0 0 1 1.5 1.5v11.25a1.5 1.5 0 0 1-1.5 1.5H6.75L3.75 21V6A1.5 1.5 0 0 1 5.25 4.5Z" />
+          <path stroke-linecap="round" stroke-linejoin="round" d="M7.5 9h9M7.5 12h5.25" />
+        </svg>
+        <span class="sidebar-label">Cases</span>
       </a>
       <a
         href="{% url 'frontend:dashboard-leads' %}"
-        class="w-full block text-left px-3 py-2 rounded-md text-sm flex items-center justify-between {% if active == 'leads' %}bg-primary/10 text-primary{% else %}hover:bg-muted/60{% endif %}"
+        class="sidebar-link w-full block text-left px-3 py-2 rounded-md text-sm flex items-center gap-3 {% if active == 'leads' %}bg-primary/10 text-primary{% else %}hover:bg-muted/60{% endif %}"
+        title="Leads"
       >
-        <span>Leads</span>
+        <svg class="sidebar-icon h-4 w-4 {% if active == 'leads' %}text-primary{% else %}text-muted-foreground{% endif %}" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor">
+          <path stroke-linecap="round" stroke-linejoin="round" d="M9.813 6.75 12 2.25l2.187 4.5 4.94.72-3.563 3.472.84 4.908L12 13.5l-4.404 2.25.84-4.908L4.873 7.47l4.94-.72Z" />
+          <path stroke-linecap="round" stroke-linejoin="round" d="M12 13.5v7.5" />
+        </svg>
+        <span class="sidebar-label">Leads</span>
       </a>
       <a
         href="{% url 'frontend:dashboard-customers' %}"
-        class="w-full block text-left px-3 py-2 rounded-md text-sm flex items-center justify-between {% if active == 'customers' %}bg-primary/10 text-primary{% else %}hover:bg-muted/60{% endif %}"
+        class="sidebar-link w-full block text-left px-3 py-2 rounded-md text-sm flex items-center gap-3 {% if active == 'customers' %}bg-primary/10 text-primary{% else %}hover:bg-muted/60{% endif %}"
+        title="Customers"
       >
-        <span>Customers</span>
+        <svg class="sidebar-icon h-4 w-4 {% if active == 'customers' %}text-primary{% else %}text-muted-foreground{% endif %}" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor">
+          <path stroke-linecap="round" stroke-linejoin="round" d="M15 19.128a9.38 9.38 0 0 0 2.625.372 9.337 9.337 0 0 0 4.121-.933 2.25 2.25 0 0 0-1.256-4.13h-1.047a8.1 8.1 0 0 0-3.434.732" />
+          <path stroke-linecap="round" stroke-linejoin="round" d="M6.75 19.128a9.357 9.357 0 0 1-2.625.372 9.337 9.337 0 0 1-4.121-.933A2.25 2.25 0 0 1 1.26 14.44h1.047a8.1 8.1 0 0 1 3.434.732" />
+          <path stroke-linecap="round" stroke-linejoin="round" d="M12 13.5a4.5 4.5 0 1 0-4.5-4.5 4.5 4.5 0 0 0 4.5 4.5Z" />
+          <path stroke-linecap="round" stroke-linejoin="round" d="M16.5 21.75a4.5 4.5 0 0 0-9 0" />
+        </svg>
+        <span class="sidebar-label">Customers</span>
       </a>
       <a
         href="{% url 'frontend:dashboard-agents' %}"
-        class="w-full block text-left px-3 py-2 rounded-md text-sm flex items-center justify-between {% if active == 'agents' %}bg-primary/10 text-primary{% else %}hover:bg-muted/60{% endif %}"
+        class="sidebar-link w-full block text-left px-3 py-2 rounded-md text-sm flex items-center gap-3 {% if active == 'agents' %}bg-primary/10 text-primary{% else %}hover:bg-muted/60{% endif %}"
+        title="Agents"
       >
-        <span>Agents</span>
+        <svg class="sidebar-icon h-4 w-4 {% if active == 'agents' %}text-primary{% else %}text-muted-foreground{% endif %}" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor">
+          <path stroke-linecap="round" stroke-linejoin="round" d="M9.75 3v2.25m4.5-2.25V5.25M4.5 9.75h15m-12 0V18a1.5 1.5 0 0 0 1.5 1.5h6a1.5 1.5 0 0 0 1.5-1.5V9.75m-9 0V7.5A1.5 1.5 0 0 1 9 6h6a1.5 1.5 0 0 1 1.5 1.5v2.25" />
+          <path stroke-linecap="round" stroke-linejoin="round" d="M10.5 14.25h3m-3 2.25h3" />
+        </svg>
+        <span class="sidebar-label">Agents</span>
       </a>
       <a
         href="{% url 'frontend:dashboard-knowledge' %}"
-        class="w-full block text-left px-3 py-2 rounded-md text-sm flex items-center justify-between {% if active == 'knowledge' %}bg-primary/10 text-primary{% else %}hover:bg-muted/60{% endif %}"
+        class="sidebar-link w-full block text-left px-3 py-2 rounded-md text-sm flex items-center gap-3 {% if active == 'knowledge' %}bg-primary/10 text-primary{% else %}hover:bg-muted/60{% endif %}"
+        title="Knowledge"
       >
-        <span>Knowledge</span>
+        <svg class="sidebar-icon h-4 w-4 {% if active == 'knowledge' %}text-primary{% else %}text-muted-foreground{% endif %}" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor">
+          <path stroke-linecap="round" stroke-linejoin="round" d="M4.5 19.5V6.75A2.25 2.25 0 0 1 6.75 4.5h10.5A2.25 2.25 0 0 1 19.5 6.75V19.5M4.5 19.5h15M8.25 8.25h7.5M8.25 11.25h7.5" />
+        </svg>
+        <span class="sidebar-label">Knowledge</span>
       </a>
     </nav>
-    <div class="mt-auto rounded-xl p-3 bg-gradient-to-br from-primary/20 via-primary/10 to-primary/5">
-      <div class="text-sm font-semibold">Upgrade to PRO</div>
-      <div class="text-xs text-muted-foreground mb-2">Get access to all features</div>
-      <button type="button" class="inline-flex items-center justify-center rounded-full bg-gradient-primary text-white text-xs font-medium px-3 py-2 hover:opacity-90 transition-opacity">
-        Get Pro Now!
-      </button>
-    </div>
     <button
       type="button"
-      class="group flex items-center gap-2 px-2 py-3 mt-1 rounded-md transition-colors hover:bg-muted/70 focus:outline-none focus:ring-2 focus:ring-primary/40 focus:ring-offset-2 focus:ring-offset-card"
+      class="sidebar-account group flex items-center gap-2 px-2 py-3 mt-1 rounded-md transition-colors hover:bg-muted/70 focus:outline-none focus:ring-2 focus:ring-primary/40 focus:ring-offset-2 focus:ring-offset-card"
       data-dashboard-account-trigger
       aria-haspopup="dialog"
       aria-expanded="false"
+      title="Account"
     >
       <div class="h-8 w-8 rounded-full bg-gradient-to-br from-primary/40 to-primary/20 flex items-center justify-center text-xs font-semibold text-primary-foreground uppercase">
         {% if user_name %}
@@ -63,7 +175,7 @@
           <span class="inline-flex h-4 w-4 rounded bg-muted/70 animate-pulse" aria-hidden="true"></span>
         {% endif %}
       </div>
-      <div class="flex-1 text-left">
+      <div class="sidebar-account-details flex-1 text-left">
         <div class="text-sm font-medium">
           {% if user_name %}
             {{ user_name }}
@@ -71,11 +183,11 @@
             <span class="inline-flex h-4 w-20 rounded bg-muted/70 animate-pulse" aria-hidden="true"></span>
           {% endif %}
         </div>
-        <div class="text-xs text-muted-foreground">
+        <div class="sidebar-subtitle text-xs text-muted-foreground">
           Manage account
         </div>
       </div>
-      <svg class="h-4 w-4 text-muted-foreground transition-transform group-data-[open=true]:rotate-180" data-dashboard-account-caret xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 20 20" stroke-width="1.5" stroke="currentColor">
+      <svg class="sidebar-caret h-4 w-4 text-muted-foreground transition-transform group-data-[open=true]:rotate-180" data-dashboard-account-caret xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 20 20" stroke-width="1.5" stroke="currentColor">
         <path stroke-linecap="round" stroke-linejoin="round" d="m6 8 4 4 4-4" />
       </svg>
     </button>
@@ -92,7 +204,7 @@
     data-dashboard-account-overlay
   ></div>
   <div
-    class="fixed inset-x-4 bottom-6 z-50 mx-auto max-w-xs rounded-xl border border-border/60 bg-card p-4 shadow-lg sm:inset-auto sm:right-6 sm:top-auto sm:bottom-6 sm:w-64"
+    class="fixed inset-x-4 bottom-6 z-50 mx-auto max-w-xs rounded-xl border border-border/60 bg-card p-4 shadow-lg sm:inset-auto sm:left-6 sm:right-auto sm:bottom-6 sm:top-auto sm:w-64 sm:mx-0"
     role="dialog"
     aria-modal="true"
     aria-labelledby="dashboard-account-modal-title"
@@ -155,6 +267,39 @@
     var previouslyFocused = null;
     var isOpen = false;
 
+    function positionMenu() {
+      if (!content || !trigger) {
+        return;
+      }
+      var rect = trigger.getBoundingClientRect();
+      if (!rect.width || !rect.height) {
+        return;
+      }
+      var viewportPadding = 12;
+      var maxWidth = Math.max(200, rect.width);
+      var width = Math.min(maxWidth, window.innerWidth - viewportPadding * 2);
+      var left = Math.min(
+        Math.max(rect.left, viewportPadding),
+        Math.max(viewportPadding, window.innerWidth - width - viewportPadding)
+      );
+      content.style.left = Math.round(left) + "px";
+      content.style.right = "auto";
+      content.style.width = Math.round(width) + "px";
+      content.style.maxWidth = Math.round(width) + "px";
+      content.style.bottom = "auto";
+      var contentRect = content.getBoundingClientRect();
+      var spacing = 12;
+      var top = rect.top - contentRect.height - spacing;
+      if (top < viewportPadding) {
+        top = rect.bottom + spacing;
+      }
+      var maxTop = window.innerHeight - contentRect.height - viewportPadding;
+      if (top > maxTop) {
+        top = Math.max(viewportPadding, maxTop);
+      }
+      content.style.top = Math.round(top) + "px";
+    }
+
     function setState(open) {
       isOpen = open;
       modal.classList.toggle("hidden", !open);
@@ -169,6 +314,7 @@
       if (open) {
         previouslyFocused = document.activeElement instanceof HTMLElement ? document.activeElement : null;
         window.setTimeout(function () {
+          positionMenu();
           if (content) {
             content.focus();
           }
@@ -215,5 +361,50 @@
         closeModal();
       }
     });
+
+    window.addEventListener("resize", function () {
+      if (isOpen) {
+        positionMenu();
+      }
+    });
+  })();
+
+  (function () {
+    var sidebar = document.querySelector("[data-sidebar]");
+    if (!sidebar) {
+      return;
+    }
+    var toggle = sidebar.querySelector("[data-sidebar-toggle]");
+    var storageKey = "pocketai:sidebar-collapsed";
+
+    function applyCollapsed(collapsed) {
+      sidebar.setAttribute("data-collapsed", collapsed ? "true" : "false");
+      if (toggle) {
+        toggle.setAttribute("aria-pressed", collapsed ? "true" : "false");
+        toggle.setAttribute("aria-label", collapsed ? "Expand sidebar" : "Collapse sidebar");
+      }
+    }
+
+    var saved = null;
+    try {
+      saved = window.localStorage ? window.localStorage.getItem(storageKey) : null;
+    } catch (_err) {
+      saved = null;
+    }
+    applyCollapsed(saved === "true");
+
+    if (toggle) {
+      toggle.addEventListener("click", function () {
+        var next = sidebar.getAttribute("data-collapsed") !== "true";
+        applyCollapsed(next);
+        try {
+          if (window.localStorage) {
+            window.localStorage.setItem(storageKey, next ? "true" : "false");
+          }
+        } catch (_err) {
+          // ignore storage failures
+        }
+      });
+    }
   })();
 </script>

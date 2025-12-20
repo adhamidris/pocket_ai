@@ -6,6 +6,8 @@ import logging
 import mimetypes
 import uuid
 
+from http import HTTPStatus
+
 from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Any, Dict, List
@@ -17,7 +19,7 @@ from django.contrib.auth.decorators import login_required
 from django.core.exceptions import ValidationError
 from django.core.validators import URLValidator
 from django.db.models import Count, Q
-from django.http import Http404, HttpRequest, HttpResponse
+from django.http import Http404, HttpRequest, HttpResponse, JsonResponse
 from django.middleware.csrf import get_token
 from django.shortcuts import redirect, render
 from django.test.client import RequestFactory
@@ -32,6 +34,7 @@ from apps.accounts.models import (
     BusinessProfile,
     IdentifierColumnStatus,
     IdentifierSchemaStatus,
+    IntegrationSyncFrequency,
     KnowledgeIntegration,
     KnowledgeIntegrationStatus,
     KnowledgeIntegrationType,
@@ -53,6 +56,7 @@ from apps.accounts.agents import (
     initials_from_name,
     list_agents,
 )
+from apps.accounts.registration import KnowledgeUploadError
 from apps.cases.services import list_cases
 from apps.customers.services import list_customers
 from apps.knowledge.documents import DocumentListValidationError, list_documents
@@ -144,12 +148,21 @@ def _format_dashboard_datetime(value: datetime | str | None) -> str | None:
 
 def _integration_status_badge(status: str) -> str:
     palette = {
-        KnowledgeIntegrationStatus.CONNECTED: "bg-emerald-50 text-emerald-700 border border-emerald-100",
-        KnowledgeIntegrationStatus.SYNCING: "bg-blue-50 text-blue-700 border border-blue-100",
-        KnowledgeIntegrationStatus.ERROR: "bg-rose-50 text-rose-700 border border-rose-100",
-        KnowledgeIntegrationStatus.DISCONNECTED: "bg-amber-50 text-amber-700 border border-amber-100",
+        KnowledgeIntegrationStatus.CONNECTED: "text-emerald-600",
+        KnowledgeIntegrationStatus.SYNCING: "text-blue-600",
+        KnowledgeIntegrationStatus.ERROR: "text-rose-600",
+        KnowledgeIntegrationStatus.DISCONNECTED: "text-amber-600",
     }
-    return palette.get(status, "bg-muted text-muted-foreground border border-border/60")
+    return palette.get(status, "text-slate-500")
+
+
+def _format_integration_frequency(frequency: str | None) -> str:
+    if not frequency:
+        return "Manual"
+    try:
+        return IntegrationSyncFrequency(frequency).label
+    except ValueError:
+        return str(frequency).replace("_", " ").title()
 
 
 def _describe_integration_type(integration_type: str) -> str:
@@ -166,7 +179,14 @@ def _serialize_dashboard_integration(integration: KnowledgeIntegration) -> dict[
     description = _describe_integration_type(integration.integration_type)
     last_sync = _format_dashboard_datetime(integration.last_synced_at)
     next_sync = _format_dashboard_datetime(schedule.get("next_run_at"))
+    frequency = schedule.get("frequency") or integration.get_default_sync_frequency()
+    frequency_label = _format_integration_frequency(frequency)
     rows_ingested = sync_stats.get("rows_ingested")
+    status_note = None
+    if integration.status == KnowledgeIntegrationStatus.DISCONNECTED:
+        status_note = "Connection needs attention. Reconnect to resume syncing."
+    elif integration.status == KnowledgeIntegrationStatus.ERROR and not integration.sync_error:
+        status_note = "Sync failed. Review credentials and try again."
     sheets_url = ""
     sync_url = ""
     if integration.integration_type == KnowledgeIntegrationType.GOOGLE_DRIVE:
@@ -184,6 +204,13 @@ def _serialize_dashboard_integration(integration: KnowledgeIntegration) -> dict[
         "resource_count": len(integration.resource_configs or []),
         "rows_ingested": rows_ingested,
         "sync_error": integration.sync_error,
+        "status_note": status_note,
+        "sync_frequency": frequency,
+        "sync_frequency_label": frequency_label,
+        "is_attention": integration.status in {
+            KnowledgeIntegrationStatus.ERROR,
+            KnowledgeIntegrationStatus.DISCONNECTED,
+        },
         "default_visibility": integration.get_default_visibility(),
         "default_sync_frequency": integration.get_default_sync_frequency(),
         "api": {
@@ -1901,19 +1928,52 @@ def _format_document_timestamp(value: datetime | None) -> str:
 
 def _document_status_class(status: str | None) -> str:
     mapping = {
-        "ready": "bg-emerald-100/70 text-emerald-700 border border-emerald-200",
-        "active": "bg-emerald-100/70 text-emerald-700 border border-emerald-200",
-        "processing": "bg-amber-100/70 text-amber-700 border border-amber-200",
-        "pending": "bg-amber-100/70 text-amber-700 border border-amber-200",
-        "failed": "bg-rose-100/70 text-rose-700 border border-rose-200",
-        "archived": "bg-muted/70 text-muted-foreground border border-border/60",
+        "ready": "text-emerald-600",
+        "active": "text-emerald-600",
+        "processing": "text-amber-600",
+        "pending": "text-amber-600",
+        "failed": "text-rose-600",
+        "archived": "text-slate-500",
     }
     normalized = (status or "").lower()
-    return mapping.get(normalized, "bg-muted/70 text-muted-foreground border border-border/60")
+    return mapping.get(normalized, "text-slate-500")
 
 
 def _document_identifier(doc_id: uuid.UUID) -> str:
     return f"KN-{str(doc_id).split('-')[0].upper()}"
+
+
+def _wants_json(request: HttpRequest) -> bool:
+    accept_header = request.headers.get("accept", "")
+    return request.headers.get("x-requested-with") == "XMLHttpRequest" or "application/json" in accept_header
+
+
+def _serialize_upload_for_dashboard(upload: KnowledgeUpload) -> dict[str, object]:
+    updated_at = upload.updated_at
+    status_label = (upload.status or "").replace("_", " ").title()
+    return {
+        "id": str(upload.id),
+        "name": upload.display_name or "Document",
+        "identifier": _document_identifier(upload.id),
+        "classification": upload.category or upload.language or "General",
+        "type_badge": upload.get_source_type_display(),
+        "source_type": upload.source_type,
+        "source_label": upload.get_source_type_display(),
+        "status_label": status_label,
+        "status_code": upload.status or "",
+        "status_badge_class": _document_status_class(upload.status),
+        "updated": _format_document_timestamp(updated_at),
+        "updated_iso": updated_at.isoformat() if updated_at else "",
+        "size_display": _format_document_size(upload.size_bytes),
+        "size_bytes": upload.size_bytes or 0,
+        "language": upload.language or "",
+        "category": upload.category or "",
+        "token_count": upload.token_count or 0,
+        "is_sensitive": bool(upload.is_sensitive),
+        "last_synced_iso": upload.last_synced_at.isoformat() if upload.last_synced_at else "",
+        "last_ingested_iso": upload.last_ingested_at.isoformat() if upload.last_ingested_at else "",
+        "integration_name": upload.integration.name if upload.integration_id else "",
+    }
 
 
 def _build_guardrails_snapshot(business: BusinessProfile | None) -> dict[str, object]:
@@ -2217,9 +2277,44 @@ def dashboard_knowledge(request: HttpRequest) -> HttpResponse:
 
     documents_showing = len(documents)
     integrations_cards = _gather_dashboard_integrations(business)
+    requested_tab = (request.GET.get("tab") or "").strip().lower()
+    valid_tabs = {"documents", "integrations", "collections", "guardrails"}
+    active_tab = requested_tab if requested_tab in valid_tabs else "documents"
+    attention_statuses = {
+        KnowledgeIntegrationStatus.ERROR,
+        KnowledgeIntegrationStatus.DISCONNECTED,
+    }
+    integrations_attention = [
+        integration for integration in integrations_cards if integration["status"] in attention_statuses
+    ]
+    integrations_active = [
+        integration for integration in integrations_cards if integration["status"] not in attention_statuses
+    ]
+    integrations_summary = {
+        "active": len(integrations_active),
+        "attention": len(integrations_attention),
+        "syncing": sum(
+            1
+            for integration in integrations_cards
+            if integration["status"] == KnowledgeIntegrationStatus.SYNCING
+        ),
+        "total": len(integrations_cards),
+    }
+    guardrail_identifiers: list[dict[str, str]] = []
+    if guardrails.get("enabled"):
+        for schema in guardrails.get("registry", []):
+            if schema.get("status") != IdentifierSchemaStatus.ACTIVE:
+                continue
+            key = schema.get("key")
+            if not key:
+                continue
+            label = schema.get("display_name") or key
+            guardrail_identifiers.append({"key": key, "label": label})
+        guardrail_identifiers.sort(key=lambda item: item["label"].lower())
     context = {
         "user_name": user_name,
         "knowledge_stats": stats,
+        "knowledge_active_tab": active_tab,
         "knowledge_filters": {
             "search_placeholder": "Search documents, tags, sources…",
             "collection_label": "All collections",
@@ -2236,7 +2331,10 @@ def dashboard_knowledge(request: HttpRequest) -> HttpResponse:
         "knowledge_documents_has_prev": False,
         "knowledge_documents_has_next": bool(business and total_documents > documents_showing),
         "knowledge_integrations": integrations_cards,
-        "knowledge_integrations_empty_message": "Connect a source to sync articles, FAQs, or product specs automatically.",
+        "knowledge_integrations_active": integrations_active,
+        "knowledge_integrations_attention": integrations_attention,
+        "knowledge_integrations_summary": integrations_summary,
+        "knowledge_integrations_empty_message": "Connect a source to keep external docs and spreadsheets updated automatically.",
         "knowledge_integrations_enabled": bool(business),
         "knowledge_business_id": str(business.id) if business else "",
         "knowledge_integrations_connect_url": reverse("frontend:dashboard-knowledge-integrations-connect"),
@@ -2249,6 +2347,7 @@ def dashboard_knowledge(request: HttpRequest) -> HttpResponse:
         ],
         "knowledge_upload_enabled": bool(business),
         "knowledge_dump_enabled": bool(business),
+        "knowledge_guardrail_identifiers": guardrail_identifiers,
         "guardrails": guardrails,
     }
     return render(request, "frontend/knowledge.html", context)
@@ -2257,15 +2356,22 @@ def dashboard_knowledge(request: HttpRequest) -> HttpResponse:
 @login_required
 @require_http_methods(["POST"])
 def dashboard_knowledge_upload(request: HttpRequest) -> HttpResponse:
+    wants_json = _wants_json(request)
     business = _primary_business_for_user(request.user)
     if not business:
-        messages.error(request, "Link a business profile before uploading knowledge.")
+        message = "Link a business profile before uploading knowledge."
+        if wants_json:
+            return JsonResponse({"success": False, "message": message}, status=HTTPStatus.BAD_REQUEST)
+        messages.error(request, message)
         return redirect("frontend:dashboard-knowledge")
 
     source_type = (request.POST.get("source_type") or "").strip().lower()
     valid_types = {value for value, _label in KNOWLEDGE_UPLOAD_SIMPLE_TYPES}
     if source_type not in valid_types:
-        messages.error(request, "Select a valid knowledge type.")
+        message = "Select a valid knowledge type."
+        if wants_json:
+            return JsonResponse({"success": False, "message": message}, status=HTTPStatus.BAD_REQUEST)
+        messages.error(request, message)
         return redirect("frontend:dashboard-knowledge")
 
     display_name = (request.POST.get("display_name") or "").strip()
@@ -2298,12 +2404,34 @@ def dashboard_knowledge_upload(request: HttpRequest) -> HttpResponse:
         else:  # pragma: no cover - defensive fallback
             raise KnowledgeUploadError("Unsupported knowledge type selected.", field="source_type")
     except (KnowledgeUploadError, ValidationError) as exc:
-        messages.error(request, str(exc))
+        message = str(exc)
+        if wants_json:
+            payload = {"success": False, "message": message}
+            if isinstance(exc, KnowledgeUploadError) and exc.field:
+                payload["field"] = exc.field
+            return JsonResponse(payload, status=HTTPStatus.BAD_REQUEST)
+        messages.error(request, message)
+        return redirect("frontend:dashboard-knowledge")
     except Exception:  # pragma: no cover - defensive logging
         logger.exception("Failed to store knowledge upload from dashboard.")
-        messages.error(request, "Unable to save the document right now. Please try again.")
+        message = "Unable to save the document right now. Please try again."
+        if wants_json:
+            return JsonResponse({"success": False, "message": message}, status=HTTPStatus.INTERNAL_SERVER_ERROR)
+        messages.error(request, message)
+        return redirect("frontend:dashboard-knowledge")
     else:
         if upload_record:
+            if wants_json:
+                documents_total = KnowledgeUpload.objects.filter(business_profile=business).count()
+                return JsonResponse(
+                    {
+                        "success": True,
+                        "message": f'"{upload_record.display_name}" added to your knowledge base.',
+                        "document": _serialize_upload_for_dashboard(upload_record),
+                        "documents_total": documents_total,
+                    },
+                    status=HTTPStatus.CREATED,
+                )
             messages.success(request, f'"{upload_record.display_name}" added to your knowledge base.')
     return redirect("frontend:dashboard-knowledge")
 
@@ -2459,6 +2587,9 @@ def dashboard_cases(request: HttpRequest) -> HttpResponse:
         "cases_loading": False,
         "cases": cases,
         "cases_empty_message": "No cases yet. Connect Pocket AI to your support channels to see live traffic.",
+        "cases_showing_count": len(cases),
+        "cases_has_prev": False,
+        "cases_has_next": bool(total and total > len(cases)),
     }
     return render(request, "frontend/cases.html", context)
 

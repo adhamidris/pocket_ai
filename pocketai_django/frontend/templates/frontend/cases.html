@@ -10,7 +10,7 @@
       <section class="flex flex-col gap-6">
         <div class="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
           <div class="flex items-center gap-3">
-            <div class="text-xl md:text-2xl font-semibold text-gradient-hero">Cases</div>
+            <h1 class="text-xl md:text-2xl font-semibold text-gradient-hero">Cases</h1>
             <span class="hidden md:inline-flex items-center rounded-full border border-border/60 bg-muted/50 px-3 py-1 text-xs font-medium text-muted-foreground">
               {{ cases_total|default:0 }} results
             </span>
@@ -37,21 +37,21 @@
         </div>
 
         <div class="grid grid-cols-1 sm:grid-cols-3 gap-4">
-          <div class="rounded-lg border bg-card text-card-foreground shadow-sm border border-border/70 bg-card/70 backdrop-blur transition-all duration-300 hover:border-primary/35">
+          <div class="rounded-lg border border-border/70 bg-card/70 backdrop-blur shadow-sm transition-all duration-300 hover:border-primary/35">
             <div class="p-5 space-y-2">
               <span class="text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground/70">Open cases</span>
               <div class="text-3xl font-semibold tracking-tight text-foreground">{{ cases_metrics.open|default:"—" }}</div>
               <div class="text-xs font-medium text-muted-foreground">Target &lt; 15</div>
             </div>
           </div>
-          <div class="rounded-lg border bg-card text-card-foreground shadow-sm border border-border/70 bg-card/70 backdrop-blur transition-all duration-300 hover:border-primary/35">
+          <div class="rounded-lg border border-border/70 bg-card/70 backdrop-blur shadow-sm transition-all duration-300 hover:border-primary/35">
             <div class="p-5 space-y-2">
               <span class="text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground/70">Urgent cases</span>
               <div class="text-3xl font-semibold tracking-tight text-foreground">{{ cases_metrics.urgent|default:"—" }}</div>
               <div class="text-xs font-medium text-muted-foreground">{{ cases_metrics.urgent_delta|default:"All clear" }}</div>
             </div>
           </div>
-          <div class="rounded-lg border bg-card text-card-foreground shadow-sm border border-border/70 bg-card/70 backdrop-blur transition-all duration-300 hover:border-primary/35">
+          <div class="rounded-lg border border-border/70 bg-card/70 backdrop-blur shadow-sm transition-all duration-300 hover:border-primary/35">
             <div class="p-5 space-y-2">
               <span class="text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground/70">Avg. time open</span>
               <div class="text-3xl font-semibold tracking-tight text-foreground">{{ cases_metrics.avg_open|default:"—" }}</div>
@@ -276,42 +276,34 @@
                   </tbody>
                 </table>
               </div>
-              {% if not cases_loading and not cases %}
-                <div class="border-t border-border/60 px-4 py-4 text-sm text-muted-foreground">
-                  {{ cases_empty_message|default:"No cases yet." }}
+              <div class="flex flex-col gap-3 md:flex-row md:items-center md:justify-between border-t border-border/70 px-4 py-3 text-xs text-muted-foreground">
+                <div>
+                  Showing {{ cases_showing_count|default:0 }} of {{ cases_total|default:0 }} cases
                 </div>
-              {% endif %}
-              <div class="px-4 pb-5">
-                <nav role="navigation" aria-label="pagination" class="mx-auto flex w-full justify-center">
-                  <ul class="flex flex-row items-center gap-1">
-                    <li>
-                      <a class="inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-lg text-sm font-medium ring-offset-background transition-all duration-300 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50 [&_svg]:pointer-events-none [&_svg]:size-4 [&_svg]:shrink-0 bg-background/60 hover:bg-accent/40 hover:text-accent-foreground gap-1 pl-2.5 h-10 px-4 py-2 text-muted-foreground/70 pointer-events-none opacity-60" aria-disabled="true" href="#">
-                        <svg class="h-4 w-4" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" aria-hidden="true">
-                          <path stroke-linecap="round" stroke-linejoin="round" d="m15 19-7-7 7-7" />
-                        </svg>
-                        <span>Previous</span>
-                      </a>
-                    </li>
-                    <li>
-                      <a class="inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-lg text-sm font-medium ring-offset-background transition-all duration-300 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50 [&_svg]:pointer-events-none [&_svg]:size-4 [&_svg]:shrink-0 bg-background/80 hover:bg-accent/40 hover:text-accent-foreground h-10 w-10" aria-current="page" href="#">
-                        1
-                      </a>
-                    </li>
-                    <li>
-                      <a class="inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-lg text-sm font-medium ring-offset-background transition-all duration-300 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50 [&_svg]:pointer-events-none [&_svg]:size-4 [&_svg]:shrink-0 hover:bg-accent/40 hover:text-accent-foreground h-10 w-10 text-muted-foreground/70" aria-disabled="true" href="#">
-                        2
-                      </a>
-                    </li>
-                    <li>
-                      <a class="inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-lg text-sm font-medium ring-offset-background transition-all duration-300 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50 [&_svg]:pointer-events-none [&_svg]:size-4 [&_svg]:shrink-0 bg-background/60 hover:bg-accent/40 hover:text-accent-foreground gap-1 pr-2.5 h-10 px-4 py-2 text-muted-foreground/70 pointer-events-none opacity-60" aria-disabled="true" href="#">
-                        <span>Next</span>
-                        <svg class="h-4 w-4" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" aria-hidden="true">
-                          <path stroke-linecap="round" stroke-linejoin="round" d="m9 5 7 7-7 7" />
-                        </svg>
-                      </a>
-                    </li>
-                  </ul>
-                </nav>
+                <div class="flex items-center gap-2">
+                  <button
+                    type="button"
+                    class="inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-md text-xs font-medium ring-offset-background transition-all duration-300 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-40 border border-input bg-background hover:bg-accent hover:text-accent-foreground h-8 px-3 py-1"
+                    {% if not cases_has_prev %}disabled{% endif %}
+                    data-page="prev"
+                  >
+                    Previous
+                  </button>
+                  <button
+                    type="button"
+                    class="inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-md text-xs font-medium ring-offset-background transition-all duration-300 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-40 border border-input bg-background hover:bg-accent hover:text-accent-foreground h-8 px-3 py-1"
+                    {% if not cases_has_next %}disabled{% endif %}
+                    data-page="next"
+                  >
+                    Next
+                  </button>
+                  {% if cases_loading %}
+                    <svg class="h-3.5 w-3.5 animate-spin text-muted-foreground" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                      <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                      <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 0 1 8-8v4a4 4 0 0 0-4 4H4Z"></path>
+                    </svg>
+                  {% endif %}
+                </div>
               </div>
             </div>
             </div>

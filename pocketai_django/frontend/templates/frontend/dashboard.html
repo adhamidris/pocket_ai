@@ -65,13 +65,11 @@
             <div class="absolute inset-0 bg-gradient-to-r from-amber-200/40 via-amber-100/5 to-transparent"></div>
             <div class="relative px-4 py-3 flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
               <div class="flex items-start gap-3">
-                <div class="h-9 w-9 rounded-xl bg-white/80 text-amber-600 shadow-[0_6px_18px_-12px_rgba(245,158,11,0.6)] grid place-items-center">
-                  <svg class="h-4 w-4" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor">
-                    <path stroke-linecap="round" stroke-linejoin="round" d="M10.29 3.86 1.82 18a1 1 0 0 0 .86 1.5h18.64a1 1 0 0 0 .86-1.5L13.71 3.86a1 1 0 0 0-1.72 0Z" />
-                    <path stroke-linecap="round" stroke-linejoin="round" d="M12 9v4" />
-                    <path stroke-linecap="round" stroke-linejoin="round" d="M12 17h.01" />
-                  </svg>
-                </div>
+                <svg class="mt-0.5 h-5 w-5 text-amber-600" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" aria-hidden="true">
+                  <path stroke-linecap="round" stroke-linejoin="round" d="M10.29 3.86 1.82 18a1 1 0 0 0 .86 1.5h18.64a1 1 0 0 0 .86-1.5L13.71 3.86a1 1 0 0 0-1.72 0Z" />
+                  <path stroke-linecap="round" stroke-linejoin="round" d="M12 9v4" />
+                  <path stroke-linecap="round" stroke-linejoin="round" d="M12 17h.01" />
+                </svg>
                 <div class="space-y-1">
                   <div class="text-xs font-semibold uppercase tracking-[0.14em] text-amber-600">Escalation monitor</div>
                   <div class="text-sm font-semibold text-foreground">{{ dashboard_alert_message|default:"No escalations yet — monitoring continuously." }}</div>
@@ -89,7 +87,7 @@
         <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
           {% if dashboard_loading %}
             {% for _ in "123" %}
-              <div class="border border-border/40 bg-card/55 backdrop-blur-sm p-5 rounded-xl">
+              <div class="rounded-lg border border-border/70 bg-card/70 backdrop-blur shadow-sm p-5 transition-all duration-300 hover:border-primary/35">
                 <div class="space-y-4">
                   <div class="space-y-1">
                     <div class="h-2 w-16 rounded bg-muted/60 animate-pulse" aria-hidden="true"></div>
@@ -106,9 +104,8 @@
             {% endfor %}
           {% elif dashboard_metrics %}
             {% for metric in dashboard_metrics %}
-              <div class="relative overflow-hidden border border-border/40 bg-card/80 backdrop-blur-sm rounded-xl transition-all duration-300 hover:border-primary/35">
-                <div class="absolute inset-0 bg-gradient-to-br from-primary/15 via-transparent to-transparent opacity-60"></div>
-                <div class="relative p-5 space-y-3">
+              <div class="rounded-lg border border-border/70 bg-card/70 backdrop-blur shadow-sm transition-all duration-300 hover:border-primary/35">
+                <div class="p-5 space-y-3">
                   <span class="text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground/70">{{ metric.label|default:"Metric" }}</span>
                   <div class="text-3xl font-semibold tracking-tight text-foreground">
                     {{ metric.value|default:"—" }}

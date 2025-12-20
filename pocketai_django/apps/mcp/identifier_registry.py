@@ -238,6 +238,55 @@ class IdentifierGuardrail:
             upload_id = str(mapping.upload_id) if mapping.upload_id else "*"
             bucket = mapping_index.setdefault(upload_id, set())
             bucket.add(key)
+
+        active_keys: set[str] | None = None
+        try:
+            uploads_qs = KnowledgeUpload.objects.filter(business_profile=self.business_profile)
+            try:
+                uploads_qs = uploads_qs.filter(metadata__has_key="identifier_guardrails")
+            except Exception:
+                pass
+            for upload_id, metadata in uploads_qs.values_list("id", "metadata"):
+                if not isinstance(metadata, Mapping):
+                    continue
+                guardrails = metadata.get("identifier_guardrails")
+                if not isinstance(guardrails, Mapping):
+                    continue
+                raw_required = (
+                    guardrails.get("required_keys")
+                    or guardrails.get("required")
+                    or guardrails.get("requiredIdentifiers")
+                    or guardrails.get("required_identifiers")
+                )
+                if raw_required is None:
+                    continue
+                if isinstance(raw_required, str):
+                    values = [raw_required]
+                elif isinstance(raw_required, list):
+                    values = raw_required
+                else:
+                    continue
+                normalized: list[str] = []
+                for entry in values:
+                    token = _normalize_identifier_token(str(entry or ""))
+                    if not token:
+                        continue
+                    if active_keys is None:
+                        active_keys = set(
+                            IdentifierSchema.objects.filter(
+                                business_profile=self.business_profile,
+                                status=IdentifierSchemaStatus.ACTIVE,
+                            ).values_list("key", flat=True)
+                        )
+                    if active_keys is not None and token not in active_keys:
+                        continue
+                    normalized.append(token)
+                if not normalized:
+                    continue
+                bucket = mapping_index.setdefault(str(upload_id), set())
+                bucket.update(normalized)
+        except Exception:
+            pass
         return mapping_index
 
     def _all_required_keys(self) -> set[str]:

@@ -38,7 +38,7 @@
 
       <section class="grid grid-cols-1 sm:grid-cols-3 gap-4">
         {% for stat in agents_stats %}
-          <div class="rounded-lg border bg-card text-card-foreground shadow-sm border border-border/70 bg-card/70 backdrop-blur transition-all duration-300 hover:border-primary/35">
+          <div class="rounded-lg border border-border/70 bg-card/70 backdrop-blur shadow-sm transition-all duration-300 hover:border-primary/35">
             <div class="p-5 space-y-2">
               <span class="text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground/70">{{ stat.label }}</span>
               {% if stat.value %}

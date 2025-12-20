@@ -31,6 +31,7 @@ from apps.accounts.models import (
     KnowledgeSourceType,
     KnowledgeUpload,
     KnowledgeVisibility,
+    _normalize_identifier_token,
 )
 from apps.conversations.models import IdentifierEvent
 from apps.cases.models import Case, CaseMessage, CasePriority, CaseStatus
@@ -1123,8 +1124,6 @@ def _serialize_document_summary(item: DocumentListItem) -> dict:
         "statusLabel": item.status_label,
         "sourceType": item.source_type,
         "sourceLabel": item.source_label,
-        "tags": list(item.tags),
-        "collections": list(item.collections),
         "language": item.language,
         "category": item.category,
         "tokenCount": item.token_count,
@@ -1138,33 +1137,52 @@ def _serialize_document_summary(item: DocumentListItem) -> dict:
     }
 
 
+DOCUMENT_GUARDRAILS_KEY = "identifier_guardrails"
+DOCUMENT_GUARDRAILS_REQUIRED_KEY = "required_keys"
+
+
+def _normalize_guardrail_identifiers(raw_keys: object) -> list[str]:
+    if raw_keys is None:
+        return []
+    if isinstance(raw_keys, str):
+        values = [raw_keys]
+    elif isinstance(raw_keys, list):
+        values = raw_keys
+    else:
+        return []
+    normalized: list[str] = []
+    seen: set[str] = set()
+    for entry in values:
+        token = _normalize_identifier_token(str(entry or ""))
+        if not token or token in seen:
+            continue
+        normalized.append(token)
+        seen.add(token)
+    return normalized
+
+
+def _read_document_guardrails(metadata: object) -> list[str]:
+    if not isinstance(metadata, dict):
+        return []
+    guardrails = metadata.get(DOCUMENT_GUARDRAILS_KEY)
+    if not isinstance(guardrails, dict):
+        return []
+    raw = (
+        guardrails.get(DOCUMENT_GUARDRAILS_REQUIRED_KEY)
+        or guardrails.get("required")
+        or guardrails.get("requiredIdentifiers")
+        or guardrails.get("required_identifiers")
+    )
+    return _normalize_guardrail_identifiers(raw)
+
+
 def _serialize_document_detail(detail: DocumentDetail) -> dict:
     payload = {
         "summary": _serialize_document_summary(detail.summary),
-        "description": detail.description,
         "summaryText": detail.summary_text,
-        "metadata": detail.metadata,
-        "ingestionMetadata": detail.ingestion_metadata,
-        "retentionPolicy": detail.retention_policy,
         "createdByAgent": detail.created_by_agent,
+        "guardrails": {"requiredIdentifiers": _read_document_guardrails(detail.metadata)},
     }
-    if detail.file_detail:
-        payload["file"] = {
-            "filename": detail.file_detail.filename,
-            "contentType": detail.file_detail.content_type,
-            "sizeBytes": detail.file_detail.size_bytes,
-            "pageCount": detail.file_detail.page_count,
-        }
-    if detail.url_detail:
-        payload["url"] = {
-            "url": detail.url_detail.url,
-            "host": detail.url_detail.host,
-        }
-    if detail.text_detail:
-        payload["text"] = {
-            "characters": detail.text_detail.characters,
-            "preview": detail.text_detail.preview,
-        }
     if detail.pages:
         payload["layoutPages"] = [
             {
@@ -1660,13 +1678,126 @@ def knowledge_documents_collection(request: HttpRequest) -> JsonResponse:
     return JsonResponse(response, status=HTTPStatus.OK)
 
 
-@require_http_methods(["GET", "DELETE"])
+@require_http_methods(["GET", "DELETE", "PATCH"])
 def knowledge_document_detail(request: HttpRequest, document_id: uuid.UUID):
-    business_id = request.GET.get("business_id")
+    payload: dict | None = None
+    if request.method == "PATCH":
+        try:
+            payload = json.loads(request.body.decode("utf-8") or "{}")
+        except (json.JSONDecodeError, UnicodeDecodeError):
+            return JsonResponse(
+                {"error": "INVALID_JSON", "message": "Request body must be valid JSON."},
+                status=HTTPStatus.BAD_REQUEST,
+            )
+        business_id = request.GET.get("business_id") or (payload or {}).get("businessId")
+    else:
+        business_id = request.GET.get("business_id")
     business, error = _resolve_business_profile(request, business_id)
     if error:
         return error
     assert business is not None
+
+    if request.method == "PATCH":
+        if not request.user.is_authenticated:
+            return JsonResponse(
+                {"error": "UNAUTHORIZED", "message": "Login required to update documents."},
+                status=HTTPStatus.UNAUTHORIZED,
+            )
+        payload = payload or {}
+        display_name_keys = ("display_name", "displayName", "name")
+        display_name_provided = any(key in payload for key in display_name_keys)
+        display_name = ""
+        if display_name_provided:
+            display_name = (
+                str(payload.get("display_name") or payload.get("displayName") or payload.get("name") or "").strip()
+            )
+            if not display_name:
+                return JsonResponse(
+                    {"error": "VALIDATION_ERROR", "message": "Display name is required."},
+                    status=HTTPStatus.BAD_REQUEST,
+                )
+            if len(display_name) > 255:
+                return JsonResponse(
+                    {"error": "VALIDATION_ERROR", "message": "Display name must be 255 characters or fewer."},
+                    status=HTTPStatus.BAD_REQUEST,
+                )
+
+        guardrails_payload = payload.get("guardrails")
+        raw_required = None
+        if "requiredIdentifiers" in payload:
+            raw_required = payload.get("requiredIdentifiers")
+        elif guardrails_payload is not None:
+            if not isinstance(guardrails_payload, dict):
+                return JsonResponse(
+                    {"error": "VALIDATION_ERROR", "message": "guardrails must be an object."},
+                    status=HTTPStatus.BAD_REQUEST,
+                )
+            for key in ("requiredIdentifiers", "required_keys", "required", "required_identifiers"):
+                if key in guardrails_payload:
+                    raw_required = guardrails_payload.get(key)
+                    break
+
+        if not display_name_provided and raw_required is None:
+            return JsonResponse(
+                {"error": "VALIDATION_ERROR", "message": "No changes provided."},
+                status=HTTPStatus.BAD_REQUEST,
+            )
+
+        if raw_required is not None and not isinstance(raw_required, list):
+            return JsonResponse(
+                {"error": "VALIDATION_ERROR", "message": "requiredIdentifiers must be a list."},
+                status=HTTPStatus.BAD_REQUEST,
+            )
+
+        upload = KnowledgeUpload.objects.filter(business_profile=business, id=document_id).first()
+        if not upload:
+            return JsonResponse(
+                {"error": "DOCUMENT_NOT_FOUND", "message": "Document not found."},
+                status=HTTPStatus.NOT_FOUND,
+            )
+
+        update_fields: list[str] = []
+        if display_name_provided:
+            upload.display_name = display_name[:255]
+            update_fields.append("display_name")
+
+        required_identifiers: list[str] = []
+        if raw_required is not None:
+            required_identifiers = _normalize_guardrail_identifiers(raw_required or [])
+            metadata = upload.metadata if isinstance(upload.metadata, dict) else {}
+            metadata_copy = dict(metadata)
+            guardrails_meta = metadata_copy.get(DOCUMENT_GUARDRAILS_KEY)
+            if not isinstance(guardrails_meta, dict):
+                guardrails_meta = {}
+            if required_identifiers:
+                guardrails_meta[DOCUMENT_GUARDRAILS_REQUIRED_KEY] = required_identifiers
+                metadata_copy[DOCUMENT_GUARDRAILS_KEY] = guardrails_meta
+            else:
+                guardrails_meta.pop(DOCUMENT_GUARDRAILS_REQUIRED_KEY, None)
+                if guardrails_meta:
+                    metadata_copy[DOCUMENT_GUARDRAILS_KEY] = guardrails_meta
+                else:
+                    metadata_copy.pop(DOCUMENT_GUARDRAILS_KEY, None)
+            upload.metadata = metadata_copy
+            update_fields.append("metadata")
+
+        if not update_fields:
+            return JsonResponse(
+                {"error": "VALIDATION_ERROR", "message": "No changes provided."},
+                status=HTTPStatus.BAD_REQUEST,
+            )
+
+        upload.save(update_fields=update_fields + ["updated_at"])
+        logger.info(
+            "knowledge_document_update user=%s business=%s document=%s",
+            getattr(request.user, "id", None),
+            business.id,
+            document_id,
+        )
+        response_payload = {"success": True, "document": {"id": str(upload.id), "name": upload.display_name}}
+        if raw_required is not None:
+            response_payload["guardrails"] = {"requiredIdentifiers": required_identifiers}
+        return JsonResponse(response_payload, status=HTTPStatus.OK)
 
     if request.method == "DELETE":
         try:

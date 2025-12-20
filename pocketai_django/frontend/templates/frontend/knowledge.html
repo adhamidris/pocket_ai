@@ -11,6 +11,39 @@
   .no-scrollbar::-webkit-scrollbar {
     display: none;
   }
+  @keyframes knowledgeRowFlash {
+    0% {
+      background-color: hsl(var(--primary) / 0.12);
+    }
+    100% {
+      background-color: transparent;
+    }
+  }
+  .knowledge-row-flash {
+    animation: knowledgeRowFlash 4s ease-out;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .knowledge-row-flash {
+      animation: none;
+    }
+  }
+  .summary-frame {
+    position: relative;
+  }
+  .summary-frame.is-clamped {
+    max-height: 6.8em;
+    overflow: hidden;
+  }
+  .summary-frame.has-overflow.is-clamped::after {
+    content: "";
+    position: absolute;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    height: 2.4em;
+    background: linear-gradient(to bottom, transparent, hsl(var(--card)));
+    pointer-events: none;
+  }
 </style>
 {% endblock %}
 
@@ -20,20 +53,8 @@
   <main class="flex-1 overflow-auto">
     <div class="w-full px-4 md:px-6 lg:px-8 py-6 space-y-6">
       <header class="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
-        <div class="text-xl md:text-2xl font-semibold text-gradient-hero">Knowledge</div>
+        <h1 class="text-xl md:text-2xl font-semibold text-gradient-hero">Knowledge</h1>
         <div class="flex flex-wrap items-center gap-2">
-          <button
-            type="button"
-            class="inline-flex items-center gap-2 rounded-lg bg-primary text-primary-foreground px-4 py-2 text-sm font-medium shadow-sm transition-all duration-300 hover:bg-primary/90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 {% if not knowledge_upload_enabled %}opacity-40 cursor-not-allowed{% endif %}"
-            data-upload-toggle
-            {% if not knowledge_upload_enabled %}disabled aria-disabled="true"{% endif %}
-          >
-            <svg class="h-4 w-4" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" aria-hidden="true">
-              <path stroke-linecap="round" stroke-linejoin="round" d="M4 16v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2" />
-              <path stroke-linecap="round" stroke-linejoin="round" d="M12 16V4m0 0-4 4m4-4 4 4" />
-            </svg>
-            Upload Doc
-          </button>
           <a
             href="{% if knowledge_dump_enabled %}{% url 'frontend:dashboard-knowledge-dump' %}{% else %}#{% endif %}"
             class="inline-flex items-center gap-2 rounded-lg border border-input bg-background px-4 py-2 text-sm font-medium transition-all duration-300 hover:bg-accent hover:text-accent-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 {% if not knowledge_dump_enabled %}opacity-40 pointer-events-none{% endif %}"
@@ -50,7 +71,7 @@
               <svg class="h-4 w-4" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" aria-hidden="true">
                 <path stroke-linecap="round" stroke-linejoin="round" d="M6.75 3v2.25M3 6.75h2.25M17.25 3v2.25M21 6.75h-2.25M6.75 18.75V21M3 17.25h2.25m12-14.25L12 8.25m0 0L8.25 5.25M12 8.25v7.5m0 0L8.25 12.75M12 15.75l3.75-3" />
               </svg>
-              Connect Integrations
+              Connect Google Drive
             </button>
           </form>
         </div>
@@ -68,76 +89,23 @@
         </div>
       {% endif %}
 
-      {% if knowledge_upload_enabled %}
-        <div class="hidden rounded-xl border border-border/60 bg-card/80 p-4 shadow-sm space-y-4" data-upload-panel>
-          <div class="flex items-start justify-between gap-4">
-            <div>
-              <div class="text-sm font-semibold text-foreground">Add knowledge</div>
-              <p class="text-xs text-muted-foreground">Upload a file, capture a URL, or paste a short playbook.</p>
-            </div>
-            <button type="button" class="rounded-md p-1 text-muted-foreground hover:bg-muted" data-upload-cancel aria-label="Close upload panel">
-              <svg class="h-4 w-4" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor">
-                <path stroke-linecap="round" stroke-linejoin="round" d="M6 18 18 6M6 6l12 12" />
-              </svg>
-            </button>
-          </div>
-          <form method="post" action="{% url 'frontend:dashboard-knowledge-upload' %}" enctype="multipart/form-data" class="space-y-4" data-upload-form>
-            {% csrf_token %}
-            <div class="grid gap-4 md:grid-cols-2">
-              <label class="space-y-1 text-sm">
-                <span class="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Display name (optional)</span>
-                <input type="text" name="display_name" placeholder="e.g. Corporate account FAQ" class="w-full rounded-lg border border-input bg-background px-3 py-2 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" />
-              </label>
-              <label class="space-y-1 text-sm">
-                <span class="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Source type</span>
-                <select name="source_type" data-upload-type class="w-full rounded-lg border border-input bg-background px-3 py-2 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
-                  {% for option in knowledge_upload_types %}
-                    <option value="{{ option.value }}"{% if forloop.first %} selected{% endif %}>{{ option.label }}</option>
-                  {% endfor %}
-                </select>
-              </label>
-            </div>
-            <div class="grid gap-4 md:grid-cols-2">
-              <div data-upload-field="file" class="space-y-1">
-                <span class="text-xs font-semibold uppercase tracking-wide text-muted-foreground block">File upload</span>
-                <input type="file" name="knowledge_file" class="w-full rounded-lg border border-dashed border-input bg-background px-3 py-2 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" />
-                <p class="text-xs text-muted-foreground">Accepted: PDF, DOCX, TXT. We’ll index the file under this business.</p>
-              </div>
-              <div data-upload-field="link" class="space-y-1 hidden">
-                <span class="text-xs font-semibold uppercase tracking-wide text-muted-foreground block">External link</span>
-                <input type="url" name="knowledge_url" placeholder="https://example.com/handbook" class="w-full rounded-lg border border-input bg-background px-3 py-2 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" disabled />
-                <p class="text-xs text-muted-foreground">Add a documentation URL or wiki page to reference later.</p>
-              </div>
-            </div>
-            <div data-upload-field="text" class="space-y-1 hidden">
-              <span class="text-xs font-semibold uppercase tracking-wide text-muted-foreground block">Manual entry</span>
-              <textarea name="knowledge_text" rows="4" placeholder="Paste a short SOP or message template…" class="w-full rounded-lg border border-input bg-background px-3 py-2 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" disabled></textarea>
-            </div>
-            <div class="flex items-center justify-end gap-2">
-              <button type="button" class="inline-flex items-center rounded-md border border-input bg-background px-3 py-2 text-xs font-semibold text-muted-foreground hover:bg-muted" data-upload-cancel>Cancel</button>
-              <button type="submit" class="inline-flex items-center rounded-md bg-primary px-4 py-2 text-sm font-semibold text-primary-foreground shadow-sm hover:bg-primary/90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2">Save to knowledge</button>
-            </div>
-          </form>
-        </div>
-      {% endif %}
-
-      <section class="space-y-6" data-knowledge-tabs>
+      <section class="space-y-6" data-knowledge-tabs data-active-tab="{{ knowledge_active_tab }}">
         <div class="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
           <div class="inline-flex rounded-lg border border-border/40 bg-muted/70 p-1" data-tabs-list>
-            <button type="button" class="rounded-md px-3 py-1.5 text-xs font-semibold tracking-wide uppercase bg-primary text-primary-foreground shadow-sm transition-colors" data-tab-button="documents">
+            <button type="button" class="rounded-md px-3 py-1.5 text-xs font-semibold tracking-wide uppercase transition-colors {% if knowledge_active_tab == 'documents' %}bg-primary text-primary-foreground shadow-sm{% else %}text-muted-foreground hover:text-primary{% endif %}" data-tab-button="documents">
               Documents
             </button>
-            <button type="button" class="rounded-md px-3 py-1.5 text-xs font-semibold uppercase tracking-wide text-muted-foreground transition-colors hover:text-primary" data-tab-button="integrations">
+            <button type="button" class="rounded-md px-3 py-1.5 text-xs font-semibold uppercase tracking-wide transition-colors {% if knowledge_active_tab == 'integrations' %}bg-primary text-primary-foreground shadow-sm{% else %}text-muted-foreground hover:text-primary{% endif %}" data-tab-button="integrations">
               Integrations
             </button>
-            <button type="button" class="rounded-md px-3 py-1.5 text-xs font-semibold uppercase tracking-wide text-muted-foreground transition-colors hover:text-primary" data-tab-button="collections">
+            <button type="button" class="rounded-md px-3 py-1.5 text-xs font-semibold uppercase tracking-wide transition-colors {% if knowledge_active_tab == 'collections' %}bg-primary text-primary-foreground shadow-sm{% else %}text-muted-foreground hover:text-primary{% endif %}" data-tab-button="collections">
               Collections
             </button>
-            <button type="button" class="rounded-md px-3 py-1.5 text-xs font-semibold uppercase tracking-wide text-muted-foreground transition-colors hover:text-primary" data-tab-button="guardrails">
+            <button type="button" class="rounded-md px-3 py-1.5 text-xs font-semibold uppercase tracking-wide transition-colors {% if knowledge_active_tab == 'guardrails' %}bg-primary text-primary-foreground shadow-sm{% else %}text-muted-foreground hover:text-primary{% endif %}" data-tab-button="guardrails">
               Data Guardrails
             </button>
           </div>
-          <div class="flex flex-wrap items-center gap-2 md:ml-auto" data-tab-toolbar="documents">
+          <div class="flex flex-wrap items-center gap-2 md:ml-auto {% if knowledge_active_tab != 'documents' %}hidden{% endif %}" data-tab-toolbar="documents">
             <button type="button" class="inline-flex items-center gap-2 rounded-lg border border-input bg-background px-3 py-2 text-sm font-medium transition-all hover:bg-accent hover:text-accent-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2">
               <svg class="h-4 w-4 text-muted-foreground" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" aria-hidden="true">
                 <path stroke-linecap="round" stroke-linejoin="round" d="M3 7.5A2.25 2.25 0 0 1 5.25 5h13.5A2.25 2.25 0 0 1 21 7.5v9A2.25 2.25 0 0 1 18.75 18.75H5.25A2.25 2.25 0 0 1 3 16.5v-9Z" />
@@ -149,32 +117,7 @@
               </svg>
             </button>
           </div>
-          <div class="hidden flex-col gap-2" data-tab-toolbar="integrations">
-            <div class="flex items-center gap-2 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
-              <svg class="h-3.5 w-3.5" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" aria-hidden="true">
-                <path stroke-linecap="round" stroke-linejoin="round" d="M21 12a9 9 0 1 1-9-9" />
-                <path stroke-linecap="round" stroke-linejoin="round" d="M21 3v7h-7" />
-              </svg>
-              Bulk actions
-            </div>
-            <div class="flex flex-wrap items-center gap-2">
-              <button type="button" class="inline-flex items-center gap-2 rounded-md border border-input bg-background px-3 py-2 text-xs font-medium hover:bg-accent hover:text-accent-foreground">
-                <svg class="h-4 w-4" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor">
-                  <path stroke-linecap="round" stroke-linejoin="round" d="M4 4v5h.582a2 2 0 0 1 1.789 1.106l.472.944a2 2 0 0 0 1.79 1.106H14m0 0V4m0 8h3.5A2.5 2.5 0 0 1 20 14.5V20" />
-                  <path stroke-linecap="round" stroke-linejoin="round" d="M4 20h16" />
-                </svg>
-                Sync all
-              </button>
-              <button type="button" class="inline-flex items-center gap-2 rounded-md border border-input bg-background px-3 py-2 text-xs font-medium hover:bg-accent hover:text-accent-foreground">
-                <svg class="h-4 w-4" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor">
-                  <path stroke-linecap="round" stroke-linejoin="round" d="m9 12 2 2 4-4" />
-                  <path stroke-linecap="round" stroke-linejoin="round" d="M3 12a9 9 0 1 0 9-9" />
-                </svg>
-                Show connected only
-              </button>
-            </div>
-          </div>
-          <div class="hidden flex-col gap-2" data-tab-toolbar="collections">
+          <div class="flex flex-col gap-2 {% if knowledge_active_tab != 'collections' %}hidden{% endif %}" data-tab-toolbar="collections">
             <div class="flex items-center gap-2 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
               <svg class="h-3.5 w-3.5" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" aria-hidden="true">
                 <path stroke-linecap="round" stroke-linejoin="round" d="M3 7.5 12 12l9-4.5M3 12l9 4.5 9-4.5M3 16.5 12 21l9-4.5" />
@@ -192,7 +135,7 @@
           </div>
         </div>
 
-        <div class="space-y-5" data-tab-panel="documents">
+        <div class="space-y-5 {% if knowledge_active_tab != 'documents' %}hidden{% endif %}" data-tab-panel="documents">
           <div class="space-y-3">
             <div class="flex items-center gap-2 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
               <svg class="h-3.5 w-3.5" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" aria-hidden="true">
@@ -200,41 +143,100 @@
               </svg>
               Add content
             </div>
-            <div class="rounded-2xl border-2 border-dashed border-primary/30 bg-primary/5 px-6 py-5">
-              <div class="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
-                <div class="flex items-start gap-4">
-                  <div class="rounded-full bg-primary/10 p-3 text-primary">
-                    <svg class="h-5 w-5" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor">
-                      <path stroke-linecap="round" stroke-linejoin="round" d="M4 16v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2" />
-                      <path stroke-linecap="round" stroke-linejoin="round" d="M12 16V4m0 0-4 4m4-4 4 4" />
-                    </svg>
-                  </div>
-                  <div class="space-y-2">
-                    <div class="text-sm font-semibold text-foreground">Drag &amp; drop files or paste text</div>
-                    <p class="text-xs text-muted-foreground">Upload PDFs, docs, spreadsheets, or paste raw text and we will index it automatically.</p>
-                    <div class="flex flex-wrap gap-2 pt-1">
-                      <button type="button" class="inline-flex items-center gap-2 rounded-md bg-background px-3 py-1.5 text-xs font-medium text-muted-foreground shadow-sm">
-                        <svg class="h-4 w-4" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor">
-                          <path stroke-linecap="round" stroke-linejoin="round" d="M5 5h14M5 9h14M5 13h14M5 17h10" />
-                        </svg>
-                        Add text note
-                      </button>
-                      <button type="button" class="inline-flex items-center gap-2 rounded-md bg-background px-3 py-1.5 text-xs font-medium text-muted-foreground shadow-sm">
-                        <svg class="h-4 w-4" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor">
-                          <path stroke-linecap="round" stroke-linejoin="round" d="M3 3h7v7H3zM14 3h7v7h-7zM14 14h7v7h-7zM3 14h7v7H3z" />
-                        </svg>
-                        Import table
-                      </button>
+            <div
+              class="rounded-2xl border-2 border-dashed border-primary/30 bg-primary/5 px-6 py-5 transition-shadow transition-colors {% if not knowledge_upload_enabled %}opacity-40 cursor-not-allowed{% else %}cursor-pointer{% endif %}"
+              data-upload-dropzone
+              data-upload-banner
+              data-upload-enabled="{{ knowledge_upload_enabled|yesno:'true,false' }}"
+              {% if not knowledge_upload_enabled %}aria-disabled="true"{% endif %}
+            >
+              <form method="post" action="{% url 'frontend:dashboard-knowledge-upload' %}" enctype="multipart/form-data" class="space-y-4" data-upload-form>
+                {% csrf_token %}
+                <input type="hidden" name="source_type" value="{{ knowledge_upload_types.0.value }}" data-upload-type-input />
+                <input type="file" name="knowledge_file" class="sr-only" data-upload-file-input />
+                <div class="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
+                  <div class="flex items-start gap-4">
+                    <div class="rounded-full bg-primary/10 p-3 text-primary">
+                      <svg class="h-5 w-5" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor">
+                        <path stroke-linecap="round" stroke-linejoin="round" d="M4 16v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2" />
+                        <path stroke-linecap="round" stroke-linejoin="round" d="M12 16V4m0 0-4 4m4-4 4 4" />
+                      </svg>
+                    </div>
+                    <div class="space-y-2">
+                      <div class="text-sm font-semibold text-foreground">Drop files here or upload to add knowledge</div>
+                      <p class="text-xs text-muted-foreground">Supports PDF, DOCX, CSV, XLSX, and TXT. We auto-detect format.</p>
+                      <div class="flex flex-wrap gap-2 pt-1">
+                        <button type="button" class="inline-flex items-center gap-2 rounded-full border border-border/60 bg-background px-3 py-1 text-[11px] font-semibold text-muted-foreground shadow-sm transition hover:border-primary/40 hover:text-primary" data-upload-action="text">
+                          <svg class="h-3.5 w-3.5" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor">
+                            <path stroke-linecap="round" stroke-linejoin="round" d="M5 5h14M5 9h14M5 13h14M5 17h10" />
+                          </svg>
+                          Paste text
+                        </button>
+                        <button type="button" class="inline-flex items-center gap-2 rounded-full border border-border/60 bg-background px-3 py-1 text-[11px] font-semibold text-muted-foreground shadow-sm transition hover:border-primary/40 hover:text-primary" data-upload-action="link">
+                          <svg class="h-3.5 w-3.5" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor">
+                            <path stroke-linecap="round" stroke-linejoin="round" d="M13.5 6.75h3.75a2.25 2.25 0 0 1 2.25 2.25v3.75m-6 6.75H9a2.25 2.25 0 0 1-2.25-2.25v-3.75m1.5-3.75 7.5 7.5" />
+                          </svg>
+                          Add link
+                        </button>
+                      </div>
                     </div>
                   </div>
+                  <button type="button" class="inline-flex items-center gap-2 rounded-md bg-primary px-4 py-2 text-xs font-semibold text-primary-foreground shadow-sm hover:bg-primary/90" data-upload-action="file" data-upload-browse>
+                    <svg class="h-4 w-4" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor">
+                      <path stroke-linecap="round" stroke-linejoin="round" d="M8 7h11M8 12h8m-8 5h6M3 5v14a2 2 0 0 0 2 2h14" />
+                    </svg>
+                    Upload files
+                  </button>
                 </div>
-                <button type="button" class="inline-flex items-center gap-2 rounded-md border border-primary/40 bg-primary/10 px-4 py-2 text-xs font-medium text-primary hover:bg-primary/15">
-                  <svg class="h-4 w-4" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor">
-                    <path stroke-linecap="round" stroke-linejoin="round" d="M8 7h11M8 12h8m-8 5h6M3 5v14a2 2 0 0 0 2 2h14" />
-                  </svg>
-                  Browse files
-                </button>
-              </div>
+                <div class="hidden space-y-2 rounded-lg border border-border/60 bg-background/80 px-3 py-2 text-[11px] text-muted-foreground transition-all duration-200 opacity-0 -translate-y-1" data-upload-status role="status" aria-live="polite">
+                  <div class="flex items-center justify-between gap-2 text-xs">
+                    <div class="flex min-w-0 items-center gap-2">
+                      <span class="font-semibold text-foreground" data-upload-status-label>Uploading…</span>
+                      <span class="truncate text-muted-foreground" data-upload-status-file></span>
+                      <button type="button" class="hidden text-[11px] font-semibold text-primary hover:underline" data-upload-rename-toggle>
+                        Rename
+                      </button>
+                    </div>
+                    <span class="tabular-nums text-muted-foreground" data-upload-status-percent></span>
+                  </div>
+                  <div class="h-1.5 w-full rounded-full bg-muted/60" data-upload-progress-wrap>
+                    <div class="h-full w-0 rounded-full bg-primary transition-[width] duration-200" data-upload-progress></div>
+                  </div>
+                  <div data-upload-status-message></div>
+                  <div class="hidden items-center gap-2" data-upload-rename-form>
+                    <input
+                      type="text"
+                      class="h-8 w-full rounded-md border border-input bg-background px-2 text-xs text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                      placeholder="Update title"
+                      data-upload-rename-input
+                    />
+                    <button type="button" class="inline-flex items-center rounded-md bg-primary px-2.5 py-1 text-[11px] font-semibold text-primary-foreground" data-upload-rename-save>
+                      Save
+                    </button>
+                    <button type="button" class="inline-flex items-center rounded-md border border-input bg-background px-2 py-1 text-[11px] font-semibold text-muted-foreground" data-upload-rename-cancel>
+                      Cancel
+                    </button>
+                  </div>
+                </div>
+                <div class="hidden space-y-3 pt-2" data-upload-inline>
+                  <label class="space-y-1 text-sm">
+                    <span class="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Title (optional)</span>
+                    <input type="text" name="display_name" placeholder="e.g. Corporate account FAQ" class="w-full rounded-lg border border-input bg-background px-3 py-2 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" data-upload-display-name />
+                  </label>
+                  <div data-upload-inline-field="text" class="space-y-1 hidden">
+                    <span class="text-xs font-semibold uppercase tracking-wide text-muted-foreground block">Manual entry</span>
+                    <textarea name="knowledge_text" rows="4" placeholder="Paste a short SOP or message template…" class="w-full rounded-lg border border-input bg-background px-3 py-2 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" disabled></textarea>
+                  </div>
+                  <div data-upload-inline-field="link" class="space-y-1 hidden">
+                    <span class="text-xs font-semibold uppercase tracking-wide text-muted-foreground block">External link</span>
+                    <input type="url" name="knowledge_url" placeholder="https://example.com/handbook" class="w-full rounded-lg border border-input bg-background px-3 py-2 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" disabled />
+                  </div>
+                  <div class="flex items-center justify-end gap-2">
+                    <button type="button" class="inline-flex items-center rounded-md border border-input bg-background px-3 py-2 text-xs font-semibold text-muted-foreground hover:bg-muted" data-upload-inline-cancel>Cancel</button>
+                    <button type="submit" class="inline-flex items-center rounded-md bg-primary px-4 py-2 text-sm font-semibold text-primary-foreground shadow-sm hover:bg-primary/90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2">Save to knowledge</button>
+                  </div>
+                </div>
+              </form>
             </div>
           </div>
 
@@ -350,7 +352,7 @@
                           <span class="inline-flex items-center rounded-full border border-border/60 bg-muted/40 px-2 py-0.5 text-[11px] font-medium text-muted-foreground">{{ doc.type_badge }}</span>
                         </td>
                         <td class="py-4">
-                          <span class="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-semibold capitalize {{ doc.status_badge_class }}">
+                          <span class="text-[11px] font-semibold capitalize {{ doc.status_badge_class }}">
                             {{ doc.status_label }}
                           </span>
                         </td>
@@ -381,7 +383,9 @@
               </table>
             </div>
             <div class="border-t border-border/60 bg-background/95 backdrop-blur px-4 py-3 text-xs text-muted-foreground flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-              <div>Showing {{ knowledge_documents_showing|default:0 }} of {{ knowledge_documents_total|default:0 }} documents</div>
+              <div data-documents-count data-documents-showing="{{ knowledge_documents_showing|default:0 }}" data-documents-total="{{ knowledge_documents_total|default:0 }}">
+                Showing {{ knowledge_documents_showing|default:0 }} of {{ knowledge_documents_total|default:0 }} documents
+              </div>
               <div class="flex items-center gap-2">
                 <button type="button" class="inline-flex items-center gap-2 rounded-md border border-input bg-background px-3 py-1 text-xs font-medium hover:bg-accent hover:text-accent-foreground {% if not knowledge_documents_has_prev %}opacity-40 cursor-not-allowed{% endif %}" {% if not knowledge_documents_has_prev %}disabled{% endif %}>
                   Previous
@@ -400,87 +404,220 @@
           </div>
         </div>
 
-        <div class="hidden space-y-4" data-tab-panel="integrations">
-          <div class="flex items-center gap-2 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
-            <svg class="h-3.5 w-3.5" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" aria-hidden="true">
-              <path stroke-linecap="round" stroke-linejoin="round" d="M4.5 9.75a7.5 7.5 0 0 1 14.495-1.5m.005 1.5V6m0 3.75h-3.75" />
-              <path stroke-linecap="round" stroke-linejoin="round" d="M19.5 14.25a7.5 7.5 0 0 1-14.495 1.5m-.005-1.5V18m0-3.75h3.75" />
-            </svg>
-            Connected sources
-          </div>
-          {% if knowledge_integrations %}
-            <div class="grid gap-4 lg:grid-cols-2 xl:grid-cols-3">
-              {% for integration in knowledge_integrations %}
-                <div class="rounded-lg border border-border/60 bg-card/70 p-4 space-y-4">
-                  <div class="flex items-start gap-3">
-                    <div class="h-10 w-10 shrink-0 rounded-full bg-primary/10 flex items-center justify-center text-primary">
-                      <svg class="h-5 w-5" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" aria-hidden="true">
-                        <path stroke-linecap="round" stroke-linejoin="round" d="M4.5 12a7.5 7.5 0 0 1 13.35-4.35L21 8.25M19.5 3v5.25M19.5 12a7.5 7.5 0 0 1-13.35 4.35L3 15.75M4.5 21v-5.25" />
-                      </svg>
-                    </div>
-                    <div class="space-y-1 flex-1">
-                      <div class="flex flex-wrap items-center gap-2">
-                        <div class="text-sm font-semibold text-foreground">{{ integration.name }}</div>
-                        <span class="inline-flex items-center rounded-full px-2 py-0.5 text-[11px] font-semibold {{ integration.status_class }}">{{ integration.status_label }}</span>
-                      </div>
-                      <p class="text-xs text-muted-foreground leading-relaxed">{{ integration.description }}</p>
-                    </div>
-                  </div>
-                  <div class="grid gap-3 text-xs text-muted-foreground sm:grid-cols-2">
-                    <div class="space-y-1">
-                      <div class="text-[11px] uppercase tracking-wide">Last sync</div>
-                      <div class="text-sm font-medium text-foreground">{{ integration.last_sync|default_if_none:"—" }}</div>
-                    </div>
-                    <div class="space-y-1">
-                      <div class="text-[11px] uppercase tracking-wide">Next run</div>
-                      <div class="text-sm font-medium text-foreground">{{ integration.next_sync|default_if_none:"—" }}</div>
-                    </div>
-                    <div class="space-y-1">
-                      <div class="text-[11px] uppercase tracking-wide">Resources</div>
-                      <div class="text-sm font-medium text-foreground">{{ integration.resource_count }}</div>
-                    </div>
-                    <div class="space-y-1">
-                      <div class="text-[11px] uppercase tracking-wide">Rows last sync</div>
-                      <div class="text-sm font-medium text-foreground">{{ integration.rows_ingested|default_if_none:"—" }}</div>
-                    </div>
-                  </div>
-                  {% if integration.sync_error %}
-                    <div class="rounded-md border border-rose-100 bg-rose-50 px-3 py-2 text-xs text-rose-700">
-                      {{ integration.sync_error }}
-                    </div>
-                  {% endif %}
-                  {% if integration.resource_count == 0 %}
-                    <div class="rounded-md border border-dashed border-amber-200 bg-amber-50/50 px-3 py-2 text-xs text-amber-800">
-                      No sheets have been selected yet. Use “Manage sheets” to choose which tabs should sync.
-                    </div>
-                  {% endif %}
-                  {% if integration.api.sheets and knowledge_business_id %}
-                    <div class="flex flex-wrap gap-2 pt-2">
-                      <button
-                        type="button"
-                        class="inline-flex items-center gap-2 rounded-md border border-input bg-background px-3 py-1.5 text-xs font-semibold text-foreground transition hover:border-primary/40 hover:text-primary"
-                        data-integration-configure
-                        data-integration-id="{{ integration.id }}"
-                        data-integration-name="{{ integration.name }}"
-                        data-sheets-url="{{ integration.api.sheets }}"
-                        data-sync-url="{{ integration.api.sync }}"
-                        data-business-id="{{ knowledge_business_id }}"
-                        data-default-visibility="{{ integration.default_visibility }}"
-                        data-default-frequency="{{ integration.default_sync_frequency }}"
-                      >
-                        Manage sheets
-                      </button>
-                    </div>
-                      <div class="rounded-md border border-border/50 bg-muted/40 px-3 py-2 text-xs text-muted-foreground">
-                      After saving your sheet selections, run the sync worker or launch it from the modal:
-                      <pre class="mt-1 overflow-x-auto rounded bg-background px-2 py-1 text-[11px] font-mono text-foreground">python manage.py sync_knowledge_integrations --integration-id {{ integration.id }} --ignore-schedule
-python manage.py reset_stalled_ingestion_jobs --older-than 15 --requeue --requeue-missing
-python manage.py knowledge_ingestion_worker</pre>
-                    </div>
-                  {% endif %}
-                </div>
-              {% endfor %}
+        <div class="space-y-6 {% if knowledge_active_tab != 'integrations' %}hidden{% endif %}" data-tab-panel="integrations">
+          <div class="rounded-2xl border border-border/60 bg-card/70 p-5 space-y-4">
+            <div class="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
+              <div class="space-y-1">
+                <div class="text-sm font-semibold text-foreground">Keep external knowledge in sync</div>
+                <p class="text-xs text-muted-foreground">
+                  Connect Google Drive to keep spreadsheets, SOPs, and trackers updated automatically.
+                </p>
+              </div>
+              <form method="post" action="{{ knowledge_integrations_connect_url }}">
+                {% csrf_token %}
+                <button type="submit" class="inline-flex items-center gap-2 rounded-md bg-primary px-4 py-2 text-xs font-semibold text-primary-foreground shadow-sm transition hover:bg-primary/90 {% if not knowledge_integrations_enabled %}opacity-40 cursor-not-allowed{% endif %}" {% if not knowledge_integrations_enabled %}disabled aria-disabled="true"{% endif %}>
+                  <svg class="h-4 w-4" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" aria-hidden="true">
+                    <path stroke-linecap="round" stroke-linejoin="round" d="M6.75 3v2.25M3 6.75h2.25M17.25 3v2.25M21 6.75h-2.25M6.75 18.75V21M3 17.25h2.25m12-14.25L12 8.25m0 0L8.25 5.25M12 8.25v7.5m0 0L8.25 12.75M12 15.75l3.75-3" />
+                  </svg>
+                  Connect Google Drive
+                </button>
+              </form>
             </div>
+            <div class="grid gap-3 sm:grid-cols-3">
+              <div class="rounded-lg border border-border/60 bg-muted/30 px-3 py-3">
+                <div class="text-[10px] uppercase tracking-wide text-muted-foreground">Active sources</div>
+                <div class="text-lg font-semibold text-foreground">{{ knowledge_integrations_summary.active }}</div>
+                <div class="text-[11px] text-muted-foreground">Connected or syncing</div>
+              </div>
+              <div class="rounded-lg border border-border/60 bg-muted/30 px-3 py-3">
+                <div class="text-[10px] uppercase tracking-wide text-muted-foreground">Needs attention</div>
+                <div class="text-lg font-semibold text-foreground">{{ knowledge_integrations_summary.attention }}</div>
+                <div class="text-[11px] text-muted-foreground">Reconnect or fix errors</div>
+              </div>
+              <div class="rounded-lg border border-border/60 bg-muted/30 px-3 py-3">
+                <div class="text-[10px] uppercase tracking-wide text-muted-foreground">Syncing now</div>
+                <div class="text-lg font-semibold text-foreground">{{ knowledge_integrations_summary.syncing }}</div>
+                <div class="text-[11px] text-muted-foreground">In progress</div>
+              </div>
+            </div>
+            {% if not knowledge_integrations_enabled %}
+              <div class="rounded-md border border-border/60 bg-muted/30 px-3 py-2 text-xs text-muted-foreground">
+                Link a business profile to connect integrations.
+              </div>
+            {% endif %}
+          </div>
+
+          {% if knowledge_integrations %}
+            {% if knowledge_integrations_attention %}
+              <section class="space-y-3">
+                <div class="flex items-center gap-2 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+                  <svg class="h-3.5 w-3.5" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" aria-hidden="true">
+                    <path stroke-linecap="round" stroke-linejoin="round" d="M12 9v3.75m0 3.75h.007v.007H12v-.007Z" />
+                    <path stroke-linecap="round" stroke-linejoin="round" d="M4.5 19.5h15a1.5 1.5 0 0 0 1.5-1.5V6a1.5 1.5 0 0 0-1.5-1.5h-15A1.5 1.5 0 0 0 3 6v12a1.5 1.5 0 0 0 1.5 1.5Z" />
+                  </svg>
+                  Needs attention
+                </div>
+                <div class="grid gap-4 lg:grid-cols-2 xl:grid-cols-3">
+                  {% for integration in knowledge_integrations_attention %}
+                    <div class="rounded-lg border p-4 space-y-4 {% if integration.is_attention %}border-rose-100 bg-rose-50/40{% else %}border-border/60 bg-card/70{% endif %}">
+                      <div class="flex items-start gap-3">
+                        <div class="h-10 w-10 shrink-0 rounded-full bg-primary/10 flex items-center justify-center text-primary">
+                          <svg class="h-5 w-5" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" aria-hidden="true">
+                            <path stroke-linecap="round" stroke-linejoin="round" d="M4.5 12a7.5 7.5 0 0 1 13.35-4.35L21 8.25M19.5 3v5.25M19.5 12a7.5 7.5 0 0 1-13.35 4.35L3 15.75M4.5 21v-5.25" />
+                          </svg>
+                        </div>
+                        <div class="space-y-1 flex-1">
+                          <div class="flex flex-wrap items-center gap-2">
+                            <div class="text-sm font-semibold text-foreground">{{ integration.name }}</div>
+                            <span class="text-[11px] font-semibold {{ integration.status_class }}">{{ integration.status_label }}</span>
+                          </div>
+                          <p class="text-xs text-muted-foreground leading-relaxed">{{ integration.description }}</p>
+                        </div>
+                      </div>
+                      <div class="grid gap-3 text-xs text-muted-foreground sm:grid-cols-2">
+                        <div class="space-y-1">
+                          <div class="text-[11px] uppercase tracking-wide">Last sync</div>
+                          <div class="text-sm font-medium text-foreground">{{ integration.last_sync|default_if_none:"—" }}</div>
+                        </div>
+                        <div class="space-y-1">
+                          <div class="text-[11px] uppercase tracking-wide">Next sync</div>
+                          <div class="text-sm font-medium text-foreground">{{ integration.next_sync|default_if_none:"—" }}</div>
+                        </div>
+                        <div class="space-y-1">
+                          <div class="text-[11px] uppercase tracking-wide">Auto-sync</div>
+                          <div class="text-sm font-medium text-foreground">{{ integration.sync_frequency_label|default_if_none:"—" }}</div>
+                        </div>
+                        <div class="space-y-1">
+                          <div class="text-[11px] uppercase tracking-wide">Resources</div>
+                          <div class="text-sm font-medium text-foreground">{{ integration.resource_count }}</div>
+                        </div>
+                      </div>
+                      {% if integration.rows_ingested %}
+                        <div class="text-xs text-muted-foreground">Last sync ingested {{ integration.rows_ingested }} rows.</div>
+                      {% endif %}
+                      {% if integration.sync_error %}
+                        <div class="rounded-md border border-rose-100 bg-rose-50 px-3 py-2 text-xs text-rose-700">
+                          {{ integration.sync_error }}
+                        </div>
+                      {% elif integration.status_note %}
+                        <div class="rounded-md border border-amber-200 bg-amber-50/60 px-3 py-2 text-xs text-amber-800">
+                          {{ integration.status_note }}
+                        </div>
+                      {% endif %}
+                      {% if integration.resource_count == 0 %}
+                        <div class="rounded-md border border-dashed border-amber-200 bg-amber-50/50 px-3 py-2 text-xs text-amber-800">
+                          No resources selected yet. Choose what to sync to start ingesting.
+                        </div>
+                      {% endif %}
+                      {% if integration.api.sheets and knowledge_business_id %}
+                        <div class="flex flex-wrap items-center gap-2 pt-1">
+                          <button
+                            type="button"
+                            class="inline-flex items-center gap-2 rounded-md border border-input bg-background px-3 py-1.5 text-xs font-semibold text-foreground transition hover:border-primary/40 hover:text-primary"
+                            data-integration-configure
+                            data-integration-id="{{ integration.id }}"
+                            data-integration-name="{{ integration.name }}"
+                            data-sheets-url="{{ integration.api.sheets }}"
+                            data-sync-url="{{ integration.api.sync }}"
+                            data-business-id="{{ knowledge_business_id }}"
+                            data-default-visibility="{{ integration.default_visibility }}"
+                            data-default-frequency="{{ integration.default_sync_frequency }}"
+                          >
+                            Manage sheets
+                          </button>
+                        </div>
+                        <p class="text-[11px] text-muted-foreground">Syncs run on schedule or from the modal.</p>
+                      {% endif %}
+                    </div>
+                  {% endfor %}
+                </div>
+              </section>
+            {% endif %}
+
+            {% if knowledge_integrations_active %}
+              <section class="space-y-3">
+                <div class="flex items-center gap-2 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+                  <svg class="h-3.5 w-3.5" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" aria-hidden="true">
+                    <path stroke-linecap="round" stroke-linejoin="round" d="M4.5 12a7.5 7.5 0 0 1 13.35-4.35L21 8.25M19.5 3v5.25M19.5 12a7.5 7.5 0 0 1-13.35 4.35L3 15.75M4.5 21v-5.25" />
+                  </svg>
+                  Connected sources
+                </div>
+                <div class="grid gap-4 lg:grid-cols-2 xl:grid-cols-3">
+                  {% for integration in knowledge_integrations_active %}
+                    <div class="rounded-lg border p-4 space-y-4 {% if integration.is_attention %}border-rose-100 bg-rose-50/40{% else %}border-border/60 bg-card/70{% endif %}">
+                      <div class="flex items-start gap-3">
+                        <div class="h-10 w-10 shrink-0 rounded-full bg-primary/10 flex items-center justify-center text-primary">
+                          <svg class="h-5 w-5" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" aria-hidden="true">
+                            <path stroke-linecap="round" stroke-linejoin="round" d="M4.5 12a7.5 7.5 0 0 1 13.35-4.35L21 8.25M19.5 3v5.25M19.5 12a7.5 7.5 0 0 1-13.35 4.35L3 15.75M4.5 21v-5.25" />
+                          </svg>
+                        </div>
+                        <div class="space-y-1 flex-1">
+                          <div class="flex flex-wrap items-center gap-2">
+                            <div class="text-sm font-semibold text-foreground">{{ integration.name }}</div>
+                            <span class="text-[11px] font-semibold {{ integration.status_class }}">{{ integration.status_label }}</span>
+                          </div>
+                          <p class="text-xs text-muted-foreground leading-relaxed">{{ integration.description }}</p>
+                        </div>
+                      </div>
+                      <div class="grid gap-3 text-xs text-muted-foreground sm:grid-cols-2">
+                        <div class="space-y-1">
+                          <div class="text-[11px] uppercase tracking-wide">Last sync</div>
+                          <div class="text-sm font-medium text-foreground">{{ integration.last_sync|default_if_none:"—" }}</div>
+                        </div>
+                        <div class="space-y-1">
+                          <div class="text-[11px] uppercase tracking-wide">Next sync</div>
+                          <div class="text-sm font-medium text-foreground">{{ integration.next_sync|default_if_none:"—" }}</div>
+                        </div>
+                        <div class="space-y-1">
+                          <div class="text-[11px] uppercase tracking-wide">Auto-sync</div>
+                          <div class="text-sm font-medium text-foreground">{{ integration.sync_frequency_label|default_if_none:"—" }}</div>
+                        </div>
+                        <div class="space-y-1">
+                          <div class="text-[11px] uppercase tracking-wide">Resources</div>
+                          <div class="text-sm font-medium text-foreground">{{ integration.resource_count }}</div>
+                        </div>
+                      </div>
+                      {% if integration.rows_ingested %}
+                        <div class="text-xs text-muted-foreground">Last sync ingested {{ integration.rows_ingested }} rows.</div>
+                      {% endif %}
+                      {% if integration.sync_error %}
+                        <div class="rounded-md border border-rose-100 bg-rose-50 px-3 py-2 text-xs text-rose-700">
+                          {{ integration.sync_error }}
+                        </div>
+                      {% elif integration.status_note %}
+                        <div class="rounded-md border border-amber-200 bg-amber-50/60 px-3 py-2 text-xs text-amber-800">
+                          {{ integration.status_note }}
+                        </div>
+                      {% endif %}
+                      {% if integration.resource_count == 0 %}
+                        <div class="rounded-md border border-dashed border-amber-200 bg-amber-50/50 px-3 py-2 text-xs text-amber-800">
+                          No resources selected yet. Choose what to sync to start ingesting.
+                        </div>
+                      {% endif %}
+                      {% if integration.api.sheets and knowledge_business_id %}
+                        <div class="flex flex-wrap items-center gap-2 pt-1">
+                          <button
+                            type="button"
+                            class="inline-flex items-center gap-2 rounded-md border border-input bg-background px-3 py-1.5 text-xs font-semibold text-foreground transition hover:border-primary/40 hover:text-primary"
+                            data-integration-configure
+                            data-integration-id="{{ integration.id }}"
+                            data-integration-name="{{ integration.name }}"
+                            data-sheets-url="{{ integration.api.sheets }}"
+                            data-sync-url="{{ integration.api.sync }}"
+                            data-business-id="{{ knowledge_business_id }}"
+                            data-default-visibility="{{ integration.default_visibility }}"
+                            data-default-frequency="{{ integration.default_sync_frequency }}"
+                          >
+                            Manage sheets
+                          </button>
+                        </div>
+                        <p class="text-[11px] text-muted-foreground">Syncs run on schedule or from the modal.</p>
+                      {% endif %}
+                    </div>
+                  {% endfor %}
+                </div>
+              </section>
+            {% endif %}
           {% else %}
             <div class="rounded-xl border border-dashed border-border/60 bg-muted/30 p-6 text-sm text-muted-foreground">
               {{ knowledge_integrations_empty_message }}
@@ -488,7 +625,7 @@ python manage.py knowledge_ingestion_worker</pre>
           {% endif %}
         </div>
 
-        <div class="hidden space-y-4" data-tab-panel="collections">
+        <div class="space-y-4 {% if knowledge_active_tab != 'collections' %}hidden{% endif %}" data-tab-panel="collections">
           <div class="flex items-center gap-2 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
             <svg class="h-3.5 w-3.5" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" aria-hidden="true">
               <path stroke-linecap="round" stroke-linejoin="round" d="M3 7.5 12 12l9-4.5M3 12l9 4.5 9-4.5M3 16.5 12 21l9-4.5" />
@@ -535,7 +672,7 @@ python manage.py knowledge_ingestion_worker</pre>
           {% endif %}
         </div>
 
-        <div class="hidden space-y-5" data-tab-panel="guardrails" data-guardrails>
+        <div class="space-y-5 {% if knowledge_active_tab != 'guardrails' %}hidden{% endif %}" data-tab-panel="guardrails" data-guardrails>
           <div class="flex items-start gap-3 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
             <svg class="h-3.5 w-3.5 text-primary" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" aria-hidden="true">
               <path stroke-linecap="round" stroke-linejoin="round" d="M12 9v3.75m0 3.75h.007v.007H12v-.007Z" />
@@ -1162,7 +1299,7 @@ python manage.py knowledge_ingestion_worker</pre>
                 <div class="text-lg font-semibold text-foreground leading-tight" data-document-name>Document name</div>
                 <div class="text-xs text-muted-foreground" data-document-identifier>KN-0000</div>
               </div>
-              <span class="inline-flex items-center rounded-full border px-2.5 py-0.5 text-[11px] font-semibold capitalize text-muted-foreground" data-document-status-badge>Draft</span>
+              <span class="text-[11px] font-semibold capitalize text-muted-foreground" data-document-status-badge>Draft</span>
             </div>
             <div class="mt-3 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
               <span data-document-source-label>Upload</span>
@@ -1182,7 +1319,6 @@ python manage.py knowledge_ingestion_worker</pre>
                 >
                   Delete document
                 </button>
-                <p class="text-[11px] text-muted-foreground">Deleting removes this document from search immediately.</p>
               </div>
               <div class="hidden rounded-md border border-border/60 bg-muted/40 px-3 py-2 text-xs text-muted-foreground" data-document-delete-notice></div>
             {% endif %}
@@ -1219,60 +1355,49 @@ python manage.py knowledge_ingestion_worker</pre>
 
           <section class="space-y-4 px-6">
             <div>
-              <div class="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Description</div>
-              <p class="mt-1 text-sm leading-relaxed text-foreground" data-document-description>No description provided.</p>
-            </div>
-            <div>
-              <div class="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Summary</div>
-              <p class="mt-1 text-sm leading-relaxed text-foreground" data-document-summary>No summary available.</p>
-            </div>
-          </section>
-
-          <section class="space-y-4 px-6">
-            <div>
-              <div class="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Tags</div>
-              <div class="mt-2 flex flex-wrap gap-2 text-xs" data-document-tags>
-                <span class="text-muted-foreground">No tags.</span>
+              <div class="flex items-center gap-2">
+                <div class="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Summary</div>
+                <span class="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground/80">Auto summary</span>
               </div>
-            </div>
-            <div>
-              <div class="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Collections</div>
-              <div class="mt-2 flex flex-wrap gap-2 text-xs" data-document-collections>
-                <span class="text-muted-foreground">Not assigned to collections.</span>
+              <div class="mt-2 space-y-2">
+                <div class="summary-frame is-clamped text-sm leading-relaxed text-foreground" data-document-summary-wrap>
+                  <div class="summary-body space-y-2" data-document-summary>No summary available.</div>
+                </div>
+                <button
+                  type="button"
+                  class="hidden text-xs font-semibold text-primary hover:underline"
+                  data-document-summary-toggle
+                  aria-expanded="false"
+                >
+                  Show more
+                </button>
               </div>
             </div>
           </section>
 
-          <section class="space-y-4 px-6">
-            <div class="rounded-xl border border-border/70 bg-card/95 p-4">
-              <div class="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Metadata</div>
-              <pre class="mt-2 whitespace-pre-wrap text-xs text-muted-foreground" data-document-metadata>{"empty": true}</pre>
+          <section class="space-y-3 px-6">
+            <div class="flex items-start justify-between gap-3">
+              <div>
+                <div class="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Guardrails</div>
+                <p class="text-xs text-muted-foreground">Require identifiers before this document is used in answers.</p>
+              </div>
+              <button
+                type="button"
+                class="inline-flex items-center gap-2 rounded-md border border-input bg-background px-3 py-1.5 text-xs font-semibold text-foreground transition hover:border-primary/40 hover:text-primary disabled:opacity-50 disabled:cursor-not-allowed"
+                data-document-guardrails-save
+                disabled
+                aria-disabled="true"
+              >
+                Save
+              </button>
             </div>
-            <div class="rounded-xl border border-border/70 bg-card/95 p-4">
-              <div class="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Retention policy</div>
-              <pre class="mt-2 whitespace-pre-wrap text-xs text-muted-foreground" data-document-retention>{"empty": true}</pre>
-            </div>
-            <div class="rounded-xl border border-border/70 bg-card/95 p-4">
-              <div class="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Ingestion / preflight</div>
-              <pre class="mt-2 whitespace-pre-wrap text-xs text-muted-foreground" data-document-ingestion>{"empty": true}</pre>
+            <div class="rounded-lg border border-border/60 bg-muted/30 p-3 space-y-2">
+              <div class="text-xs text-muted-foreground hidden" data-document-guardrails-empty></div>
+              <div class="space-y-2" data-document-guardrails-list></div>
+              <div class="text-xs text-muted-foreground hidden" data-document-guardrails-status></div>
             </div>
           </section>
 
-          <section class="space-y-4 px-6">
-            <div class="rounded-xl border border-border/70 bg-card/95 p-4 space-y-2 hidden" data-document-file-section>
-              <div class="text-xs font-semibold uppercase tracking-wide text-muted-foreground">File details</div>
-              <div class="text-sm text-foreground" data-document-file></div>
-            </div>
-            <div class="rounded-xl border border-border/70 bg-card/95 p-4 space-y-2 hidden" data-document-url-section>
-              <div class="text-xs font-semibold uppercase tracking-wide text-muted-foreground">URL</div>
-              <a href="#" target="_blank" rel="noreferrer" class="text-sm font-medium text-primary hover:underline" data-document-url>—</a>
-              <div class="text-xs text-muted-foreground" data-document-host></div>
-            </div>
-            <div class="rounded-xl border border-border/70 bg-card/95 p-4 space-y-2 hidden" data-document-text-section>
-              <div class="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Text preview</div>
-              <p class="text-sm text-foreground" data-document-text-preview>—</p>
-            </div>
-          </section>
         </div>
       </div>
     </div>
@@ -1282,6 +1407,7 @@ python manage.py knowledge_ingestion_worker</pre>
 {% endblock %}
 
 {% block extra_js %}
+  {{ knowledge_guardrail_identifiers|json_script:"knowledge-guardrail-identifiers" }}
 <script>
   document.addEventListener("DOMContentLoaded", function () {
     const tabsRoot = document.querySelector("[data-knowledge-tabs]");
@@ -1289,6 +1415,9 @@ python manage.py knowledge_ingestion_worker</pre>
       const buttons = Array.from(tabsRoot.querySelectorAll("[data-tab-button]"));
       const panels = Array.from(tabsRoot.querySelectorAll("[data-tab-panel]"));
       const toolbars = Array.from(document.querySelectorAll("[data-tab-toolbar]"));
+      const tabNames = buttons
+        .map((button) => button.dataset.tabButton || "")
+        .filter((name) => name);
 
       const setActive = (target) => {
         buttons.forEach((btn) => {
@@ -1307,84 +1436,783 @@ python manage.py knowledge_ingestion_worker</pre>
         });
       };
 
+      const isValidTab = (tab) => tabNames.indexOf(tab) !== -1;
+
+      const initialTab = isValidTab(tabsRoot.dataset.activeTab)
+        ? tabsRoot.dataset.activeTab
+        : "documents";
+
+      const updateTabQuery = (tab) => {
+        if (!window.history || !window.history.replaceState) {
+          return;
+        }
+        try {
+          const url = new URL(window.location.href);
+          url.searchParams.set("tab", tab);
+          window.history.replaceState(null, "", url.toString());
+        } catch (error) {
+          // ignore URL parsing errors
+        }
+      };
+
       buttons.forEach((button) => {
-        button.addEventListener("click", () => setActive(button.dataset.tabButton));
+        button.addEventListener("click", () => {
+          const target = button.dataset.tabButton;
+          if (!isValidTab(target)) {
+            return;
+          }
+          setActive(target);
+          updateTabQuery(target);
+        });
       });
-      setActive("documents");
+      setActive(initialTab);
     }
 
-    var uploadPanelCard = document.querySelector("[data-upload-panel]");
-    var uploadToggle = document.querySelector("[data-upload-toggle]");
-    var uploadCancelButtons = document.querySelectorAll("[data-upload-cancel]");
-    var uploadTypeSelect = document.querySelector("[data-upload-type]");
-    var uploadFieldBlocks = document.querySelectorAll("[data-upload-field]");
     var uploadForm = document.querySelector("[data-upload-form]");
+    var uploadDropzone = document.querySelector("[data-upload-dropzone]");
+    var uploadBanner = document.querySelector("[data-upload-banner]");
+    var uploadActionButtons = document.querySelectorAll("[data-upload-action]");
+    var uploadTypeInput = uploadForm ? uploadForm.querySelector("[data-upload-type-input]") : null;
+    var uploadFileInput = uploadForm ? uploadForm.querySelector("[data-upload-file-input]") : null;
+    var uploadInline = uploadForm ? uploadForm.querySelector("[data-upload-inline]") : null;
+    var uploadInlineFields = uploadForm ? uploadForm.querySelectorAll("[data-upload-inline-field]") : [];
+    var uploadInlineCancel = uploadForm ? uploadForm.querySelector("[data-upload-inline-cancel]") : null;
+    var uploadDisplayName = uploadForm ? uploadForm.querySelector("[data-upload-display-name]") : null;
+    var uploadStatus = uploadForm ? uploadForm.querySelector("[data-upload-status]") : null;
+    var uploadStatusLabel = uploadForm ? uploadForm.querySelector("[data-upload-status-label]") : null;
+    var uploadStatusFile = uploadForm ? uploadForm.querySelector("[data-upload-status-file]") : null;
+    var uploadStatusPercent = uploadForm ? uploadForm.querySelector("[data-upload-status-percent]") : null;
+    var uploadProgressWrap = uploadForm ? uploadForm.querySelector("[data-upload-progress-wrap]") : null;
+    var uploadProgressBar = uploadForm ? uploadForm.querySelector("[data-upload-progress]") : null;
+    var uploadStatusMessage = uploadForm ? uploadForm.querySelector("[data-upload-status-message]") : null;
+    var uploadRenameToggle = uploadForm ? uploadForm.querySelector("[data-upload-rename-toggle]") : null;
+    var uploadRenameForm = uploadForm ? uploadForm.querySelector("[data-upload-rename-form]") : null;
+    var uploadRenameInput = uploadForm ? uploadForm.querySelector("[data-upload-rename-input]") : null;
+    var uploadRenameSave = uploadForm ? uploadForm.querySelector("[data-upload-rename-save]") : null;
+    var uploadRenameCancel = uploadForm ? uploadForm.querySelector("[data-upload-rename-cancel]") : null;
+    var uploadEnabled = Boolean(uploadForm);
+    var uploadInFlight = false;
+    var uploadStatusTimer = null;
+    var uploadStatusHideTimer = null;
+    var lastUploadedDocumentId = "";
+    var lastUploadedDocumentName = "";
+    var defaultUploadType = uploadTypeInput ? uploadTypeInput.value : "file";
+    if (uploadDropzone && uploadDropzone.dataset.uploadEnabled === "false") {
+      uploadEnabled = false;
+    }
 
-    function refreshUploadFields() {
-      if (!uploadFieldBlocks || !uploadTypeSelect) {
+    function clearUploadStatusTimer() {
+      if (uploadStatusTimer) {
+        clearTimeout(uploadStatusTimer);
+        uploadStatusTimer = null;
+      }
+    }
+
+    function clearUploadStatusHideTimer() {
+      if (uploadStatusHideTimer) {
+        clearTimeout(uploadStatusHideTimer);
+        uploadStatusHideTimer = null;
+      }
+    }
+
+    function showUploadStatus() {
+      if (!uploadStatus) return;
+      clearUploadStatusHideTimer();
+      uploadStatus.classList.remove("hidden");
+      requestAnimationFrame(function () {
+        uploadStatus.classList.remove("opacity-0", "-translate-y-1");
+      });
+    }
+
+    function hideUploadStatus() {
+      if (!uploadStatus) return;
+      clearUploadStatusHideTimer();
+      uploadStatus.classList.add("opacity-0", "-translate-y-1");
+      uploadStatusHideTimer = setTimeout(function () {
+        uploadStatus.classList.add("hidden");
+      }, 220);
+    }
+
+    function resetRenameState() {
+      lastUploadedDocumentId = "";
+      lastUploadedDocumentName = "";
+      if (uploadRenameToggle) {
+        uploadRenameToggle.classList.add("hidden");
+      }
+      if (uploadRenameForm) {
+        uploadRenameForm.classList.add("hidden");
+      }
+      if (uploadRenameInput) {
+        uploadRenameInput.value = "";
+      }
+    }
+
+    function setRenameVisible(visible) {
+      if (!uploadRenameToggle) return;
+      uploadRenameToggle.classList.toggle("hidden", !visible);
+      if (!visible && uploadRenameForm) {
+        uploadRenameForm.classList.add("hidden");
+      }
+    }
+
+    function deriveDisplayName(fileName) {
+      if (!fileName) return "";
+      var trimmed = fileName.trim();
+      if (!trimmed) return "";
+      return trimmed.replace(/\.[^/.]+$/, "").trim();
+    }
+
+    function applyStatusVariant(variant) {
+      if (!uploadStatus || !uploadProgressBar) return;
+      uploadStatus.classList.remove("border-emerald-200", "bg-emerald-50/70", "text-emerald-800");
+      uploadStatus.classList.remove("border-rose-200", "bg-rose-50/70", "text-rose-800");
+      uploadProgressBar.classList.remove("bg-emerald-500", "bg-rose-500");
+      if (variant === "success") {
+        uploadStatus.classList.add("border-emerald-200", "bg-emerald-50/70", "text-emerald-800");
+        uploadProgressBar.classList.add("bg-emerald-500");
+      }
+      if (variant === "error") {
+        uploadStatus.classList.add("border-rose-200", "bg-rose-50/70", "text-rose-800");
+        uploadProgressBar.classList.add("bg-rose-500");
+      }
+    }
+
+    function updateUploadProgress(percent) {
+      if (!uploadProgressBar || !uploadStatusPercent || !uploadProgressWrap) return;
+      if (percent == null) {
+        uploadProgressWrap.classList.add("hidden");
+        uploadStatusPercent.textContent = "";
+        uploadProgressBar.style.width = "0%";
         return;
       }
-      var activeType = (uploadTypeSelect.value || "").toLowerCase();
-      uploadFieldBlocks.forEach(function (block) {
-        var fieldType = (block.getAttribute("data-upload-field") || "").toLowerCase();
-        var isActive = fieldType === activeType;
-        block.classList.toggle("hidden", !isActive);
-        var inputs = block.querySelectorAll("input, textarea");
+      var clamped = Math.max(0, Math.min(100, percent));
+      uploadProgressWrap.classList.remove("hidden");
+      uploadProgressBar.style.width = clamped + "%";
+      uploadStatusPercent.textContent = clamped + "%";
+    }
+
+    function setUploadStatus(state, options) {
+      if (!uploadStatus) return;
+      options = options || {};
+      if (!state) {
+        hideUploadStatus();
+        if (uploadStatusFile) uploadStatusFile.textContent = "";
+        if (uploadStatusMessage) uploadStatusMessage.textContent = "";
+        updateUploadProgress(null);
+        applyStatusVariant("");
+        setRenameVisible(false);
+        return;
+      }
+      showUploadStatus();
+      if (uploadStatusLabel) {
+        var label = options.label || (state === "success" ? "Uploaded" : state === "error" ? "Upload failed" : "Uploading…");
+        uploadStatusLabel.textContent = label;
+      }
+      if (uploadStatusFile) {
+        uploadStatusFile.textContent = options.fileName ? "• " + options.fileName : "";
+      }
+      if (uploadStatusMessage) {
+        uploadStatusMessage.textContent = options.message || "";
+      }
+      applyStatusVariant(state);
+      if (state !== "success") {
+        setRenameVisible(false);
+      }
+      if (state === "success") {
+        updateUploadProgress(100);
+      } else if (state === "error") {
+        updateUploadProgress(null);
+      } else {
+        updateUploadProgress(options.percent != null ? options.percent : 0);
+      }
+    }
+
+    function setUploadBusy(isBusy) {
+      if (uploadBanner) {
+        uploadBanner.classList.toggle("opacity-70", isBusy);
+        uploadBanner.classList.toggle("pointer-events-none", isBusy);
+      }
+      if (uploadActionButtons && uploadActionButtons.length) {
+        uploadActionButtons.forEach(function (button) {
+          if (isBusy) {
+            button.setAttribute("disabled", "disabled");
+            button.setAttribute("aria-disabled", "true");
+          } else {
+            button.removeAttribute("disabled");
+            button.removeAttribute("aria-disabled");
+          }
+        });
+      }
+      if (uploadInlineCancel) {
+        if (isBusy) {
+          uploadInlineCancel.setAttribute("disabled", "disabled");
+          uploadInlineCancel.setAttribute("aria-disabled", "true");
+        } else {
+          uploadInlineCancel.removeAttribute("disabled");
+          uploadInlineCancel.removeAttribute("aria-disabled");
+        }
+      }
+      if (uploadInline) {
+        var inlineSubmit = uploadInline.querySelector("button[type='submit']");
+        if (inlineSubmit) {
+          if (isBusy) {
+            inlineSubmit.setAttribute("disabled", "disabled");
+            inlineSubmit.setAttribute("aria-disabled", "true");
+          } else {
+            inlineSubmit.removeAttribute("disabled");
+            inlineSubmit.removeAttribute("aria-disabled");
+          }
+        }
+      }
+      if (uploadRenameToggle) {
+        if (isBusy) {
+          uploadRenameToggle.setAttribute("disabled", "disabled");
+          uploadRenameToggle.setAttribute("aria-disabled", "true");
+        } else {
+          uploadRenameToggle.removeAttribute("disabled");
+          uploadRenameToggle.removeAttribute("aria-disabled");
+        }
+      }
+    }
+
+    function setUploadType(type) {
+      if (!uploadTypeInput) return;
+      uploadTypeInput.value = type || defaultUploadType;
+    }
+
+    function setInlineMode(mode) {
+      if (!uploadInline) return;
+      var activeMode = (mode || "").toLowerCase();
+      var showInline = Boolean(activeMode);
+      uploadInline.classList.toggle("hidden", !showInline);
+      if (uploadDisplayName && !showInline) {
+        uploadDisplayName.value = "";
+      }
+      uploadInlineFields.forEach(function (field) {
+        var fieldType = (field.getAttribute("data-upload-inline-field") || "").toLowerCase();
+        var isActive = fieldType === activeMode;
+        field.classList.toggle("hidden", !isActive);
+        var inputs = field.querySelectorAll("input, textarea");
         inputs.forEach(function (input) {
           if (isActive) {
             input.removeAttribute("disabled");
+            input.setAttribute("required", "required");
           } else {
             input.setAttribute("disabled", "disabled");
-            if (input.type === "file") {
-              input.value = "";
-            }
+            input.removeAttribute("required");
+            input.value = "";
           }
         });
       });
     }
 
-    function setUploadPanelVisible(visible) {
-      if (!uploadPanelCard) return;
-      uploadPanelCard.classList.toggle("hidden", !visible);
-      if (visible) {
-        refreshUploadFields();
+    function resetInline() {
+      setInlineMode("");
+      setUploadType(defaultUploadType);
+      if (uploadDisplayName) {
+        uploadDisplayName.value = "";
       }
     }
 
-    function closeUploadPanel() {
+    function resetUploadForm() {
       if (uploadForm) {
         uploadForm.reset();
       }
-      if (uploadTypeSelect && uploadTypeSelect.options.length) {
-        uploadTypeSelect.value = uploadTypeSelect.options[0].value;
+      resetInline();
+      if (uploadFileInput) {
+        uploadFileInput.value = "";
       }
-      refreshUploadFields();
-      setUploadPanelVisible(false);
+      if (uploadDisplayName) {
+        uploadDisplayName.value = "";
+      }
+      resetRenameState();
     }
 
-    if (uploadToggle && uploadPanelCard) {
-      uploadToggle.addEventListener("click", function () {
-        var isHidden = uploadPanelCard.classList.contains("hidden");
-        if (isHidden) {
-          setUploadPanelVisible(true);
-        } else {
-          closeUploadPanel();
+    function openInline(mode) {
+      if (!uploadEnabled || uploadInFlight) return;
+      clearUploadStatusTimer();
+      setUploadStatus("");
+      setUploadType(mode);
+      setInlineMode(mode);
+      if (!uploadInline) return;
+      var activeField = uploadInline.querySelector("[data-upload-inline-field='" + mode + "']");
+      if (!activeField) return;
+      var focusTarget = activeField.querySelector("textarea, input");
+      if (focusTarget) {
+        focusTarget.focus();
+      }
+    }
+
+    function openFilePicker() {
+      if (!uploadEnabled || !uploadFileInput || uploadInFlight) return;
+      clearUploadStatusTimer();
+      clearUploadStatusHideTimer();
+      setUploadStatus("");
+      resetInline();
+      uploadFileInput.click();
+    }
+
+    function highlightNewRow(row) {
+      if (!row) return;
+      row.classList.add("knowledge-row-flash");
+      setTimeout(function () {
+        if (row.dataset.selected === "true") return;
+        row.classList.remove("knowledge-row-flash");
+      }, 4500);
+    }
+
+    function updateDocumentRowName(documentId, newName) {
+      if (!documentId) return;
+      var row = document.querySelector("[data-document-id='" + documentId + "']");
+      if (!row) return;
+      row.dataset.documentName = newName;
+      var nameSpan = row.querySelector("td span.font-medium");
+      if (nameSpan) {
+        nameSpan.textContent = newName;
+      }
+      if (activeRow && activeRow.dataset.documentId === documentId) {
+        currentDocumentTitle = newName;
+        if (fieldName) fieldName.textContent = newName;
+      }
+    }
+
+    function insertDocumentRow(documentData, totalCount) {
+      if (!documentData) return;
+      var table = document.querySelector("[data-documents-table]");
+      if (!table) return;
+      var tbody = table.querySelector("tbody");
+      if (!tbody) return;
+      var placeholder = tbody.querySelector("tr td[colspan]");
+      if (placeholder && placeholder.parentNode) {
+        tbody.innerHTML = "";
+      }
+
+      var row = document.createElement("tr");
+      row.className =
+        "border-b transition-colors hover:bg-muted/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40 focus-visible:ring-offset-2 cursor-pointer";
+      row.setAttribute("data-document-row", "");
+      row.setAttribute("tabindex", "0");
+      row.setAttribute("aria-expanded", "false");
+
+      row.dataset.documentId = documentData.id || "";
+      row.dataset.documentName = documentData.name || "Document";
+      row.dataset.documentIdentifier = documentData.identifier || "";
+      row.dataset.documentStatus = documentData.status_code || "";
+      row.dataset.documentStatusLabel = documentData.status_label || "";
+      row.dataset.documentSource = documentData.source_label || documentData.type_badge || "";
+      row.dataset.documentType = documentData.source_type || "";
+      row.dataset.documentUpdated = documentData.updated || "";
+      row.dataset.documentUpdatedIso = documentData.updated_iso || "";
+      row.dataset.documentSize = documentData.size_display || "—";
+      row.dataset.documentLanguage = documentData.language || "";
+      row.dataset.documentCategory = documentData.category || "";
+      row.dataset.documentTokens = String(documentData.token_count || 0);
+      row.dataset.documentSensitive = documentData.is_sensitive ? "true" : "false";
+      row.dataset.documentLastSynced = documentData.last_synced_iso || "";
+      row.dataset.documentLastIngested = documentData.last_ingested_iso || "";
+      row.dataset.documentIntegration = documentData.integration_name || "";
+
+      var nameCell = document.createElement("td");
+      nameCell.className = "py-4";
+      var nameWrap = document.createElement("div");
+      nameWrap.className = "flex flex-col";
+      var nameText = document.createElement("span");
+      nameText.className = "font-medium leading-tight text-foreground";
+      nameText.textContent = documentData.name || "Document";
+      var identifierText = document.createElement("span");
+      identifierText.className = "text-xs text-muted-foreground";
+      identifierText.textContent = documentData.identifier || "";
+      nameWrap.appendChild(nameText);
+      nameWrap.appendChild(identifierText);
+      nameCell.appendChild(nameWrap);
+
+      var classificationCell = document.createElement("td");
+      classificationCell.className = "py-4";
+      var classificationText = document.createElement("div");
+      classificationText.className = "text-sm text-muted-foreground";
+      classificationText.textContent = documentData.classification || "General";
+      classificationCell.appendChild(classificationText);
+
+      var typeCell = document.createElement("td");
+      typeCell.className = "py-4";
+      var typeBadge = document.createElement("span");
+      typeBadge.className =
+        "inline-flex items-center rounded-full border border-border/60 bg-muted/40 px-2 py-0.5 text-[11px] font-medium text-muted-foreground";
+      typeBadge.textContent = documentData.type_badge || documentData.source_label || "File Upload";
+      typeCell.appendChild(typeBadge);
+
+      var statusCell = document.createElement("td");
+      statusCell.className = "py-4";
+      var statusBadge = document.createElement("span");
+      statusBadge.className =
+        "text-[11px] font-semibold capitalize " + (documentData.status_badge_class || "text-slate-500");
+      statusBadge.textContent = documentData.status_label || "Processing";
+      statusCell.appendChild(statusBadge);
+
+      var updatedCell = document.createElement("td");
+      updatedCell.className = "py-4 text-right";
+      var updatedText = document.createElement("div");
+      updatedText.className = "text-sm font-medium text-foreground";
+      updatedText.textContent = documentData.updated || "—";
+      var sizeText = document.createElement("div");
+      sizeText.className = "text-xs text-muted-foreground";
+      sizeText.textContent = documentData.size_display || "—";
+      updatedCell.appendChild(updatedText);
+      updatedCell.appendChild(sizeText);
+
+      var actionCell = document.createElement("td");
+      actionCell.className = "py-4";
+      var triggerButton = document.createElement("button");
+      triggerButton.type = "button";
+      triggerButton.className = "p-1.5 rounded-md hover:bg-muted transition-colors";
+      triggerButton.setAttribute("aria-label", "Open document detail");
+      triggerButton.setAttribute("data-document-trigger", "");
+      triggerButton.innerHTML =
+        '<svg class="h-4 w-4 text-muted-foreground" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M12 5v.008M12 12v.008m0 6.984v.008" /></svg>';
+      actionCell.appendChild(triggerButton);
+
+      row.appendChild(nameCell);
+      row.appendChild(classificationCell);
+      row.appendChild(typeCell);
+      row.appendChild(statusCell);
+      row.appendChild(updatedCell);
+      row.appendChild(actionCell);
+
+      tbody.insertBefore(row, tbody.firstChild);
+      bindDocumentRow(row);
+      highlightNewRow(row);
+
+      var existingRows = tbody.querySelectorAll("[data-document-row]");
+      if (existingRows.length > 50) {
+        var lastRow = existingRows[existingRows.length - 1];
+        if (lastRow && lastRow.parentNode) {
+          lastRow.parentNode.removeChild(lastRow);
+        }
+      }
+
+      var countNode = document.querySelector("[data-documents-count]");
+      if (countNode) {
+        var finalRows = tbody.querySelectorAll("[data-document-row]");
+        var showing = finalRows.length;
+        var total = totalCount != null ? totalCount : parseInt(countNode.dataset.documentsTotal || "0", 10) + 1;
+        countNode.dataset.documentsShowing = String(showing);
+        countNode.dataset.documentsTotal = String(total);
+        countNode.textContent = "Showing " + showing + " of " + total + " documents";
+      }
+
+      return row;
+    }
+
+    function startUpload(options) {
+      if (!uploadEnabled || uploadInFlight || !uploadForm) return;
+      options = options || {};
+      clearUploadStatusTimer();
+      resetRenameState();
+      uploadInFlight = true;
+      setUploadBusy(true);
+      setUploadStatus("uploading", {
+        label: options.label || "Uploading…",
+        fileName: options.fileName || "",
+        percent: options.trackProgress ? 0 : null,
+        message: options.message || "Uploading to your knowledge base…",
+      });
+
+      var formData = new FormData(uploadForm);
+      var xhr = new XMLHttpRequest();
+      xhr.open("POST", uploadForm.action, true);
+      xhr.setRequestHeader("X-Requested-With", "XMLHttpRequest");
+      xhr.setRequestHeader("Accept", "application/json");
+      if (csrfToken) {
+        xhr.setRequestHeader("X-CSRFToken", csrfToken);
+      }
+      if (options.trackProgress && xhr.upload) {
+        xhr.upload.onprogress = function (event) {
+          if (!event.lengthComputable) return;
+          var percent = Math.round((event.loaded / event.total) * 100);
+          updateUploadProgress(percent);
+        };
+      }
+      xhr.onload = function () {
+        uploadInFlight = false;
+        setUploadBusy(false);
+        var payload = null;
+        try {
+          payload = JSON.parse(xhr.responseText || "{}");
+        } catch (_err) {
+          payload = null;
+        }
+        if (xhr.status >= 200 && xhr.status < 300 && payload && payload.success !== false) {
+          setUploadStatus("success", {
+            label: "Uploaded",
+            fileName: options.fileName || "",
+            message: payload.message || "Queued for ingestion.",
+          });
+          var insertedRow = insertDocumentRow(payload.document || null, payload.documents_total);
+          lastUploadedDocumentId = payload && payload.document ? payload.document.id || "" : "";
+          lastUploadedDocumentName = payload && payload.document ? payload.document.name || "" : "";
+          if (uploadRenameInput) {
+            uploadRenameInput.value = lastUploadedDocumentName;
+          }
+          setRenameVisible(Boolean(lastUploadedDocumentId));
+          resetUploadForm();
+          uploadStatusTimer = setTimeout(function () {
+            setUploadStatus("");
+          }, 8000);
+          return;
+        }
+        var message = (payload && payload.message) || "Unable to upload this file right now.";
+        setUploadStatus("error", { label: "Upload failed", fileName: options.fileName || "", message: message });
+        uploadStatusTimer = setTimeout(function () {
+          setUploadStatus("");
+        }, 6500);
+      };
+      xhr.onerror = function () {
+        uploadInFlight = false;
+        setUploadBusy(false);
+        setUploadStatus("error", { label: "Upload failed", message: "Network error. Please try again." });
+        uploadStatusTimer = setTimeout(function () {
+          setUploadStatus("");
+        }, 6500);
+      };
+      xhr.send(formData);
+    }
+
+    function submitFileUpload() {
+      if (!uploadEnabled || !uploadForm || !uploadFileInput || uploadInFlight) return;
+      if (!uploadFileInput.files || !uploadFileInput.files.length) return;
+      setUploadType(defaultUploadType);
+      var fileName = uploadFileInput.files[0] ? uploadFileInput.files[0].name : "";
+      if (uploadDisplayName) {
+        var proposedName = deriveDisplayName(fileName);
+        if (!uploadDisplayName.value.trim()) {
+          uploadDisplayName.value = proposedName;
+        }
+      }
+      startUpload({ fileName: fileName, trackProgress: true, message: "Uploading file…" });
+    }
+
+    function showRenameForm() {
+      if (!uploadRenameForm || !uploadRenameInput || !lastUploadedDocumentId) return;
+      clearUploadStatusTimer();
+      uploadRenameForm.classList.remove("hidden");
+      if (uploadRenameToggle) {
+        uploadRenameToggle.classList.add("hidden");
+      }
+      uploadRenameInput.value = lastUploadedDocumentName || uploadRenameInput.value || "";
+      uploadRenameInput.focus();
+    }
+
+    function hideRenameForm() {
+      if (!uploadRenameForm) return;
+      uploadRenameForm.classList.add("hidden");
+      setRenameVisible(Boolean(lastUploadedDocumentId));
+      if (uploadRenameToggle && !uploadRenameToggle.classList.contains("hidden")) {
+        clearUploadStatusTimer();
+        uploadStatusTimer = setTimeout(function () {
+          setUploadStatus("");
+        }, 6000);
+      }
+    }
+
+    function renameUploadedDocument() {
+      if (!lastUploadedDocumentId || !uploadRenameInput) return;
+      var nextName = (uploadRenameInput.value || "").trim();
+      if (!nextName) {
+        if (uploadStatusMessage) {
+          uploadStatusMessage.textContent = "Title cannot be empty.";
+        }
+        return;
+      }
+      if (uploadRenameSave) {
+        uploadRenameSave.setAttribute("disabled", "disabled");
+      }
+      var endpoint = "/api/knowledge/documents/" + encodeURIComponent(lastUploadedDocumentId) + "/";
+      if (knowledgeBusinessId) {
+        endpoint += "?business_id=" + encodeURIComponent(knowledgeBusinessId);
+      }
+      fetch(endpoint, {
+        method: "PATCH",
+        headers: {
+          "Content-Type": "application/json",
+          Accept: "application/json",
+          ...(csrfToken ? { "X-CSRFToken": csrfToken } : {}),
+        },
+        body: JSON.stringify({ display_name: nextName }),
+        credentials: "same-origin",
+      })
+        .then(function (response) {
+          return response.json().then(function (payload) {
+            if (!response.ok) {
+              throw new Error(payload.message || payload.error || "Unable to update title.");
+            }
+            return payload;
+          });
+        })
+        .then(function () {
+          lastUploadedDocumentName = nextName;
+          updateDocumentRowName(lastUploadedDocumentId, nextName);
+          if (uploadStatusMessage) {
+            uploadStatusMessage.textContent = "Title updated.";
+          }
+          hideRenameForm();
+          uploadStatusTimer = setTimeout(function () {
+            setUploadStatus("");
+          }, 4000);
+        })
+        .catch(function (error) {
+          if (uploadStatusMessage) {
+            uploadStatusMessage.textContent = error.message || "Unable to update title.";
+          }
+        })
+        .finally(function () {
+          if (uploadRenameSave) {
+            uploadRenameSave.removeAttribute("disabled");
+          }
+        });
+    }
+
+    if (uploadInlineCancel) {
+      uploadInlineCancel.addEventListener("click", function (event) {
+        event.preventDefault();
+        resetInline();
+      });
+    }
+
+    if (uploadForm) {
+      uploadForm.addEventListener("submit", function (event) {
+        if (!uploadEnabled) return;
+        event.preventDefault();
+        if (uploadInFlight) return;
+        if (typeof uploadForm.checkValidity === "function" && !uploadForm.checkValidity()) {
+          uploadForm.reportValidity();
+          return;
+        }
+        var mode = uploadTypeInput ? uploadTypeInput.value : defaultUploadType;
+        if (mode === "text") {
+          startUpload({ label: "Saving note…", message: "Saving your note…", trackProgress: false });
+          return;
+        }
+        if (mode === "link") {
+          startUpload({ label: "Saving link…", message: "Saving your link…", trackProgress: false });
+          return;
+        }
+        submitFileUpload();
+      });
+    }
+
+    if (uploadRenameToggle) {
+      uploadRenameToggle.addEventListener("click", function (event) {
+        event.preventDefault();
+        showRenameForm();
+      });
+    }
+
+    if (uploadRenameCancel) {
+      uploadRenameCancel.addEventListener("click", function (event) {
+        event.preventDefault();
+        hideRenameForm();
+      });
+    }
+
+    if (uploadRenameSave) {
+      uploadRenameSave.addEventListener("click", function (event) {
+        event.preventDefault();
+        renameUploadedDocument();
+      });
+    }
+
+    if (uploadRenameInput) {
+      uploadRenameInput.addEventListener("keydown", function (event) {
+        if (event.key === "Enter") {
+          event.preventDefault();
+          renameUploadedDocument();
         }
       });
     }
 
-    if (uploadCancelButtons && uploadCancelButtons.length) {
-      uploadCancelButtons.forEach(function (button) {
+    if (uploadActionButtons && uploadActionButtons.length) {
+      uploadActionButtons.forEach(function (button) {
         button.addEventListener("click", function (event) {
           event.preventDefault();
-          closeUploadPanel();
+          event.stopPropagation();
+          if (!uploadEnabled || uploadInFlight) return;
+          var targetType = (button.getAttribute("data-upload-action") || "").toLowerCase();
+          if (targetType === "text" || targetType === "link") {
+            openInline(targetType);
+            return;
+          }
+          openFilePicker();
         });
       });
     }
 
-    if (uploadTypeSelect) {
-      uploadTypeSelect.addEventListener("change", refreshUploadFields);
-      refreshUploadFields();
+    if (uploadBanner) {
+      uploadBanner.addEventListener("click", function (event) {
+        if (!uploadEnabled || uploadInFlight) return;
+        if (event.target.closest("[data-upload-action]")) return;
+        if (event.target.closest("a, button, input, select, textarea, label")) return;
+        if (uploadInline && !uploadInline.classList.contains("hidden")) return;
+        openFilePicker();
+      });
+    }
+
+    if (uploadFileInput) {
+      uploadFileInput.addEventListener("change", function () {
+        submitFileUpload();
+      });
+    }
+
+    function setDropzoneActive(active) {
+      if (!uploadDropzone) return;
+      uploadDropzone.classList.toggle("ring-2", active);
+      uploadDropzone.classList.toggle("ring-primary/40", active);
+    }
+
+    function shouldHandleFiles(event) {
+      if (!event || !event.dataTransfer) return false;
+      var types = Array.from(event.dataTransfer.types || []);
+      return types.includes("Files");
+    }
+
+    if (uploadDropzone) {
+      uploadDropzone.addEventListener("dragenter", function (event) {
+        if (!uploadEnabled || uploadInFlight || !shouldHandleFiles(event)) return;
+        event.preventDefault();
+        setDropzoneActive(true);
+      });
+      uploadDropzone.addEventListener("dragover", function (event) {
+        if (!uploadEnabled || uploadInFlight || !shouldHandleFiles(event)) return;
+        event.preventDefault();
+        event.dataTransfer.dropEffect = "copy";
+        setDropzoneActive(true);
+      });
+      uploadDropzone.addEventListener("dragleave", function (event) {
+        if (!uploadEnabled || uploadInFlight) return;
+        if (event.relatedTarget && uploadDropzone.contains(event.relatedTarget)) {
+          return;
+        }
+        setDropzoneActive(false);
+      });
+      uploadDropzone.addEventListener("drop", function (event) {
+        if (!uploadEnabled || uploadInFlight || !shouldHandleFiles(event)) return;
+        event.preventDefault();
+        setDropzoneActive(false);
+        var files = event.dataTransfer.files;
+        if (!files || !files.length || !uploadFileInput) return;
+        resetInline();
+        try {
+          uploadFileInput.files = files;
+        } catch (_err) {
+          if (typeof DataTransfer !== "undefined") {
+            var dataTransfer = new DataTransfer();
+            Array.from(files).forEach(function (file) {
+              dataTransfer.items.add(file);
+            });
+            uploadFileInput.files = dataTransfer.files;
+          }
+        }
+        submitFileUpload();
+      });
     }
 
     // Guardrails actions (match policy, approve schema, add mapping)
@@ -1729,24 +2557,18 @@ python manage.py knowledge_ingestion_worker</pre>
     var fieldCategory = panel.querySelector("[data-document-category]");
     var fieldSensitive = panel.querySelector("[data-document-sensitive]");
     var fieldIntegration = panel.querySelector("[data-document-integration]");
-    var fieldDescription = panel.querySelector("[data-document-description]");
     var fieldSummary = panel.querySelector("[data-document-summary]");
-    var fieldTags = panel.querySelector("[data-document-tags]");
-    var fieldCollections = panel.querySelector("[data-document-collections]");
-    var fieldMetadata = panel.querySelector("[data-document-metadata]");
-    var fieldRetention = panel.querySelector("[data-document-retention]");
-    var fieldIngestion = panel.querySelector("[data-document-ingestion]");
-    var fileSection = panel.querySelector("[data-document-file-section]");
-    var fileField = panel.querySelector("[data-document-file]");
-    var urlSection = panel.querySelector("[data-document-url-section]");
-    var urlField = panel.querySelector("[data-document-url]");
-    var hostField = panel.querySelector("[data-document-host]");
-    var textSection = panel.querySelector("[data-document-text-section]");
-    var textPreviewField = panel.querySelector("[data-document-text-preview]");
+    var summaryWrap = panel.querySelector("[data-document-summary-wrap]");
+    var summaryToggle = panel.querySelector("[data-document-summary-toggle]");
+    var guardrailsList = panel.querySelector("[data-document-guardrails-list]");
+    var guardrailsEmpty = panel.querySelector("[data-document-guardrails-empty]");
+    var guardrailsStatus = panel.querySelector("[data-document-guardrails-status]");
+    var guardrailsSave = panel.querySelector("[data-document-guardrails-save]");
     var body = document.body;
     var deleteButton = panel.querySelector("[data-document-delete]");
     var deleteNotice = panel.querySelector("[data-document-delete-notice]");
     var deleteButtonLabel = deleteButton ? (deleteButton.textContent || "Delete document").trim() || "Delete document" : "Delete document";
+    var guardrailsSaveLabel = guardrailsSave ? (guardrailsSave.textContent || "Save").trim() || "Save" : "Save";
 
     function clearDeleteNotice() {
       if (!deleteNotice) return;
@@ -1780,18 +2602,49 @@ python manage.py knowledge_ingestion_worker</pre>
 
     var selectedClasses = ["ring-1", "ring-primary/60", "bg-primary/5"];
     var statusClassMap = {
-      ready: "inline-flex items-center rounded-full border border-emerald-200 bg-emerald-50 px-2.5 py-0.5 text-[11px] font-semibold capitalize text-emerald-700",
-      active: "inline-flex items-center rounded-full border border-emerald-200 bg-emerald-50 px-2.5 py-0.5 text-[11px] font-semibold capitalize text-emerald-700",
-      processing: "inline-flex items-center rounded-full border border-amber-200 bg-amber-50 px-2.5 py-0.5 text-[11px] font-semibold capitalize text-amber-700",
-      pending: "inline-flex items-center rounded-full border border-amber-200 bg-amber-50 px-2.5 py-0.5 text-[11px] font-semibold capitalize text-amber-700",
-      failed: "inline-flex items-center rounded-full border border-rose-200 bg-rose-50 px-2.5 py-0.5 text-[11px] font-semibold capitalize text-rose-700",
-      archived: "inline-flex items-center rounded-full border border-border/60 bg-muted/70 px-2.5 py-0.5 text-[11px] font-semibold capitalize text-muted-foreground",
+      ready: "text-emerald-600",
+      active: "text-emerald-600",
+      processing: "text-amber-600",
+      pending: "text-amber-600",
+      failed: "text-rose-600",
+      archived: "text-slate-500",
     };
 
     var activeRow = null;
     var inFlight = null;
     var isPanelOpen = false;
     var currentDocumentTitle = "";
+    var summaryExpanded = false;
+    var detailCache = {};
+    var detailCacheOrder = [];
+    var detailCacheLimit = 40;
+    var detailCacheTtlMs = 180000;
+    var closePanelTimer = null;
+    var guardrailInputs = {};
+    var guardrailSelection = new Set();
+    var guardrailBaseline = new Set();
+    var guardrailDirty = false;
+    var guardrailSaving = false;
+    var guardrailDocumentId = "";
+    var guardrailStatusTimer = null;
+    var guardrailOptions = [];
+    var guardrailScript = document.getElementById("knowledge-guardrail-identifiers");
+    if (guardrailScript && guardrailScript.textContent) {
+      try {
+        var parsedGuardrails = JSON.parse(guardrailScript.textContent || "[]");
+        if (Array.isArray(parsedGuardrails)) {
+          guardrailOptions = parsedGuardrails;
+        }
+      } catch (_err) {
+        guardrailOptions = [];
+      }
+    }
+    var guardrailOptionKeys = new Set();
+    guardrailOptions.forEach(function (option) {
+      if (option && option.key) {
+        guardrailOptionKeys.add(option.key);
+      }
+    });
 
     function formatDate(value) {
       if (!value) {
@@ -1841,9 +2694,345 @@ python manage.py knowledge_ingestion_worker</pre>
       }
       var normalized = (code || label || "").toString().toLowerCase();
       target.className =
-        statusClassMap[normalized] ||
-        "inline-flex items-center rounded-full border border-border/60 bg-muted/70 px-2.5 py-0.5 text-[11px] font-semibold capitalize text-muted-foreground";
+        "text-[11px] font-semibold capitalize " + (statusClassMap[normalized] || "text-slate-500");
       target.textContent = label || "Draft";
+    }
+
+    function normalizeSummaryText(value) {
+      if (value == null) {
+        return "";
+      }
+      return String(value).trim();
+    }
+
+    function isBulletLine(text) {
+      return /^(\s*[-*•]|\s*\d+[.)]|\s*[A-Za-z][.)])\s+/.test(text);
+    }
+
+    function stripBullet(text) {
+      return text.replace(/^(\s*[-*•]|\s*\d+[.)]|\s*[A-Za-z][.)])\s+/, "").trim();
+    }
+
+    function setSummaryExpandedState(expanded) {
+      summaryExpanded = expanded;
+      if (summaryWrap) {
+        summaryWrap.classList.toggle("is-clamped", !expanded);
+        if (expanded) {
+          summaryWrap.classList.remove("has-overflow");
+        }
+      }
+      if (summaryToggle) {
+        summaryToggle.textContent = expanded ? "Show less" : "Show more";
+        summaryToggle.setAttribute("aria-expanded", expanded ? "true" : "false");
+      }
+    }
+
+    function updateSummaryClamp() {
+      if (!summaryWrap || !summaryToggle) {
+        return;
+      }
+      setSummaryExpandedState(false);
+      window.requestAnimationFrame(function () {
+        var hasOverflow = summaryWrap.scrollHeight > summaryWrap.clientHeight + 1;
+        summaryWrap.classList.toggle("has-overflow", hasOverflow);
+        summaryToggle.classList.toggle("hidden", !hasOverflow);
+      });
+    }
+
+    function renderSummary(text) {
+      if (!fieldSummary) {
+        return;
+      }
+      setSummaryExpandedState(false);
+      var normalized = normalizeSummaryText(text);
+      fieldSummary.innerHTML = "";
+      if (!normalized) {
+        fieldSummary.textContent = "No summary available.";
+        if (summaryToggle) summaryToggle.classList.add("hidden");
+        if (summaryWrap) summaryWrap.classList.remove("has-overflow");
+        return;
+      }
+
+      var lines = normalized.split(/\r?\n/);
+      var fragment = document.createDocumentFragment();
+      var list = null;
+
+      lines.forEach(function (line) {
+        var trimmed = line.trim();
+        if (!trimmed) {
+          if (list) {
+            fragment.appendChild(list);
+            list = null;
+          }
+          return;
+        }
+        if (isBulletLine(trimmed)) {
+          if (!list) {
+            list = document.createElement("ul");
+            list.className = "list-disc pl-5 space-y-1";
+          }
+          var li = document.createElement("li");
+          li.textContent = stripBullet(trimmed);
+          list.appendChild(li);
+        } else {
+          if (list) {
+            fragment.appendChild(list);
+            list = null;
+          }
+          var paragraph = document.createElement("p");
+          paragraph.textContent = trimmed;
+          fragment.appendChild(paragraph);
+        }
+      });
+
+      if (list) {
+        fragment.appendChild(list);
+      }
+
+      fieldSummary.appendChild(fragment);
+      updateSummaryClamp();
+    }
+
+    function clearGuardrailStatusTimer() {
+      if (!guardrailStatusTimer) {
+        return;
+      }
+      window.clearTimeout(guardrailStatusTimer);
+      guardrailStatusTimer = null;
+    }
+
+    function setGuardrailStatus(message, tone, autoHideMs) {
+      if (!guardrailsStatus) return;
+      clearGuardrailStatusTimer();
+      if (!message) {
+        guardrailsStatus.textContent = "";
+        guardrailsStatus.classList.add("hidden");
+        guardrailsStatus.classList.remove("text-emerald-600", "text-rose-600", "text-muted-foreground");
+        return;
+      }
+      guardrailsStatus.textContent = message;
+      guardrailsStatus.classList.remove("hidden", "text-emerald-600", "text-rose-600", "text-muted-foreground");
+      if (tone === "success") {
+        guardrailsStatus.classList.add("text-emerald-600");
+      } else if (tone === "error") {
+        guardrailsStatus.classList.add("text-rose-600");
+      } else {
+        guardrailsStatus.classList.add("text-muted-foreground");
+      }
+      if (autoHideMs) {
+        guardrailStatusTimer = window.setTimeout(function () {
+          setGuardrailStatus("");
+        }, autoHideMs);
+      }
+    }
+
+    function setGuardrailInputsEnabled(enabled) {
+      Object.keys(guardrailInputs).forEach(function (key) {
+        guardrailInputs[key].disabled = !enabled;
+      });
+    }
+
+    function updateGuardrailSaveState() {
+      if (!guardrailsSave) return;
+      var canSave = !guardrailSaving && guardrailDirty && guardrailDocumentId && guardrailOptions.length > 0;
+      guardrailsSave.disabled = !canSave;
+      if (canSave) {
+        guardrailsSave.removeAttribute("aria-disabled");
+      } else {
+        guardrailsSave.setAttribute("aria-disabled", "true");
+      }
+    }
+
+    function guardrailSelectionsEqual(a, b) {
+      if (a.size !== b.size) {
+        return false;
+      }
+      for (var value of a) {
+        if (!b.has(value)) {
+          return false;
+        }
+      }
+      return true;
+    }
+
+    function filterGuardrailKeys(keys) {
+      if (!Array.isArray(keys)) {
+        return [];
+      }
+      if (guardrailOptionKeys.size === 0) {
+        return [];
+      }
+      return keys.filter(function (key) {
+        return guardrailOptionKeys.has(key);
+      });
+    }
+
+    function setGuardrailSelection(keys) {
+      var filtered = filterGuardrailKeys(keys || []);
+      guardrailSelection = new Set(filtered);
+      guardrailBaseline = new Set(filtered);
+      guardrailDirty = false;
+      Object.keys(guardrailInputs).forEach(function (key) {
+        guardrailInputs[key].checked = guardrailSelection.has(key);
+      });
+      updateGuardrailSaveState();
+    }
+
+    function markGuardrailDirty() {
+      guardrailDirty = !guardrailSelectionsEqual(guardrailSelection, guardrailBaseline);
+      updateGuardrailSaveState();
+    }
+
+    function buildGuardrailOptions() {
+      if (!guardrailsList) return;
+      guardrailsList.innerHTML = "";
+      guardrailInputs = {};
+      if (!guardrailOptions.length) {
+        if (guardrailsEmpty) {
+          guardrailsEmpty.innerHTML = 'No active identifiers yet. Add them in <a href="?tab=guardrails" class="text-primary hover:underline">Data Guardrails</a>.';
+          guardrailsEmpty.classList.remove("hidden");
+        }
+        if (guardrailsSave) {
+          guardrailsSave.classList.add("hidden");
+        }
+        return;
+      }
+      if (guardrailsEmpty) {
+        guardrailsEmpty.textContent = "";
+        guardrailsEmpty.classList.add("hidden");
+      }
+      if (guardrailsSave) {
+        guardrailsSave.classList.remove("hidden");
+      }
+
+      guardrailOptions.forEach(function (option) {
+        if (!option || !option.key) {
+          return;
+        }
+        var label = document.createElement("label");
+        label.className = "flex items-start gap-2 text-sm";
+        var input = document.createElement("input");
+        input.type = "checkbox";
+        input.className = "mt-1 h-4 w-4 rounded border-input text-primary focus:ring-primary";
+        input.value = option.key;
+        input.setAttribute("data-guardrail-option", option.key);
+        input.addEventListener("change", function () {
+          if (input.checked) {
+            guardrailSelection.add(option.key);
+          } else {
+            guardrailSelection.delete(option.key);
+          }
+          markGuardrailDirty();
+        });
+        var textWrap = document.createElement("span");
+        var name = document.createElement("span");
+        name.className = "font-semibold text-foreground";
+        name.textContent = option.label || option.key;
+        var key = document.createElement("span");
+        key.className = "block text-xs text-muted-foreground";
+        key.textContent = option.key;
+        textWrap.appendChild(name);
+        textWrap.appendChild(key);
+        label.appendChild(input);
+        label.appendChild(textWrap);
+        guardrailsList.appendChild(label);
+        guardrailInputs[option.key] = input;
+      });
+      setGuardrailInputsEnabled(false);
+      updateGuardrailSaveState();
+    }
+
+    buildGuardrailOptions();
+
+    function resetGuardrailPanel() {
+      guardrailDocumentId = "";
+      guardrailSelection = new Set();
+      guardrailBaseline = new Set();
+      guardrailDirty = false;
+      guardrailSaving = false;
+      Object.keys(guardrailInputs).forEach(function (key) {
+        guardrailInputs[key].checked = false;
+      });
+      setGuardrailInputsEnabled(false);
+      if (guardrailsSave) {
+        guardrailsSave.textContent = guardrailsSaveLabel;
+      }
+      setGuardrailStatus("");
+      updateGuardrailSaveState();
+    }
+
+    function setGuardrailPending(documentId) {
+      guardrailDocumentId = documentId || "";
+      guardrailSelection = new Set();
+      guardrailBaseline = new Set();
+      guardrailDirty = false;
+      Object.keys(guardrailInputs).forEach(function (key) {
+        guardrailInputs[key].checked = false;
+      });
+      setGuardrailInputsEnabled(false);
+      if (guardrailOptions.length) {
+        setGuardrailStatus("Loading guardrails...", "info");
+      } else {
+        setGuardrailStatus("");
+      }
+      updateGuardrailSaveState();
+    }
+
+    function cacheDocumentDetail(documentId, detail) {
+      if (!documentId || !detail) {
+        return;
+      }
+      var statusValue =
+        detail && detail.summary && detail.summary.status ? String(detail.summary.status).toLowerCase() : "";
+      detailCache[documentId] = {
+        detail: detail,
+        fetchedAt: Date.now(),
+        status: statusValue,
+      };
+      var existingIndex = detailCacheOrder.indexOf(documentId);
+      if (existingIndex !== -1) {
+        detailCacheOrder.splice(existingIndex, 1);
+      }
+      detailCacheOrder.push(documentId);
+      if (detailCacheOrder.length > detailCacheLimit) {
+        var removed = detailCacheOrder.shift();
+        if (removed && detailCache[removed]) {
+          delete detailCache[removed];
+        }
+      }
+    }
+
+    function updateCachedGuardrails(documentId, requiredKeys) {
+      if (!documentId) {
+        return;
+      }
+      var cached = readCachedDetail(documentId);
+      if (!cached || !cached.detail) {
+        return;
+      }
+      if (!cached.detail.guardrails) {
+        cached.detail.guardrails = {};
+      }
+      cached.detail.guardrails.requiredIdentifiers = requiredKeys || [];
+      cached.fetchedAt = Date.now();
+    }
+
+    function readCachedDetail(documentId) {
+      if (!documentId) {
+        return null;
+      }
+      return detailCache[documentId] || null;
+    }
+
+    function isCacheFresh(entry) {
+      if (!entry || !entry.fetchedAt) {
+        return false;
+      }
+      return Date.now() - entry.fetchedAt < detailCacheTtlMs;
+    }
+
+    function isStableStatus(status) {
+      return status === "ready" || status === "active" || status === "archived" || status === "failed";
     }
 
     function setPanelState(state) {
@@ -1865,7 +3054,82 @@ python manage.py knowledge_ingestion_worker</pre>
       }
     }
 
+    function clearClosePanelTimer() {
+      if (!closePanelTimer) {
+        return;
+      }
+      window.clearTimeout(closePanelTimer);
+      closePanelTimer = null;
+    }
+
+    function schedulePanelReset(options) {
+      options = options || {};
+      clearClosePanelTimer();
+      closePanelTimer = window.setTimeout(function () {
+        currentDocumentTitle = "";
+        setPanelState("empty");
+        resetGuardrailPanel();
+        if (options.resetSelection !== false) {
+          clearSelection();
+        }
+      }, 320);
+    }
+
+    function fetchDocumentDetail(documentId, dataset, options) {
+      options = options || {};
+      if (inFlight && typeof inFlight.abort === "function") {
+        inFlight.abort();
+      }
+      var controller = typeof window.AbortController === "function" ? new AbortController() : null;
+      inFlight = controller;
+      if (!options.silent) {
+        setPanelState("loading");
+      }
+      return fetch("/api/knowledge/documents/" + encodeURIComponent(documentId) + "/", {
+        method: "GET",
+        headers: { Accept: "application/json" },
+        credentials: "same-origin",
+        signal: controller ? controller.signal : undefined,
+      })
+        .then(function (response) {
+          if (!response.ok) {
+            throw new Error("Failed to load detail");
+          }
+          return response.json();
+        })
+        .then(function (payload) {
+          if (controller && controller.signal.aborted) {
+            return;
+          }
+          var detail = payload && payload.document ? payload.document : {};
+          cacheDocumentDetail(documentId, detail);
+          populatePanel(detail, dataset);
+          setPanelState("content");
+          if (scrollRoot) {
+            scrollRoot.scrollTop = 0;
+          }
+        })
+        .catch(function (error) {
+          if (controller && controller.signal.aborted) {
+            return;
+          }
+          console.error("Failed to load document detail", error);
+          if (!options.silent) {
+            if (errorMessage) {
+              errorMessage.textContent = "Unable to load document details. Please try again.";
+            }
+            setPanelState("error");
+          }
+        })
+        .finally(function () {
+          if (controller && inFlight === controller) {
+            inFlight = null;
+          }
+        });
+    }
+
     function openPanel() {
+      clearClosePanelTimer();
       isPanelOpen = true;
       panel.setAttribute("aria-hidden", "false");
       panel.classList.remove("translate-x-full");
@@ -1905,10 +3169,6 @@ python manage.py knowledge_ingestion_worker</pre>
         inFlight.abort();
       }
       inFlight = null;
-      if (!options.suppressState) {
-        currentDocumentTitle = "";
-        setPanelState("empty");
-      }
       if (!isPanelOpen && !options.force) {
         return;
       }
@@ -1926,35 +3186,10 @@ python manage.py knowledge_ingestion_worker</pre>
         body.classList.remove("overflow-hidden");
       }
       isPanelOpen = false;
-      if (options.resetSelection !== false) {
+      if (!options.suppressState) {
+        schedulePanelReset(options);
+      } else if (options.resetSelection !== false) {
         clearSelection();
-      }
-    }
-
-    function renderBadges(target, values, emptyMessage) {
-      if (!target) return;
-      target.innerHTML = "";
-      if (!values || !values.length) {
-        var empty = document.createElement("span");
-        empty.className = "text-muted-foreground";
-        empty.textContent = emptyMessage || "None.";
-        target.appendChild(empty);
-        return;
-      }
-      values.forEach(function (value) {
-        var pill = document.createElement("span");
-        pill.className =
-          "inline-flex items-center rounded-full border border-border/60 bg-muted/40 px-2 py-0.5 text-[11px] font-medium text-foreground";
-        pill.textContent = value;
-        target.appendChild(pill);
-      });
-    }
-
-    function stringifyJSON(data) {
-      try {
-        return JSON.stringify(data || {}, null, 2);
-      } catch (_err) {
-        return "{}";
       }
     }
 
@@ -1980,16 +3215,8 @@ python manage.py knowledge_ingestion_worker</pre>
       if (fieldCategory) fieldCategory.textContent = dataset.documentCategory || "—";
       if (fieldSensitive) fieldSensitive.textContent = formatBoolean(dataset.documentSensitive === "true");
       if (fieldIntegration) fieldIntegration.textContent = dataset.documentIntegration || "—";
-      if (fieldDescription) fieldDescription.textContent = "Loading description…";
-      if (fieldSummary) fieldSummary.textContent = "Loading summary…";
-      if (fieldMetadata) fieldMetadata.textContent = "{}";
-      if (fieldRetention) fieldRetention.textContent = "{}";
-      if (fieldIngestion) fieldIngestion.textContent = "{}";
-      renderBadges(fieldTags, [], "No tags.");
-      renderBadges(fieldCollections, [], "Not assigned to collections.");
-      if (fileSection) fileSection.classList.add("hidden");
-      if (urlSection) urlSection.classList.add("hidden");
-      if (textSection) textSection.classList.add("hidden");
+      renderSummary("Loading summary...");
+      setGuardrailPending(dataset.documentId || "");
     }
 
     function populatePanel(detail, dataset) {
@@ -2030,55 +3257,15 @@ python manage.py knowledge_ingestion_worker</pre>
       if (fieldCategory) fieldCategory.textContent = summary.category || dataset.documentCategory || "—";
       if (fieldSensitive) fieldSensitive.textContent = formatBoolean(summary.isSensitive || dataset.documentSensitive === "true");
       if (fieldIntegration) fieldIntegration.textContent = summary.integrationName || dataset.documentIntegration || "—";
-      if (fieldDescription) fieldDescription.textContent = detail.description || "No description provided.";
-      if (fieldSummary) fieldSummary.textContent = detail.summaryText || "No summary available.";
-      renderBadges(fieldTags, summary.tags || [], "No tags.");
-      renderBadges(fieldCollections, summary.collections || [], "Not assigned to collections.");
-      if (fieldMetadata) fieldMetadata.textContent = stringifyJSON(detail.metadata);
-      if (fieldRetention) fieldRetention.textContent = stringifyJSON(detail.retentionPolicy);
-      if (fieldIngestion) {
-        var ingestionMeta = detail.ingestionMetadata || {};
-        var compact = {};
-        if (ingestionMeta.format) compact.format = ingestionMeta.format;
-        if (ingestionMeta.preflight) compact.preflight = ingestionMeta.preflight;
-        if (ingestionMeta.dataset) compact.dataset = ingestionMeta.dataset;
-        if (ingestionMeta.table_stats) compact.table_stats = ingestionMeta.table_stats;
-        if (ingestionMeta.table_truncation) compact.table_truncation = ingestionMeta.table_truncation;
-        if (ingestionMeta.normalization) compact.normalization = ingestionMeta.normalization;
-        fieldIngestion.textContent = stringifyJSON(compact);
+      renderSummary(detail.summaryText || "No summary available.");
+      var requiredIdentifiers = [];
+      if (detail && detail.guardrails && Array.isArray(detail.guardrails.requiredIdentifiers)) {
+        requiredIdentifiers = detail.guardrails.requiredIdentifiers;
       }
-
-      if (detail.file) {
-        if (fileSection) fileSection.classList.remove("hidden");
-        if (fileField) {
-          var parts = [];
-          if (detail.file.filename) parts.push(detail.file.filename);
-          if (detail.file.contentType) parts.push(detail.file.contentType);
-          if (detail.file.sizeBytes != null) parts.push(formatBytes(detail.file.sizeBytes));
-          if (detail.file.pageCount != null) parts.push(detail.file.pageCount + " pages");
-          fileField.textContent = parts.join(" • ") || "File metadata unavailable.";
-        }
-      } else if (fileSection) {
-        fileSection.classList.add("hidden");
-      }
-
-      if (detail.url) {
-        if (urlSection) urlSection.classList.remove("hidden");
-        if (urlField) {
-          urlField.textContent = detail.url.url || "Open URL";
-          urlField.href = detail.url.url || "#";
-        }
-        if (hostField) hostField.textContent = detail.url.host || "";
-      } else if (urlSection) {
-        urlSection.classList.add("hidden");
-      }
-
-      if (detail.text) {
-        if (textSection) textSection.classList.remove("hidden");
-        if (textPreviewField) textPreviewField.textContent = detail.text.preview || "No preview available.";
-      } else if (textSection) {
-        textSection.classList.add("hidden");
-      }
+      guardrailDocumentId = summary.id || dataset.documentId || "";
+      setGuardrailSelection(requiredIdentifiers);
+      setGuardrailInputsEnabled(Boolean(guardrailOptions.length && guardrailDocumentId));
+      setGuardrailStatus("");
 
       if (fieldAriaTitle) {
         fieldAriaTitle.textContent = currentDocumentTitle;
@@ -2103,6 +3290,12 @@ python manage.py knowledge_ingestion_worker</pre>
       }
     }
 
+    if (summaryToggle) {
+      summaryToggle.addEventListener("click", function () {
+        setSummaryExpandedState(!summaryExpanded);
+      });
+    }
+
     function handleRowActivation(row, options) {
       if (!row) return;
       var uuid = row.getAttribute("data-document-id");
@@ -2112,55 +3305,26 @@ python manage.py knowledge_ingestion_worker</pre>
         openPanel();
         return;
       }
+      var cachedEntry = readCachedDetail(uuid);
+      var cachedDetail = cachedEntry ? cachedEntry.detail : null;
+      var cacheFresh = cachedEntry && isCacheFresh(cachedEntry);
+      var cacheStable = cachedEntry && isStableStatus(cachedEntry ? cachedEntry.status : "");
       selectRow(row);
       prefillFromRow(row);
-      if (inFlight && typeof inFlight.abort === "function") {
-        inFlight.abort();
-      }
-      var controller = typeof window.AbortController === "function" ? new AbortController() : null;
-      inFlight = controller;
       openPanel();
-      setPanelState("loading");
+      if (cachedDetail) {
+        populatePanel(cachedDetail, row.dataset);
+        setPanelState("content");
+      } else {
+        setPanelState("loading");
+      }
       if (scrollRoot) {
         scrollRoot.scrollTop = 0;
       }
-      fetch("/api/knowledge/documents/" + encodeURIComponent(uuid) + "/", {
-        method: "GET",
-        headers: { Accept: "application/json" },
-        credentials: "same-origin",
-        signal: controller ? controller.signal : undefined,
-      })
-        .then(function (response) {
-          if (!response.ok) {
-            throw new Error("Failed to load detail");
-          }
-          return response.json();
-        })
-        .then(function (payload) {
-          if (controller && controller.signal.aborted) {
-            return;
-          }
-          populatePanel(payload && payload.document ? payload.document : {}, row.dataset);
-          setPanelState("content");
-          if (scrollRoot) {
-            scrollRoot.scrollTop = 0;
-          }
-        })
-        .catch(function (error) {
-          if (controller && controller.signal.aborted) {
-            return;
-          }
-          console.error("Failed to load document detail", error);
-          if (errorMessage) {
-            errorMessage.textContent = "Unable to load document details. Please try again.";
-          }
-          setPanelState("error");
-        })
-        .finally(function () {
-          if (controller && inFlight === controller) {
-            inFlight = null;
-          }
-        });
+      if (!options.forceReload && cachedDetail && cacheFresh && cacheStable) {
+        return;
+      }
+      fetchDocumentDetail(uuid, row.dataset, { silent: Boolean(cachedDetail) });
     }
 
     function getCookie(name) {
@@ -2192,7 +3356,6 @@ python manage.py knowledge_ingestion_worker</pre>
       var selectedCountField = sheetsModal.querySelector("[data-sheets-selected-count]");
       var saveSelectionButton = sheetsModal.querySelector("[data-sheets-save]");
       var syncNowButton = sheetsModal.querySelector("[data-sheets-sync]");
-      var commandBlock = sheetsModal.querySelector("[data-sheets-command]");
       var modalTitle = sheetsModal.querySelector("[data-sheets-title]");
       var sheetsState = {
         available: [],
@@ -2715,12 +3878,6 @@ python manage.py knowledge_ingestion_worker</pre>
         sheetsState.businessId = dataset.businessId || "";
         sheetsState.sheetsUrl = dataset.sheetsUrl || "";
         sheetsState.syncUrl = dataset.syncUrl || "";
-        if (commandBlock) {
-          commandBlock.textContent =
-            "python manage.py sync_knowledge_integrations --integration-id " +
-            sheetsState.integrationId +
-            " --ignore-schedule\npython manage.py process_knowledge_ingestion --watch";
-        }
         if (modalTitle) {
           modalTitle.textContent = "Manage sheets · " + sheetsState.integrationName;
         }
@@ -2773,8 +3930,8 @@ python manage.py knowledge_ingestion_worker</pre>
       });
     }
 
-    var rows = Array.prototype.slice.call(document.querySelectorAll("[data-document-row]") || []);
-    rows.forEach(function (row) {
+    function bindDocumentRow(row) {
+      if (!row) return;
       row.addEventListener("click", function (event) {
         if (event.defaultPrevented) return;
         event.stopPropagation();
@@ -2794,7 +3951,73 @@ python manage.py knowledge_ingestion_worker</pre>
           handleRowActivation(row);
         });
       }
-    });
+    }
+
+    var rows = Array.prototype.slice.call(document.querySelectorAll("[data-document-row]") || []);
+    rows.forEach(bindDocumentRow);
+
+    if (guardrailsSave) {
+      guardrailsSave.addEventListener("click", function () {
+        if (guardrailsSave.disabled || guardrailSaving) {
+          return;
+        }
+        if (!guardrailDocumentId || !knowledgeBusinessId) {
+          return;
+        }
+        guardrailSaving = true;
+        updateGuardrailSaveState();
+        guardrailsSave.textContent = "Saving...";
+        setGuardrailStatus("Saving guardrails...", "info");
+        var saveUrl = "/api/knowledge/documents/" + encodeURIComponent(guardrailDocumentId) + "/";
+        if (knowledgeBusinessId) {
+          saveUrl += "?business_id=" + encodeURIComponent(knowledgeBusinessId);
+        }
+        var headers = {
+          "Content-Type": "application/json",
+          Accept: "application/json",
+        };
+        if (csrfToken) {
+          headers["X-CSRFToken"] = csrfToken;
+        }
+        var payload = {
+          requiredIdentifiers: Array.from(guardrailSelection),
+        };
+        fetch(saveUrl, {
+          method: "PATCH",
+          headers: headers,
+          credentials: "same-origin",
+          body: JSON.stringify(payload),
+        })
+          .then(function (response) {
+            if (!response.ok) {
+              return response.json().then(function (data) {
+                var message = (data && (data.message || data.error)) || "Unable to save guardrails.";
+                throw new Error(message);
+              });
+            }
+            return response.json();
+          })
+          .then(function (data) {
+            var required = payload.requiredIdentifiers;
+            if (data && data.guardrails && Array.isArray(data.guardrails.requiredIdentifiers)) {
+              required = data.guardrails.requiredIdentifiers;
+            }
+            setGuardrailSelection(required);
+            updateCachedGuardrails(guardrailDocumentId, required);
+            setGuardrailStatus("Guardrails saved.", "success", 3000);
+          })
+          .catch(function (error) {
+            setGuardrailStatus(error.message || "Unable to save guardrails.", "error");
+          })
+          .finally(function () {
+            guardrailSaving = false;
+            if (guardrailsSave) {
+              guardrailsSave.textContent = guardrailsSaveLabel;
+            }
+            updateGuardrailSaveState();
+          });
+      });
+    }
 
     if (deleteButton) {
       deleteButton.addEventListener("click", function () {
