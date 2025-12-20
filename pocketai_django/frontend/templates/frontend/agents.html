@@ -23,16 +23,6 @@
             </svg>
             Create agent
           </button>
-          <button
-            type="button"
-            class="inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-lg text-sm font-medium ring-offset-background transition-all duration-300 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-60 [&_svg]:pointer-events-none [&_svg]:size-4 [&_svg]:shrink-0 border border-input bg-background text-muted-foreground h-10 px-4 py-2"
-            disabled
-          >
-            <svg class="h-4 w-4" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" aria-hidden="true">
-              <path stroke-linecap="round" stroke-linejoin="round" d="M12 6v12m6-6H6" />
-            </svg>
-            Templates
-          </button>
         </div>
       </header>
 
@@ -65,7 +55,7 @@
               type="search"
               name="agent-search"
               class="pl-9 w-full h-10 rounded-md border border-border/60 bg-muted/70 text-sm focus-visible:ring-0 focus-visible:border-border transition-colors"
-              placeholder="{{ agents_filters.search_placeholder|default:'Search name, ID, role…' }}"
+              placeholder="Search agents..."
               autocomplete="off"
               data-search-ready="true"
             />
@@ -284,13 +274,12 @@
 </div>
 
 <div
-  class="fixed inset-0 z-40 bg-background/60 backdrop-blur-sm opacity-0 pointer-events-none transition-opacity duration-300"
+  class="fixed inset-0 z-40 flex items-center justify-center bg-background/60 backdrop-blur-sm opacity-0 pointer-events-none transition-opacity duration-300 p-4"
   data-agent-overlay
   style="opacity: 0; pointer-events: none;"
-></div>
-
+>
 <aside
-  class="fixed inset-y-0 right-0 z-50 flex w-full max-w-full translate-x-full transform transition-transform duration-300 sm:w-[360px] lg:w-[420px] xl:w-[460px] border-l border-border/70 bg-card/95 backdrop-blur shadow-2xl"
+  class="w-full max-w-4xl h-full max-h-[90vh] overflow-hidden rounded-2xl border border-border/70 bg-card/95 backdrop-blur shadow-2xl opacity-0 translate-y-4 scale-95 transform transition-all duration-200"
   data-agent-panel
   data-state="empty"
   role="dialog"
@@ -298,7 +287,6 @@
   aria-labelledby="agent-panel-heading"
   aria-hidden="true"
   tabindex="-1"
-  style="transform: translateX(100%);"
 >
   <div class="relative flex h-full w-full flex-col">
     <div id="agent-panel-heading" class="sr-only" data-agent-aria-title>Select an agent</div>
@@ -351,33 +339,84 @@
             Retry
           </button>
         </div>
-        <div class="hidden space-y-6 pb-16" data-agent-content>
-          <section class="border-b border-border/70 bg-card/90 px-6 pt-10 pb-6">
-            <div class="flex items-start gap-3">
-              <span class="inline-flex h-12 w-12 items-center justify-center rounded-full bg-primary/10 text-primary font-semibold uppercase" data-agent-initials>AI</span>
-              <div class="flex-1 min-w-0">
-                <div class="text-lg font-semibold text-foreground leading-tight" data-agent-name>Agent name</div>
-                <div class="mt-1 flex flex-wrap items-center gap-1 text-xs text-muted-foreground">
-                  <span data-agent-identifier>ID</span>
-                  <span aria-hidden="true">•</span>
-                  <span data-agent-role>Support Agent</span>
-                  <span aria-hidden="true">•</span>
-                  <span data-agent-tone>Friendly tone</span>
-                </div>
-              </div>
-              <span class="text-xs text-muted-foreground" data-agent-last-active>—</span>
-            </div>
-            <div class="mt-3 flex flex-wrap items-center gap-2">
-              <span class="text-[11px] font-semibold capitalize text-muted-foreground" data-agent-status-badge>Draft</span>
-              <span class="text-xs text-muted-foreground" data-agent-updated>Updated —</span>
-            </div>
-          </section>
+	        <div class="hidden space-y-6 pb-16" data-agent-content>
+	          <section class="border-b border-border/70 bg-card/90 px-6 pt-10 pb-6">
+	            <div class="flex items-start gap-3">
+	              <span class="inline-flex h-12 w-12 items-center justify-center rounded-full bg-primary/10 text-primary font-semibold uppercase" data-agent-initials>AI</span>
+	              <div class="flex-1 min-w-0">
+	                <div class="text-lg font-semibold text-foreground leading-tight" data-agent-name>Agent name</div>
+	                <div class="mt-1 flex flex-wrap items-center gap-1 text-xs text-muted-foreground">
+	                  <span data-agent-identifier>ID</span>
+	                  <span aria-hidden="true">•</span>
+	                  <span data-agent-role>Support Agent</span>
+	                  <span aria-hidden="true">•</span>
+	                  <span data-agent-tone>Friendly tone</span>
+	                </div>
+	              </div>
+	              <span class="text-xs text-muted-foreground" data-agent-last-active>—</span>
+	            </div>
+	            <div class="mt-3 flex flex-wrap items-center gap-2">
+	              <span class="text-[11px] font-semibold capitalize text-muted-foreground" data-agent-status-badge>Draft</span>
+	              <span class="text-xs text-muted-foreground" data-agent-updated>Updated —</span>
+	            </div>
+	          </section>
 
-          <section class="space-y-4 px-6">
-            <div class="rounded-xl border border-border/70 bg-card/95 p-4 space-y-4 shadow-sm">
-              <div class="text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">Performance</div>
-              <dl class="grid grid-cols-2 gap-4 text-sm sm:grid-cols-3">
-                <div>
+	          <section class="px-6 pt-6" aria-label="Agent detail tabs">
+	            <div
+	              class="grid grid-cols-3 gap-1 rounded-lg border border-border/60 bg-muted/40 p-1"
+	              role="tablist"
+	              aria-label="Agent detail sections"
+	              data-agent-tabs
+	            >
+	              <button
+	                type="button"
+	                id="agent-tab-overview"
+	                class="inline-flex items-center justify-center rounded-md px-3 py-2 text-sm font-medium bg-background text-foreground shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40 focus-visible:ring-offset-2 focus-visible:ring-offset-background"
+	                role="tab"
+	                aria-selected="true"
+	                aria-controls="agent-tabpanel-overview"
+	                data-agent-tab="overview"
+	              >
+	                Overview
+	              </button>
+	              <button
+	                type="button"
+	                id="agent-tab-automation"
+	                class="inline-flex items-center justify-center rounded-md px-3 py-2 text-sm font-medium text-muted-foreground hover:text-foreground hover:bg-background/60 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40 focus-visible:ring-offset-2 focus-visible:ring-offset-background"
+	                role="tab"
+	                aria-selected="false"
+	                aria-controls="agent-tabpanel-automation"
+	                tabindex="-1"
+	                data-agent-tab="automation"
+	              >
+	                Automation controls
+	              </button>
+	              <button
+	                type="button"
+	                id="agent-tab-knowledge"
+	                class="inline-flex items-center justify-center rounded-md px-3 py-2 text-sm font-medium text-muted-foreground hover:text-foreground hover:bg-background/60 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40 focus-visible:ring-offset-2 focus-visible:ring-offset-background"
+	                role="tab"
+	                aria-selected="false"
+	                aria-controls="agent-tabpanel-knowledge"
+	                tabindex="-1"
+	                data-agent-tab="knowledge"
+	              >
+	                Knowledge Access
+	              </button>
+	            </div>
+	          </section>
+
+	          <section
+	            id="agent-tabpanel-overview"
+	            class="space-y-4 px-6"
+	            role="tabpanel"
+	            aria-labelledby="agent-tab-overview"
+	            data-agent-tab-panel="overview"
+	          >
+	            <div class="rounded-xl border border-border/70 bg-card/95 p-4 space-y-4 shadow-sm">
+	              <div class="text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">Performance</div>
+	              <dl class="grid grid-cols-2 gap-4 text-sm sm:grid-cols-3">
+	                <div>
                   <dt class="text-xs uppercase tracking-wide text-muted-foreground">Conversations</dt>
                   <dd class="text-base font-semibold text-foreground" data-agent-metric-total>—</dd>
                 </div>
@@ -459,36 +498,55 @@
             </div>
 
             <div class="rounded-xl border border-border/60 bg-card/95 p-4 space-y-3 shadow-sm">
-              <div class="text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">Escalation rule</div>
-              <p class="text-sm text-foreground" data-agent-escalation>None configured.</p>
-            </div>
+	              <div class="text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">Escalation rule</div>
+	              <p class="text-sm text-foreground" data-agent-escalation>None configured.</p>
+	            </div>
+	          </section>
 
-            <div class="rounded-xl border border-border/60 bg-card/95 p-4 space-y-3 shadow-sm" data-agent-action-container>
-              <div class="flex items-center justify-between gap-3">
-                <div>
-                  <div class="text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">Automation controls</div>
-                  <p class="text-xs text-muted-foreground">Toggle orchestrator actions this agent is allowed to run.</p>
-                </div>
-                <span class="text-xs text-muted-foreground" data-agent-action-state>Idle</span>
-              </div>
-              <div class="space-y-3" data-agent-action-list>
-                <p class="text-xs text-muted-foreground">Select an agent to load action permissions.</p>
-              </div>
-            </div>
+	          <section
+	            id="agent-tabpanel-automation"
+	            class="space-y-4 px-6"
+	            role="tabpanel"
+	            aria-labelledby="agent-tab-automation"
+	            data-agent-tab-panel="automation"
+	            hidden
+	          >
+	            <div class="rounded-xl border border-border/60 bg-card/95 p-4 space-y-3 shadow-sm" data-agent-action-container>
+	              <div class="flex items-center justify-between gap-3">
+	                <div>
+	                  <div class="text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">Automation controls</div>
+	                  <p class="text-xs text-muted-foreground">Toggle orchestrator actions this agent is allowed to run.</p>
+	                </div>
+	                <span class="text-xs text-muted-foreground" data-agent-action-state>Idle</span>
+	              </div>
+	              <div class="space-y-3" data-agent-action-list>
+	                <p class="text-xs text-muted-foreground">Select an agent to load action permissions.</p>
+	              </div>
+	            </div>
+	          </section>
 
-            <div class="rounded-xl border border-border/60 bg-card/95 p-4 space-y-3 shadow-sm">
-              <div class="text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">Knowledge access</div>
-              <p class="text-xs text-muted-foreground" data-agent-knowledge-mode>Uses all business knowledge sources.</p>
-              <ul class="divide-y divide-border/60 rounded-lg border border-border/60" data-agent-knowledge-list>
-                <li class="px-3 py-2 text-sm text-muted-foreground">No knowledge items attached.</li>
-              </ul>
-            </div>
-          </section>
-        </div>
-      </div>
-    </div>
-  </div>
-</aside>
+	          <section
+	            id="agent-tabpanel-knowledge"
+	            class="space-y-4 px-6"
+	            role="tabpanel"
+	            aria-labelledby="agent-tab-knowledge"
+	            data-agent-tab-panel="knowledge"
+	            hidden
+	          >
+	            <div class="rounded-xl border border-border/60 bg-card/95 p-4 space-y-3 shadow-sm">
+		              <div class="text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">Knowledge Access</div>
+	              <p class="text-xs text-muted-foreground" data-agent-knowledge-mode>Uses all business knowledge sources.</p>
+	              <ul class="divide-y divide-border/60 rounded-lg border border-border/60" data-agent-knowledge-list>
+	                <li class="px-3 py-2 text-sm text-muted-foreground">No knowledge items attached.</li>
+	              </ul>
+	            </div>
+	          </section>
+	        </div>
+	      </div>
+	    </div>
+	  </div>
+	</aside>
+</div>
 
 <div class="fixed inset-0 z-50 hidden items-center justify-center bg-background/80 backdrop-blur-sm" data-dialog="create-agent" role="dialog" aria-modal="true">
   <div class="w-full max-w-lg rounded-2xl border border-border/70 bg-card shadow-lg shadow-black/10">
@@ -574,21 +632,139 @@
     var fieldKnowledgeList = panel.querySelector("[data-agent-knowledge-list]");
     var shareableField = panel.querySelector("[data-agent-shareable]");
     var shareableState = panel.querySelector("[data-agent-shareable-state]");
-    var shareableOpen = panel.querySelector("[data-agent-shareable-open]");
-    var shareableCopy = panel.querySelector("[data-agent-shareable-copy]");
-    var actionList = panel.querySelector("[data-agent-action-list]");
-    var actionStateLabel = panel.querySelector("[data-agent-action-state]");
+	    var shareableOpen = panel.querySelector("[data-agent-shareable-open]");
+	    var shareableCopy = panel.querySelector("[data-agent-shareable-copy]");
+	    var actionList = panel.querySelector("[data-agent-action-list]");
+	    var actionStateLabel = panel.querySelector("[data-agent-action-state]");
+	    var tabsList = panel.querySelector("[data-agent-tabs]");
+	    var tabsButtons = tabsList
+	      ? Array.prototype.slice.call(tabsList.querySelectorAll("[data-agent-tab]") || [])
+	      : [];
+	    var tabsPanels = Array.prototype.slice.call(panel.querySelectorAll("[data-agent-tab-panel]") || []);
 
-    var abortSupported = typeof window.AbortController === "function";
-    var selectedClasses = ["ring-1", "ring-primary/60", "bg-primary/5"];
-    var activeRow = null;
-    var inFlight = null;
-    var isPanelOpen = false;
-    var currentAgentTitle = "";
-    var shareableLinkValue = "";
-    var actionFetchController = null;
-    var currentActionAgentId = null;
-    var actionFlashTimer = null;
+	    var abortSupported = typeof window.AbortController === "function";
+	    var selectedClasses = ["ring-1", "ring-primary/60", "bg-primary/5"];
+	    var activeRow = null;
+	    var inFlight = null;
+	    var isPanelOpen = false;
+	    var currentAgentTitle = "";
+	    var shareableLinkValue = "";
+	    var actionFetchController = null;
+	    var currentActionAgentId = null;
+	    var actionFlashTimer = null;
+	    var currentTab = "overview";
+
+	    var tabActiveClasses = ["bg-background", "text-foreground", "shadow-sm"];
+	    var tabInactiveClasses = ["text-muted-foreground", "hover:text-foreground", "hover:bg-background/60"];
+
+	    function setActiveTab(nextTab, options) {
+	      if (!tabsButtons.length || !tabsPanels.length) {
+	        return;
+	      }
+	      options = options || {};
+	      var normalized = (nextTab || "").toString().trim().toLowerCase();
+	      if (!normalized) {
+	        return;
+	      }
+
+	      var matched = false;
+	      tabsPanels.forEach(function (panelEl) {
+	        if (!panelEl) return;
+	        var key = (panelEl.getAttribute("data-agent-tab-panel") || "").toString().trim().toLowerCase();
+	        var isActive = key === normalized;
+	        if (isActive) {
+	          matched = true;
+	        }
+	        panelEl.hidden = !isActive;
+	      });
+
+	      if (!matched) {
+	        return;
+	      }
+
+	      var activeButton = null;
+	      tabsButtons.forEach(function (button) {
+	        if (!button) return;
+	        var key = (button.getAttribute("data-agent-tab") || "").toString().trim().toLowerCase();
+	        var isActive = key === normalized;
+	        button.setAttribute("aria-selected", isActive ? "true" : "false");
+	        button.tabIndex = isActive ? 0 : -1;
+	        if (isActive) {
+	          activeButton = button;
+	          tabInactiveClasses.forEach(function (cls) {
+	            button.classList.remove(cls);
+	          });
+	          tabActiveClasses.forEach(function (cls) {
+	            button.classList.add(cls);
+	          });
+	        } else {
+	          tabActiveClasses.forEach(function (cls) {
+	            button.classList.remove(cls);
+	          });
+	          tabInactiveClasses.forEach(function (cls) {
+	            button.classList.add(cls);
+	          });
+	        }
+	      });
+
+	      currentTab = normalized;
+	      if (scrollRoot && options.scrollTop !== false) {
+	        scrollRoot.scrollTop = 0;
+	      }
+	      if (activeButton && options.focus) {
+	        try {
+	          activeButton.focus({ preventScroll: true });
+	        } catch (_err) {
+	          activeButton.focus();
+	        }
+	      }
+	    }
+
+	    if (tabsButtons.length) {
+	      tabsButtons.forEach(function (button) {
+	        button.addEventListener("click", function (event) {
+	          event.preventDefault();
+	          event.stopPropagation();
+	          var tab = button.getAttribute("data-agent-tab");
+	          setActiveTab(tab, { focus: false });
+	        });
+	      });
+	    }
+
+	    if (tabsList) {
+	      tabsList.addEventListener("keydown", function (event) {
+	        var key = event.key;
+	        if (!tabsButtons.length) {
+	          return;
+	        }
+	        if (key !== "ArrowLeft" && key !== "ArrowRight" && key !== "Home" && key !== "End") {
+	          return;
+	        }
+	        event.preventDefault();
+
+	        var activeIndex = tabsButtons.findIndex(function (button) {
+	          return button && button.getAttribute("aria-selected") === "true";
+	        });
+	        if (activeIndex < 0) {
+	          activeIndex = 0;
+	        }
+	        var nextIndex = activeIndex;
+	        if (key === "ArrowLeft") {
+	          nextIndex = (activeIndex - 1 + tabsButtons.length) % tabsButtons.length;
+	        } else if (key === "ArrowRight") {
+	          nextIndex = (activeIndex + 1) % tabsButtons.length;
+	        } else if (key === "Home") {
+	          nextIndex = 0;
+	        } else if (key === "End") {
+	          nextIndex = tabsButtons.length - 1;
+	        }
+	        var nextButton = tabsButtons[nextIndex];
+	        if (!nextButton) {
+	          return;
+	        }
+	        setActiveTab(nextButton.getAttribute("data-agent-tab"), { focus: true });
+	      });
+	    }
 
     function formatNumber(value, fallback) {
       var candidate = value;
@@ -694,12 +870,24 @@
       }
     }
 
+    var modalHiddenClasses = ["opacity-0", "translate-y-4", "scale-95"];
+    var modalVisibleClasses = ["opacity-100", "translate-y-0", "scale-100"];
+
+    if (panel) {
+      panel.addEventListener("click", function (event) {
+        event.stopPropagation();
+      });
+    }
+
     function openPanel() {
       isPanelOpen = true;
       panel.setAttribute("aria-hidden", "false");
-      panel.classList.remove("translate-x-full");
-      panel.classList.add("translate-x-0");
-      panel.style.transform = "translateX(0)";
+      modalHiddenClasses.forEach(function (cls) {
+        panel.classList.remove(cls);
+      });
+      modalVisibleClasses.forEach(function (cls) {
+        panel.classList.add(cls);
+      });
       if (overlay) {
         overlay.classList.remove("opacity-0", "pointer-events-none");
         overlay.classList.add("opacity-100");
@@ -748,9 +936,12 @@
         overlay.style.opacity = "0";
         overlay.style.pointerEvents = "none";
       }
-      panel.classList.add("translate-x-full");
-      panel.classList.remove("translate-x-0");
-      panel.style.transform = "translateX(100%)";
+      modalVisibleClasses.forEach(function (cls) {
+        panel.classList.remove(cls);
+      });
+      modalHiddenClasses.forEach(function (cls) {
+        panel.classList.add(cls);
+      });
       panel.setAttribute("aria-hidden", "true");
       if (body) {
         body.classList.remove("overflow-hidden");
@@ -1162,6 +1353,7 @@
       var uuid = row.getAttribute("data-agent-uuid");
       if (!uuid) return;
       options = options || {};
+      setActiveTab("overview", { scrollTop: false });
       if (!options.forceReload && activeRow === row && isPanelOpen && panel.dataset.state === "content") {
         openPanel();
         return;

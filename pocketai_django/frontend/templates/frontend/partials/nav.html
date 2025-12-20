@@ -1,5 +1,5 @@
 {% with brand=site.brand nav_links=site.nav_links auth_links=site.auth_links %}
-<header class="sticky top-0 z-50 border-b border-neutral-100 bg-background/80 backdrop-blur-xl">
+<header class="sticky top-0 z-50 border-b border-border/70 bg-background/80 backdrop-blur-xl">
   <div class="container mx-auto px-6 py-4">
     <div class="flex items-center justify-between gap-4">
       <a href="{{ brand.href }}" class="flex items-center gap-3 text-foreground">
@@ -103,7 +103,7 @@
     </div>
     <div
       id="mobile-nav"
-      class="hidden md:hidden animate-fade-in border-t border-neutral-100 pt-4"
+      class="hidden md:hidden animate-fade-in border-t border-border/70 pt-4"
       data-nav-mobile
     >
       <nav class="flex flex-col space-y-4 pb-4">
@@ -212,47 +212,6 @@
       if (closeIcon) {
         closeIcon.classList.toggle("hidden", !expanded);
       }
-    });
-  });
-
-  document.addEventListener("DOMContentLoaded", function () {
-    var themeButtons = document.querySelectorAll("[data-theme-toggle]");
-    if (!themeButtons.length) {
-      return;
-    }
-
-    themeButtons.forEach(function (button) {
-      var moon = button.querySelector('[data-theme-icon="moon"]');
-      var sun = button.querySelector('[data-theme-icon="sun"]');
-      var label = button.querySelector("[data-theme-label]");
-      var lightLabel = button.getAttribute("data-light-label") || "";
-      var darkLabel = button.getAttribute("data-dark-label") || "";
-
-      function applyState(state) {
-        button.setAttribute("data-theme-state", state);
-        if (moon) {
-          moon.classList.toggle("hidden", state !== "light");
-        }
-        if (sun) {
-          sun.classList.toggle("hidden", state !== "dark");
-        }
-        var labelText = state === "light" ? lightLabel : darkLabel;
-        if (label && labelText) {
-          label.textContent = labelText;
-        }
-        if (labelText) {
-          button.setAttribute("aria-label", labelText);
-          button.setAttribute("title", labelText);
-        }
-      }
-
-      applyState(button.getAttribute("data-theme-state") || "light");
-
-      button.addEventListener("click", function () {
-        var current = button.getAttribute("data-theme-state") || "light";
-        var next = current === "light" ? "dark" : "light";
-        applyState(next);
-      });
     });
   });
 </script>

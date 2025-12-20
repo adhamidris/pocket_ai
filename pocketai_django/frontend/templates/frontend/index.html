@@ -18,7 +18,7 @@
           {{ page.hero.title_prefix }}
           <span class="text-gradient-hero"> {{ page.hero.title_highlight }}</span>
         </h1>
-        <p class="text-xl text-neutral-500 max-w-lg mx-auto lg:mx-0 leading-relaxed">
+        <p class="text-xl text-muted-foreground max-w-lg mx-auto lg:mx-0 leading-relaxed">
           {{ page.hero.subtitle }}
         </p>
 
@@ -44,7 +44,7 @@
           </a>
         </div>
 
-        <div class="flex flex-col sm:flex-row gap-8 mt-8 pt-6 border-t border-neutral-200">
+        <div class="flex flex-col sm:flex-row gap-8 mt-8 pt-6 border-t border-border/70">
           {% for stat in page.hero.stats %}
             <div class="text-center lg:text-start">
               {% if stat.format == "hours" %}
@@ -70,7 +70,7 @@
                   >0</span>
                 </div>
               {% endif %}
-              <div class="text-neutral-500 text-sm">{{ stat.label }}</div>
+              <div class="text-muted-foreground text-sm">{{ stat.label }}</div>
             </div>
           {% endfor %}
         </div>

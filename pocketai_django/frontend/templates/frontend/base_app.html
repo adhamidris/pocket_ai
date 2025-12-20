@@ -8,7 +8,33 @@
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <script>
+      (function () {
+        var storageKey = "pocketai:theme";
+        var defaultTheme = "dark";
+        var root = document.documentElement;
+
+        function normalize(value) {
+          var candidate = (value || "").toString().trim().toLowerCase();
+          return candidate === "dark" || candidate === "light" ? candidate : "";
+        }
+
+        function readTheme() {
+          try {
+            return window.localStorage ? window.localStorage.getItem(storageKey) : "";
+          } catch (_err) {
+            return "";
+          }
+        }
+
+        var stored = normalize(readTheme());
+        var theme = stored || defaultTheme;
+        root.classList.toggle("dark", theme === "dark");
+        root.setAttribute("data-theme", theme);
+      })();
+    </script>
     <link rel="stylesheet" href="{% static 'css/main.css' %}">
+    <link rel="stylesheet" href="{% static 'css/theme.css' %}">
     <style>
       ::-webkit-scrollbar {
         width: 6px;
@@ -35,6 +61,88 @@
     <div id="app-root" class="min-h-screen flex flex-col">
       {% block content %}{% endblock %}
     </div>
+    <script>
+      (function () {
+        var storageKey = "pocketai:theme";
+        var root = document.documentElement;
+
+        function getTheme() {
+          return root.classList.contains("dark") ? "dark" : "light";
+        }
+
+        function persist(theme) {
+          try {
+            if (window.localStorage) {
+              window.localStorage.setItem(storageKey, theme);
+            }
+          } catch (_err) {
+            // ignore storage failures
+          }
+        }
+
+        function updateButtons(theme) {
+          var next = theme === "dark" ? "light" : "dark";
+          var buttons = document.querySelectorAll("[data-theme-toggle]");
+          if (!buttons.length) {
+            return;
+          }
+
+          buttons.forEach(function (button) {
+            button.setAttribute("data-theme-state", theme);
+            var moon = button.querySelector('[data-theme-icon="moon"]');
+            var sun = button.querySelector('[data-theme-icon="sun"]');
+
+            if (moon) {
+              moon.classList.toggle("hidden", theme === "dark");
+            }
+            if (sun) {
+              sun.classList.toggle("hidden", theme !== "dark");
+            }
+
+            var lightLabel = button.getAttribute("data-light-label") || "Light mode";
+            var darkLabel = button.getAttribute("data-dark-label") || "Dark mode";
+            var actionLabel = next === "light" ? lightLabel : darkLabel;
+
+            var label = button.querySelector("[data-theme-label]");
+            if (label) {
+              label.textContent = actionLabel;
+            }
+
+            button.setAttribute("aria-label", actionLabel);
+            button.setAttribute("title", actionLabel);
+          });
+        }
+
+        function setTheme(theme) {
+          var normalized = (theme || "").toString().toLowerCase();
+          if (normalized !== "dark" && normalized !== "light") {
+            return;
+          }
+          root.classList.toggle("dark", normalized === "dark");
+          root.setAttribute("data-theme", normalized);
+          persist(normalized);
+          updateButtons(normalized);
+        }
+
+        function toggleTheme() {
+          var current = getTheme();
+          var next = current === "dark" ? "light" : "dark";
+          setTheme(next);
+        }
+
+        document.addEventListener("DOMContentLoaded", function () {
+          updateButtons(getTheme());
+
+          var buttons = document.querySelectorAll("[data-theme-toggle]");
+          buttons.forEach(function (button) {
+            button.addEventListener("click", function (event) {
+              event.preventDefault();
+              toggleTheme();
+            });
+          });
+        });
+      })();
+    </script>
     {% block extra_js %}{% endblock %}
   </body>
 </html>
