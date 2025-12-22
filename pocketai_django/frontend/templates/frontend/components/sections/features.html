@@ -48,40 +48,80 @@
       </p>
     </div>
 
-    <div class="mt-8" data-feature-root data-feature-active="{{ section.tabs.0.key }}">
-      <div class="grid lg:grid-cols-12 gap-8 items-start">
-        <div class="lg:col-span-4">
-          <div class="flex lg:flex-col flex-wrap gap-4">
-            {% for tab in section.tabs %}
-              <button
-                type="button"
-                data-feature-tab="{{ tab.key }}"
-                class="group relative inline-flex items-center justify-between lg:justify-start gap-3 rounded-2xl px-5 py-3 text-base lg:text-lg w-full lg:w-auto transition-all {% if tab.key == section.tabs.0.key %}bg-primary/15 text-primary shadow-soft{% else %}bg-card hover:bg-accent/40 hover:shadow-soft{% endif %}"
-                aria-pressed="{% if tab.key == section.tabs.0.key %}true{% else %}false{% endif %}"
-              >
-                <span class="absolute inset-x-0 bottom-0 h-px bg-gradient-to-r from-transparent via-primary/50 to-transparent opacity-0 group-hover:opacity-100 transition-opacity" aria-hidden="true"></span>
-                <span class="inline-flex items-center gap-2.5">
-                  {% lucide tab.icon "w-5 h-5 transition-transform duration-300 group-hover:scale-110" %}
-                  <span class="font-semibold tracking-tight">{{ tab.label }}</span>
-                </span>
-                <span class="hidden lg:inline w-1.5 h-1.5 rounded-full {% if tab.key == section.tabs.0.key %}bg-primary{% else %}bg-muted{% endif %}"></span>
-              </button>
-            {% endfor %}
+    <div class="mt-8" data-feature-scroll-root data-feature-active="{{ section.tabs.0.key }}">
+      <div class="features-scroll-viewport no-scrollbar" data-feature-scroll-viewport>
+        <div class="grid lg:grid-cols-2 gap-12 items-start">
+          <div class="space-y-8">
+          {% for tab in section.tabs %}
+            <article
+              id="feature-{{ tab.key }}"
+              data-feature-step="{{ tab.key }}"
+              class="scroll-mt-28 md:scroll-mt-32 min-h-[60vh] flex flex-col justify-center transition-opacity duration-500 {% if forloop.first %}opacity-100{% else %}opacity-40{% endif %}"
+              aria-current="{% if forloop.first %}true{% else %}false{% endif %}"
+            >
+              <div class="lg:hidden mb-8">
+                <div class="relative h-80 rounded-3xl overflow-hidden border border-border/60 bg-card shadow-premium">
+                  {% include "frontend/components/sections/partials/feature_media.html" with tab=tab integrations=section.integrations %}
+                </div>
+              </div>
+
+              <div class="inline-flex items-center gap-2 text-xs md:text-sm uppercase tracking-wider text-muted-foreground mb-3" data-feature-align>
+                {% lucide tab.icon "w-4 h-4" %}
+                <span>{{ tab.title }}</span>
+              </div>
+              <h3 class="text-3xl lg:text-4xl font-semibold text-foreground mb-4">
+                {{ tab.label }}
+              </h3>
+              <p class="text-muted-foreground text-lg lg:text-xl leading-relaxed mb-8 max-w-lg">
+                {{ tab.promo }}
+              </p>
+
+              {% if tab.key == "integrations" %}
+                <div class="grid grid-cols-2 sm:grid-cols-3 gap-4 max-w-lg">
+                  {% for integration in section.integrations %}
+                    <div class="flex items-center justify-center h-14 rounded-xl bg-background/40 border border-border/40">
+                      <img
+                        src="https://cdn.simpleicons.org/{{ integration.slug }}/9CA3AF"
+                        alt="{{ integration.name }} logo"
+                        class="h-8 w-auto opacity-90"
+                        loading="lazy"
+                        decoding="async"
+                      >
+                    </div>
+                  {% endfor %}
+                </div>
+              {% elif tab.bullets %}
+                <div class="grid sm:grid-cols-2 gap-5 max-w-lg">
+                  {% for bullet in tab.bullets %}
+                    <div class="flex items-start gap-3 bg-background/40 border border-border/40 rounded-xl p-5 transition-all duration-300 {% if forloop.counter0|divisibleby:2 %}hover:translate-x-[2px]{% else %}hover:-translate-x-[2px]{% endif %}">
+                      <div class="w-9 h-9 rounded-lg bg-primary/10 flex items-center justify-center">
+                        {% lucide bullet.icon "w-5 h-5 text-primary" %}
+                      </div>
+                      <div class="text-foreground font-medium leading-relaxed">
+                        {{ bullet.label }}
+                      </div>
+                    </div>
+                  {% endfor %}
+                </div>
+              {% endif %}
+            </article>
+          {% endfor %}
           </div>
-        </div>
-        <div class="lg:col-span-8">
-          <div class="relative bg-card rounded-3xl p-10 lg:p-14 shadow-premium overflow-hidden">
-            <div class="pointer-events-none absolute -top-24 -right-24 w-[420px] h-[420px] rounded-full bg-gradient-hero opacity-10 blur-3xl animate-pulse" aria-hidden="true"></div>
-            <div data-feature-panel>
-              {% include "frontend/components/sections/partials/feature_panel.html" with tab=section.tabs.0 integrations=section.integrations %}
+
+          <div class="hidden lg:flex sticky top-0 features-sticky items-start justify-end">
+            <div class="features-sticky-frame relative h-[420px] w-full max-w-lg rounded-3xl overflow-hidden border border-border/60 bg-card shadow-premium" data-feature-media-frame>
+              <div class="pointer-events-none absolute -top-24 -right-24 w-[420px] h-[420px] rounded-full bg-gradient-hero opacity-10 blur-3xl animate-pulse" aria-hidden="true"></div>
+              <div class="absolute inset-0" data-feature-media>
+                {% include "frontend/components/sections/partials/feature_media.html" with tab=section.tabs.0 integrations=section.integrations %}
+              </div>
             </div>
           </div>
-        </div>
+      </div>
       </div>
 
       {% for tab in section.tabs %}
-        <template data-feature-template="{{ tab.key }}">
-          {% include "frontend/components/sections/partials/feature_panel.html" with tab=tab integrations=section.integrations %}
+        <template data-feature-media-template="{{ tab.key }}">
+          {% include "frontend/components/sections/partials/feature_media.html" with tab=tab integrations=section.integrations %}
         </template>
       {% endfor %}
     </div>
@@ -90,132 +130,165 @@
 
 <script>
   document.addEventListener("DOMContentLoaded", function () {
-    var root = document.querySelector("[data-feature-root]");
+    var root = document.querySelector("[data-feature-scroll-root]");
     if (!root) {
       return;
-    }
-
-    var panel = root.querySelector("[data-feature-panel]");
+	    }
+	
+    var viewport = root.querySelector("[data-feature-scroll-viewport]");
+    var mediaFrame = root.querySelector("[data-feature-media-frame]");
+    var media = root.querySelector("[data-feature-media]");
     var templates = {};
-    root.querySelectorAll("template[data-feature-template]").forEach(function (template) {
-      templates[template.dataset.featureTemplate] = template;
+    root.querySelectorAll("template[data-feature-media-template]").forEach(function (template) {
+      templates[template.dataset.featureMediaTemplate] = template;
     });
 
-    var buttons = Array.prototype.slice.call(root.querySelectorAll("[data-feature-tab]"));
-    var activeKey = root.getAttribute("data-feature-active") || (buttons[0] && buttons[0].dataset.featureTab);
-    var hover = false;
-    var inView = false;
-    var autoTimer = null;
-    var ACTIVE_CLASSES = ["bg-primary/15", "text-primary", "shadow-soft"];
-    var INACTIVE_CLASSES = ["bg-card", "hover:bg-accent/40", "hover:shadow-soft"];
-
-    function updateButtons() {
-      buttons.forEach(function (button) {
-        var isActive = button.dataset.featureTab === activeKey;
-        button.setAttribute("aria-pressed", String(isActive));
-        if (isActive) {
-          INACTIVE_CLASSES.forEach(function (cls) {
-            button.classList.remove(cls);
-          });
-          ACTIVE_CLASSES.forEach(function (cls) {
-            if (!button.classList.contains(cls)) {
-              button.classList.add(cls);
-            }
-          });
-          var indicator = button.querySelector(".hidden.lg\\:inline");
-          if (indicator) {
-            indicator.classList.remove("bg-muted");
-            indicator.classList.add("bg-primary");
-          }
-        } else {
-          ACTIVE_CLASSES.forEach(function (cls) {
-            button.classList.remove(cls);
-          });
-          INACTIVE_CLASSES.forEach(function (cls) {
-            if (!button.classList.contains(cls)) {
-              button.classList.add(cls);
-            }
-          });
-          var inactiveIndicator = button.querySelector(".hidden.lg\\:inline");
-          if (inactiveIndicator) {
-            inactiveIndicator.classList.remove("bg-primary");
-            if (!inactiveIndicator.classList.contains("bg-muted")) {
-              inactiveIndicator.classList.add("bg-muted");
-            }
-          }
-        }
-      });
-    }
+    var steps = Array.prototype.slice.call(root.querySelectorAll("[data-feature-step]"));
+    var activeKey = root.getAttribute("data-feature-active") || (steps[0] && steps[0].dataset.featureStep);
 
     function setActive(key) {
-      if (!key || key === activeKey || !templates[key] || !panel) {
+      if (!key || key === activeKey || !templates[key]) {
         return;
       }
       activeKey = key;
       root.setAttribute("data-feature-active", key);
-      panel.innerHTML = "";
-      var fragment = templates[key].content.cloneNode(true);
-      panel.appendChild(fragment);
-      updateButtons();
-    }
 
-    function nextKey() {
-      if (buttons.length <= 1) {
-        return activeKey;
+      if (media) {
+        media.innerHTML = "";
+        media.appendChild(templates[key].content.cloneNode(true));
       }
-      var currentIndex = buttons.findIndex(function (button) {
-        return button.dataset.featureTab === activeKey;
+
+      steps.forEach(function (step) {
+        var isActive = step.dataset.featureStep === key;
+        step.setAttribute("aria-current", isActive ? "true" : "false");
+        step.classList.toggle("opacity-100", isActive);
+        step.classList.toggle("opacity-40", !isActive);
       });
-      var nextIndex = (currentIndex + 1) % buttons.length;
-      return buttons[nextIndex].dataset.featureTab;
     }
 
-    function clearAuto() {
-      if (autoTimer) {
-        window.clearInterval(autoTimer);
-        autoTimer = null;
-      }
-    }
-
-    function startAuto() {
-      clearAuto();
-      if (!inView || hover || buttons.length <= 1) {
+    function setInitialFromHash() {
+      var hash = (window.location.hash || "").replace("#", "");
+      if (!hash) {
         return;
       }
-      autoTimer = window.setInterval(function () {
-        setActive(nextKey());
-      }, 12000);
+      if (hash.indexOf("feature-") !== 0) {
+        return;
+      }
+      var key = hash.replace("feature-", "");
+      if (!templates[key]) {
+        return;
+      }
+      activeKey = key;
+      root.setAttribute("data-feature-active", key);
+      if (media) {
+        media.innerHTML = "";
+        media.appendChild(templates[key].content.cloneNode(true));
+      }
+      steps.forEach(function (step) {
+        var isActive = step.dataset.featureStep === key;
+        step.setAttribute("aria-current", isActive ? "true" : "false");
+        step.classList.toggle("opacity-100", isActive);
+        step.classList.toggle("opacity-40", !isActive);
+      });
     }
 
-    buttons.forEach(function (button) {
-      button.addEventListener("click", function () {
-        setActive(button.dataset.featureTab);
-      });
-    });
+    setInitialFromHash();
 
-    root.addEventListener("mouseenter", function () {
-      hover = true;
-      clearAuto();
-    });
+    var mql = window.matchMedia("(min-width: 1024px)");
+    var stepObserver = null;
 
-    root.addEventListener("mouseleave", function () {
-      hover = false;
-      startAuto();
-    });
+    function activeAlignElement() {
+      var activeStep = steps.find(function (step) {
+        return step.getAttribute("aria-current") === "true";
+      }) || steps[0];
+      if (!activeStep) {
+        return null;
+      }
+      return activeStep.querySelector("[data-feature-align]");
+    }
 
-    var observer = new IntersectionObserver(function (entries) {
-      entries.forEach(function (entry) {
-        inView = entry.isIntersecting;
-        if (inView && !hover) {
-          startAuto();
-        } else {
-          clearAuto();
-        }
-      });
-    }, { threshold: 0.3 });
+    function syncMediaOffset() {
+      if (!mql.matches || !viewport || !mediaFrame) {
+        return;
+      }
+      var align = activeAlignElement();
+      if (!align) {
+        return;
+      }
 
-    observer.observe(root);
-    updateButtons();
-    startAuto();
+      var viewportRect = viewport.getBoundingClientRect();
+      var alignRect = align.getBoundingClientRect();
+      var offset = alignRect.top - viewportRect.top;
+      if (!isFinite(offset)) {
+        return;
+      }
+
+      var maxOffset = viewport.clientHeight - mediaFrame.getBoundingClientRect().height;
+      if (isFinite(maxOffset)) {
+        offset = Math.max(0, Math.min(offset, Math.max(0, maxOffset)));
+      } else {
+        offset = Math.max(0, offset);
+      }
+
+      root.style.setProperty("--feature-media-offset", String(Math.round(offset)) + "px");
+    }
+
+    function clearObserver() {
+      if (stepObserver) {
+        stepObserver.disconnect();
+        stepObserver = null;
+      }
+    }
+
+	    function observeSteps() {
+	      clearObserver();
+	      if (!mql.matches || steps.length === 0 || !viewport) {
+	        return;
+	      }
+	      if (typeof IntersectionObserver === "undefined") {
+	        return;
+	      }
+	
+	      stepObserver = new IntersectionObserver(function (entries) {
+	        var visible = entries.filter(function (entry) {
+	          return entry.isIntersecting;
+	        });
+	        if (visible.length === 0) {
+	          return;
+	        }
+	
+	        var rootRect = viewport.getBoundingClientRect();
+	        var viewportCenter = rootRect.top + rootRect.height / 2;
+	        visible.sort(function (a, b) {
+	          var aCenter = a.boundingClientRect.top + a.boundingClientRect.height / 2;
+	          var bCenter = b.boundingClientRect.top + b.boundingClientRect.height / 2;
+	          return Math.abs(aCenter - viewportCenter) - Math.abs(bCenter - viewportCenter);
+	        });
+
+        var best = visible[0];
+	        if (best && best.target && best.target.dataset && best.target.dataset.featureStep) {
+	          setActive(best.target.dataset.featureStep);
+	        }
+	      }, { root: viewport, rootMargin: "-45% 0px -45% 0px", threshold: 0 });
+	
+	      steps.forEach(function (step) {
+	        stepObserver.observe(step);
+	      });
+	    }
+
+    observeSteps();
+    syncMediaOffset();
+    window.requestAnimationFrame(syncMediaOffset);
+    window.setTimeout(syncMediaOffset, 250);
+
+    if (mql.addEventListener) {
+      mql.addEventListener("change", observeSteps);
+      mql.addEventListener("change", syncMediaOffset);
+    } else if (mql.addListener) {
+      mql.addListener(observeSteps);
+      mql.addListener(syncMediaOffset);
+    }
+
+    window.addEventListener("resize", syncMediaOffset);
   });
 </script>

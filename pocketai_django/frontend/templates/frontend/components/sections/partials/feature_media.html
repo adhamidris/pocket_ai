@@ -1,0 +1,87 @@
+{% load lucide %}
+<div class="animate-panel-in relative h-full w-full transition-all duration-500 ease-out will-change-transform">
+  {% if tab.key == "integrations" %}
+    <div class="absolute inset-0 bg-gradient-hero"></div>
+  {% elif tab.key == "billing" %}
+    <div class="absolute inset-0 bg-gradient-primary"></div>
+  {% else %}
+    <div class="absolute inset-0 bg-gradient-to-br from-primary/40 to-primary/20"></div>
+  {% endif %}
+
+  <div class="pointer-events-none absolute inset-0 opacity-20" aria-hidden="true">
+    <div class="absolute -top-24 -left-24 w-[420px] h-[420px] rounded-full bg-white/10 blur-3xl"></div>
+    <div class="absolute -bottom-24 -right-24 w-[420px] h-[420px] rounded-full bg-white/10 blur-3xl"></div>
+  </div>
+
+  {% if tab.image %}
+    <img
+      src="{{ tab.image }}"
+      alt="{{ tab.label }}"
+      class="relative h-full w-full object-cover"
+      loading="lazy"
+      decoding="async"
+    >
+  {% else %}
+    <div class="relative h-full w-full flex items-center justify-center p-8">
+      {% if tab.key == "integrations" %}
+        <div class="w-full max-w-lg rounded-2xl border border-white/20 bg-white/10 backdrop-blur-sm p-6">
+          <div class="flex items-center justify-between mb-5">
+            <div class="flex items-center gap-2 text-white font-semibold">
+              {% lucide tab.icon "w-5 h-5" %}
+              <span>{{ tab.label }}</span>
+            </div>
+            <span class="text-white opacity-80 text-xs uppercase tracking-wider">Connect</span>
+          </div>
+          <div class="grid grid-cols-4 gap-3">
+            {% for integration in integrations %}
+              <div class="flex items-center justify-center h-14 rounded-xl bg-white/10 border border-white/20">
+                <img
+                  src="https://cdn.simpleicons.org/{{ integration.slug }}/ffffff"
+                  alt="{{ integration.name }} logo"
+                  class="h-8 w-auto opacity-90"
+                  loading="lazy"
+                  decoding="async"
+                >
+              </div>
+            {% endfor %}
+          </div>
+        </div>
+      {% else %}
+        <div class="w-full max-w-lg rounded-2xl border border-white/20 bg-white/10 backdrop-blur-sm overflow-hidden">
+          <div class="flex items-center gap-2 px-4 py-3 border-b border-white/20">
+            <div class="flex items-center gap-1.5">
+              <span class="h-2.5 w-2.5 rounded-full bg-white/10"></span>
+              <span class="h-2.5 w-2.5 rounded-full bg-white/10"></span>
+              <span class="h-2.5 w-2.5 rounded-full bg-white/10"></span>
+            </div>
+            <div class="ml-auto h-2 w-24 rounded bg-white/10"></div>
+          </div>
+          <div class="p-6 space-y-3">
+            <div class="flex items-center gap-3">
+              <div class="h-10 w-10 rounded-xl bg-white/10 flex items-center justify-center">
+                {% lucide tab.icon "w-5 h-5 text-white" %}
+              </div>
+              <div>
+                <div class="text-white font-semibold">{{ tab.label }}</div>
+                <div class="text-white opacity-80 text-sm">{{ tab.title }}</div>
+              </div>
+            </div>
+
+            <div class="grid grid-cols-2 gap-3 pt-2">
+              <div class="rounded-xl bg-white/10 border border-white/20 p-4 space-y-3">
+                <div class="h-2 w-24 rounded bg-white/10"></div>
+                <div class="h-2 w-full rounded bg-white/10"></div>
+                <div class="h-2 w-32 rounded bg-white/10"></div>
+              </div>
+              <div class="rounded-xl bg-white/10 border border-white/20 p-4 space-y-3">
+                <div class="h-2 w-20 rounded bg-white/10"></div>
+                <div class="h-2 w-full rounded bg-white/10"></div>
+                <div class="h-2 w-24 rounded bg-white/10"></div>
+              </div>
+            </div>
+          </div>
+        </div>
+      {% endif %}
+    </div>
+  {% endif %}
+</div>

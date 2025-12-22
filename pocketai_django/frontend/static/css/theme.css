@@ -190,3 +190,20 @@
     gap: 2rem;
   }
 }
+
+/* Landing features scroll reveal */
+@media (min-width: 1024px) {
+  .features-scroll-viewport {
+    height: 70vh;
+    overflow-y: auto;
+    padding-right: 0.5rem;
+  }
+
+  .features-sticky {
+    height: 70vh;
+  }
+
+  .features-sticky-frame {
+    margin-top: var(--feature-media-offset, 0px);
+  }
+}
