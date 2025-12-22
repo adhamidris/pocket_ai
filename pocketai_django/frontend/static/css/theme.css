@@ -235,4 +235,21 @@
     top: auto;
     height: 100%;
   }
+
+  [data-feature-scroll-root] [data-feature-media] .feature-media-layer {
+    position: absolute;
+    inset: 0;
+    opacity: 1;
+    transition: opacity var(--transition-normal, 250ms ease);
+  }
+
+  [data-feature-scroll-root] [data-feature-media] .feature-media-layer.is-entering,
+  [data-feature-scroll-root] [data-feature-media] .feature-media-layer.is-leaving {
+    opacity: 0;
+    pointer-events: none;
+  }
+
+  [data-feature-scroll-mode="pinned"] [data-feature-media] .animate-panel-in {
+    animation: none !important;
+  }
 }

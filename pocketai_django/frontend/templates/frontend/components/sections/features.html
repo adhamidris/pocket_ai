@@ -154,6 +154,129 @@
     var steps = Array.prototype.slice.call(root.querySelectorAll("[data-feature-step]"));
     var activeKey = root.getAttribute("data-feature-active") || (steps[0] && steps[0].dataset.featureStep);
     var mql = window.matchMedia("(min-width: 1024px)");
+    var mediaSwapToken = 0;
+
+    function cloneMediaFragment(key) {
+      if (!key || !templates[key]) {
+        return null;
+      }
+
+      var fragment = templates[key].content.cloneNode(true);
+      var rootNode = fragment.firstElementChild;
+      if (rootNode && rootNode.classList && rootNode.classList.contains("animate-panel-in")) {
+        rootNode.classList.remove("animate-panel-in");
+      }
+      return fragment;
+    }
+
+    function ensureCurrentLayer() {
+      if (!media) {
+        return null;
+      }
+
+      var current = media.querySelector('[data-feature-media-layer="current"]');
+      if (current) {
+        return current;
+      }
+
+      var wrapper = document.createElement("div");
+      wrapper.className = "feature-media-layer";
+      wrapper.setAttribute("data-feature-media-layer", "current");
+
+      while (media.firstChild) {
+        wrapper.appendChild(media.firstChild);
+      }
+
+      media.appendChild(wrapper);
+      return wrapper;
+    }
+
+    function replaceMedia(key) {
+      if (!media) {
+        return;
+      }
+
+      var fragment = cloneMediaFragment(key);
+      if (!fragment) {
+        return;
+      }
+
+      var current = ensureCurrentLayer();
+      if (!current) {
+        return;
+      }
+
+      current.innerHTML = "";
+      current.appendChild(fragment);
+    }
+
+    function swapMedia(key) {
+      if (!media) {
+        return;
+      }
+
+      var fragment = cloneMediaFragment(key);
+      if (!fragment) {
+        return;
+      }
+
+      mediaSwapToken += 1;
+      var token = mediaSwapToken;
+
+      var currentLayers = Array.prototype.slice.call(media.querySelectorAll('[data-feature-media-layer="current"]'));
+      var currentLayer = currentLayers[currentLayers.length - 1] || ensureCurrentLayer();
+      currentLayers.slice(0, -1).forEach(function (layer) {
+        layer.remove();
+      });
+
+      media.querySelectorAll('[data-feature-media-layer="next"]').forEach(function (layer) {
+        layer.remove();
+      });
+
+      if (!currentLayer) {
+        replaceMedia(key);
+        return;
+      }
+
+      currentLayer.classList.remove("is-entering");
+      currentLayer.classList.remove("is-leaving");
+
+      var nextLayer = document.createElement("div");
+      nextLayer.className = "feature-media-layer is-entering";
+      nextLayer.setAttribute("data-feature-media-layer", "next");
+      nextLayer.appendChild(fragment);
+      media.appendChild(nextLayer);
+
+      window.requestAnimationFrame(function () {
+        if (token !== mediaSwapToken) {
+          return;
+        }
+        nextLayer.classList.remove("is-entering");
+        currentLayer.classList.add("is-leaving");
+      });
+
+      var completed = false;
+      function finalize() {
+        if (completed || token !== mediaSwapToken) {
+          return;
+        }
+        completed = true;
+        if (currentLayer && currentLayer.parentNode === media) {
+          currentLayer.remove();
+        }
+        nextLayer.classList.remove("is-entering");
+        nextLayer.classList.remove("is-leaving");
+        nextLayer.setAttribute("data-feature-media-layer", "current");
+      }
+
+      nextLayer.addEventListener("transitionend", function (event) {
+        if (event.propertyName === "opacity") {
+          finalize();
+        }
+      });
+
+      window.setTimeout(finalize, 450);
+    }
 
     function setActive(key) {
       if (!key || key === activeKey || !templates[key]) {
@@ -162,10 +285,7 @@
       activeKey = key;
       root.setAttribute("data-feature-active", key);
 
-      if (media) {
-        media.innerHTML = "";
-        media.appendChild(templates[key].content.cloneNode(true));
-      }
+      swapMedia(key);
 
       steps.forEach(function (step) {
         var isActive = step.dataset.featureStep === key;
@@ -193,10 +313,7 @@
       activeKey = key;
       root.setAttribute("data-feature-active", key);
 
-      if (media) {
-        media.innerHTML = "";
-        media.appendChild(templates[key].content.cloneNode(true));
-      }
+      replaceMedia(key);
 
       steps.forEach(function (step) {
         var isActive = step.dataset.featureStep === key;
