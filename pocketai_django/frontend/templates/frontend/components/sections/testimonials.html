@@ -11,7 +11,8 @@
     </div>
 
     <div class="relative">
-      <div class="marquee overflow-hidden">
+      <!-- Added py-10 (reduced from py-12) to allow shadows to breathe -->
+      <div class="marquee overflow-hidden py-10">
         <div class="marquee-track will-change-transform">
           {% for testimonial in section.items %}
             {% include "frontend/components/sections/testimonials_card.html" with testimonial=testimonial %}
@@ -26,8 +27,9 @@
 
   <style>
     .marquee {
-      mask-image: linear-gradient(to right, transparent, black 10%, black 90%, transparent);
-      -webkit-mask-image: linear-gradient(to right, transparent, black 10%, black 90%, transparent);
+      /* Adjusted mask gradient to 15%/85% for a slightly tighter fade */
+      mask-image: linear-gradient(to right, transparent, black 15%, black 85%, transparent);
+      -webkit-mask-image: linear-gradient(to right, transparent, black 15%, black 85%, transparent);
     }
     .marquee-track {
       display: flex;
