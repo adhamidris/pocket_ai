@@ -65,6 +65,8 @@
       (function () {
         var storageKey = "pocketai:theme";
         var root = document.documentElement;
+        var prefersReducedMotion = window.matchMedia ? window.matchMedia("(prefers-reduced-motion: reduce)") : null;
+        var isTransitioning = false;
 
         function getTheme() {
           return root.classList.contains("dark") ? "dark" : "light";
@@ -89,16 +91,6 @@
 
           buttons.forEach(function (button) {
             button.setAttribute("data-theme-state", theme);
-            var moon = button.querySelector('[data-theme-icon="moon"]');
-            var sun = button.querySelector('[data-theme-icon="sun"]');
-
-            if (moon) {
-              moon.classList.toggle("hidden", theme === "dark");
-            }
-            if (sun) {
-              sun.classList.toggle("hidden", theme !== "dark");
-            }
-
             var lightLabel = button.getAttribute("data-light-label") || "Light mode";
             var darkLabel = button.getAttribute("data-dark-label") || "Dark mode";
             var actionLabel = next === "light" ? lightLabel : darkLabel;
@@ -124,10 +116,99 @@
           updateButtons(normalized);
         }
 
-        function toggleTheme() {
+        function parseDuration(value) {
+          var raw = (value || "").toString().trim();
+          if (!raw) {
+            return 700;
+          }
+          if (raw.endsWith("ms")) {
+            return parseFloat(raw) || 700;
+          }
+          if (raw.endsWith("s")) {
+            return (parseFloat(raw) || 0.7) * 1000;
+          }
+          var parsed = parseFloat(raw);
+          return Number.isFinite(parsed) ? parsed : 700;
+        }
+
+        function getTransitionDuration() {
+          return parseDuration(getComputedStyle(root).getPropertyValue("--theme-transition-duration"));
+        }
+
+        function getTransitionOrigin(event, button) {
+          if (
+            event &&
+            typeof event.clientX === "number" &&
+            typeof event.clientY === "number" &&
+            (event.clientX !== 0 || event.clientY !== 0)
+          ) {
+            return { x: event.clientX, y: event.clientY };
+          }
+          if (button) {
+            var rect = button.getBoundingClientRect();
+            if (rect.width || rect.height) {
+              return { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 };
+            }
+          }
+          return { x: window.innerWidth / 2, y: window.innerHeight / 2 };
+        }
+
+        function setTransitionVars(origin) {
+          var x = origin.x;
+          var y = origin.y;
+          var maxX = Math.max(x, window.innerWidth - x);
+          var maxY = Math.max(y, window.innerHeight - y);
+          var radius = Math.hypot(maxX, maxY) + 24;
+          root.style.setProperty("--theme-transition-x", x + "px");
+          root.style.setProperty("--theme-transition-y", y + "px");
+          root.style.setProperty("--theme-transition-radius", Math.ceil(radius) + "px");
+        }
+
+        function toggleTheme(event, button) {
+          if (isTransitioning) {
+            return;
+          }
           var current = getTheme();
           var next = current === "dark" ? "light" : "dark";
-          setTheme(next);
+          var origin = getTransitionOrigin(event, button);
+          setTransitionVars(origin);
+          isTransitioning = true;
+          var iconWrap = button ? button.querySelector("[data-theme-icon-wrap]") : null;
+          if (button) {
+            button.setAttribute("data-theme-animating", "true");
+          }
+
+          var reduceMotion = prefersReducedMotion && prefersReducedMotion.matches;
+          var duration = getTransitionDuration();
+          var useViewTransition = Boolean(document.startViewTransition) && !reduceMotion;
+
+          if (useViewTransition) {
+            root.setAttribute("data-theme-transition", "view");
+            if (iconWrap) {
+              iconWrap.style.viewTransitionName = "theme-toggle-icon";
+            }
+            var transition = document.startViewTransition(function () {
+              setTheme(next);
+            });
+            transition.finished.finally(function () {
+              root.removeAttribute("data-theme-transition");
+              if (iconWrap) {
+                iconWrap.style.viewTransitionName = "";
+              }
+              if (button) {
+                button.removeAttribute("data-theme-animating");
+              }
+              isTransitioning = false;
+            });
+          } else {
+            setTheme(next);
+            window.setTimeout(function () {
+              if (button) {
+                button.removeAttribute("data-theme-animating");
+              }
+              isTransitioning = false;
+            }, duration);
+          }
         }
 
         document.addEventListener("DOMContentLoaded", function () {
@@ -137,7 +218,7 @@
           buttons.forEach(function (button) {
             button.addEventListener("click", function (event) {
               event.preventDefault();
-              toggleTheme();
+              toggleTheme(event, button);
             });
           });
         });

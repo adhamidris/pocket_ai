@@ -204,16 +204,161 @@
     height: clamp(300px, 55vh, 420px);
   }
 
-  [data-feature-scroll-root] [data-feature-media] .feature-media-layer {
-    position: absolute;
-    inset: 0;
+  .features-sticky-frame [data-feature-media] .backdrop-blur-sm {
+    -webkit-backdrop-filter: none;
+    backdrop-filter: none;
+  }
+}
+
+/* Theme toggle + view transition */
+:root {
+  --theme-transition-duration: 700ms;
+  --theme-transition-ease: cubic-bezier(0.22, 1, 0.36, 1);
+  --theme-transition-x: 50vw;
+  --theme-transition-y: 50vh;
+  --theme-transition-radius: 120vmax;
+}
+
+[data-theme-icon-wrap] {
+  display: inline-grid;
+  place-items: center;
+  position: relative;
+  transform: translateZ(0);
+  will-change: transform;
+  vertical-align: middle;
+}
+
+[data-theme-icon-wrap] [data-theme-icon] {
+  grid-area: 1 / 1;
+  opacity: 0;
+  transform: scale(0.6) rotate(-90deg);
+  transform-origin: center;
+  transition: opacity 240ms ease, transform var(--theme-transition-duration) var(--theme-transition-ease);
+  will-change: opacity, transform;
+  pointer-events: none;
+}
+
+[data-theme-toggle][data-theme-state="dark"] [data-theme-icon="moon"],
+:root[data-theme="dark"] [data-theme-toggle]:not([data-theme-state]) [data-theme-icon="moon"] {
+  opacity: 1;
+  transform: scale(0.92) rotate(0deg);
+}
+
+[data-theme-toggle][data-theme-state="dark"] [data-theme-icon="sun"],
+:root[data-theme="dark"] [data-theme-toggle]:not([data-theme-state]) [data-theme-icon="sun"] {
+  opacity: 0;
+  transform: scale(0.5) rotate(120deg);
+}
+
+[data-theme-toggle][data-theme-state="light"] [data-theme-icon="sun"],
+:root[data-theme="light"] [data-theme-toggle]:not([data-theme-state]) [data-theme-icon="sun"] {
+  opacity: 1;
+  transform: scale(1) rotate(0deg);
+}
+
+[data-theme-toggle][data-theme-state="light"] [data-theme-icon="moon"],
+:root[data-theme="light"] [data-theme-toggle]:not([data-theme-state]) [data-theme-icon="moon"] {
+  opacity: 0;
+  transform: scale(0.5) rotate(-120deg);
+}
+
+[data-theme-toggle][data-theme-animating="true"] [data-theme-icon-wrap] {
+  animation: theme-icon-spin var(--theme-transition-duration) var(--theme-transition-ease);
+}
+
+@keyframes theme-icon-spin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* Freeze in-page color transitions during view transitions to avoid flicker. */
+:root[data-theme-transition="view"] *,
+:root[data-theme-transition="view"] *::before,
+:root[data-theme-transition="view"] *::after {
+  transition: none !important;
+}
+
+::view-transition-old(theme-toggle-icon),
+::view-transition-new(theme-toggle-icon) {
+  animation-duration: var(--theme-transition-duration);
+  animation-timing-function: var(--theme-transition-ease);
+  animation-fill-mode: both;
+  z-index: 3;
+}
+
+::view-transition-old(theme-toggle-icon) {
+  animation-name: theme-toggle-icon-old;
+}
+
+::view-transition-new(theme-toggle-icon) {
+  animation-name: theme-toggle-icon-new;
+}
+
+@keyframes theme-toggle-icon-old {
+  from {
     opacity: 1;
-    transition: opacity var(--transition-normal, 250ms ease);
+    transform: rotate(0deg) scale(1);
+  }
+  to {
+    opacity: 0;
+    transform: rotate(180deg) scale(0.6);
+  }
+}
+
+@keyframes theme-toggle-icon-new {
+  from {
+    opacity: 0;
+    transform: rotate(-180deg) scale(0.6);
+  }
+  to {
+    opacity: 1;
+    transform: rotate(0deg) scale(1);
+  }
+}
+
+::view-transition-old(root) {
+  animation: none;
+  z-index: 1;
+}
+
+::view-transition-new(root) {
+  z-index: 2;
+  clip-path: circle(0 at var(--theme-transition-x) var(--theme-transition-y));
+  animation: theme-ripple-reveal var(--theme-transition-duration) var(--theme-transition-ease);
+  animation-fill-mode: both;
+  will-change: clip-path;
+}
+
+@keyframes theme-ripple-reveal {
+  from {
+    clip-path: circle(0 at var(--theme-transition-x) var(--theme-transition-y));
+  }
+  to {
+    clip-path: circle(var(--theme-transition-radius) at var(--theme-transition-x) var(--theme-transition-y));
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  [data-theme-icon-wrap] [data-theme-icon] {
+    transition: none;
   }
 
-  [data-feature-scroll-root] [data-feature-media] .feature-media-layer.is-entering,
-  [data-feature-scroll-root] [data-feature-media] .feature-media-layer.is-leaving {
-    opacity: 0;
-    pointer-events: none;
+  [data-theme-toggle][data-theme-animating="true"] [data-theme-icon-wrap] {
+    animation: none;
+  }
+
+  ::view-transition-old(theme-toggle-icon),
+  ::view-transition-new(theme-toggle-icon) {
+    animation: none;
+  }
+
+  ::view-transition-old(root),
+  ::view-transition-new(root) {
+    animation: none;
+    clip-path: none;
   }
 }
