@@ -293,8 +293,6 @@
         step.classList.toggle("opacity-100", isActive);
         step.classList.toggle("opacity-40", !isActive);
       });
-
-      syncMediaOffset();
     }
 
     function setInitialFromHash() {
@@ -321,8 +319,6 @@
         step.classList.toggle("opacity-100", isActive);
         step.classList.toggle("opacity-40", !isActive);
       });
-
-      syncMediaOffset();
     }
 
     setInitialFromHash();
@@ -333,48 +329,103 @@
       topOffset: 0,
       trackTop: 0,
       maxTranslate: 0,
+      translate: 0,
+      thresholds: [],
+      mediaOffset: 0,
+      lockKey: activeKey,
+      locked: false,
     };
 
-    function activeAlignElement() {
-      var activeStep =
-        steps.find(function (step) {
-          return step.getAttribute("aria-current") === "true";
-        }) || steps[0];
-
-      if (!activeStep) {
-        return null;
-      }
-      return activeStep.querySelector("[data-feature-align]");
+    function clamp(value, min, max) {
+      return Math.max(min, Math.min(max, value));
     }
 
-    function syncMediaOffset() {
+    function getStepByKey(key) {
+      return (
+        steps.find(function (step) {
+          return step.dataset && step.dataset.featureStep === key;
+        }) || steps[0]
+      );
+    }
+
+    function lockMediaOffset() {
       if (!mql.matches || !copyViewport || !mediaFrame) {
         return;
       }
-      var align = activeAlignElement();
+
+      var step = getStepByKey(metrics.lockKey || activeKey);
+      if (!step) {
+        return;
+      }
+
+      var align = step.querySelector("[data-feature-align]") || step;
       if (!align) {
         return;
       }
 
       var viewportRect = copyViewport.getBoundingClientRect();
       var alignRect = align.getBoundingClientRect();
-      var offset = alignRect.top - viewportRect.top;
-      if (!isFinite(offset)) {
+      var offsetNow = alignRect.top - viewportRect.top;
+      if (!isFinite(offsetNow)) {
         return;
       }
 
+      var offsetAtStart = offsetNow + (metrics.translate || 0);
       var maxOffset = viewportRect.height - mediaFrame.getBoundingClientRect().height;
       if (isFinite(maxOffset)) {
-        offset = Math.max(0, Math.min(offset, Math.max(0, maxOffset)));
+        offsetAtStart = clamp(offsetAtStart, 0, Math.max(0, maxOffset));
       } else {
-        offset = Math.max(0, offset);
+        offsetAtStart = Math.max(0, offsetAtStart);
       }
 
-      root.style.setProperty("--feature-media-offset", String(Math.round(offset)) + "px");
+      metrics.mediaOffset = offsetAtStart;
+      metrics.locked = true;
+      root.style.setProperty("--feature-media-offset", String(Math.round(offsetAtStart)) + "px");
     }
 
-    function clamp(value, min, max) {
-      return Math.max(min, Math.min(max, value));
+    function computeThresholds() {
+      if (!mql.matches || !copyViewport) {
+        metrics.thresholds = [];
+        return;
+      }
+
+      var viewportRect = copyViewport.getBoundingClientRect();
+      var translate = metrics.translate || 0;
+      var mediaOffset = metrics.mediaOffset || 0;
+      var lead = clamp(Math.round(viewportRect.height * 0.22), 80, 220);
+
+      metrics.thresholds = steps
+        .map(function (step) {
+          var key = step.dataset ? step.dataset.featureStep : "";
+          var align = step.querySelector("[data-feature-align]") || step;
+          var alignRect = align.getBoundingClientRect();
+          var offsetNow = alignRect.top - viewportRect.top;
+          var offsetAtStart = offsetNow + translate;
+          return { key: key, threshold: offsetAtStart - mediaOffset - lead };
+        })
+        .filter(function (item) {
+          return !!item.key;
+        })
+        .sort(function (a, b) {
+          return a.threshold - b.threshold;
+        });
+    }
+
+    function keyForTranslate(translate) {
+      if (!metrics.thresholds || metrics.thresholds.length === 0) {
+        return activeKey;
+      }
+
+      var epsilon = 6;
+      var key = metrics.thresholds[0].key;
+
+      metrics.thresholds.forEach(function (item) {
+        if (translate >= item.threshold - epsilon) {
+          key = item.key;
+        }
+      });
+
+      return key;
     }
 
     function getPinTopOffset() {
@@ -414,8 +465,10 @@
       var trackHeight = Math.max(contentHeight, viewportHeight);
       track.style.height = String(Math.ceil(trackHeight)) + "px";
       metrics.trackTop = track.getBoundingClientRect().top + window.scrollY;
-
-      syncMediaOffset();
+      metrics.locked = false;
+      metrics.thresholds = [];
+      lockMediaOffset();
+      computeThresholds();
     }
 
     function updatePinned() {
@@ -433,32 +486,19 @@
 
       var start = metrics.trackTop - metrics.topOffset;
       var translate = clamp(window.scrollY - start, 0, metrics.maxTranslate);
+      metrics.translate = translate;
       copyInner.style.transform = "translate3d(0," + String(-Math.round(translate)) + "px,0)";
 
-      var viewportRect = copyViewport.getBoundingClientRect();
-      var centerY = viewportRect.top + viewportRect.height / 2;
-      var bestStep = null;
-      var bestDistance = Infinity;
+      if (!metrics.locked) {
+        lockMediaOffset();
+        computeThresholds();
+      } else if (!metrics.thresholds || metrics.thresholds.length === 0) {
+        computeThresholds();
+      }
 
-      steps.forEach(function (step) {
-        var rect = step.getBoundingClientRect();
-        var stepCenter = rect.top + rect.height / 2;
-        var distance = Math.abs(stepCenter - centerY);
-        if (distance < bestDistance) {
-          bestDistance = distance;
-          bestStep = step;
-        }
-      });
-
-      if (bestStep && bestStep.dataset && bestStep.dataset.featureStep) {
-        var nextKey = bestStep.dataset.featureStep;
-        if (nextKey && nextKey !== activeKey) {
-          setActive(nextKey);
-        } else {
-          syncMediaOffset();
-        }
-      } else {
-        syncMediaOffset();
+      var nextKey = keyForTranslate(translate);
+      if (nextKey && nextKey !== activeKey) {
+        setActive(nextKey);
       }
     }
 
@@ -468,6 +508,9 @@
       }
 
       root.setAttribute("data-feature-scroll-mode", "pinned");
+      metrics.lockKey = activeKey;
+      metrics.locked = false;
+      metrics.thresholds = [];
       recalcPinned();
       requestTick();
 
