@@ -49,10 +49,12 @@
     </div>
 
     <div class="mt-8" data-feature-scroll-root data-feature-active="{{ section.tabs.0.key }}">
-      <div class="features-scroll-viewport no-scrollbar" data-feature-scroll-viewport>
-        <div class="grid lg:grid-cols-2 gap-12 items-start">
-          <div class="space-y-8">
-          {% for tab in section.tabs %}
+      <div class="features-scroll-track" data-feature-scroll-track>
+        <div class="features-scroll-pin" data-feature-scroll-pin>
+          <div class="grid lg:grid-cols-2 gap-12 items-start features-scroll-grid">
+            <div class="features-scroll-copy" data-feature-scroll-copy-viewport>
+              <div class="space-y-8 features-scroll-copy-inner" data-feature-scroll-copy-inner>
+              {% for tab in section.tabs %}
             <article
               id="feature-{{ tab.key }}"
               data-feature-step="{{ tab.key }}"
@@ -106,17 +108,19 @@
               {% endif %}
             </article>
           {% endfor %}
-          </div>
+              </div>
+            </div>
 
-          <div class="hidden lg:flex sticky top-0 features-sticky items-start justify-end">
-            <div class="features-sticky-frame relative h-[420px] w-full max-w-lg rounded-3xl overflow-hidden border border-border/60 bg-card shadow-premium" data-feature-media-frame>
-              <div class="pointer-events-none absolute -top-24 -right-24 w-[420px] h-[420px] rounded-full bg-gradient-hero opacity-10 blur-3xl animate-pulse" aria-hidden="true"></div>
-              <div class="absolute inset-0" data-feature-media>
-                {% include "frontend/components/sections/partials/feature_media.html" with tab=section.tabs.0 integrations=section.integrations %}
+            <div class="hidden lg:flex features-sticky items-start justify-end">
+              <div class="features-sticky-frame relative h-[420px] w-full max-w-lg rounded-3xl overflow-hidden border border-border/60 bg-card shadow-premium" data-feature-media-frame>
+                <div class="pointer-events-none absolute -top-24 -right-24 w-[420px] h-[420px] rounded-full bg-gradient-hero opacity-10 blur-3xl animate-pulse" aria-hidden="true"></div>
+                <div class="absolute inset-0" data-feature-media>
+                  {% include "frontend/components/sections/partials/feature_media.html" with tab=section.tabs.0 integrations=section.integrations %}
+                </div>
               </div>
             </div>
           </div>
-      </div>
+        </div>
       </div>
 
       {% for tab in section.tabs %}
@@ -133,18 +137,23 @@
     var root = document.querySelector("[data-feature-scroll-root]");
     if (!root) {
       return;
-	    }
-	
-    var viewport = root.querySelector("[data-feature-scroll-viewport]");
+    }
+
+    var track = root.querySelector("[data-feature-scroll-track]");
+    var pin = root.querySelector("[data-feature-scroll-pin]");
+    var copyViewport = root.querySelector("[data-feature-scroll-copy-viewport]");
+    var copyInner = root.querySelector("[data-feature-scroll-copy-inner]");
     var mediaFrame = root.querySelector("[data-feature-media-frame]");
     var media = root.querySelector("[data-feature-media]");
     var templates = {};
+
     root.querySelectorAll("template[data-feature-media-template]").forEach(function (template) {
       templates[template.dataset.featureMediaTemplate] = template;
     });
 
     var steps = Array.prototype.slice.call(root.querySelectorAll("[data-feature-step]"));
     var activeKey = root.getAttribute("data-feature-active") || (steps[0] && steps[0].dataset.featureStep);
+    var mql = window.matchMedia("(min-width: 1024px)");
 
     function setActive(key) {
       if (!key || key === activeKey || !templates[key]) {
@@ -164,6 +173,8 @@
         step.classList.toggle("opacity-100", isActive);
         step.classList.toggle("opacity-40", !isActive);
       });
+
+      syncMediaOffset();
     }
 
     function setInitialFromHash() {
@@ -178,29 +189,41 @@
       if (!templates[key]) {
         return;
       }
+
       activeKey = key;
       root.setAttribute("data-feature-active", key);
+
       if (media) {
         media.innerHTML = "";
         media.appendChild(templates[key].content.cloneNode(true));
       }
+
       steps.forEach(function (step) {
         var isActive = step.dataset.featureStep === key;
         step.setAttribute("aria-current", isActive ? "true" : "false");
         step.classList.toggle("opacity-100", isActive);
         step.classList.toggle("opacity-40", !isActive);
       });
+
+      syncMediaOffset();
     }
 
     setInitialFromHash();
 
-    var mql = window.matchMedia("(min-width: 1024px)");
-    var stepObserver = null;
+    var resizeObserver = null;
+    var ticking = false;
+    var metrics = {
+      topOffset: 0,
+      trackTop: 0,
+      maxTranslate: 0,
+    };
 
     function activeAlignElement() {
-      var activeStep = steps.find(function (step) {
-        return step.getAttribute("aria-current") === "true";
-      }) || steps[0];
+      var activeStep =
+        steps.find(function (step) {
+          return step.getAttribute("aria-current") === "true";
+        }) || steps[0];
+
       if (!activeStep) {
         return null;
       }
@@ -208,7 +231,7 @@
     }
 
     function syncMediaOffset() {
-      if (!mql.matches || !viewport || !mediaFrame) {
+      if (!mql.matches || !copyViewport || !mediaFrame) {
         return;
       }
       var align = activeAlignElement();
@@ -216,14 +239,14 @@
         return;
       }
 
-      var viewportRect = viewport.getBoundingClientRect();
+      var viewportRect = copyViewport.getBoundingClientRect();
       var alignRect = align.getBoundingClientRect();
       var offset = alignRect.top - viewportRect.top;
       if (!isFinite(offset)) {
         return;
       }
 
-      var maxOffset = viewport.clientHeight - mediaFrame.getBoundingClientRect().height;
+      var maxOffset = viewportRect.height - mediaFrame.getBoundingClientRect().height;
       if (isFinite(maxOffset)) {
         offset = Math.max(0, Math.min(offset, Math.max(0, maxOffset)));
       } else {
@@ -233,62 +256,158 @@
       root.style.setProperty("--feature-media-offset", String(Math.round(offset)) + "px");
     }
 
-    function clearObserver() {
-      if (stepObserver) {
-        stepObserver.disconnect();
-        stepObserver = null;
+    function clamp(value, min, max) {
+      return Math.max(min, Math.min(max, value));
+    }
+
+    function getPinTopOffset() {
+      var header = document.querySelector("header");
+      var headerHeight = header ? header.getBoundingClientRect().height : 0;
+      return headerHeight + 16;
+    }
+
+    function requestTick() {
+      if (ticking) {
+        return;
+      }
+      ticking = true;
+      window.requestAnimationFrame(function () {
+        ticking = false;
+        updatePinned();
+      });
+    }
+
+    function recalcPinned() {
+      if (!track || !copyViewport || !copyInner) {
+        return;
+      }
+
+      var pinTop = getPinTopOffset();
+      root.style.setProperty("--features-pin-top", String(Math.round(pinTop)) + "px");
+
+      var viewportHeight = copyViewport.getBoundingClientRect().height;
+      var contentHeight = copyInner.scrollHeight;
+      if (!isFinite(viewportHeight) || !isFinite(contentHeight) || viewportHeight <= 0) {
+        return;
+      }
+
+      metrics.topOffset = pinTop;
+      metrics.maxTranslate = Math.max(0, contentHeight - viewportHeight);
+
+      var trackHeight = Math.max(contentHeight, viewportHeight);
+      track.style.height = String(Math.ceil(trackHeight)) + "px";
+      metrics.trackTop = track.getBoundingClientRect().top + window.scrollY;
+
+      syncMediaOffset();
+    }
+
+    function updatePinned() {
+      if (!mql.matches || !track || !copyViewport || !copyInner || steps.length === 0) {
+        return;
+      }
+      if (root.getAttribute("data-feature-scroll-mode") !== "pinned") {
+        return;
+      }
+
+      var trackRect = track.getBoundingClientRect();
+      if (trackRect.top > window.innerHeight || trackRect.bottom < -window.innerHeight) {
+        return;
+      }
+
+      var start = metrics.trackTop - metrics.topOffset;
+      var translate = clamp(window.scrollY - start, 0, metrics.maxTranslate);
+      copyInner.style.transform = "translate3d(0," + String(-Math.round(translate)) + "px,0)";
+
+      var viewportRect = copyViewport.getBoundingClientRect();
+      var centerY = viewportRect.top + viewportRect.height / 2;
+      var bestStep = null;
+      var bestDistance = Infinity;
+
+      steps.forEach(function (step) {
+        var rect = step.getBoundingClientRect();
+        var stepCenter = rect.top + rect.height / 2;
+        var distance = Math.abs(stepCenter - centerY);
+        if (distance < bestDistance) {
+          bestDistance = distance;
+          bestStep = step;
+        }
+      });
+
+      if (bestStep && bestStep.dataset && bestStep.dataset.featureStep) {
+        var nextKey = bestStep.dataset.featureStep;
+        if (nextKey && nextKey !== activeKey) {
+          setActive(nextKey);
+        } else {
+          syncMediaOffset();
+        }
+      } else {
+        syncMediaOffset();
       }
     }
 
-	    function observeSteps() {
-	      clearObserver();
-	      if (!mql.matches || steps.length === 0 || !viewport) {
-	        return;
-	      }
-	      if (typeof IntersectionObserver === "undefined") {
-	        return;
-	      }
-	
-	      stepObserver = new IntersectionObserver(function (entries) {
-	        var visible = entries.filter(function (entry) {
-	          return entry.isIntersecting;
-	        });
-	        if (visible.length === 0) {
-	          return;
-	        }
-	
-	        var rootRect = viewport.getBoundingClientRect();
-	        var viewportCenter = rootRect.top + rootRect.height / 2;
-	        visible.sort(function (a, b) {
-	          var aCenter = a.boundingClientRect.top + a.boundingClientRect.height / 2;
-	          var bCenter = b.boundingClientRect.top + b.boundingClientRect.height / 2;
-	          return Math.abs(aCenter - viewportCenter) - Math.abs(bCenter - viewportCenter);
-	        });
+    function enablePinned() {
+      if (!track || !pin || !copyViewport || !copyInner) {
+        return;
+      }
 
-        var best = visible[0];
-	        if (best && best.target && best.target.dataset && best.target.dataset.featureStep) {
-	          setActive(best.target.dataset.featureStep);
-	        }
-	      }, { root: viewport, rootMargin: "-45% 0px -45% 0px", threshold: 0 });
-	
-	      steps.forEach(function (step) {
-	        stepObserver.observe(step);
-	      });
-	    }
+      root.setAttribute("data-feature-scroll-mode", "pinned");
+      recalcPinned();
+      requestTick();
 
-    observeSteps();
-    syncMediaOffset();
-    window.requestAnimationFrame(syncMediaOffset);
-    window.setTimeout(syncMediaOffset, 250);
+      window.addEventListener("scroll", requestTick, { passive: true });
+      window.addEventListener("resize", handleResize);
 
-    if (mql.addEventListener) {
-      mql.addEventListener("change", observeSteps);
-      mql.addEventListener("change", syncMediaOffset);
-    } else if (mql.addListener) {
-      mql.addListener(observeSteps);
-      mql.addListener(syncMediaOffset);
+      if (typeof ResizeObserver !== "undefined") {
+        resizeObserver = new ResizeObserver(function () {
+          recalcPinned();
+          requestTick();
+        });
+        resizeObserver.observe(copyInner);
+      }
+
+      window.setTimeout(function () {
+        recalcPinned();
+        requestTick();
+      }, 200);
     }
 
-    window.addEventListener("resize", syncMediaOffset);
+    function disablePinned() {
+      root.removeAttribute("data-feature-scroll-mode");
+
+      if (track) {
+        track.style.height = "";
+      }
+      if (copyInner) {
+        copyInner.style.transform = "";
+      }
+
+      window.removeEventListener("scroll", requestTick);
+      window.removeEventListener("resize", handleResize);
+
+      if (resizeObserver) {
+        resizeObserver.disconnect();
+        resizeObserver = null;
+      }
+    }
+
+    function handleResize() {
+      recalcPinned();
+      requestTick();
+    }
+
+    function syncMode() {
+      disablePinned();
+      if (mql.matches) {
+        enablePinned();
+      }
+    }
+
+    syncMode();
+
+    if (mql.addEventListener) {
+      mql.addEventListener("change", syncMode);
+    } else if (mql.addListener) {
+      mql.addListener(syncMode);
+    }
   });
 </script>

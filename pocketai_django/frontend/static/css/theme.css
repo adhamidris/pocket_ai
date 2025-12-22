@@ -193,17 +193,46 @@
 
 /* Landing features scroll reveal */
 @media (min-width: 1024px) {
-  .features-scroll-viewport {
-    height: 70vh;
-    overflow-y: auto;
-    padding-right: 0.5rem;
-  }
-
   .features-sticky {
+    position: sticky;
+    top: var(--features-pin-top, 0px);
     height: 70vh;
   }
 
   .features-sticky-frame {
     margin-top: var(--feature-media-offset, 0px);
+    height: clamp(300px, 55vh, 420px);
+  }
+
+  [data-feature-scroll-mode="pinned"] .features-scroll-track {
+    position: relative;
+  }
+
+  [data-feature-scroll-mode="pinned"] .features-scroll-pin {
+    position: sticky;
+    top: var(--features-pin-top, 0px);
+    height: var(--features-pin-height, 70vh);
+  }
+
+  [data-feature-scroll-mode="pinned"] .features-scroll-grid {
+    height: 100%;
+    align-items: stretch;
+  }
+
+  [data-feature-scroll-mode="pinned"] .features-scroll-copy {
+    height: 100%;
+    min-height: 0;
+    overflow: hidden;
+    padding-right: 0.5rem;
+  }
+
+  [data-feature-scroll-mode="pinned"] .features-scroll-copy-inner {
+    will-change: transform;
+  }
+
+  [data-feature-scroll-mode="pinned"] .features-sticky {
+    position: relative;
+    top: auto;
+    height: 100%;
   }
 }
