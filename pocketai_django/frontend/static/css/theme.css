@@ -204,38 +204,6 @@
     height: clamp(300px, 55vh, 420px);
   }
 
-  [data-feature-scroll-mode="pinned"] .features-scroll-track {
-    position: relative;
-  }
-
-  [data-feature-scroll-mode="pinned"] .features-scroll-pin {
-    position: sticky;
-    top: var(--features-pin-top, 0px);
-    height: var(--features-pin-height, 70vh);
-  }
-
-  [data-feature-scroll-mode="pinned"] .features-scroll-grid {
-    height: 100%;
-    align-items: stretch;
-  }
-
-  [data-feature-scroll-mode="pinned"] .features-scroll-copy {
-    height: 100%;
-    min-height: 0;
-    overflow: hidden;
-    padding-right: 0.5rem;
-  }
-
-  [data-feature-scroll-mode="pinned"] .features-scroll-copy-inner {
-    will-change: transform;
-  }
-
-  [data-feature-scroll-mode="pinned"] .features-sticky {
-    position: relative;
-    top: auto;
-    height: 100%;
-  }
-
   [data-feature-scroll-root] [data-feature-media] .feature-media-layer {
     position: absolute;
     inset: 0;
@@ -247,9 +215,5 @@
   [data-feature-scroll-root] [data-feature-media] .feature-media-layer.is-leaving {
     opacity: 0;
     pointer-events: none;
-  }
-
-  [data-feature-scroll-mode="pinned"] [data-feature-media] .animate-panel-in {
-    animation: none !important;
   }
 }

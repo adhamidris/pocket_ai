@@ -49,12 +49,9 @@
     </div>
 
     <div class="mt-8" data-feature-scroll-root data-feature-active="{{ section.tabs.0.key }}">
-      <div class="features-scroll-track" data-feature-scroll-track>
-        <div class="features-scroll-pin" data-feature-scroll-pin>
-          <div class="grid lg:grid-cols-2 gap-12 items-start features-scroll-grid">
-            <div class="features-scroll-copy" data-feature-scroll-copy-viewport>
-              <div class="space-y-8 features-scroll-copy-inner" data-feature-scroll-copy-inner>
-              {% for tab in section.tabs %}
+      <div class="grid lg:grid-cols-2 gap-12 items-start">
+        <div class="space-y-8">
+        {% for tab in section.tabs %}
             <article
               id="feature-{{ tab.key }}"
               data-feature-step="{{ tab.key }}"
@@ -108,16 +105,15 @@
               {% endif %}
             </article>
           {% endfor %}
-              </div>
-            </div>
+          <div class="hidden lg:block" data-feature-end-spacer aria-hidden="true"></div>
 
-            <div class="hidden lg:flex features-sticky items-start justify-end">
-              <div class="features-sticky-frame relative h-[420px] w-full max-w-lg rounded-3xl overflow-hidden border border-border/60 bg-card shadow-premium" data-feature-media-frame>
-                <div class="pointer-events-none absolute -top-24 -right-24 w-[420px] h-[420px] rounded-full bg-gradient-hero opacity-10 blur-3xl animate-pulse" aria-hidden="true"></div>
-                <div class="absolute inset-0" data-feature-media>
-                  {% include "frontend/components/sections/partials/feature_media.html" with tab=section.tabs.0 integrations=section.integrations %}
-                </div>
-              </div>
+        </div>
+
+        <div class="hidden lg:flex features-sticky items-start justify-end">
+          <div class="features-sticky-frame relative h-[420px] w-full max-w-lg rounded-3xl overflow-hidden border border-border/60 bg-card shadow-premium" data-feature-media-frame>
+            <div class="pointer-events-none absolute -top-24 -right-24 w-[420px] h-[420px] rounded-full bg-gradient-hero opacity-10 blur-3xl animate-pulse" aria-hidden="true"></div>
+            <div class="absolute inset-0" data-feature-media>
+              {% include "frontend/components/sections/partials/feature_media.html" with tab=section.tabs.0 integrations=section.integrations %}
             </div>
           </div>
         </div>
@@ -139,10 +135,6 @@
       return;
     }
 
-    var track = root.querySelector("[data-feature-scroll-track]");
-    var pin = root.querySelector("[data-feature-scroll-pin]");
-    var copyViewport = root.querySelector("[data-feature-scroll-copy-viewport]");
-    var copyInner = root.querySelector("[data-feature-scroll-copy-inner]");
     var mediaFrame = root.querySelector("[data-feature-media-frame]");
     var media = root.querySelector("[data-feature-media]");
     var templates = {};
@@ -326,18 +318,19 @@
     var resizeObserver = null;
     var ticking = false;
     var metrics = {
-      topOffset: 0,
-      trackTop: 0,
-      maxTranslate: 0,
-      translate: 0,
+      anchorMode: "",
+      anchorY: 0,
       thresholds: [],
-      mediaOffset: 0,
-      lockKey: activeKey,
-      locked: false,
     };
 
     function clamp(value, min, max) {
       return Math.max(min, Math.min(max, value));
+    }
+
+    function getPinTopOffset() {
+      var header = document.querySelector("header");
+      var headerHeight = header ? header.getBoundingClientRect().height : 0;
+      return headerHeight + 16;
     }
 
     function getStepByKey(key) {
@@ -348,79 +341,49 @@
       );
     }
 
-    function lockMediaOffset() {
-      if (!mql.matches || !copyViewport || !mediaFrame) {
-        return;
-      }
-
-      var step = getStepByKey(metrics.lockKey || activeKey);
+    function getAlignElement(step) {
       if (!step) {
-        return;
+        return null;
       }
-
-      var align = step.querySelector("[data-feature-align]") || step;
-      if (!align) {
-        return;
-      }
-
-      var viewportRect = copyViewport.getBoundingClientRect();
-      var alignRect = align.getBoundingClientRect();
-      var offsetNow = alignRect.top - viewportRect.top;
-      if (!isFinite(offsetNow)) {
-        return;
-      }
-
-      var offsetAtStart = offsetNow + (metrics.translate || 0);
-      var maxOffset = viewportRect.height - mediaFrame.getBoundingClientRect().height;
-      if (isFinite(maxOffset)) {
-        offsetAtStart = clamp(offsetAtStart, 0, Math.max(0, maxOffset));
-      } else {
-        offsetAtStart = Math.max(0, offsetAtStart);
-      }
-
-      metrics.mediaOffset = offsetAtStart;
-      metrics.locked = true;
-      root.style.setProperty("--feature-media-offset", String(Math.round(offsetAtStart)) + "px");
+      return step.querySelector("[data-feature-align]") || step;
     }
 
-    function computeThresholds() {
-      if (!mql.matches || !copyViewport) {
-        metrics.thresholds = [];
-        return;
+    function buildThresholds(anchorY, viewportHeight) {
+      if (!isFinite(anchorY) || !isFinite(viewportHeight) || viewportHeight <= 0) {
+        return [];
       }
 
-      var viewportRect = copyViewport.getBoundingClientRect();
-      var translate = metrics.translate || 0;
-      var mediaOffset = metrics.mediaOffset || 0;
-      var lead = clamp(Math.round(viewportRect.height * 0.22), 80, 220);
+      var lead = clamp(Math.round(viewportHeight * 0.22), 80, 220);
 
-      metrics.thresholds = steps
+      return steps
         .map(function (step) {
           var key = step.dataset ? step.dataset.featureStep : "";
-          var align = step.querySelector("[data-feature-align]") || step;
-          var alignRect = align.getBoundingClientRect();
-          var offsetNow = alignRect.top - viewportRect.top;
-          var offsetAtStart = offsetNow + translate;
-          return { key: key, threshold: offsetAtStart - mediaOffset - lead };
+          var align = getAlignElement(step);
+          if (!key || !align) {
+            return null;
+          }
+
+          var rect = align.getBoundingClientRect();
+          var docY = rect.top + window.scrollY;
+          return { key: key, threshold: docY - anchorY - lead };
         })
         .filter(function (item) {
-          return !!item.key;
+          return item && item.key;
         })
         .sort(function (a, b) {
           return a.threshold - b.threshold;
         });
     }
 
-    function keyForTranslate(translate) {
+    function keyForScrollY(scrollY) {
       if (!metrics.thresholds || metrics.thresholds.length === 0) {
         return activeKey;
       }
 
       var epsilon = 6;
       var key = metrics.thresholds[0].key;
-
       metrics.thresholds.forEach(function (item) {
-        if (translate >= item.threshold - epsilon) {
+        if (scrollY >= item.threshold - epsilon) {
           key = item.key;
         }
       });
@@ -428,10 +391,83 @@
       return key;
     }
 
-    function getPinTopOffset() {
-      var header = document.querySelector("header");
-      var headerHeight = header ? header.getBoundingClientRect().height : 0;
-      return headerHeight + 16;
+    function lockMediaAnchor(pinTop, stickyColumnRect) {
+      if (!mediaFrame) {
+        return false;
+      }
+
+      var frameRect = mediaFrame.getBoundingClientRect();
+      var maxOffset = stickyColumnRect.height - frameRect.height;
+      maxOffset = Math.max(0, maxOffset);
+
+      var targetY = pinTop + maxOffset / 2;
+      var bestStep = null;
+      var bestDistance = Infinity;
+
+      steps.forEach(function (step) {
+        var align = getAlignElement(step);
+        if (!align) {
+          return;
+        }
+        var rect = align.getBoundingClientRect();
+        var distance = Math.abs(rect.top - targetY);
+        if (distance < bestDistance) {
+          bestDistance = distance;
+          bestStep = step;
+        }
+      });
+
+      var step = bestStep || getStepByKey(activeKey);
+      var align = getAlignElement(step);
+      if (!align) {
+        return false;
+      }
+
+      var alignRect = align.getBoundingClientRect();
+      var offset = clamp(alignRect.top - pinTop, 0, maxOffset);
+      root.style.setProperty("--feature-media-offset", String(Math.round(offset)) + "px");
+
+      metrics.anchorY = pinTop + offset;
+      metrics.thresholds = buildThresholds(metrics.anchorY, stickyColumnRect.height);
+      metrics.anchorMode = "media";
+
+      return metrics.thresholds.length > 0;
+    }
+
+    function ensureThresholds() {
+      var pinTop = getPinTopOffset();
+      root.style.setProperty("--features-pin-top", String(Math.round(pinTop)) + "px");
+
+      if (mql.matches && mediaFrame) {
+        var stickyColumn = mediaFrame.closest(".features-sticky");
+        if (stickyColumn) {
+          var stickyRect = stickyColumn.getBoundingClientRect();
+          var engaged = stickyRect.top <= pinTop + 1 && stickyRect.bottom >= pinTop + 1;
+          if (engaged && metrics.anchorMode !== "media") {
+            metrics.thresholds = [];
+            lockMediaAnchor(pinTop, stickyRect);
+          }
+        }
+      }
+
+      if (!metrics.thresholds || metrics.thresholds.length === 0) {
+        metrics.anchorMode = "fallback";
+        metrics.anchorY = Math.round(window.innerHeight * 0.32);
+        metrics.thresholds = buildThresholds(metrics.anchorY, window.innerHeight);
+      }
+    }
+
+    function updateActive() {
+      if (steps.length === 0) {
+        return;
+      }
+
+      ensureThresholds();
+
+      var nextKey = keyForScrollY(window.scrollY);
+      if (nextKey && nextKey !== activeKey) {
+        setActive(nextKey);
+      }
     }
 
     function requestTick() {
@@ -441,133 +477,32 @@
       ticking = true;
       window.requestAnimationFrame(function () {
         ticking = false;
-        updatePinned();
+        updateActive();
       });
     }
 
-    function recalcPinned() {
-      if (!track || !copyViewport || !copyInner) {
-        return;
-      }
-
-      var pinTop = getPinTopOffset();
-      root.style.setProperty("--features-pin-top", String(Math.round(pinTop)) + "px");
-
-      var viewportHeight = copyViewport.getBoundingClientRect().height;
-      var contentHeight = copyInner.scrollHeight;
-      if (!isFinite(viewportHeight) || !isFinite(contentHeight) || viewportHeight <= 0) {
-        return;
-      }
-
-      metrics.topOffset = pinTop;
-      metrics.maxTranslate = Math.max(0, contentHeight - viewportHeight);
-
-      var trackHeight = Math.max(contentHeight, viewportHeight);
-      track.style.height = String(Math.ceil(trackHeight)) + "px";
-      metrics.trackTop = track.getBoundingClientRect().top + window.scrollY;
-      metrics.locked = false;
-      metrics.thresholds = [];
-      lockMediaOffset();
-      computeThresholds();
-    }
-
-    function updatePinned() {
-      if (!mql.matches || !track || !copyViewport || !copyInner || steps.length === 0) {
-        return;
-      }
-      if (root.getAttribute("data-feature-scroll-mode") !== "pinned") {
-        return;
-      }
-
-      var trackRect = track.getBoundingClientRect();
-      if (trackRect.top > window.innerHeight || trackRect.bottom < -window.innerHeight) {
-        return;
-      }
-
-      var start = metrics.trackTop - metrics.topOffset;
-      var translate = clamp(window.scrollY - start, 0, metrics.maxTranslate);
-      metrics.translate = translate;
-      copyInner.style.transform = "translate3d(0," + String(-Math.round(translate)) + "px,0)";
-
-      if (!metrics.locked) {
-        lockMediaOffset();
-        computeThresholds();
-      } else if (!metrics.thresholds || metrics.thresholds.length === 0) {
-        computeThresholds();
-      }
-
-      var nextKey = keyForTranslate(translate);
-      if (nextKey && nextKey !== activeKey) {
-        setActive(nextKey);
-      }
-    }
-
-    function enablePinned() {
-      if (!track || !pin || !copyViewport || !copyInner) {
-        return;
-      }
-
-      root.setAttribute("data-feature-scroll-mode", "pinned");
-      metrics.lockKey = activeKey;
-      metrics.locked = false;
-      metrics.thresholds = [];
-      recalcPinned();
-      requestTick();
-
-      window.addEventListener("scroll", requestTick, { passive: true });
-      window.addEventListener("resize", handleResize);
-
-      if (typeof ResizeObserver !== "undefined") {
-        resizeObserver = new ResizeObserver(function () {
-          recalcPinned();
-          requestTick();
-        });
-        resizeObserver.observe(copyInner);
-      }
-
-      window.setTimeout(function () {
-        recalcPinned();
-        requestTick();
-      }, 200);
-    }
-
-    function disablePinned() {
-      root.removeAttribute("data-feature-scroll-mode");
-
-      if (track) {
-        track.style.height = "";
-      }
-      if (copyInner) {
-        copyInner.style.transform = "";
-      }
-
-      window.removeEventListener("scroll", requestTick);
-      window.removeEventListener("resize", handleResize);
-
-      if (resizeObserver) {
-        resizeObserver.disconnect();
-        resizeObserver = null;
-      }
-    }
-
     function handleResize() {
-      recalcPinned();
+      metrics.anchorMode = "";
+      metrics.anchorY = 0;
+      metrics.thresholds = [];
       requestTick();
     }
 
-    function syncMode() {
-      disablePinned();
-      if (mql.matches) {
-        enablePinned();
-      }
-    }
-
-    syncMode();
+    window.addEventListener("scroll", requestTick, { passive: true });
+    window.addEventListener("resize", handleResize);
 
     if (mql.addEventListener) {
-      mql.addEventListener("change", syncMode);
+      mql.addEventListener("change", handleResize);
     } else if (mql.addListener) {
-      mql.addListener(syncMode);
+      mql.addListener(handleResize);
     }
+
+    if (typeof ResizeObserver !== "undefined") {
+      resizeObserver = new ResizeObserver(handleResize);
+      resizeObserver.observe(root);
+    }
+
+    requestTick();
+    window.setTimeout(handleResize, 250);
   });
 </script>
