@@ -1,14 +1,14 @@
 {% load lucide %}
 <section id="pricing" class="bg-background pt-16 md:pt-20 pb-24 md:pb-28">
   <div class="container mx-auto px-6">
-    <div class="text-center mb-12 md:mb-16 landing-reveal" style="--reveal-delay: 0ms;">
+    <div class="text-center mb-12 md:mb-16">
       <div class="text-xs uppercase tracking-widest text-muted-foreground mb-3">{{ section.flexible }}</div>
       <h2 class="text-4xl lg:text-5xl font-bold text-foreground">
         {{ section.choose }}<span class="text-gradient-hero">{{ section.motion }}</span>
       </h2>
     </div>
 
-    <div data-pricing-root data-active-schema="packages" data-billing-cycle="monthly" class="landing-reveal" style="--reveal-delay: 220ms;">
+    <div data-pricing-root data-active-schema="packages" data-billing-cycle="monthly">
       <div class="flex justify-center">
         <div class="inline-flex gap-2 bg-card rounded-2xl p-1">
           {% for tab in section.tabs %}

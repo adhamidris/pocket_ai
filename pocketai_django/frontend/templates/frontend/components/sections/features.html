@@ -39,7 +39,7 @@
   </div>
 
   <div class="container mx-auto px-6">
-    <div class="text-center mb-14 md:mb-24 landing-reveal" style="--reveal-delay: 0ms;">
+    <div class="text-center mb-14 md:mb-24 animate-fade-in">
       <h2 class="text-4xl lg:text-5xl font-bold text-foreground mb-5">
         {{ section.section_title_prefix }} <span class="text-gradient-hero">{{ section.section_title_highlight }}</span>
       </h2>
@@ -50,7 +50,7 @@
 
     <div class="mt-8" data-feature-root data-feature-active="{{ section.tabs.0.key }}">
       <div class="grid lg:grid-cols-12 gap-8 items-start">
-        <div class="lg:col-span-4 landing-reveal" style="--reveal-delay: 220ms;">
+        <div class="lg:col-span-4">
           <div class="flex lg:flex-col flex-wrap gap-4">
             {% for tab in section.tabs %}
               <button
@@ -69,7 +69,7 @@
             {% endfor %}
           </div>
         </div>
-        <div class="lg:col-span-8 landing-reveal" style="--reveal-delay: 360ms;">
+        <div class="lg:col-span-8">
           <div class="relative bg-card rounded-3xl p-10 lg:p-14 shadow-premium overflow-hidden">
             <div class="pointer-events-none absolute -top-24 -right-24 w-[420px] h-[420px] rounded-full bg-gradient-hero opacity-10 blur-3xl animate-pulse" aria-hidden="true"></div>
             <div data-feature-panel>

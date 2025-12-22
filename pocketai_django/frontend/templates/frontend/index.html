@@ -14,14 +14,14 @@
   <div class="container mx-auto px-6 pt-24 pb-12 md:pt-28 md:pb-16 relative z-10">
     <div class="hero-layout grid lg:grid-cols-2 gap-12 items-center">
       <div class="hero-copy">
-        <div class="hero-title text-center lg:text-start landing-reveal" style="--reveal-delay: 0ms;">
+        <div class="hero-title text-center lg:text-start animate-fade-in">
           <h1 class="text-5xl lg:text-7xl font-bold text-foreground leading-tight">
             {{ page.hero.title_prefix }}
             <span class="text-gradient-hero"> {{ page.hero.title_highlight }}</span>
           </h1>
         </div>
 
-        <div class="hero-details text-center lg:text-start landing-reveal space-y-8" style="--reveal-delay: 320ms;">
+        <div class="hero-details text-center lg:text-start animate-fade-in space-y-8">
           <p class="text-xl text-muted-foreground max-w-lg mx-auto lg:mx-0 leading-relaxed">
             {{ page.hero.subtitle }}
           </p>
@@ -54,7 +54,7 @@
         </div>
       </div>
 
-      <div class="hero-simulator relative landing-reveal" style="--reveal-delay: 180ms;">
+      <div class="hero-simulator relative animate-slide-up" style="animation-delay: 0.3s;">
         <div class="simulation-card bg-card rounded-2xl shadow-premium p-6">
           <div class="flex items-center gap-2 mb-4 pb-4 border-b border-border">
             <div class="flex gap-2">
@@ -359,41 +359,6 @@
       }
       typingElement.classList.add("hidden");
     }
-  });
-</script>
-
-<script>
-  document.addEventListener("DOMContentLoaded", function () {
-    var revealNodes = Array.prototype.slice.call(document.querySelectorAll(".landing-reveal"));
-    if (revealNodes.length === 0) {
-      return;
-    }
-
-    var reducedMotion = false;
-    if (window.matchMedia) {
-      reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-    }
-
-    if (!("IntersectionObserver" in window) || reducedMotion) {
-      revealNodes.forEach(function (node) {
-        node.classList.add("is-revealed");
-      });
-      return;
-    }
-
-    var observer = new IntersectionObserver(function (entries, obs) {
-      entries.forEach(function (entry) {
-        if (!entry.isIntersecting) {
-          return;
-        }
-        entry.target.classList.add("is-revealed");
-        obs.unobserve(entry.target);
-      });
-    }, { threshold: 0.2, rootMargin: "0px 0px -10% 0px" });
-
-    revealNodes.forEach(function (node) {
-      observer.observe(node);
-    });
   });
 </script>
 
