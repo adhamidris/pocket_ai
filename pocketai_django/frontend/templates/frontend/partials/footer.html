@@ -1,6 +1,6 @@
 {% load lucide %}
 <footer class="footer-section bg-background border-t border-border">
-  <div class="container mx-auto px-6 py-16">
+  <div class="container mx-auto px-6 pt-16 pb-12">
     <div class="grid lg:grid-cols-6 gap-8">
       <div class="lg:col-span-2 md:text-left text-center">
         <div class="flex items-center gap-2 mb-6 justify-center md:justify-start">
@@ -12,17 +12,6 @@
         <p class="text-muted-foreground mb-6 leading-relaxed md:text-left text-center">
           {{ site.footer.blurb }}
         </p>
-        <div class="flex gap-4 justify-center md:justify-start">
-          {% for social in site.footer.social %}
-            <a
-              href="{{ social.href }}"
-              class="w-10 h-10 bg-muted rounded-lg flex items-center justify-center hover:bg-accent transition-colors group"
-              aria-label="{{ social.label }}"
-            >
-              {% lucide social.icon "w-5 h-5 text-muted-foreground group-hover:text-foreground transition-colors" %}
-            </a>
-          {% endfor %}
-        </div>
       </div>
 
       {% for category, links in site.footer.categories.items %}
@@ -38,24 +27,45 @@
         </div>
       {% endfor %}
     </div>
+  </div>
 
-    <div class="footer-bottom mt-16 pt-8 border-t border-border flex justify-center items-center">
-      <div class="text-muted-foreground text-sm text-center flex flex-col items-center gap-2">
-        <div class="text-sm text-muted-foreground">
-          {{ site.footer.bottom.copyright }}
+  <div>
+    <div class="container mx-auto px-6 py-6">
+      <div class="flex flex-col gap-4 md:flex-row md:items-center">
+        <div class="flex justify-center md:justify-start md:flex-1">
+          <div class="flex items-center gap-3">
+            {% for social in site.footer.social %}
+              <a
+                href="{{ social.href }}"
+                class="w-8 h-8 rounded-lg flex items-center justify-center text-muted-foreground hover:text-foreground transition-colors"
+                aria-label="{{ social.label }}"
+              >
+                {% lucide social.icon "w-4 h-4" %}
+              </a>
+            {% endfor %}
+          </div>
         </div>
-        <div class="flex items-center gap-3">
-          <a href="{{ site.footer.bottom.privacy.href }}" class="text-muted-foreground hover:text-foreground transition-colors">
-            {{ site.footer.bottom.privacy.label }}
+
+        <div class="text-muted-foreground text-sm text-center md:flex-1">
+          <span>{{ site.footer.bottom.copyright }}</span>
+          <a
+            href="{{ site.footer.bottom.cookie.href }}"
+            class="ms-3 text-foreground hover:underline underline-offset-4"
+          >
+            Manage Cookies
           </a>
-          <span class="opacity-40">•</span>
-          <a href="{{ site.footer.bottom.terms.href }}" class="text-muted-foreground hover:text-foreground transition-colors">
-            {{ site.footer.bottom.terms.label }}
-          </a>
-          <span class="opacity-40">•</span>
-          <a href="{{ site.footer.bottom.cookie.href }}" class="text-muted-foreground hover:text-foreground transition-colors">
-            {{ site.footer.bottom.cookie.label }}
-          </a>
+        </div>
+
+        <div class="flex justify-center md:justify-end md:flex-1">
+          <button
+            type="button"
+            class="inline-flex items-center gap-2 rounded-full border border-border/60 bg-card/80 px-4 py-2 text-sm text-muted-foreground shadow-sm hover:bg-accent/40 transition-colors"
+            aria-label="{{ site.language_toggle.label }}"
+          >
+            {% lucide "globe" "w-4 h-4" %}
+            <span class="text-foreground font-medium">{{ site.language_toggle.options.0.label|default:"English" }}</span>
+            <span class="text-neutral-400">United States</span>
+          </button>
         </div>
       </div>
     </div>
