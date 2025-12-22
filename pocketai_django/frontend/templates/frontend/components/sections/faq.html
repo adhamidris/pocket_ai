@@ -1,13 +1,13 @@
 {% load lucide %}
 <section id="faq" class="bg-background pt-16 md:pt-20 pb-20 md:pb-24">
   <div class="container mx-auto px-6">
-    <div class="text-center mb-12 md:mb-16 animate-fade-in">
+    <div class="text-center mb-12 md:mb-16 landing-reveal" style="--reveal-delay: 0ms;">
       <h2 class="text-4xl md:text-5xl font-semibold text-foreground">
         {{ section.title_prefix }} <span class="text-gradient-hero">{{ section.title_highlight }}</span>
       </h2>
     </div>
 
-    <div class="mx-auto max-w-4xl bg-card rounded-2xl p-5 md:p-7 shadow-premium animate-panel-in" data-faq-root>
+    <div class="mx-auto max-w-4xl bg-card rounded-2xl p-5 md:p-7 shadow-premium landing-reveal" style="--reveal-delay: 220ms;" data-faq-root>
       {% for item in section.items %}
         <div class="last:pb-0" data-faq-item>
           <button

@@ -1,14 +1,14 @@
 {% load lucide %}
 <section id="pricing" class="bg-background pt-16 md:pt-20 pb-24 md:pb-28">
   <div class="container mx-auto px-6">
-    <div class="text-center mb-12 md:mb-16">
+    <div class="text-center mb-12 md:mb-16 landing-reveal" style="--reveal-delay: 0ms;">
       <div class="text-xs uppercase tracking-widest text-muted-foreground mb-3">{{ section.flexible }}</div>
       <h2 class="text-4xl lg:text-5xl font-bold text-foreground">
         {{ section.choose }}<span class="text-gradient-hero">{{ section.motion }}</span>
       </h2>
     </div>
 
-    <div data-pricing-root data-active-schema="packages" data-billing-cycle="monthly">
+    <div data-pricing-root data-active-schema="packages" data-billing-cycle="monthly" class="landing-reveal" style="--reveal-delay: 220ms;">
       <div class="flex justify-center">
         <div class="inline-flex gap-2 bg-card rounded-2xl p-1">
           {% for tab in section.tabs %}
@@ -52,7 +52,7 @@
           </div>
         </div>
 
-        <div class="grid md:grid-cols-3 gap-6 animate-fade-in">
+        <div class="grid md:grid-cols-3 gap-6">
           {% for plan in section.packages %}
             <div
               class="relative overflow-visible rounded-2xl shadow-premium p-6 lg:p-8 flex flex-col transition-all duration-300 hover:-translate-y-1 hover:shadow-soft bg-primary/10 text-center md:text-left ring-1 ring-primary/25 hover:ring-primary/40"
@@ -114,7 +114,7 @@
       </div>
 
       <div data-pricing-panel="wage" class="hidden">
-        <div class="grid md:grid-cols-3 gap-6 animate-fade-in">
+        <div class="grid md:grid-cols-3 gap-6">
           {% for plan in section.wage_plans %}
             <div class="relative overflow-visible rounded-2xl shadow-premium p-6 lg:p-8 flex flex-col transition-all duration-300 hover:-translate-y-1 hover:shadow-soft bg-primary/10 text-center md:text-left">
               <div class="flex items-center justify-between mb-3">
