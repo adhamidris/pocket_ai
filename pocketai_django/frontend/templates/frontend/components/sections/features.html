@@ -553,9 +553,11 @@
     // Scroll Jumper Implementation
     var scrollJumpEnabled = true;
     var isJumping = false;
-    var jumpCooldown = 800; // ms between jumps - reduced for more responsive feel
+    var jumpCooldown = 600; // ms between jumps - reduced for more sensitive/responsive feel
     var lastJumpTime = 0;
     var featuresSection = document.querySelector("#features");
+    var wasAboveFeatures = true; // Track if user was above features section
+    var hasEnteredFirstFeature = false; // Track if user has entered through first feature
 
     function getCurrentFeatureIndex() {
       if (steps.length === 0) {
@@ -621,6 +623,64 @@
       }, jumpCooldown);
     }
 
+    function enforceFirstFeatureEntry() {
+      if (!featuresSection || steps.length === 0) return;
+      
+      var rect = featuresSection.getBoundingClientRect();
+      var firstFeatureRect = steps[0].getBoundingClientRect();
+      
+      // Update tracking state first
+      if (rect.bottom < 0) {
+        // User is above features section
+        wasAboveFeatures = true;
+        hasEnteredFirstFeature = false;
+      } else if (rect.top > window.innerHeight) {
+        // User is below features section - clear the flag so we don't trigger when scrolling back up
+        wasAboveFeatures = false;
+        hasEnteredFirstFeature = false;
+      }
+      
+      // Only enforce entry gate if coming from above AND haven't entered yet
+      if (wasAboveFeatures && !hasEnteredFirstFeature) {
+        // Section is entering viewport from above
+        if (rect.top < window.innerHeight && rect.top > -200) {
+          // Check if we're about to skip past the first feature
+          if (firstFeatureRect.top < window.innerHeight / 3) {
+            smoothScrollTo(steps[0]);
+            hasEnteredFirstFeature = true;
+            isJumping = true;
+            lastJumpTime = Date.now();
+            
+            setTimeout(function() {
+              isJumping = false;
+            }, jumpCooldown);
+          }
+        }
+      }
+    }
+
+    function jumpToPreviousFeature() {
+      var currentIndex = getCurrentFeatureIndex();
+
+      if (currentIndex <= 0) {
+        // At first feature - disable jump mode
+        scrollJumpEnabled = false;
+        return;
+      }
+
+      isJumping = true;
+      lastJumpTime = Date.now();
+
+      var prevFeature = steps[currentIndex - 1];
+      if (prevFeature) {
+        smoothScrollTo(prevFeature);
+      }
+
+      setTimeout(function () {
+        isJumping = false;
+      }, jumpCooldown);
+    }
+
     function isInFeaturesSection() {
       if (!featuresSection) {
         return false;
@@ -633,14 +693,17 @@
     }
 
     function monitorScrollPosition() {
+      // Enforce first feature entry gate
+      enforceFirstFeatureEntry();
+      
       if (!scrollJumpEnabled && featuresSection) {
         var rect = featuresSection.getBoundingClientRect();
         var currentIndex = getCurrentFeatureIndex();
 
-        // Re-enable jump mode if scrolling back up into features section
-        // and not at the last feature
+        // Re-enable jump mode if scrolling back into features section
+        // and not at the first or last feature
         if (rect.top < window.innerHeight / 2 && rect.bottom > window.innerHeight / 2) {
-          if (currentIndex < steps.length - 1) {
+          if (currentIndex > 0 && currentIndex < steps.length - 1) {
             scrollJumpEnabled = true;
           }
         }
@@ -666,12 +729,14 @@
       // Determine scroll direction from wheel event
       var deltaY = event.deltaY;
 
-      // Only jump on scroll down
+      // Jump on scroll down (next feature) or scroll up (previous feature)
       if (deltaY > 0) {
         event.preventDefault();
         jumpToNextFeature();
+      } else if (deltaY < 0) {
+        event.preventDefault();
+        jumpToPreviousFeature();
       }
-      // Scrolling up - allow normal behavior (don't prevent)
     }
 
     // Add wheel event listener for scroll jumping
