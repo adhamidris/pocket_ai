@@ -2,7 +2,7 @@ document.addEventListener("DOMContentLoaded", () => {
     const targetElement = document.querySelector(".flip-words-target");
     if (!targetElement) return;
 
-    const words = ["Customer Service", "Assistants"];
+    const words = ["Support", "Assistants"];
     let currentWordIndex = 0;
 
     // Create a wrapper
