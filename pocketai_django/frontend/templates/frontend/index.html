@@ -98,6 +98,43 @@
                 #sim-messages::-webkit-scrollbar {
                   display: none !important;
                 }
+
+                /* Morphing transition animations */
+                @keyframes morphOut {
+                  0% {
+                    opacity: 1;
+                    transform: scale(1);
+                    filter: blur(0px);
+                  }
+
+                  100% {
+                    opacity: 0;
+                    transform: scale(0.92);
+                    filter: blur(6px);
+                  }
+                }
+
+                @keyframes morphIn {
+                  0% {
+                    opacity: 0;
+                    transform: scale(0.88);
+                    filter: blur(10px);
+                  }
+
+                  100% {
+                    opacity: 1;
+                    transform: scale(1);
+                    filter: blur(0px);
+                  }
+                }
+
+                .chat-transition-out {
+                  animation: morphOut 350ms cubic-bezier(0.4, 0.0, 0.2, 1) forwards;
+                }
+
+                .chat-transition-in {
+                  animation: morphIn 450ms cubic-bezier(0.2, 0.8, 0.2, 1) forwards;
+                }
               </style>
               <div id="sim-messages"
                 class="relative h-80 overflow-y-auto bg-background no-scrollbar overscroll-contain px-4 pt-4 pb-6"
@@ -164,23 +201,59 @@
 
     function startScenario(index) {
       clearTimers();
-      clearMessages();
       currentScenarioIndex = index;
       var scenario = scenarios[currentScenarioIndex];
       if (!scenario) {
         return;
       }
-      if (headerName) {
-        headerName.textContent = scenario.agent_name;
+
+      // Apply morphing transition
+      if (messagesInner && messagesInner.children.length > 0) {
+        // Fade out current messages
+        messagesInner.classList.add('chat-transition-out');
+
+        activeTimers.push(window.setTimeout(function () {
+          // Clear messages after fade out
+          clearMessages();
+
+          // Update header info
+          if (headerName) {
+            headerName.textContent = scenario.agent_name;
+          }
+          if (headerRole) {
+            headerRole.textContent = scenario.job_title;
+          }
+          if (headerInitials) {
+            headerInitials.textContent = getInitials(scenario.agent_name);
+          }
+
+          // Immediately start fade in with new conversation
+          messagesInner.classList.remove('chat-transition-out');
+          messagesInner.classList.add('chat-transition-in');
+
+          // Start new messages
+          var messageIndex = 0;
+          scheduleMessage(scenario, messageIndex);
+
+          // Remove transition class after animation completes
+          activeTimers.push(window.setTimeout(function () {
+            messagesInner.classList.remove('chat-transition-in');
+          }, 450));
+        }, 350));
+      } else {
+        // First load - no transition needed
+        if (headerName) {
+          headerName.textContent = scenario.agent_name;
+        }
+        if (headerRole) {
+          headerRole.textContent = scenario.job_title;
+        }
+        if (headerInitials) {
+          headerInitials.textContent = getInitials(scenario.agent_name);
+        }
+        var messageIndex = 0;
+        scheduleMessage(scenario, messageIndex);
       }
-      if (headerRole) {
-        headerRole.textContent = scenario.job_title;
-      }
-      if (headerInitials) {
-        headerInitials.textContent = getInitials(scenario.agent_name);
-      }
-      var messageIndex = 0;
-      scheduleMessage(scenario, messageIndex);
     }
 
     function scheduleMessage(scenario, index) {
