@@ -85,22 +85,8 @@
                 </div>
               </div>
 
-              <div class="relative h-80 overflow-y-auto bg-background custom-scrollbar overscroll-contain px-4 pt-4 pb-6 space-y-6" data-chat-messages>
-                <div class="hidden" data-chat-typing>
-                  <div class="flex gap-4 items-start py-2 message-row animate-fade-in">
-                    <div class="flex-1 min-w-0 flex flex-col items-start">
-                      <div class="flex items-center gap-2 text-xs text-muted-foreground">
-                        <div class="flex items-center justify-center h-3.5 w-3.5 text-primary">
-                          <svg class="animate-spin h-full w-full" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" aria-hidden="true">
-                            <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
-                            <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-                          </svg>
-                        </div>
-                        <span class="animate-pulse">Thinking...</span>
-                      </div>
-                    </div>
-                  </div>
-                </div>
+              <div class="relative h-80 overflow-y-auto bg-background custom-scrollbar overscroll-contain px-4 pt-4 pb-6" data-chat-messages>
+                <div class="space-y-6" data-chat-inner-container></div>
               </div>
             </div>
           </div>
@@ -136,7 +122,9 @@
     var headerRole = chatRoot.querySelector("[data-chat-agent-role]");
     var headerInitials = chatRoot.querySelector("[data-chat-agent-initials]");
     var messagesContainer = chatRoot.querySelector("[data-chat-messages]");
-    var typingElement = chatRoot.querySelector("[data-chat-typing]");
+    var messagesInner = chatRoot.querySelector("[data-chat-inner-container]") || messagesContainer;
+    var activeBotBubble = null;
+    var activeBotText = null;
     var restartDelay = 2800;
     var activeTimers = [];
     var activeInterval = null;
@@ -189,21 +177,29 @@
       }
 
       var message = scenario.conversation[index];
+      var continueBot = message.is_bot && isBotContinuation(scenario, index) && activeBotBubble;
       if (message.is_bot) {
-        showTyping();
+        var bubble = ensureBotBubble(message, continueBot);
+        showTyping(getSpinnerText(message), bubble);
+      } else {
+        activeBotBubble = null;
+        activeBotText = null;
       }
 
       activeTimers.push(window.setTimeout(function () {
         hideTyping();
         if (message.is_bot && message.images && message.images.length > 0) {
-          appendMessage(message, true);
+          var imageBubble = ensureBotBubble(message, continueBot);
+          appendBotTextSegment(imageBubble, message.text);
+          appendImages(imageBubble, message.images);
           scheduleMessage(scenario, index + 1);
           return;
         }
         if (message.is_bot) {
+          var streamBubble = ensureBotBubble(message, continueBot);
           streamBotMessage(message, function () {
             scheduleMessage(scenario, index + 1);
-          });
+          }, streamBubble);
         } else {
           appendMessage(message, false);
           scheduleMessage(scenario, index + 1);
@@ -211,8 +207,8 @@
       }, Number(message.delay) || 1200));
     }
 
-    function streamBotMessage(message, onComplete) {
-      var bubble = appendMessage({ id: message.id, text: "", is_bot: true }, false);
+    function streamBotMessage(message, onComplete, targetBubble) {
+      var bubble = targetBubble || appendMessage({ id: message.id, text: "", is_bot: true }, false);
       if (!bubble) {
         if (typeof onComplete === "function") {
           onComplete();
@@ -220,6 +216,9 @@
         return;
       }
 
+      var textEl = getBotTextEl(bubble) || bubble;
+      var existingText = textEl.textContent || "";
+      var joiner = existingText ? "\n" : "";
       var fullText = message.text || "";
       var perCharMs = 50;
       var minDuration = 700;
@@ -230,7 +229,7 @@
 
       activeInterval = window.setInterval(function () {
         pos += 1;
-        bubble.textContent = fullText.slice(0, pos);
+        textEl.textContent = existingText + joiner + fullText.slice(0, pos);
         scrollMessages();
         if (pos >= fullText.length) {
           if (activeInterval) {
@@ -245,7 +244,7 @@
     }
 
     function appendMessage(message, includeImages) {
-      if (!messagesContainer) {
+      if (!messagesInner) {
         return null;
       }
       var wrapper = document.createElement("div");
@@ -256,42 +255,97 @@
       content.className = "flex-1 min-w-0 flex flex-col " + (message.is_bot ? "items-start" : "items-end");
 
       var header = document.createElement("div");
-      header.className = "flex items-baseline gap-2 mb-1 " + (message.is_bot ? "" : "flex-row-reverse");
+      header.className = "flex items-baseline gap-2 mb-0 " + (message.is_bot ? "" : "flex-row-reverse");
 
       var bubble = document.createElement("div");
       if (message.is_bot) {
-        bubble.className = "text-sm leading-relaxed text-foreground text-start max-w-none break-words whitespace-pre-wrap";
+        bubble.className = "relative text-sm leading-relaxed text-foreground text-start max-w-none break-words whitespace-pre-wrap";
+        bubble.style.maxWidth = "45ch";
+        var statusRow = document.createElement("div");
+        statusRow.className = "flex items-center gap-2 text-xs text-muted-foreground mb-1 opacity-0 pointer-events-none transition-opacity duration-200";
+        statusRow.setAttribute("data-bot-status", "true");
+        var statusDot = document.createElement("div");
+        statusDot.className = "flex items-center justify-center h-3.5 w-3.5 text-primary";
+        statusDot.innerHTML = '<svg class="animate-spin h-full w-full" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" aria-hidden="true"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>';
+        var statusText = document.createElement("span");
+        statusText.className = "animate-pulse";
+        statusText.setAttribute("data-bot-status-text", "true");
+        statusText.textContent = "Thinking...";
+        statusRow.appendChild(statusDot);
+        statusRow.appendChild(statusText);
+        var finalEl = document.createElement("div");
+        finalEl.className = "space-y-3";
+        finalEl.setAttribute("data-bot-final", "true");
+        var textSpan = document.createElement("div");
+        textSpan.className = "space-y-2 leading-relaxed";
+        textSpan.setAttribute("data-bot-text", "true");
+        textSpan.textContent = message.text || "";
+        bubble.appendChild(statusRow);
+        finalEl.appendChild(textSpan);
+        bubble.appendChild(finalEl);
+        activeBotBubble = bubble;
+        activeBotText = textSpan;
       } else {
         bubble.className = "text-sm leading-relaxed bg-muted text-foreground px-5 py-3 rounded-2xl rounded-tr-sm text-start inline-block shadow-sm whitespace-pre-wrap";
+        bubble.style.maxWidth = "36ch";
+        bubble.textContent = message.text || "";
+        activeBotBubble = null;
+        activeBotText = null;
       }
-      bubble.textContent = message.text || "";
 
       content.appendChild(header);
       content.appendChild(bubble);
       wrapper.appendChild(content);
-      messagesContainer.appendChild(wrapper);
+      messagesInner.appendChild(wrapper);
       scrollMessages();
 
       if (includeImages && message.images) {
-        var grid = document.createElement("div");
-        grid.className = "mt-2 grid grid-cols-3 gap-2";
-        message.images.forEach(function (src) {
-          var img = document.createElement("img");
-          img.src = src;
-          img.alt = "";
-          img.loading = "lazy";
-          img.decoding = "async";
-          img.draggable = false;
-          img.className = "w-24 h-16 object-cover rounded-md";
-          img.addEventListener("error", function () {
-            img.style.display = "none";
-          });
-          grid.appendChild(img);
-        });
-        bubble.appendChild(grid);
+        appendImages(bubble, message.images);
       }
 
       return bubble;
+    }
+
+    function appendImages(bubble, images) {
+      if (!bubble || !images || !images.length) {
+        return;
+      }
+      var target = bubble.querySelector("[data-bot-final]") || bubble;
+      var grid = document.createElement("div");
+      grid.className = "mt-2 grid grid-cols-3 gap-2";
+      var pendingImages = images.length;
+      var handleImageDone = function () {
+        pendingImages -= 1;
+        if (pendingImages <= 0) {
+          scrollMessages();
+        }
+      };
+      images.forEach(function (src) {
+        var img = document.createElement("img");
+        img.src = src;
+        img.alt = "";
+        img.loading = "lazy";
+        img.decoding = "async";
+        img.draggable = false;
+        img.className = "w-24 h-16 object-cover rounded-md";
+        img.addEventListener("load", handleImageDone);
+        img.addEventListener("error", function () {
+          img.style.display = "none";
+          handleImageDone();
+        });
+        grid.appendChild(img);
+      });
+      target.appendChild(grid);
+    }
+
+    function appendBotTextSegment(bubble, text) {
+      if (!bubble) {
+        return;
+      }
+      var textEl = getBotTextEl(bubble) || bubble;
+      var existingText = textEl.textContent || "";
+      var joiner = existingText ? "\n" : "";
+      textEl.textContent = existingText + joiner + (text || "");
     }
 
     function scrollMessages() {
@@ -313,12 +367,14 @@
     }
 
     function clearMessages() {
-      if (messagesContainer) {
-        messagesContainer.querySelectorAll("[data-chat-message]").forEach(function (node) {
+      if (messagesInner) {
+        messagesInner.querySelectorAll("[data-chat-message]").forEach(function (node) {
           node.remove();
         });
       }
       hideTyping();
+      activeBotBubble = null;
+      activeBotText = null;
       if (activeInterval) {
         window.clearInterval(activeInterval);
         activeInterval = null;
@@ -336,20 +392,62 @@
       }
     }
 
-    function showTyping() {
-      if (!typingElement || !messagesContainer) {
+    function getSpinnerText(message) {
+      if (!message) {
+        return "Thinking...";
+      }
+      return message.spinner_text || message.spinner || message.status || "Thinking...";
+    }
+
+    function getBotTextEl(bubble) {
+      if (!bubble) {
+        return null;
+      }
+      return bubble.querySelector("[data-bot-text]");
+    }
+
+    function isBotContinuation(scenario, index) {
+      if (!scenario || index <= 0) {
+        return false;
+      }
+      var previous = scenario.conversation[index - 1];
+      return Boolean(previous && previous.is_bot);
+    }
+
+    function ensureBotBubble(message, isContinuation) {
+      if (isContinuation && activeBotBubble) {
+        return activeBotBubble;
+      }
+      var bubble = appendMessage({ id: message.id, text: "", is_bot: true }, false);
+      activeBotBubble = bubble;
+      activeBotText = getBotTextEl(bubble);
+      return bubble;
+    }
+
+    function showTyping(label, targetBubble) {
+      var bubble = targetBubble || activeBotBubble;
+      if (!bubble) {
         return;
       }
-      typingElement.classList.remove("hidden");
-      messagesContainer.appendChild(typingElement);
+      var statusRow = bubble.querySelector("[data-bot-status]");
+      var statusText = bubble.querySelector("[data-bot-status-text]");
+      if (statusText) {
+        statusText.textContent = label || "Thinking...";
+      }
+      if (statusRow) {
+        statusRow.classList.remove("opacity-0");
+      }
       scrollMessages();
     }
 
     function hideTyping() {
-      if (!typingElement) {
+      if (!activeBotBubble) {
         return;
       }
-      typingElement.classList.add("hidden");
+      var statusRow = activeBotBubble.querySelector("[data-bot-status]");
+      if (statusRow) {
+        statusRow.classList.add("opacity-0");
+      }
     }
   });
 </script>
