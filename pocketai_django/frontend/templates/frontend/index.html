@@ -25,12 +25,12 @@
           </p>
 
           <div class="flex flex-col sm:flex-row gap-4 justify-center lg:justify-start">
-            <a
-              href="{{ page.hero.primary_cta.href }}"
-              class="inline-flex items-center justify-center rounded-lg bg-gradient-primary px-6 py-3 text-base font-semibold text-white shadow-lg transition-all duration-200 hover:opacity-90 hover:scale-105 group"
-            >
+            <a href="{{ page.hero.primary_cta.href }}"
+              class="inline-flex items-center justify-center rounded-lg bg-gradient-primary px-6 py-3 text-base font-semibold text-white shadow-lg transition-all duration-200 hover:opacity-90 hover:scale-105 group">
               {{ page.hero.primary_cta.label }}
-              <svg class="ms-2 h-4 w-4 transition-transform group-hover:translate-x-1" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <svg class="ms-2 h-4 w-4 transition-transform group-hover:translate-x-1" viewBox="0 0 24 24" fill="none"
+                stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"
+                aria-hidden="true">
                 <path d="M5 12h14"></path>
                 <path d="m12 5 7 7-7 7"></path>
               </svg>
@@ -40,12 +40,13 @@
           <div class="mt-6 text-center lg:text-start">
             <div class="flex gap-4 justify-center lg:justify-start">
               {% for store in page.hero.store_links %}
-                <a href="{{ store.href }}" class="inline-flex items-center gap-3 rounded-xl bg-card/90 px-5 py-3 shadow-sm hover:bg-accent/40 transition-colors">
-                  <span aria-hidden="true" class="text-foreground">{{ store.icon|safe }}</span>
-                  <div class="leading-tight text-left">
-                    <div class="text-[15px] font-semibold text-foreground">{{ store.label_bottom }}</div>
-                  </div>
-                </a>
+              <a href="{{ store.href }}"
+                class="inline-flex items-center gap-3 rounded-xl bg-card/90 px-5 py-3 shadow-sm hover:bg-accent/40 transition-colors">
+                <span aria-hidden="true" class="text-foreground">{{ store.icon|safe }}</span>
+                <div class="leading-tight text-left">
+                  <div class="text-[15px] font-semibold text-foreground">{{ store.label_bottom }}</div>
+                </div>
+              </a>
               {% endfor %}
             </div>
           </div>
@@ -72,21 +73,26 @@
                 </div>
                 <div>
                   <div class="flex items-center gap-2">
-                    <div class="font-semibold text-foreground text-sm leading-none" data-chat-agent-name>{{ page.hero.demo.scenarios.0.agent_name }}</div>
+                    <div class="font-semibold text-foreground text-sm leading-none" data-chat-agent-name>{{
+                      page.hero.demo.scenarios.0.agent_name }}</div>
                     <div class="flex items-center gap-1.5">
                       <span class="relative flex h-1.5 w-1.5">
-                        <span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-500 opacity-75"></span>
+                        <span
+                          class="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-500 opacity-75"></span>
                         <span class="relative inline-flex rounded-full h-1.5 w-1.5 bg-emerald-500"></span>
                       </span>
                       <span class="text-[10px] font-medium text-emerald-500">{{ page.hero.demo.online_label }}</span>
                     </div>
                   </div>
-                  <div class="text-xs text-muted-foreground" data-chat-agent-role>{{ page.hero.demo.scenarios.0.job_title }}</div>
+                  <div class="text-xs text-muted-foreground" data-chat-agent-role>{{
+                    page.hero.demo.scenarios.0.job_title }}</div>
                 </div>
               </div>
 
-              <div class="relative h-80 overflow-y-auto bg-background custom-scrollbar overscroll-contain px-4 pt-4 pb-6" data-chat-messages>
-                <div class="space-y-6" data-chat-inner-container></div>
+              <div
+                class="relative h-80 overflow-y-auto bg-background custom-scrollbar overscroll-contain px-4 pt-4 pb-6"
+                data-chat-messages>
+                <div class="space-y-3" data-chat-inner-container></div>
               </div>
             </div>
           </div>
@@ -248,7 +254,7 @@
         return null;
       }
       var wrapper = document.createElement("div");
-      wrapper.className = "flex gap-4 items-start py-2 message-row animate-fade-in " + (message.is_bot ? "" : "flex-row-reverse");
+      wrapper.className = "flex gap-2 items-start py-1 message-row animate-fade-in " + (message.is_bot ? "" : "flex-row-reverse");
       wrapper.setAttribute("data-chat-message", "true");
 
       var content = document.createElement("div");
@@ -259,10 +265,10 @@
 
       var bubble = document.createElement("div");
       if (message.is_bot) {
-        bubble.className = "relative text-sm leading-relaxed text-foreground text-start max-w-none break-words whitespace-pre-wrap";
+        bubble.className = "relative text-sm leading-relaxed text-foreground text-start max-w-none break-words whitespace-pre-wrap min-h-[20px]";
         bubble.style.maxWidth = "45ch";
         var statusRow = document.createElement("div");
-        statusRow.className = "flex items-center gap-2 text-xs text-muted-foreground mb-1 opacity-0 pointer-events-none transition-opacity duration-200";
+        statusRow.className = "flex items-center gap-2 text-xs text-muted-foreground mb-1 hidden";
         statusRow.setAttribute("data-bot-status", "true");
         var statusDot = document.createElement("div");
         statusDot.className = "flex items-center justify-center h-3.5 w-3.5 text-primary";
@@ -435,7 +441,7 @@
         statusText.textContent = label || "Thinking...";
       }
       if (statusRow) {
-        statusRow.classList.remove("opacity-0");
+        statusRow.classList.remove("hidden");
       }
       scrollMessages();
     }
@@ -446,7 +452,7 @@
       }
       var statusRow = activeBotBubble.querySelector("[data-bot-status]");
       if (statusRow) {
-        statusRow.classList.add("opacity-0");
+        statusRow.classList.add("hidden");
       }
     }
   });
