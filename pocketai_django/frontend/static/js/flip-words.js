@@ -8,28 +8,20 @@ document.addEventListener("DOMContentLoaded", () => {
     // Create a wrapper
     const wrapper = document.createElement("div");
     wrapper.className = "flip-words-wrapper";
-    // Insert wrapper before target and put target inside, or just replace content?
-    // Let's replace the content of targetElement directly but styled properly
     targetElement.innerHTML = "";
     targetElement.appendChild(wrapper);
 
     // Function to wrap letters
     const createWordSpan = (text) => {
         const wordSpan = document.createElement("span");
-        wordSpan.className = "flip-word text-primary"; // Fallback to solid color
-
-        // Split by space to handle multi-word phrases as single "flip word" logical unit if needed,
-        // but the reference splits by word then letter.
-        // "Customer Service" is one item in the array `words`.
-        // The reference splits the current phrase into sub-words (space delimited)
-        // and then splits those into letters.
+        wordSpan.className = "flip-word text-primary";
 
         const subWords = text.split(" ");
         subWords.forEach((subWord, swIdx) => {
             const subWordSpan = document.createElement("span");
-            subWordSpan.className = "inline-block whitespace-nowrap"; // Keep sub-words together
+            subWordSpan.className = "inline-block whitespace-nowrap";
 
-            subWord.split("").forEach((char, charIdx) => {
+            subWord.split("").forEach((char) => {
                 const letterSpan = document.createElement("span");
                 letterSpan.textContent = char;
                 letterSpan.className = "flip-letter";
@@ -38,7 +30,7 @@ document.addEventListener("DOMContentLoaded", () => {
 
             wordSpan.appendChild(subWordSpan);
 
-            // Add space if not last subword
+            // Add space between subwords
             if (swIdx < subWords.length - 1) {
                 const space = document.createElement("span");
                 space.innerHTML = "&nbsp;";
@@ -53,40 +45,40 @@ document.addEventListener("DOMContentLoaded", () => {
     const animateIn = (wordSpan) => {
         const letters = wordSpan.querySelectorAll(".flip-letter");
         letters.forEach((letter, i) => {
-            letter.style.animationDelay = `${i * 0.05}s`;
+            letter.style.animationDelay = `${i * 0.04}s`;
             letter.classList.add("active");
         });
     };
 
-    const animateOut = (wordSpan, callback) => {
+    const animateOut = (wordSpan) => {
+        // CRITICAL: Clear all animation delays so letters exit simultaneously
         const letters = wordSpan.querySelectorAll(".flip-letter");
-        // We are animating the whole container out now via CSS on the .exiting class
-        // by targeting .exiting .flip-letter
+        letters.forEach((letter) => {
+            letter.style.animationDelay = '0s';
+        });
 
-        // Clean up hardcoded styles - relying on CSS Grid stacking
-        // wordSpan.style.position = "absolute"; // Removed
-
+        // Remove after exit animation completes (0.2s animation + small buffer)
         setTimeout(() => {
-            if (callback) callback();
-        }, 600); // Wait for animation to finish (approx 0.4s + delays)
+            if (wordSpan.parentNode) {
+                wordSpan.remove();
+            }
+        }, 250);
     };
 
     const cycleWords = () => {
         const currentWord = words[currentWordIndex];
         const newWordSpan = createWordSpan(currentWord);
 
-        // Position absolute for exit requires the wrapper to be relative.
-        // When a new word comes in, the old one (if exists) needs to exit.
+        // Find and animate out ALL existing words (not just non-exiting ones)
+        const existingWords = wrapper.querySelectorAll(".flip-word");
+        existingWords.forEach(oldWordSpan => {
+            if (!oldWordSpan.classList.contains("exiting")) {
+                oldWordSpan.classList.add("exiting");
+                animateOut(oldWordSpan);
+            }
+        });
 
-        const oldWordSpan = wrapper.querySelector(".flip-word:not(.exiting)");
-
-        if (oldWordSpan) {
-            oldWordSpan.classList.add("exiting"); // Marker class
-            animateOut(oldWordSpan, () => {
-                oldWordSpan.remove();
-            });
-        }
-
+        // Add and animate in the new word
         wrapper.appendChild(newWordSpan);
         animateIn(newWordSpan);
 
@@ -96,6 +88,6 @@ document.addEventListener("DOMContentLoaded", () => {
     // Initial start
     cycleWords();
 
-    // Loop
+    // Loop every 3 seconds
     setInterval(cycleWords, 3000);
 });
