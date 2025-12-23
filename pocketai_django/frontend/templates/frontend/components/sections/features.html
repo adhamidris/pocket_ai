@@ -153,6 +153,7 @@
 
     var steps = Array.prototype.slice.call(root.querySelectorAll("[data-feature-step]"));
     var activeKey = root.getAttribute("data-feature-active") || (steps[0] && steps[0].dataset.featureStep);
+    var anchorKey = activeKey;
     var mql = window.matchMedia("(min-width: 1024px)");
 
     function preloadTemplateImages() {
@@ -249,6 +250,7 @@
         step.classList.toggle("opacity-100", isActive);
         step.classList.toggle("opacity-40", !isActive);
       });
+      anchorKey = activeKey;
     }
 
     setInitialFromHash();
@@ -256,6 +258,8 @@
 
     var resizeObserver = null;
     var ticking = false;
+    var pinExtraOffset = 0;
+    var mediaOffset = null;
     var metrics = {
       anchorMode: "",
       anchorY: 0,
@@ -277,6 +281,7 @@
         var parsed = attr ? parseFloat(attr) : 0;
         extraOffset = Number.isFinite(parsed) ? parsed : 0;
       }
+      pinExtraOffset = extraOffset;
       return headerHeight + 16 + extraOffset;
     }
 
@@ -295,12 +300,60 @@
       return step.querySelector("[data-feature-align]") || step;
     }
 
+    function applyMediaOffset(offset) {
+      if (!Number.isFinite(offset)) {
+        return;
+      }
+      var rounded = Math.round(offset);
+      if (mediaOffset === rounded) {
+        return;
+      }
+      mediaOffset = rounded;
+      root.style.setProperty("--feature-media-offset", String(rounded) + "px");
+    }
+
+    function computeMediaOffset(stickyRect, alignRect) {
+      if (!mediaFrame || !stickyRect || !alignRect) {
+        return null;
+      }
+
+      var frameRect = mediaFrame.getBoundingClientRect();
+      var maxOffset = stickyRect.height - frameRect.height;
+      maxOffset = Math.max(0, maxOffset);
+
+      var minOffset = Math.min(0, -pinExtraOffset);
+      var offset = clamp(alignRect.top - stickyRect.top, minOffset, maxOffset);
+
+      return { offset: offset, maxOffset: maxOffset, minOffset: minOffset };
+    }
+
+    function syncMediaOffset(stickyRect) {
+      if (!stickyRect || Number.isFinite(mediaOffset)) {
+        return null;
+      }
+
+      var step = getStepByKey(anchorKey);
+      var align = getAlignElement(step);
+      if (!align) {
+        return null;
+      }
+
+      var alignRect = align.getBoundingClientRect();
+      var computed = computeMediaOffset(stickyRect, alignRect);
+      if (!computed) {
+        return null;
+      }
+
+      applyMediaOffset(computed.offset);
+      return computed;
+    }
+
     function buildThresholds(anchorY, viewportHeight) {
       if (!isFinite(anchorY) || !isFinite(viewportHeight) || viewportHeight <= 0) {
         return [];
       }
 
-      var lead = clamp(Math.round(viewportHeight * 0.22), 80, 220);
+      var lead = clamp(Math.round(viewportHeight * 0.32), 120, 260);
 
       return steps
         .map(function (step) {
@@ -347,34 +400,27 @@
       var maxOffset = stickyColumnRect.height - frameRect.height;
       maxOffset = Math.max(0, maxOffset);
 
-      var targetY = pinTop + maxOffset / 2;
-      var bestStep = null;
-      var bestDistance = Infinity;
-
-      steps.forEach(function (step) {
+      var minOffset = Math.min(0, -pinExtraOffset);
+      var offset = mediaOffset;
+      if (!Number.isFinite(offset)) {
+        var step = getStepByKey(anchorKey);
         var align = getAlignElement(step);
         if (!align) {
-          return;
+          return false;
         }
-        var rect = align.getBoundingClientRect();
-        var distance = Math.abs(rect.top - targetY);
-        if (distance < bestDistance) {
-          bestDistance = distance;
-          bestStep = step;
-        }
-      });
 
-      var step = bestStep || getStepByKey(activeKey);
-      var align = getAlignElement(step);
-      if (!align) {
-        return false;
+        var alignRect = align.getBoundingClientRect();
+        var computed = computeMediaOffset(stickyColumnRect, alignRect);
+        if (!computed) {
+          return false;
+        }
+        offset = computed.offset;
+      } else {
+        offset = clamp(offset, minOffset, maxOffset);
       }
+      applyMediaOffset(offset);
 
-      var alignRect = align.getBoundingClientRect();
-      var offset = clamp(alignRect.top - pinTop, 0, maxOffset);
-      root.style.setProperty("--feature-media-offset", String(Math.round(offset)) + "px");
-
-      metrics.anchorY = pinTop + offset;
+      metrics.anchorY = Math.round(pinTop + offset);
       metrics.thresholds = buildThresholds(metrics.anchorY, stickyColumnRect.height);
       metrics.anchorMode = "media";
 
@@ -389,11 +435,16 @@
         var stickyColumn = mediaFrame.closest(".features-sticky");
         if (stickyColumn) {
           var stickyRect = stickyColumn.getBoundingClientRect();
+          syncMediaOffset(stickyRect);
+
           var engaged = stickyRect.top <= pinTop + 1 && stickyRect.bottom >= pinTop + 1;
-          if (engaged && metrics.anchorMode !== "media") {
-            metrics.thresholds = [];
-            spacerDirty = true;
-            lockMediaAnchor(pinTop, stickyRect);
+          if (engaged) {
+            var nextAnchorY = Number.isFinite(mediaOffset) ? Math.round(pinTop + mediaOffset) : null;
+            if (metrics.anchorMode !== "media" || (nextAnchorY != null && metrics.anchorY !== nextAnchorY)) {
+              metrics.thresholds = [];
+              spacerDirty = true;
+              lockMediaAnchor(pinTop, stickyRect);
+            }
           }
         }
       }
@@ -473,11 +524,22 @@
       metrics.thresholds = [];
       spacerDirty = true;
       endSpacerHeight = null;
+      mediaOffset = null;
+      requestTick();
+    }
+
+    function handleContentResize() {
+      metrics.anchorMode = "";
+      metrics.anchorY = 0;
+      metrics.thresholds = [];
+      spacerDirty = true;
+      endSpacerHeight = null;
       requestTick();
     }
 
     window.addEventListener("scroll", requestTick, { passive: true });
     window.addEventListener("resize", handleResize);
+    window.addEventListener("load", handleResize);
 
     if (mql.addEventListener) {
       mql.addEventListener("change", handleResize);
@@ -486,7 +548,7 @@
     }
 
     if (typeof ResizeObserver !== "undefined") {
-      resizeObserver = new ResizeObserver(handleResize);
+      resizeObserver = new ResizeObserver(handleContentResize);
       resizeObserver.observe(root);
     }
 
