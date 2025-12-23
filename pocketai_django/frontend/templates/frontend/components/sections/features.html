@@ -1,28 +1,33 @@
 {% load lucide %}
 <section id="features" class="pt-16 md:pt-20 pb-10 md:pb-28 bg-background relative">
   <div class="pointer-events-none absolute inset-0 -z-10 overflow-hidden" aria-hidden="true">
-    <svg class="absolute -top-6 left-1/2 -translate-x-1/2 w-[1200px] h-20 opacity-20" viewBox="0 0 1200 80" preserveAspectRatio="none">
+    <svg class="absolute -top-6 left-1/2 -translate-x-1/2 w-[1200px] h-20 opacity-20" viewBox="0 0 1200 80"
+      preserveAspectRatio="none">
       <defs>
         <linearGradient id="feat-grad-1" x1="0%" y1="0%" x2="100%" y2="0%">
           <stop offset="0%" stop-color="hsl(240 100% 70%)"></stop>
           <stop offset="100%" stop-color="hsl(250 100% 75%)"></stop>
         </linearGradient>
       </defs>
-      <path d="M0,40 C200,10 400,60 600,30 800,55 1000,25 1200,40" fill="none" stroke="url(#feat-grad-1)" stroke-width="2" stroke-linecap="round" stroke-dasharray="6 10">
+      <path d="M0,40 C200,10 400,60 600,30 800,55 1000,25 1200,40" fill="none" stroke="url(#feat-grad-1)"
+        stroke-width="2" stroke-linecap="round" stroke-dasharray="6 10">
         <animate attributeName="stroke-dashoffset" from="0" to="-300" dur="10s" repeatCount="indefinite"></animate>
       </path>
-      <path d="M0,60 C250,30 450,70 700,40 900,65 1050,35 1200,55" fill="none" stroke="url(#feat-grad-1)" stroke-width="1.5" stroke-linecap="round" stroke-dasharray="4 12">
+      <path d="M0,60 C250,30 450,70 700,40 900,65 1050,35 1200,55" fill="none" stroke="url(#feat-grad-1)"
+        stroke-width="1.5" stroke-linecap="round" stroke-dasharray="4 12">
         <animate attributeName="stroke-dashoffset" from="0" to="-400" dur="16s" repeatCount="indefinite"></animate>
       </path>
     </svg>
-    <svg class="absolute -bottom-6 left-1/2 -translate-x-1/2 w-[1200px] h-20 opacity-15" viewBox="0 0 1200 80" preserveAspectRatio="none">
+    <svg class="absolute -bottom-6 left-1/2 -translate-x-1/2 w-[1200px] h-20 opacity-15" viewBox="0 0 1200 80"
+      preserveAspectRatio="none">
       <defs>
         <linearGradient id="feat-grad-2" x1="0%" y1="0%" x2="100%" y2="0%">
           <stop offset="0%" stop-color="hsl(250 100% 75%)"></stop>
           <stop offset="100%" stop-color="hsl(240 100% 70%)"></stop>
         </linearGradient>
       </defs>
-      <path d="M0,20 C220,50 440,10 660,35 880,15 1040,45 1200,25" fill="none" stroke="url(#feat-grad-2)" stroke-width="2" stroke-linecap="round" stroke-dasharray="5 10">
+      <path d="M0,20 C220,50 440,10 660,35 880,15 1040,45 1200,25" fill="none" stroke="url(#feat-grad-2)"
+        stroke-width="2" stroke-linecap="round" stroke-dasharray="5 10">
         <animate attributeName="stroke-dashoffset" from="0" to="-320" dur="12s" repeatCount="indefinite"></animate>
       </path>
     </svg>
@@ -48,72 +53,71 @@
       </p>
     </div>
 
-    <div class="mt-8" data-feature-scroll-root data-feature-active="{{ section.tabs.0.key }}" data-feature-pin-offset="64">
+    <div class="mt-8" data-feature-scroll-root data-feature-active="{{ section.tabs.0.key }}"
+      data-feature-pin-offset="64">
       <div class="grid lg:grid-cols-2 gap-12 items-start">
         <div class="space-y-8">
-        {% for tab in section.tabs %}
-            <article
-              id="feature-{{ tab.key }}"
-              data-feature-step="{{ tab.key }}"
-              class="feature-step scroll-mt-28 md:scroll-mt-32 min-h-[60vh] flex flex-col justify-center transition-opacity duration-500 {% if forloop.first %}opacity-100{% else %}opacity-40{% endif %}"
-              aria-current="{% if forloop.first %}true{% else %}false{% endif %}"
-            >
-              <div class="lg:hidden mb-8">
-                <div class="relative h-80 rounded-3xl overflow-hidden border border-border/60 bg-card shadow-premium">
-                  {% include "frontend/components/sections/partials/feature_media.html" with tab=tab integrations=section.integrations %}
-                </div>
+          {% for tab in section.tabs %}
+          <article id="feature-{{ tab.key }}" data-feature-step="{{ tab.key }}"
+            class="feature-step scroll-mt-28 md:scroll-mt-32 min-h-[60vh] flex flex-col justify-center transition-opacity duration-500 {% if forloop.first %}opacity-100{% else %}opacity-40{% endif %}"
+            aria-current="{% if forloop.first %}true{% else %}false{% endif %}">
+            <div class="lg:hidden mb-8">
+              <div class="relative h-80 rounded-3xl overflow-hidden border border-border/60 bg-card shadow-premium">
+                {% include "frontend/components/sections/partials/feature_media.html" with tab=tab integrations=section.integrations %}
               </div>
+            </div>
 
-              <div class="feature-step-body">
-                <div class="inline-flex items-center gap-2 text-xs md:text-sm uppercase tracking-wider text-muted-foreground mb-3">
-                  {% lucide tab.icon "w-4 h-4" %}
-                  <span>{{ tab.title }}</span>
-                </div>
-                <h3 class="text-3xl lg:text-4xl font-semibold text-foreground mb-4" data-feature-align>
-                  {{ tab.label }}
-                </h3>
-                <p class="text-muted-foreground text-lg lg:text-xl leading-relaxed mb-8 max-w-lg">
-                  {{ tab.promo }}
-                </p>
-
-                {% if tab.key == "integrations" %}
-                  <div class="grid grid-cols-2 sm:grid-cols-3 gap-4 max-w-lg">
-                    {% for integration in section.integrations %}
-                      <div class="flex items-center justify-center h-14 rounded-xl bg-background/40 border border-border/40">
-                        <img
-                          src="https://cdn.simpleicons.org/{{ integration.slug }}/9CA3AF"
-                          alt="{{ integration.name }} logo"
-                          class="h-8 w-auto opacity-90"
-                          loading="lazy"
-                          decoding="async"
-                        >
-                      </div>
-                    {% endfor %}
-                  </div>
-                {% elif tab.bullets %}
-                  <div class="grid sm:grid-cols-2 gap-5 max-w-lg">
-                    {% for bullet in tab.bullets %}
-                      <div class="flex items-start gap-3 bg-background/40 border border-border/40 rounded-xl p-5 transition-all duration-300 {% if forloop.counter0|divisibleby:2 %}hover:translate-x-[2px]{% else %}hover:-translate-x-[2px]{% endif %}">
-                        <div class="w-9 h-9 rounded-lg bg-primary/10 flex items-center justify-center">
-                          {% lucide bullet.icon "w-5 h-5 text-primary" %}
-                        </div>
-                        <div class="text-foreground font-medium leading-relaxed">
-                          {{ bullet.label }}
-                        </div>
-                      </div>
-                    {% endfor %}
-                  </div>
-                {% endif %}
+            <div class="feature-step-body">
+              <div
+                class="inline-flex items-center gap-2 text-xs md:text-sm uppercase tracking-wider text-muted-foreground mb-3">
+                {% lucide tab.icon "w-4 h-4" %}
+                <span>{{ tab.title }}</span>
               </div>
-            </article>
+              <h3 class="text-3xl lg:text-4xl font-semibold text-foreground mb-4" data-feature-align>
+                {{ tab.label }}
+              </h3>
+              <p class="text-muted-foreground text-lg lg:text-xl leading-relaxed mb-8 max-w-lg">
+                {{ tab.promo }}
+              </p>
+
+              {% if tab.key == "integrations" %}
+              <div class="grid grid-cols-2 sm:grid-cols-3 gap-4 max-w-lg">
+                {% for integration in section.integrations %}
+                <div class="flex items-center justify-center h-14 rounded-xl bg-background/40 border border-border/40">
+                  <img src="https://cdn.simpleicons.org/{{ integration.slug }}/9CA3AF" alt="{{ integration.name }} logo"
+                    class="h-8 w-auto opacity-90" loading="lazy" decoding="async">
+                </div>
+                {% endfor %}
+              </div>
+              {% elif tab.bullets %}
+              <div class="grid sm:grid-cols-2 gap-5 max-w-lg">
+                {% for bullet in tab.bullets %}
+                <div
+                  class="flex items-start gap-3 bg-background/40 border border-border/40 rounded-xl p-5 transition-all duration-300 {% if forloop.counter0|divisibleby:2 %}hover:translate-x-[2px]{% else %}hover:-translate-x-[2px]{% endif %}">
+                  <div class="w-9 h-9 rounded-lg bg-primary/10 flex items-center justify-center">
+                    {% lucide bullet.icon "w-5 h-5 text-primary" %}
+                  </div>
+                  <div class="text-foreground font-medium leading-relaxed">
+                    {{ bullet.label }}
+                  </div>
+                </div>
+                {% endfor %}
+              </div>
+              {% endif %}
+            </div>
+          </article>
           {% endfor %}
           <div class="hidden lg:block" data-feature-end-spacer aria-hidden="true"></div>
 
         </div>
 
         <div class="hidden lg:flex features-sticky items-start justify-end">
-          <div class="features-sticky-frame relative h-[420px] w-full max-w-lg rounded-3xl overflow-hidden border border-border/60 bg-card shadow-premium" data-feature-media-frame>
-            <div class="pointer-events-none absolute -top-24 -right-24 w-[420px] h-[420px] rounded-full bg-gradient-hero opacity-10 blur-3xl" aria-hidden="true"></div>
+          <div
+            class="features-sticky-frame relative h-[420px] w-full max-w-lg rounded-3xl overflow-hidden border border-border/60 bg-card shadow-premium"
+            data-feature-media-frame>
+            <div
+              class="pointer-events-none absolute -top-24 -right-24 w-[420px] h-[420px] rounded-full bg-gradient-hero opacity-10 blur-3xl"
+              aria-hidden="true"></div>
             <div class="absolute inset-0" data-feature-media>
               {% include "frontend/components/sections/partials/feature_media.html" with tab=section.tabs.0 integrations=section.integrations %}
             </div>
@@ -122,9 +126,9 @@
       </div>
 
       {% for tab in section.tabs %}
-        <template data-feature-media-template="{{ tab.key }}">
-          {% include "frontend/components/sections/partials/feature_media.html" with tab=tab integrations=section.integrations %}
-        </template>
+      <script type="text/x-template" data-feature-media-template="{{ tab.key }}">
+        {% include "frontend/components/sections/partials/feature_media.html" with tab=tab integrations=section.integrations %}
+      </script>
       {% endfor %}
     </div>
   </div>
@@ -149,7 +153,7 @@
       }
     }
 
-    root.querySelectorAll("template[data-feature-media-template]").forEach(function (template) {
+    root.querySelectorAll("script[data-feature-media-template]").forEach(function (template) {
       templates[template.dataset.featureMediaTemplate] = template;
     });
 
@@ -166,11 +170,13 @@
       var seen = {};
       Object.keys(templates).forEach(function (key) {
         var template = templates[key];
-        if (!template || !template.content) {
+        if (!template || !template.innerHTML) {
           return;
         }
 
-        template.content.querySelectorAll("img[src]").forEach(function (img) {
+        var tempDiv = document.createElement('div');
+        tempDiv.innerHTML = template.innerHTML;
+        tempDiv.querySelectorAll("img[src]").forEach(function (img) {
           var src = img.getAttribute("src");
           if (!src || seen[src]) {
             return;
@@ -189,12 +195,13 @@
         return null;
       }
 
-      var fragment = templates[key].content.cloneNode(true);
-      var rootNode = fragment.firstElementChild;
+      var tempDiv = document.createElement('div');
+      tempDiv.innerHTML = templates[key].innerHTML.trim();
+      var rootNode = tempDiv.firstElementChild;
       if (rootNode && rootNode.classList && rootNode.classList.contains("animate-panel-in")) {
         rootNode.classList.remove("animate-panel-in");
       }
-      return fragment;
+      return rootNode;
     }
 
     function replaceMedia(key) {
@@ -202,13 +209,13 @@
         return;
       }
 
-      var fragment = cloneMediaFragment(key);
-      if (!fragment) {
+      var element = cloneMediaFragment(key);
+      if (!element) {
         return;
       }
 
       media.innerHTML = "";
-      media.appendChild(fragment);
+      media.appendChild(element);
     }
 
     function setActive(key) {
@@ -542,6 +549,136 @@
     window.addEventListener("scroll", requestTick, { passive: true });
     window.addEventListener("resize", handleResize);
     window.addEventListener("load", handleResize);
+
+    // Scroll Jumper Implementation
+    var scrollJumpEnabled = true;
+    var isJumping = false;
+    var jumpCooldown = 800; // ms between jumps - reduced for more responsive feel
+    var lastJumpTime = 0;
+    var featuresSection = document.querySelector("#features");
+
+    function getCurrentFeatureIndex() {
+      if (steps.length === 0) {
+        return 0;
+      }
+
+      var scrollY = window.scrollY;
+      var viewportMiddle = scrollY + window.innerHeight / 3;
+      var closestIndex = 0;
+      var minDistance = Infinity;
+
+      steps.forEach(function (step, index) {
+        var rect = step.getBoundingClientRect();
+        var stepTop = rect.top + scrollY;
+        var distance = Math.abs(stepTop - viewportMiddle);
+
+        if (distance < minDistance) {
+          minDistance = distance;
+          closestIndex = index;
+        }
+      });
+
+      return closestIndex;
+    }
+
+    function smoothScrollTo(element) {
+      if (!element) return;
+
+      var header = document.querySelector("header");
+      var headerHeight = header ? header.getBoundingClientRect().height : 0;
+      var offset = headerHeight + 80; // Extra spacing for better visual centering
+      
+      var elementPosition = element.getBoundingClientRect().top + window.scrollY;
+      var targetPosition = elementPosition - offset;
+
+      // Use native smooth scroll with custom behavior
+      window.scrollTo({
+        top: targetPosition,
+        behavior: "smooth"
+      });
+    }
+
+    function jumpToNextFeature() {
+      var currentIndex = getCurrentFeatureIndex();
+      var totalFeatures = steps.length;
+
+      if (currentIndex >= totalFeatures - 1) {
+        // At last feature - disable jump mode
+        scrollJumpEnabled = false;
+        return;
+      }
+
+      isJumping = true;
+      lastJumpTime = Date.now();
+
+      var nextFeature = steps[currentIndex + 1];
+      if (nextFeature) {
+        smoothScrollTo(nextFeature);
+      }
+
+      setTimeout(function () {
+        isJumping = false;
+      }, jumpCooldown);
+    }
+
+    function isInFeaturesSection() {
+      if (!featuresSection) {
+        return false;
+      }
+      var rect = featuresSection.getBoundingClientRect();
+      var viewportHeight = window.innerHeight;
+
+      // Consider "in section" if section is visible in viewport
+      return rect.top < viewportHeight && rect.bottom > 0;
+    }
+
+    function monitorScrollPosition() {
+      if (!scrollJumpEnabled && featuresSection) {
+        var rect = featuresSection.getBoundingClientRect();
+        var currentIndex = getCurrentFeatureIndex();
+
+        // Re-enable jump mode if scrolling back up into features section
+        // and not at the last feature
+        if (rect.top < window.innerHeight / 2 && rect.bottom > window.innerHeight / 2) {
+          if (currentIndex < steps.length - 1) {
+            scrollJumpEnabled = true;
+          }
+        }
+      }
+    }
+
+    function handleFeatureScroll(event) {
+      // Skip if on mobile/small screens
+      if (!mql.matches) {
+        return;
+      }
+
+      if (!isInFeaturesSection() || !scrollJumpEnabled || isJumping) {
+        return;
+      }
+
+      var now = Date.now();
+      if (now - lastJumpTime < jumpCooldown) {
+        event.preventDefault();
+        return;
+      }
+
+      // Determine scroll direction from wheel event
+      var deltaY = event.deltaY;
+
+      // Only jump on scroll down
+      if (deltaY > 0) {
+        event.preventDefault();
+        jumpToNextFeature();
+      }
+      // Scrolling up - allow normal behavior (don't prevent)
+    }
+
+    // Add wheel event listener for scroll jumping
+    window.addEventListener("wheel", handleFeatureScroll, { passive: false });
+
+    // Monitor scroll position to re-enable jump mode
+    window.addEventListener("scroll", monitorScrollPosition, { passive: true });
 
     if (mql.addEventListener) {
       mql.addEventListener("change", handleResize);
