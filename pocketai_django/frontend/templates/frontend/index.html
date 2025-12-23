@@ -1,13 +1,17 @@
 {% extends "frontend/base.html" %}
 {% load ui_components %}
+{% load static %}
+
+{% block extra_head %}
+<link rel="stylesheet" href="{% static 'css/flip-words.css' %}">
+{% endblock %}
+
 
 {% block title %}{{ page.hero.title_prefix }} {{ page.hero.title_highlight }} | Pocket AI{% endblock %}
 
 {% block content %}
 <section class="relative min-h-[80vh] md:min-h-[85vh] flex items-center justify-center overflow-hidden bg-background">
-  <div class="absolute inset-0 opacity-20 pointer-events-none">
-    <div class="absolute top-20 left-10 w-72 h-72 bg-primary/20 rounded-full blur-3xl"></div>
-  </div>
+
 
   <div class="container mx-auto px-6 pt-24 pb-12 md:pt-28 md:pb-16 relative z-10">
     <div class="hero-layout grid lg:grid-cols-2 gap-12 items-center">
@@ -15,7 +19,8 @@
         <div class="hero-title text-center lg:text-start animate-fade-in">
           <h1 class="text-5xl lg:text-7xl font-bold text-foreground leading-tight">
             {{ page.hero.title_prefix }}
-            <span class="text-gradient-hero"> {{ page.hero.title_highlight }}</span>
+            <span class="flip-words-target"> {{ page.hero.title_highlight }}</span>
+
           </h1>
         </div>
 
@@ -469,4 +474,8 @@
 {% include "frontend/components/sections/pricing.html" with section=page.sections.pricing %}
 {% include "frontend/components/sections/faq.html" with section=page.sections.faq %}
 {% include "frontend/components/sections/mobile_app.html" with section=page.sections.mobile_app %}
+{% endblock %}
+
+{% block extra_js %}
+<script src="{% static 'js/flip-words.js' %}"></script>
 {% endblock %}
