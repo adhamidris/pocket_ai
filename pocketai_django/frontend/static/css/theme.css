@@ -208,6 +208,15 @@
     -webkit-backdrop-filter: none;
     backdrop-filter: none;
   }
+
+  .feature-step-body {
+    transition: filter 200ms ease;
+    will-change: filter;
+  }
+
+  .feature-step[aria-current="false"] .feature-step-body {
+    filter: blur(1.25px);
+  }
 }
 
 /* Theme toggle + view transition */
