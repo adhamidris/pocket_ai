@@ -53,7 +53,7 @@
         </h2>
         
         <!-- Sparkles Container - Matches Heading Width Exactly -->
-        <div class="relative w-full h-20 flex items-center justify-center">
+        <div class="relative w-[150%] -ml-[25%] h-20 flex items-center justify-center">
           <!-- Sparkles Canvas -->
           <canvas id="features-sparkles-canvas" class="absolute inset-0 w-full h-full"></canvas>
           
@@ -818,7 +818,7 @@
 
     var ctx = canvas.getContext("2d");
     var particles = [];
-    var particleCount = 400; // Reduced from 1200 for a cleaner look
+    var particleCount = 800; // Increased to 800 to fill gaps after widening
     var animationFrameId = null;
 
     function setCanvasSize() {
