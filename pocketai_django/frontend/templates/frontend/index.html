@@ -7,8 +7,6 @@
 <section class="relative min-h-[80vh] md:min-h-[85vh] flex items-center justify-center overflow-hidden bg-background">
   <div class="absolute inset-0 opacity-20 pointer-events-none">
     <div class="absolute top-20 left-10 w-72 h-72 bg-primary/20 rounded-full blur-3xl"></div>
-    <div class="absolute bottom-20 right-12 w-96 h-96 bg-primary-light/15 rounded-full blur-3xl"></div>
-    <div class="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[600px] h-[600px] bg-gradient-hero opacity-10 rounded-full blur-3xl"></div>
   </div>
 
   <div class="container mx-auto px-6 pt-24 pb-12 md:pt-28 md:pb-16 relative z-10">
@@ -55,7 +53,7 @@
       </div>
 
       <div class="hero-simulator relative animate-slide-up" style="animation-delay: 0.3s;">
-        <div class="simulation-card bg-card rounded-2xl shadow-premium p-6">
+        <div class="simulation-card bg-background rounded-2xl shadow-premium p-6">
           <div class="flex items-center gap-2 mb-4 pb-4 border-b border-border">
             <div class="flex gap-2">
               <span class="w-3 h-3 rounded-full bg-red-400"></span>
@@ -67,65 +65,40 @@
             </div>
           </div>
           <div class="relative">
-            <div
-              class="bg-card rounded-xl shadow-premium overflow-hidden"
-              data-chat-root
-            >
-              <div class="flex items-center justify-between p-4 bg-secondary">
-                <div class="flex items-center gap-3">
-                  <div class="w-8 h-8 rounded-full flex items-center justify-center bg-primary/10">
-                    <svg class="h-4 w-4 text-primary" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                      <path d="M12 12c2.21 0 4-1.79 4-4s-1.79-4-4-4-4 1.79-4 4 1.79 4 4 4Z"></path>
-                      <path d="M20 20a8 8 0 0 0-16 0"></path>
-                      <path d="M16 16.5c1.29.94 2 2.23 2 3.5"></path>
-                    </svg>
-                  </div>
-                  <div>
-                    <div class="font-medium text-card-foreground" data-chat-agent-name>{{ page.hero.demo.scenarios.0.agent_name }}</div>
-                    <div class="text-[11px] text-muted-foreground" data-chat-agent-role>{{ page.hero.demo.scenarios.0.job_title }}</div>
-                    <div class="text-[11px] text-muted-foreground flex items-center gap-1 mt-0.5">
-                      <span class="w-2 h-2 bg-success-light rounded-full animate-pulse"></span>
-                      {{ page.hero.demo.online_label }}
+            <div class="relative bg-background rounded-xl border border-border/50 overflow-hidden" data-chat-root>
+              <div class="flex items-center gap-3 p-4 border-b border-border/50 bg-background/80 backdrop-blur-sm">
+                <div class="h-8 w-8 rounded-lg bg-primary flex items-center justify-center">
+                  <span class="text-white text-xs font-semibold" data-chat-agent-initials>AI</span>
+                </div>
+                <div>
+                  <div class="flex items-center gap-2">
+                    <div class="font-semibold text-foreground text-sm leading-none" data-chat-agent-name>{{ page.hero.demo.scenarios.0.agent_name }}</div>
+                    <div class="flex items-center gap-1.5">
+                      <span class="relative flex h-1.5 w-1.5">
+                        <span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-500 opacity-75"></span>
+                        <span class="relative inline-flex rounded-full h-1.5 w-1.5 bg-emerald-500"></span>
+                      </span>
+                      <span class="text-[10px] font-medium text-emerald-500">{{ page.hero.demo.online_label }}</span>
                     </div>
                   </div>
+                  <div class="text-xs text-muted-foreground" data-chat-agent-role>{{ page.hero.demo.scenarios.0.job_title }}</div>
                 </div>
               </div>
 
-              <div class="h-80 p-4 overflow-y-auto no-scrollbar overscroll-contain space-y-3 bg-card" data-chat-messages>
+              <div class="relative h-80 overflow-y-auto bg-background custom-scrollbar overscroll-contain px-4 pt-4 pb-6 space-y-6" data-chat-messages>
                 <div class="hidden" data-chat-typing>
-                  <div class="flex justify-start animate-fade-in">
-                    <div class="flex items-start gap-2">
-                      <div class="w-6 h-6 rounded-full bg-primary/20 flex items-center justify-center mt-1">
-                        <svg class="h-3 w-3 text-primary" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                          <path d="M12 12c2.21 0 4-1.79 4-4s-1.79-4-4-4-4 1.79-4 4 1.79 4 4 4Z"></path>
-                          <path d="M20 20a8 8 0 0 0-16 0"></path>
-                        </svg>
-                      </div>
-                      <div class="bg-card px-4 py-3 rounded-2xl rounded-bl-sm border border-border/50">
-                        <div class="flex gap-1">
-                          <div class="w-2 h-2 bg-neutral-400 rounded-full animate-bounce"></div>
-                          <div class="w-2 h-2 bg-neutral-400 rounded-full animate-bounce" style="animation-delay: 0.15s;"></div>
-                          <div class="w-2 h-2 bg-neutral-400 rounded-full animate-bounce" style="animation-delay: 0.3s;"></div>
+                  <div class="flex gap-4 items-start py-2 message-row animate-fade-in">
+                    <div class="flex-1 min-w-0 flex flex-col items-start">
+                      <div class="flex items-center gap-2 text-xs text-muted-foreground">
+                        <div class="flex items-center justify-center h-3.5 w-3.5 text-primary">
+                          <svg class="animate-spin h-full w-full" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" aria-hidden="true">
+                            <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                            <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                          </svg>
                         </div>
+                        <span class="animate-pulse">Thinking...</span>
                       </div>
                     </div>
-                  </div>
-                </div>
-              </div>
-
-              <div class="p-4 border-t border-border/50 bg-card/50">
-                <div class="flex gap-2 opacity-50">
-                  <input
-                    type="text"
-                    disabled
-                    placeholder="{{ page.hero.demo.input_placeholder }}"
-                    class="flex-1 px-3 py-2 bg-input border border-border rounded-lg text-sm text-muted-foreground"
-                  >
-                  <div class="w-10 h-9 bg-primary/20 rounded-lg flex items-center justify-center">
-                    <svg class="h-4 w-4 text-primary/60" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                      <path d="M12 12c2.21 0 4-1.79 4-4s-1.79-4-4-4-4 1.79-4 4 1.79 4 4 4Z"></path>
-                      <path d="M20 20a8 8 0 0 0-16 0"></path>
-                    </svg>
                   </div>
                 </div>
               </div>
@@ -161,6 +134,7 @@
 
     var headerName = chatRoot.querySelector("[data-chat-agent-name]");
     var headerRole = chatRoot.querySelector("[data-chat-agent-role]");
+    var headerInitials = chatRoot.querySelector("[data-chat-agent-initials]");
     var messagesContainer = chatRoot.querySelector("[data-chat-messages]");
     var typingElement = chatRoot.querySelector("[data-chat-typing]");
     var restartDelay = 2800;
@@ -169,6 +143,20 @@
     var currentScenarioIndex = Math.floor(Math.random() * scenarios.length);
 
     startScenario(currentScenarioIndex);
+
+    function getInitials(name) {
+      if (!name) {
+        return "AI";
+      }
+      var parts = name.trim().split(/\s+/).filter(Boolean);
+      if (parts.length === 0) {
+        return "AI";
+      }
+      var initials = parts.slice(0, 2).map(function (part) {
+        return part.charAt(0);
+      }).join("");
+      return initials.toUpperCase() || "AI";
+    }
 
     function startScenario(index) {
       clearTimers();
@@ -183,6 +171,9 @@
       }
       if (headerRole) {
         headerRole.textContent = scenario.job_title;
+      }
+      if (headerInitials) {
+        headerInitials.textContent = getInitials(scenario.agent_name);
       }
       var messageIndex = 0;
       scheduleMessage(scenario, messageIndex);
@@ -258,25 +249,26 @@
         return null;
       }
       var wrapper = document.createElement("div");
-      wrapper.className = "flex animate-fade-in " + (message.is_bot ? "justify-start" : "justify-end");
+      wrapper.className = "flex gap-4 items-start py-2 message-row animate-fade-in " + (message.is_bot ? "" : "flex-row-reverse");
       wrapper.setAttribute("data-chat-message", "true");
 
-      var inner = document.createElement("div");
-      inner.className = "flex items-start gap-2 max-w-[80%]" + (message.is_bot ? "" : " flex-row-reverse");
+      var content = document.createElement("div");
+      content.className = "flex-1 min-w-0 flex flex-col " + (message.is_bot ? "items-start" : "items-end");
 
-      var avatar = document.createElement("div");
-      avatar.className = "w-6 h-6 rounded-full flex items-center justify-center flex-shrink-0 mt-1 " + (message.is_bot ? "bg-primary/20" : "bg-neutral-300");
-      avatar.innerHTML = message.is_bot
-        ? '<svg class="h-3 w-3 text-primary" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 12c2.21 0 4-1.79 4-4s-1.79-4-4-4-4 1.79-4 4 1.79 4 4 4Z"></path><path d="M20 20a8 8 0 0 0-16 0"></path></svg>'
-        : '<svg class="h-3 w-3 text-neutral-600" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M16 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"></path><circle cx="12" cy="7" r="4"></circle></svg>';
+      var header = document.createElement("div");
+      header.className = "flex items-baseline gap-2 mb-1 " + (message.is_bot ? "" : "flex-row-reverse");
 
       var bubble = document.createElement("div");
-      bubble.className = "px-4 py-2 rounded-2xl text-sm shadow-sm whitespace-pre-wrap " + (message.is_bot ? "bg-card text-card-foreground border border-border/50" : "bg-gradient-primary text-white") + (message.is_bot ? " rounded-bl-sm" : " rounded-br-sm");
+      if (message.is_bot) {
+        bubble.className = "text-sm md:text-base leading-relaxed text-foreground text-start max-w-none break-words whitespace-pre-wrap";
+      } else {
+        bubble.className = "text-sm md:text-base leading-relaxed bg-muted text-foreground px-5 py-3 rounded-2xl rounded-tr-sm text-start inline-block shadow-sm whitespace-pre-wrap";
+      }
       bubble.textContent = message.text || "";
 
-      inner.appendChild(avatar);
-      inner.appendChild(bubble);
-      wrapper.appendChild(inner);
+      content.appendChild(header);
+      content.appendChild(bubble);
+      wrapper.appendChild(content);
       messagesContainer.appendChild(wrapper);
       scrollMessages();
 
