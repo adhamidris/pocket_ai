@@ -533,7 +533,7 @@ def landing(request: HttpRequest) -> HttpResponse:
     features = {
         "section_title_prefix": "Everything You Need for",
         "section_title_highlight": "Perfect Support",
-        "section_subtitle": "Our comprehensive platform combines cutting-edge AI with intuitive design to deliver exceptional customer service experiences.",
+        "section_subtitle": "",
         "tabs": [
             {
                 "key": "setup",

@@ -45,12 +45,21 @@
 
   <div class="container mx-auto px-6">
     <div class="text-center mb-14 md:mb-24 animate-fade-in">
-      <h2 class="text-4xl lg:text-5xl font-bold text-foreground mb-5">
-        {{ section.section_title_prefix }} <span class="text-gradient-hero">{{ section.section_title_highlight }}</span>
-      </h2>
-      <p class="text-xl text-muted-foreground max-w-3xl mx-auto">
-        {{ section.section_subtitle }}
-      </p>
+      <!-- Container that sizes to heading width -->
+      <div class="inline-block">
+        <!-- Heading Text -->
+        <h2 class="text-4xl lg:text-5xl font-bold text-foreground mb-0 whitespace-nowrap">
+          {{ section.section_title_prefix }} <span class="text-gradient-hero">{{ section.section_title_highlight }}</span>
+        </h2>
+        
+        <!-- Sparkles Container - Matches Heading Width Exactly -->
+        <div class="relative w-full h-20 flex items-center justify-center">
+          <!-- Sparkles Canvas -->
+          <canvas id="features-sparkles-canvas" class="absolute inset-0 w-full h-full"></canvas>
+          
+
+        </div>
+      </div>
     </div>
 
     <div class="mt-8" data-feature-scroll-root data-feature-active="{{ section.tabs.0.key }}"
@@ -800,5 +809,111 @@
 
     requestTick();
     window.setTimeout(handleResize, 250);
+  });
+
+  // Sparkles Particle Animation
+  document.addEventListener("DOMContentLoaded", function () {
+    var canvas = document.getElementById("features-sparkles-canvas");
+    if (!canvas) return;
+
+    var ctx = canvas.getContext("2d");
+    var particles = [];
+    var particleCount = 400; // Reduced from 1200 for a cleaner look
+    var animationFrameId = null;
+
+    function setCanvasSize() {
+      var container = canvas.parentElement;
+      if (!container) return;
+      
+      // Use container's actual size for canvas
+      var rect = container.getBoundingClientRect();
+      canvas.width = rect.width;
+      canvas.height = rect.height;
+    }
+
+    function Particle() {
+      this.x = Math.random() * canvas.width;
+      this.y = Math.random() * canvas.height;
+      this.size = Math.random() * 1.0 + 0.5; // 0.5 to 1.5 pixels - finer, less chunky
+      this.speedX = (Math.random() - 0.5) * 0.15; // Much slower horizontal movement
+      this.speedY = (Math.random() - 0.5) * 0.15; // Much slower vertical movement
+      this.opacity = Math.random() * 0.5 + 0.3; // 0.3 to 0.8 - slightly more subtle
+      this.opacityDirection = Math.random() > 0.5 ? 1 : -1;
+    }
+
+    Particle.prototype.update = function () {
+      this.x += this.speedX;
+      this.y += this.speedY;
+
+      // Wrap around edges
+      if (this.x > canvas.width) this.x = 0;
+      if (this.x < 0) this.x = canvas.width;
+      if (this.y > canvas.height) this.y = 0;
+      if (this.y < 0) this.y = canvas.height;
+
+      // Flicker effect - brighter range
+      this.opacity += this.opacityDirection * 0.01;
+      if (this.opacity >= 0.9) this.opacityDirection = -1;
+      if (this.opacity <= 0.5) this.opacityDirection = 1;
+    };
+
+    Particle.prototype.draw = function () {
+      // Apply mask effect (fade out at edges)
+      // Top-aligned half-ellipse: brighter at the top (near text), fading towards bottom
+      var dx = this.x - canvas.width / 2;
+      var dy = this.y; // Distance from top edge
+      
+      // Superellipse mask for rounded-rectangle shape
+      // X: Power of 4 creates a flat top with rounded corners ( squircle-like )
+      // Y: Power of 2 maintains a pleasant vertical fade
+      var xNorm = Math.abs(dx) / (canvas.width * 0.5);
+      var yNorm = dy / canvas.height;
+      
+      // Calculate "distance" in superellipse space
+      // dist < 1 is inside, dist > 1 is outside
+      // We start fading before 1 to give it a soft edge
+      var dist = Math.pow(xNorm, 4) + Math.pow(yNorm, 2);
+      
+      // Invert for alpha (1 at top-center)
+      var maskAlpha = Math.max(0, 1 - dist);
+
+      ctx.fillStyle = "rgba(255, 255, 255, " + (this.opacity * maskAlpha) + ")";
+      ctx.fillRect(this.x, this.y, this.size, this.size);
+    };
+
+    function init() {
+      setCanvasSize();
+      particles = [];
+      for (var i = 0; i < particleCount; i++) {
+        particles.push(new Particle());
+      }
+    }
+
+    function animate() {
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+      for (var i = 0; i < particles.length; i++) {
+        particles[i].update();
+        particles[i].draw();
+      }
+
+      animationFrameId = requestAnimationFrame(animate);
+    }
+
+    init();
+    animate();
+
+    // Handle resize
+    window.addEventListener("resize", function () {
+      setCanvasSize();
+      init();
+    });
+
+    // Cleanup on page unload
+    window.addEventListener("beforeunload", function () {
+      if (animationFrameId) {
+        cancelAnimationFrame(animationFrameId);
+      }
+    });
   });
 </script>
