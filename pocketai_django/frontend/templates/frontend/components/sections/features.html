@@ -550,6 +550,45 @@
     window.addEventListener("resize", handleResize);
     window.addEventListener("load", handleResize);
 
+    // Wait for images to load before calculating positions
+    var imagesToLoad = 0;
+    var imagesLoaded = 0;
+
+    function initializePositions() {
+      requestTick();
+      window.setTimeout(handleResize, 100);
+    }
+
+    function onImageLoad() {
+      imagesLoaded++;
+      if (imagesLoaded >= imagesToLoad) {
+        initializePositions();
+      }
+    }
+
+    // Check for images in initial media panel
+    if (media) {
+      var imgs = media.querySelectorAll('img');
+      imagesToLoad = imgs.length;
+      
+      if (imagesToLoad === 0) {
+        // No images to wait for
+        initializePositions();
+      } else {
+        imgs.forEach(function(img) {
+          if (img.complete) {
+            onImageLoad();
+          } else {
+            img.addEventListener('load', onImageLoad);
+            img.addEventListener('error', onImageLoad); // Count errors too to prevent hanging
+          }
+        });
+      }
+    } else {
+      // No media panel, initialize immediately
+      initializePositions();
+    }
+
     // Scroll Jumper Implementation
     var scrollJumpEnabled = true;
     var isJumping = false;
@@ -644,8 +683,11 @@
       if (wasAboveFeatures && !hasEnteredFirstFeature) {
         // Section is entering viewport from above
         if (rect.top < window.innerHeight && rect.top > -200) {
-          // Check if we're about to skip past the first feature
-          if (firstFeatureRect.top < window.innerHeight / 3) {
+          // Only trigger if we're REALLY about to skip past the first feature
+          // More aggressive threshold: only catch if first feature is already scrolling out of view
+          // This lets gentle scrolls naturally land on first feature without intervention
+          if (firstFeatureRect.top < 0 || firstFeatureRect.bottom < window.innerHeight / 2) {
+            // We've scrolled past the first feature - catch it!
             smoothScrollTo(steps[0]);
             hasEnteredFirstFeature = true;
             isJumping = true;
