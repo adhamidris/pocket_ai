@@ -48,7 +48,7 @@
       </p>
     </div>
 
-    <div class="mt-8" data-feature-scroll-root data-feature-active="{{ section.tabs.0.key }}">
+    <div class="mt-8" data-feature-scroll-root data-feature-active="{{ section.tabs.0.key }}" data-feature-pin-offset="64">
       <div class="grid lg:grid-cols-2 gap-12 items-start">
         <div class="space-y-8">
         {% for tab in section.tabs %}
@@ -64,11 +64,11 @@
                 </div>
               </div>
 
-              <div class="inline-flex items-center gap-2 text-xs md:text-sm uppercase tracking-wider text-muted-foreground mb-3" data-feature-align>
+              <div class="inline-flex items-center gap-2 text-xs md:text-sm uppercase tracking-wider text-muted-foreground mb-3">
                 {% lucide tab.icon "w-4 h-4" %}
                 <span>{{ tab.title }}</span>
               </div>
-              <h3 class="text-3xl lg:text-4xl font-semibold text-foreground mb-4">
+              <h3 class="text-3xl lg:text-4xl font-semibold text-foreground mb-4" data-feature-align>
                 {{ tab.label }}
               </h3>
               <p class="text-muted-foreground text-lg lg:text-xl leading-relaxed mb-8 max-w-lg">
@@ -271,7 +271,13 @@
     function getPinTopOffset() {
       var header = document.querySelector("header");
       var headerHeight = header ? header.getBoundingClientRect().height : 0;
-      return headerHeight + 16;
+      var extraOffset = 0;
+      if (root) {
+        var attr = root.getAttribute("data-feature-pin-offset");
+        var parsed = attr ? parseFloat(attr) : 0;
+        extraOffset = Number.isFinite(parsed) ? parsed : 0;
+      }
+      return headerHeight + 16 + extraOffset;
     }
 
     function getStepByKey(key) {
