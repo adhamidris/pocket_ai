@@ -55,7 +55,7 @@
 
       <div class="hero-simulator relative animate-slide-up" style="animation-delay: 0.3s;">
         <div class="simulation-card bg-background rounded-2xl shadow-premium p-6">
-          <div class="flex items-center gap-2 mb-4 pb-4 border-b border-border">
+          <div class="flex items-center gap-2 mb-4 pb-4">
             <div class="flex gap-2">
               <span class="w-3 h-3 rounded-full bg-red-400"></span>
               <span class="w-3 h-3 rounded-full bg-yellow-400"></span>
@@ -66,8 +66,8 @@
             </div>
           </div>
           <div class="relative">
-            <div class="relative bg-background rounded-xl border border-border/50 overflow-hidden" data-chat-root>
-              <div class="flex items-center gap-3 p-4 border-b border-border/50 bg-background/80 backdrop-blur-sm">
+            <div class="relative bg-background rounded-xl overflow-hidden" data-chat-root>
+              <div class="flex items-center gap-3 p-4 bg-background/80 backdrop-blur-sm">
                 <div class="h-8 w-8 rounded-lg bg-primary flex items-center justify-center">
                   <span class="text-white text-xs font-semibold" data-chat-agent-initials>AI</span>
                 </div>
@@ -89,9 +89,14 @@
                 </div>
               </div>
 
-              <div
-                class="relative h-80 overflow-y-auto bg-background custom-scrollbar overscroll-contain px-4 pt-4 pb-6"
-                data-chat-messages>
+              <style>
+                #sim-messages::-webkit-scrollbar {
+                  display: none !important;
+                }
+              </style>
+              <div id="sim-messages"
+                class="relative h-80 overflow-y-auto bg-background no-scrollbar overscroll-contain px-4 pt-4 pb-6"
+                style="scrollbar-width: none; -ms-overflow-style: none;" data-chat-messages>
                 <div class="space-y-3" data-chat-inner-container></div>
               </div>
             </div>
