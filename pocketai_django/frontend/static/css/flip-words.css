@@ -1,22 +1,38 @@
 /* flip-words.css */
 .flip-words-wrapper {
   position: relative;
-  display: inline-block;
+  display: inline-grid;
+  grid-template-columns: 1fr;
+  align-items: center;
   padding-left: 0.5rem;
   padding-right: 0.5rem;
 }
 
 .flip-word {
-  display: inline-block;
+  display: block;
+  grid-area: 1 / 1;
   white-space: nowrap;
+  width: max-content;
+  /* Ensure it takes necessary width */
+}
+
+@media (max-width: 640px) {
+  .flip-words-wrapper {
+    font-size: 0.7em;
+  }
+
+  .flip-word {
+    white-space: normal;
+    width: auto;
+  }
 }
 
 /* Letters need to be inline-block to transform */
 .flip-letter {
   display: inline-block;
-  opacity: 1;
-  filter: blur(0px);
-  transform: translateY(0);
+  opacity: 0;
+  filter: blur(8px);
+  transform: translateY(8px);
   will-change: transform, opacity, filter;
 }
 

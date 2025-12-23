@@ -61,34 +61,10 @@ document.addEventListener("DOMContentLoaded", () => {
     const animateOut = (wordSpan, callback) => {
         const letters = wordSpan.querySelectorAll(".flip-letter");
         // We are animating the whole container out now via CSS on the .exiting class
-        // But wait, the .exiting class is on the wordSpan, but the CSS targets .flip-letter.exiting?
-        // The JS adds .exiting to the wordSpan.
-        // So the CSS selector `.flip-letter.exiting` won't match anything unless we add exiting to letters too OR change CSS.
+        // by targeting .exiting .flip-letter
 
-        // Let's change the JS to add exiting to letters too for individual control or update CSS to handle wordSpan exit.
-        // simpler: animate the letters out staggered too?
-        // or just animate the container.
-
-        // The provided CSS has `.flip-letter.exiting`. This means we expect the letter to have the class.
-        // BUT my JS implementation: `oldWordSpan.classList.add("exiting");`
-        // So current CSS `.flip-letter.exiting` does NOTHING.
-
-        // Changing approach:
-        // Let's make the exit animation apply to the letters inside the exiting word wrapper.
-        // CSS Selector: `.exiting .flip-letter` -> this will target letters inside an exiting word.
-
-        // Update JS to just rely on the class addition for trigger.
-        // Note: The previous JS logic had hardcoded style transitions. I'm removing those to rely on CSS.
-
-        // wait, we need to ensure the letters actually animate out.
-        // Let's update the CSS in the next step to `.exiting .flip-letter`
-        // And here in JS we just add the class to the wrapper.
-
-        // Clean up hardcoded styles
-        wordSpan.style.position = "absolute";
-        wordSpan.style.top = "0";
-        wordSpan.style.left = "0";
-        // wordSpan.style.width = "100%"; // maybe? to prevent collapse?
+        // Clean up hardcoded styles - relying on CSS Grid stacking
+        // wordSpan.style.position = "absolute"; // Removed
 
         setTimeout(() => {
             if (callback) callback();
