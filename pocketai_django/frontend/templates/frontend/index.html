@@ -72,7 +72,7 @@
           </div>
           <div class="relative">
             <div class="relative bg-background rounded-xl overflow-hidden" data-chat-root>
-              <div class="flex items-center gap-3 p-4 bg-background/80 backdrop-blur-sm">
+              <div class="flex items-center gap-3 p-4 bg-background/80 backdrop-blur-sm" data-chat-header>
                 <div class="h-8 w-8 rounded-lg bg-primary flex items-center justify-center">
                   <span class="text-white text-xs font-semibold" data-chat-agent-initials>AI</span>
                 </div>
@@ -174,6 +174,7 @@
     var headerName = chatRoot.querySelector("[data-chat-agent-name]");
     var headerRole = chatRoot.querySelector("[data-chat-agent-role]");
     var headerInitials = chatRoot.querySelector("[data-chat-agent-initials]");
+    var chatHeader = chatRoot.querySelector("[data-chat-header]");
     var messagesContainer = chatRoot.querySelector("[data-chat-messages]");
     var messagesInner = chatRoot.querySelector("[data-chat-inner-container]") || messagesContainer;
     var activeBotBubble = null;
@@ -209,8 +210,11 @@
 
       // Apply morphing transition
       if (messagesInner && messagesInner.children.length > 0) {
-        // Fade out current messages
+        // Fade out current messages AND header
         messagesInner.classList.add('chat-transition-out');
+        if (chatHeader) {
+          chatHeader.classList.add('chat-transition-out');
+        }
 
         activeTimers.push(window.setTimeout(function () {
           // Clear messages after fade out
@@ -227,9 +231,13 @@
             headerInitials.textContent = getInitials(scenario.agent_name);
           }
 
-          // Immediately start fade in with new conversation
+          // Immediately start fade in with new conversation AND header
           messagesInner.classList.remove('chat-transition-out');
           messagesInner.classList.add('chat-transition-in');
+          if (chatHeader) {
+            chatHeader.classList.remove('chat-transition-out');
+            chatHeader.classList.add('chat-transition-in');
+          }
 
           // Start new messages
           var messageIndex = 0;
@@ -238,6 +246,9 @@
           // Remove transition class after animation completes
           activeTimers.push(window.setTimeout(function () {
             messagesInner.classList.remove('chat-transition-in');
+            if (chatHeader) {
+              chatHeader.classList.remove('chat-transition-in');
+            }
           }, 450));
         }, 350));
       } else {
