@@ -39,7 +39,7 @@
   </div>
 
   <div class="container mx-auto px-6">
-    <div class="text-center mb-10 md:mb-16 animate-fade-in">
+    <div class="text-center mb-14 md:mb-24 animate-fade-in">
       <h2 class="text-4xl lg:text-5xl font-bold text-foreground mb-5">
         {{ section.section_title_prefix }} <span class="text-gradient-hero">{{ section.section_title_highlight }}</span>
       </h2>
@@ -48,106 +48,443 @@
       </p>
     </div>
 
-    <div class="flex justify-center">
-      <div class="feature-beam-card mx-auto w-full max-w-4xl rounded-3xl border border-border/60 bg-card/70 px-6 py-8 shadow-premium md:px-10 md:py-12">
-        <div class="feature-beam-stage" role="img" aria-label="Animated beam showing one input branching to multiple outputs.">
-          <svg class="feature-beam-lines" viewBox="0 0 260 480" fill="none" aria-hidden="true">
-            <defs>
-              <linearGradient id="feature-beam-trace" x1="0%" y1="0%" x2="100%" y2="0%">
-                <stop offset="0%" stop-color="hsl(240 100% 70% / 0)"></stop>
-                <stop offset="50%" stop-color="hsl(240 100% 70% / 0.95)"></stop>
-                <stop offset="100%" stop-color="hsl(250 100% 75% / 0)"></stop>
-              </linearGradient>
-              <filter id="feature-beam-glow" x="-50%" y="-50%" width="200%" height="200%">
-                <feGaussianBlur stdDeviation="3" result="blur"></feGaussianBlur>
-                <feMerge>
-                  <feMergeNode in="blur"></feMergeNode>
-                  <feMergeNode in="SourceGraphic"></feMergeNode>
-                </feMerge>
-              </filter>
-              <filter id="feature-beam-glow-soft" x="-50%" y="-50%" width="200%" height="200%">
-                <feGaussianBlur stdDeviation="1.6" result="blur"></feGaussianBlur>
-                <feMerge>
-                  <feMergeNode in="blur"></feMergeNode>
-                  <feMergeNode in="SourceGraphic"></feMergeNode>
-                </feMerge>
-              </filter>
-            </defs>
+    <div class="mt-8" data-feature-scroll-root data-feature-active="{{ section.tabs.0.key }}">
+      <div class="grid lg:grid-cols-2 gap-12 items-start">
+        <div class="space-y-8">
+        {% for tab in section.tabs %}
+            <article
+              id="feature-{{ tab.key }}"
+              data-feature-step="{{ tab.key }}"
+              class="scroll-mt-28 md:scroll-mt-32 min-h-[60vh] flex flex-col justify-center transition-opacity duration-500 {% if forloop.first %}opacity-100{% else %}opacity-40{% endif %}"
+              aria-current="{% if forloop.first %}true{% else %}false{% endif %}"
+            >
+              <div class="lg:hidden mb-8">
+                <div class="relative h-80 rounded-3xl overflow-hidden border border-border/60 bg-card shadow-premium">
+                  {% include "frontend/components/sections/partials/feature_media.html" with tab=tab integrations=section.integrations %}
+                </div>
+              </div>
 
-            <path class="beam-base" d="M130 60 C 130 120 130 170 130 220"></path>
-            <path class="beam-base" d="M130 220 C 125 270 100 330 70 390"></path>
-            <path class="beam-base" d="M130 220 C 128 275 118 335 110 390"></path>
-            <path class="beam-base" d="M130 220 C 132 275 142 335 150 390"></path>
-            <path class="beam-base" d="M130 220 C 135 270 160 330 190 390"></path>
+              <div class="inline-flex items-center gap-2 text-xs md:text-sm uppercase tracking-wider text-muted-foreground mb-3" data-feature-align>
+                {% lucide tab.icon "w-4 h-4" %}
+                <span>{{ tab.title }}</span>
+              </div>
+              <h3 class="text-3xl lg:text-4xl font-semibold text-foreground mb-4">
+                {{ tab.label }}
+              </h3>
+              <p class="text-muted-foreground text-lg lg:text-xl leading-relaxed mb-8 max-w-lg">
+                {{ tab.promo }}
+              </p>
 
-            <path class="beam-path beam-path-trunk" d="M130 60 C 130 120 130 170 130 220">
-              <animate attributeName="stroke-dashoffset" dur="6s" repeatCount="indefinite" values="0;0;-540;-540" keyTimes="0;0.06;0.32;1" calcMode="linear"></animate>
-              <animate attributeName="opacity" dur="6s" repeatCount="indefinite" values="0;1;1;0;0" keyTimes="0;0.06;0.32;0.36;1" calcMode="linear"></animate>
-            </path>
-            <path class="beam-path beam-path-branch" d="M130 220 C 125 270 100 330 70 390">
-              <animate attributeName="stroke-dashoffset" dur="6s" repeatCount="indefinite" values="0;0;-540;-540" keyTimes="0;0.32;0.6;1" calcMode="linear"></animate>
-              <animate attributeName="opacity" dur="6s" repeatCount="indefinite" values="0;0;1;1;0;0" keyTimes="0;0.32;0.38;0.6;0.66;1" calcMode="linear"></animate>
-            </path>
-            <path class="beam-path beam-path-branch" d="M130 220 C 128 275 118 335 110 390">
-              <animate attributeName="stroke-dashoffset" dur="6s" repeatCount="indefinite" values="0;0;-540;-540" keyTimes="0;0.32;0.6;1" calcMode="linear"></animate>
-              <animate attributeName="opacity" dur="6s" repeatCount="indefinite" values="0;0;1;1;0;0" keyTimes="0;0.32;0.38;0.6;0.66;1" calcMode="linear"></animate>
-            </path>
-            <path class="beam-path beam-path-branch" d="M130 220 C 132 275 142 335 150 390">
-              <animate attributeName="stroke-dashoffset" dur="6s" repeatCount="indefinite" values="0;0;-540;-540" keyTimes="0;0.32;0.6;1" calcMode="linear"></animate>
-              <animate attributeName="opacity" dur="6s" repeatCount="indefinite" values="0;0;1;1;0;0" keyTimes="0;0.32;0.38;0.6;0.66;1" calcMode="linear"></animate>
-            </path>
-            <path class="beam-path beam-path-branch" d="M130 220 C 135 270 160 330 190 390">
-              <animate attributeName="stroke-dashoffset" dur="6s" repeatCount="indefinite" values="0;0;-540;-540" keyTimes="0;0.32;0.6;1" calcMode="linear"></animate>
-              <animate attributeName="opacity" dur="6s" repeatCount="indefinite" values="0;0;1;1;0;0" keyTimes="0;0.32;0.38;0.6;0.66;1" calcMode="linear"></animate>
-            </path>
+              {% if tab.key == "integrations" %}
+                <div class="grid grid-cols-2 sm:grid-cols-3 gap-4 max-w-lg">
+                  {% for integration in section.integrations %}
+                    <div class="flex items-center justify-center h-14 rounded-xl bg-background/40 border border-border/40">
+                      <img
+                        src="https://cdn.simpleicons.org/{{ integration.slug }}/9CA3AF"
+                        alt="{{ integration.name }} logo"
+                        class="h-8 w-auto opacity-90"
+                        loading="lazy"
+                        decoding="async"
+                      >
+                    </div>
+                  {% endfor %}
+                </div>
+              {% elif tab.bullets %}
+                <div class="grid sm:grid-cols-2 gap-5 max-w-lg">
+                  {% for bullet in tab.bullets %}
+                    <div class="flex items-start gap-3 bg-background/40 border border-border/40 rounded-xl p-5 transition-all duration-300 {% if forloop.counter0|divisibleby:2 %}hover:translate-x-[2px]{% else %}hover:-translate-x-[2px]{% endif %}">
+                      <div class="w-9 h-9 rounded-lg bg-primary/10 flex items-center justify-center">
+                        {% lucide bullet.icon "w-5 h-5 text-primary" %}
+                      </div>
+                      <div class="text-foreground font-medium leading-relaxed">
+                        {{ bullet.label }}
+                      </div>
+                    </div>
+                  {% endfor %}
+                </div>
+              {% endif %}
+            </article>
+          {% endfor %}
+          <div class="hidden lg:block" data-feature-end-spacer aria-hidden="true"></div>
 
-            <circle class="beam-dot beam-dot-trunk" r="4">
-              <animateMotion dur="6s" repeatCount="indefinite" begin="0s" path="M130 60 C 130 120 130 170 130 220" keyTimes="0;0.32;1" keyPoints="0;1;1" calcMode="linear"></animateMotion>
-              <animate attributeName="opacity" dur="6s" repeatCount="indefinite" begin="0s" values="0;1;1;0;0" keyTimes="0;0.05;0.32;0.36;1"></animate>
-            </circle>
-            <circle class="beam-dot beam-dot-branch" r="4">
-              <animateMotion dur="6s" repeatCount="indefinite" begin="0s" path="M130 220 C 125 270 100 330 70 390" keyTimes="0;0.32;0.6;1" keyPoints="0;0;1;1" calcMode="linear"></animateMotion>
-              <animate attributeName="opacity" dur="6s" repeatCount="indefinite" begin="0s" values="0;0;1;1;0;0" keyTimes="0;0.32;0.38;0.6;0.66;1"></animate>
-            </circle>
-            <circle class="beam-dot beam-dot-branch" r="4">
-              <animateMotion dur="6s" repeatCount="indefinite" begin="0s" path="M130 220 C 128 275 118 335 110 390" keyTimes="0;0.32;0.6;1" keyPoints="0;0;1;1" calcMode="linear"></animateMotion>
-              <animate attributeName="opacity" dur="6s" repeatCount="indefinite" begin="0s" values="0;0;1;1;0;0" keyTimes="0;0.32;0.38;0.6;0.66;1"></animate>
-            </circle>
-            <circle class="beam-dot beam-dot-branch" r="4">
-              <animateMotion dur="6s" repeatCount="indefinite" begin="0s" path="M130 220 C 132 275 142 335 150 390" keyTimes="0;0.32;0.6;1" keyPoints="0;0;1;1" calcMode="linear"></animateMotion>
-              <animate attributeName="opacity" dur="6s" repeatCount="indefinite" begin="0s" values="0;0;1;1;0;0" keyTimes="0;0.32;0.38;0.6;0.66;1"></animate>
-            </circle>
-            <circle class="beam-dot beam-dot-branch" r="4">
-              <animateMotion dur="6s" repeatCount="indefinite" begin="0s" path="M130 220 C 135 270 160 330 190 390" keyTimes="0;0.32;0.6;1" keyPoints="0;0;1;1" calcMode="linear"></animateMotion>
-              <animate attributeName="opacity" dur="6s" repeatCount="indefinite" begin="0s" values="0;0;1;1;0;0" keyTimes="0;0.32;0.38;0.6;0.66;1"></animate>
-            </circle>
-          </svg>
+        </div>
 
-          <div class="feature-beam-node feature-beam-input" aria-hidden="true">
-            <svg class="h-6 w-6" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
-              <circle cx="12" cy="8" r="4"></circle>
-              <path d="M4 20c2.5-4 13.5-4 16 0"></path>
-            </svg>
-          </div>
-
-          <div class="feature-beam-hub" aria-hidden="true">
-            <span></span>
-          </div>
-
-          <div class="feature-beam-output" style="--beam-output-left: 27%; --beam-output-top: 81%;" aria-hidden="true">
-            {% lucide "message-square" "w-4 h-4" %}
-          </div>
-          <div class="feature-beam-output" style="--beam-output-left: 42%; --beam-output-top: 81%;" aria-hidden="true">
-            {% lucide "bar-chart-3" "w-4 h-4" %}
-          </div>
-          <div class="feature-beam-output" style="--beam-output-left: 58%; --beam-output-top: 81%;" aria-hidden="true">
-            {% lucide "shield" "w-4 h-4" %}
-          </div>
-          <div class="feature-beam-output" style="--beam-output-left: 73%; --beam-output-top: 81%;" aria-hidden="true">
-            {% lucide "layers" "w-4 h-4" %}
+        <div class="hidden lg:flex features-sticky items-start justify-end">
+          <div class="features-sticky-frame relative h-[420px] w-full max-w-lg rounded-3xl overflow-hidden border border-border/60 bg-card shadow-premium" data-feature-media-frame>
+            <div class="pointer-events-none absolute -top-24 -right-24 w-[420px] h-[420px] rounded-full bg-gradient-hero opacity-10 blur-3xl" aria-hidden="true"></div>
+            <div class="absolute inset-0" data-feature-media>
+              {% include "frontend/components/sections/partials/feature_media.html" with tab=section.tabs.0 integrations=section.integrations %}
+            </div>
           </div>
         </div>
       </div>
+
+      {% for tab in section.tabs %}
+        <template data-feature-media-template="{{ tab.key }}">
+          {% include "frontend/components/sections/partials/feature_media.html" with tab=tab integrations=section.integrations %}
+        </template>
+      {% endfor %}
     </div>
   </div>
 </section>
+
+<script>
+  document.addEventListener("DOMContentLoaded", function () {
+    var root = document.querySelector("[data-feature-scroll-root]");
+    if (!root) {
+      return;
+    }
+
+    var mediaFrame = root.querySelector("[data-feature-media-frame]");
+    var media = root.querySelector("[data-feature-media]");
+    var endSpacer = root.querySelector("[data-feature-end-spacer]");
+    var templates = {};
+
+    if (media) {
+      var initialPanel = media.firstElementChild;
+      if (initialPanel && initialPanel.classList && initialPanel.classList.contains("animate-panel-in")) {
+        initialPanel.classList.remove("animate-panel-in");
+      }
+    }
+
+    root.querySelectorAll("template[data-feature-media-template]").forEach(function (template) {
+      templates[template.dataset.featureMediaTemplate] = template;
+    });
+
+    var steps = Array.prototype.slice.call(root.querySelectorAll("[data-feature-step]"));
+    var activeKey = root.getAttribute("data-feature-active") || (steps[0] && steps[0].dataset.featureStep);
+    var mql = window.matchMedia("(min-width: 1024px)");
+
+    function preloadTemplateImages() {
+      if (!mql.matches) {
+        return;
+      }
+
+      var seen = {};
+      Object.keys(templates).forEach(function (key) {
+        var template = templates[key];
+        if (!template || !template.content) {
+          return;
+        }
+
+        template.content.querySelectorAll("img[src]").forEach(function (img) {
+          var src = img.getAttribute("src");
+          if (!src || seen[src]) {
+            return;
+          }
+          seen[src] = true;
+
+          var preloader = new Image();
+          preloader.decoding = "async";
+          preloader.src = src;
+        });
+      });
+    }
+
+    function cloneMediaFragment(key) {
+      if (!key || !templates[key]) {
+        return null;
+      }
+
+      var fragment = templates[key].content.cloneNode(true);
+      var rootNode = fragment.firstElementChild;
+      if (rootNode && rootNode.classList && rootNode.classList.contains("animate-panel-in")) {
+        rootNode.classList.remove("animate-panel-in");
+      }
+      return fragment;
+    }
+
+    function replaceMedia(key) {
+      if (!media) {
+        return;
+      }
+
+      var fragment = cloneMediaFragment(key);
+      if (!fragment) {
+        return;
+      }
+
+      media.innerHTML = "";
+      media.appendChild(fragment);
+    }
+
+    function setActive(key) {
+      if (!key || key === activeKey || !templates[key]) {
+        return;
+      }
+      activeKey = key;
+      root.setAttribute("data-feature-active", key);
+
+      replaceMedia(key);
+
+      steps.forEach(function (step) {
+        var isActive = step.dataset.featureStep === key;
+        step.setAttribute("aria-current", isActive ? "true" : "false");
+        step.classList.toggle("opacity-100", isActive);
+        step.classList.toggle("opacity-40", !isActive);
+      });
+    }
+
+    function setInitialFromHash() {
+      var hash = (window.location.hash || "").replace("#", "");
+      if (!hash) {
+        return;
+      }
+      if (hash.indexOf("feature-") !== 0) {
+        return;
+      }
+      var key = hash.replace("feature-", "");
+      if (!templates[key]) {
+        return;
+      }
+
+      activeKey = key;
+      root.setAttribute("data-feature-active", key);
+
+      replaceMedia(key);
+
+      steps.forEach(function (step) {
+        var isActive = step.dataset.featureStep === key;
+        step.setAttribute("aria-current", isActive ? "true" : "false");
+        step.classList.toggle("opacity-100", isActive);
+        step.classList.toggle("opacity-40", !isActive);
+      });
+    }
+
+    setInitialFromHash();
+    preloadTemplateImages();
+
+    var resizeObserver = null;
+    var ticking = false;
+    var metrics = {
+      anchorMode: "",
+      anchorY: 0,
+      thresholds: [],
+    };
+    var endSpacerHeight = null;
+    var spacerDirty = true;
+
+    function clamp(value, min, max) {
+      return Math.max(min, Math.min(max, value));
+    }
+
+    function getPinTopOffset() {
+      var header = document.querySelector("header");
+      var headerHeight = header ? header.getBoundingClientRect().height : 0;
+      return headerHeight + 16;
+    }
+
+    function getStepByKey(key) {
+      return (
+        steps.find(function (step) {
+          return step.dataset && step.dataset.featureStep === key;
+        }) || steps[0]
+      );
+    }
+
+    function getAlignElement(step) {
+      if (!step) {
+        return null;
+      }
+      return step.querySelector("[data-feature-align]") || step;
+    }
+
+    function buildThresholds(anchorY, viewportHeight) {
+      if (!isFinite(anchorY) || !isFinite(viewportHeight) || viewportHeight <= 0) {
+        return [];
+      }
+
+      var lead = clamp(Math.round(viewportHeight * 0.22), 80, 220);
+
+      return steps
+        .map(function (step) {
+          var key = step.dataset ? step.dataset.featureStep : "";
+          var align = getAlignElement(step);
+          if (!key || !align) {
+            return null;
+          }
+
+          var rect = align.getBoundingClientRect();
+          var docY = rect.top + window.scrollY;
+          return { key: key, threshold: docY - anchorY - lead };
+        })
+        .filter(function (item) {
+          return item && item.key;
+        })
+        .sort(function (a, b) {
+          return a.threshold - b.threshold;
+        });
+    }
+
+    function keyForScrollY(scrollY) {
+      if (!metrics.thresholds || metrics.thresholds.length === 0) {
+        return activeKey;
+      }
+
+      var epsilon = 6;
+      var key = metrics.thresholds[0].key;
+      metrics.thresholds.forEach(function (item) {
+        if (scrollY >= item.threshold - epsilon) {
+          key = item.key;
+        }
+      });
+
+      return key;
+    }
+
+    function lockMediaAnchor(pinTop, stickyColumnRect) {
+      if (!mediaFrame) {
+        return false;
+      }
+
+      var frameRect = mediaFrame.getBoundingClientRect();
+      var maxOffset = stickyColumnRect.height - frameRect.height;
+      maxOffset = Math.max(0, maxOffset);
+
+      var targetY = pinTop + maxOffset / 2;
+      var bestStep = null;
+      var bestDistance = Infinity;
+
+      steps.forEach(function (step) {
+        var align = getAlignElement(step);
+        if (!align) {
+          return;
+        }
+        var rect = align.getBoundingClientRect();
+        var distance = Math.abs(rect.top - targetY);
+        if (distance < bestDistance) {
+          bestDistance = distance;
+          bestStep = step;
+        }
+      });
+
+      var step = bestStep || getStepByKey(activeKey);
+      var align = getAlignElement(step);
+      if (!align) {
+        return false;
+      }
+
+      var alignRect = align.getBoundingClientRect();
+      var offset = clamp(alignRect.top - pinTop, 0, maxOffset);
+      root.style.setProperty("--feature-media-offset", String(Math.round(offset)) + "px");
+
+      metrics.anchorY = pinTop + offset;
+      metrics.thresholds = buildThresholds(metrics.anchorY, stickyColumnRect.height);
+      metrics.anchorMode = "media";
+
+      return metrics.thresholds.length > 0;
+    }
+
+    function ensureThresholds() {
+      var pinTop = getPinTopOffset();
+      root.style.setProperty("--features-pin-top", String(Math.round(pinTop)) + "px");
+
+      if (mql.matches && mediaFrame) {
+        var stickyColumn = mediaFrame.closest(".features-sticky");
+        if (stickyColumn) {
+          var stickyRect = stickyColumn.getBoundingClientRect();
+          var engaged = stickyRect.top <= pinTop + 1 && stickyRect.bottom >= pinTop + 1;
+          if (engaged && metrics.anchorMode !== "media") {
+            metrics.thresholds = [];
+            spacerDirty = true;
+            lockMediaAnchor(pinTop, stickyRect);
+          }
+        }
+      }
+
+      if (!metrics.thresholds || metrics.thresholds.length === 0) {
+        spacerDirty = true;
+        metrics.anchorMode = "fallback";
+        metrics.anchorY = Math.round(window.innerHeight * 0.32);
+        metrics.thresholds = buildThresholds(metrics.anchorY, window.innerHeight);
+      }
+
+      if (spacerDirty) {
+        updateEndSpacer();
+        spacerDirty = false;
+      }
+    }
+
+    function updateEndSpacer() {
+      if (!endSpacer || !mql.matches || steps.length === 0) {
+        if (endSpacer && endSpacerHeight !== 0) {
+          endSpacer.style.height = "0px";
+          endSpacerHeight = 0;
+        }
+        return;
+      }
+
+      if (!metrics.thresholds || metrics.thresholds.length === 0) {
+        return;
+      }
+
+      var lastThreshold = metrics.thresholds[metrics.thresholds.length - 1].threshold;
+      var buffer = clamp(Math.round(window.innerHeight * 0.12), 80, 170);
+
+      var rootBottomDocY = root.getBoundingClientRect().bottom + window.scrollY;
+      var endRootScrollY = rootBottomDocY - window.innerHeight;
+      var delta = Math.ceil(lastThreshold + buffer - endRootScrollY);
+
+      var currentHeight = endSpacerHeight;
+      if (currentHeight == null) {
+        currentHeight = Math.ceil(endSpacer.getBoundingClientRect().height);
+      }
+
+      var nextHeight = Math.max(0, currentHeight + delta);
+      if (endSpacerHeight !== nextHeight) {
+        endSpacer.style.height = String(nextHeight) + "px";
+        endSpacerHeight = nextHeight;
+      }
+    }
+
+    function updateActive() {
+      if (steps.length === 0) {
+        return;
+      }
+
+      ensureThresholds();
+
+      var nextKey = keyForScrollY(window.scrollY);
+      if (nextKey && nextKey !== activeKey) {
+        setActive(nextKey);
+      }
+    }
+
+    function requestTick() {
+      if (ticking) {
+        return;
+      }
+      ticking = true;
+      window.requestAnimationFrame(function () {
+        ticking = false;
+        updateActive();
+      });
+    }
+
+    function handleResize() {
+      metrics.anchorMode = "";
+      metrics.anchorY = 0;
+      metrics.thresholds = [];
+      spacerDirty = true;
+      endSpacerHeight = null;
+      requestTick();
+    }
+
+    window.addEventListener("scroll", requestTick, { passive: true });
+    window.addEventListener("resize", handleResize);
+
+    if (mql.addEventListener) {
+      mql.addEventListener("change", handleResize);
+    } else if (mql.addListener) {
+      mql.addListener(handleResize);
+    }
+
+    if (typeof ResizeObserver !== "undefined") {
+      resizeObserver = new ResizeObserver(handleResize);
+      resizeObserver.observe(root);
+    }
+
+    requestTick();
+    window.setTimeout(handleResize, 250);
+  });
+</script>
