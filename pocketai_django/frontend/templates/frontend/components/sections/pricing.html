@@ -60,8 +60,9 @@
         <div class="grid md:grid-cols-3 gap-6">
           {% for plan in section.packages %}
             <!-- Tech Card -->
+            <!-- Tech Card -->
             <div
-              class="group relative flex flex-col bg-card border {% if plan.badge and plan.tier == 'Pro' %}border-primary shadow-[0_0_20px_rgba(var(--primary-rgb),0.1)]{% else %}border-border{% endif %} rounded-xl overflow-hidden transition-all duration-300 hover:border-primary/50 hover:shadow-lg hover:-translate-y-1"
+              class="group relative flex flex-col bg-card border border-border/60 rounded-xl overflow-hidden transition-all duration-300 hover:border-primary/50 hover:shadow-2xl hover:shadow-primary/10 hover:-translate-y-1"
             >
               <!-- Grid Background Pattern -->
               <!-- Grid Background Pattern REMOVED -->
@@ -108,9 +109,9 @@
 
               <!-- Action -->
               <div class="relative z-10 p-6 border-t border-border/50 bg-card/50">
-                  <button
+                   <button
                     type="button"
-                    class="w-full text-xs uppercase tracking-wider py-3 px-4 rounded-lg border transition-all duration-300 {% if plan.badge and plan.tier == 'Pro' %}bg-primary text-primary-foreground border-primary hover:bg-primary/90{% else %}border-border bg-transparent text-foreground hover:border-primary hover:text-primary{% endif %}"
+                    class="w-full text-xs font-medium uppercase tracking-wider py-3.5 px-4 rounded-lg border border-primary bg-primary text-primary-foreground shadow-lg shadow-primary/25 hover:bg-primary/90 hover:shadow-primary/40 transition-all duration-300"
                   >
                     {{ section.billing_cycle.get_started }}
                   </button>
@@ -123,7 +124,7 @@
       <div data-pricing-panel="wage" class="hidden">
         <div class="grid md:grid-cols-3 gap-6">
           {% for plan in section.wage_plans %}
-             <div class="group relative flex flex-col bg-card border border-border rounded-xl overflow-hidden transition-all duration-300 hover:border-primary/50 hover:shadow-lg hover:-translate-y-1">
+             <div class="group relative flex flex-col bg-card border border-border/60 rounded-xl overflow-hidden transition-all duration-300 hover:border-primary/50 hover:shadow-2xl hover:shadow-primary/10 hover:-translate-y-1">
               <!-- Grid Pattern REMOVED -->
 
               <div class="relative z-10 p-6 border-b border-border/50 bg-card/50 backdrop-blur-sm">
@@ -157,7 +158,7 @@
               <div class="relative z-10 p-6 border-t border-border/50 bg-card/50">
                   <button
                     type="button"
-                    class="w-full text-xs uppercase tracking-wider py-3 px-4 rounded-lg border border-border bg-transparent text-foreground hover:border-primary hover:text-primary transition-all duration-300"
+                    class="w-full text-xs font-medium uppercase tracking-wider py-3.5 px-4 rounded-lg border border-border/50 bg-secondary/30 text-foreground hover:bg-secondary/60 hover:border-primary/50 hover:text-primary transition-all duration-300"
                   >
                     {{ section.billing_cycle.add_credit }}
                   </button>
@@ -168,7 +169,7 @@
       </div>
 
       <div data-pricing-panel="self" class="hidden">
-        <div class="max-w-3xl mx-auto group relative flex flex-col bg-card border border-border rounded-xl overflow-hidden transition-all duration-300 hover:border-primary/50">
+        <div class="max-w-3xl mx-auto group relative flex flex-col bg-card border border-border/60 rounded-xl overflow-hidden transition-all duration-300 hover:border-primary/50 hover:shadow-2xl hover:shadow-primary/10 hover:-translate-y-1">
              <div class="absolute inset-0 z-0 opacity-20 pointer-events-none text-foreground/40" 
                    style="background-image: linear-gradient(to right, currentColor 1px, transparent 1px), linear-gradient(to bottom, currentColor 1px, transparent 1px); background-size: 24px 24px;">
               </div>
@@ -197,13 +198,13 @@
                 <div class="flex flex-col justify-center gap-3 min-w-[200px]">
                      <button
                       type="button"
-                      class="w-full text-xs uppercase tracking-wider py-3 px-4 rounded-lg border border-primary bg-primary text-primary-foreground hover:bg-primary/90 transition-all duration-300"
+                      class="w-full text-xs font-medium uppercase tracking-wider py-3.5 px-4 rounded-lg border border-primary bg-primary text-primary-foreground shadow-lg shadow-primary/25 hover:bg-primary/90 hover:shadow-primary/40 transition-all duration-300"
                     >
                       {{ section.self.cta_quote }}
                     </button>
                     <button
                       type="button"
-                      class="w-full text-xs uppercase tracking-wider py-3 px-4 rounded-lg border border-border bg-transparent text-foreground hover:border-primary hover:text-primary transition-all duration-300"
+                      class="w-full text-xs font-medium uppercase tracking-wider py-3.5 px-4 rounded-lg border border-border/50 bg-secondary/30 text-foreground hover:bg-secondary/60 hover:border-primary/50 hover:text-primary transition-all duration-300"
                     >
                       {{ section.self.cta_sales }}
                     </button>
