@@ -1,0 +1,71 @@
+# Python cache
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+
+# Virtual environments
+.venv/
+venv/
+ENV/
+env/
+
+# Django
+*.log
+local_settings.py
+db.sqlite3
+db.sqlite3-journal
+/var/
+var/logs/
+var/media/
+var/staticfiles/
+
+# Environment variables
+.env
+.env.local
+.env.*.local
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Git
+.git/
+.gitignore
+.gitattributes
+
+# CI/CD
+.github/
+.gitlab-ci.yml
+
+# Documentation (not needed in container)
+*.md
+docs/
+
+# Mobile app (separate deployment)
+mobile/
+node_modules/
+
+# Test files
+*.test.py
+test_*.py
+tests/
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Development files
+.editorconfig
+.flake8
+.pylintrc
+mypy.ini
+
+# Large files that change frequently
+*.mp4
+*.mov
+*.avi

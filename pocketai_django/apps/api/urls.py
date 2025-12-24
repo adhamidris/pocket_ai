@@ -11,10 +11,15 @@ from .chat_portal import (
     submit_feedback,
 )
 
+from apps.api import health_views
+
 app_name = "api"
 
 urlpatterns = [
-    path("health/", views.placeholder, name="health"),
+    # Health check endpoints (updated from placeholder)
+    path("health/", health_views.health_check, name="health"),
+    path("health/ready/", health_views.readiness_check, name="readiness"),
+    path("health/live/", health_views.liveness_check, name="liveness"),
     path("agents/", views.agents_collection, name="agents-list"),
     path("agents/<uuid:agent_id>/", views.agent_detail_view, name="agents-detail"),
     path("agents/<uuid:agent_id>/actions/", views.agent_action_settings_view, name="agents-actions"),

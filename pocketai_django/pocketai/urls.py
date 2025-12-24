@@ -10,7 +10,3 @@ urlpatterns = [
     path("", include("frontend.urls")),
     path("api/", include("apps.api.urls")),
 ]
-
-if settings.DEBUG:
-    # Place Silk ahead of the frontend catch-all slug route so /silk/** does not hit chat_portal.
-    urlpatterns = [path("silk/", include("silk.urls", namespace="silk"))] + urlpatterns

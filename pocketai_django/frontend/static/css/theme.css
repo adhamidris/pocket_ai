@@ -270,14 +270,21 @@
   vertical-align: middle;
 }
 
+/* Default state: no transition on opacity to prevent flash on first render.
+   The transition is only applied during active theme toggle animation. */
 [data-theme-icon-wrap] [data-theme-icon] {
   grid-area: 1 / 1;
   opacity: 0;
   transform: scale(0.6) rotate(-90deg);
   transform-origin: center;
-  transition: opacity 240ms ease, transform var(--theme-transition-duration) var(--theme-transition-ease);
+  transition: transform var(--theme-transition-duration) var(--theme-transition-ease);
   will-change: opacity, transform;
   pointer-events: none;
+}
+
+/* Only enable opacity transition during active theme animation */
+[data-theme-toggle][data-theme-animating="true"] [data-theme-icon-wrap] [data-theme-icon] {
+  transition: opacity 240ms ease, transform var(--theme-transition-duration) var(--theme-transition-ease);
 }
 
 [data-theme-toggle][data-theme-state="dark"] [data-theme-icon="moon"],

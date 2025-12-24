@@ -73,7 +73,7 @@ class KnowledgeUploadError(Exception):
 @dataclass(slots=True)
 class KnowledgeUploadResult:
     business: BusinessProfile
-    session: RegistrationSession
+    session: RegistrationSession | None
     uploads: list[KnowledgeUpload]
 
 
@@ -100,7 +100,7 @@ def start_registration(*, first_name: str, email: str, password: str) -> Registr
 
         session = RegistrationSession.objects.create(
             user=user,
-            current_step="form",
+            current_step="business",  # After Step 1, next step is the business profile
             steps_completed=1,
             total_steps=4,
             last_activity_at=timezone.now(),
@@ -195,7 +195,7 @@ def upsert_business_profile(
                 profile.status = "pending"
             profile.save()
 
-        session.current_step = "business"
+        session.current_step = "agent"  # After business step, next is agent setup
         session.steps_completed = max(session.steps_completed, 2)
         session.last_activity_at = timezone.now()
         session.save(update_fields=["current_step", "steps_completed", "last_activity_at", "updated_at"])
@@ -230,7 +230,7 @@ def configure_agent_profile(
             raise AgentProfileError("Business profile not found.") from exc
 
         session = business.registration_session
-        session.current_step = "agent"
+        session.current_step = "uploads"  # After agent step, next is knowledge uploads
         session.steps_completed = max(session.steps_completed, 3)
         session.last_activity_at = timezone.now()
         session.save(update_fields=["current_step", "steps_completed", "last_activity_at", "updated_at"])
@@ -502,14 +502,15 @@ def finalize_knowledge_uploads(
                     if upload.status not in {KnowledgeStatus.READY, KnowledgeStatus.ACTIVE}:
                         uploads_for_ingestion.append(upload)
 
-        # Update registration session markers.
-        session.current_step = "uploads"
-        session.steps_completed = max(session.steps_completed, 4)
-        session.is_complete = True
-        session.last_activity_at = timezone.now()
-        session.save(
-            update_fields=["current_step", "steps_completed", "is_complete", "last_activity_at", "updated_at"]
-        )
+        # Update registration session markers if available.
+        if session is not None:
+            session.current_step = "uploads"
+            session.steps_completed = max(session.steps_completed, 4)
+            session.is_complete = True
+            session.last_activity_at = timezone.now()
+            session.save(
+                update_fields=["current_step", "steps_completed", "is_complete", "last_activity_at", "updated_at"]
+            )
 
         if user.status != "active":
             user.status = "active"

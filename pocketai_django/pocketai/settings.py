@@ -10,15 +10,117 @@ import time
 # Base directory of the Django project (the folder that contains manage.py)
 BASE_DIR = Path(__file__).resolve().parent.parent
 
-# SECURITY WARNING: replace before production
-SECRET_KEY = "django-insecure-change-me"
-
-DEBUG = True
-
 os.environ.setdefault("TOKENIZERS_PARALLELISM", "false")
 
 
-ALLOWED_HOSTS: list[str] = []
+# ==============================================================================
+# SECURITY SETTINGS (Environment-based)
+# ==============================================================================
+
+def _is_production() -> bool:
+    """Detect if running in production based on environment signals."""
+    return any([
+        os.getenv("DJANGO_ENV") == "production",
+        os.getenv("RAILWAY_ENVIRONMENT") == "production",
+        os.getenv("RENDER") is not None,
+        os.getenv("FLY_APP_NAME") is not None,
+        os.getenv("DJANGO_DEBUG", "").lower() == "false",
+    ])
+
+
+# DEBUG: Default to False (safe), allow override for development
+DEBUG = os.getenv("DJANGO_DEBUG", "false").lower() in {"1", "true", "yes"}
+
+if DEBUG and _is_production():
+    import warnings
+    warnings.warn(
+        "DEBUG=True detected in production environment! This is a CRITICAL security risk.",
+        RuntimeWarning,
+        stacklevel=2,
+    )
+
+# SECRET_KEY: Load from environment or use insecure default (with warning)
+_default_secret_key = "django-insecure-change-me"
+SECRET_KEY = os.getenv("DJANGO_SECRET_KEY", _default_secret_key)
+
+if SECRET_KEY == _default_secret_key:
+    import sys
+    warning_msg = (
+        "\n"
+        "⚠️  WARNING: Using insecure default SECRET_KEY!\n"
+        "   This is DANGEROUS in production. Generate a secure key:\n"
+        "   python -c 'from django.core.management.utils import get_random_secret_key; print(get_random_secret_key())'\n"
+        "   Then set DJANGO_SECRET_KEY environment variable.\n"
+    )
+    if _is_production():
+        # In production, this is a critical error
+        print(warning_msg, file=sys.stderr)
+        raise RuntimeError("Cannot start in production with default SECRET_KEY")
+    else:
+        # In development, just warn
+        print(warning_msg, file=sys.stderr)
+
+# ALLOWED_HOSTS: Load from environment (comma-separated)
+_allowed_hosts_raw = os.getenv("ALLOWED_HOSTS", "").strip()
+if _allowed_hosts_raw:
+    ALLOWED_HOSTS = [h.strip() for h in _allowed_hosts_raw.split(",") if h.strip()]
+else:
+    # Development defaults
+    ALLOWED_HOSTS = ["localhost", "127.0.0.1", "[::1]"]
+    if _is_production():
+        import warnings
+        warnings.warn(
+            "ALLOWED_HOSTS not configured in production! Set the ALLOWED_HOSTS environment variable.",
+            RuntimeWarning,
+            stacklevel=2,
+        )
+
+
+# ==============================================================================
+# ERROR MONITORING (Sentry)
+# ==============================================================================
+
+if not DEBUG:
+    _sentry_dsn = os.getenv("SENTRY_DSN", "").strip()
+    if _sentry_dsn:
+        import logging
+        import sentry_sdk
+        from sentry_sdk.integrations.django import DjangoIntegration
+        from sentry_sdk.integrations.logging import LoggingIntegration
+        from sentry_sdk.integrations.redis import RedisIntegration
+        
+        sentry_sdk.init(
+            dsn=_sentry_dsn,
+            integrations=[
+                DjangoIntegration(
+                    transaction_style='url',
+                    middleware_spans=True,
+                    signals_spans=True,
+                ),
+                LoggingIntegration(
+                    level=logging.INFO,
+                    event_level=logging.ERROR,
+                ),
+                RedisIntegration(),
+            ],
+            environment=os.getenv('SENTRY_ENVIRONMENT', 'production'),
+            release=os.getenv('SENTRY_RELEASE', 'unknown'),
+            
+            # Performance Monitoring
+            traces_sample_rate=float(os.getenv('SENTRY_TRACES_SAMPLE_RATE', '0.1')),  # 10% of requests
+            profiles_sample_rate=float(os.getenv('SENTRY_PROFILES_SAMPLE_RATE', '0.1')),  # 10% of traces
+            
+            # Privacy: Don't send PII (critical for multi-tenant SaaS)
+            send_default_pii=False,
+            
+            # Ignore common noise
+            ignore_errors=[
+                'SuspiciousOperation',
+                'PermissionDenied',
+            ],
+        )
+        print(f"✅ Sentry initialized for environment: {os.getenv('SENTRY_ENVIRONMENT', 'production')}")
+
 
 
 def _split_scopes(raw: str | None) -> list[str]:
@@ -74,7 +176,6 @@ INSTALLED_APPS = [
     "django.contrib.messages",
     "django.contrib.staticfiles",
     # Profiling / request tracing (DEBUG-only URLs wired below)
-    "silk",
     # Project apps
     "apps.accounts",
     "apps.cases",
@@ -639,10 +740,33 @@ PORTAL_ASSET_VERSION = os.getenv("PORTAL_ASSET_VERSION")
 if not PORTAL_ASSET_VERSION:
     PORTAL_ASSET_VERSION = str(int(time.time()))
 
+# ==============================================================================
+# SECURITY MIDDLEWARE & HEADERS
+# ==============================================================================
+
+# HTTPS enforcement (production only - enable AFTER SSL is verified)
+SECURE_SSL_REDIRECT = os.getenv("SECURE_SSL_REDIRECT", "false").lower() in {"1", "true", "yes"}
+
+# HTTP Strict Transport Security (HSTS) - enforce HTTPS for 1 year
+SECURE_HSTS_SECONDS = int(os.getenv("SECURE_HSTS_SECONDS", "0"))
+SECURE_HSTS_INCLUDE_SUBDOMAINS = SECURE_HSTS_SECONDS > 0
+SECURE_HSTS_PRELOAD = SECURE_HSTS_SECONDS > 0
+
+# Secure cookies (HTTPS only)
+SESSION_COOKIE_SECURE = os.getenv("SESSION_COOKIE_SECURE", "false").lower() in {"1", "true", "yes"}
+CSRF_COOKIE_SECURE = os.getenv("CSRF_COOKIE_SECURE", "false").lower() in {"1", "true", "yes"}
+
+# Prevent clickjacking
+X_FRAME_OPTIONS = 'DENY'
+
+# Content type sniffing protection
+SECURE_CONTENT_TYPE_NOSNIFF = True
+
+# XSS protection (browsers)
+SECURE_BROWSER_XSS_FILTER = True
+
 MIDDLEWARE = [
     "django.middleware.security.SecurityMiddleware",
-    # Silk must run early to capture timings for downstream middleware/views.
-    "silk.middleware.SilkyMiddleware",
     "django.contrib.sessions.middleware.SessionMiddleware",
     "django.middleware.common.CommonMiddleware",
     "django.middleware.csrf.CsrfViewMiddleware",
@@ -674,17 +798,62 @@ TEMPLATES = [
 WSGI_APPLICATION = "pocketai.wsgi.application"
 ASGI_APPLICATION = "pocketai.asgi.application"
 
-# Database: placeholder SQLite setup until backend migration
-DATABASES = {
-    'default': {
-        'ENGINE': 'django.db.backends.postgresql',
-        'NAME': 'djangopocket',
-        'USER': 'djangopocket',
-        'PASSWORD': 'adham123',
-        'HOST': 'localhost',
-        'PORT': '5432',
+# ==============================================================================
+# DATABASE (Environment-based)
+# ==============================================================================
+
+# Option 1: Use DATABASE_URL if provided (Railway, Heroku, Render)
+_database_url = os.getenv("DATABASE_URL")
+
+if _database_url:
+    # Parse DATABASE_URL (format: postgresql://user:pass@host:port/dbname)
+    import re
+    match = re.match(
+        r"postgresql://(?P<user>[^:]+):(?P<password>[^@]+)@(?P<host>[^:]+):(?P<port>\d+)/(?P<name>.+)",
+        _database_url
+    )
+    if match:
+        DATABASES = {
+            'default': {
+                'ENGINE': 'django.db.backends.postgresql',
+                'NAME': match.group('name'),
+                'USER': match.group('user'),
+                'PASSWORD': match.group('password'),
+                'HOST': match.group('host'),
+                'PORT': match.group('port'),
+            }
+        }
+    else:
+        # Fallback to dj-database-url if available
+        try:
+            import dj_database_url
+            DATABASES = {'default': dj_database_url.parse(_database_url)}
+        except ImportError:
+            raise ValueError(
+                "Invalid DATABASE_URL format. Install dj-database-url or use individual POSTGRES_* variables."
+            )
+else:
+    # Option 2: Individual environment variables
+    DATABASES = {
+        'default': {
+            'ENGINE': 'django.db.backends.postgresql',
+            'NAME': os.getenv('POSTGRES_DB', 'djangopocket'),
+            'USER': os.getenv('POSTGRES_USER', 'djangopocket'),
+            'PASSWORD': os.getenv('POSTGRES_PASSWORD', 'adham123'),  # Default for local dev only
+            'HOST': os.getenv('POSTGRES_HOST', 'localhost'),
+            'PORT': os.getenv('POSTGRES_PORT', '5432'),
+            'CONN_MAX_AGE': int(os.getenv('DB_CONN_MAX_AGE', '0')),  # Connection pooling
+        }
     }
-}
+
+# Warn if using default password in production
+if DATABASES['default']['PASSWORD'] == 'adham123' and _is_production():
+    import warnings
+    warnings.warn(
+        "Using default database password in production! Set POSTGRES_PASSWORD environment variable.",
+        RuntimeWarning,
+        stacklevel=2,
+    )
 
 AUTH_PASSWORD_VALIDATORS = [
     {
@@ -763,10 +932,3 @@ LOGGING = {
     },
 }
 
-# Silk profiling (kept lightweight and DEBUG-first; URLs are only mounted in DEBUG)
-SILKY_PYTHON_PROFILER = os.getenv("SILKY_PYTHON_PROFILER", "true").lower() in {"1", "true", "yes"}
-SILKY_PYTHON_PROFILER_BINARY = os.getenv("SILKY_PYTHON_PROFILER_BINARY", "false").lower() in {"1", "true", "yes"}
-if not DEBUG:
-    # Avoid profiler overhead and sensitive traces outside local development.
-    SILKY_PYTHON_PROFILER = False
-    SILKY_PYTHON_PROFILER_BINARY = False

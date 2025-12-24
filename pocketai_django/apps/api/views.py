@@ -169,6 +169,16 @@ def start_registration(request: HttpRequest) -> JsonResponse:
     session = result.session
     user = result.user
 
+    # Log the user in immediately so they can resume registration after page refresh
+    backend_path = (
+        settings.AUTHENTICATION_BACKENDS[0]
+        if settings.AUTHENTICATION_BACKENDS
+        else "django.contrib.auth.backends.ModelBackend"
+    )
+    auth_login(request, user, backend=backend_path)
+    request.session["registration_session_id"] = str(session.id)
+    request.session["auth_entrypoint"] = "registration"
+
     response = {
         "registrationId": str(session.id),
         "user": {
@@ -3134,12 +3144,12 @@ def finalize_uploads(request: HttpRequest, business_id: str) -> JsonResponse:
             "status": business.status,
         },
         "session": {
-            "id": str(session.id),
-            "currentStep": session.current_step,
-            "stepsCompleted": session.steps_completed,
-            "totalSteps": session.total_steps,
-            "isComplete": session.is_complete,
-        },
+            "id": str(session.id) if session else None,
+            "currentStep": session.current_step if session else None,
+            "stepsCompleted": session.steps_completed if session else None,
+            "totalSteps": session.total_steps if session else None,
+            "isComplete": session.is_complete if session else True,
+        } if session else None,
         "nextStep": "complete",
         "redirectUrl": redirect_url,
     }

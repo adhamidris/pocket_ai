@@ -128,7 +128,9 @@ def build_system_message(
             • HARD LIMIT: Call at most once per assistant turn.
             • Put every alias/spelling in `queries[]` so the backend runs one batched search.
             • Only search again if the visitor adds a new constraint. If you have snippets, use them immediately.
+
         - `read_knowledge`
+
             • One retrieval tool for both documents and tables/datasets.
             • Use `intent="table"` when the evidence is tabular (`is_table_chunk=true` / dataset-mode) or you need lookups/filters/sorts/aggregates.
             • Use `intent="text"` when you need a text excerpt/page from a document.

@@ -1,0 +1,149 @@
+# ==============================================================================
+# DOCKER COMPOSE - Local Development & Staging
+# ==============================================================================
+# Start all services: docker-compose up -d
+# View logs: docker-compose logs -f web
+# Stop all: docker-compose down
+
+version: '3.8'
+
+services:
+  # PostgreSQL Database with pgvector extension
+  postgres:
+    image: pgvector/pgvector:pg15
+    container_name: pocketai_postgres
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-pocketai}
+      POSTGRES_USER: ${POSTGRES_USER:-pocketai}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-pocketai_dev_password}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-pocketai}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  # Redis Cache
+  redis:
+    image: redis:7-alpine
+    container_name: pocketai_redis
+    command: redis-server --appendonly yes
+    volumes:
+      - redis_data:/data
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  # Django Web Application
+  web:
+    build:
+      context: ./pocketai_django
+      dockerfile: Dockerfile
+    container_name: pocketai_web
+    command: /app/scripts/docker-entrypoint.sh
+    environment:
+      # Load from .env file
+      DJANGO_DEBUG: ${DJANGO_DEBUG:-false}
+      DJANGO_SECRET_KEY: ${DJANGO_SECRET_KEY}
+      ALLOWED_HOSTS: ${ALLOWED_HOSTS:-localhost,127.0.0.1}
+      
+      # Database (connect to postgres service)
+      POSTGRES_DB: ${POSTGRES_DB:-pocketai}
+      POSTGRES_USER: ${POSTGRES_USER:-pocketai}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-pocketai_dev_password}
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: 5432
+      
+      # Redis (connect to redis service)
+      REDIS_URL: redis://redis:6379/0
+      
+      # LLM Provider
+      MCP_PROVIDER: ${MCP_PROVIDER:-openai}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY:-}
+      
+      # Embeddings
+      EMBED_PROVIDER: ${EMBED_PROVIDER:-local}
+      EMBED_MODEL: ${EMBED_MODEL:-sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2}
+      EMBED_DIM: ${EMBED_DIM:-384}
+      
+      # Optional: Auto-run migrations on startup
+      RUN_MIGRATIONS: ${RUN_MIGRATIONS:-false}
+      
+      # Optional: Collect static files
+      COLLECT_STATIC: ${COLLECT_STATIC:-true}
+    volumes:
+      - ./pocketai_django:/app
+      - media_data:/app/var/media
+      - static_data:/app/var/staticfiles
+      - logs_data:/app/var/logs
+    ports:
+      - "8000:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health/"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    restart: unless-stopped
+
+  # Background Worker (Celery/Django ingestion)
+  worker:
+    build:
+      context: ./pocketai_django
+      dockerfile: Dockerfile
+    container_name: pocketai_worker
+    command: /app/scripts/worker-entrypoint.sh
+    environment:
+      # Same environment as web
+      DJANGO_DEBUG: ${DJANGO_DEBUG:-false}
+      DJANGO_SECRET_KEY: ${DJANGO_SECRET_KEY}
+      POSTGRES_DB: ${POSTGRES_DB:-pocketai}
+      POSTGRES_USER: ${POSTGRES_USER:-pocketai}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-pocketai_dev_password}
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: 5432
+      REDIS_URL: redis://redis:6379/0
+      MCP_PROVIDER: ${MCP_PROVIDER:-openai}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY:-}
+      EMBED_PROVIDER: ${EMBED_PROVIDER:-local}
+      EMBED_MODEL: ${EMBED_MODEL:-sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2}
+      EMBED_DIM: ${EMBED_DIM:-384}
+    volumes:
+      - ./pocketai_django:/app
+      - media_data:/app/var/media
+      - logs_data:/app/var/logs
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      web:
+        condition: service_started
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
+  redis_data:
+  media_data:
+  static_data:
+  logs_data:
+
+networks:
+  default:
+    name: pocketai_network

@@ -204,7 +204,7 @@
     data-dashboard-account-overlay
   ></div>
   <div
-    class="fixed inset-x-4 bottom-6 z-50 mx-auto max-w-xs rounded-xl border border-border/60 bg-card p-4 shadow-lg sm:inset-auto sm:left-6 sm:right-auto sm:bottom-6 sm:top-auto sm:w-64 sm:mx-0"
+    class="fixed inset-x-4 bottom-6 z-50 mx-auto max-w-xs rounded-xl border border-border/60 bg-card p-4 shadow-lg sm:inset-auto sm:left-6 sm:right-auto sm:bottom-6 sm:top-auto sm:w-64 sm:mx-0 opacity-0 transition-opacity duration-150"
     role="dialog"
     aria-modal="true"
     aria-labelledby="dashboard-account-modal-title"
@@ -323,7 +323,6 @@
 
     function setState(open) {
       isOpen = open;
-      modal.classList.toggle("hidden", !open);
       modal.setAttribute("data-state", open ? "open" : "closed");
       modal.setAttribute("aria-hidden", open ? "false" : "true");
       trigger.dataset.open = open ? "true" : "false";
@@ -334,15 +333,30 @@
       }
       if (open) {
         previouslyFocused = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+        // Show modal container but keep content invisible
+        modal.classList.remove("hidden");
+        // Position synchronously before revealing
+        positionMenu();
+        // Force reflow to ensure position is applied before transition
+        void content.offsetHeight;
+        // Now fade in the content
+        content.classList.remove("opacity-0");
+        content.classList.add("opacity-100");
+        if (content) {
+          content.focus();
+        }
+      } else {
+        // Fade out the content first
+        content.classList.remove("opacity-100");
+        content.classList.add("opacity-0");
+        // Hide modal after transition completes
         window.setTimeout(function () {
-          positionMenu();
-          if (content) {
-            content.focus();
-          }
-        }, 30);
-      } else if (previouslyFocused) {
-        previouslyFocused.focus();
-        previouslyFocused = null;
+          modal.classList.add("hidden");
+        }, 150);
+        if (previouslyFocused) {
+          previouslyFocused.focus();
+          previouslyFocused = null;
+        }
       }
     }
 

@@ -4,16 +4,19 @@
 
 {% block content %}
 <section class="relative min-h-[60vh] flex items-center justify-center px-4 pt-4 pb-6 md:px-6 md:pt-6 md:pb-12 overflow-hidden">
-  <div class="pointer-events-none absolute inset-0 opacity-30 register-orbs" aria-hidden="true">
-    <div class="absolute top-10 left-8 w-[420px] h-[420px] bg-gradient-hero rounded-full blur-3xl animate-none md:animate-pulse"></div>
-    <div class="absolute bottom-12 right-8 w-[520px] h-[520px] bg-gradient-primary rounded-full blur-3xl animate-none md:animate-pulse" style="animation-delay:1.2s"></div>
-  </div>
   <div class="relative z-10 w-full max-w-lg md:max-w-xl">
-    <div class="register-form rounded-xl border border-border bg-card shadow-premium overflow-hidden" data-register-card>
-      <div class="bg-secondary p-3 md:p-4 rounded-t-xl register-header relative">
-        <div class="absolute right-3 top-2 text-[10px] font-medium uppercase tracking-wide text-muted-foreground" data-register-step-indicator>
-          Step: {{ page.step_indicator }}
-        </div>
+    <div class="register-form rounded-xl bg-card shadow-premium overflow-hidden" 
+      data-register-card
+      {% if registration_state %}
+      data-registration-id="{{ registration_state.session_id }}"
+      data-user-id="{{ registration_state.user_public_id }}"
+      data-initial-step="{{ registration_state.current_step }}"
+      data-steps-completed="{{ registration_state.steps_completed }}"
+      {% if registration_state.business_id %}data-business-id="{{ registration_state.business_id }}"{% endif %}
+      {% if registration_state.agent_id %}data-agent-id="{{ registration_state.agent_id }}"{% endif %}
+      {% endif %}
+    >
+      <div class="bg-secondary p-3 md:p-4 rounded-t-xl register-header relative" style="min-height: 6rem;">
         <h1 class="text-2xl md:text-3xl font-bold text-secondary-foreground text-center register-header-title">
           <span
             data-register-header-prefix
@@ -21,34 +24,27 @@
             data-text-business="{{ page.business.title_prefix }}"
             data-text-agent="{{ page.agent.title_prefix }}"
             data-text-uploads="{{ page.uploads.title_prefix }}"
-          >
-            {{ page.title_prefix }}
-          </span>&nbsp;
-          <span
+          >{% if registration_state.current_step == 'business' %}{{ page.business.title_prefix }}{% elif registration_state.current_step == 'agent' %}{{ page.agent.title_prefix }}{% elif registration_state.current_step == 'uploads' %}{{ page.uploads.title_prefix }}{% else %}{{ page.title_prefix }}{% endif %}</span>&nbsp;<span
             class="text-gradient-hero"
             data-register-header-highlight
             data-text-form="{{ page.title_highlight }}"
             data-text-business="{{ page.business.title_highlight }}"
             data-text-agent="{{ page.agent.title_highlight }}"
             data-text-uploads="{{ page.uploads.title_highlight }}"
-          >
-            {{ page.title_highlight }}
-          </span>
+          >{% if registration_state.current_step == 'business' %}{{ page.business.title_highlight }}{% elif registration_state.current_step == 'agent' %}{{ page.agent.title_highlight }}{% elif registration_state.current_step == 'uploads' %}{{ page.uploads.title_highlight }}{% else %}{{ page.title_highlight }}{% endif %}</span>
         </h1>
         <p
-          class="mt-1 text-center text-sm md:text-base streaming-text opacity-80 font-medium tracking-wide"
+          class="mt-1 text-center text-sm md:text-base streaming-text opacity-80 font-medium tracking-wide min-h-[1.5rem]"
           data-register-typed
           data-text-form="{{ page.typed_subtitle }}"
           data-text-business="{{ page.business.subtitle }}"
           data-text-agent="{{ page.agent.subtitle }}"
           data-text-uploads="{{ page.uploads.subtitle }}"
-        >
-          {{ page.typed_subtitle }}
-        </p>
+        >{% if registration_state.current_step == 'business' %}{{ page.business.subtitle }}{% elif registration_state.current_step == 'agent' %}{{ page.agent.subtitle }}{% elif registration_state.current_step == 'uploads' %}{{ page.uploads.subtitle }}{% else %}{{ page.typed_subtitle }}{% endif %}</p>
       </div>
       <div class="p-3 md:p-4">
         <div class="relative min-h-[20rem]" data-register-steps>
-          <div data-register-step="form" class="animate-panel-in">
+          <div data-register-step="form" class="{% if registration_state and registration_state.current_step != 'form' %}hidden opacity-0{% endif %} transition-opacity duration-200 ease-in-out">
             <form
               class="space-y-4"
               novalidate
@@ -159,7 +155,7 @@
               </button>
             </form>
           </div>
-          <div data-register-step="business" class="hidden animate-panel-in">
+          <div data-register-step="business" class="{% if not registration_state or registration_state.current_step != 'business' %}hidden opacity-0{% endif %} transition-opacity duration-200 ease-in-out">
             <form
               class="space-y-4"
               novalidate
@@ -375,7 +371,7 @@
               </div>
             </form>
           </div>
-          <div data-register-step="agent" class="hidden animate-panel-in">
+          <div data-register-step="agent" class="{% if not registration_state or registration_state.current_step != 'agent' %}hidden opacity-0{% endif %} transition-opacity duration-200 ease-in-out">
             <form
               class="space-y-4"
               novalidate
@@ -594,7 +590,7 @@
             </form>
           </div>
           <!-- Uploads step -->
-          <div data-register-step="uploads" class="hidden animate-panel-in">
+          <div data-register-step="uploads" class="{% if not registration_state or registration_state.current_step != 'uploads' %}hidden opacity-0{% endif %} transition-opacity duration-200 ease-in-out">
             <form
               class="space-y-4"
               novalidate
@@ -701,7 +697,7 @@
 
         </div>
         {% if request.user.is_authenticated %}
-          <div class="mt-6 text-center text-sm text-foreground/80">
+          <div class="mt-6 text-center text-sm text-foreground/80 hidden" data-skip-to-dashboard>
             You're already signed in.
             <a href="{% url 'frontend:dashboard' %}" class="text-primary hover:underline">Go to your dashboard</a>
           </div>
@@ -730,6 +726,8 @@
 
 {% block extra_js %}
 {{ business_data|json_script:"register-business-data" }}
+{% if prefill_business %}{{ prefill_business|json_script:"register-prefill-business" }}{% endif %}
+{% if prefill_agent %}{{ prefill_agent|json_script:"register-prefill-agent" }}{% endif %}
 <script>
   document.addEventListener("DOMContentLoaded", function () {
     var root = document.querySelector("[data-register-card]");
@@ -800,6 +798,27 @@
         businessData = JSON.parse(businessDataScript.textContent || "{}");
       } catch (error) {
         businessData = null;
+      }
+    }
+
+    // Parse prefill data for resuming registration
+    var prefillBusinessScript = document.getElementById("register-prefill-business");
+    var prefillBusiness = null;
+    if (prefillBusinessScript) {
+      try {
+        prefillBusiness = JSON.parse(prefillBusinessScript.textContent || "{}");
+      } catch (error) {
+        prefillBusiness = null;
+      }
+    }
+
+    var prefillAgentScript = document.getElementById("register-prefill-agent");
+    var prefillAgent = null;
+    if (prefillAgentScript) {
+      try {
+        prefillAgent = JSON.parse(prefillAgentScript.textContent || "{}");
+      } catch (error) {
+        prefillAgent = null;
       }
     }
 
@@ -930,7 +949,12 @@
     var orderedSteps = Array.prototype.slice.call(stepPanels).map(function (panel) {
       return panel.getAttribute("data-register-step");
     });
-    var currentStep = orderedSteps.length ? orderedSteps[0] : "form";
+    // Check for server-provided initial step (for resuming registration)
+    var serverInitialStep = root.getAttribute("data-initial-step");
+    var currentStep = serverInitialStep && orderedSteps.indexOf(serverInitialStep) !== -1 
+      ? serverInitialStep 
+      : (orderedSteps.length ? orderedSteps[0] : "form");
+    var skipToDashboard = root.querySelector("[data-skip-to-dashboard]");
     var isSubmitting = false;
 
     var businessPanel = root.querySelector("[data-register-step=\"business\"]");
@@ -1061,7 +1085,141 @@
     var uploadsMaterialsConfig = {};
     var uploadsState = { selected: [], values: {} };
 
-
+    // Hydrate business form from prefill data (for resuming registration)
+    function hydrateBusinessForm() {
+      if (!prefillBusiness || !hasBusinessStep) return;
+      
+      // Business name
+      if (businessNameInput && prefillBusiness.name) {
+        businessNameInput.value = prefillBusiness.name;
+      }
+      
+      // Industry
+      if (prefillBusiness.industry) {
+        businessState.industry = prefillBusiness.industry;
+        if (industryHiddenInput) {
+          industryHiddenInput.value = prefillBusiness.industry;
+        }
+        if (industryLabel) {
+          industryLabel.textContent = prefillBusiness.industry;
+        }
+      }
+      
+      // Line of business
+      if (prefillBusiness.line_of_business && Array.isArray(prefillBusiness.line_of_business)) {
+        businessState.lineOfBusiness = prefillBusiness.line_of_business.slice();
+        if (lobHiddenInput) {
+          lobHiddenInput.value = JSON.stringify(prefillBusiness.line_of_business);
+        }
+      }
+      
+      // Custom line of business
+      if (prefillBusiness.line_of_business_custom && Array.isArray(prefillBusiness.line_of_business_custom)) {
+        businessState.lineOfBusinessCustom = prefillBusiness.line_of_business_custom.slice();
+        if (lobCustomHiddenInput) {
+          lobCustomHiddenInput.value = JSON.stringify(prefillBusiness.line_of_business_custom);
+        }
+      }
+      
+      // Country
+      if (prefillBusiness.country) {
+        businessState.country = prefillBusiness.country;
+        countryAutoDetected = true; // Prevent auto-detection from overriding
+        if (countryHiddenInput) {
+          countryHiddenInput.value = prefillBusiness.country;
+        }
+        if (countryLabel) {
+          // Find the country with flag
+          var matchedCountry = businessCountries.find(function (c) {
+            return c.value === prefillBusiness.country;
+          });
+          if (matchedCountry) {
+            countryLabel.innerHTML = matchedCountry.flag + " " + matchedCountry.value;
+          } else {
+            countryLabel.textContent = prefillBusiness.country;
+          }
+        }
+      }
+      
+      // Website
+      if (websiteInput && prefillBusiness.website) {
+        websiteInput.value = prefillBusiness.website;
+      }
+    }
+    
+    // Hydrate agent form from prefill data (for resuming registration)
+    function hydrateAgentForm() {
+      if (!prefillAgent || !hasAgentStep) return;
+      
+      // Agent name
+      if (agentNameInput && prefillAgent.name) {
+        agentNameInput.value = prefillAgent.name;
+      }
+      
+      // Role
+      if (prefillAgent.role) {
+        agentState.role = prefillAgent.role;
+        if (agentRoleHiddenInput) {
+          agentRoleHiddenInput.value = prefillAgent.role;
+        }
+        if (agentRoleLabel) {
+          agentRoleLabel.textContent = prefillAgent.role;
+        }
+      }
+      
+      // Tone
+      if (prefillAgent.tone) {
+        agentState.tone = prefillAgent.tone;
+        if (agentToneHiddenInput) {
+          agentToneHiddenInput.value = prefillAgent.tone;
+        }
+        if (agentToneLabel) {
+          agentToneLabel.textContent = prefillAgent.tone;
+        }
+      }
+      
+      // Traits
+      if (prefillAgent.traits && Array.isArray(prefillAgent.traits)) {
+        agentState.traits = prefillAgent.traits.slice();
+        if (agentTraitsHiddenInput) {
+          agentTraitsHiddenInput.value = prefillAgent.traits.join(",");
+        }
+        // Update trait button states
+        agentTraitsButtons.forEach(function (btn) {
+          var trait = btn.getAttribute("data-agent-trait");
+          var isActive = agentState.traits.indexOf(trait) !== -1;
+          btn.setAttribute("data-active", isActive ? "true" : "false");
+          var activeClass = btn.getAttribute("data-active-class") || "";
+          var inactiveClass = btn.getAttribute("data-inactive-class") || "";
+          if (isActive) {
+            btn.className = btn.className.replace(new RegExp(inactiveClass.split(" ").join("|"), "g"), "").trim();
+            activeClass.split(" ").forEach(function (cls) {
+              if (cls) btn.classList.add(cls);
+            });
+          } else {
+            btn.className = btn.className.replace(new RegExp(activeClass.split(" ").join("|"), "g"), "").trim();
+            inactiveClass.split(" ").forEach(function (cls) {
+              if (cls) btn.classList.add(cls);
+            });
+          }
+        });
+      }
+      
+      // Escalation rule
+      if (prefillAgent.escalation_rule) {
+        agentState.escalation = prefillAgent.escalation_rule;
+        if (agentEscalationHiddenInput) {
+          agentEscalationHiddenInput.value = prefillAgent.escalation_rule;
+        }
+        if (agentEscalationLabel) {
+          agentEscalationLabel.textContent = prefillAgent.escalation_rule;
+        }
+      }
+    }
+    
+    // Run hydration at initialization
+    hydrateBusinessForm();
+    hydrateAgentForm();
 
     function setUploadsError(fieldKey, message) {
       if (!hasUploadsStep) return;
@@ -2933,29 +3091,59 @@
       if (!stepPanels.length) {
         return;
       }
-      currentStep = stepKey;
+      
+      // Fade out current step first
+      var currentPanel = null;
       stepPanels.forEach(function (panel) {
         var key = panel.getAttribute("data-register-step");
-        panel.classList.toggle("hidden", key !== stepKey);
+        if (key === currentStep && !panel.classList.contains("hidden")) {
+          currentPanel = panel;
+          panel.classList.add("opacity-0");
+        }
       });
-      if (stepIndicator) {
-        stepIndicator.textContent = "Step: " + stepKey;
-      }
-      applyHeader(stepKey, true);
-      if (stepKey === "business") {
-        autoDetectCountry();
-      } else {
-        closeIndustryPopover();
-        closeLobPopover();
-        closeCountryPopover();
-      }
-      closeAllAgentPopovers();
-      if (stepKey === "agent") {
-        updateAgentRoleDisplay();
-        updateAgentToneDisplay();
-        updateAgentTraitsDisplay();
-        updateAgentEscalationDisplay();
-      }
+      
+      currentStep = stepKey;
+      
+      // After fade out, switch visibility and fade in new step
+      setTimeout(function () {
+        stepPanels.forEach(function (panel) {
+          var key = panel.getAttribute("data-register-step");
+          if (key === stepKey) {
+            panel.classList.remove("hidden");
+            // Small delay before fading in for smoother transition
+            requestAnimationFrame(function () {
+              panel.classList.remove("opacity-0");
+            });
+          } else {
+            panel.classList.add("hidden", "opacity-0");
+          }
+        });
+        
+        if (stepIndicator) {
+          stepIndicator.textContent = "Step: " + stepKey;
+        }
+        applyHeader(stepKey, true);
+        // Show/hide "skip to dashboard" link based on step (hide on mandatory steps like business)
+        if (skipToDashboard) {
+          // Only uploads step can show the skip option - all other steps are mandatory
+          var showSkip = stepKey === "uploads";
+          skipToDashboard.classList.toggle("hidden", !showSkip);
+        }
+        if (stepKey === "business") {
+          autoDetectCountry();
+        } else {
+          closeIndustryPopover();
+          closeLobPopover();
+          closeCountryPopover();
+        }
+        closeAllAgentPopovers();
+        if (stepKey === "agent") {
+          updateAgentRoleDisplay();
+          updateAgentToneDisplay();
+          updateAgentTraitsDisplay();
+          updateAgentEscalationDisplay();
+        }
+      }, 200); // Wait for fade out transition to complete
     }
 
     function advanceToStep(stepKey) {

@@ -44,6 +44,7 @@ from apps.accounts.models import (
     KnowledgeUploadFile,
     KnowledgeUploadText,
     KnowledgeUploadUrl,
+    RegistrationSession,
 )
 from apps.cases.models import Case, CaseStatus
 from apps.conversations.models import Conversation, ConversationSender, IdentifierEvent
@@ -845,6 +846,69 @@ def register(request: HttpRequest) -> HttpResponse:
 
     get_token(request)
 
+    # Check for authenticated user with incomplete registration session
+    registration_state: dict[str, Any] | None = None
+    prefill_business: dict[str, Any] | None = None
+    prefill_agent: dict[str, Any] | None = None
+
+    if request.user.is_authenticated:
+        # Look for the most recent incomplete registration session
+        incomplete_session = (
+            RegistrationSession.objects.filter(
+                user=request.user,
+                is_complete=False,
+            )
+            .select_related("business_profile", "business_profile__agent_profile")
+            .order_by("-created_at")
+            .first()
+        )
+
+        if incomplete_session:
+            # Build state for template hydration
+            business = getattr(incomplete_session, "business_profile", None)
+            agent = getattr(business, "agent_profile", None) if business else None
+
+            registration_state = {
+                "session_id": str(incomplete_session.id),
+                "user_public_id": str(request.user.public_id),
+                "email": request.user.email,
+                "current_step": incomplete_session.current_step,
+                "steps_completed": incomplete_session.steps_completed,
+                "business_id": str(business.id) if business else None,
+                "agent_id": str(agent.id) if agent else None,
+            }
+
+            # Pre-fill business form data if available
+            if business:
+                prefill_business = {
+                    "name": business.name or "",
+                    "industry": business.industry or "",
+                    "industry_key": business.industry_key or "",
+                    "line_of_business": business.line_of_business or [],
+                    "line_of_business_custom": business.line_of_business_custom or [],
+                    "country": business.country or "",
+                    "website": business.website or "",
+                }
+
+            # Pre-fill agent form data if available
+            if agent:
+                prefill_agent = {
+                    "name": agent.name or "",
+                    "role": agent.role or "",
+                    "tone": agent.tone or "",
+                    "traits": agent.traits or [],
+                    "escalation_rule": agent.escalation_rule or "",
+                }
+        else:
+            # User is authenticated but has no incomplete session
+            # Check if they have a completed session - redirect to dashboard
+            completed_session = RegistrationSession.objects.filter(
+                user=request.user,
+                is_complete=True,
+            ).exists()
+            if completed_session:
+                return redirect("frontend:dashboard")
+
     industries = [
         "E-commerce & Retail",
         "SaaS & Software",
@@ -1323,6 +1387,10 @@ def register(request: HttpRequest) -> HttpResponse:
             "max_badges": 2,
         },
         "mobile_app": _mobile_app_section(),
+        # Registration resume state (for authenticated users with incomplete registrations)
+        "registration_state": registration_state,
+        "prefill_business": prefill_business,
+        "prefill_agent": prefill_agent,
     }
     return render(request, "frontend/register.html", context)
 
