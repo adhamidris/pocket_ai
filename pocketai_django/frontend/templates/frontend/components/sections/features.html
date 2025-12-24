@@ -556,8 +556,13 @@
     var imagesLoaded = 0;
 
     function initializePositions() {
-      requestTick();
-      window.setTimeout(handleResize, 100);
+      // Use double requestAnimationFrame to ensure layout is stable
+      // First rAF waits for pending style/layout, second ensures paint is complete
+      window.requestAnimationFrame(function() {
+        window.requestAnimationFrame(function() {
+          handleResize();
+        });
+      });
     }
 
     function onImageLoad() {
@@ -730,8 +735,8 @@
       resizeObserver.observe(root);
     }
 
-    requestTick();
-    window.setTimeout(handleResize, 250);
+    // Initial tick handled by initializePositions() after image/layout check
+    // No competing timeouts needed - the load event + initializePositions cover all cases
   });
 
 
