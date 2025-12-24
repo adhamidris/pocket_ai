@@ -74,6 +74,7 @@ IDENTIFIER_MAPPING_CACHE_TTL = 300
 DEFAULT_MAX_SEARCH_QUERY_VARIANTS = 4
 MCP_LOG_PII_DEFAULT = False
 MCP_LOG_SNIPPET_PREVIEWS_DEFAULT = False
+MCP_LOG_FULL_SNIPPET_CONTENT_DEFAULT = False
 
 
 def _mcp_log_pii_enabled() -> bool:
@@ -82,6 +83,10 @@ def _mcp_log_pii_enabled() -> bool:
 
 def _mcp_log_snippet_previews_enabled() -> bool:
     return bool(getattr(settings, "MCP_LOG_SNIPPET_PREVIEWS", MCP_LOG_SNIPPET_PREVIEWS_DEFAULT))
+
+
+def _mcp_log_full_snippet_content_enabled() -> bool:
+    return bool(getattr(settings, "MCP_LOG_FULL_SNIPPET_CONTENT", MCP_LOG_FULL_SNIPPET_CONTENT_DEFAULT))
 
 
 def _log_safe_text_fields(field: str, value: str | None) -> dict[str, object]:
@@ -1654,6 +1659,7 @@ def _log_snippet_payloads(
     preview_items: list[dict[str, object]] = []
     include_previews = _mcp_log_snippet_previews_enabled()
     include_pii = _mcp_log_pii_enabled()
+    include_full_content = _mcp_log_full_snippet_content_enabled()
     for payload in snippet_payloads[:5]:
         upload_id = payload.get("upload_id")
         chunk_id = payload.get("chunk_id") or payload.get("id")
@@ -1667,20 +1673,38 @@ def _log_snippet_payloads(
                 preview = preview_text
             else:
                 preview_hash = sha256_hex(preview_text)
-        preview_items.append(
-            {
-                "label": payload.get("public_label") or payload.get("title") or payload.get("label"),
-                "upload_id": str(upload_id) if upload_id else None,
-                "chunk_id": str(chunk_id) if chunk_id else None,
-                "read_state": payload.get("read_state"),
-                "read_required": bool(payload.get("read_required")),
-                "is_table_chunk": bool(payload.get("is_table_chunk")),
-                "score": payload.get("score"),
-                "preview": redact_free_text(preview) if preview and not include_pii else preview,
-                "preview_sha256": preview_hash,
-                "preview_len": preview_len,
-            }
-        )
+        
+        item_dict = {
+            "label": payload.get("public_label") or payload.get("title") or payload.get("label"),
+            "upload_id": str(upload_id) if upload_id else None,
+            "chunk_id": str(chunk_id) if chunk_id else None,
+            "read_state": payload.get("read_state"),
+            "read_required": bool(payload.get("read_required")),
+            "is_table_chunk": bool(payload.get("is_table_chunk")),
+            "score": payload.get("score"),
+            "preview": redact_free_text(preview) if preview and not include_pii else preview,
+            "preview_sha256": preview_hash,
+            "preview_len": preview_len,
+        }
+        
+        # Add full content when enabled
+        if include_full_content:
+            content = payload.get("content")
+            if content:
+                item_dict["full_content"] = str(content) if include_pii else str(content)
+                item_dict["full_content_len"] = len(str(content))
+            
+            summary = payload.get("summary")
+            if summary:
+                item_dict["summary"] = str(summary) if include_pii else str(summary)
+                item_dict["summary_len"] = len(str(summary))
+            
+            rows = payload.get("rows")
+            if rows and isinstance(rows, list):
+                item_dict["rows"] = rows if include_pii else rows
+                item_dict["rows_count"] = len(rows)
+        
+        preview_items.append(item_dict)
     detail = dict(meta or {})
     if "query" in detail:
         query_value = _coerce_str(detail.pop("query")).strip()
