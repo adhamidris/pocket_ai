@@ -48,7 +48,7 @@
       <!-- Container that sizes to heading width -->
       <div class="inline-block">
         <!-- Heading Text -->
-        <h2 class="text-4xl lg:text-5xl font-bold text-foreground mb-0 whitespace-nowrap">
+        <h2 class="text-4xl lg:text-5xl font-bold text-foreground mb-0 lg:whitespace-nowrap">
           {{ section.section_title_prefix }} <span class="text-gradient-hero">{{ section.section_title_highlight }}</span>
         </h2>
       </div>
@@ -593,7 +593,7 @@
     // Lightweight Feature Scroll Snapping (High Sensitivity)
     var featuresSection = document.querySelector("#features");
     var isSnapping = false;
-    var snapCooldown = 500;
+    var snapCooldown = 1200;
     var lastSnapTime = 0;
     var hasEngagedWithFeatures = false; // Track if user has reached feature 1
 
@@ -683,15 +683,15 @@
       
       // FIRST FEATURE GATE: If not engaged yet, only allow jumping to feature 0
       if (!hasEngagedWithFeatures) {
-        // Require deeper scroll before triggering - section top must be above 40% of viewport
-        var scrollDepthThreshold = window.innerHeight * 0.4;
+        // Require deeper scroll before triggering - section top must be above 30% of viewport
+        var scrollDepthThreshold = window.innerHeight * 0.3;
         if (rect.top > scrollDepthThreshold) {
           // Not scrolled deep enough yet, allow normal scrolling
           return;
         }
         
-        // More sensitive threshold for better responsiveness
-        if (Math.abs(delta) < 20) return;
+        // Higher threshold for less aggressive snapping
+        if (Math.abs(delta) < 80) return;
         
         // Force target to be feature 0 on first entry
         if (delta > 0) {
@@ -702,9 +702,8 @@
         return;
       }
       
-      // AFTER ENGAGEMENT: High sensitivity for feature-to-feature navigation
-      var nearFeature = isNearFeature();
-      var minDelta = nearFeature ? 2 : 50;
+      // AFTER ENGAGEMENT: Reduced sensitivity for smoother navigation
+      var minDelta = 80;
       
       if (Math.abs(delta) < minDelta) return;
 
@@ -717,7 +716,8 @@
       snapToFeature(targetIndex);
     }
 
-    window.addEventListener("wheel", handleFeaturesScroll, { passive: false });
+    // Scroll snapping disabled for smoother, more professional scrolling experience
+    // window.addEventListener("wheel", handleFeaturesScroll, { passive: false });
 
     if (mql.addEventListener) {
       mql.addEventListener("change", handleResize);
