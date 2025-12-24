@@ -51,14 +51,6 @@
         <h2 class="text-4xl lg:text-5xl font-bold text-foreground mb-0 whitespace-nowrap">
           {{ section.section_title_prefix }} <span class="text-gradient-hero">{{ section.section_title_highlight }}</span>
         </h2>
-        
-        <!-- Sparkles Container - Matches Heading Width Exactly -->
-        <div class="relative w-[150%] -ml-[25%] h-20 flex items-center justify-center">
-          <!-- Sparkles Canvas -->
-          <canvas id="features-sparkles-canvas" class="absolute inset-0 w-full h-full"></canvas>
-          
-
-        </div>
       </div>
     </div>
 
@@ -598,29 +590,24 @@
       initializePositions();
     }
 
-    // Scroll Jumper Implementation
-    var scrollJumpEnabled = true;
-    var isJumping = false;
-    var jumpCooldown = 600; // ms between jumps - reduced for more sensitive/responsive feel
-    var lastJumpTime = 0;
+    // Lightweight Feature Scroll Snapping (High Sensitivity)
     var featuresSection = document.querySelector("#features");
-    var wasAboveFeatures = true; // Track if user was above features section
-    var hasEnteredFirstFeature = false; // Track if user has entered through first feature
+    var isSnapping = false;
+    var snapCooldown = 500;
+    var lastSnapTime = 0;
+    var hasEngagedWithFeatures = false; // Track if user has reached feature 1
 
-    function getCurrentFeatureIndex() {
-      if (steps.length === 0) {
-        return 0;
-      }
-
-      var scrollY = window.scrollY;
-      var viewportMiddle = scrollY + window.innerHeight / 3;
+    function getClosestFeatureIndex(scrollY) {
+      if (steps.length === 0) return 0;
+      
+      var viewportMiddle = scrollY + window.innerHeight / 2;
       var closestIndex = 0;
       var minDistance = Infinity;
 
       steps.forEach(function (step, index) {
         var rect = step.getBoundingClientRect();
-        var stepTop = rect.top + scrollY;
-        var distance = Math.abs(stepTop - viewportMiddle);
+        var stepMiddle = rect.top + scrollY + rect.height / 2;
+        var distance = Math.abs(stepMiddle - viewportMiddle);
 
         if (distance < minDistance) {
           minDistance = distance;
@@ -631,170 +618,106 @@
       return closestIndex;
     }
 
-    function smoothScrollTo(element) {
-      if (!element) return;
+    function isNearFeature() {
+      if (steps.length === 0) return false;
+      
+      var viewportMiddle = window.scrollY + window.innerHeight / 2;
+      
+      // Check if we're close to any feature (within 30% of viewport height)
+      var threshold = window.innerHeight * 0.3;
+      
+      for (var i = 0; i < steps.length; i++) {
+        var rect = steps[i].getBoundingClientRect();
+        var stepMiddle = rect.top + window.scrollY + rect.height / 2;
+        var distance = Math.abs(stepMiddle - viewportMiddle);
+        
+        if (distance < threshold) {
+          return true;
+        }
+      }
+      
+      return false;
+    }
 
+    function snapToFeature(index) {
+      if (index < 0 || index >= steps.length) return;
+      
+      var feature = steps[index];
       var header = document.querySelector("header");
       var headerHeight = header ? header.getBoundingClientRect().height : 0;
-      var offset = headerHeight + 80; // Extra spacing for better visual centering
-      
-      var elementPosition = element.getBoundingClientRect().top + window.scrollY;
-      var targetPosition = elementPosition - offset;
+      var targetY = feature.getBoundingClientRect().top + window.scrollY - headerHeight - 80;
 
-      // Use native smooth scroll with custom behavior
+      isSnapping = true;
       window.scrollTo({
-        top: targetPosition,
+        top: targetY,
         behavior: "smooth"
       });
-    }
 
-    function jumpToNextFeature() {
-      var currentIndex = getCurrentFeatureIndex();
-      var totalFeatures = steps.length;
-
-      if (currentIndex >= totalFeatures - 1) {
-        // At last feature - disable jump mode
-        scrollJumpEnabled = false;
-        return;
+      // Mark as engaged once we snap to feature 1 or beyond
+      if (index >= 0) {
+        hasEngagedWithFeatures = true;
       }
 
-      isJumping = true;
-      lastJumpTime = Date.now();
-
-      var nextFeature = steps[currentIndex + 1];
-      if (nextFeature) {
-        smoothScrollTo(nextFeature);
-      }
-
-      setTimeout(function () {
-        isJumping = false;
-      }, jumpCooldown);
+      setTimeout(function() {
+        isSnapping = false;
+      }, snapCooldown);
     }
 
-    function enforceFirstFeatureEntry() {
-      if (!featuresSection || steps.length === 0) return;
+    function handleFeaturesScroll(event) {
+      if (!mql.matches || !featuresSection) return;
       
-      var rect = featuresSection.getBoundingClientRect();
-      var firstFeatureRect = steps[0].getBoundingClientRect();
-      
-      // Update tracking state first
-      if (rect.bottom < 0) {
-        // User is above features section
-        wasAboveFeatures = true;
-        hasEnteredFirstFeature = false;
-      } else if (rect.top > window.innerHeight) {
-        // User is below features section - clear the flag so we don't trigger when scrolling back up
-        wasAboveFeatures = false;
-        hasEnteredFirstFeature = false;
-      }
-      
-      // Only enforce entry gate if coming from above AND haven't entered yet
-      if (wasAboveFeatures && !hasEnteredFirstFeature) {
-        // Section is entering viewport from above
-        if (rect.top < window.innerHeight && rect.top > -200) {
-          // Only trigger if we're REALLY about to skip past the first feature
-          // More aggressive threshold: only catch if first feature is already scrolling out of view
-          // This lets gentle scrolls naturally land on first feature without intervention
-          if (firstFeatureRect.top < 0 || firstFeatureRect.bottom < window.innerHeight / 2) {
-            // We've scrolled past the first feature - catch it!
-            smoothScrollTo(steps[0]);
-            hasEnteredFirstFeature = true;
-            isJumping = true;
-            lastJumpTime = Date.now();
-            
-            setTimeout(function() {
-              isJumping = false;
-            }, jumpCooldown);
-          }
-        }
-      }
-    }
-
-    function jumpToPreviousFeature() {
-      var currentIndex = getCurrentFeatureIndex();
-
-      if (currentIndex <= 0) {
-        // At first feature - disable jump mode
-        scrollJumpEnabled = false;
-        return;
-      }
-
-      isJumping = true;
-      lastJumpTime = Date.now();
-
-      var prevFeature = steps[currentIndex - 1];
-      if (prevFeature) {
-        smoothScrollTo(prevFeature);
-      }
-
-      setTimeout(function () {
-        isJumping = false;
-      }, jumpCooldown);
-    }
-
-    function isInFeaturesSection() {
-      if (!featuresSection) {
-        return false;
-      }
-      var rect = featuresSection.getBoundingClientRect();
-      var viewportHeight = window.innerHeight;
-
-      // Consider "in section" if section is visible in viewport
-      return rect.top < viewportHeight && rect.bottom > 0;
-    }
-
-    function monitorScrollPosition() {
-      // Enforce first feature entry gate
-      enforceFirstFeatureEntry();
-      
-      if (!scrollJumpEnabled && featuresSection) {
-        var rect = featuresSection.getBoundingClientRect();
-        var currentIndex = getCurrentFeatureIndex();
-
-        // Re-enable jump mode if scrolling back into features section
-        // and not at the first or last feature
-        if (rect.top < window.innerHeight / 2 && rect.bottom > window.innerHeight / 2) {
-          if (currentIndex > 0 && currentIndex < steps.length - 1) {
-            scrollJumpEnabled = true;
-          }
-        }
-      }
-    }
-
-    function handleFeatureScroll(event) {
-      // Skip if on mobile/small screens
-      if (!mql.matches) {
-        return;
-      }
-
-      if (!isInFeaturesSection() || !scrollJumpEnabled || isJumping) {
-        return;
-      }
-
       var now = Date.now();
-      if (now - lastJumpTime < jumpCooldown) {
-        event.preventDefault();
+      if (isSnapping || now - lastSnapTime < snapCooldown) return;
+
+      var rect = featuresSection.getBoundingClientRect();
+      var isInSection = rect.top < window.innerHeight && rect.bottom > 0;
+      
+      if (!isInSection) {
+        // Reset engagement flag when leaving section
+        hasEngagedWithFeatures = false;
         return;
       }
 
-      // Determine scroll direction from wheel event
-      var deltaY = event.deltaY;
-
-      // Jump on scroll down (next feature) or scroll up (previous feature)
-      if (deltaY > 0) {
-        event.preventDefault();
-        jumpToNextFeature();
-      } else if (deltaY < 0) {
-        event.preventDefault();
-        jumpToPreviousFeature();
+      var delta = event.deltaY;
+      var currentIndex = getClosestFeatureIndex(window.scrollY);
+      
+      // FIRST FEATURE GATE: If not engaged yet, only allow jumping to feature 0
+      if (!hasEngagedWithFeatures) {
+        // Require deeper scroll before triggering - section top must be above 40% of viewport
+        var scrollDepthThreshold = window.innerHeight * 0.4;
+        if (rect.top > scrollDepthThreshold) {
+          // Not scrolled deep enough yet, allow normal scrolling
+          return;
+        }
+        
+        // More sensitive threshold for better responsiveness
+        if (Math.abs(delta) < 20) return;
+        
+        // Force target to be feature 0 on first entry
+        if (delta > 0) {
+          event.preventDefault();
+          lastSnapTime = now;
+          snapToFeature(0);
+        }
+        return;
       }
+      
+      // AFTER ENGAGEMENT: High sensitivity for feature-to-feature navigation
+      var nearFeature = isNearFeature();
+      var minDelta = nearFeature ? 2 : 50;
+      
+      if (Math.abs(delta) < minDelta) return;
+
+      var targetIndex = delta > 0 ? currentIndex + 1 : currentIndex - 1;
+
+      if (targetIndex < 0 || targetIndex >= steps.length) return;
+
+      event.preventDefault();
+      lastSnapTime = now;
+      snapToFeature(targetIndex);
     }
 
-    // Add wheel event listener for scroll jumping
-    window.addEventListener("wheel", handleFeatureScroll, { passive: false });
-
-    // Monitor scroll position to re-enable jump mode
-    window.addEventListener("scroll", monitorScrollPosition, { passive: true });
+    window.addEventListener("wheel", handleFeaturesScroll, { passive: false });
 
     if (mql.addEventListener) {
       mql.addEventListener("change", handleResize);
@@ -811,109 +734,5 @@
     window.setTimeout(handleResize, 250);
   });
 
-  // Sparkles Particle Animation
-  document.addEventListener("DOMContentLoaded", function () {
-    var canvas = document.getElementById("features-sparkles-canvas");
-    if (!canvas) return;
 
-    var ctx = canvas.getContext("2d");
-    var particles = [];
-    var particleCount = 800; // Increased to 800 to fill gaps after widening
-    var animationFrameId = null;
-
-    function setCanvasSize() {
-      var container = canvas.parentElement;
-      if (!container) return;
-      
-      // Use container's actual size for canvas
-      var rect = container.getBoundingClientRect();
-      canvas.width = rect.width;
-      canvas.height = rect.height;
-    }
-
-    function Particle() {
-      this.x = Math.random() * canvas.width;
-      this.y = Math.random() * canvas.height;
-      this.size = Math.random() * 1.0 + 0.5; // 0.5 to 1.5 pixels - finer, less chunky
-      this.speedX = (Math.random() - 0.5) * 0.15; // Much slower horizontal movement
-      this.speedY = (Math.random() - 0.5) * 0.15; // Much slower vertical movement
-      this.opacity = Math.random() * 0.5 + 0.3; // 0.3 to 0.8 - slightly more subtle
-      this.opacityDirection = Math.random() > 0.5 ? 1 : -1;
-    }
-
-    Particle.prototype.update = function () {
-      this.x += this.speedX;
-      this.y += this.speedY;
-
-      // Wrap around edges
-      if (this.x > canvas.width) this.x = 0;
-      if (this.x < 0) this.x = canvas.width;
-      if (this.y > canvas.height) this.y = 0;
-      if (this.y < 0) this.y = canvas.height;
-
-      // Flicker effect - brighter range
-      this.opacity += this.opacityDirection * 0.01;
-      if (this.opacity >= 0.9) this.opacityDirection = -1;
-      if (this.opacity <= 0.5) this.opacityDirection = 1;
-    };
-
-    Particle.prototype.draw = function () {
-      // Apply mask effect (fade out at edges)
-      // Top-aligned half-ellipse: brighter at the top (near text), fading towards bottom
-      var dx = this.x - canvas.width / 2;
-      var dy = this.y; // Distance from top edge
-      
-      // Superellipse mask for rounded-rectangle shape
-      // X: Power of 4 creates a flat top with rounded corners ( squircle-like )
-      // Y: Power of 2 maintains a pleasant vertical fade
-      var xNorm = Math.abs(dx) / (canvas.width * 0.5);
-      var yNorm = dy / canvas.height;
-      
-      // Calculate "distance" in superellipse space
-      // dist < 1 is inside, dist > 1 is outside
-      // We start fading before 1 to give it a soft edge
-      var dist = Math.pow(xNorm, 4) + Math.pow(yNorm, 2);
-      
-      // Invert for alpha (1 at top-center)
-      var maskAlpha = Math.max(0, 1 - dist);
-
-      ctx.fillStyle = "rgba(255, 255, 255, " + (this.opacity * maskAlpha) + ")";
-      ctx.fillRect(this.x, this.y, this.size, this.size);
-    };
-
-    function init() {
-      setCanvasSize();
-      particles = [];
-      for (var i = 0; i < particleCount; i++) {
-        particles.push(new Particle());
-      }
-    }
-
-    function animate() {
-      ctx.clearRect(0, 0, canvas.width, canvas.height);
-
-      for (var i = 0; i < particles.length; i++) {
-        particles[i].update();
-        particles[i].draw();
-      }
-
-      animationFrameId = requestAnimationFrame(animate);
-    }
-
-    init();
-    animate();
-
-    // Handle resize
-    window.addEventListener("resize", function () {
-      setCanvasSize();
-      init();
-    });
-
-    // Cleanup on page unload
-    window.addEventListener("beforeunload", function () {
-      if (animationFrameId) {
-        cancelAnimationFrame(animationFrameId);
-      }
-    });
-  });
 </script>
