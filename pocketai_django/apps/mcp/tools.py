@@ -239,7 +239,7 @@ TOOL_DEFINITIONS: tuple[Mapping[str, object], ...] = (
     ),
     _function_schema(
         name="list_tables",
-        description="List uploads that contain structured tables so you can grab their document IDs before aggregations.",
+        description="List queryable dataset/spreadsheet uploads (CSV/XLSX/JSONL) so you can grab their document IDs before table queries.",
         properties={
             "query": {
                 "type": "string",
@@ -877,9 +877,10 @@ def _detect_full_page_intent(
     total_rows = _coerce_int(diag.get("table_total_rows") or diag.get("table_indexed_rows"))
     if not total_rows and upload:
         metadata = upload.ingestion_metadata if isinstance(getattr(upload, "ingestion_metadata", None), Mapping) else {}
-        table_stats = metadata.get("table_stats") if isinstance(metadata, Mapping) else {}
-        total_rows = _coerce_int(table_stats.get("total_rows"))
-        truncated = truncated or bool(table_stats.get("partial_index"))
+        table_stats = metadata.get("table_stats") if isinstance(metadata, Mapping) else None
+        if isinstance(table_stats, Mapping):
+            total_rows = _coerce_int(table_stats.get("total_rows"))
+            truncated = truncated or bool(table_stats.get("partial_index"))
 
     if total_rows and total_rows <= 20 and not truncated:
         return True
@@ -1769,9 +1770,10 @@ def _search_hint(
     diag = diagnostics or {}
     if intent == "table":
         return (
-            "These results look tabular. Use read_knowledge with intent=table and the table upload document_id to retrieve exact rows/columns and totals "
-            "(narrow with table.match_column + match_value(s) or table.query + sheet_name/select_columns). If snippets have is_table_chunk=true, do NOT request text excerpts; "
-            "use read_knowledge intent=table (and call list_tables once if you need sheet/table options)."
+            "These results look tabular. Use read_knowledge with intent=table ONLY for native datasets/spreadsheets (CSV/XLSX/JSONL). "
+            "If the source is a document (PDF/DOCX/TXT) that visually contains a table, use read_knowledge intent=text (or auto) to read the relevant page—"
+            "`is_table_chunk=true` can come from tables extracted from documents and is not a signal that the file is queryable like a spreadsheet. "
+            "Use list_tables only to find dataset uploads (document_id + sheet hints) before table queries."
         )
     if diag.get("path") == "fallback":
         return "Fallback snippets in use; confirm details with the visitor or narrow the request before citing specifics."
@@ -2609,33 +2611,39 @@ def _read_document_handler(
     if chunk_record:
         chunk_meta = chunk_record.metadata if isinstance(getattr(chunk_record, "metadata", None), Mapping) else {}
         if chunk_meta.get("is_table_chunk"):
-            upload_id = str(chunk_record.upload_id)
-            structured_log(
-                "mcp",
-                "read_document.wrong_tool_for_table",
-                {
+            upload = chunk_record.upload
+            ingestion_meta = upload.ingestion_metadata if isinstance(getattr(upload, "ingestion_metadata", None), Mapping) else {}
+            format_hint = str(ingestion_meta.get("format") or "").strip().lower()
+            dataset_meta = ingestion_meta.get("dataset") if isinstance(ingestion_meta, Mapping) else None
+            dataset_enabled = bool(isinstance(dataset_meta, Mapping) and dataset_meta.get("enabled"))
+            native_tabular = format_hint in {"csv", "tsv", "xls", "xlsx", "jsonl"}
+            if dataset_enabled or native_tabular:
+                upload_id = str(chunk_record.upload_id)
+                structured_log(
+                    "mcp",
+                    "read_document.wrong_tool_for_table",
+                    {
+                        "document_id": document_id,
+                        "upload_id": upload_id,
+                        "chunk_id": str(chunk_record.id),
+                    },
+                    context={"conversation": conversation.id, "business": conversation.business_profile_id},
+                    logger_obj=logger,
+                    level=logging.WARNING,
+                )
+                return {
+                    "tool": "read_document",
                     "document_id": document_id,
                     "upload_id": upload_id,
-                    "chunk_id": str(chunk_record.id),
-                },
-                context={"conversation": conversation.id, "business": conversation.business_profile_id},
-                logger_obj=logger,
-                level=logging.WARNING,
-            )
-            return {
-                "tool": "read_document",
-                "document_id": document_id,
-                "upload_id": upload_id,
-                "status": "constraint_error",
-                "error": "wrong_tool_for_table",
-                "error_code": "wrong_tool_for_table",
-                "snippets": [],
-                "hint": (
-                    "This document is a structured table (`is_table_chunk=true`). Use `read_knowledge` with `intent=table` and "
-                    f"document_id={upload_id} (or call `list_tables` to find the right table upload), then narrow with "
-                    "`table.match_column` + `match_value(s)` or `table.query` + `sheet_name`/`select_columns`."
-                ),
-            }
+                    "status": "constraint_error",
+                    "error": "wrong_tool_for_table",
+                    "error_code": "wrong_tool_for_table",
+                    "snippets": [],
+                    "hint": (
+                        "This upload is a structured dataset/spreadsheet table. Use `read_knowledge` with `intent=table` and "
+                        f"document_id={upload_id} (and call `list_tables` if you need sheet options)."
+                    ),
+                }
     if upload_record and upload_record.tables.exists() and not upload_record.pages.exists():
         upload_id = str(upload_record.id)
         structured_log(
@@ -2958,14 +2966,19 @@ def _list_tables_handler(
             "hint": str(exc),
         }
 
+    tabular_formats = ("csv", "tsv", "xls", "xlsx", "jsonl")
     uploads_qs = (
         apply_customer_visible_uploads(
             KnowledgeUpload.objects.filter(
                 business_profile=conversation.business_profile,
                 status=KnowledgeStatus.ACTIVE,
-                tables__isnull=False,
             )
         )
+        .filter(
+            models.Q(ingestion_metadata__dataset__enabled=True)
+            | models.Q(ingestion_metadata__format__in=tabular_formats)
+        )
+        .filter(tables__isnull=False)
         .only(
             "id",
             "display_name",
@@ -5476,6 +5489,9 @@ def _read_knowledge_handler(
         if isinstance(getattr(upload_record, "ingestion_metadata", None), Mapping)
         else {}
     )
+    format_hint = str(ingestion_meta.get("format") or "").strip().lower()
+    native_tabular = format_hint in {"csv", "tsv", "xls", "xlsx", "jsonl"}
+    is_document_format = format_hint in {"pdf", "docx", "txt", "text"} or not format_hint
     dataset_meta = ingestion_meta.get("dataset") if isinstance(ingestion_meta, Mapping) else None
     dataset_enabled = bool(isinstance(dataset_meta, Mapping) and dataset_meta.get("enabled"))
     upload_has_tables = bool(upload_record.tables.exists())
@@ -5546,6 +5562,16 @@ def _read_knowledge_handler(
             return True
         return False
 
+    def _has_strong_table_signal(payload: Mapping[str, object]) -> bool:
+        """Strong signals that indicate a real table query (not just sheet/index hints)."""
+        for key in ("query", "match_column", "match_value", "match_values", "filters"):
+            value = payload.get(key)
+            if isinstance(value, str) and value.strip():
+                return True
+            if isinstance(value, (list, dict)) and value:
+                return True
+        return False
+
     wants_table = False
     wants_text = False
     if intent == "table":
@@ -5553,15 +5579,19 @@ def _read_knowledge_handler(
     elif intent == "text":
         wants_text = True
 
-    if is_table_chunk or is_dataset_card:
+    if is_dataset_card:
         wants_table = True
 
-    if _has_table_signal(table_args):
+    if is_document_format:
+        # Deterministic document routing: PDFs/DOCX/TXT are read as text even if they contain visual tables.
+        wants_text = True
+        wants_table = False
+    elif _has_table_signal(table_args):
         wants_table = True
 
     if not wants_text and not wants_table:
-        # Auto routing: prefer tabular engines when the upload is tabular.
-        wants_table = upload_has_tables or dataset_enabled
+        # Auto routing: prefer tabular engines only for native tabular formats or datasets.
+        wants_table = dataset_enabled or native_tabular
         wants_text = not wants_table
 
     def _log_read_knowledge_performance(envelope: Mapping[str, object]) -> None:
@@ -5592,6 +5622,12 @@ def _read_knowledge_handler(
             "is_table_chunk": is_table_chunk,
             "is_dataset_card": is_dataset_card,
         }
+        # Include auto_fallback if present
+        auto_fallback = diagnostics.get("auto_fallback") if isinstance(diagnostics, Mapping) else None
+        if auto_fallback:
+            detail["auto_fallback"] = auto_fallback
+            detail["prior_engine"] = diagnostics.get("prior_engine") if isinstance(diagnostics, Mapping) else None
+            detail["prior_status"] = diagnostics.get("prior_status") if isinstance(diagnostics, Mapping) else None
         error_code = envelope.get("error_code")
         if error_code not in (None, ""):
             detail["error_code"] = error_code
@@ -6360,6 +6396,59 @@ def _read_knowledge_handler(
 
         result = _table_aggregate_handler(table_agg_args, conversation=conversation, context=context)
         result_out = dict(result) if isinstance(result, Mapping) else {"status": "error", "error": "invalid_result"}
+
+        # Smart fallback: if table engine returned not_found with 0 rows for a document-type upload
+        # without strong table signals, retry with text mode instead.
+        table_status = str(result_out.get("status") or "").strip().lower()
+        table_evaluated_rows = int(result_out.get("evaluated_rows") or 0)
+        is_document_upload = bool(upload_record.pages.exists())
+        has_strong_signal = _has_strong_table_signal(table_args)
+
+        if (
+            table_status == "not_found"
+            and table_evaluated_rows == 0
+            and is_document_upload
+            and not has_strong_signal
+            and not is_table_chunk
+            and not is_dataset_card
+        ):
+            # Fallback to text mode using upload_record.id (not chunk id)
+            fallback_read_args: dict[str, object] = {"document_id": str(upload_record.id)}
+            for key in ("page", "offset", "mode", "token_budget", "chunk_neighbor"):
+                value = text_args.get(key)
+                if value is not None and not (isinstance(value, str) and not value.strip()):
+                    fallback_read_args[key] = value
+
+            fallback_result = _read_document_handler(fallback_read_args, conversation=conversation, context=context)
+            fallback_envelope = _envelope(
+                engine="text_page",
+                engine_tool="read_document",
+                result=fallback_result,
+                resolved_upload_id=str(upload_record.id),
+                requested_document_id=raw_id,
+                resolved_chunk_id=str(chunk_record.id) if chunk_record else None,
+                resolved_document_id_used=str(upload_record.id),
+            )
+            # Add provenance about the fallback
+            fallback_diagnostics = fallback_envelope.get("diagnostics")
+            if isinstance(fallback_diagnostics, dict):
+                fallback_diagnostics["auto_fallback"] = "table_empty_to_text"
+                fallback_diagnostics["prior_engine"] = "table_preview"
+                fallback_diagnostics["prior_status"] = table_status
+                fallback_diagnostics["prior_evaluated_rows"] = table_evaluated_rows
+
+            _log_read_knowledge_performance(fallback_envelope)
+            if fallback_envelope.get("status") == "ok" and _has_prompt_evidence(fallback_envelope):
+                _record_knowledge_audit_event_once(
+                    context=context,
+                    conversation=conversation,
+                    upload=upload_record,
+                    action=KnowledgeAuditAction.READ,
+                    engine=_coerce_str(fallback_envelope.get("engine")).strip(),
+                    status=_coerce_str(fallback_envelope.get("status")).strip(),
+                    metadata={"engine_tool": "read_document", "auto_fallback": True},
+                )
+            return fallback_envelope
 
         if requested_identifier_column and requested_identifier_values and _column_suggests_identifier(requested_identifier_column):
             identifier_diag["requested_identifier"] = {

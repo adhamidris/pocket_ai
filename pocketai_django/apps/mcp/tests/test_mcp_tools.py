@@ -10,6 +10,7 @@ from apps.accounts.models import (
     KnowledgeStatus,
     KnowledgeUpload,
     KnowledgeUploadChunk,
+    KnowledgeUploadTable,
     RegistrationSession,
     User,
     IdentifierColumnMapping,
@@ -166,6 +167,126 @@ class McpReadDocumentHandlerTests(TestCase):
         self.assertEqual(result["status"], "ok")
         self.assertTrue(result["snippets"])
         self.assertEqual(result["snippets"][0]["read_state"], "summary")
+
+
+class McpReadKnowledgeRoutingTests(TestCase):
+    def setUp(self) -> None:
+        super().setUp()
+        tools._knowledge_service.cache_clear()  # type: ignore[attr-defined]
+        self.embed_patcher = mock.patch("apps.rag.ai_orchestrator.build_embedding_service", return_value=None)
+        self.embed_patcher.start()
+        self.user = User.objects.create(email="mcp-read-knowledge@example.com", first_name="Reader")
+        self.registration = RegistrationSession.objects.create(user=self.user)
+        self.business = BusinessProfile.objects.create(
+            user=self.user,
+            registration_session=self.registration,
+            name="Docs Co",
+            industry="docs",
+        )
+        self.conversation = Conversation.objects.create(
+            business_profile=self.business,
+            session_token="read-knowledge-session",
+        )
+        self.upload = KnowledgeUpload.objects.create(
+            business_profile=self.business,
+            user=self.user,
+            source_type=KnowledgeSourceType.FILE,
+            status=KnowledgeStatus.ACTIVE,
+            display_name="Card Fees PDF",
+            ingestion_metadata={
+                "format": "pdf",
+                "structured_exports": {
+                    "pages": [
+                        {
+                            "page_number": 1,
+                            "synopsis": "Fee table overview.",
+                            "headings": ["Fees"],
+                        }
+                    ]
+                },
+            },
+        )
+        self.table_chunk = KnowledgeUploadChunk.objects.create(
+            upload=self.upload,
+            business_profile=self.business,
+            chunk_index=0,
+            content="Fee\tAmount\nForeign transaction\t3%",
+            metadata={"is_table_chunk": True, "strategy": "table_extract", "is_table_preview": True},
+        )
+
+    def tearDown(self) -> None:
+        self.embed_patcher.stop()
+        super().tearDown()
+
+    def test_read_knowledge_forces_text_for_pdf_table_chunk_even_with_table_args(self) -> None:
+        context = ToolExecutionContext(
+            max_chunk_reads_per_turn=3,
+            max_chunk_pages_per_turn=3,
+            char_budget_per_turn=5000,
+        )
+        payload = {
+            "document_id": str(self.table_chunk.id),
+            "intent": "table",
+            "table": {"query": "foreign transaction fee"},
+        }
+        result = tools._read_knowledge_handler(payload, self.conversation, context)
+
+        self.assertEqual(result["status"], "ok")
+        self.assertEqual(result["engine"], "text_page")
+        self.assertEqual(result["diagnostics"]["engine_tool"], "read_document")
+        evidence = result.get("evidence") or {}
+        self.assertTrue(evidence.get("snippets"))
+
+
+class McpListTablesHandlerDatasetOnlyTests(TestCase):
+    def setUp(self) -> None:
+        super().setUp()
+        tools._knowledge_service.cache_clear()  # type: ignore[attr-defined]
+        self.embed_patcher = mock.patch("apps.rag.ai_orchestrator.build_embedding_service", return_value=None)
+        self.embed_patcher.start()
+        self.user = User.objects.create(email="mcp-list-tables@example.com", first_name="Lister")
+        self.registration = RegistrationSession.objects.create(user=self.user)
+        self.business = BusinessProfile.objects.create(
+            user=self.user,
+            registration_session=self.registration,
+            name="Tables Co",
+            industry="tables",
+        )
+        self.conversation = Conversation.objects.create(
+            business_profile=self.business,
+            session_token="list-tables-session",
+        )
+        self.pdf_upload = KnowledgeUpload.objects.create(
+            business_profile=self.business,
+            user=self.user,
+            source_type=KnowledgeSourceType.FILE,
+            status=KnowledgeStatus.ACTIVE,
+            display_name="Fees PDF",
+            ingestion_metadata={"format": "pdf"},
+        )
+        KnowledgeUploadTable.objects.create(upload=self.pdf_upload, order_index=1, title="Fees Table")
+        self.csv_upload = KnowledgeUpload.objects.create(
+            business_profile=self.business,
+            user=self.user,
+            source_type=KnowledgeSourceType.FILE,
+            status=KnowledgeStatus.ACTIVE,
+            display_name="Fees CSV",
+            ingestion_metadata={"format": "csv"},
+        )
+        KnowledgeUploadTable.objects.create(upload=self.csv_upload, order_index=1, title="Fees Dataset")
+
+    def tearDown(self) -> None:
+        self.embed_patcher.stop()
+        super().tearDown()
+
+    def test_list_tables_excludes_pdf_uploads(self) -> None:
+        context = ToolExecutionContext()
+        result = tools._list_tables_handler({}, self.conversation, context)
+
+        self.assertEqual(result["status"], "ok")
+        upload_ids = {entry.get("upload_id") for entry in result.get("results", [])}
+        self.assertIn(str(self.csv_upload.id), upload_ids)
+        self.assertNotIn(str(self.pdf_upload.id), upload_ids)
 
 
 class McpSearchKnowledgeHandlerTests(TestCase):

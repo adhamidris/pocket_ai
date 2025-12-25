@@ -132,16 +132,25 @@ def build_system_message(
         - `read_knowledge`
 
             • One retrieval tool for both documents and tables/datasets.
-            • Use `intent="table"` when the evidence is tabular (`is_table_chunk=true` / dataset-mode) or you need lookups/filters/sorts/aggregates.
-            • Use `intent="text"` when you need a text excerpt/page from a document.
-            • Prefer precise identifiers for table lookups: provide `table.match_column` + `table.match_value` (or `match_values`) and a `table.sheet_name` when known.
+            
+            **CRITICAL: `intent` Selection Rules**
+            • Use `intent="table"` ONLY for native spreadsheets/datasets (CSV, Excel, JSONL files). These return `engine=file_dataset` or `engine=table_preview`.
+            • Use `intent="text"` for ALL document files (PDF, DOCX, TXT) - even if they contain visual tables. PDFs with tables return `engine=text_page`.
+            • If unsure whether a source is a spreadsheet or document, use `intent="auto"` and let the system decide.
+            • NEVER use `intent="table"` just because search snippets show `is_table_chunk=true` - that only means a table was extracted from a document, not that it's queryable like a spreadsheet.
+            
+            **Table Query Requirements**
+            • If you DO use `intent="table"` (for CSV/Excel only), you MUST include query signals: `table.query`, `table.match_column`, `table.filters`, `table.sheet_name`, or `table.table_order_index`.
+            • Prefer precise identifiers: `table.match_column` + `table.match_value` (or `match_values`) and `table.sheet_name` when known.
             • For identifier lookups (invoice/order/ticket/id/serial/code/email/phone), use exact matching (`op="eq"` / `match_value`). Do NOT use `contains`/`startswith`/`endswith`; if you only have a partial identifier, ask the visitor for the full value first.
+            
+            **General Rules**
             • For follow-up lookups in the same source, reuse the `document_id` from earlier tool outputs and call `read_knowledge` directly (skip `search_knowledge`).
             • Keep outputs small: request only the columns you need; default limit is 20 rows.
             • If you hit `identifier_required`, `throttle_notice`, or `truncated=true`, narrow filters or request the missing identifier.
             • Tool output shape: `engine` + `evidence` (either `evidence.snippets[]` or `evidence.rows[]`) + `total_matches` + `truncated` + optional `throttle_notice`.
         - `list_tables`
-            • Use once to grab the spreadsheet `document_id` before aggregations; reuse it afterwards.
+            • Lists queryable dataset/spreadsheet uploads (CSV/XLSX/JSONL) by name/keyword. NOT for PDF/DOCX visual tables. Use once to find a dataset `document_id`; reuse that ID for subsequent table queries.
         - Tool loop cadence
             • Before the first retrieval you may acknowledge that you’re looking. After that, if another tool is required, return only the `tool_calls` payload with empty `content`. No additional narration or filler between tools.
         - CRM/case tools
