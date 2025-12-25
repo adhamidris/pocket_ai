@@ -2910,6 +2910,9 @@ class KnowledgeIngestionService:
                             "is_table_chunk": True,
                             "is_table_preview": True,
                             "table_title": title,
+                            "table_id": str(t.id),
+                            "table_order_index": t.order_index,
+                            "table_page_number": t.page.page_number if t.page else None,  # FIXED: t.page_number doesn't exist
                             "visibility": getattr(upload, "visibility", KnowledgeVisibility.PRIVATE),
                         }
                         if hidden_columns:
@@ -2918,6 +2921,15 @@ class KnowledgeIngestionService:
                         for key in ("entity_type", "entity_name", "entity_business"):
                             if table_metadata.get(key):
                                 base_metadata[key] = table_metadata[key]
+                        
+                        # NEW: Propagate quality metadata to chunks
+                        if "quality_score" in table_metadata:
+                            base_metadata["table_quality_score"] = table_metadata["quality_score"]
+                        if "is_decorative" in table_metadata:
+                            base_metadata["table_is_decorative"] = table_metadata["is_decorative"]
+                        if "quality_signals" in table_metadata:
+                            base_metadata["table_quality_signals"] = table_metadata["quality_signals"]
+                        
                         alias_list = base_metadata.get("aliases") or []
                         for block in blocks:
                             if not block:
@@ -3313,6 +3325,118 @@ class KnowledgeIngestionService:
                 filled += 1
         return filled
 
+    def _assess_table_quality(self, table_payload) -> dict[str, Any]:
+        """
+        Assess table quality to detect decorative/garbage tables.
+        
+        Returns dict with:
+        - quality_score: float 0.0-1.0 (0=garbage, 1=high quality)
+        - is_decorative: bool (True if likely decorative)
+        - signals: dict of detected quality signals
+        """
+        signals: dict[str, Any] = {}
+        penalties = 0
+        max_penalties = 10
+        
+        # Get table data
+        column_schema = table_payload.column_schema or []
+        rows = table_payload.rows or []
+        page_number = table_payload.page_number or 0
+        order_index = table_payload.order_index or 0
+        
+        # Heuristic 1: Nonsense column names
+        nonsense_patterns = [
+            r'^column_\d+$',  # Generic column_1, column_2
+            r'^col\d+$',      # col1, col2
+            r'^\d+$',         # Just numbers
+            r'^[a-z]$',       # Single letters
+        ]
+        nonsense_count = 0
+        for col in column_schema:
+            col_str = str(col).strip().lower()
+            for pattern in nonsense_patterns:
+                if re.match(pattern, col_str):
+                    nonsense_count += 1
+                    break
+        
+        if nonsense_count >= len(column_schema) * 0.75 and len(column_schema) > 0:
+            signals['nonsense_columns'] = True
+            penalties += 3
+        
+        # Heuristic 2: Spaced characters detection (e.g., "W H I T E")
+        spaced_char_count = 0
+        total_cells = 0
+        
+        for row in rows[:10]:  # Check first 10 rows
+            for cell in (row.cells or []):
+                raw_text = str(cell.raw_text or "").strip()
+                total_cells += 1
+                
+                # Check for spaced single characters: "A B C D"
+                if re.match(r'^([A-Z]\s){2,}[A-Z]$', raw_text) or re.match(r'^(\w\s){2,}\w$', raw_text):
+                    spaced_char_count += 1
+                    signals.setdefault('spaced_char_examples', []).append(raw_text[:50])
+        
+        if total_cells > 0 and spaced_char_count / total_cells >= 0.3:
+            signals['spaced_characters'] = True
+            penalties += 4
+        
+        # Heuristic 3: Repeating patterns
+        cell_values: list[str] = []
+        for row in rows[:5]:
+            for cell in (row.cells or []):
+                raw_text = str(cell.raw_text or "").strip().lower()
+                if raw_text:
+                    cell_values.append(raw_text)
+        
+        if len(cell_values) >= 3:
+            unique_values = len(set(cell_values))
+            if unique_values / len(cell_values) < 0.3:  # Less than 30% unique
+                signals['high_repetition'] = True
+                signals['unique_ratio'] = round(unique_values / len(cell_values), 2)
+                penalties += 2
+        
+        # Heuristic 4: Too few data rows
+        data_row_count = len([r for r in rows if not (r.metadata or {}).get('row_type') == 'header'])
+        if data_row_count < 2:
+            signals['insufficient_rows'] = True
+            penalties += 2
+        
+        # Heuristic 5: Header/footer position (first/last page)
+        if page_number == 1 and order_index == 0:
+            # First table on first page = might be header decoration
+            signals['first_page_first_table'] = True
+            penalties += 1
+        
+        # Heuristic 6: Card-like patterns (e.g., credit card mockups)
+        card_keywords = ['valid', 'thru', 'expires', 'cvv', 'card number', 'cardholder']
+        keyword_matches = 0
+        
+        for row in rows[:5]:
+            for cell in (row.cells or []):
+                raw_text = str(cell.raw_text or "").strip().lower()
+                for keyword in card_keywords:
+                    if keyword in raw_text:
+                        keyword_matches += 1
+                        signals.setdefault('card_keywords', []).append(keyword)
+        
+        if keyword_matches >= 3 and data_row_count <= 2:
+            signals['card_mockup'] = True
+            penalties += 3
+        
+        # Calculate quality score (0.0 = garbage, 1.0 = high quality)
+        quality_score = max(0.0, 1.0 - (penalties / max_penalties))
+        
+        # Determine if decorative (threshold: quality < 0.5)
+        is_decorative = quality_score < 0.5
+        
+        return {
+            'quality_score': round(quality_score, 2),
+            'is_decorative': is_decorative,
+            'signals': signals,
+            'penalties': penalties,
+        }
+
     def _persist_structured_artifacts(self, upload: KnowledgeUpload, extraction: ExtractionResult) -> dict[str, Any]:
         KnowledgeUploadPage.objects.filter(upload=upload).delete()
         KnowledgeUploadTable.objects.filter(upload=upload).delete()
@@ -3407,6 +3531,15 @@ class KnowledgeIngestionService:
         table_summaries: list[dict[str, Any]] = []
 
         for table_payload in extraction.tables:
+            # Assess table quality
+            quality_assessment = self._assess_table_quality(table_payload)
+            
+            # Merge quality data into table metadata
+            table_metadata = dict(table_payload.metadata or {})
+            table_metadata['quality_score'] = quality_assessment['quality_score']
+            table_metadata['is_decorative'] = quality_assessment['is_decorative']
+            table_metadata['quality_signals'] = quality_assessment['signals']
+            
             page_obj = page_lookup.get(table_payload.page_number or -1)
             table_obj = KnowledgeUploadTable.objects.create(
                 upload=upload,
@@ -3418,7 +3551,7 @@ class KnowledgeIngestionService:
                 bbox=table_payload.bbox,
                 column_schema=table_payload.column_schema,
                 data_dictionary=table_payload.data_dictionary,
-                metadata=table_payload.metadata,
+                metadata=table_metadata,  # Include quality metadata
             )
             table_lookup[(table_payload.order_index, table_payload.page_number)] = table_obj
             table_summaries.append(
@@ -3428,6 +3561,8 @@ class KnowledgeIngestionService:
                     "page_number": table_payload.page_number,
                     "row_count": len(table_payload.rows),
                     "column_schema": table_payload.column_schema,
+                    "quality_score": quality_assessment['quality_score'],  # NEW
+                    "is_decorative": quality_assessment['is_decorative'],  # NEW
                 }
             )
             for row_payload in table_payload.rows:

@@ -1148,6 +1148,7 @@ class KnowledgeSearchService:
                         limit=remaining,
                         business_profile=business_profile,
                         pathway="hybrid",
+                        query=traits.normalized or traits.original or query,  # NEW: For query-aware row sampling
                     )
                 )
             blended, snippet_ms = self._snippet_rerank(
@@ -1226,6 +1227,7 @@ class KnowledgeSearchService:
                 limit=limit,
                 business_profile=business_profile,
                 pathway="hybrid",
+                query=traits.normalized or traits.original or query,  # NEW: For query-aware row sampling
             )
         )
         if snippets:
@@ -1484,6 +1486,7 @@ class KnowledgeSearchService:
         limit: int,
         business_profile,
         pathway: str,
+        query: str | None = None,  # NEW: For query-aware row sampling
     ) -> Sequence[KnowledgeSnippet]:
         if not hits:
             return tuple()
@@ -1497,7 +1500,8 @@ class KnowledgeSearchService:
             current = per_upload_counts.get(upload.id, 0)
             if current >= max_per_upload:
                 continue
-            table_sample: tuple[Mapping[str, object], ...] | None = self._table_row_sample(chunk, max_columns=4)
+            # NEW: Pass query to enable query-aware row sampling
+            table_sample: tuple[Mapping[str, object], ...] | None = self._table_row_sample(chunk, max_columns=4, query=query)
             snippets.append(self._chunk_to_snippet(chunk, result=hit, table_row_sample=table_sample))
             per_upload_counts[upload.id] = current + 1
             if len(snippets) >= limit:
@@ -2522,12 +2526,39 @@ class KnowledgeSearchService:
             entity_bonus = self._entity_bonus(cand.chunk, traits.tokens, traits.normalized)
             alias_bonus = max(cand.alias_confidence, self._alias_bonus(cand.chunk, traits.tokens, traits.normalized))
             recency_score = cand.recency_score or self._recency_score(cand.chunk.upload)
+            
+            # NEW: Quality-based penalty for decorative tables (Phase 2.1 + 3.2)
+            quality_penalty = 0.0
+            chunk_metadata = cand.chunk.metadata if isinstance(cand.chunk.metadata, dict) else {}
+            
+            if chunk_metadata.get("is_table_chunk"):
+                # Get quality score from metadata (0.0 = garbage, 1.0 = high quality)
+                quality_score_raw = chunk_metadata.get("table_quality_score")
+                is_decorative = chunk_metadata.get("table_is_decorative", False)
+                
+                # FIXED: Defensive type checking to prevent crashes
+                quality_score = None
+                try:
+                    if quality_score_raw is not None:
+                        quality_score = float(quality_score_raw)
+                except (TypeError, ValueError):
+                    quality_score = None
+                
+                if quality_score is not None and quality_score < 0.5:
+                    # Apply penalty for low quality tables
+                    # Penalty ranges from 0% (quality=0.5) to 50% (quality=0.0)
+                    quality_penalty = (0.5 - quality_score) * 1.0  # Max penalty of 0.5
+                elif is_decorative:
+                    # Fallback: if is_decorative flag is set, apply moderate penalty
+                    quality_penalty = 0.30
+            
             combined = (
                 self.rerank_weights["vector"] * vector_score
                 + self.rerank_weights["lexical"] * lexical_score
                 + self.rerank_weights["alias"] * alias_bonus
                 + self.rerank_weights["entity"] * entity_bonus
                 + self.rerank_weights["recency"] * recency_score
+                - quality_penalty  # NEW: Subtract quality penalty
             )
             cand.diagnostics["score_breakdown"] = {
                 "vector": round(vector_score, 4),
@@ -2535,6 +2566,7 @@ class KnowledgeSearchService:
                 "alias": round(alias_bonus, 4),
                 "entity": round(entity_bonus, 4),
                 "recency": round(recency_score, 4),
+                "quality_penalty": round(quality_penalty, 4),  # NEW: Include in diagnostics
             }
             cand.rerank_score = combined
             scored.append((combined, -idx, cand))
@@ -3182,7 +3214,12 @@ class KnowledgeSearchService:
         title = f"{label} – chunk {chunk_number}" if chunk_number else label or "Document"
         summary = self._summarize_chunk(chunk)
         sample_text = ""
-        if table_row_sample:
+        
+        # Only use table_row_sample for actual table chunks
+        chunk_metadata = chunk.metadata if isinstance(chunk.metadata, dict) else {}
+        is_table_chunk_flag = bool(chunk_metadata.get("is_table_chunk"))
+        
+        if table_row_sample and is_table_chunk_flag:
             pairs = []
             for entry in table_row_sample:
                 col = entry.get("column") or ""
@@ -3192,9 +3229,14 @@ class KnowledgeSearchService:
                     pairs.append(combined)
             if pairs:
                 sample_text = "; ".join(pairs)[:500]
-        if sample_text:
-            summary = f"{sample_text}"[:500]
-        chunk_metadata = chunk.metadata if isinstance(chunk.metadata, dict) else {}
+        
+        # For table chunks, combine sample with summary instead of overwriting
+        if sample_text and is_table_chunk_flag:
+            if summary:
+                summary = f"{summary}\n{sample_text}"[:500]
+            else:
+                summary = sample_text[:500]
+        
         truncated = False
         if content_mode == "abstract":
             content = summary
@@ -3512,6 +3554,50 @@ class KnowledgeSearchService:
             return chunk
         return base_qs.order_by("-chunk_index").first()
 
+    def _get_page_text_from_blocks(
+        self,
+        upload: KnowledgeUpload,
+        page_number: int,
+        max_chars: int | None = None,
+    ) -> tuple[str, bool]:
+        """
+        Extract actual page text from KnowledgeUploadPageBlock entries.
+        Returns (text, truncated_flag).
+        
+        This is the CORRECT way to get page content, not via chunk indices.
+        """
+        try:
+            from apps.accounts.models import KnowledgeUploadPageBlock
+            
+            blocks = list(
+                KnowledgeUploadPageBlock.objects.filter(
+                    upload=upload,
+                    page__page_number=page_number
+                )
+                .select_related("page")
+                .order_by("order_index")
+            )
+            
+            if not blocks:
+                return ("", False)
+            
+            # Combine block texts in order
+            page_parts: list[str] = []
+            for block in blocks:
+                if block.text:
+                    page_parts.append(block.text)
+            
+            combined = "\n\n".join(page_parts).strip()
+            
+            if max_chars and len(combined) > max_chars:
+                return (combined[:max_chars], True)
+            
+            return (combined, False)
+            
+        except Exception:
+            # Fallback if blocks aren't available
+            return ("", False)
+
     def load_page_window(
         self,
         *,
@@ -3526,6 +3612,9 @@ class KnowledgeSearchService:
         """
         Fetch a single chunk "page" with a tighter char budget so the LLM can
         request additional windows via repeated tool calls.
+        
+        NOW FIXED: Prioritizes actual page text from PageBlocks instead of
+        mapping page_index to chunk_index.
         """
 
         inline_cap = self.inline_char_limit_for_business(business_profile)
@@ -3540,6 +3629,99 @@ class KnowledgeSearchService:
                 pass
         effective_neighbor = self._neighbor_window_for_business(business_profile, neighbor)
 
+        # NEW LOGIC: Try to get page from blocks first if we have upload_id and page_index
+        page_from_blocks = False
+        upload_obj = None
+        page_text = ""
+        page_truncated = False
+        
+        if upload_id is not None and chunk_id is None:
+            # User is requesting a specific page by number - try blocks first
+            try:
+                upload_obj = (
+                    apply_customer_visible_uploads(
+                        KnowledgeUpload.objects.filter(
+                            id=upload_id,
+                            business_profile=business_profile,
+                            status=KnowledgeStatus.ACTIVE
+                        )
+                    )
+                    .only("id", "ingestion_metadata", "display_name", "source_type", "summary")
+                    .first()
+                )
+                
+                if upload_obj:
+                    page_text, page_truncated = self._get_page_text_from_blocks(
+                        upload_obj,
+                        page_index,
+                        max_chars=effective_limit
+                    )
+                    if page_text:
+                        page_from_blocks = True
+            except Exception:
+                # Fall through to chunk-based approach
+                pass
+
+        # If we successfully got page from blocks, return it directly
+        if page_from_blocks and upload_obj:
+            synopsis = self._page_synopsis_text(upload_obj, page_index, "")
+            label = getattr(upload_obj, "display_name", None) or "Document"
+            
+            # Use synopsis for excerpt mode, full text for full_page mode
+            if normalized_mode != "full_page":
+                content_value = synopsis or page_text[:500]
+                read_state = KNOWLEDGE_READ_STATE_SUMMARY
+                truncated_flag = False
+            else:
+                content_value = page_text
+                read_state = KNOWLEDGE_READ_STATE_PREVIEW if page_truncated else KNOWLEDGE_READ_STATE_FULL
+                truncated_flag = page_truncated
+            
+            diagnostics = {
+                "page_request": True,
+                "page_number": page_index,
+                "page_mode": normalized_mode,
+                "page_char_limit": effective_limit,
+                "page_source": "page_blocks",  # NEW diagnostic
+            }
+            
+            return tuple([
+                KnowledgeSnippet(
+                    id=upload_obj.id,
+                    title=f"{label} – page {page_index}",
+                    summary=synopsis or (page_text[:280] if page_text else ""),
+                    source=upload_obj.get_source_type_display(),
+                    content=content_value,
+                    content_mode="full_page" if normalized_mode == "full_page" else "excerpt",
+                    public_label=label,
+                    structured_tables=tuple(),
+                    issues=tuple(),
+                    page_summaries=tuple(),
+                    read_state=read_state,
+                    topic_hints=tuple(),
+                    is_pinned=False,
+                    upload_id=upload_obj.id,
+                    chunk_id=None,
+                    chunk_index=None,
+                    page_number=page_index,
+                    page_mode=normalized_mode,
+                    entity_type=None,
+                    entity_name=None,
+                    entity_business=None,
+                    is_table_chunk=False,
+                    aliases=tuple(),
+                    search_stage="load_page",
+                    confidence_score=1.0,
+                    truncated=truncated_flag,
+                    source_diagnostics=diagnostics,
+                    partial_index=False,
+                    structured_table_count=0,
+                    issue_count=0,
+                    structured_table_hint=None,
+                )
+            ])
+
+        # FALLBACK: Use old chunk-based approach for backwards compatibility
         target_chunk_id = chunk_id
         fallback_upload_id: uuid.UUID | None = None
         if target_chunk_id is None and upload_id is not None:
@@ -3592,6 +3774,7 @@ class KnowledgeSearchService:
                     "page_mode": normalized_mode,
                     "page_char_limit": effective_limit,
                     "neighbor_window": effective_neighbor,
+                    "page_source": "chunk_fallback",  # NEW diagnostic
                 }
             )
             content_value = snippet.content
@@ -3912,38 +4095,99 @@ class KnowledgeSearchService:
             )
         return enriched
 
-    def _table_row_sample(self, chunk: KnowledgeUploadChunk, *, max_columns: int = 4) -> tuple[Mapping[str, object], ...]:
+    def _table_row_sample(
+        self, 
+        chunk: KnowledgeUploadChunk, 
+        *, 
+        max_columns: int = 4,
+        query: str | None = None,
+    ) -> tuple[Mapping[str, object], ...]:
         """
         Build a compact key/value sample for table chunks so search snippets
         carry identifiers without requiring a full read.
+        
+        NOW CHUNK-SCOPED: Uses table_id from chunk metadata to sample from
+        the correct table, not the first table of the upload.
+        
+        NOW QUERY-AWARE: If query provided, selects most relevant row based
+        on token matching instead of always returning first row.
         """
-        upload = chunk.upload
-        tables_manager = getattr(upload, "tables", None)
-        if not hasattr(tables_manager, "all"):
+        # Only sample for table chunks
+        chunk_metadata = chunk.metadata if isinstance(chunk.metadata, dict) else {}
+        if not chunk_metadata.get("is_table_chunk"):
             return tuple()
-        try:
-            table = tables_manager.order_by("order_index").first()
-            if not table:
+        
+        # Get table_id from chunk metadata (added during ingestion)
+        table_id = chunk_metadata.get("table_id")
+        if not table_id:
+            # Fallback for legacy chunks without table_id - use old behavior
+            upload = chunk.upload
+            tables_manager = getattr(upload, "tables", None)
+            if not hasattr(tables_manager, "all"):
                 return tuple()
-            row = (
+            try:
+                table = tables_manager.order_by("order_index").first()
+            except Exception:
+                return tuple()
+        else:
+            # NEW: Use the specific table for this chunk
+            try:
+                from apps.accounts.models import KnowledgeUploadTable
+                table = KnowledgeUploadTable.objects.filter(id=table_id).first()
+            except Exception:
+                return tuple()
+        
+        if not table:
+            return tuple()
+        
+        try:
+            # Get data rows (exclude headers), limit to top 50 for performance
+            rows = list(
                 table.rows.filter(row_index__isnull=False)
-                .order_by("row_index")
+                .exclude(metadata__row_type='header')
+                .order_by("row_index")[:50]  # PERF: Limit to avoid loading thousands of rows
                 .prefetch_related(
                     Prefetch(
                         "cells",
                         queryset=KnowledgeUploadTableCell.objects.order_by("column_index"),
                     )
                 )
-                .first()
             )
-            if not row:
+            
+            if not rows:
                 return tuple()
-            cells = list(row.cells.all())
+            
+            # NEW: Query-aware row selection
+            selected_row = rows[0]  # Default to first row
+            
+            if query and len(rows) > 1:
+                # Tokenize query (simple whitespace split, lowercase)
+                query_tokens = set(query.lower().split())
+                
+                # Score each row by token matches
+                best_score = 0
+                for row in rows:
+                    row_score = 0
+                    cells = list(row.cells.all())
+                    
+                    for cell in cells:
+                        cell_text = str(cell.raw_text or "").lower()
+                        # Count matching query tokens
+                        for token in query_tokens:
+                            if token in cell_text:
+                                row_score += 1
+                    
+                    if row_score > best_score:
+                        best_score = row_score
+                        selected_row = row
+            
+            # Build sample from selected row
+            cells = list(selected_row.cells.all())
             sample: list[Mapping[str, object]] = []
             for cell in cells[:max_columns]:
                 sample.append(
                     {
-                        "row": row.row_index,
+                        "row": selected_row.row_index,
                         "column": cell.column_key or f"column_{(cell.column_index or 0) + 1}",
                         "value": cell.raw_text,
                     }
