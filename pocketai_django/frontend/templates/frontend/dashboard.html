@@ -88,7 +88,7 @@
         <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
           {% if dashboard_loading %}
             {% for _ in "123" %}
-              <div class="rounded-lg border border-border/70 bg-card/70 backdrop-blur shadow-sm p-5 transition-all duration-300 hover:border-primary/35">
+              <div class="rounded-lg bg-card/70 backdrop-blur shadow-sm p-5 transition-all duration-300">
                 <div class="space-y-4">
                   <div class="space-y-1">
                     <div class="h-2 w-16 rounded bg-muted/60 animate-pulse" aria-hidden="true"></div>
@@ -105,7 +105,7 @@
             {% endfor %}
           {% elif dashboard_metrics %}
             {% for metric in dashboard_metrics %}
-              <div class="rounded-lg border border-border/70 bg-card/70 backdrop-blur shadow-sm transition-all duration-300 hover:border-primary/35">
+              <div class="rounded-lg bg-card/70 backdrop-blur shadow-sm transition-all duration-300">
                 <div class="p-5 space-y-3">
                   <span class="text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground/70">{{ metric.label|default:"Metric" }}</span>
                   <div class="text-3xl font-semibold tracking-tight text-foreground">

@@ -42,7 +42,7 @@
 
       <section class="grid grid-cols-1 sm:grid-cols-3 gap-4">
         {% for stat in customers_stats %}
-          <div class="rounded-lg border border-border/70 bg-card/70 backdrop-blur shadow-sm transition-all duration-300 hover:border-primary/35">
+          <div class="rounded-lg bg-card/70 backdrop-blur shadow-sm transition-all duration-300">
             <div class="p-5 space-y-2">
               <span class="text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground/70">{{ stat.label }}</span>
               {% if stat.value %}
@@ -123,12 +123,12 @@
       </section>
 
       <section class="space-y-4">
-        <div class="relative border border-border/70 bg-card text-card-foreground shadow-lg shadow-black/5 backdrop-blur hover:border-primary/35 transition-colors dark:border-slate-700/50 dark:bg-slate-800/70 dark:shadow-black/25 rounded-xl overflow-hidden">
+        <div class="relative bg-card text-card-foreground shadow-lg shadow-black/5 backdrop-blur transition-colors rounded-xl overflow-hidden">
           <div class="absolute inset-x-0 top-0 h-px bg-gradient-to-r from-primary/35 via-primary/20 to-transparent"></div>
           <div class="relative overflow-x-auto">
-            <table class="w-full caption-bottom text-sm rounded-xl border border-border/70 bg-background/60 shadow-sm backdrop-blur [&_th]:px-3 [&_td]:px-3 [&_th:first-child]:pl-4 [&_td:first-child]:pl-4 [&_th:last-child]:pr-4 [&_td:last-child]:pr-4 [&_th]:py-3 [&_td]:py-3">
-              <thead class="sticky top-0 z-10 bg-muted/70 backdrop-blur border-b border-border/80">
-                <tr class="border-b transition-colors hover:bg-transparent">
+            <table class="w-full caption-bottom text-sm rounded-xl bg-background/40 shadow-sm backdrop-blur [&_th]:px-3 [&_td]:px-3 [&_th:first-child]:pl-4 [&_td:first-child]:pl-4 [&_th:last-child]:pr-4 [&_td:last-child]:pr-4 [&_th]:py-3 [&_td]:py-3">
+              <thead class="sticky top-0 z-10 bg-muted/80 backdrop-blur border-b border-border/60">
+                <tr class="transition-colors hover:bg-transparent">
                   <th scope="col" class="h-12 text-left align-middle font-medium text-muted-foreground w-[240px]">Customer</th>
                   <th scope="col" class="h-12 text-left align-middle font-medium text-muted-foreground">Email</th>
                   <th scope="col" class="h-12 text-right align-middle font-medium text-muted-foreground">Conversations</th>
@@ -147,7 +147,7 @@
                   </tr>
                 {% elif customers_loading %}
                   {% for _ in skeleton_rows %}
-                    <tr class="border-b transition-colors hover:bg-muted/50">
+                    <tr class="transition-colors hover:bg-muted/40">
                       <td class="py-4">
                         <div class="flex items-center gap-3">
                           <span class="inline-flex h-10 w-10 rounded-full bg-muted/60 animate-pulse" aria-hidden="true"></span>
@@ -174,7 +174,7 @@
                 {% elif customers %}
                   {% for customer in customers %}
                     <tr
-                      class="border-b transition-colors hover:bg-muted/50 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-primary/60 focus-visible:ring-offset-0 cursor-pointer"
+                      class="transition-colors hover:bg-muted/40 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-primary/60 focus-visible:ring-offset-0 cursor-pointer"
                       data-customer-row
                       data-customer-uuid="{{ customer.uuid }}"
                       data-customer-name="{{ customer.name|default:'Customer'|escape }}"

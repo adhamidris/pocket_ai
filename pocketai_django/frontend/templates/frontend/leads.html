@@ -36,7 +36,7 @@
 
       <section class="grid grid-cols-1 sm:grid-cols-3 gap-4">
         {% for stat in leads_stats %}
-          <div class="rounded-lg border border-border/70 bg-card/70 backdrop-blur shadow-sm transition-all duration-300 hover:border-primary/35">
+          <div class="rounded-lg bg-card/70 backdrop-blur shadow-sm transition-all duration-300">
             <div class="p-5 space-y-2">
               <span class="text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground/70">{{ stat.label }}</span>
               <div class="flex items-baseline justify-between gap-2">
@@ -114,7 +114,7 @@
       </section>
 
       <section class="grid grid-cols-1 gap-4">
-        <div class="relative border border-border/70 bg-card shadow-lg shadow-black/5 backdrop-blur transition-colors hover:border-primary/35 dark:border-slate-700/50 dark:bg-slate-800/70 dark:shadow-black/25 rounded-xl">
+        <div class="relative bg-card text-card-foreground shadow-lg shadow-black/5 backdrop-blur transition-colors rounded-xl overflow-hidden">
           <div class="absolute inset-x-0 top-0 h-px bg-gradient-to-r from-primary/35 via-primary/20 to-transparent"></div>
           {% if leads_backend_notice %}
             <div class="py-14 text-center text-sm text-muted-foreground">{{ leads_backend_notice }}</div>
@@ -122,10 +122,10 @@
             <div class="py-14 text-center text-sm text-muted-foreground">{{ leads_auth_notice }}</div>
           {% elif leads_loading %}
             <div class="py-6">
-              <table class="w-full caption-bottom text-sm rounded-xl border border-border/70 bg-background/60 shadow-sm backdrop-blur">
+              <table class="w-full caption-bottom text-sm rounded-xl bg-background/40 shadow-sm backdrop-blur">
                 <tbody>
                   {% for _ in skeleton_rows %}
-                    <tr class="border-b transition-colors hover:bg-muted/60">
+                    <tr class="transition-colors hover:bg-muted/40">
                       <td class="px-4 py-4">
                         <div class="flex flex-col gap-2">
                           <span class="h-3 w-40 rounded bg-muted/60 animate-pulse" aria-hidden="true"></span>
@@ -167,9 +167,9 @@
           {% elif leads %}
             <div class="hidden md:block">
               <div class="relative overflow-x-auto overflow-y-auto max-h-[70vh]">
-                <table class="w-full caption-bottom text-sm rounded-xl border border-border/70 bg-background/60 shadow-sm backdrop-blur [&_th]:px-3 [&_td]:px-3 [&_th:first-child]:pl-4 [&_td:first-child]:pl-4 [&_th:last-child]:pr-4 [&_td:last-child]:pr-4 [&_th]:py-3 [&_td]:py-3">
-                  <thead class="sticky top-0 z-10 bg-muted/70 backdrop-blur border-b border-border/80">
-                    <tr class="border-b transition-colors hover:bg-transparent">
+                <table class="w-full caption-bottom text-sm rounded-xl bg-background/40 shadow-sm backdrop-blur [&_th]:px-3 [&_td]:px-3 [&_th:first-child]:pl-4 [&_td:first-child]:pl-4 [&_th:last-child]:pr-4 [&_td:last-child]:pr-4 [&_th]:py-3 [&_td]:py-3" data-leads-table>
+                  <thead class="sticky top-0 z-10 bg-muted/80 backdrop-blur border-b border-border/60">
+                    <tr class="transition-colors hover:bg-transparent">
                       <th scope="col" class="h-12 text-left font-medium text-muted-foreground w-[200px]">Lead</th>
                       <th scope="col" class="h-12 text-left font-medium text-muted-foreground">Company</th>
                       <th scope="col" class="h-12 text-left font-medium text-muted-foreground">Stage</th>

@@ -28,7 +28,7 @@
 
       <section class="grid grid-cols-1 sm:grid-cols-3 gap-4">
         {% for stat in agents_stats %}
-          <div class="rounded-lg border border-border/70 bg-card/70 backdrop-blur shadow-sm transition-all duration-300 hover:border-primary/35">
+          <div class="rounded-lg bg-card/70 backdrop-blur shadow-sm transition-all duration-300">
             <div class="p-5 space-y-2">
               <span class="text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground/70">{{ stat.label }}</span>
               {% if stat.value %}
@@ -279,7 +279,7 @@
   style="opacity: 0; pointer-events: none;"
 >
 <aside
-  class="w-full max-w-4xl h-full max-h-[90vh] overflow-hidden rounded-2xl border border-border/70 bg-card/95 backdrop-blur shadow-2xl opacity-0 translate-y-4 scale-95 transform transition-all duration-200"
+  class="w-full max-w-4xl h-full max-h-[90vh] overflow-hidden rounded-2xl bg-card/95 backdrop-blur shadow-2xl opacity-0 translate-y-4 scale-95 transform transition-all duration-200"
   data-agent-panel
   data-state="empty"
   role="dialog"
@@ -413,7 +413,7 @@
 	            aria-labelledby="agent-tab-overview"
 	            data-agent-tab-panel="overview"
 	          >
-	            <div class="rounded-xl border border-border/70 bg-card/95 p-4 space-y-4 shadow-sm">
+	            <div class="rounded-xl bg-card/95 p-4 space-y-4 shadow-sm">
 	              <div class="text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">Performance</div>
 	              <dl class="grid grid-cols-2 gap-4 text-sm sm:grid-cols-3">
 	                <div>

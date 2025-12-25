@@ -44,7 +44,7 @@
       </div>
       <div class="p-3 md:p-4">
         <div class="relative min-h-[20rem]" data-register-steps>
-          <div data-register-step="form" class="{% if registration_state and registration_state.current_step != 'form' %}hidden opacity-0{% endif %} transition-opacity duration-200 ease-in-out">
+          <div data-register-step="form" class="{% if registration_state and registration_state.current_step != 'form' %}hidden opacity-0{% endif %} transition-opacity duration-300 ease-in-out">
             <form
               class="space-y-4"
               novalidate
@@ -155,7 +155,7 @@
               </button>
             </form>
           </div>
-          <div data-register-step="business" class="{% if not registration_state or registration_state.current_step != 'business' %}hidden opacity-0{% endif %} transition-opacity duration-200 ease-in-out">
+          <div data-register-step="business" class="{% if not registration_state or registration_state.current_step != 'business' %}hidden opacity-0{% endif %} transition-opacity duration-300 ease-in-out">
             <form
               class="space-y-4"
               novalidate
@@ -371,7 +371,7 @@
               </div>
             </form>
           </div>
-          <div data-register-step="agent" class="{% if not registration_state or registration_state.current_step != 'agent' %}hidden opacity-0{% endif %} transition-opacity duration-200 ease-in-out">
+          <div data-register-step="agent" class="{% if not registration_state or registration_state.current_step != 'agent' %}hidden opacity-0{% endif %} transition-opacity duration-300 ease-in-out">
             <form
               class="space-y-4"
               novalidate
@@ -590,7 +590,7 @@
             </form>
           </div>
           <!-- Uploads step -->
-          <div data-register-step="uploads" class="{% if not registration_state or registration_state.current_step != 'uploads' %}hidden opacity-0{% endif %} transition-opacity duration-200 ease-in-out">
+          <div data-register-step="uploads" class="{% if not registration_state or registration_state.current_step != 'uploads' %}hidden opacity-0{% endif %} transition-opacity duration-300 ease-in-out">
             <form
               class="space-y-4"
               novalidate
@@ -3087,45 +3087,82 @@
       });
     }
 
-    function setStep(stepKey) {
+    function setStep(stepKey, immediate) {
       if (!stepPanels.length) {
         return;
       }
       
-      // Fade out current step first
-      var currentPanel = null;
+      // If immediate mode, skip animation
+      if (immediate) {
+        stepPanels.forEach(function (panel) {
+          var key = panel.getAttribute("data-register-step");
+          if (key === stepKey) {
+            panel.classList.remove("hidden", "opacity-0");
+          } else {
+            panel.classList.add("hidden", "opacity-0");
+          }
+        });
+        currentStep = stepKey;
+        if (stepIndicator) {
+          stepIndicator.textContent = "Step: " + stepKey;
+        }
+        // Don't restart header typing on initial load
+        applyHeader(stepKey, false);
+        if (skipToDashboard) {
+          var showSkip = stepKey === "uploads";
+          skipToDashboard.classList.toggle("hidden", !showSkip);
+        }
+        if (stepKey === "business") {
+          autoDetectCountry();
+        }
+        if (stepKey === "agent") {
+          updateAgentRoleDisplay();
+          updateAgentToneDisplay();
+          updateAgentTraitsDisplay();
+          updateAgentEscalationDisplay();
+        }
+        return;
+      }
+      
+      // Clean cross-fade transition
+      // Phase 1: Fade out current step
       stepPanels.forEach(function (panel) {
         var key = panel.getAttribute("data-register-step");
         if (key === currentStep && !panel.classList.contains("hidden")) {
-          currentPanel = panel;
           panel.classList.add("opacity-0");
         }
       });
       
       currentStep = stepKey;
       
-      // After fade out, switch visibility and fade in new step
+      // Phase 2: After fade out completes, swap visibility and fade in
       setTimeout(function () {
+        // Update header BEFORE showing new step to prevent text jump
+        if (stepIndicator) {
+          stepIndicator.textContent = "Step: " + stepKey;
+        }
+        applyHeader(stepKey, false); // Don't restart typing mid-transition
+        
         stepPanels.forEach(function (panel) {
           var key = panel.getAttribute("data-register-step");
           if (key === stepKey) {
+            // Make visible but keep opacity 0
             panel.classList.remove("hidden");
-            // Small delay before fading in for smoother transition
+            panel.classList.add("opacity-0");
+            
+            // Small delay then fade in
             requestAnimationFrame(function () {
-              panel.classList.remove("opacity-0");
+              requestAnimationFrame(function () {
+                panel.classList.remove("opacity-0");
+              });
             });
           } else {
             panel.classList.add("hidden", "opacity-0");
           }
         });
         
-        if (stepIndicator) {
-          stepIndicator.textContent = "Step: " + stepKey;
-        }
-        applyHeader(stepKey, true);
-        // Show/hide "skip to dashboard" link based on step (hide on mandatory steps like business)
+        // Handle step-specific logic
         if (skipToDashboard) {
-          // Only uploads step can show the skip option - all other steps are mandatory
           var showSkip = stepKey === "uploads";
           skipToDashboard.classList.toggle("hidden", !showSkip);
         }
@@ -3143,7 +3180,7 @@
           updateAgentTraitsDisplay();
           updateAgentEscalationDisplay();
         }
-      }, 200); // Wait for fade out transition to complete
+      }, 300); // Match CSS transition duration
     }
 
     function advanceToStep(stepKey) {

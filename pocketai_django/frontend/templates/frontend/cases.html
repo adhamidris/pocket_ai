@@ -40,21 +40,21 @@
         </header>
 
         <div class="grid grid-cols-1 sm:grid-cols-3 gap-4">
-          <div class="rounded-lg border border-border/70 bg-card/70 backdrop-blur shadow-sm transition-all duration-300 hover:border-primary/35">
+          <div class="rounded-lg bg-card/70 backdrop-blur shadow-sm transition-all duration-300">
             <div class="p-5 space-y-2">
               <span class="text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground/70">Open cases</span>
               <div class="text-3xl font-semibold tracking-tight text-foreground">{{ cases_metrics.open|default:"—" }}</div>
               <div class="text-xs font-medium text-muted-foreground">Target &lt; 15</div>
             </div>
           </div>
-          <div class="rounded-lg border border-border/70 bg-card/70 backdrop-blur shadow-sm transition-all duration-300 hover:border-primary/35">
+          <div class="rounded-lg bg-card/70 backdrop-blur shadow-sm transition-all duration-300">
             <div class="p-5 space-y-2">
               <span class="text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground/70">Urgent cases</span>
               <div class="text-3xl font-semibold tracking-tight text-foreground">{{ cases_metrics.urgent|default:"—" }}</div>
               <div class="text-xs font-medium text-muted-foreground">{{ cases_metrics.urgent_delta|default:"All clear" }}</div>
             </div>
           </div>
-          <div class="rounded-lg border border-border/70 bg-card/70 backdrop-blur shadow-sm transition-all duration-300 hover:border-primary/35">
+          <div class="rounded-lg bg-card/70 backdrop-blur shadow-sm transition-all duration-300">
             <div class="p-5 space-y-2">
               <span class="text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground/70">Avg. time open</span>
               <div class="text-3xl font-semibold tracking-tight text-foreground">{{ cases_metrics.avg_open|default:"—" }}</div>
@@ -137,12 +137,12 @@
         <div class="flex flex-col gap-4 lg:flex-row">
           <div class="flex-1 min-w-0">
             <div class="space-y-4">
-              <div class="relative border border-border/70 bg-card text-card-foreground shadow-lg shadow-black/5 backdrop-blur hover:border-primary/35 transition-colors dark:border-slate-700/50 dark:bg-slate-800/70 dark:shadow-black/25 rounded-xl overflow-hidden">
+              <div class="relative bg-card text-card-foreground shadow-lg shadow-black/5 backdrop-blur transition-colors rounded-xl overflow-hidden">
               <div class="absolute inset-x-0 top-0 h-px bg-gradient-to-r from-primary/35 via-primary/20 to-transparent"></div>
               <div class="relative overflow-x-auto overflow-y-auto max-h-[70vh]">
-                <table class="w-full caption-bottom text-sm rounded-xl border border-border/70 bg-background/60 shadow-sm backdrop-blur [&_th]:px-3 [&_td]:px-3 [&_th:first-child]:pl-4 [&_td:first-child]:pl-4 [&_th:last-child]:pr-4 [&_td:last-child]:pr-4 [&_th]:py-3 [&_td]:py-3">
-                  <thead class="sticky top-0 z-10 bg-muted/70 backdrop-blur border-b border-border/80">
-                    <tr class="border-b transition-colors hover:bg-transparent">
+                <table class="w-full caption-bottom text-sm rounded-xl bg-background/40 shadow-sm backdrop-blur [&_th]:px-3 [&_td]:px-3 [&_th:first-child]:pl-4 [&_td:first-child]:pl-4 [&_th:last-child]:pr-4 [&_td:last-child]:pr-4 [&_th]:py-3 [&_td]:py-3">
+                  <thead class="sticky top-0 z-10 bg-muted/80 backdrop-blur border-b border-border/60">
+                    <tr class="transition-colors hover:bg-transparent">
                       <th class="h-12 px-4 text-left align-middle font-medium text-muted-foreground w-8">
                         <span class="peer h-3.5 w-3.5 shrink-0 rounded-full border border-secondary bg-secondary ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 data-[state=checked]:bg-primary data-[state=checked]:text-primary-foreground data-[state=checked]:border-primary block"></span>
                       </th>
@@ -162,7 +162,7 @@
                   <tbody class="[&_tr:last-child]:border-0" data-cases-table>
                     {% if cases_loading %}
                       {% for _ in skeleton_rows %}
-                        <tr class="border-b transition-colors hover:bg-muted/50">
+                        <tr class="transition-colors hover:bg-muted/40">
                           <td class="p-4 align-middle [&:has([role=checkbox])]:pr-0 w-8">
                             <span class="block h-3.5 w-3.5 rounded-full bg-muted/60 animate-pulse"></span>
                           </td>
@@ -192,7 +192,7 @@
                     {% elif cases %}
                       {% for case in cases %}
                         <tr
-                          class="case-list-row border-b transition-colors hover:bg-muted/50 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-primary/60 focus-visible:ring-offset-0 cursor-pointer"
+                          class="transition-colors hover:bg-muted/40 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-primary/60 focus-visible:ring-offset-0 cursor-pointer"
                           data-case-row
                           data-case-uuid="{{ case.uuid }}"
                           data-case-number="{{ case.id }}"
