@@ -2521,6 +2521,50 @@ def dashboard_knowledge(request: HttpRequest) -> HttpResponse:
 
 
 @login_required
+def dashboard_knowledge_visualizer(request: HttpRequest) -> HttpResponse:
+    user_name = _current_user_name(request)
+    documents: list[dict[str, object]] = []
+    total_documents = 0
+    has_error = False
+    business = _primary_business_for_user(request.user)
+    selected_id = (request.GET.get("document_id") or "").strip()
+
+    if business:
+        try:
+            result = list_documents(business_profile=business, limit=100, offset=0)
+            total_documents = result.total
+            for item in result.items:
+                documents.append(
+                    {
+                        "uuid": str(item.id),
+                        "name": item.name or "Document",
+                        "source_label": item.source_label,
+                        "status_label": item.status_label,
+                        "status_code": item.status,
+                        "status_badge_class": _document_status_class(item.status),
+                        "updated": _format_document_timestamp(item.updated_at),
+                    }
+                )
+        except DocumentListValidationError:
+            has_error = True
+
+    context = {
+        "user_name": user_name,
+        "knowledge_business_id": str(business.id) if business else "",
+        "visualizer_documents": documents,
+        "visualizer_documents_total": total_documents if business else 0,
+        "visualizer_documents_empty_message": (
+            "Upload a document to see ingestion artifacts here." if business else "Link a business profile to inspect documents."
+        ),
+        "visualizer_empty_title": "Select a document",
+        "visualizer_empty_message": "Pick a document to inspect how it was ingested and chunked.",
+        "visualizer_selected_id": selected_id,
+        "visualizer_error_message": "Unable to load documents right now." if has_error else None,
+    }
+    return render(request, "frontend/knowledge_visualizer.html", context)
+
+
+@login_required
 @require_http_methods(["POST"])
 def dashboard_knowledge_upload(request: HttpRequest) -> HttpResponse:
     wants_json = _wants_json(request)

@@ -59,6 +59,15 @@
         </div>
         <div class="flex flex-wrap items-center justify-start md:justify-end gap-2">
           <a
+            href="{% url 'frontend:dashboard-knowledge-visualizer' %}"
+            class="inline-flex items-center gap-2 rounded-lg border border-input bg-background px-4 py-2 text-sm font-medium transition-all duration-300 hover:bg-accent hover:text-accent-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+          >
+            <svg class="h-4 w-4 text-muted-foreground" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" aria-hidden="true">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M3 3v18h18M7.5 15l3-3 3 2.25 3.75-4.5" />
+            </svg>
+            Visualizer
+          </a>
+          <a
             href="{% if knowledge_dump_enabled %}{% url 'frontend:dashboard-knowledge-dump' %}{% else %}#{% endif %}"
             class="inline-flex items-center gap-2 rounded-lg border border-input bg-background px-4 py-2 text-sm font-medium transition-all duration-300 hover:bg-accent hover:text-accent-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 {% if not knowledge_dump_enabled %}opacity-40 pointer-events-none{% endif %}"
             {% if knowledge_dump_enabled %}download{% else %}aria-disabled="true"{% endif %}

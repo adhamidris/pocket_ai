@@ -1,0 +1,670 @@
+{% extends "frontend/base_app.html" %}
+
+{% block title %}Knowledge Visualizer | Pocket AI{% endblock %}
+
+{% block extra_head %}
+<style>
+  .viz-scroll {
+    scrollbar-width: thin;
+  }
+  .viz-card {
+    background: linear-gradient(180deg, hsl(var(--card)) 0%, hsl(var(--card) / 0.92) 100%);
+  }
+  .viz-step[data-state="complete"] {
+    border-color: hsl(var(--primary) / 0.35);
+    background: hsl(var(--primary) / 0.08);
+  }
+  .viz-step[data-state="pending"] {
+    opacity: 0.6;
+  }
+  .viz-chip {
+    background: hsl(var(--muted) / 0.9);
+  }
+  .viz-chip[data-active="true"] {
+    background: hsl(var(--primary) / 0.12);
+    color: hsl(var(--primary));
+  }
+  .viz-code {
+    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+  }
+  .line-clamp-4 {
+    display: -webkit-box;
+    -webkit-line-clamp: 4;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+  }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="min-h-screen bg-background flex">
+  {% include "frontend/components/dashboard/sidebar.html" with active="knowledge" user_name=user_name %}
+  <main class="flex-1 overflow-auto">
+    <div class="w-full px-4 md:px-6 lg:px-8 py-6 space-y-6">
+      <header class="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+        <div class="space-y-1.5">
+          <h1 class="text-xl md:text-2xl font-semibold text-gradient-hero">Knowledge Visualizer</h1>
+          <p class="text-sm text-muted-foreground">Inspect what the ingestion pipeline produces: blocks, tables, chunks, and issues.</p>
+        </div>
+        <div class="flex flex-wrap items-center gap-2">
+          <a
+            href="{% url 'frontend:dashboard-knowledge' %}"
+            class="inline-flex items-center gap-2 rounded-lg border border-input bg-background px-4 py-2 text-sm font-medium transition-all duration-300 hover:bg-accent hover:text-accent-foreground"
+          >
+            Back to Knowledge
+          </a>
+        </div>
+      </header>
+
+      <div
+        class="grid grid-cols-1 lg:grid-cols-[320px_1fr] gap-4"
+        data-visualizer-root
+        data-api-root="{% url 'api:knowledge-documents-list' %}"
+        data-business-id="{{ knowledge_business_id }}"
+        data-selected-id="{{ visualizer_selected_id }}"
+      >
+        <section class="rounded-2xl border border-border/60 bg-card/70 p-4 space-y-3">
+          <div class="flex items-center justify-between">
+            <div>
+              <div class="text-sm font-semibold text-foreground">Documents</div>
+              <div class="text-xs text-muted-foreground">Select an upload to preview its artifacts.</div>
+            </div>
+            <span class="text-xs text-muted-foreground">{{ visualizer_documents_total }}</span>
+          </div>
+          <label class="space-y-1">
+            <span class="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">Search</span>
+            <input
+              type="search"
+              placeholder="Filter by name or status"
+              class="w-full rounded-lg border border-input bg-background px-3 py-2 text-xs focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              data-doc-search
+            />
+          </label>
+          {% if visualizer_error_message %}
+            <div class="rounded-lg border border-rose-200 bg-rose-50/80 px-3 py-2 text-xs text-rose-700">
+              {{ visualizer_error_message }}
+            </div>
+          {% endif %}
+          <div class="space-y-2 max-h-[68vh] overflow-auto viz-scroll" data-doc-list>
+            {% if visualizer_documents %}
+              {% for doc in visualizer_documents %}
+                <button
+                  type="button"
+                  class="w-full rounded-xl border border-border/50 bg-background px-3 py-3 text-left transition hover:border-primary/40 hover:bg-primary/5"
+                  data-doc-item
+                  data-doc-id="{{ doc.uuid }}"
+                  data-doc-name="{{ doc.name }}"
+                  data-doc-status="{{ doc.status_code }}"
+                >
+                  <div class="flex items-start justify-between gap-2">
+                    <div>
+                      <div class="text-sm font-semibold text-foreground">{{ doc.name }}</div>
+                      <div class="text-xs text-muted-foreground">{{ doc.source_label }} · {{ doc.status_label }}</div>
+                    </div>
+                    <div class="text-[10px] uppercase tracking-wide {{ doc.status_badge_class }}">{{ doc.status_label }}</div>
+                  </div>
+                  <div class="mt-2 text-[11px] text-muted-foreground">
+                    Updated {{ doc.updated }}
+                  </div>
+                </button>
+              {% endfor %}
+            {% else %}
+              <div class="rounded-lg border border-dashed border-border/60 bg-muted/40 px-3 py-4 text-xs text-muted-foreground">
+                {{ visualizer_documents_empty_message }}
+              </div>
+            {% endif %}
+          </div>
+        </section>
+
+        <section class="space-y-4">
+          <div class="rounded-2xl border border-border/60 bg-card/70 p-4" data-visualizer-empty>
+            <div class="text-sm font-semibold text-foreground">{{ visualizer_empty_title }}</div>
+            <p class="text-xs text-muted-foreground">{{ visualizer_empty_message }}</p>
+          </div>
+
+          <div class="space-y-4 hidden" data-visualizer-content>
+            <div class="rounded-2xl border border-border/60 p-4 viz-card space-y-4">
+              <div class="flex flex-col gap-1">
+                <div class="text-xs uppercase tracking-wide text-muted-foreground">Pipeline</div>
+                <div class="text-sm font-semibold text-foreground" data-doc-title>Document</div>
+              </div>
+              <div class="grid grid-cols-2 md:grid-cols-5 gap-2">
+                <div class="viz-step rounded-lg border border-border/60 px-3 py-2" data-pipeline-step="uploaded" data-state="pending">
+                  <div class="text-[10px] uppercase text-muted-foreground">Uploaded</div>
+                  <div class="text-xs font-semibold" data-step-label>Pending</div>
+                </div>
+                <div class="viz-step rounded-lg border border-border/60 px-3 py-2" data-pipeline-step="extracted" data-state="pending">
+                  <div class="text-[10px] uppercase text-muted-foreground">Extracted</div>
+                  <div class="text-xs font-semibold" data-step-label>Pending</div>
+                </div>
+                <div class="viz-step rounded-lg border border-border/60 px-3 py-2" data-pipeline-step="structured" data-state="pending">
+                  <div class="text-[10px] uppercase text-muted-foreground">Structured</div>
+                  <div class="text-xs font-semibold" data-step-label>Pending</div>
+                </div>
+                <div class="viz-step rounded-lg border border-border/60 px-3 py-2" data-pipeline-step="chunked" data-state="pending">
+                  <div class="text-[10px] uppercase text-muted-foreground">Chunked</div>
+                  <div class="text-xs font-semibold" data-step-label>Pending</div>
+                </div>
+                <div class="viz-step rounded-lg border border-border/60 px-3 py-2" data-pipeline-step="indexed" data-state="pending">
+                  <div class="text-[10px] uppercase text-muted-foreground">Indexed</div>
+                  <div class="text-xs font-semibold" data-step-label>Pending</div>
+                </div>
+              </div>
+            </div>
+
+            <div class="grid grid-cols-1 xl:grid-cols-[1.2fr_0.8fr] gap-4">
+              <div class="rounded-2xl border border-border/60 bg-card/70 p-4 space-y-3">
+                <div class="text-xs uppercase tracking-wide text-muted-foreground">Snapshot</div>
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-3 text-xs">
+                  <div class="space-y-1">
+                    <div class="text-[11px] uppercase text-muted-foreground">Status</div>
+                    <div class="text-sm font-semibold text-foreground" data-field="status">—</div>
+                  </div>
+                  <div class="space-y-1">
+                    <div class="text-[11px] uppercase text-muted-foreground">Source</div>
+                    <div class="text-sm font-semibold text-foreground" data-field="source">—</div>
+                  </div>
+                  <div class="space-y-1">
+                    <div class="text-[11px] uppercase text-muted-foreground">Updated</div>
+                    <div class="text-sm font-semibold text-foreground" data-field="updated">—</div>
+                  </div>
+                  <div class="space-y-1">
+                    <div class="text-[11px] uppercase text-muted-foreground">Counts</div>
+                    <div class="text-sm font-semibold text-foreground" data-field="counts">—</div>
+                  </div>
+                </div>
+                <div class="space-y-1">
+                  <div class="text-[11px] uppercase text-muted-foreground">Summary</div>
+                  <p class="text-xs text-muted-foreground" data-field="summary">No summary available.</p>
+                </div>
+              </div>
+
+              <div class="rounded-2xl border border-border/60 bg-card/70 p-4 space-y-3">
+                <div class="text-xs uppercase tracking-wide text-muted-foreground">Quality report</div>
+                <div class="space-y-2 text-xs" data-quality-report>
+                  <div class="text-muted-foreground">No quality report captured yet.</div>
+                </div>
+              </div>
+            </div>
+
+            <div class="rounded-2xl border border-border/60 bg-card/70 p-4 space-y-3">
+              <div class="flex items-center justify-between gap-2">
+                <div class="text-xs uppercase tracking-wide text-muted-foreground">Ingestion metadata</div>
+                <button type="button" class="text-xs font-semibold text-primary hover:underline" data-ingest-toggle>Show raw metadata</button>
+              </div>
+              <div class="grid grid-cols-2 md:grid-cols-4 gap-3 text-xs" data-ingest-summary></div>
+              <pre class="viz-code text-[11px] text-muted-foreground whitespace-pre-wrap hidden" data-ingest-raw></pre>
+            </div>
+
+            <div class="rounded-2xl border border-border/60 bg-card/70 p-4 space-y-4">
+              <div class="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+                <div>
+                  <div class="text-xs uppercase tracking-wide text-muted-foreground">Chunks</div>
+                  <div class="text-sm font-semibold text-foreground">Chunked payloads ready for retrieval</div>
+                </div>
+                <div class="flex flex-wrap items-center gap-2">
+                  <button class="viz-chip rounded-full px-3 py-1 text-xs font-semibold" data-chunk-filter="all" data-active="true">All</button>
+                  <button class="viz-chip rounded-full px-3 py-1 text-xs font-semibold" data-chunk-filter="text">Text</button>
+                  <button class="viz-chip rounded-full px-3 py-1 text-xs font-semibold" data-chunk-filter="table">Table</button>
+                  <button class="viz-chip rounded-full px-3 py-1 text-xs font-semibold" data-chunk-filter="entity">Entity</button>
+                </div>
+              </div>
+              <input
+                type="search"
+                placeholder="Search chunk content..."
+                class="w-full rounded-lg border border-input bg-background px-3 py-2 text-xs focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                data-chunk-search
+              />
+              <div class="space-y-2 max-h-[360px] overflow-auto viz-scroll" data-chunk-list></div>
+            </div>
+
+            <div class="grid grid-cols-1 xl:grid-cols-[1fr_1fr] gap-4">
+              <div class="rounded-2xl border border-border/60 bg-card/70 p-4 space-y-3">
+                <div class="text-xs uppercase tracking-wide text-muted-foreground">Tables</div>
+                <div class="space-y-3 max-h-[320px] overflow-auto viz-scroll" data-table-list></div>
+              </div>
+
+              <div class="rounded-2xl border border-border/60 bg-card/70 p-4 space-y-3">
+                <div class="text-xs uppercase tracking-wide text-muted-foreground">Pages</div>
+                <div class="flex items-center gap-2">
+                  <span class="text-xs text-muted-foreground">Page</span>
+                  <select class="rounded-md border border-input bg-background px-2 py-1 text-xs" data-page-select></select>
+                </div>
+                <div class="space-y-2 max-h-[280px] overflow-auto viz-scroll" data-page-blocks></div>
+              </div>
+            </div>
+
+            <div class="rounded-2xl border border-border/60 bg-card/70 p-4 space-y-3">
+              <div class="text-xs uppercase tracking-wide text-muted-foreground">Issues</div>
+              <div class="space-y-2 text-xs" data-issue-list></div>
+            </div>
+
+            <div class="rounded-2xl border border-border/60 bg-card/70 p-4 space-y-2">
+              <button type="button" class="text-xs font-semibold text-primary hover:underline" data-raw-toggle>Show raw JSON</button>
+              <pre class="viz-code text-[11px] text-muted-foreground whitespace-pre-wrap hidden" data-raw-json></pre>
+            </div>
+          </div>
+        </section>
+      </div>
+    </div>
+  </main>
+</div>
+{% endblock %}
+
+{% block extra_scripts %}
+<script>
+  document.addEventListener("DOMContentLoaded", function () {
+    const root = document.querySelector("[data-visualizer-root]");
+    if (!root) return;
+
+    const apiRoot = root.dataset.apiRoot || "/api/knowledge/documents/";
+    const businessId = root.dataset.businessId || "";
+    const selectedId = root.dataset.selectedId || "";
+
+    const emptyState = root.querySelector("[data-visualizer-empty]");
+    const contentState = root.querySelector("[data-visualizer-content]");
+    const docTitle = root.querySelector("[data-doc-title]");
+    const summaryField = root.querySelector("[data-field='summary']");
+    const statusField = root.querySelector("[data-field='status']");
+    const sourceField = root.querySelector("[data-field='source']");
+    const updatedField = root.querySelector("[data-field='updated']");
+    const countsField = root.querySelector("[data-field='counts']");
+    const qualityReport = root.querySelector("[data-quality-report]");
+    const ingestSummary = root.querySelector("[data-ingest-summary]");
+    const ingestToggle = root.querySelector("[data-ingest-toggle]");
+    const ingestRaw = root.querySelector("[data-ingest-raw]");
+    const chunkList = root.querySelector("[data-chunk-list]");
+    const chunkSearch = root.querySelector("[data-chunk-search]");
+    const chunkFilters = Array.from(root.querySelectorAll("[data-chunk-filter]"));
+    const tableList = root.querySelector("[data-table-list]");
+    const pageSelect = root.querySelector("[data-page-select]");
+    const pageBlocks = root.querySelector("[data-page-blocks]");
+    const issueList = root.querySelector("[data-issue-list]");
+    const rawToggle = root.querySelector("[data-raw-toggle]");
+    const rawJson = root.querySelector("[data-raw-json]");
+
+    const pipelineSteps = Array.from(root.querySelectorAll("[data-pipeline-step]"));
+    const docButtons = Array.from(root.querySelectorAll("[data-doc-item]"));
+    const docSearch = root.querySelector("[data-doc-search]");
+
+    let activeFilter = "all";
+    let cachedDoc = null;
+
+    function setStepState(stepKey, isComplete, label) {
+      const step = pipelineSteps.find((el) => el.dataset.pipelineStep === stepKey);
+      if (!step) return;
+      step.dataset.state = isComplete ? "complete" : "pending";
+      const labelEl = step.querySelector("[data-step-label]");
+      if (labelEl) {
+        labelEl.textContent = label || (isComplete ? "Done" : "Pending");
+      }
+    }
+
+    function formatCount(value) {
+      if (value == null) return "0";
+      const num = Number(value);
+      if (Number.isNaN(num)) return "0";
+      return num.toLocaleString();
+    }
+
+    function formatStatus(summary) {
+      if (!summary) return "Unknown";
+      return summary.statusLabel || summary.status || "Unknown";
+    }
+
+    function renderSummary(doc) {
+      const summary = doc.summary || {};
+      const name = summary.name || "Document";
+      if (docTitle) docTitle.textContent = name;
+      if (statusField) statusField.textContent = formatStatus(summary);
+      if (sourceField) sourceField.textContent = summary.sourceLabel || summary.sourceType || "—";
+      if (updatedField) updatedField.textContent = summary.updatedAt || "—";
+      const counts = [
+        formatCount((doc.chunks || []).length) + " chunks",
+        formatCount((doc.structuredTables || []).length) + " tables",
+        formatCount((doc.issues || []).length) + " issues",
+      ];
+      if (countsField) countsField.textContent = counts.join(" · ");
+      if (summaryField) summaryField.textContent = doc.summaryText || "No summary available.";
+    }
+
+    function renderPipeline(doc) {
+      const summary = doc.summary || {};
+      setStepState("uploaded", true, "Uploaded");
+      const extracted = Boolean((doc.layoutPages || []).length || doc.summaryText);
+      const structured = Boolean((doc.structuredTables || []).length || (doc.layoutPages || []).length);
+      const chunked = Boolean((doc.chunks || []).length);
+      const indexed = (summary.status || "").toLowerCase() === "active";
+      setStepState("extracted", extracted, extracted ? "Done" : "Pending");
+      setStepState("structured", structured, structured ? "Done" : "Pending");
+      setStepState("chunked", chunked, chunked ? "Done" : "Pending");
+      setStepState("indexed", indexed, indexed ? "Active" : "Pending");
+    }
+
+    function renderQuality(report) {
+      if (!qualityReport) return;
+      qualityReport.innerHTML = "";
+      if (!report || typeof report !== "object") {
+        qualityReport.textContent = "No quality report captured yet.";
+        return;
+      }
+      const entries = [
+        { label: "Chunks", value: report.chunk_count },
+        { label: "Tables", value: report.table_count },
+        { label: "Decorative tables", value: report.decorative_table_count },
+        { label: "Decorative blocks", value: report.decorative_block_pct ? report.decorative_block_pct + "%" : "0%" },
+        { label: "Issues", value: report.issue_count },
+      ];
+      entries.forEach((entry) => {
+        const row = document.createElement("div");
+        row.className = "flex items-center justify-between";
+        row.innerHTML = "<span class='text-muted-foreground'>" + entry.label + "</span><span class='font-semibold text-foreground'>" + formatCount(entry.value) + "</span>";
+        qualityReport.appendChild(row);
+      });
+      if (report.extraction_error_codes && report.extraction_error_codes.length) {
+        const codes = document.createElement("div");
+        codes.className = "text-[11px] text-muted-foreground";
+        codes.textContent = "Errors: " + report.extraction_error_codes.join(", ");
+        qualityReport.appendChild(codes);
+      }
+    }
+
+    function renderIngestionMetadata(meta) {
+      if (!ingestSummary) return;
+      ingestSummary.innerHTML = "";
+      if (!meta || typeof meta !== "object") {
+        ingestSummary.innerHTML = "<div class='text-muted-foreground'>No ingestion metadata available.</div>";
+        if (ingestRaw) ingestRaw.textContent = "";
+        return;
+      }
+      const tableStats = meta.table_stats || {};
+      const entries = [
+        { label: "Format", value: meta.format || "—" },
+        { label: "Content type", value: meta.content_type || "—" },
+        { label: "Pages", value: meta.page_count != null ? meta.page_count : "—" },
+        { label: "Tables", value: meta.table_count != null ? meta.table_count : "—" },
+        { label: "Words", value: meta.word_count != null ? formatCount(meta.word_count) : "—" },
+        { label: "Characters", value: meta.character_count != null ? formatCount(meta.character_count) : "—" },
+        { label: "Table rows", value: tableStats.total_rows != null ? formatCount(tableStats.total_rows) : "—" },
+        { label: "Indexed rows", value: tableStats.indexed_rows != null ? formatCount(tableStats.indexed_rows) : "—" },
+      ];
+      entries.forEach((entry) => {
+        const item = document.createElement("div");
+        item.className = "space-y-1";
+        item.innerHTML =
+          "<div class='text-[11px] uppercase text-muted-foreground'>" +
+          entry.label +
+          "</div><div class='text-sm font-semibold text-foreground'>" +
+          entry.value +
+          "</div>";
+        ingestSummary.appendChild(item);
+      });
+      if (ingestRaw) {
+        ingestRaw.textContent = JSON.stringify(meta, null, 2);
+      }
+    }
+
+    function renderChunks(doc) {
+      if (!chunkList) return;
+      const chunks = doc.chunks || [];
+      const query = (chunkSearch && chunkSearch.value ? chunkSearch.value.toLowerCase() : "").trim();
+      const filtered = chunks.filter((chunk) => {
+        const metadata = chunk.metadata || {};
+        const type = metadata.index_type || (metadata.is_table_chunk ? "table" : "text");
+        if (activeFilter !== "all" && type !== activeFilter) {
+          return false;
+        }
+        if (!query) return true;
+        const haystack = (chunk.content || "") + " " + JSON.stringify(metadata || {});
+        return haystack.toLowerCase().includes(query);
+      });
+      chunkList.innerHTML = "";
+      if (!filtered.length) {
+        const empty = document.createElement("div");
+        empty.className = "text-xs text-muted-foreground";
+        empty.textContent = "No chunks match this filter.";
+        chunkList.appendChild(empty);
+        return;
+      }
+      filtered.slice(0, 200).forEach((chunk) => {
+        const metadata = chunk.metadata || {};
+        const type = metadata.index_type || (metadata.is_table_chunk ? "table" : "text");
+        const item = document.createElement("div");
+        item.className = "rounded-xl border border-border/50 bg-background px-3 py-3 space-y-2";
+        const header = document.createElement("div");
+        header.className = "flex items-center justify-between gap-2 text-xs";
+        header.innerHTML =
+          "<span class='font-semibold text-foreground'>Chunk " +
+          formatCount(chunk.index) +
+          "</span><span class='text-[10px] uppercase tracking-wide text-muted-foreground'>" +
+          type +
+          "</span>";
+        const metaLine = document.createElement("div");
+        metaLine.className = "text-[11px] text-muted-foreground";
+        const metaBits = [];
+        if (metadata.page_anchor) metaBits.push(metadata.page_anchor);
+        if (metadata.table_title) metaBits.push(metadata.table_title);
+        if (metadata.content_source) metaBits.push(metadata.content_source);
+        if (metadata.index_type && !metaBits.includes(metadata.index_type)) metaBits.push(metadata.index_type);
+        metaLine.textContent = metaBits.length ? metaBits.join(" · ") : "—";
+        const preview = document.createElement("div");
+        preview.className = "text-xs text-muted-foreground line-clamp-4";
+        preview.textContent = (chunk.content || "").slice(0, 500) || "No content.";
+        item.appendChild(header);
+        item.appendChild(metaLine);
+        item.appendChild(preview);
+        chunkList.appendChild(item);
+      });
+    }
+
+    function renderTables(doc) {
+      if (!tableList) return;
+      tableList.innerHTML = "";
+      const tables = doc.structuredTables || [];
+      if (!tables.length) {
+        const empty = document.createElement("div");
+        empty.className = "text-xs text-muted-foreground";
+        empty.textContent = "No structured tables detected.";
+        tableList.appendChild(empty);
+        return;
+      }
+      tables.slice(0, 6).forEach((table) => {
+        const wrap = document.createElement("div");
+        wrap.className = "rounded-xl border border-border/50 bg-background p-3 space-y-2";
+        const title = document.createElement("div");
+        title.className = "text-xs font-semibold text-foreground";
+        title.textContent = table.title || "Table " + formatCount(table.orderIndex);
+        const meta = document.createElement("div");
+        meta.className = "text-[11px] text-muted-foreground";
+        meta.textContent = "Rows: " + formatCount(table.rowCount) + " · Page " + (table.pageNumber || "—");
+        const header = document.createElement("div");
+        header.className = "viz-code text-[11px] text-muted-foreground";
+        header.textContent = (table.columnSchema || []).join(" | ") || "—";
+        wrap.appendChild(title);
+        wrap.appendChild(meta);
+        wrap.appendChild(header);
+        const rows = (table.rows || []).slice(0, 3);
+        rows.forEach((row) => {
+          const rowLine = document.createElement("div");
+          rowLine.className = "viz-code text-[11px] text-muted-foreground";
+          const values = (row.cells || []).map((cell) => cell.rawText || "");
+          rowLine.textContent = values.join(" | ");
+          wrap.appendChild(rowLine);
+        });
+        tableList.appendChild(wrap);
+      });
+    }
+
+    function renderPages(doc) {
+      if (!pageSelect || !pageBlocks) return;
+      const pages = doc.layoutPages || [];
+      pageSelect.innerHTML = "";
+      pageBlocks.innerHTML = "";
+      if (!pages.length) {
+        pageBlocks.innerHTML = "<div class='text-xs text-muted-foreground'>No page layout blocks captured.</div>";
+        return;
+      }
+      pages.forEach((page, idx) => {
+        const option = document.createElement("option");
+        option.value = String(idx);
+        option.textContent = "Page " + page.pageNumber;
+        pageSelect.appendChild(option);
+      });
+      function drawPage(index) {
+        const page = pages[index];
+        if (!page) return;
+        pageBlocks.innerHTML = "";
+        const blocks = page.blocks || [];
+        if (!blocks.length) {
+          pageBlocks.innerHTML = "<div class='text-xs text-muted-foreground'>No blocks on this page.</div>";
+          return;
+        }
+        blocks.slice(0, 40).forEach((block) => {
+          const item = document.createElement("div");
+          item.className = "rounded-lg border border-border/40 bg-background px-3 py-2 text-xs";
+          const label = document.createElement("div");
+          label.className = "text-[10px] uppercase text-muted-foreground";
+          label.textContent = (block.blockType || "block") + " · " + (block.sectionHeading || "—");
+          const text = document.createElement("div");
+          text.className = "text-muted-foreground";
+          text.textContent = (block.text || "").slice(0, 220) || "—";
+          item.appendChild(label);
+          item.appendChild(text);
+          pageBlocks.appendChild(item);
+        });
+      }
+      drawPage(0);
+      pageSelect.addEventListener("change", function () {
+        drawPage(Number(pageSelect.value || 0));
+      });
+    }
+
+    function renderIssues(doc) {
+      if (!issueList) return;
+      issueList.innerHTML = "";
+      const issues = doc.issues || [];
+      if (!issues.length) {
+        issueList.innerHTML = "<div class='text-xs text-muted-foreground'>No ingestion issues reported.</div>";
+        return;
+      }
+      issues.slice(0, 12).forEach((issue) => {
+        const item = document.createElement("div");
+        item.className = "rounded-lg border border-border/40 bg-background px-3 py-2";
+        item.innerHTML =
+          "<div class='text-[11px] uppercase text-muted-foreground'>" +
+          (issue.severity || "info") +
+          "</div><div class='text-xs text-foreground'>" +
+          (issue.description || issue.code || "Issue") +
+          "</div>";
+        issueList.appendChild(item);
+      });
+    }
+
+    function renderRaw(doc) {
+      if (!rawJson) return;
+      rawJson.textContent = JSON.stringify(doc, null, 2);
+    }
+
+    function updateContent(doc) {
+      cachedDoc = doc;
+      if (emptyState) emptyState.classList.add("hidden");
+      if (contentState) contentState.classList.remove("hidden");
+      renderSummary(doc);
+      renderPipeline(doc);
+      renderQuality(doc.qualityReport);
+      renderIngestionMetadata(doc.ingestionMetadata);
+      renderChunks(doc);
+      renderTables(doc);
+      renderPages(doc);
+      renderIssues(doc);
+      renderRaw(doc);
+    }
+
+    function fetchDocument(documentId) {
+      if (!documentId) return;
+      const url = apiRoot + documentId + "/?business_id=" + encodeURIComponent(businessId || "");
+      fetch(url, { credentials: "same-origin" })
+        .then((response) => response.json())
+        .then((payload) => {
+          if (payload && payload.document) {
+            updateContent(payload.document);
+          }
+        })
+        .catch(() => {
+          // ignore fetch errors for now
+        });
+    }
+
+    function setActiveDoc(button) {
+      docButtons.forEach((btn) => {
+        btn.classList.toggle("border-primary/60", btn === button);
+        btn.classList.toggle("bg-primary/5", btn === button);
+      });
+      if (button) {
+        fetchDocument(button.dataset.docId);
+      }
+    }
+
+    docButtons.forEach((button) => {
+      button.addEventListener("click", function () {
+        setActiveDoc(button);
+      });
+    });
+
+    if (docSearch) {
+      docSearch.addEventListener("input", function () {
+        const value = docSearch.value.trim().toLowerCase();
+        docButtons.forEach((button) => {
+          const name = (button.dataset.docName || "").toLowerCase();
+          const status = (button.dataset.docStatus || "").toLowerCase();
+          const matches = !value || name.includes(value) || status.includes(value);
+          button.classList.toggle("hidden", !matches);
+        });
+      });
+    }
+
+    chunkFilters.forEach((filter) => {
+      filter.addEventListener("click", function () {
+        activeFilter = filter.dataset.chunkFilter || "all";
+        chunkFilters.forEach((btn) => {
+          btn.dataset.active = btn === filter ? "true" : "false";
+        });
+        if (cachedDoc) {
+          renderChunks(cachedDoc);
+        }
+      });
+    });
+
+    if (chunkSearch) {
+      chunkSearch.addEventListener("input", function () {
+        if (cachedDoc) {
+          renderChunks(cachedDoc);
+        }
+      });
+    }
+
+    if (rawToggle && rawJson) {
+      rawToggle.addEventListener("click", function () {
+        const isHidden = rawJson.classList.contains("hidden");
+        rawJson.classList.toggle("hidden", !isHidden);
+        rawToggle.textContent = isHidden ? "Hide raw JSON" : "Show raw JSON";
+      });
+    }
+
+    if (ingestToggle && ingestRaw) {
+      ingestToggle.addEventListener("click", function () {
+        const isHidden = ingestRaw.classList.contains("hidden");
+        ingestRaw.classList.toggle("hidden", !isHidden);
+        ingestToggle.textContent = isHidden ? "Hide raw metadata" : "Show raw metadata";
+      });
+    }
+
+    if (selectedId) {
+      const preselect = docButtons.find((btn) => btn.dataset.docId === selectedId);
+      if (preselect) {
+        setActiveDoc(preselect);
+      }
+    }
+  });
+</script>
+{% endblock %}
