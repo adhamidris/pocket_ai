@@ -24,7 +24,7 @@ from django.utils import timezone
 
 from opentelemetry import trace as otel_trace
 
-from apps.accounts.models import AgentProfile
+from apps.accounts.models import AgentProfile, KnowledgeUpload
 from apps.conversations.models import Conversation, ConversationExtractionType, ConversationSender
 from apps.llm.llm_provider import PromptGenerationError, _emit_stream_chunks
 from apps.rag.ai_orchestrator import (
@@ -182,6 +182,8 @@ class McpOrchestratorService:
         final_answer_started = False
         inline_response_blocks_detected = False
 
+
+
         def _status_event(code: str, label: str | None = None, meta: Mapping[str, object] | None = None) -> None:
             if not on_status_change:
                 return
@@ -223,60 +225,42 @@ class McpOrchestratorService:
                 return {"code": "searching", "label": label, "meta": meta, "compat_code": "searching_knowledge"}
 
             if tool_name == "read_knowledge":
+                # Legacy support: try to guess label from intent, but prefer generic if vague
+                intent_hint = str(arguments.get("intent") or "").strip().lower()
+                base_label = "Analyzing properties" # distinct from "Reading" to show intelligence
+                if intent_hint == "table":
+                     base_label = "Analyzing dataset"
+                elif intent_hint == "text":
+                     base_label = "Reading document"
+                
                 raw_id = arguments.get("document_id")
                 doc_id = str(raw_id).strip() if raw_id is not None else ""
                 short_id = f"{doc_id[:8]}…" if doc_id else ""
-
-                intent_hint = str(arguments.get("intent") or "").strip().lower()
-                table_args = arguments.get("table") if isinstance(arguments.get("table"), Mapping) else {}
-                table_signal = intent_hint == "table"
-
-                if not table_signal and isinstance(table_args, Mapping):
-                    for key in (
-                        "match_column",
-                        "match_value",
-                        "match_values",
-                        "filters",
-                        "query",
-                        "select_columns",
-                        "sort_by",
-                        "aggregate",
-                    ):
-                        value = table_args.get(key)
-                        if value is None:
-                            continue
-                        if isinstance(value, str) and not value.strip():
-                            continue
-                        if isinstance(value, (list, tuple, set, dict)) and not value:
-                            continue
-                        table_signal = True
-                        break
-
-                base_label = "Reading table data" if table_signal else "Reading document"
-                label = base_label if table_signal or not short_id else f"Reading: {short_id}"
-                meta = {"document_id": doc_id, "intent": "table" if table_signal else "text"} if doc_id else {}
+                label = base_label if not short_id else f"{base_label}: {short_id}"
+                
+                meta = {"document_id": doc_id, "intent": intent_hint} if doc_id else {}
                 return {"code": "reading", "label": label, "meta": meta, "compat_code": "reading_document"}
 
             if tool_name == "read_document":
                 raw_id = arguments.get("document_id")
                 doc_id = str(raw_id).strip() if raw_id is not None else ""
                 short_id = f"{doc_id[:8]}…" if doc_id else ""
-                base_label = "Reading document"
-                label = f"Reading: {short_id}" if short_id else base_label
+                
+                mode = str(arguments.get("mode") or "").strip().lower()
+                # Pillar 3: Status confidence
+                action_verb = "Scanning" if mode == "full_page" else "Reading"
+                label = f"{action_verb} document"
+                if short_id:
+                    label += f": {short_id}"
+                    
                 meta = {"document_id": doc_id} if doc_id else {}
                 return {"code": "reading", "label": label, "meta": meta, "compat_code": "reading_document"}
 
-            if tool_name == "table_aggregate":
-                raw_id = arguments.get("document_id")
+            if tool_name == "table_aggregate" or tool_name == "query_dataset":
+                raw_id = arguments.get("document_id") or arguments.get("dataset_id")
                 doc_id = str(raw_id).strip() if raw_id is not None else ""
-                label = "Reading table data"
-                meta = {"document_id": doc_id} if doc_id else {}
-                return {"code": "reading", "label": label, "meta": meta, "compat_code": "reading_document"}
-
-            if tool_name == "dataset_query":
-                raw_id = arguments.get("document_id")
-                doc_id = str(raw_id).strip() if raw_id is not None else ""
-                label = "Querying dataset"
+                # Pillar 3: Status confidence
+                label = "Analyzing dataset"
                 meta = {"document_id": doc_id} if doc_id else {}
                 return {"code": "reading", "label": label, "meta": meta, "compat_code": "reading_document"}
 
@@ -606,6 +590,13 @@ class McpOrchestratorService:
                     for tool_call in current_tool_calls:
                         tool_name = self._tool_name(tool_call)
                         arguments = self._tool_arguments(tool_call)
+
+                        # --- Pillar 2: Adaptive Routing (Auto-Repair) ---
+                        # Intercept and fix mismatched tool calls (e.g. query_dataset on PDF)
+                        # before they hit the handler and return an error.
+                        tool_name, arguments = self._adaptive_routing_policy(tool_name, arguments, conversation, status_callback=_status_event)
+                        # ------------------------------------------------
+
                         cached_table_result = None
                         table_cache_key = None
                         if tool_name == "table_aggregate":
@@ -1668,7 +1659,7 @@ class McpOrchestratorService:
 
     @staticmethod
     def _is_knowledge_tool(name: str) -> bool:
-        return name in {"search_knowledge", "read_knowledge", "read_document", "table_aggregate", "dataset_query"}
+        return name in {"search_knowledge", "read_knowledge", "read_document", "table_aggregate", "dataset_query", "query_dataset"}
 
     @staticmethod
     def _tool_schema_name(tool_def: Mapping[str, object]) -> str | None:
@@ -4075,3 +4066,74 @@ class McpOrchestratorService:
         except Exception:
             args_json = str(arguments)
         return f"{tool_name}:{args_json}"
+
+    def _adaptive_routing_policy(
+        self,
+        name: str,
+        args: Mapping[str, object],
+        conv: Conversation,
+        status_callback: Callable[[str, str | None, Mapping[str, object] | None], None] | None = None,
+    ) -> tuple[str, Mapping[str, object]]:
+        """
+        Pillar 2: Adaptive Server-Side Routing.
+        Intercepts tool calls to check if the target resource matches the tool's expected kind.
+        Auto-repairs obvious mismatches (dataset query on PDF -> read document).
+        """
+        
+        # Helper to check if upload is dataset
+        def _is_dataset(up_id: str) -> bool:
+            try:
+                uid = uuid.UUID(str(up_id).strip())
+                # Enforce tenant isolation
+                up = KnowledgeUpload.objects.filter(
+                    id=uid, 
+                    business_profile=conv.business_profile
+                ).only("ingestion_metadata").first()
+                
+                if not up:
+                    return False
+                    
+                meta = up.ingestion_metadata or {}
+                # Broaden detection: explicit dataset mode OR tabular format
+                if meta.get("dataset", {}).get("enabled"):
+                    return True
+                    
+                fmt = str(meta.get("format") or "").lower().strip()
+                return fmt in {"csv", "tsv", "xls", "xlsx", "jsonl"}
+                
+            except ValueError:
+                return False
+
+        if name == "query_dataset":
+            doc_id = args.get("dataset_id") or args.get("document_id")
+            if doc_id and not _is_dataset(str(doc_id)):
+                # Mismatch: query_dataset on a non-dataset (Document)
+                # Repair: Switch to read_document
+                # We default to page 1 full_page scan if no other info, 
+                # assuming a broad query intent from standard dataset usage.
+                new_args = dict(args)
+                new_args["document_id"] = doc_id
+                new_args["page"] = 1 # Fallback
+                new_args["mode"] = "full_page" # Assume deep read for broad query
+                
+                # Log the repair
+                if status_callback:
+                    status_callback("routing.repair", "Auto-correcting: Reading document instead of querying dataset")
+                return "read_document", new_args
+
+        if name == "read_document":
+                doc_id = args.get("document_id")
+                if doc_id and _is_dataset(str(doc_id)):
+                    # Mismatch: read_document on a Dataset
+                    # Repair: Switch to query_dataset
+                    # We can't easily map 'page' to a query, but we can try a preview
+                    new_args = dict(args)
+                    new_args["dataset_id"] = doc_id
+                    if "query" not in new_args:
+                        new_args["limit"] = 5 # Preview
+                    
+                    if status_callback:
+                        status_callback("routing.repair", "Auto-correcting: Querying dataset instead of reading document")
+                    return "query_dataset", new_args
+        
+        return name, args

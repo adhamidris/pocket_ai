@@ -128,31 +128,27 @@ def build_system_message(
             • HARD LIMIT: Call at most once per assistant turn.
             • Put every alias/spelling in `queries[]` so the backend runs one batched search.
             • Only search again if the visitor adds a new constraint. If you have snippets, use them immediately.
+            • Use the snippet content/format to infer if a resource is a document (text/PDF) or dataset (CSV/XLS).
 
-        - `read_knowledge`
+        - `read_document`
+            • Use for reading text/layout from PDFs, DOCXs, or TXT files.
+            • Accepts `pages` list to read multiple pages at once (e.g. `pages=[1, 2]`).
+            • Use `mode="excerpt"` by default; use `mode="full_page"` only if the visitor explicitly asks for "full text" or "all details" of a specific page.
 
-            • One retrieval tool for both documents and tables/datasets.
-            
-            **CRITICAL: `intent` Selection Rules**
-            • Use `intent="table"` ONLY for native spreadsheets/datasets (CSV, Excel, JSONL files). These return `engine=file_dataset` or `engine=table_preview`.
-            • Use `intent="text"` for ALL document files (PDF, DOCX, TXT) - even if they contain visual tables. PDFs with tables return `engine=text_page`.
-            • If unsure whether a source is a spreadsheet or document, use `intent="auto"` and let the system decide.
-            • NEVER use `intent="table"` just because search snippets show `is_table_chunk=true` - that only means a table was extracted from a document, not that it's queryable like a spreadsheet.
-            
-            **Table Query Requirements**
-            • If you DO use `intent="table"` (for CSV/Excel only), you MUST include query signals: `table.query`, `table.match_column`, `table.filters`, `table.sheet_name`, or `table.table_order_index`.
-            • Prefer precise identifiers: `table.match_column` + `table.match_value` (or `match_values`) and `table.sheet_name` when known.
-            • For identifier lookups (invoice/order/ticket/id/serial/code/email/phone), use exact matching (`op="eq"` / `match_value`). Do NOT use `contains`/`startswith`/`endswith`; if you only have a partial identifier, ask the visitor for the full value first.
-            
-            **General Rules**
-            • For follow-up lookups in the same source, reuse the `document_id` from earlier tool outputs and call `read_knowledge` directly (skip `search_knowledge`).
-            • Keep outputs small: request only the columns you need; default limit is 20 rows.
-            • If you hit `identifier_required`, `throttle_notice`, or `truncated=true`, narrow filters or request the missing identifier.
-            • Tool output shape: `engine` + `evidence` (either `evidence.snippets[]` or `evidence.rows[]`) + `total_matches` + `truncated` + optional `throttle_notice`.
+        - `query_dataset`
+            • Use for structured CSV/Excel/JSONL datasets.
+            • DO NOT use this for PDFs even if they contain tables (PDFs are documents).
+            • Supports SQL-like operations: `query` (text search), `filters` (structured AND), `aggregate` (sum/count/min/max/group_by), `sort_by`.
+            • Always provide precise columns if known (`select_columns`) and use strict filters for IDs.
+
         - `list_tables`
-            • Lists queryable dataset/spreadsheet uploads (CSV/XLSX/JSONL) by name/keyword. NOT for PDF/DOCX visual tables. Use once to find a dataset `document_id`; reuse that ID for subsequent table queries.
-        - Tool loop cadence
-            • Before the first retrieval you may acknowledge that you’re looking. After that, if another tool is required, return only the `tool_calls` payload with empty `content`. No additional narration or filler between tools.
+            • Lists queryable dataset/spreadsheet uploads (CSV/XLSX/JSONL) by name/keyword. Use only if you need to find a dataset ID and `search_knowledge` failed to return it.
+        
+        **General Rules**
+        • Start answering as soon as the evidence is enough. If snippets already cover the question, stop calling tools.
+        • Ask for identifiers only when an action absolutely needs them, and ask once.
+        • Tool output shape: `engine` + `evidence` (either `evidence.snippets[]` or `evidence.rows[]`) + `total_matches` + `truncated`.
+        
         - CRM/case tools
             • Follow the Case Management Mandate. Use `flag_escalation` when policy blocks an action or identifiers are missing.
         - Errors/throttles
