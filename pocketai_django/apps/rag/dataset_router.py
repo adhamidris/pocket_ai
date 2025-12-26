@@ -37,7 +37,13 @@ def _cache_size_limit() -> int:
     return max(8, min(2048, value))
 
 
-def _load_bloom(*, storage_path: str, bits: int, hashes: int) -> BloomFilter | None:
+def _load_bloom(
+    *,
+    storage_path: str,
+    bits: int,
+    hashes: int,
+    business_id: str | None = None,
+) -> BloomFilter | None:
     if not storage_path or bits <= 0 or hashes <= 0:
         return None
     media_root = Path(getattr(settings, "MEDIA_ROOT", ".")).resolve()
@@ -50,7 +56,8 @@ def _load_bloom(*, storage_path: str, bits: int, hashes: int) -> BloomFilter | N
         stat = abs_path.stat()
     except OSError:
         return None
-    cache_key = f"{storage_path}:{bits}:{hashes}"
+    business_token = business_id or "global"
+    cache_key = f"{business_token}:{storage_path}:{bits}:{hashes}"
     cached = _BLOOM_CACHE.get(cache_key)
     if cached and cached[0] == stat.st_mtime:
         return cached[1]
@@ -143,7 +150,12 @@ def find_datasets_for_identifier(
                 hashes = int(entry.get("hashes") or 0)
             except (TypeError, ValueError):
                 continue
-            bloom = _load_bloom(storage_path=storage_path, bits=bits, hashes=hashes)
+            bloom = _load_bloom(
+                storage_path=storage_path,
+                bits=bits,
+                hashes=hashes,
+                business_id=str(business_profile.id),
+            )
             if not bloom:
                 continue
             if not bloom.maybe_contains(normalized):
@@ -202,7 +214,12 @@ def match_upload_for_identifier(
             hashes = int(entry.get("hashes") or 0)
         except (TypeError, ValueError):
             continue
-        bloom = _load_bloom(storage_path=storage_path, bits=bits, hashes=hashes)
+        bloom = _load_bloom(
+            storage_path=storage_path,
+            bits=bits,
+            hashes=hashes,
+            business_id=str(upload.business_profile_id),
+        )
         if not bloom:
             continue
         if not bloom.maybe_contains(normalized):

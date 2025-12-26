@@ -95,6 +95,8 @@ class McpOrchestratorService:
         self.provider = provider
         self.tool_definitions = tools.TOOL_DEFINITIONS
         self.max_tool_iterations = int(getattr(settings, "MCP_MAX_TOOL_ITERATIONS", 10))
+        self.read_document_repeat_limit = max(1, int(getattr(settings, "MCP_READ_DOCUMENT_REPEAT_LIMIT", 2)))
+        self.read_document_throttle_limit = max(1, int(getattr(settings, "MCP_READ_DOCUMENT_THROTTLE_LIMIT", 2)))
         self.business_override_key = getattr(settings, "RAG_BUSINESS_OVERRIDE_KEY", "rag_overrides")
         default_chunk_reads = max(1, int(getattr(settings, "RAG_MAX_CHUNK_READS_PER_TURN", 3)))
         self.max_chunk_reads_per_turn = max(
@@ -576,6 +578,10 @@ class McpOrchestratorService:
             duplicate_loop_streak = 0
             duplicate_loop_threshold = 2
             table_only_workflow = False
+            read_document_signatures: dict[str, int] = {}
+            read_document_throttle_hits = 0
+            read_document_guardrail_reason: str | None = None
+            read_document_guardrail_signature: str | None = None
 
             for iteration_index in range(self.max_tool_iterations):
                 current_tool_calls = list(assistant_message.get("tool_calls") or [])
@@ -728,6 +734,30 @@ class McpOrchestratorService:
                                     "duplicate_short_circuit": bool(duplicate_result),
                                 }
                             )
+                            if tool_name == "read_document":
+                                signature = self._read_document_signature(arguments, tool_result)
+                                if signature:
+                                    repeat_count = read_document_signatures.get(signature, 0) + 1
+                                    read_document_signatures[signature] = repeat_count
+                                    if (
+                                        read_document_guardrail_reason is None
+                                        and repeat_count >= self.read_document_repeat_limit
+                                    ):
+                                        read_document_guardrail_reason = "read_document_repeat"
+                                        read_document_guardrail_signature = signature
+                                status_value = str(tool_result.get("status") or "").strip().lower()
+                                error_code = str(tool_result.get("error_code") or "").strip().lower()
+                                throttled = bool(tool_result.get("throttle_notice"))
+                                if status_value == "throttled" or error_code == "prompt_budget_exceeded":
+                                    throttled = True
+                                if throttled:
+                                    read_document_throttle_hits += 1
+                                    if (
+                                        read_document_guardrail_reason is None
+                                        and read_document_throttle_hits >= self.read_document_throttle_limit
+                                    ):
+                                        read_document_guardrail_reason = "read_document_throttle"
+                                        read_document_guardrail_signature = signature
 
                             if self._is_knowledge_tool(tool_name):
                                 self._record_knowledge_outputs(tool_context, tool_result)
@@ -815,6 +845,59 @@ class McpOrchestratorService:
                         extra_system_messages.append({"role": "system", "content": loop_note})
                     extra_system_messages.append(reminder)
                     loop_messages[insert_at:insert_at] = extra_system_messages
+                    if read_document_guardrail_reason:
+                        structured_log(
+                            "mcp",
+                            "tool.loop.force_final",
+                            {
+                                "reason": read_document_guardrail_reason,
+                                "signature": read_document_guardrail_signature,
+                                "repeat_limit": self.read_document_repeat_limit,
+                                "throttle_limit": self.read_document_throttle_limit,
+                                "throttle_hits": read_document_throttle_hits,
+                            },
+                            context={
+                                "conversation": conversation.id,
+                                "business": conversation.business_profile_id,
+                            },
+                            logger_obj=logger,
+                            level=logging.WARNING,
+                        )
+                        reminder_text = (
+                            "Tools are repeating the same document read. Do NOT call tools again. "
+                            "Answer now using the snippets already provided. "
+                            "If something is still unclear, ask a single clarifying question."
+                        )
+                        if read_document_guardrail_reason == "read_document_throttle":
+                            reminder_text = (
+                                "read_document has been throttled. Do NOT call tools again. "
+                                "Answer now using the snippets already provided. "
+                                "If something is still unclear, ask a single clarifying question."
+                            )
+                        forced_reminder = {"role": "system", "content": reminder_text}
+                        forced_messages = list(loop_messages)
+                        forced_messages.insert(insert_at, forced_reminder)
+                        forced_payload = self._chat_with_context_governor(
+                            conversation=conversation,
+                            stage="force_final",
+                            messages=forced_messages,
+                            tools=None,
+                            on_stream_delta=_answer_stream_chunk,
+                        )
+                        assistant_message = self._coerce_assistant_message(forced_payload)
+                        next_tool_calls = []
+                        _mark_answer_started()
+                        transcript.append(
+                            {
+                                "role": "assistant",
+                                "content": assistant_message.get("content"),
+                            }
+                        )
+                        tool_phase_assistant_message = assistant_message
+                        raw_content = assistant_message.get("content")
+                        if isinstance(raw_content, str) and raw_content.strip():
+                            single_pass_candidate = raw_content.strip()
+                        break
                     tools_for_iteration = self.tool_definitions
                     if table_only_workflow:
                         tools_for_iteration = self._exclude_tool_schemas({"read_document"})
@@ -4066,6 +4149,61 @@ class McpOrchestratorService:
         except Exception:
             args_json = str(arguments)
         return f"{tool_name}:{args_json}"
+
+    @staticmethod
+    def _read_document_signature(
+        arguments: Mapping[str, object],
+        result: Mapping[str, object] | None = None,
+    ) -> str | None:
+        doc_id = str(arguments.get("document_id") or (result or {}).get("document_id") or "").strip()
+        if not doc_id:
+            return None
+
+        mode = str((result or {}).get("mode") or arguments.get("mode") or "").strip().lower()
+        if not mode:
+            mode = "excerpt"
+
+        pages: list[int] = []
+
+        def _add_page(value: object) -> None:
+            try:
+                pages.append(max(1, int(value)))
+            except (TypeError, ValueError):
+                return
+
+        result_pages = (result or {}).get("pages")
+        if isinstance(result_pages, list):
+            for value in result_pages:
+                _add_page(value)
+        else:
+            pages_arg = arguments.get("pages")
+            if isinstance(pages_arg, list):
+                for value in pages_arg:
+                    _add_page(value)
+            if not pages:
+                page_arg = arguments.get("page")
+                if page_arg is not None:
+                    _add_page(page_arg)
+            if not pages:
+                offset_value = arguments.get("offset")
+                if offset_value is not None:
+                    try:
+                        pages.append(max(1, int(offset_value) + 1))
+                    except (TypeError, ValueError):
+                        pass
+        if not pages:
+            pages = [1]
+        pages = sorted(set(pages))
+
+        neighbor_value = arguments.get("neighbor_window") or arguments.get("chunk_neighbor")
+        try:
+            neighbor = int(neighbor_value)
+        except (TypeError, ValueError):
+            neighbor = 1
+        neighbor = max(0, min(3, neighbor))
+
+        page_key = ",".join(str(page) for page in pages)
+        return f"{doc_id}:{mode}:{page_key}:n{neighbor}"
 
     def _adaptive_routing_policy(
         self,

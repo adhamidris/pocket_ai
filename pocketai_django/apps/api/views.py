@@ -1193,6 +1193,9 @@ def _serialize_document_detail(detail: DocumentDetail) -> dict:
         "createdByAgent": detail.created_by_agent,
         "guardrails": {"requiredIdentifiers": _read_document_guardrails(detail.metadata)},
     }
+    quality_report = detail.ingestion_metadata.get("quality_report") if isinstance(detail.ingestion_metadata, dict) else None
+    if isinstance(quality_report, dict) and quality_report:
+        payload["qualityReport"] = quality_report
     if detail.pages:
         payload["layoutPages"] = [
             {

@@ -435,7 +435,7 @@ class QueryNormalizer:
         lowered = cls._normalize_query_text(value).strip().lower()
         if not lowered:
             return ""
-        sanitized = re.sub(r"[^\w\\-\\s]", "", lowered, flags=re.UNICODE)
+        sanitized = re.sub(r"[^\w\-\s]", "", lowered, flags=re.UNICODE)
         sanitized = sanitized.replace("_", "-")
         sanitized = cls._SPACE_PATTERN.sub("-", sanitized)
         sanitized = re.sub(r"-{2,}", "-", sanitized)
@@ -461,12 +461,19 @@ class QueryNormalizer:
     ) -> bool:
         if not tokens:
             return False
+        # Strong signal: digit-bearing IDs with separators (e.g., TRIP-101, INV_123).
+        if has_digits and (has_dashes or has_underscores):
+            return True
         if len(tokens) <= 3 and (has_digits or has_dashes or has_underscores):
             return True
         for candidate in alias_candidates:
-            if candidate and cls._IDENTIFIER_PATTERN.fullmatch(candidate):
+            # Avoid flagging plain multiword names that normalize into hyphenated forms (e.g., "Grand Luxor").
+            if candidate and cls._IDENTIFIER_PATTERN.fullmatch(candidate) and any(ch.isdigit() for ch in candidate):
                 return True
-        return any(cls._IDENTIFIER_PATTERN.fullmatch(token) for token in tokens if token)
+        return any(
+            token and cls._IDENTIFIER_PATTERN.fullmatch(token) and any(ch.isdigit() for ch in token)
+            for token in tokens
+        )
 
 
 @dataclasses.dataclass(frozen=True)
@@ -610,9 +617,9 @@ class KnowledgeSearchService:
         self.snippet_rerank_pool = max(5, int(getattr(settings, "RAG_SNIPPET_RERANK_POOL", 20)))
         self.business_override_key = getattr(settings, "RAG_BUSINESS_OVERRIDE_KEY", "rag_overrides")
         self.window_cache_limit = max(32, int(getattr(settings, "RAG_NEIGHBOR_WINDOW_CACHE_SIZE", 128)))
-        self._window_cache: OrderedDict[tuple[uuid.UUID, int, int], list[KnowledgeUploadChunk]] = OrderedDict()
+        self._window_cache: OrderedDict[tuple[uuid.UUID, uuid.UUID, int, int], list[KnowledgeUploadChunk]] = OrderedDict()
         self.structured_count_cache_limit = 256
-        self._structured_count_cache: OrderedDict[uuid.UUID, tuple[int, int]] = OrderedDict()
+        self._structured_count_cache: OrderedDict[tuple[uuid.UUID, uuid.UUID], tuple[int, int]] = OrderedDict()
         self.table_result_cap = max(3, int(getattr(settings, "RAG_TABLE_RESULT_LIMIT", 12)))
         self.table_similarity_threshold = float(getattr(settings, "RAG_TABLE_SIMILARITY_THRESHOLD", 0.3))
         self.table_column_cache_limit = max(8, int(getattr(settings, "RAG_TABLE_COLUMN_CACHE_SIZE", 32)))
@@ -621,6 +628,7 @@ class KnowledgeSearchService:
         self.table_rerank_floor = float(getattr(settings, "RAG_TABLE_RERANK_FLOOR", 0.35))
         self.table_vector_floor = float(getattr(settings, "RAG_TABLE_VECTOR_FLOOR", 0.45))
         self.table_chunk_sample_limit = max(3, int(getattr(settings, "RAG_TABLE_CHUNK_SAMPLE", 6)))
+        self.table_context_snippet_cap = max(0, int(getattr(settings, "RAG_TABLE_CONTEXT_SNIPPETS", 2)))
         self.table_column_hint_base = {
             "name",
             "title",
@@ -644,9 +652,37 @@ class KnowledgeSearchService:
             "csv",
             "tab",
             "grid",
+            # "Table-critical" intent words (used to decide when doc-table previews are helpful).
+            "fee",
+            "fees",
+            "charge",
+            "charges",
+            "limit",
+            "limits",
+            "compare",
+            "comparison",
+            "pricing",
+            "price",
+            "prices",
+            "rate",
+            "rates",
+            "apr",
+            "interest",
         }
+        # Formats we should NOT treat as queryable tables (documents are read-only evidence, not datasets).
+        default_non_queryable_formats = ("pdf", "docx")
+        formats_setting = getattr(settings, "RAG_NON_QUERYABLE_TABLE_FORMATS", None)
+        if isinstance(formats_setting, (list, tuple, set)):
+            cleaned: list[str] = []
+            for entry in formats_setting:
+                token = str(entry or "").strip().lower()
+                if token:
+                    cleaned.append(token)
+            if cleaned:
+                default_non_queryable_formats = tuple(cleaned)
+        self.non_queryable_table_formats: set[str] = set(default_non_queryable_formats)
         logger.info("emb.provider %s model=%s", type(self.embedding_service).__name__ if self.embedding_service else None, getattr(self.embedding_service, "model", None))
-        self._page_summary_cache: OrderedDict[uuid.UUID, dict[int, Mapping[str, object]]] = OrderedDict()
+        self._page_summary_cache: OrderedDict[tuple[uuid.UUID, uuid.UUID], dict[int, Mapping[str, object]]] = OrderedDict()
         self._table_presence_cache: OrderedDict[uuid.UUID, bool] = OrderedDict()
 
     def _business_override(self, business_profile, key: str, default: int | float) -> int | float:
@@ -740,24 +776,38 @@ class KnowledgeSearchService:
         override = self._business_override(business_profile, "page_char_limit", base)
         return max(200, int(override))
 
-    def _window_cache_get(self, upload_id: uuid.UUID, start: int, end: int) -> list[KnowledgeUploadChunk] | None:
-        key = (upload_id, start, end)
+    def _window_cache_get(
+        self,
+        business_id: uuid.UUID,
+        upload_id: uuid.UUID,
+        start: int,
+        end: int,
+    ) -> list[KnowledgeUploadChunk] | None:
+        key = (business_id, upload_id, start, end)
         cached = self._window_cache.get(key)
         if cached is not None:
             self._window_cache.move_to_end(key)
         return cached
 
-    def _window_cache_set(self, upload_id: uuid.UUID, start: int, end: int, chunks: list[KnowledgeUploadChunk]) -> None:
-        key = (upload_id, start, end)
+    def _window_cache_set(
+        self,
+        business_id: uuid.UUID,
+        upload_id: uuid.UUID,
+        start: int,
+        end: int,
+        chunks: list[KnowledgeUploadChunk],
+    ) -> None:
+        key = (business_id, upload_id, start, end)
         self._window_cache[key] = chunks
         self._window_cache.move_to_end(key)
         if len(self._window_cache) > self.window_cache_limit:
             self._window_cache.popitem(last=False)
 
     def _page_summary_entries(self, upload: KnowledgeUpload) -> dict[int, Mapping[str, object]]:
-        cached = self._page_summary_cache.get(upload.id)
+        cache_key = (upload.business_profile_id, upload.id)
+        cached = self._page_summary_cache.get(cache_key)
         if cached is not None:
-            self._page_summary_cache.move_to_end(upload.id)
+            self._page_summary_cache.move_to_end(cache_key)
             return cached
         metadata = upload.ingestion_metadata if isinstance(upload.ingestion_metadata, dict) else {}
         exports = metadata.get("structured_exports") if isinstance(metadata, dict) else None
@@ -773,8 +823,8 @@ class KnowledgeSearchService:
                 except (TypeError, ValueError):
                     continue
                 entries[page_index] = item
-        self._page_summary_cache[upload.id] = entries
-        self._page_summary_cache.move_to_end(upload.id)
+        self._page_summary_cache[cache_key] = entries
+        self._page_summary_cache.move_to_end(cache_key)
         if len(self._page_summary_cache) > self.page_summary_cache_limit:
             self._page_summary_cache.popitem(last=False)
         return entries
@@ -800,9 +850,10 @@ class KnowledgeSearchService:
         return (fallback or "").strip()
 
     def _structured_counts(self, upload: KnowledgeUpload) -> tuple[int, int]:
-        cached = self._structured_count_cache.get(upload.id)
+        cache_key = (upload.business_profile_id, upload.id)
+        cached = self._structured_count_cache.get(cache_key)
         if cached:
-            self._structured_count_cache.move_to_end(upload.id)
+            self._structured_count_cache.move_to_end(cache_key)
             return cached
         metadata = upload.ingestion_metadata if isinstance(upload.ingestion_metadata, dict) else {}
         exports = metadata.get("structured_exports") if isinstance(metadata, dict) else None
@@ -820,8 +871,8 @@ class KnowledgeSearchService:
             except Exception:
                 issues = 0
         counts = (tables, issues)
-        self._structured_count_cache[upload.id] = counts
-        self._structured_count_cache.move_to_end(upload.id)
+        self._structured_count_cache[cache_key] = counts
+        self._structured_count_cache.move_to_end(cache_key)
         if len(self._structured_count_cache) > self.structured_count_cache_limit:
             self._structured_count_cache.popitem(last=False)
         return counts
@@ -1089,23 +1140,64 @@ class KnowledgeSearchService:
                 "request": diagnostics.get("request_id"),
             },
         )
+        diagnostics["chunk_candidate_count_raw"] = len(chunk_hits)
+        table_intent = bool(table_context.get("has_intent"))
+
+        # Always suppress legacy PDF "json_entity" chunks (historically created from per-row table entities).
+        # These chunks tend to be low-context ("Table_1: ...") and can dominate retrieval even for normal Q&A.
+        if chunk_hits:
+            before = len(chunk_hits)
+            chunk_hits = tuple(hit for hit in chunk_hits if not self._is_legacy_pdf_table_entity_chunk(hit.chunk))
+            removed = before - len(chunk_hits)
+            if removed:
+                diagnostics["pdf_table_entity_chunks_filtered"] = removed
+                _rag_log(
+                    "pdf.table_entities.filtered",
+                    {"removed": removed, "remaining": len(chunk_hits)},
+                    indent=1,
+                    context={
+                        "business": business_profile.id,
+                        "request": diagnostics.get("request_id"),
+                    },
+                )
+
+        # For non-table queries, prefer page/text chunks and suppress extracted doc-table preview chunks.
+        # This prevents PDFs-with-tables from dominating retrieval unless the query is actually table-critical.
+        if chunk_hits and not table_intent:
+            before = len(chunk_hits)
+            chunk_hits = tuple(hit for hit in chunk_hits if not self._is_doc_table_preview_chunk(hit.chunk))
+            removed = before - len(chunk_hits)
+            if removed:
+                diagnostics["doc_table_chunks_filtered"] = removed
+                _rag_log(
+                    "table.preview.filtered",
+                    {"removed": removed, "remaining": len(chunk_hits)},
+                    indent=1,
+                    context={
+                        "business": business_profile.id,
+                        "request": diagnostics.get("request_id"),
+                    },
+                )
+        chunk_hits, context_hits, route_diag = self._route_chunk_hits(chunk_hits, table_intent=table_intent)
+        diagnostics.update(route_diag)
         diagnostics["chunk_candidate_count"] = len(chunk_hits)
         table_snippets: tuple[KnowledgeSnippet, ...] = tuple()
         table_reason: str | None = None
         should_run_table = False
         table_duration_ms: int | None = None
-        has_header_match = bool(table_context.get("matched_columns"))
+        matched_columns_query = table_context.get("matched_columns_query")
+        has_header_match = bool(matched_columns_query) if isinstance(matched_columns_query, set) else False
         if tables_available:
             if not chunk_hits:
                 should_run_table = True
                 table_reason = "no_chunk_candidates"
-            elif self._chunk_hits_are_weak(chunk_hits, traits):
+            elif table_intent and self._chunk_hits_are_weak(chunk_hits, traits):
                 should_run_table = True
                 table_reason = "weak_chunk_candidates"
-            elif self._query_has_entity_tokens(business_profile, traits):
+            elif table_intent and self._query_has_entity_tokens(business_profile, traits):
                 should_run_table = True
                 table_reason = "entity_query_parallel"
-            elif has_header_match:
+            elif table_intent and has_header_match:
                 should_run_table = True
                 table_reason = "header_match"
 
@@ -1141,6 +1233,18 @@ class KnowledgeSearchService:
             diagnostics["snippet_count"] = len(table_snippets)
             blended: list[KnowledgeSnippet] = list(table_snippets[:limit])
             remaining = max(0, limit - len(blended))
+            if table_intent and context_hits and remaining and self.table_context_snippet_cap:
+                context_limit = min(self.table_context_snippet_cap, remaining)
+                blended.extend(
+                    self._search_chunks(
+                        context_hits,
+                        limit=context_limit,
+                        business_profile=business_profile,
+                        pathway="hybrid",
+                        query=traits.normalized or traits.original or query,
+                    )
+                )
+                remaining = max(0, limit - len(blended))
             if chunk_hits and remaining:
                 blended.extend(
                     self._search_chunks(
@@ -1221,7 +1325,7 @@ class KnowledgeSearchService:
             )
             return result_obj
 
-        snippets = tuple(
+        snippets_list: list[KnowledgeSnippet] = list(
             self._search_chunks(
                 chunk_hits,
                 limit=limit,
@@ -1230,6 +1334,20 @@ class KnowledgeSearchService:
                 query=traits.normalized or traits.original or query,  # NEW: For query-aware row sampling
             )
         )
+        if table_intent and context_hits and self.table_context_snippet_cap:
+            remaining = max(0, limit - len(snippets_list))
+            if remaining:
+                context_limit = min(self.table_context_snippet_cap, remaining)
+                snippets_list.extend(
+                    self._search_chunks(
+                        context_hits,
+                        limit=context_limit,
+                        business_profile=business_profile,
+                        pathway="hybrid",
+                        query=traits.normalized or traits.original or query,
+                    )
+                )
+        snippets = tuple(snippets_list)
         if snippets:
             diagnostics["path"] = diagnostics.get("path") or "hybrid"
             diagnostics.setdefault("table_reason", table_reason)
@@ -1355,7 +1473,7 @@ class KnowledgeSearchService:
             return AliasSearchResult(
                 hits=tuple(hits[:limit]),
                 diagnostics=diagnostics,
-                short_circuit=True,
+                short_circuit=bool(traits.is_identifier_like),
             )
 
         fuzzy_hits = self._alias_fuzzy_hits(
@@ -2706,10 +2824,16 @@ class KnowledgeSearchService:
         semantic_columns = {column for column in columns if any(hint in column for hint in hints)}
         matched_columns_query = {column for column in columns if column and column in query_text}
         matched_columns = matched_columns_query or semantic_columns
-        has_intent = bool(matched_keywords or matched_columns_query)
+        has_currency_token = bool(tokens & {"egp", "usd", "eur", "gbp", "aed", "sar", "qar", "kwd", "bhd", "omr", "jod"})
+        has_percent = "%" in query_text
+        numeric_table_intent = bool(traits.has_digits and (has_currency_token or has_percent))
+        has_intent = bool(matched_keywords or matched_columns_query or numeric_table_intent)
         return {
             "has_intent": has_intent,
             "matched_columns": matched_columns,
+            "matched_columns_query": matched_columns_query,
+            "matched_keywords": matched_keywords,
+            "numeric_intent": numeric_table_intent,
             "available_columns": columns,
             "semantic_columns": semantic_columns,
             "matched_column_count": len(matched_columns),
@@ -2724,14 +2848,11 @@ class KnowledgeSearchService:
             self._table_column_cache.move_to_end(business_id)
             return cached
         columns: set[str] = set()
-        qs = (
-            KnowledgeUploadTable.objects.filter(
-                upload__business_profile=business_profile
-            )
-            .exclude(upload__visibility=KnowledgeVisibility.INTERNAL)
-            .order_by("-updated_at")
-            .values_list("column_schema", flat=True)[: self.table_column_sample_limit]
+        qs = KnowledgeUploadTable.objects.filter(upload__business_profile=business_profile).exclude(
+            upload__visibility=KnowledgeVisibility.INTERNAL,
         )
+        qs = self._filter_queryable_table_uploads(qs, format_lookup="upload__ingestion_metadata__format")
+        qs = qs.order_by("-updated_at").values_list("column_schema", flat=True)[: self.table_column_sample_limit]
         for schema in qs:
             if not isinstance(schema, (list, tuple)):
                 continue
@@ -2811,6 +2932,18 @@ class KnowledgeSearchService:
                 hints.update(str(item).strip().lower() for item in extra if str(item).strip())
         return hints
 
+    def _filter_queryable_table_uploads(self, qs, *, format_lookup: str):
+        """
+        Keep rows where the upload format is missing/NULL or not in non-queryable formats.
+
+        We use a positive filter (IS NULL OR NOT IN) instead of exclude(IN) because
+        SQL NULL semantics can otherwise drop rows where the JSON key is absent.
+        """
+        if not self.non_queryable_table_formats:
+            return qs
+        formats = sorted(self.non_queryable_table_formats)
+        return qs.filter(Q(**{f"{format_lookup}__isnull": True}) | ~Q(**{f"{format_lookup}__in": formats}))
+
     def _business_has_tables(self, business_profile, cached_columns: set[str] | None = None) -> bool:
         business_id = getattr(business_profile, "id", None)
         if not business_id:
@@ -2821,7 +2954,11 @@ class KnowledgeSearchService:
         if cached is not None:
             self._table_presence_cache.move_to_end(business_id)
             return cached
-        exists = KnowledgeUploadTable.objects.filter(upload__business_profile=business_profile).exists()
+        qs = KnowledgeUploadTable.objects.filter(upload__business_profile=business_profile).exclude(
+            upload__visibility=KnowledgeVisibility.INTERNAL,
+        )
+        qs = self._filter_queryable_table_uploads(qs, format_lookup="upload__ingestion_metadata__format")
+        exists = qs.exists()
         self._table_presence_cache[business_id] = exists
         self._table_presence_cache.move_to_end(business_id)
         if len(self._table_presence_cache) > self.table_column_cache_limit:
@@ -2915,8 +3052,12 @@ class KnowledgeSearchService:
 
         def _is_numeric_value(value: str | None) -> bool:
             return _parse_numeric(value) is not None
-        cell_qs = KnowledgeUploadTableCell.objects.filter(
-            table__upload__business_profile=business_profile
+        cell_qs = KnowledgeUploadTableCell.objects.filter(table__upload__business_profile=business_profile).exclude(
+            table__upload__visibility=KnowledgeVisibility.INTERNAL,
+        )
+        cell_qs = self._filter_queryable_table_uploads(
+            cell_qs,
+            format_lookup="table__upload__ingestion_metadata__format",
         )
         if matched_columns:
             column_filter = Q()
@@ -2934,27 +3075,62 @@ class KnowledgeSearchService:
             .select_related("row__table__upload")
         )
         top_cells = list(cell_qs[: row_cap * 3])
-        if not top_cells:
-            return tuple()
         row_priority: list[uuid.UUID] = []
         cell_diag: dict[uuid.UUID, dict[str, object]] = {}
-        for cell in top_cells:
-            row = cell.row
-            if not row or not row.id or row.id in cell_diag:
-                continue
-            table = getattr(row, "table", None)
-            upload = getattr(table, "upload", None) if table else None
-            if not upload or upload.business_profile_id != business_profile.id:
-                continue
-            similarity = float(getattr(cell, "sim", 0.0) or 0.0)
-            cell_diag[row.id] = {
-                "column_key": cell.column_key,
-                "value": cell.raw_text,
-                "similarity": similarity,
-            }
-            row_priority.append(row.id)
-            if len(row_priority) >= row_cap:
-                break
+
+        if top_cells:
+            for cell in top_cells:
+                row = cell.row
+                if not row or not row.id or row.id in cell_diag:
+                    continue
+                table = getattr(row, "table", None)
+                upload = getattr(table, "upload", None) if table else None
+                if not upload or upload.business_profile_id != business_profile.id:
+                    continue
+                similarity = float(getattr(cell, "sim", 0.0) or 0.0)
+                cell_diag[row.id] = {
+                    "column_key": cell.column_key,
+                    "value": cell.raw_text,
+                    "similarity": similarity,
+                }
+                row_priority.append(row.id)
+                if len(row_priority) >= row_cap:
+                    break
+        else:
+            # Fallback: match on row.raw_text when no individual cell is similar enough.
+            row_qs = KnowledgeUploadTableRow.objects.filter(
+                table__upload__business_profile=business_profile,
+            ).exclude(
+                table__upload__visibility=KnowledgeVisibility.INTERNAL,
+            )
+            row_qs = self._filter_queryable_table_uploads(
+                row_qs,
+                format_lookup="table__upload__ingestion_metadata__format",
+            )
+            row_qs = (
+                row_qs.annotate(sim=TrigramSimilarity("raw_text", normalized_query))
+                .filter(sim__gte=self.table_similarity_threshold)
+                .order_by("-sim")
+                .select_related("table__upload")
+            )
+            top_rows = list(row_qs[:row_cap])
+            for row in top_rows:
+                if not row or not row.id or row.id in cell_diag:
+                    continue
+                table = getattr(row, "table", None)
+                upload = getattr(table, "upload", None) if table else None
+                if not upload or upload.business_profile_id != business_profile.id:
+                    continue
+                similarity = float(getattr(row, "sim", 0.0) or 0.0)
+                cell_diag[row.id] = {
+                    "column_key": None,
+                    "value": row.raw_text,
+                    "similarity": similarity,
+                }
+                row_priority.append(row.id)
+                if len(row_priority) >= row_cap:
+                    break
+
         if not row_priority:
             return tuple()
         rows = (
@@ -3085,15 +3261,20 @@ class KnowledgeSearchService:
 
     def _fallback_snippets(self, *, business_profile, limit: int) -> Sequence[KnowledgeSnippet]:
         # Prefer top table rows as factual fallback; if none, fall back to recent uploads.
-        table_rows = list(
-            KnowledgeUploadTableRow.objects.filter(
-                table__upload__business_profile=business_profile,
-                table__upload__status=KnowledgeStatus.ACTIVE,
-            )
-            .order_by("-created_at")[: limit * 3]
-            .select_related("table__upload__business_profile")
-            .prefetch_related("cells")
+        table_rows_qs = KnowledgeUploadTableRow.objects.filter(
+            table__upload__business_profile=business_profile,
+            table__upload__status=KnowledgeStatus.ACTIVE,
+        ).exclude(table__upload__visibility=KnowledgeVisibility.INTERNAL)
+        table_rows_qs = self._filter_queryable_table_uploads(
+            table_rows_qs,
+            format_lookup="table__upload__ingestion_metadata__format",
         )
+        table_rows_qs = (
+            table_rows_qs.order_by("-created_at")
+            .select_related("table__upload__business_profile")
+            .prefetch_related("cells")[: limit * 3]
+        )
+        table_rows = list(table_rows_qs)
         snippets: list[KnowledgeSnippet] = []
         for row in table_rows:
             table = row.table
@@ -3269,6 +3450,11 @@ class KnowledgeSearchService:
         diagnostics = dict(result.diagnostics) if result else {}
         if result and result.vector_distance is not None:
             diagnostics.setdefault("vector_distance", result.vector_distance)
+        if is_table_chunk:
+            ingestion_meta = upload.ingestion_metadata if isinstance(getattr(upload, "ingestion_metadata", None), Mapping) else {}
+            format_hint = str(ingestion_meta.get("format") or "").strip().lower()
+            if format_hint in {"pdf", "docx"}:
+                diagnostics["table_read_only"] = True
         diagnostics["structured_table_count"] = table_count
         diagnostics["issue_count"] = issue_count
         trunc_metrics = self._truncation_metrics(upload)
@@ -3901,7 +4087,7 @@ class KnowledgeSearchService:
 
             min_idx = min(max(0, ch.chunk_index - span) for ch, span in request_entries if ch.chunk_index is not None)
             max_idx = max((ch.chunk_index or 0) + span for ch, span in request_entries)
-            cached_window = self._window_cache_get(upload.id, min_idx, max_idx)
+            cached_window = self._window_cache_get(upload.business_profile_id, upload.id, min_idx, max_idx)
             if cached_window is not None:
                 window_chunks = cached_window
             else:
@@ -3912,7 +4098,7 @@ class KnowledgeSearchService:
                         chunk_index__lte=max_idx,
                     ).order_by("chunk_index")
                 )
-                self._window_cache_set(upload.id, min_idx, max_idx, window_chunks)
+                self._window_cache_set(upload.business_profile_id, upload.id, min_idx, max_idx, window_chunks)
             by_index = {ch.chunk_index: ch for ch in window_chunks}
             if upload.id not in structured_cache:
                 structured_cache[upload.id] = tuple(self._serialize_structured_tables_with_rows(upload, max_tables=3, max_rows=5))
@@ -4380,6 +4566,63 @@ class KnowledgeSearchService:
         return False
 
     @staticmethod
+    def _is_doc_table_preview_chunk(chunk: KnowledgeUploadChunk) -> bool:
+        metadata = chunk.metadata if isinstance(chunk.metadata, dict) else {}
+        return bool(metadata.get("is_table_chunk")) and bool(metadata.get("is_table_preview"))
+
+    @staticmethod
+    def _chunk_index_type(chunk: KnowledgeUploadChunk) -> str:
+        metadata = chunk.metadata if isinstance(chunk.metadata, dict) else {}
+        raw = str(metadata.get("index_type") or "").strip().lower()
+        if raw:
+            return raw
+        if metadata.get("is_table_chunk"):
+            return "table"
+        return "text"
+
+    def _route_chunk_hits(
+        self,
+        hits: Sequence[ChunkResult],
+        *,
+        table_intent: bool,
+    ) -> tuple[tuple[ChunkResult, ...], tuple[ChunkResult, ...], dict[str, object]]:
+        if not hits:
+            return tuple(), tuple(), {"index_route": "empty", "index_route_table_hits": 0, "index_route_text_hits": 0}
+        table_hits: list[ChunkResult] = []
+        text_hits: list[ChunkResult] = []
+        for hit in hits:
+            index_type = self._chunk_index_type(hit.chunk)
+            if index_type == "table":
+                table_hits.append(hit)
+            else:
+                text_hits.append(hit)
+        if table_intent:
+            primary = table_hits or list(hits)
+            context = text_hits if table_hits else []
+            route = "table_first" if table_hits else "table_fallback_all"
+        else:
+            primary = text_hits or list(hits)
+            context = []
+            route = "text_first" if text_hits else "text_fallback_all"
+        diagnostics = {
+            "index_route": route,
+            "index_route_table_hits": len(table_hits),
+            "index_route_text_hits": len(text_hits),
+        }
+        return tuple(primary), tuple(context), diagnostics
+
+    @staticmethod
+    def _is_legacy_pdf_table_entity_chunk(chunk: KnowledgeUploadChunk) -> bool:
+        metadata = chunk.metadata if isinstance(chunk.metadata, dict) else {}
+        if metadata.get("strategy") != "json_entity":
+            return False
+        upload = getattr(chunk, "upload", None)
+        ingestion_meta = getattr(upload, "ingestion_metadata", None) if upload else None
+        if not isinstance(ingestion_meta, Mapping):
+            return False
+        return str(ingestion_meta.get("format") or "").strip().lower() == "pdf"
+
+    @staticmethod
     def _is_pinned(upload: KnowledgeUpload) -> bool:
         metadata = upload.metadata if isinstance(upload.metadata, dict) else {}
         ingestion = upload.ingestion_metadata if isinstance(upload.ingestion_metadata, dict) else {}
@@ -4404,6 +4647,13 @@ class KnowledgeSearchService:
             normalized = value.strip().lower()
             return normalized in {"1", "true", "yes", "y", "t", "pin"}
         return False
+
+    @staticmethod
+    def _coerce_int(value: object) -> int:
+        try:
+            return int(value) if value is not None else 0
+        except (TypeError, ValueError):
+            return 0
 
     @classmethod
     def _topic_hints(cls, upload: KnowledgeUpload) -> tuple[str, ...]:
@@ -5767,6 +6017,8 @@ class AiOrchestratorService:
             payload["confidence_score"] = float(snippet.confidence_score)
         payload["truncated"] = bool(snippet.truncated)
         payload["source_diagnostics"] = dict(snippet.source_diagnostics or {})
+        if payload["source_diagnostics"].get("table_read_only"):
+            payload["table_read_only"] = True
         partial_index = bool(snippet.partial_index)
         payload["partial_index"] = partial_index
         payload["aliases"] = list(snippet.aliases or ())

@@ -285,6 +285,18 @@ class KnowledgeUploadAdmin(admin.ModelAdmin):
     search_fields = ("display_name", "source_name", "legacy_url", "business_profile__name", "user__email")
     ordering = ("-updated_at",)
     autocomplete_fields = ("integration",)
+    readonly_fields = ("quality_report",)
+
+    @admin.display(description="Quality report")
+    def quality_report(self, obj: KnowledgeUpload) -> str:
+        meta = obj.ingestion_metadata if isinstance(obj.ingestion_metadata, dict) else {}
+        report = meta.get("quality_report") if isinstance(meta, dict) else None
+        if not report:
+            return "-"
+        try:
+            return format_html("<pre>{}</pre>", json.dumps(report, indent=2, sort_keys=True))
+        except Exception:
+            return str(report)
 
 
 class KnowledgeAliasInline(admin.TabularInline):

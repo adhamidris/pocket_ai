@@ -168,9 +168,10 @@ class KnowledgeSearchServiceAliasTests(TestCase):
     @mock.patch("apps.rag.ai_orchestrator.build_embedding_service", return_value=None)
     def test_not_found_status_when_no_chunks(self, _build_embeddings) -> None:
         service = KnowledgeSearchService()
+        empty_registration = RegistrationSession.objects.create(user=self.user)
         empty_business = BusinessProfile.objects.create(
             user=self.user,
-            registration_session=self.registration,
+            registration_session=empty_registration,
             name="Empty Co",
             industry="travel",
         )

@@ -501,6 +501,7 @@ class PageRenderer:
             
             # Assemble text from rows with inline table formatting
             block_texts = []
+            decorative_fragments_filtered = 0
             for row_blocks in block_rows:
                 # Check if this row looks like a table row (multiple columns)
                 if len(row_blocks) >= 3:  # 3+ blocks in same row = likely table
@@ -508,13 +509,22 @@ class PageRenderer:
                     row_cells = [block[4].strip() for block in row_blocks if len(block) > 4]
                     row_cells = [cell for cell in row_cells if cell]  # Remove empty
                     if row_cells:
-                        block_texts.append("\t".join(row_cells))
+                        row_text = "\t".join(row_cells)
+                        signals = self._decorative_text_signals(row_text)
+                        if self._is_decorative_text(row_text, signals):
+                            decorative_fragments_filtered += 1
+                            continue
+                        block_texts.append(row_text)
                 else:
                     # Regular text - just concatenate
                     for block in row_blocks:
                         if len(block) > 4:
                             text_fragment = block[4].strip()
                             if text_fragment:
+                                signals = self._decorative_text_signals(text_fragment)
+                                if self._is_decorative_text(text_fragment, signals):
+                                    decorative_fragments_filtered += 1
+                                    continue
                                 block_texts.append(text_fragment)
             
             # Join blocks with appropriate spacing
@@ -556,6 +566,7 @@ class PageRenderer:
                     metadata={
                         "char_count": char_count,
                         "block_count": len(raw_blocks),
+                        "decorative_fragments_filtered": decorative_fragments_filtered,
                         "extraction_method": "block_sorted_with_row_detection"
                     },
                 )
@@ -712,6 +723,53 @@ class PageRenderer:
         
         return rows
 
+    @staticmethod
+    def _block_anchor(page_number: int, order_index: int) -> str:
+        return f"p{page_number}-b{order_index}"
+
+    @staticmethod
+    def _decorative_text_signals(text: str) -> dict[str, Any]:
+        signals: dict[str, Any] = {}
+        if not text:
+            return signals
+        lowered = text.lower()
+        if re.search(r"\bvalid\s*thru\b", lowered):
+            signals["valid_thru"] = True
+        if re.search(r"\b(?:\d{4}[\s-]?){3}\d{4}\b", lowered):
+            signals["card_number"] = True
+        stripped = text.strip()
+        if re.fullmatch(r"(?:[A-Za-z]\s+){2,}[A-Za-z]", stripped):
+            signals["spaced_characters"] = True
+        alnum = [c for c in stripped if c.isalnum()]
+        digits = sum(1 for c in stripped if c.isdigit())
+        if alnum and (digits / len(alnum)) >= 0.6 and len(stripped.split()) <= 4:
+            signals["mostly_digits"] = True
+        return signals
+
+    @staticmethod
+    def _is_decorative_text(text: str, signals: Mapping[str, Any]) -> bool:
+        if not text:
+            return False
+        if signals.get("card_number") or signals.get("valid_thru"):
+            return True
+        if signals.get("spaced_characters") and len(text.split()) <= 6:
+            return True
+        if signals.get("mostly_digits") and len(text.split()) <= 4:
+            return True
+        return False
+
+    @staticmethod
+    def _page_region(bbox: Mapping[str, Any], page_height: float | None) -> str | None:
+        if not page_height:
+            return None
+        y0 = float(bbox.get("y0") or 0.0)
+        y1 = float(bbox.get("y1") or 0.0)
+        if y1 <= page_height * 0.08:
+            return "header"
+        if y0 >= page_height * 0.92:
+            return "footer"
+        return None
+
     def _looks_like_table_text(self, text: str) -> bool:
         """Check if text block appears to be tabular data"""
         lines = [line for line in text.splitlines() if line.strip()]
@@ -811,6 +869,11 @@ class PageRenderer:
             raw_blocks = page.get_text("blocks") or []  # type: ignore[attr-defined]
         except Exception:  # pragma: no cover - fallback to full page block
             raw_blocks = []
+        page_height = None
+        try:
+            page_height = float(page.rect.height)
+        except Exception:
+            page_height = None
         payloads: list[PageBlockPayload] = []
         heading_context: list[str] = []
         for order_index, block in enumerate(raw_blocks):
@@ -822,12 +885,44 @@ class PageRenderer:
                 "y1": float(block[3]) if len(block) > 3 else 0.0,
             }
             stripped = text_fragment.strip()
+            raw_block_type = None
+            if len(block) > 6 and block[6] is not None:
+                try:
+                    raw_block_type = int(block[6])
+                except (TypeError, ValueError):
+                    raw_block_type = None
             block_type = self._resolve_block_type(block, stripped)
+            if raw_block_type == 1:
+                block_type = KnowledgeBlockType.IMAGE
+            elif raw_block_type in {2, 3}:
+                block_type = KnowledgeBlockType.FIGURE
             if self._looks_like_heading(stripped):
                 heading_context = [stripped]
                 section_heading = stripped
             else:
                 section_heading = heading_context[-1] if heading_context else ""
+            decorative_signals = self._decorative_text_signals(stripped) if stripped else {}
+            is_decorative = self._is_decorative_text(stripped, decorative_signals)
+            region_role = "text"
+            if block_type == KnowledgeBlockType.TABLE:
+                region_role = "table"
+            elif block_type in {KnowledgeBlockType.IMAGE, KnowledgeBlockType.FIGURE}:
+                region_role = "figure"
+            elif is_decorative:
+                region_role = "decorative"
+            page_region = self._page_region(bbox, page_height) if stripped else None
+            block_metadata: dict[str, Any] = {
+                "anchor": self._block_anchor(page_number, order_index),
+                "region_role": region_role,
+            }
+            if raw_block_type is not None:
+                block_metadata["raw_block_type"] = raw_block_type
+            if page_region:
+                block_metadata["page_region"] = page_region
+            if decorative_signals:
+                block_metadata["decorative_signals"] = decorative_signals
+            if is_decorative:
+                block_metadata["is_decorative"] = True
             payloads.append(
                 PageBlockPayload(
                     block_type=block_type,
@@ -838,6 +933,7 @@ class PageRenderer:
                     heading_path=list(heading_context),
                     detected_language="",
                     confidence=None,
+                    metadata=block_metadata,
                 )
             )
         if not payloads:
@@ -846,7 +942,7 @@ class PageRenderer:
                     block_type=KnowledgeBlockType.PARAGRAPH,
                     order_index=0,
                     text=page.get_text("text") or "",
-                    metadata={"fallback": True},
+                    metadata={"fallback": True, "anchor": self._block_anchor(page_number, 0), "region_role": "text"},
                 )
             )
         return payloads
@@ -2543,11 +2639,19 @@ class KnowledgeIngestionService:
         ingest_config = self._table_ingest_config(upload)
         tables, table_metrics, limit_issues, table_summary = self._apply_table_limits(tables, upload=upload, config=ingest_config)
         issues = issues + limit_issues
-        table_entities = self._table_row_entities(
-            tables,
-            business_profile=getattr(upload, "business_profile", None),
-            upload=upload,
-        )
+
+        # PDFs are documents (not datasets). Indexing per-row "table entities" from a PDF tends to
+        # flood retrieval with low-context chunks (e.g. `Table_1: ...`) and mislead downstream
+        # prompting into "dataset-like" behavior. We keep structured table artifacts, but skip
+        # row-entity generation for PDFs.
+        if (format_hint or "").lower() == "pdf":
+            table_entities: list[dict[str, Any]] = []
+        else:
+            table_entities = self._table_row_entities(
+                tables,
+                business_profile=getattr(upload, "business_profile", None),
+                upload=upload,
+            )
         table_stats = self._table_stats_summary(
             total_rows=table_summary["total_rows"],
             indexed_rows=table_summary["indexed_rows"],
@@ -2714,6 +2818,15 @@ class KnowledgeIngestionService:
         }
 
         entity_payloads = list(extraction.entities or [])
+        format_hint = (extraction.format_hint or "").lower()
+        if format_hint in {"pdf", "application/pdf"} and entity_payloads:
+            logger.info(
+                "pdf.entities.disabled upload=%s business=%s entities=%s",
+                upload.id,
+                upload.business_profile_id,
+                len(entity_payloads),
+            )
+            entity_payloads = []
         if entity_payloads and not feature_state.entity_chunking:
             table_entities = [e for e in entity_payloads if e.get("alias_source_type") == "table"]
             if table_entities:
@@ -2740,7 +2853,20 @@ class KnowledgeIngestionService:
                 normalized,
                 entities=entity_payloads,
                 ingestion_metadata=ingestion_metadata,
+                pages=extraction.pages,
+                format_hint=extraction.format_hint,
             )
+            quality_report = self._build_quality_report(
+                upload=upload,
+                extraction=extraction,
+                chunk_count=chunk_count,
+                chunk_objects=chunk_objects,
+                structured_summary=structured_summary,
+            )
+            if quality_report:
+                ingestion_metadata["quality_report"] = quality_report
+            else:
+                ingestion_metadata.pop("quality_report", None)
             if entity_payloads:
                 entity_stats = self._persist_entities(upload, entity_payloads, chunk_objects)
                 alias_count = entity_stats.get("alias_count", 0)
@@ -2756,6 +2882,19 @@ class KnowledgeIngestionService:
                         self.alias_warning_threshold,
                     )
             else:
+                # Ensure old entity/alias records are cleared when we intentionally skip entities
+                # (e.g., PDFs) or when extraction no longer yields any entities.
+                existing_entities = KnowledgeEntity.objects.filter(upload=upload)
+                removed = existing_entities.count()
+                if removed:
+                    existing_entities.delete()
+                    self._invalidate_alias_cache(upload.business_profile_id)
+                    logger.info(
+                        "json.entities.cleared upload=%s business=%s entities=%s",
+                        upload.id,
+                        upload.business_profile_id,
+                        removed,
+                    )
                 ingestion_metadata.pop("alias_count", None)
                 ingestion_metadata.pop("alias_patterns_used", None)
             upload.summary = summary
@@ -2807,6 +2946,97 @@ class KnowledgeIngestionService:
             except Exception as exc:  # pragma: no cover - monitoring failures must not block ingestion
                 logger.warning("quality.ingestion.monitor_failed business=%s error=%s", upload.business_profile_id, exc)
 
+    def _build_quality_report(
+        self,
+        *,
+        upload: KnowledgeUpload,
+        extraction: ExtractionResult,
+        chunk_count: int,
+        chunk_objects: Sequence[KnowledgeUploadChunk],
+        structured_summary: Mapping[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        report: dict[str, Any] = {}
+
+        def _pct(part: int, whole: int) -> float:
+            if whole <= 0:
+                return 0.0
+            return round((float(part) / float(whole)) * 100.0, 2)
+
+        report["generated_at"] = timezone.now().isoformat()
+        report["chunk_count"] = int(chunk_count)
+
+        table_chunk_count = 0
+        entity_chunk_count = 0
+        for chunk in chunk_objects:
+            meta = chunk.metadata if isinstance(chunk.metadata, Mapping) else {}
+            if meta.get("is_table_chunk"):
+                table_chunk_count += 1
+            if meta.get("index_type") == "entity":
+                entity_chunk_count += 1
+        text_chunk_count = max(0, chunk_count - table_chunk_count - entity_chunk_count)
+        report["chunk_breakdown"] = {
+            "text": text_chunk_count,
+            "table": table_chunk_count,
+            "entity": entity_chunk_count,
+        }
+
+        pages = extraction.pages or []
+        report["page_count"] = len(pages)
+        total_blocks = 0
+        decorative_blocks = 0
+        decorative_fragments_filtered = 0
+        for page in pages:
+            blocks = page.blocks or []
+            total_blocks += len(blocks)
+            page_meta = page.metadata if isinstance(page.metadata, Mapping) else {}
+            decorative_fragments_filtered += int(page_meta.get("decorative_fragments_filtered") or 0)
+            for block in blocks:
+                block_meta = block.metadata if isinstance(block.metadata, Mapping) else {}
+                if block_meta.get("is_decorative") or block_meta.get("region_role") == "decorative":
+                    decorative_blocks += 1
+        report["block_count"] = total_blocks
+        report["decorative_block_count"] = decorative_blocks
+        report["decorative_block_pct"] = _pct(decorative_blocks, total_blocks)
+        if decorative_fragments_filtered:
+            report["decorative_fragments_filtered"] = decorative_fragments_filtered
+
+        table_summary = None
+        if structured_summary and isinstance(structured_summary, Mapping):
+            table_summary = structured_summary.get("tables")
+        if isinstance(table_summary, list):
+            table_count = len(table_summary)
+            decorative_table_count = sum(1 for entry in table_summary if entry.get("is_decorative"))
+        else:
+            table_count = len(extraction.tables or [])
+            decorative_table_count = 0
+        report["table_count"] = table_count
+        report["decorative_table_count"] = decorative_table_count
+        report["decorative_table_pct"] = _pct(decorative_table_count, table_count)
+
+        issues = extraction.issues or []
+        report["issue_count"] = len(issues)
+        severity_counts = {
+            KnowledgeIssueSeverity.ERROR.value: 0,
+            KnowledgeIssueSeverity.WARNING.value: 0,
+            KnowledgeIssueSeverity.INFO.value: 0,
+        }
+        error_codes: set[str] = set()
+        for issue in issues:
+            severity = str(issue.severity or "")
+            if severity in severity_counts:
+                severity_counts[severity] += 1
+            else:
+                severity_counts[KnowledgeIssueSeverity.INFO.value] += 1
+            if severity == KnowledgeIssueSeverity.ERROR.value and issue.code:
+                error_codes.add(str(issue.code))
+        report["issue_severity"] = severity_counts
+        if error_codes:
+            report["extraction_error_codes"] = sorted(error_codes)[:12]
+
+        report["upload_id"] = str(upload.id)
+        report["business_profile_id"] = str(upload.business_profile_id)
+        return report
+
     def _build_chunks(
         self,
         upload: KnowledgeUpload,
@@ -2814,6 +3044,8 @@ class KnowledgeIngestionService:
         *,
         entities: Sequence[Mapping[str, Any]] | None = None,
         ingestion_metadata: Mapping[str, Any] | None = None,
+        pages: Sequence[PageLayout] | None = None,
+        format_hint: str | None = None,
     ) -> tuple[int, list[str], list[KnowledgeUploadChunk]]:
         """
         Build semantic chunks from either structured entities or sliding windows of text/tables.
@@ -2821,19 +3053,31 @@ class KnowledgeIngestionService:
         from apps.accounts.models import KnowledgeUploadTable  # local import to avoid cycles
 
         entity_payloads = list(entities or [])
+        used_page_blocks = False
         if entity_payloads:
             segment_payloads = self._build_entity_segment_payloads(entity_payloads)
         else:
-            text_segments = self._chunk_text(content)
-            segment_payloads: list[dict[str, Any]] = []
-            for segment in text_segments:
-                if not segment:
-                    continue
-                augmented, aliases = self._inject_identifiers_into_text(segment)
-                metadata = {"strategy": "sliding_window"}
-                if aliases:
-                    metadata.update(self._alias_metadata(aliases))
-                segment_payloads.append({"text": augmented, "metadata": metadata})
+            segment_payloads = []
+            if pages:
+                page_segments = self._build_text_segments_from_blocks(pages)
+                if page_segments:
+                    segment_payloads.extend(page_segments)
+                    used_page_blocks = True
+            if not segment_payloads:
+                text_segments = self._chunk_text(content)
+                for segment in text_segments:
+                    if not segment:
+                        continue
+                    augmented, aliases = self._inject_identifiers_into_text(segment)
+                    metadata = {
+                        "strategy": "sliding_window",
+                        "index_type": "text",
+                        "content_source": "flat_text",
+                        "region_role": "text",
+                    }
+                    if aliases:
+                        metadata.update(self._alias_metadata(aliases))
+                    segment_payloads.append({"text": augmented, "metadata": metadata})
 
             table_segment_payloads: list[dict[str, Any]] = []
             privacy_rules = self._table_privacy_rules(upload)
@@ -2844,6 +3088,32 @@ class KnowledgeIngestionService:
                     .prefetch_related("rows__cells")
                 )
                 for t in tables:
+                    table_metadata = t.metadata if isinstance(t.metadata, dict) else {}
+                    quality_score = table_metadata.get("quality_score")
+                    is_decorative = table_metadata.get("is_decorative")
+                    quality_signals = table_metadata.get("quality_signals")
+                    strong_noise_signal = False
+                    if isinstance(quality_signals, dict):
+                        strong_noise_signal = bool(
+                            quality_signals.get("card_mockup") or quality_signals.get("spaced_characters")
+                        )
+                    if is_decorative is True and strong_noise_signal:
+                        logger.info(
+                            "table.preview.skip_decorative upload=%s table=%s score=%s signals=%s",
+                            upload.id,
+                            getattr(t, "id", None),
+                            quality_score,
+                            list(quality_signals.keys()) if isinstance(quality_signals, dict) else None,
+                        )
+                        continue
+                    if isinstance(quality_score, (int, float)) and quality_score <= 0.2:
+                        logger.info(
+                            "table.preview.skip_low_quality upload=%s table=%s score=%s",
+                            upload.id,
+                            getattr(t, "id", None),
+                            quality_score,
+                        )
+                        continue
                     raw_schema = list(map(str, (t.column_schema or [])))
                     column_map: list[tuple[str, str, int]] = []
                     hidden_columns: list[str] = []
@@ -2913,6 +3183,9 @@ class KnowledgeIngestionService:
                             "table_id": str(t.id),
                             "table_order_index": t.order_index,
                             "table_page_number": t.page.page_number if t.page else None,  # FIXED: t.page_number doesn't exist
+                            "index_type": "table",
+                            "content_source": "table_preview",
+                            "region_role": "table",
                             "visibility": getattr(upload, "visibility", KnowledgeVisibility.PRIVATE),
                         }
                         if hidden_columns:
@@ -2929,6 +3202,8 @@ class KnowledgeIngestionService:
                             base_metadata["table_is_decorative"] = table_metadata["is_decorative"]
                         if "quality_signals" in table_metadata:
                             base_metadata["table_quality_signals"] = table_metadata["quality_signals"]
+                        if table_metadata.get("page_anchor"):
+                            base_metadata["page_anchor"] = table_metadata["page_anchor"]
                         
                         alias_list = base_metadata.get("aliases") or []
                         for block in blocks:
@@ -2994,12 +3269,18 @@ class KnowledgeIngestionService:
                 vector = embeddings[index]
 
             chunk_metadata = {
-                "strategy": "json_entity" if entity_payloads else "sliding_window_plus_tables",
+                "strategy": "json_entity"
+                if entity_payloads
+                else ("page_blocks_plus_tables" if used_page_blocks else "sliding_window_plus_tables"),
             }
             extra_meta = payload.get("metadata") or {}
             if isinstance(extra_meta, dict):
                 chunk_metadata.update(extra_meta)
             chunk_metadata.setdefault("is_table_chunk", False)
+            if entity_payloads:
+                chunk_metadata.setdefault("index_type", "entity")
+            else:
+                chunk_metadata.setdefault("index_type", "text")
             self._finalize_alias_metadata(chunk_metadata)
 
             chunk = KnowledgeUploadChunk(
@@ -3336,7 +3617,7 @@ class KnowledgeIngestionService:
         """
         signals: dict[str, Any] = {}
         penalties = 0
-        max_penalties = 10
+        max_penalties = 14
         
         # Get table data
         column_schema = table_payload.column_schema or []
@@ -3381,7 +3662,64 @@ class KnowledgeIngestionService:
             signals['spaced_characters'] = True
             penalties += 4
         
-        # Heuristic 3: Repeating patterns
+        # Heuristic 3: Row/column consistency
+        row_lengths: list[int] = []
+        non_empty_cells = 0
+        expected_columns = len(column_schema)
+        for row in rows:
+            cell_list = list(row.cells or [])
+            row_lengths.append(len(cell_list))
+            for cell in cell_list:
+                if str(cell.raw_text or "").strip():
+                    non_empty_cells += 1
+        if not expected_columns and row_lengths:
+            expected_columns = max(row_lengths)
+        if rows and expected_columns:
+            matching = sum(1 for length in row_lengths if length == expected_columns)
+            row_consistency = matching / max(1, len(row_lengths))
+            fill_ratio = non_empty_cells / max(1, expected_columns * len(rows))
+            signals["row_consistency"] = round(row_consistency, 2)
+            signals["cell_fill_ratio"] = round(fill_ratio, 2)
+            if row_consistency < 0.6:
+                signals["row_misalignment"] = True
+                penalties += 2
+            if fill_ratio < 0.4:
+                signals["sparse_table"] = True
+                penalties += 1
+
+        # Heuristic 4: Header confidence
+        header_cells = None
+        for row in rows:
+            if (row.metadata or {}).get("row_type") == "header":
+                header_cells = [str(cell.raw_text or "") for cell in (row.cells or [])]
+                break
+        if header_cells:
+            joined = " ".join(header_cells).strip()
+            alnum = [c for c in joined if c.isalnum()]
+            digits = sum(1 for c in joined if c.isdigit())
+            letters = sum(1 for c in joined if c.isalpha())
+            non_numeric = sum(1 for cell in header_cells if not re.search(r"\d", cell or ""))
+            non_numeric_ratio = non_numeric / max(1, len(header_cells))
+            digit_ratio = digits / max(1, len(alnum))
+            alpha_ratio = letters / max(1, len(alnum))
+            length_ratio = sum(1 for cell in header_cells if len(cell.strip()) >= 3) / max(1, len(header_cells))
+            header_confidence = 0.0
+            if non_numeric_ratio >= 0.6:
+                header_confidence += 0.4
+            if alpha_ratio >= 0.4:
+                header_confidence += 0.3
+            if digit_ratio < 0.3:
+                header_confidence += 0.2
+            if length_ratio >= 0.5:
+                header_confidence += 0.1
+            signals["header_confidence"] = round(min(header_confidence, 1.0), 2)
+            if header_confidence < 0.3:
+                penalties += 1
+        else:
+            signals["header_confidence"] = 0.0
+            penalties += 1
+
+        # Heuristic 5: Repeating patterns
         cell_values: list[str] = []
         for row in rows[:5]:
             for cell in (row.cells or []):
@@ -3396,30 +3734,38 @@ class KnowledgeIngestionService:
                 signals['unique_ratio'] = round(unique_values / len(cell_values), 2)
                 penalties += 2
         
-        # Heuristic 4: Too few data rows
+        # Heuristic 6: Too few data rows
         data_row_count = len([r for r in rows if not (r.metadata or {}).get('row_type') == 'header'])
         if data_row_count < 2:
             signals['insufficient_rows'] = True
             penalties += 2
         
-        # Heuristic 5: Header/footer position (first/last page)
+        # Heuristic 7: Header/footer position (first/last page)
         if page_number == 1 and order_index == 0:
             # First table on first page = might be header decoration
             signals['first_page_first_table'] = True
             penalties += 1
         
-        # Heuristic 6: Card-like patterns (e.g., credit card mockups)
+        # Heuristic 8: Card-like patterns (e.g., credit card mockups)
         card_keywords = ['valid', 'thru', 'expires', 'cvv', 'card number', 'cardholder']
         keyword_matches = 0
+        card_number_hits = 0
         
         for row in rows[:5]:
             for cell in (row.cells or []):
                 raw_text = str(cell.raw_text or "").strip().lower()
+                if "valid" in raw_text and "thru" in raw_text:
+                    signals["valid_thru"] = True
+                if re.search(r"\b(?:\d{4}[\s-]?){3}\d{4}\b", raw_text):
+                    card_number_hits += 1
                 for keyword in card_keywords:
                     if keyword in raw_text:
                         keyword_matches += 1
                         signals.setdefault('card_keywords', []).append(keyword)
         
+        if card_number_hits:
+            signals["card_number_pattern"] = True
+            penalties += 2
         if keyword_matches >= 3 and data_row_count <= 2:
             signals['card_mockup'] = True
             penalties += 3
@@ -3539,6 +3885,10 @@ class KnowledgeIngestionService:
             table_metadata['quality_score'] = quality_assessment['quality_score']
             table_metadata['is_decorative'] = quality_assessment['is_decorative']
             table_metadata['quality_signals'] = quality_assessment['signals']
+            if table_payload.page_number:
+                table_metadata["page_anchor"] = f"p{table_payload.page_number}-t{table_payload.order_index}"
+            else:
+                table_metadata["page_anchor"] = f"t{table_payload.order_index}"
             
             page_obj = page_lookup.get(table_payload.page_number or -1)
             table_obj = KnowledgeUploadTable.objects.create(
@@ -3651,12 +4001,156 @@ class KnowledgeIngestionService:
             "details": issue.details,
         }
 
+    def _build_text_segments_from_blocks(
+        self,
+        pages: Sequence[PageLayout],
+        *,
+        chunk_chars: int = 1200,
+        overlap: int = 200,
+    ) -> list[dict[str, Any]]:
+        if not pages:
+            return []
+        chunk_chars = max(200, int(chunk_chars))
+        overlap = max(0, min(int(overlap), chunk_chars // 2))
+        skip_types = {
+            KnowledgeBlockType.TABLE,
+            KnowledgeBlockType.IMAGE,
+            KnowledgeBlockType.FIGURE,
+            KnowledgeBlockType.HEADER,
+            KnowledgeBlockType.FOOTER,
+            KnowledgeBlockType.OTHER,
+        }
+        anchor_limit = 12
+        heading_limit = 6
+        segments: list[dict[str, Any]] = []
+
+        def _dedupe(values: Sequence[str], limit: int) -> list[str]:
+            seen: set[str] = set()
+            output: list[str] = []
+            for value in values:
+                if not value or value in seen:
+                    continue
+                seen.add(value)
+                output.append(value)
+                if limit and len(output) >= limit:
+                    break
+            return output
+
+        for page in pages:
+            block_units: list[dict[str, Any]] = []
+            for block in page.blocks:
+                if block.block_type in skip_types:
+                    continue
+                block_meta = block.metadata if isinstance(block.metadata, dict) else {}
+                if block_meta.get("is_decorative") or block_meta.get("region_role") == "decorative":
+                    continue
+                text = self._sanitize_text(block.text).strip()
+                if not text:
+                    continue
+                anchor = block_meta.get("anchor") or f"p{page.page_number}-b{block.order_index}"
+                heading = self._sanitize_text(block.section_heading).strip() if block.section_heading else ""
+                block_units.append(
+                    {
+                        "text": text,
+                        "page_number": page.page_number,
+                        "anchor": anchor,
+                        "section_heading": heading,
+                    }
+                )
+            if not block_units:
+                continue
+
+            current_blocks: list[dict[str, Any]] = []
+            current_len = 0
+
+            def emit(blocks: Sequence[dict[str, Any]]) -> None:
+                if not blocks:
+                    return
+                text = "\n\n".join(entry["text"] for entry in blocks).strip()
+                if not text:
+                    return
+                text, aliases = self._inject_identifiers_into_text(text)
+                anchors = _dedupe([entry.get("anchor") for entry in blocks if entry.get("anchor")], anchor_limit)
+                headings = _dedupe(
+                    [entry.get("section_heading") for entry in blocks if entry.get("section_heading")],
+                    heading_limit,
+                )
+                metadata: dict[str, Any] = {
+                    "strategy": "page_blocks",
+                    "index_type": "text",
+                    "content_source": "page_blocks",
+                    "region_role": "text",
+                    "page_numbers": [page.page_number],
+                    "page_anchor": f"p{page.page_number}",
+                }
+                if aliases:
+                    metadata.update(self._alias_metadata(aliases))
+                if anchors:
+                    metadata["block_anchors"] = anchors
+                if headings:
+                    metadata["section_headings"] = headings
+                segments.append({"text": text, "metadata": metadata})
+
+            for unit in block_units:
+                block_text = unit["text"]
+                if len(block_text) >= chunk_chars:
+                    if current_blocks:
+                        emit(current_blocks)
+                        current_blocks = []
+                        current_len = 0
+                    for piece in self._chunk_text(block_text, chunk_chars=chunk_chars, overlap=overlap):
+                        if not piece:
+                            continue
+                        piece, aliases = self._inject_identifiers_into_text(piece)
+                        metadata = {
+                            "strategy": "page_blocks",
+                            "index_type": "text",
+                            "content_source": "page_blocks",
+                            "region_role": "text",
+                            "page_numbers": [page.page_number],
+                            "page_anchor": f"p{page.page_number}",
+                            "block_anchors": [unit["anchor"]],
+                        }
+                        if aliases:
+                            metadata.update(self._alias_metadata(aliases))
+                        if unit.get("section_heading"):
+                            metadata["section_headings"] = [unit["section_heading"]]
+                        segments.append({"text": piece, "metadata": metadata})
+                    continue
+
+                additional = len(block_text) + (2 if current_blocks else 0)
+                if current_blocks and current_len + additional > chunk_chars:
+                    emit(current_blocks)
+                    if overlap > 0:
+                        carried: list[dict[str, Any]] = []
+                        carried_len = 0
+                        for prev in reversed(current_blocks):
+                            prev_len = len(prev["text"]) + (2 if carried else 0)
+                            carried.insert(0, prev)
+                            carried_len += prev_len
+                            if carried_len >= overlap:
+                                break
+                        current_blocks = carried
+                        current_len = carried_len
+                    else:
+                        current_blocks = []
+                        current_len = 0
+
+                current_blocks.append(unit)
+                current_len += additional
+
+            if current_blocks:
+                emit(current_blocks)
+
+        return segments
+
     @staticmethod
     def _chunk_text(content: str, *, chunk_chars: int = 1200, overlap: int = 200) -> list[str]:
         """
         Boundary-aware chunker:
         - Prefers to end chunks on paragraph/line boundaries to avoid splitting table rows
         - If a chunk starts on a tab-delimited line, pull in up to 2 preceding lines to capture headers
+        - Aligns the overlap start to token/line boundaries to avoid mid-word fragments (e.g., "ee", "pend")
         """
         text = (content or "").strip()
         if not text:
@@ -3667,7 +4161,48 @@ class KnowledgeIngestionService:
         start = 0
         overlap = max(0, min(overlap, chunk_chars // 2))
 
+        def _align_next_start(raw_start: int, *, min_progress: int) -> int:
+            """
+            Ensure the next chunk starts on a sane boundary so we don't create mid-word fragments
+            when applying overlap (common in PDF-extracted tabular text).
+            """
+            if raw_start <= 0:
+                return 0
+            candidate = min(raw_start, length)
+            if candidate <= min_progress:
+                candidate = min_progress
+
+            if candidate < length:
+                # Prefer starting on a line boundary near the overlap start (helps tabular PDFs).
+                lookback = min(200, candidate - min_progress)
+                if lookback > 0:
+                    nl = text.rfind("\n", candidate - lookback, candidate)
+                    if nl != -1 and (nl + 1) >= min_progress:
+                        candidate = nl + 1
+
+                # If we're still inside a token, move back to the start of the token.
+                if (
+                    candidate > min_progress
+                    and text[candidate].isalnum()
+                    and text[candidate - 1].isalnum()
+                ):
+                    while candidate > min_progress and not text[candidate - 1].isspace():
+                        candidate -= 1
+
+            # Skip leading whitespace so chunk content starts cleanly.
+            while candidate < length and text[candidate].isspace():
+                candidate += 1
+
+            # Guarantee forward progress even in edge cases.
+            if candidate <= min_progress and raw_start > min_progress:
+                candidate = raw_start
+                while candidate < length and text[candidate].isspace():
+                    candidate += 1
+
+            return min(candidate, length)
+
         while start < length:
+            current_start = start
             end_candidate = min(length, start + chunk_chars)
             window = text[start:end_candidate]
 
@@ -3710,7 +4245,8 @@ class KnowledgeIngestionService:
                 segments.append(chunk)
             if end >= length:
                 break
-            start = max(0, end - overlap)
+            raw_next_start = max(0, end - overlap)
+            start = _align_next_start(raw_next_start, min_progress=current_start + 1)
 
         return segments
 

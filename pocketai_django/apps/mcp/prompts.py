@@ -129,9 +129,11 @@ def build_system_message(
             • Put every alias/spelling in `queries[]` so the backend runs one batched search.
             • Only search again if the visitor adds a new constraint. If you have snippets, use them immediately.
             • Use the snippet content/format to infer if a resource is a document (text/PDF) or dataset (CSV/XLS).
+            • If a snippet is marked `is_table_chunk=true`, treat it as extracted table evidence. Tables extracted from documents (PDF/DOCX) are READ-ONLY—do not claim you can filter/sort/export unless you are using `query_dataset` on a dataset upload.
 
         - `read_document`
             • Use for reading text/layout from PDFs, DOCXs, or TXT files.
+            • Only call `read_document` if the visitor explicitly asks for full page/text details OR `search_knowledge` returned no snippets. Otherwise answer from snippets.
             • Accepts `pages` list to read multiple pages at once (e.g. `pages=[1, 2]`).
             • Use `mode="excerpt"` by default; use `mode="full_page"` only if the visitor explicitly asks for "full text" or "all details" of a specific page.
 

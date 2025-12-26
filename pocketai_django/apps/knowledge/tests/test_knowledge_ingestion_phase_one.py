@@ -7,7 +7,7 @@ from pathlib import Path
 from unittest import mock
 
 from django.conf import settings
-from django.test import TestCase, override_settings
+from django.test import SimpleTestCase, TestCase, override_settings
 
 from apps.accounts.models import (
     BusinessProfile,
@@ -41,6 +41,18 @@ class KnowledgeIngestionAliasTests(TestCase):
         )
         self.assertIn("trip-1", aliases)
         self.assertTrue(any(source.startswith("record_slug") for source in sources))
+
+
+class KnowledgeIngestionChunkingTests(SimpleTestCase):
+    def test_chunk_text_overlap_does_not_split_words(self) -> None:
+        # Regression: overlap should not start mid-token (e.g., "Free" -> "ee"), which creates
+        # noisy fragments that pollute retrieval for tabular PDFs.
+        text = "AAAAA Free\nBBBBB\nCCCCC"
+        segments = KnowledgeIngestionService._chunk_text(text, chunk_chars=12, overlap=2)
+        self.assertGreaterEqual(len(segments), 2)
+        first_line = segments[1].splitlines()[0]
+        self.assertNotEqual(first_line, "ee")
+        self.assertTrue(segments[1].startswith("Free") or segments[1].startswith("BBBBB"))
 
 
 class KnowledgeIngestionJsonTests(TestCase):
