@@ -350,3 +350,103 @@ class McpSearchKnowledgeHandlerTests(TestCase):
         self.assertTrue(queries_seen)
         self.assertEqual(queries_seen[0], primary_query)
         self.assertLessEqual(len(queries_seen), 4)
+
+    @mock.patch("apps.mcp.tools._knowledge_service")
+    def test_read_hint_uses_page_from_metadata_not_chunk_index(self, service_factory_mock) -> None:
+        """Integration test: read_hint.page should use page_number from snippet, not chunk_index + 1."""
+        import uuid
+        from apps.rag.ai_orchestrator import KnowledgeSnippet
+        
+        # Create a real KnowledgeSnippet with page_number=3 and chunk_index=7
+        snippet = KnowledgeSnippet(
+            id=uuid.uuid4(),
+            title="Test Chunk",
+            summary="Test summary",
+            source="file",
+            content="Test content",
+            upload_id=uuid.uuid4(),
+            chunk_id=uuid.uuid4(),
+            chunk_index=7,  # Old bug would make page=8
+            page_number=3,  # Should use this instead
+            is_table_chunk=True,
+            read_state="summary",
+        )
+        
+        class _DummySearchResult:
+            def __init__(self) -> None:
+                self.snippets = (snippet,)
+                self.status = "ok"
+                self.diagnostics = {}
+        
+        service_mock = mock.Mock()
+        service_mock.search.return_value = _DummySearchResult()
+        service_factory_mock.return_value = service_mock
+        
+        context = ToolExecutionContext(
+            max_chunk_reads_per_turn=5,
+            max_chunk_pages_per_turn=5,
+            char_budget_per_turn=5000,
+        )
+        payload = {"query": "test query", "limit": 5}
+        
+        result = tools._search_knowledge_handler(payload, self.conversation, context)
+        
+        self.assertEqual(result["status"], "ok")
+        snippets = result.get("snippets", [])
+        self.assertTrue(snippets, "Should have at least one snippet")
+        
+        read_hint = snippets[0].get("read_hint", {})
+        # Should have page=3 (from page_number), NOT page=8 (chunk_index + 1)
+        self.assertIn("page", read_hint, "Should have page when page_number is set")
+        self.assertEqual(read_hint["page"], 3, "page should be 3 from page_number, not 8 (chunk_index + 1)")
+        self.assertNotIn("offset", read_hint, "Should not have offset when page is present")
+
+    @mock.patch("apps.mcp.tools._knowledge_service")
+    def test_read_hint_uses_offset_when_no_page_number(self, service_factory_mock) -> None:
+        """Integration test: read_hint should use offset (not page) when no page_number."""
+        import uuid
+        from apps.rag.ai_orchestrator import KnowledgeSnippet
+        
+        # Create a real KnowledgeSnippet with NO page_number
+        snippet = KnowledgeSnippet(
+            id=uuid.uuid4(),
+            title="Test Chunk No Page",
+            summary="Test summary",
+            source="file",
+            content="Test content",
+            upload_id=uuid.uuid4(),
+            chunk_id=uuid.uuid4(),
+            chunk_index=7,
+            page_number=None,  # No page number
+            is_table_chunk=False,
+            read_state="summary",
+        )
+        
+        class _DummySearchResult:
+            def __init__(self) -> None:
+                self.snippets = (snippet,)
+                self.status = "ok"
+                self.diagnostics = {}
+        
+        service_mock = mock.Mock()
+        service_mock.search.return_value = _DummySearchResult()
+        service_factory_mock.return_value = service_mock
+        
+        context = ToolExecutionContext(
+            max_chunk_reads_per_turn=5,
+            max_chunk_pages_per_turn=5,
+            char_budget_per_turn=5000,
+        )
+        payload = {"query": "test query", "limit": 5}
+        
+        result = tools._search_knowledge_handler(payload, self.conversation, context)
+        
+        self.assertEqual(result["status"], "ok")
+        snippets = result.get("snippets", [])
+        self.assertTrue(snippets)
+        
+        read_hint = snippets[0].get("read_hint", {})
+        # Should have offset=7, NOT page=8
+        self.assertNotIn("page", read_hint, "Should NOT have page when no page_number")
+        self.assertIn("offset", read_hint, "Should have offset when no page_number")
+        self.assertEqual(read_hint["offset"], 7)

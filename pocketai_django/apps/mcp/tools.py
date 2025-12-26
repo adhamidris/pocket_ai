@@ -57,6 +57,7 @@ from .identifier_registry import IdentifierGuardrail, IdentifierRegistryService
 from .types import (
     ChunkPageBudgetExceeded,
     ChunkReadBudgetExceeded,
+    SearchBudgetExceeded,
     ToolConstraintError,
     ToolExecutionContext,
     ToolRateLimitExceeded,
@@ -263,12 +264,12 @@ TOOL_DEFINITIONS: tuple[Mapping[str, object], ...] = (
         properties={
             "document_id": {
                 "type": "string",
-                "description": "UUID of the upload or chunk returned by search_knowledge/list_tables.",
+                "description": "UUID of the upload (from list_tables) or chunk (from search_knowledge snippets).",
             },
             "intent": {
                 "type": "string",
                 "enum": ["auto", "text", "table"],
-                "description": "Optional hint; leave as auto unless you need to force text vs table routing.",
+                "description": "Optional hint; leave as auto unless you need to force text vs table routing. Note: PDFs and text documents always route to text mode regardless of this hint.",
                 "default": "auto",
             },
             "text": {
@@ -278,18 +279,18 @@ TOOL_DEFINITIONS: tuple[Mapping[str, object], ...] = (
                     "page": {
                         "type": "integer",
                         "minimum": 1,
-                        "description": "Page window to load (1 = first chunk).",
+                        "description": "Page number to load (1 = first page of the document, NOT chunk index).",
                         "default": 1,
                     },
                     "offset": {
                         "type": "integer",
                         "minimum": 0,
-                        "description": "Optional zero-based chunk index override when requesting specific spans.",
+                        "description": "Optional zero-based chunk index override (rarely needed; prefer page for page-based access).",
                     },
                     "mode": {
                         "type": "string",
                         "enum": ["excerpt", "full_page"],
-                        "description": "excerpt keeps responses small; full_page returns the entire inline limit.",
+                        "description": "excerpt keeps responses small; full_page returns the entire page content.",
                         "default": "excerpt",
                     },
                     "token_budget": {
@@ -601,6 +602,9 @@ def execute_tool(
         elif isinstance(exc, ChunkPageBudgetExceeded):
             status = "throttled"
             error_code = "chunk_page_budget_exceeded"
+        elif isinstance(exc, SearchBudgetExceeded):
+            status = "throttled"
+            error_code = "search_budget_exceeded"
         return {
             "tool": normalized_name,
             "status": status,
@@ -1908,6 +1912,10 @@ def _search_knowledge_handler(
             "snippets": [],
         }
 
+    # MOVED: Server-side search enforcement (Phase 4) - after query validation
+    # Per Codex review: only charge for valid non-empty queries
+    context.reserve_search()
+
     window_seconds = int(getattr(settings, "MCP_TOOL_RATE_LIMIT_WINDOW_SECONDS", 60) or 60)
     try:
         calls_per_minute = int(getattr(settings, "MCP_SEARCH_KNOWLEDGE_CALLS_PER_MINUTE", 120) or 0)
@@ -2313,13 +2321,40 @@ def _search_knowledge_handler(
             chunk_id = payload.get("chunk_id") or payload.get("id")
             upload_id = payload.get("upload_id")
             chunk_index = payload.get("chunk_index")
-            hinted_page = (int(chunk_index) + 1) if isinstance(chunk_index, int) else None
+            
+            # FIXED: Use actual page number from metadata, not chunk_index + 1
+            # Per Codex review: text.page now means PDF page number, not chunk index
+            payload_meta = payload.get("metadata") or {}
+            if isinstance(payload_meta, dict):
+                actual_page = (
+                    payload_meta.get("table_page_number") or 
+                    payload_meta.get("chunk_page") or 
+                    payload_meta.get("page_number") or
+                    payload.get("page_number")
+                )
+            else:
+                actual_page = payload.get("page_number")
+            
+            # Build read_hint with page (if known) or offset (for chunk-based access)
             mode_hint = "full_page" if intent == "identifier" else "excerpt"
-            payload["read_hint"] = {
+            read_hint: dict[str, object] = {
                 "document_id": str(chunk_id or upload_id or ""),
-                "page": hinted_page,
                 "mode": mode_hint,
             }
+            
+            if actual_page:
+                try:
+                    page_num = int(actual_page)
+                    if page_num >= 1:
+                        read_hint["page"] = page_num
+                except (TypeError, ValueError):
+                    pass
+            
+            # Fallback: use offset if no page number known
+            if "page" not in read_hint and isinstance(chunk_index, int):
+                read_hint["offset"] = chunk_index
+            
+            payload["read_hint"] = read_hint
             if read_required:
                 payload["read_required"] = True
         if guard and decision and decision.status == "ok":

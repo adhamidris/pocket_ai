@@ -39,6 +39,10 @@ class ToolRateLimitExceeded(ToolConstraintError):
     """Raised when a business/tool rate limit is exceeded."""
 
 
+class SearchBudgetExceeded(ToolConstraintError):
+    """Raised when search_knowledge calls per turn exceed the limit (Phase 4)."""
+
+
 @dataclasses.dataclass
 class ToolExecutionContext:
     """
@@ -57,6 +61,24 @@ class ToolExecutionContext:
     characters_used: int = 0
     char_budget_per_minute: int | None = None
     minute_budget_reserver: Callable[[int], None] | None = None
+    
+    # NEW: Search call enforcement (Phase 4)
+    # Configurable via settings.MCP_MAX_SEARCHES_PER_TURN (default: 2)
+    max_searches_per_turn: int = 2
+    searches_used: int = 0
+    
+    @property
+    def _effective_max_searches(self) -> int:
+        """Get the effective max searches, checking Django settings first."""
+        try:
+            from django.conf import settings
+            configured = getattr(settings, 'MCP_MAX_SEARCHES_PER_TURN', None)
+            if configured is not None:
+                return int(configured)
+        except Exception:
+            pass
+        return self.max_searches_per_turn
+    
     ingestion_warnings: list[JsonDict] = dataclasses.field(default_factory=list)
     knowledge_results: list[dict[str, object]] = dataclasses.field(default_factory=list)
     knowledge_reads: list[dict[str, object]] = dataclasses.field(default_factory=list)
@@ -118,6 +140,23 @@ class ToolExecutionContext:
             self.characters_used = projected
         if self.char_budget_per_minute and self.minute_budget_reserver:
             self.minute_budget_reserver(count)
+
+    def reserve_search(self) -> None:
+        """Ensure the search call does not exceed the per-turn search budget (Phase 4)."""
+        
+        effective_limit = self._effective_max_searches
+        if effective_limit <= 0:
+            # No limit configured (set MCP_MAX_SEARCHES_PER_TURN=0 to disable)
+            self.searches_used += 1
+            return
+        
+        self.searches_used += 1
+        if self.searches_used > effective_limit:
+            raise SearchBudgetExceeded(
+                f"Search limit exceeded ({self.searches_used} calls this turn, max {effective_limit}). "
+                "You have already searched the knowledge base this turn. Use read_knowledge to get more details "
+                "from the snippets you received, or answer based on what you found."
+            )
 
     def add_ingestion_warning(self, warning: Mapping[str, object]) -> None:
         """Record an ingestion warning so the orchestrator can surface it later."""

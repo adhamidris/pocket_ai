@@ -2541,6 +2541,12 @@ class KnowledgeSearchService:
                 try:
                     if quality_score_raw is not None:
                         quality_score = float(quality_score_raw)
+                        # Clamp to valid range [0.0, 1.0] and handle NaN/inf
+                        import math
+                        if not math.isfinite(quality_score):
+                            quality_score = None
+                        elif not (0.0 <= quality_score <= 1.0):
+                            quality_score = max(0.0, min(1.0, quality_score))
                 except (TypeError, ValueError):
                     quality_score = None
                 
@@ -3634,14 +3640,41 @@ class KnowledgeSearchService:
         upload_obj = None
         page_text = ""
         page_truncated = False
+        resolved_upload_id = upload_id
         
-        if upload_id is not None and chunk_id is None:
+        # NEW: Resolve chunk_id to upload_id for PageBlocks access (Codex gap fix)
+        if chunk_id is not None and upload_id is None:
+            try:
+                from apps.accounts.models import KnowledgeUploadChunk
+                chunk = KnowledgeUploadChunk.objects.filter(
+                    id=chunk_id,
+                    upload__business_profile=business_profile,
+                    upload__status=KnowledgeStatus.ACTIVE
+                ).select_related("upload").only("id", "upload_id", "metadata").first()
+                
+                if chunk:
+                    resolved_upload_id = chunk.upload_id
+                    # Try to get page number from chunk metadata (table_page_number or chunk_page)
+                    chunk_meta = chunk.metadata if isinstance(chunk.metadata, dict) else {}
+                    if page_index == 1:  # Only override if caller passed default page=1
+                        meta_page = chunk_meta.get("table_page_number") or chunk_meta.get("chunk_page") or chunk_meta.get("page_number")
+                        if meta_page:
+                            try:
+                                parsed_page = int(meta_page)
+                                if parsed_page >= 1:  # Clamp to valid page numbers
+                                    page_index = parsed_page
+                            except (TypeError, ValueError):
+                                pass
+            except Exception:
+                pass
+        
+        if resolved_upload_id is not None:
             # User is requesting a specific page by number - try blocks first
             try:
                 upload_obj = (
                     apply_customer_visible_uploads(
                         KnowledgeUpload.objects.filter(
-                            id=upload_id,
+                            id=resolved_upload_id,
                             business_profile=business_profile,
                             status=KnowledgeStatus.ACTIVE
                         )
