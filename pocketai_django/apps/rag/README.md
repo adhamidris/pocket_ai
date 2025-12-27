@@ -56,9 +56,7 @@ Quick Start (Dev)
 - Warm embeddings cache:
   `python manage.py warm_embeddings`
 - Run RAG eval harness (example):
-  `python manage.py run_rag_eval --business=<uuid> --set=commerce`
-- Inspect recent evaluation output:
-  `cat var/logs/rag_eval_latest.json`
+  `python manage.py run_rag_eval --set=fees-credit-cards --export=var/logs/rag_eval_fees.json`
 
 ASCII Flow (MCP Path)
 ---------------------

@@ -61,6 +61,7 @@
     <div id="app-root" class="min-h-screen flex flex-col">
       {% block content %}{% endblock %}
     </div>
+    {% block extra_scripts %}{% endblock %}
     <script>
       (function () {
         var storageKey = "pocketai:theme";

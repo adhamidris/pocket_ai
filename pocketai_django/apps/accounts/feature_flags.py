@@ -23,12 +23,26 @@ class FeatureState:
     alias_lookup: bool
     entity_chunking: bool
     hybrid_search: bool
+    rag_chunk_quality_filter: bool
+    rag_chunk_dedupe: bool
+    rag_alias_hygiene: bool
+    rag_text_chunk_penalty: bool
+    rag_shadow_ingestion: bool
+    rag_shadow_retrieval: bool
+    rag_eval_logging: bool
 
     def as_dict(self) -> dict[str, bool]:
         return {
             "alias_lookup": self.alias_lookup,
             "entity_chunking": self.entity_chunking,
             "hybrid_search": self.hybrid_search,
+            "rag_chunk_quality_filter": self.rag_chunk_quality_filter,
+            "rag_chunk_dedupe": self.rag_chunk_dedupe,
+            "rag_alias_hygiene": self.rag_alias_hygiene,
+            "rag_text_chunk_penalty": self.rag_text_chunk_penalty,
+            "rag_shadow_ingestion": self.rag_shadow_ingestion,
+            "rag_shadow_retrieval": self.rag_shadow_retrieval,
+            "rag_eval_logging": self.rag_eval_logging,
         }
 
 
@@ -59,6 +73,21 @@ class FeatureFlagService:
             alias_lookup=bool(payload.get("alias_lookup", FEATURE_FLAG_DEFAULTS["alias_lookup"])),
             entity_chunking=bool(payload.get("entity_chunking", FEATURE_FLAG_DEFAULTS["entity_chunking"])),
             hybrid_search=bool(payload.get("hybrid_search", FEATURE_FLAG_DEFAULTS["hybrid_search"])),
+            rag_chunk_quality_filter=bool(
+                payload.get("rag_chunk_quality_filter", FEATURE_FLAG_DEFAULTS["rag_chunk_quality_filter"])
+            ),
+            rag_chunk_dedupe=bool(payload.get("rag_chunk_dedupe", FEATURE_FLAG_DEFAULTS["rag_chunk_dedupe"])),
+            rag_alias_hygiene=bool(payload.get("rag_alias_hygiene", FEATURE_FLAG_DEFAULTS["rag_alias_hygiene"])),
+            rag_text_chunk_penalty=bool(
+                payload.get("rag_text_chunk_penalty", FEATURE_FLAG_DEFAULTS["rag_text_chunk_penalty"])
+            ),
+            rag_shadow_ingestion=bool(
+                payload.get("rag_shadow_ingestion", FEATURE_FLAG_DEFAULTS["rag_shadow_ingestion"])
+            ),
+            rag_shadow_retrieval=bool(
+                payload.get("rag_shadow_retrieval", FEATURE_FLAG_DEFAULTS["rag_shadow_retrieval"])
+            ),
+            rag_eval_logging=bool(payload.get("rag_eval_logging", FEATURE_FLAG_DEFAULTS["rag_eval_logging"])),
         )
 
     @classmethod

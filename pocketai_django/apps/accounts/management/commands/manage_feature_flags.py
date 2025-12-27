@@ -32,7 +32,7 @@ class Command(BaseCommand):
             action="append",
             dest="enable",
             default=[],
-            help="Feature flag(s) to enable (alias_lookup, entity_chunking, hybrid_search).",
+            help="Feature flag(s) to enable (use --list to see available flags).",
         )
         parser.add_argument(
             "--disable",

@@ -799,6 +799,54 @@ class KnowledgeUploadChunk(models.Model):
         super().save(*args, **kwargs)
 
 
+class KnowledgeUploadShadowChunk(models.Model):
+    """
+    Shadow copy of knowledge chunks for evaluation or alternate retrieval paths.
+    """
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    upload = models.ForeignKey(
+        KnowledgeUpload,
+        related_name="shadow_chunks",
+        on_delete=models.CASCADE,
+    )
+    business_profile = models.ForeignKey(
+        BusinessProfile,
+        related_name="knowledge_shadow_chunks",
+        on_delete=models.CASCADE,
+    )
+    chunk_index = models.PositiveIntegerField()
+    content = models.TextField()
+    token_count = models.PositiveIntegerField(default=0)
+    embedding = VectorField(dimensions=settings.EMBED_DIM, null=True, blank=True)
+    metadata = models.JSONField(default=dict, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = "accounts_knowledge_upload_shadow_chunk"
+        ordering = ("upload_id", "chunk_index")
+        indexes = [
+            models.Index(fields=["upload", "chunk_index"], name="kn_shadow_chunk_window_idx"),
+            models.Index(fields=["business_profile", "chunk_index"], name="kn_shadow_biz_idx"),
+            models.Index(fields=["business_profile", "upload"], name="kn_shadow_biz_upload_idx"),
+        ]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["upload", "chunk_index"],
+                name="knowledge_shadow_chunk_unique_index",
+            )
+        ]
+
+    def __str__(self) -> str:
+        return f"Shadow chunk {self.chunk_index} for {self.upload_id}"
+
+    def save(self, *args, **kwargs):
+        if self.upload_id and not self.business_profile_id and getattr(self, "upload", None):
+            self.business_profile = self.upload.business_profile
+        super().save(*args, **kwargs)
+
+
 class KnowledgeEntity(models.Model):
     """
     Structured entity detected during ingestion (primarily from JSON sources).

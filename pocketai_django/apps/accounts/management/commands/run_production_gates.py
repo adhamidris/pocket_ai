@@ -7,7 +7,7 @@ from django.conf import settings
 from django.core.management import call_command
 from django.core.management.base import BaseCommand, CommandError
 
-from apps.rag.evaluation.harness import EvaluationThresholdError, RAGEEvaluationHarness
+from apps.rag.evaluation.harness import EvaluationThresholdError, RAGEvaluationHarness
 
 
 class Command(BaseCommand):

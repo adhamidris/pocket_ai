@@ -12,6 +12,7 @@ from apps.knowledge.knowledge_ingestion import (
     TablePayload,
     TableRowPayload,
 )
+from core.tenancy import tenant_bypass, tenant_context
 
 
 class Command(BaseCommand):
@@ -38,61 +39,63 @@ class Command(BaseCommand):
         upload_id = options.get("upload_id")
         limit = options.get("limit") or 0
 
-        uploads = (
-            KnowledgeUpload.objects.filter(tables__isnull=False)
-            .distinct()
-            .prefetch_related("tables__rows__cells")
-            .select_related("business_profile")
-            .order_by("created_at")
-        )
-        if business_id:
-            uploads = uploads.filter(business_profile_id=business_id)
-        if upload_id:
-            uploads = uploads.filter(id=upload_id)
-        if limit > 0:
-            uploads = uploads[:limit]
-
-        service = KnowledgeIngestionService()
-
-        processed = 0
-        total_entities = 0
-        total_aliases = 0
-
-        for upload in uploads.iterator(chunk_size=50):
-            tables = self._to_payloads(upload)
-            if not tables:
-                continue
-            entities = service._table_row_entities(
-                tables,
-                business_profile=upload.business_profile,
-                upload=upload,
+        tenant_scope = tenant_context(business_id) if business_id else tenant_bypass()
+        with tenant_scope:
+            uploads = (
+                KnowledgeUpload.objects.filter(tables__isnull=False)
+                .distinct()
+                .prefetch_related("tables__rows__cells")
+                .select_related("business_profile")
+                .order_by("created_at")
             )
-            if not entities:
-                continue
-            with transaction.atomic():
-                stats = service._persist_entities(upload, entities, chunks=[])
-                ingestion_metadata: dict[str, Any] = dict(upload.ingestion_metadata or {})
-                if stats:
-                    if stats.get("alias_count") is not None:
-                        ingestion_metadata["alias_count"] = stats.get("alias_count")
-                    if stats.get("alias_sources"):
-                        ingestion_metadata["alias_patterns_used"] = stats.get("alias_sources")
-                upload.ingestion_metadata = ingestion_metadata
-                upload.save(update_fields=["ingestion_metadata", "updated_at"])
-            processed += 1
-            total_entities += stats.get("entity_count", 0)
-            total_aliases += stats.get("alias_count", 0)
+            if business_id:
+                uploads = uploads.filter(business_profile_id=business_id)
+            if upload_id:
+                uploads = uploads.filter(id=upload_id)
+            if limit > 0:
+                uploads = uploads[:limit]
+
+            service = KnowledgeIngestionService()
+
+            processed = 0
+            total_entities = 0
+            total_aliases = 0
+
+            for upload in uploads.iterator(chunk_size=50):
+                tables = self._to_payloads(upload)
+                if not tables:
+                    continue
+                entities = service._table_row_entities(
+                    tables,
+                    business_profile=upload.business_profile,
+                    upload=upload,
+                )
+                if not entities:
+                    continue
+                with transaction.atomic():
+                    stats = service._persist_entities(upload, entities, chunks=[])
+                    ingestion_metadata: dict[str, Any] = dict(upload.ingestion_metadata or {})
+                    if stats:
+                        if stats.get("alias_count") is not None:
+                            ingestion_metadata["alias_count"] = stats.get("alias_count")
+                        if stats.get("alias_sources"):
+                            ingestion_metadata["alias_patterns_used"] = stats.get("alias_sources")
+                    upload.ingestion_metadata = ingestion_metadata
+                    upload.save(update_fields=["ingestion_metadata", "updated_at"])
+                processed += 1
+                total_entities += stats.get("entity_count", 0)
+                total_aliases += stats.get("alias_count", 0)
+                self.stdout.write(
+                    self.style.SUCCESS(
+                        f"Backfilled upload={upload.id} entities={stats.get('entity_count', 0)} aliases={stats.get('alias_count', 0)}"
+                    )
+                )
+
             self.stdout.write(
                 self.style.SUCCESS(
-                    f"Backfilled upload={upload.id} entities={stats.get('entity_count', 0)} aliases={stats.get('alias_count', 0)}"
+                    f"Done. uploads={processed} entities={total_entities} aliases={total_aliases}"
                 )
             )
-
-        self.stdout.write(
-            self.style.SUCCESS(
-                f"Done. uploads={processed} entities={total_entities} aliases={total_aliases}"
-            )
-        )
 
     def _to_payloads(self, upload: KnowledgeUpload) -> list[TablePayload]:
         payloads: list[TablePayload] = []

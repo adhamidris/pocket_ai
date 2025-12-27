@@ -17,3 +17,13 @@ Always keep tenant isolation (no cross-tenant data leakage).
 Use the existing RAG + tool patterns instead of hard-coding special logic.
 
 Keep flows simple and product-y: clear UX for non-technical business owners, fast and safe behavior for end users.
+
+Document understanding principles (RAG):
+
+Preserve structure before chunking: tables must be extracted as rows/columns with headers, not flattened text.
+
+Chunk schema-aware: emit header+row child chunks and keep full-table parents for context.
+
+Use confidence gating for tough layouts: route low-confidence tables to higher-fidelity extraction.
+
+Keep provenance: every answer should trace back to a page anchor and table cell coordinates.

@@ -10,6 +10,7 @@ from django.utils import timezone
 
 from apps.accounts.models import BusinessProfile, KnowledgeUpload, KnowledgeUploadChunk
 from apps.rag.embeddings import EmbeddingProviderError, build_embedding_service
+from core.tenancy import tenant_bypass, tenant_context
 
 
 logger = logging.getLogger(__name__)
@@ -90,51 +91,53 @@ class Command(BaseCommand):
         if service is None:
             raise CommandError("Embedding provider is not configured. Check EMBED_PROVIDER or install fastembed.")
 
-        qs = KnowledgeUploadChunk.objects.order_by("updated_at", "id")
-        if business_id:
-            qs = qs.filter(business_profile_id=business_id)
-        if upload_id:
-            qs = qs.filter(upload_id=upload_id)
-        if not reembed_all:
-            qs = qs.filter(embedding__isnull=True)
-        if limit:
-            qs = qs[:limit]
+        tenant_scope = tenant_context(business_id) if business_id else tenant_bypass()
+        with tenant_scope:
+            qs = KnowledgeUploadChunk.objects.order_by("updated_at", "id")
+            if business_id:
+                qs = qs.filter(business_profile_id=business_id)
+            if upload_id:
+                qs = qs.filter(upload_id=upload_id)
+            if not reembed_all:
+                qs = qs.filter(embedding__isnull=True)
+            if limit:
+                qs = qs[:limit]
 
-        if not qs.exists():
-            if reembed_all:
-                message = "No knowledge chunks matched the requested scope."
-            else:
-                message = "No knowledge chunks are missing embeddings."
-            self.stdout.write(self.style.SUCCESS(message))
-            return
+            if not qs.exists():
+                if reembed_all:
+                    message = "No knowledge chunks matched the requested scope."
+                else:
+                    message = "No knowledge chunks are missing embeddings."
+                self.stdout.write(self.style.SUCCESS(message))
+                return
 
-        total_attempted = 0
-        total_updated = 0
-        touched_uploads: set[uuid.UUID] = set()
-        batch: list[KnowledgeUploadChunk] = []
+            total_attempted = 0
+            total_updated = 0
+            touched_uploads: set[uuid.UUID] = set()
+            batch: list[KnowledgeUploadChunk] = []
 
-        for chunk in qs.iterator(chunk_size=batch_size):
-            batch.append(chunk)
-            touched_uploads.add(chunk.upload_id)
-            if len(batch) >= batch_size:
+            for chunk in qs.iterator(chunk_size=batch_size):
+                batch.append(chunk)
+                touched_uploads.add(chunk.upload_id)
+                if len(batch) >= batch_size:
+                    total_updated += self._process_batch(batch, service, dry_run=dry_run)
+                    total_attempted += len(batch)
+                    batch = []
+
+            if batch:
                 total_updated += self._process_batch(batch, service, dry_run=dry_run)
                 total_attempted += len(batch)
-                batch = []
 
-        if batch:
-            total_updated += self._process_batch(batch, service, dry_run=dry_run)
-            total_attempted += len(batch)
+            if dry_run:
+                self.stdout.write(
+                    self.style.WARNING(f"[dry-run] Would attempt {total_attempted} chunk(s). No changes applied.")
+                )
+                return
 
-        if dry_run:
+            self._refresh_ingestion_metadata(touched_uploads)
             self.stdout.write(
-                self.style.WARNING(f"[dry-run] Would attempt {total_attempted} chunk(s). No changes applied.")
+                self.style.SUCCESS(f"Re-embedded {total_updated} of {total_attempted} chunk(s).")
             )
-            return
-
-        self._refresh_ingestion_metadata(touched_uploads)
-        self.stdout.write(
-            self.style.SUCCESS(f"Re-embedded {total_updated} of {total_attempted} chunk(s).")
-        )
 
     def _process_batch(
         self,

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import math
 import logging
 import shutil
 import statistics
@@ -64,6 +65,9 @@ class QueryObservation:
     lexical_latency_ms: int | None
     rerank_latency_ms: int | None
     total_latency_ms: int
+    top_snippet_previews: tuple[Mapping[str, Any], ...]
+    top_snippet_token_counts: tuple[int, ...]
+    top_snippet_char_counts: tuple[int, ...]
     diagnostics: Mapping[str, Any]
 
 
@@ -407,7 +411,7 @@ class RAGEvaluationHarness:
         )
         total_latency_ms = int((time.perf_counter() - alias_start) * 1000)
         snippets = tuple(result.snippets or ())
-        has_targets = bool(query.target_entities)
+        has_targets = bool(query.target_entities or query.target_fixtures)
         entity_lookup = tuple((snippet.entity_name or "").strip() for snippet in snippets)
         top_score_breakdown: dict[str, Any] = {}
         top_vector_distance = None
@@ -421,10 +425,23 @@ class RAGEvaluationHarness:
                 if isinstance(maybe_distance, (int, float)):
                     top_vector_distance = float(maybe_distance)
         upload_ids = tuple(str(snippet.upload_id) for snippet in snippets if snippet.upload_id)
-        fixtures = tuple(self._fixture_name_for_upload_id(snippet.upload_id) for snippet in snippets if snippet.upload_id)
-        rank = self._match_rank(snippets, query.target_entities)
+        fixtures = tuple(
+            self._fixture_name_for_upload_id(snippet.upload_id) if snippet.upload_id else "" for snippet in snippets
+        )
+        rank = self._match_rank(
+            snippets,
+            query.target_entities,
+            target_fixtures=query.target_fixtures,
+            fixture_names=fixtures,
+        )
         reciprocal_rank = 1.0 / rank if rank else 0.0
-        precision = self._precision(snippets, query.target_entities, top_k)
+        precision = self._precision(
+            snippets,
+            query.target_entities,
+            top_k,
+            target_fixtures=query.target_fixtures,
+            fixture_names=fixtures,
+        )
         top1 = rank == 1
         top3 = bool(rank and rank <= 3)
         classification_correct = self._classification_correct(query, result)
@@ -469,6 +486,9 @@ class RAGEvaluationHarness:
             lexical_latency_ms=int(lexical_latency_ms) if lexical_latency_ms is not None else None,
             rerank_latency_ms=int(rerank_latency_ms) if rerank_latency_ms is not None else None,
             total_latency_ms=total_latency_ms,
+            top_snippet_previews=self._snippet_previews(snippets),
+            top_snippet_token_counts=tuple(self._snippet_token_count(snippet) for snippet in snippets),
+            top_snippet_char_counts=tuple(len((snippet.content or "").strip()) for snippet in snippets),
             diagnostics=result.diagnostics,
         )
         return observation
@@ -522,29 +542,55 @@ class RAGEvaluationHarness:
         return True
 
     @staticmethod
-    def _match_rank(snippets: Sequence[KnowledgeSnippet], targets: Sequence[str]) -> int | None:
-        if not targets:
-            return None
+    def _match_rank(
+        snippets: Sequence[KnowledgeSnippet],
+        targets: Sequence[str],
+        *,
+        target_fixtures: Sequence[str] | None = None,
+        fixture_names: Sequence[str] | None = None,
+    ) -> int | None:
         normalized_targets = {target.strip().lower() for target in targets if target}
-        if not normalized_targets:
+        normalized_fixtures = {target.strip().lower() for target in (target_fixtures or ()) if target}
+        if not normalized_targets and not normalized_fixtures:
             return None
         for index, snippet in enumerate(snippets, start=1):
-            entity = (snippet.entity_name or "").strip().lower()
-            if entity and entity in normalized_targets:
-                return index
+            if normalized_targets:
+                entity = (snippet.entity_name or "").strip().lower()
+                if entity and entity in normalized_targets:
+                    return index
+            if normalized_fixtures and fixture_names:
+                fixture = fixture_names[index - 1] if index - 1 < len(fixture_names) else ""
+                if fixture and fixture.strip().lower() in normalized_fixtures:
+                    return index
         return None
 
     @staticmethod
-    def _precision(snippets: Sequence[KnowledgeSnippet], targets: Sequence[str], top_k: int) -> float:
-        if not snippets or not targets:
+    def _precision(
+        snippets: Sequence[KnowledgeSnippet],
+        targets: Sequence[str],
+        top_k: int,
+        *,
+        target_fixtures: Sequence[str] | None = None,
+        fixture_names: Sequence[str] | None = None,
+    ) -> float:
+        if not snippets:
             return 0.0
         normalized_targets = {target.strip().lower() for target in targets if target}
-        if not normalized_targets:
+        normalized_fixtures = {target.strip().lower() for target in (target_fixtures or ()) if target}
+        if not normalized_targets and not normalized_fixtures:
             return 0.0
         considered = snippets[:top_k]
-        relevant = [
-            snippet for snippet in considered if (snippet.entity_name or "").strip().lower() in normalized_targets
-        ]
+        relevant: list[KnowledgeSnippet] = []
+        for index, snippet in enumerate(considered, start=1):
+            if normalized_targets:
+                entity = (snippet.entity_name or "").strip().lower()
+                if entity and entity in normalized_targets:
+                    relevant.append(snippet)
+                    continue
+            if normalized_fixtures and fixture_names:
+                fixture = fixture_names[index - 1] if index - 1 < len(fixture_names) else ""
+                if fixture and fixture.strip().lower() in normalized_fixtures:
+                    relevant.append(snippet)
         if not considered:
             return 0.0
         return len(relevant) / len(considered)
@@ -586,16 +632,38 @@ class RAGEvaluationHarness:
         alias_short_circuit = (
             sum(1 for obs in identifier_obs if obs.alias_short_circuit) / identifier_count if identifier_obs else 0.0
         )
+        ndcg_values = [
+            (1.0 / math.log2(obs.match_rank + 1)) if obs.match_rank else 0.0 for obs in evaluated_obs
+        ]
+        avg_top_tokens = sum(
+            (
+                sum(obs.top_snippet_token_counts) / len(obs.top_snippet_token_counts)
+                if obs.top_snippet_token_counts
+                else 0.0
+            )
+            for obs in observations
+        ) / max(1, len(observations))
+        avg_top_chars = sum(
+            (
+                sum(obs.top_snippet_char_counts) / len(obs.top_snippet_char_counts)
+                if obs.top_snippet_char_counts
+                else 0.0
+            )
+            for obs in observations
+        ) / max(1, len(observations))
         return {
             "top1_recall": round(top1, 4),
             "top3_recall": round(top3, 4),
             "mrr": round(mrr, 4),
+            "ndcg_at_k": round(sum(ndcg_values) / denominator, 4),
             "precision_at_k": round(precision, 4),
             "identifier_top1": round(len(identifier_hits) / identifier_count, 4),
             "identifier_mrr": round(identifier_mrr, 4),
             "source_accuracy": round(source_accuracy, 4),
             "wrong_source_rate": round(wrong_source_rate, 4),
             "behavior_accuracy": round(behavior_accuracy, 4),
+            "avg_top_snippet_tokens": round(avg_top_tokens, 2),
+            "avg_top_snippet_chars": round(avg_top_chars, 2),
             "natural_query_count": len(natural_obs),
             "not_found_accuracy": round(fallback_accuracy, 4),
             "alias_short_circuit_rate": round(alias_short_circuit, 4),
@@ -649,7 +717,38 @@ class RAGEvaluationHarness:
             return "text/csv"
         if fixture.source_type == "tsv" or fixture.filename.lower().endswith(".tsv"):
             return "text/tab-separated-values"
+        if fixture.source_type == "pdf" or fixture.filename.lower().endswith(".pdf"):
+            return "application/pdf"
         return "application/json"
+
+    @staticmethod
+    def _snippet_token_count(snippet: KnowledgeSnippet) -> int:
+        content = (snippet.content or "").strip()
+        if not content:
+            content = (snippet.summary or "").strip()
+        return len(content.split()) if content else 0
+
+    @staticmethod
+    def _snippet_previews(snippets: Sequence[KnowledgeSnippet]) -> tuple[Mapping[str, Any], ...]:
+        previews: list[Mapping[str, Any]] = []
+        for snippet in snippets:
+            content = (snippet.content or "").strip()
+            summary = (snippet.summary or "").strip()
+            preview_source = content or summary
+            if len(preview_source) > 400:
+                preview_source = f"{preview_source[:400]}..."
+            previews.append(
+                {
+                    "snippet_id": str(snippet.id),
+                    "upload_id": str(snippet.upload_id) if snippet.upload_id else None,
+                    "title": snippet.title,
+                    "summary": summary[:200] + "..." if len(summary) > 200 else summary,
+                    "preview": preview_source,
+                    "search_stage": snippet.search_stage,
+                    "is_table_chunk": bool(snippet.is_table_chunk),
+                }
+            )
+        return tuple(previews)
 
 
 __all__ = [

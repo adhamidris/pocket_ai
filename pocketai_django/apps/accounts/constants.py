@@ -7,6 +7,13 @@ FEATURE_FLAG_DEFAULTS: dict[str, bool] = {
     "alias_lookup": True,
     "entity_chunking": True,
     "hybrid_search": True,
+    "rag_chunk_quality_filter": False,
+    "rag_chunk_dedupe": False,
+    "rag_alias_hygiene": False,
+    "rag_text_chunk_penalty": False,
+    "rag_shadow_ingestion": False,
+    "rag_shadow_retrieval": False,
+    "rag_eval_logging": False,
 }
 
 _TRUE_VALUES = {"1", "true", "yes", "on", "enabled"}

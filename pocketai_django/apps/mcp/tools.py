@@ -53,6 +53,7 @@ from apps.knowledge.privacy import column_suggests_pii, redact_free_text, redact
 from apps.rag.rag_logging import structured_log
 from apps.rag.tabular_limits import ToolRateLimit, enforce_tool_rate_limit, resolve_tabular_tool_limits
 from core.metrics import latency_monitor
+from core.tenancy import tenant_context
 from .identifier_registry import IdentifierGuardrail, IdentifierRegistryService
 from .types import (
     ChunkPageBudgetExceeded,
@@ -669,8 +670,10 @@ def execute_tool(
             "hint": "Unsupported tool. Use search_knowledge, read_knowledge, or list_tables.",
         }
     ctx = context or ToolExecutionContext()
+    business_id = getattr(conversation, "business_profile_id", None)
     try:
-        return handler(arguments, conversation=conversation, context=ctx)
+        with tenant_context(business_id):
+            return handler(arguments, conversation=conversation, context=ctx)
     except ToolConstraintError as exc:
         status = "constraint_error"
         error_code = "constraint_error"

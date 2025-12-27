@@ -32,6 +32,7 @@ class GoldenQuery:
     expected_behavior: str  # alias_exact | alias_fallback | hybrid | not_found
     target_entities: Sequence[str] = field(default_factory=tuple)
     target_aliases: Sequence[str] = field(default_factory=tuple)
+    target_fixtures: Sequence[str] = field(default_factory=tuple)
     notes: str = ""
 
 
@@ -236,12 +237,116 @@ JOBS_SET = GoldenSet(
     queries=JOBS_QUERIES,
 )
 
+FEES_PDF_FIXTURE = GoldenFixture(
+    name="fees_credit_cards_pdf",
+    filename="fees_credit_cards_eng_185.pdf",
+    description="Fees and Charges Credit Cards Eng_185 (PDF)",
+    source_type="pdf",
+)
+
+FEES_QUERIES: tuple[GoldenQuery, ...] = (
+    GoldenQuery(
+        query_id="fees_credit_cards_general",
+        text="what are the credit card fees?",
+        query_type="natural",
+        expected_behavior="hybrid",
+        target_fixtures=("fees_credit_cards_pdf",),
+        notes="KNOWN_FAILURE: title-only chunk surfaces instead of fee rows.",
+    ),
+    GoldenQuery(
+        query_id="fees_credit_cards_issuance",
+        text="issuance and renewal fees for credit cards",
+        query_type="natural",
+        expected_behavior="hybrid",
+        target_fixtures=("fees_credit_cards_pdf",),
+    ),
+    GoldenQuery(
+        query_id="fees_credit_cards_replacement",
+        text="replacement fees for credit cards",
+        query_type="natural",
+        expected_behavior="hybrid",
+        target_fixtures=("fees_credit_cards_pdf",),
+    ),
+    GoldenQuery(
+        query_id="fees_credit_cards_supplementary",
+        text="supplementary card fees",
+        query_type="natural",
+        expected_behavior="hybrid",
+        target_fixtures=("fees_credit_cards_pdf",),
+    ),
+    GoldenQuery(
+        query_id="fees_credit_cards_grace_period",
+        text="credit card grace period",
+        query_type="natural",
+        expected_behavior="hybrid",
+        target_fixtures=("fees_credit_cards_pdf",),
+    ),
+    GoldenQuery(
+        query_id="fees_credit_cards_interest",
+        text="credit card interest rate",
+        query_type="natural",
+        expected_behavior="hybrid",
+        target_fixtures=("fees_credit_cards_pdf",),
+    ),
+    GoldenQuery(
+        query_id="fees_credit_cards_cash_domestic",
+        text="cash withdrawal fees from domestic ATMs or POSs",
+        query_type="natural",
+        expected_behavior="hybrid",
+        target_fixtures=("fees_credit_cards_pdf",),
+    ),
+    GoldenQuery(
+        query_id="fees_credit_cards_cash_international",
+        text="cash withdrawal fees from international ATMs",
+        query_type="natural",
+        expected_behavior="hybrid",
+        target_fixtures=("fees_credit_cards_pdf",),
+    ),
+    GoldenQuery(
+        query_id="fees_credit_cards_fx_markup",
+        text="foreign exchange mark-up fee",
+        query_type="natural",
+        expected_behavior="hybrid",
+        target_fixtures=("fees_credit_cards_pdf",),
+    ),
+    GoldenQuery(
+        query_id="fees_credit_cards_ewallet",
+        text="e-wallet loading fees",
+        query_type="natural",
+        expected_behavior="hybrid",
+        target_fixtures=("fees_credit_cards_pdf",),
+    ),
+    GoldenQuery(
+        query_id="fees_credit_cards_not_found_crypto",
+        text="crypto trading fees on credit cards",
+        query_type="not_found",
+        expected_behavior="not_found",
+        notes="Intentional miss to validate fallback handling.",
+    ),
+    GoldenQuery(
+        query_id="fees_credit_cards_not_found_mortgage",
+        text="mortgage application fee",
+        query_type="not_found",
+        expected_behavior="not_found",
+        notes="Intentional miss to validate fallback handling.",
+    ),
+)
+
+FEES_SET = GoldenSet(
+    slug="fees-credit-cards",
+    industry="financial_services",
+    business_slug="eval-fees-credit-cards",
+    fixtures=(FEES_PDF_FIXTURE,),
+    queries=FEES_QUERIES,
+)
+
 
 GOLDEN_SETS: dict[str, GoldenSet] = {
     TRAVEL_SET.slug: TRAVEL_SET,
     INSURANCE_SET.slug: INSURANCE_SET,
     CARDS_SET.slug: CARDS_SET,
     JOBS_SET.slug: JOBS_SET,
+    FEES_SET.slug: FEES_SET,
 }
 
 

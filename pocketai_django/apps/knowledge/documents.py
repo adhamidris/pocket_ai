@@ -17,6 +17,7 @@ from urllib.request import Request, urlopen
 
 from django.conf import settings
 from django.db.models import Prefetch, Q
+from core.tenancy import tenant_context
 
 from apps.accounts.models import (
     AgentProfile,
@@ -254,84 +255,85 @@ def list_documents(
     if offset < 0 or offset > 10_000:
         raise DocumentListValidationError("offset must be between 0 and 10000", field="offset")
 
-    base_qs = KnowledgeUpload.objects.filter(business_profile=business_profile).only(
-        "id",
-        "display_name",
-        "status",
-        "source_type",
-        "tags",
-        "language",
-        "category",
-        "token_count",
-        "size_bytes",
-        "is_sensitive",
-        "last_ingested_at",
-        "last_synced_at",
-        "updated_at",
-        "ingestion_error",
-        "integration__name",
-    )
-    if q_name:
-        search = q_name.strip()
-        base_qs = base_qs.annotate(tags_text=Cast("tags", TextField())).filter(
-            Q(display_name__icontains=search) |
-            Q(description__icontains=search) |
-            Q(summary__icontains=search) |
-            Q(tags_text__icontains=search)
+    with tenant_context(business_profile.id):
+        base_qs = KnowledgeUpload.objects.filter(business_profile=business_profile).only(
+            "id",
+            "display_name",
+            "status",
+            "source_type",
+            "tags",
+            "language",
+            "category",
+            "token_count",
+            "size_bytes",
+            "is_sensitive",
+            "last_ingested_at",
+            "last_synced_at",
+            "updated_at",
+            "ingestion_error",
+            "integration__name",
         )
-    if collection_slug:
-        base_qs = base_qs.filter(collections__slug=collection_slug.strip())
-    if status:
-        base_qs = base_qs.filter(status__iexact=status.strip())
-    if source_type:
-        base_qs = base_qs.filter(source_type__iexact=source_type.strip())
-
-    total = base_qs.count()
-    collections_prefetch = Prefetch(
-        "collections",
-        queryset=KnowledgeCollection.objects.only("id", "name").order_by("name"),
-    )
-    rows = (
-        base_qs.select_related("integration")
-        .prefetch_related(collections_prefetch)
-        .order_by("-updated_at")[offset : offset + limit]
-    )
-
-    items = []
-    for upload in rows:
-        tags = tuple(str(tag) for tag in (upload.tags or []))
-        collections_manager = getattr(upload, "collections", None)
-        if hasattr(collections_manager, "all"):
-            collection_iterable = collections_manager.all()
-        elif collections_manager is None:
-            collection_iterable = ()
-        else:
-            collection_iterable = collections_manager
-        collection_names = tuple(coll.name for coll in collection_iterable)
-        items.append(
-            DocumentListItem(
-                id=upload.id,
-                name=upload.display_name or "Document",
-                status=upload.status,
-                status_label=(upload.status or "").replace("_", " ").title(),
-                source_type=upload.source_type,
-                source_label=upload.get_source_type_display(),
-                tags=tags,
-                collections=collection_names,
-                language=upload.language or "",
-                category=upload.category or "",
-                token_count=upload.token_count or 0,
-                size_bytes=upload.size_bytes or 0,
-                is_sensitive=bool(upload.is_sensitive),
-                last_ingested_at=upload.last_ingested_at,
-                last_synced_at=upload.last_synced_at,
-                updated_at=upload.updated_at,
-                integration_name=getattr(upload.integration, "name", None),
-                ingestion_error=upload.ingestion_error or None,
+        if q_name:
+            search = q_name.strip()
+            base_qs = base_qs.annotate(tags_text=Cast("tags", TextField())).filter(
+                Q(display_name__icontains=search) |
+                Q(description__icontains=search) |
+                Q(summary__icontains=search) |
+                Q(tags_text__icontains=search)
             )
+        if collection_slug:
+            base_qs = base_qs.filter(collections__slug=collection_slug.strip())
+        if status:
+            base_qs = base_qs.filter(status__iexact=status.strip())
+        if source_type:
+            base_qs = base_qs.filter(source_type__iexact=source_type.strip())
+
+        total = base_qs.count()
+        collections_prefetch = Prefetch(
+            "collections",
+            queryset=KnowledgeCollection.objects.only("id", "name").order_by("name"),
+        )
+        rows = (
+            base_qs.select_related("integration")
+            .prefetch_related(collections_prefetch)
+            .order_by("-updated_at")[offset : offset + limit]
         )
 
-    return DocumentListResult(items=tuple(items), total=total, limit=limit, offset=offset)
+        items = []
+        for upload in rows:
+            tags = tuple(str(tag) for tag in (upload.tags or []))
+            collections_manager = getattr(upload, "collections", None)
+            if hasattr(collections_manager, "all"):
+                collection_iterable = collections_manager.all()
+            elif collections_manager is None:
+                collection_iterable = ()
+            else:
+                collection_iterable = collections_manager
+            collection_names = tuple(coll.name for coll in collection_iterable)
+            items.append(
+                DocumentListItem(
+                    id=upload.id,
+                    name=upload.display_name or "Document",
+                    status=upload.status,
+                    status_label=(upload.status or "").replace("_", " ").title(),
+                    source_type=upload.source_type,
+                    source_label=upload.get_source_type_display(),
+                    tags=tags,
+                    collections=collection_names,
+                    language=upload.language or "",
+                    category=upload.category or "",
+                    token_count=upload.token_count or 0,
+                    size_bytes=upload.size_bytes or 0,
+                    is_sensitive=bool(upload.is_sensitive),
+                    last_ingested_at=upload.last_ingested_at,
+                    last_synced_at=upload.last_synced_at,
+                    updated_at=upload.updated_at,
+                    integration_name=getattr(upload.integration, "name", None),
+                    ingestion_error=upload.ingestion_error or None,
+                )
+            )
+
+        return DocumentListResult(items=tuple(items), total=total, limit=limit, offset=offset)
 
 
 def get_document_detail(*, business_profile: BusinessProfile, document_id: uuid.UUID) -> DocumentDetail:
@@ -345,243 +347,244 @@ def get_document_detail(*, business_profile: BusinessProfile, document_id: uuid.
     def _as_list(value: Any) -> list[Any]:
         return value if isinstance(value, list) else []
 
-    page_prefetch = Prefetch(
-        "pages",
-        queryset=KnowledgeUploadPage.objects.order_by("page_number").prefetch_related(
-            Prefetch(
-                "blocks",
-                queryset=KnowledgeUploadPageBlock.objects.order_by("order_index"),
-            )
-        ),
-    )
-    table_prefetch = Prefetch(
-        "tables",
-        queryset=KnowledgeUploadTable.objects.order_by("order_index").select_related("page").prefetch_related(
-            Prefetch(
-                "rows",
-                queryset=KnowledgeUploadTableRow.objects.order_by("row_index").prefetch_related(
-                    Prefetch(
-                        "cells",
-                        queryset=KnowledgeUploadTableCell.objects.order_by("column_index"),
-                    )
-                ),
-            )
-        ),
-    )
-    issue_prefetch = Prefetch(
-        "issues",
-        queryset=KnowledgeUploadIssue.objects.order_by("-created_at").select_related("page", "table"),
-    )
-    chunk_prefetch = Prefetch(
-        "chunks",
-        queryset=KnowledgeUploadChunk.objects.order_by("chunk_index"),
-    )
-
-    upload = (
-        KnowledgeUpload.objects.filter(business_profile=business_profile, id=document_id)
-        .select_related(
-            "integration",
-            "file_detail",
-            "url_detail",
-            "text_detail",
-            "created_by_agent",
-        )
-        .prefetch_related(
-            Prefetch(
-                "collections",
-                queryset=KnowledgeCollection.objects.only("id", "name").order_by("name"),
+    with tenant_context(business_profile.id):
+        page_prefetch = Prefetch(
+            "pages",
+            queryset=KnowledgeUploadPage.objects.order_by("page_number").prefetch_related(
+                Prefetch(
+                    "blocks",
+                    queryset=KnowledgeUploadPageBlock.objects.order_by("order_index"),
+                )
             ),
-            page_prefetch,
-            table_prefetch,
-            issue_prefetch,
-            chunk_prefetch,
         )
-        .first()
-    )
-    if upload is None:
-        raise KnowledgeUpload.DoesNotExist
-
-    summary = DocumentListItem(
-        id=upload.id,
-        name=upload.display_name or "Document",
-        status=upload.status,
-        status_label=(upload.status or "").replace("_", " ").title(),
-        source_type=upload.source_type,
-        source_label=upload.get_source_type_display(),
-        tags=tuple(str(tag) for tag in (upload.tags or [])),
-        collections=tuple(coll.name for coll in upload.collections.all()),
-        language=upload.language or "",
-        category=upload.category or "",
-        token_count=upload.token_count or 0,
-        size_bytes=upload.size_bytes or 0,
-        is_sensitive=bool(upload.is_sensitive),
-        last_ingested_at=upload.last_ingested_at,
-        last_synced_at=upload.last_synced_at,
-        updated_at=upload.updated_at,
-        integration_name=getattr(upload.integration, "name", None),
-        ingestion_error=upload.ingestion_error or None,
-    )
-
-    file_meta = None
-    file_detail = getattr(upload, "file_detail", None)
-    if file_detail:
-        file_meta = DocumentFileMeta(
-            filename=file_detail.filename,
-            content_type=file_detail.content_type or "",
-            size_bytes=file_detail.size_bytes or upload.size_bytes or 0,
-            page_count=file_detail.page_count or 0,
+        table_prefetch = Prefetch(
+            "tables",
+            queryset=KnowledgeUploadTable.objects.order_by("order_index").select_related("page").prefetch_related(
+                Prefetch(
+                    "rows",
+                    queryset=KnowledgeUploadTableRow.objects.order_by("row_index").prefetch_related(
+                        Prefetch(
+                            "cells",
+                            queryset=KnowledgeUploadTableCell.objects.order_by("column_index"),
+                        )
+                    ),
+                )
+            ),
+        )
+        issue_prefetch = Prefetch(
+            "issues",
+            queryset=KnowledgeUploadIssue.objects.order_by("-created_at").select_related("page", "table"),
+        )
+        chunk_prefetch = Prefetch(
+            "chunks",
+            queryset=KnowledgeUploadChunk.objects.order_by("chunk_index"),
         )
 
-    url_meta = None
-    url_detail = getattr(upload, "url_detail", None)
-    if url_detail:
-        url_meta = DocumentUrlMeta(
-            url=url_detail.url,
-            host=url_detail.normalized_host or urlparse(url_detail.url).netloc,
+        upload = (
+            KnowledgeUpload.objects.filter(business_profile=business_profile, id=document_id)
+            .select_related(
+                "integration",
+                "file_detail",
+                "url_detail",
+                "text_detail",
+                "created_by_agent",
+            )
+            .prefetch_related(
+                Prefetch(
+                    "collections",
+                    queryset=KnowledgeCollection.objects.only("id", "name").order_by("name"),
+                ),
+                page_prefetch,
+                table_prefetch,
+                issue_prefetch,
+                chunk_prefetch,
+            )
+            .first()
+        )
+        if upload is None:
+            raise KnowledgeUpload.DoesNotExist
+
+        summary = DocumentListItem(
+            id=upload.id,
+            name=upload.display_name or "Document",
+            status=upload.status,
+            status_label=(upload.status or "").replace("_", " ").title(),
+            source_type=upload.source_type,
+            source_label=upload.get_source_type_display(),
+            tags=tuple(str(tag) for tag in (upload.tags or [])),
+            collections=tuple(coll.name for coll in upload.collections.all()),
+            language=upload.language or "",
+            category=upload.category or "",
+            token_count=upload.token_count or 0,
+            size_bytes=upload.size_bytes or 0,
+            is_sensitive=bool(upload.is_sensitive),
+            last_ingested_at=upload.last_ingested_at,
+            last_synced_at=upload.last_synced_at,
+            updated_at=upload.updated_at,
+            integration_name=getattr(upload.integration, "name", None),
+            ingestion_error=upload.ingestion_error or None,
         )
 
-    text_meta = None
-    text_detail = getattr(upload, "text_detail", None)
-    if text_detail:
-        content = text_detail.content or ""
-        preview = content.strip()[:400]
-        text_meta = DocumentTextMeta(
-            characters=len(content),
-            preview=preview,
-        )
+        file_meta = None
+        file_detail = getattr(upload, "file_detail", None)
+        if file_detail:
+            file_meta = DocumentFileMeta(
+                filename=file_detail.filename,
+                content_type=file_detail.content_type or "",
+                size_bytes=file_detail.size_bytes or upload.size_bytes or 0,
+                page_count=file_detail.page_count or 0,
+            )
 
-    created_by_agent = None
-    if isinstance(upload.created_by_agent, AgentProfile):
-        created_by_agent = upload.created_by_agent.name
+        url_meta = None
+        url_detail = getattr(upload, "url_detail", None)
+        if url_detail:
+            url_meta = DocumentUrlMeta(
+                url=url_detail.url,
+                host=url_detail.normalized_host or urlparse(url_detail.url).netloc,
+            )
 
-    page_details: list[DocumentPageDetail] = []
-    pages_manager = getattr(upload, "pages", None)
-    if hasattr(pages_manager, "all"):
-        for page in pages_manager.all():
-            blocks = []
-            blocks_manager = getattr(page, "blocks", None)
-            block_iterable = blocks_manager.all() if hasattr(blocks_manager, "all") else ()
-            for block in block_iterable:
-                blocks.append(
-                    DocumentPageBlock(
-                        block_type=block.block_type,
-                        order_index=block.order_index,
-                        text=block.text or "",
-                        bbox=_as_dict(block.bbox),
-                        section_heading=block.section_heading or "",
-                        heading_path=tuple(str(item) for item in _as_list(block.heading_path)),
-                        detected_language=block.detected_language or None,
-                        confidence=block.confidence,
-                        metadata=_as_dict(block.metadata),
+        text_meta = None
+        text_detail = getattr(upload, "text_detail", None)
+        if text_detail:
+            content = text_detail.content or ""
+            preview = content.strip()[:400]
+            text_meta = DocumentTextMeta(
+                characters=len(content),
+                preview=preview,
+            )
+
+        created_by_agent = None
+        if isinstance(upload.created_by_agent, AgentProfile):
+            created_by_agent = upload.created_by_agent.name
+
+        page_details: list[DocumentPageDetail] = []
+        pages_manager = getattr(upload, "pages", None)
+        if hasattr(pages_manager, "all"):
+            for page in pages_manager.all():
+                blocks = []
+                blocks_manager = getattr(page, "blocks", None)
+                block_iterable = blocks_manager.all() if hasattr(blocks_manager, "all") else ()
+                for block in block_iterable:
+                    blocks.append(
+                        DocumentPageBlock(
+                            block_type=block.block_type,
+                            order_index=block.order_index,
+                            text=block.text or "",
+                            bbox=_as_dict(block.bbox),
+                            section_heading=block.section_heading or "",
+                            heading_path=tuple(str(item) for item in _as_list(block.heading_path)),
+                            detected_language=block.detected_language or None,
+                            confidence=block.confidence,
+                            metadata=_as_dict(block.metadata),
+                        )
+                    )
+                page_details.append(
+                    DocumentPageDetail(
+                        page_number=page.page_number,
+                        width=page.width,
+                        height=page.height,
+                        rotation=page.rotation,
+                        text_density=page.text_density,
+                        has_ocr_content=page.has_ocr_content,
+                        content_type=page.content_type or "",
+                        blocks=tuple(blocks),
+                        metadata=_as_dict(page.metadata),
                     )
                 )
-            page_details.append(
-                DocumentPageDetail(
-                    page_number=page.page_number,
-                    width=page.width,
-                    height=page.height,
-                    rotation=page.rotation,
-                    text_density=page.text_density,
-                    has_ocr_content=page.has_ocr_content,
-                    content_type=page.content_type or "",
-                    blocks=tuple(blocks),
-                    metadata=_as_dict(page.metadata),
-                )
-            )
 
-    table_details: list[DocumentStructuredTable] = []
-    tables_manager = getattr(upload, "tables", None)
-    if hasattr(tables_manager, "all"):
-        for table in tables_manager.all():
-            rows_payload: list[DocumentTableRow] = []
-            rows_iterable = table.rows.all() if hasattr(table, "rows") else ()
-            rows_list = list(rows_iterable)
-            for row in rows_list:
-                cells_iterable = row.cells.all() if hasattr(row, "cells") else ()
-                cells_payload = [
-                    DocumentTableCell(
-                        column_index=cell.column_index,
-                        column_key=cell.column_key or "",
-                        raw_text=cell.raw_text or "",
-                        normalized_value=_as_dict(cell.normalized_value),
-                        bbox=_as_dict(cell.bbox),
-                        confidence=cell.confidence,
-                        metadata=_as_dict(cell.metadata),
+        table_details: list[DocumentStructuredTable] = []
+        tables_manager = getattr(upload, "tables", None)
+        if hasattr(tables_manager, "all"):
+            for table in tables_manager.all():
+                rows_payload: list[DocumentTableRow] = []
+                rows_iterable = table.rows.all() if hasattr(table, "rows") else ()
+                rows_list = list(rows_iterable)
+                for row in rows_list:
+                    cells_iterable = row.cells.all() if hasattr(row, "cells") else ()
+                    cells_payload = [
+                        DocumentTableCell(
+                            column_index=cell.column_index,
+                            column_key=cell.column_key or "",
+                            raw_text=cell.raw_text or "",
+                            normalized_value=_as_dict(cell.normalized_value),
+                            bbox=_as_dict(cell.bbox),
+                            confidence=cell.confidence,
+                            metadata=_as_dict(cell.metadata),
+                        )
+                        for cell in cells_iterable
+                    ]
+                    rows_payload.append(
+                        DocumentTableRow(
+                            row_index=row.row_index,
+                            page_number=row.page_number,
+                            bbox=_as_dict(row.bbox),
+                            raw_text=row.raw_text or "",
+                            metadata=_as_dict(row.metadata),
+                            cells=tuple(cells_payload),
+                        )
                     )
-                    for cell in cells_iterable
-                ]
-                rows_payload.append(
-                    DocumentTableRow(
-                        row_index=row.row_index,
-                        page_number=row.page_number,
-                        bbox=_as_dict(row.bbox),
-                        raw_text=row.raw_text or "",
-                        metadata=_as_dict(row.metadata),
-                        cells=tuple(cells_payload),
+                table_details.append(
+                    DocumentStructuredTable(
+                        order_index=table.order_index,
+                        title=table.title or f"Table {table.order_index}",
+                        section_heading=table.section_heading or "",
+                        page_number=table.page.page_number if table.page else None,
+                        column_schema=tuple(table.column_schema or []),
+                        row_count=len(rows_payload),
+                        bbox=_as_dict(table.bbox),
+                        rows=tuple(rows_payload),
+                        metadata=_as_dict(table.metadata),
                     )
                 )
-            table_details.append(
-                DocumentStructuredTable(
-                    order_index=table.order_index,
-                    title=table.title or f"Table {table.order_index}",
-                    section_heading=table.section_heading or "",
-                    page_number=table.page.page_number if table.page else None,
-                    column_schema=tuple(table.column_schema or []),
-                    row_count=len(rows_payload),
-                    bbox=_as_dict(table.bbox),
-                    rows=tuple(rows_payload),
-                    metadata=_as_dict(table.metadata),
-                )
-            )
 
-    issue_details: list[DocumentIssue] = []
-    issues_manager = getattr(upload, "issues", None)
-    if hasattr(issues_manager, "all"):
-        for issue in issues_manager.all():
-            table_order_index = getattr(issue.table, "order_index", None)
-            issue_details.append(
-                DocumentIssue(
-                    code=issue.issue_code,
-                    severity=issue.severity,
-                    description=issue.description or "",
-                    page_number=issue.page.page_number if issue.page else None,
-                    table_order_index=table_order_index,
-                    row_index=issue.table_row.row_index if issue.table_row else None,
-                    column_index=issue.table_cell.column_index if issue.table_cell else None,
-                    details=_as_dict(issue.details),
-                    created_at=issue.created_at,
+        issue_details: list[DocumentIssue] = []
+        issues_manager = getattr(upload, "issues", None)
+        if hasattr(issues_manager, "all"):
+            for issue in issues_manager.all():
+                table_order_index = getattr(issue.table, "order_index", None)
+                issue_details.append(
+                    DocumentIssue(
+                        code=issue.issue_code,
+                        severity=issue.severity,
+                        description=issue.description or "",
+                        page_number=issue.page.page_number if issue.page else None,
+                        table_order_index=table_order_index,
+                        row_index=issue.table_row.row_index if issue.table_row else None,
+                        column_index=issue.table_cell.column_index if issue.table_cell else None,
+                        details=_as_dict(issue.details),
+                        created_at=issue.created_at,
+                    )
                 )
-            )
 
-    chunk_details: list[DocumentChunk] = []
-    chunks_manager = getattr(upload, "chunks", None)
-    if hasattr(chunks_manager, "all"):
-        for chunk in chunks_manager.all():
-            chunk_details.append(
-                DocumentChunk(
-                    index=chunk.chunk_index,
-                    content=chunk.content or "",
-                    token_count=chunk.token_count or 0,
-                    metadata=_as_dict(chunk.metadata),
+        chunk_details: list[DocumentChunk] = []
+        chunks_manager = getattr(upload, "chunks", None)
+        if hasattr(chunks_manager, "all"):
+            for chunk in chunks_manager.all():
+                chunk_details.append(
+                    DocumentChunk(
+                        index=chunk.chunk_index,
+                        content=chunk.content or "",
+                        token_count=chunk.token_count or 0,
+                        metadata=_as_dict(chunk.metadata),
+                    )
                 )
-            )
 
-    return DocumentDetail(
-        summary=summary,
-        description=upload.description or "",
-        summary_text=upload.summary or "",
-        metadata=upload.metadata or {},
-        ingestion_metadata=upload.ingestion_metadata or {},
-        retention_policy=upload.retention_policy or {},
-        file_detail=file_meta,
-        url_detail=url_meta,
-        text_detail=text_meta,
-        created_by_agent=created_by_agent,
-        pages=tuple(page_details),
-        tables=tuple(table_details),
-        issues=tuple(issue_details),
-        chunks=tuple(chunk_details),
-    )
+        return DocumentDetail(
+            summary=summary,
+            description=upload.description or "",
+            summary_text=upload.summary or "",
+            metadata=upload.metadata or {},
+            ingestion_metadata=upload.ingestion_metadata or {},
+            retention_policy=upload.retention_policy or {},
+            file_detail=file_meta,
+            url_detail=url_meta,
+            text_detail=text_meta,
+            created_by_agent=created_by_agent,
+            pages=tuple(page_details),
+            tables=tuple(table_details),
+            issues=tuple(issue_details),
+            chunks=tuple(chunk_details),
+        )
 
 
 def delete_document(*, business_profile: BusinessProfile, document_id: uuid.UUID) -> None:
@@ -589,21 +592,22 @@ def delete_document(*, business_profile: BusinessProfile, document_id: uuid.UUID
     Delete a knowledge upload and any stored artifacts on disk.
     """
 
-    upload = (
-        KnowledgeUpload.objects.filter(business_profile=business_profile, id=document_id)
-        .select_related("file_detail")
-        .first()
-    )
-    if upload is None:
-        raise KnowledgeUpload.DoesNotExist
+    with tenant_context(business_profile.id):
+        upload = (
+            KnowledgeUpload.objects.filter(business_profile=business_profile, id=document_id)
+            .select_related("file_detail")
+            .first()
+        )
+        if upload is None:
+            raise KnowledgeUpload.DoesNotExist
 
-    storage_path = ""
-    file_detail = getattr(upload, "file_detail", None)
-    if file_detail and file_detail.storage_path:
-        storage_path = file_detail.storage_path
+        storage_path = ""
+        file_detail = getattr(upload, "file_detail", None)
+        if file_detail and file_detail.storage_path:
+            storage_path = file_detail.storage_path
 
-    upload.delete()
-    logger.info("knowledge_document_delete business=%s document=%s", business_profile.id, document_id)
+        upload.delete()
+        logger.info("knowledge_document_delete business=%s document=%s", business_profile.id, document_id)
 
     media_root = getattr(settings, "MEDIA_ROOT", "")
     if not media_root:

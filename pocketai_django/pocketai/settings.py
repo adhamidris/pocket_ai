@@ -4,6 +4,7 @@ from pathlib import Path
 import base64
 import binascii
 import hashlib
+import json
 import os
 import time
 
@@ -242,6 +243,47 @@ RAG_QUERY_VECTOR_CACHE_MAX_BYTES = int(os.getenv("RAG_QUERY_VECTOR_CACHE_MAX_BYT
 RAG_NEIGHBOR_WINDOW_CACHE_SIZE = int(os.getenv("RAG_NEIGHBOR_WINDOW_CACHE_SIZE", "128"))
 RAG_BUSINESS_OVERRIDE_KEY = os.getenv("RAG_BUSINESS_OVERRIDE_KEY", "rag_overrides")
 RAG_TABLE_RESULT_LIMIT = int(os.getenv("RAG_TABLE_RESULT_LIMIT", "3"))
+RAG_TABLE_HEADER_MATCH_BONUS = float(os.getenv("RAG_TABLE_HEADER_MATCH_BONUS", "0.12"))
+RAG_TABLE_SPECIFIC_MISS_PENALTY = float(os.getenv("RAG_TABLE_SPECIFIC_MISS_PENALTY", "0.25"))
+RAG_TABLE_SPECIFIC_MIN_LENGTH = int(os.getenv("RAG_TABLE_SPECIFIC_MIN_LENGTH", "4"))
+RAG_TABLE_HEADER_TOKEN_CACHE = int(os.getenv("RAG_TABLE_HEADER_TOKEN_CACHE", "256"))
+RAG_TABLE_GENERIC_TOKEN_DF = float(os.getenv("RAG_TABLE_GENERIC_TOKEN_DF", "0.35"))
+RAG_TABLE_GENERIC_TOKEN_TOPK = int(os.getenv("RAG_TABLE_GENERIC_TOKEN_TOPK", "40"))
+RAG_TABLE_GENERIC_MIN_TABLES = int(os.getenv("RAG_TABLE_GENERIC_MIN_TABLES", "2"))
+RAG_PDFPLUMBER_ENABLED = os.getenv("RAG_PDFPLUMBER_ENABLED", "true").lower() in {"1", "true", "yes"}
+RAG_PDF_TABLE_EXTRACTOR = os.getenv("RAG_PDF_TABLE_EXTRACTOR", "auto").strip().lower() or "auto"
+_raw_pdfplumber_settings = os.getenv("RAG_PDFPLUMBER_TABLE_SETTINGS", "").strip()
+if _raw_pdfplumber_settings:
+    try:
+        RAG_PDFPLUMBER_TABLE_SETTINGS = json.loads(_raw_pdfplumber_settings)
+    except json.JSONDecodeError:
+        RAG_PDFPLUMBER_TABLE_SETTINGS = None
+else:
+    RAG_PDFPLUMBER_TABLE_SETTINGS = None
+
+RAG_AZURE_DI_ENABLED = os.getenv("RAG_AZURE_DI_ENABLED", "true").lower() in {"1", "true", "yes"}
+AZURE_DOCUMENT_INTELLIGENCE_ENDPOINT = os.getenv("AZURE_DOCUMENT_INTELLIGENCE_ENDPOINT")
+AZURE_DOCUMENT_INTELLIGENCE_KEY = os.getenv("AZURE_DOCUMENT_INTELLIGENCE_KEY")
+AZURE_DOCUMENT_INTELLIGENCE_MODEL = os.getenv("AZURE_DOCUMENT_INTELLIGENCE_MODEL", "prebuilt-layout")
+AZURE_DOCUMENT_INTELLIGENCE_API_VERSION = os.getenv("AZURE_DOCUMENT_INTELLIGENCE_API_VERSION", "2023-07-31")
+AZURE_DOCUMENT_INTELLIGENCE_BASE_PATH = os.getenv("AZURE_DOCUMENT_INTELLIGENCE_BASE_PATH", "formrecognizer")
+AZURE_DOCUMENT_INTELLIGENCE_LOCALE = os.getenv("AZURE_DOCUMENT_INTELLIGENCE_LOCALE", "")
+RAG_AZURE_DI_TIMEOUT_SECONDS = float(os.getenv("RAG_AZURE_DI_TIMEOUT_SECONDS", "60"))
+RAG_AZURE_DI_POLL_INTERVAL_SECONDS = float(os.getenv("RAG_AZURE_DI_POLL_INTERVAL_SECONDS", "1.5"))
+RAG_AZURE_DI_MAX_POLLS = int(os.getenv("RAG_AZURE_DI_MAX_POLLS", "40"))
+
+RAG_TABLE_VLM_ENABLED = os.getenv("RAG_TABLE_VLM_ENABLED", "true").lower() in {"1", "true", "yes"}
+RAG_TABLE_VLM_MODEL = os.getenv("RAG_TABLE_VLM_MODEL", "gpt-4o")
+RAG_TABLE_VLM_CONFIDENCE_THRESHOLD = float(os.getenv("RAG_TABLE_VLM_CONFIDENCE_THRESHOLD", "0.6"))
+RAG_TABLE_VLM_MAX_REPAIRS_PER_UPLOAD = int(os.getenv("RAG_TABLE_VLM_MAX_REPAIRS_PER_UPLOAD", "3"))
+
+RAG_TABLE_SCHEMA_CHUNKING = os.getenv("RAG_TABLE_SCHEMA_CHUNKING", "true").lower() in {"1", "true", "yes"}
+RAG_TABLE_PARENT_MAX_ROWS = int(os.getenv("RAG_TABLE_PARENT_MAX_ROWS", "200"))
+RAG_TABLE_PARENT_MAX_CHARS = int(os.getenv("RAG_TABLE_PARENT_MAX_CHARS", "16000"))
+RAG_TABLE_CHILD_MAX_ROWS = int(os.getenv("RAG_TABLE_CHILD_MAX_ROWS", "500"))
+
+RAG_OCR_NORMALIZATION_ENABLED = os.getenv("RAG_OCR_NORMALIZATION_ENABLED", "true").lower() in {"1", "true", "yes"}
+RAG_OCR_NORMALIZATION_REPLACEMENTS = os.getenv("RAG_OCR_NORMALIZATION_REPLACEMENTS")
 # Default to MCP orchestrator for new deployments; can be disabled per-env.
 RAG_USE_MCP_ORCHESTRATOR = os.getenv("RAG_USE_MCP_ORCHESTRATOR", "true").lower() in {"1", "true", "yes"}
 MCP_SEARCH_MAX_QUERY_VARIANTS = int(os.getenv("MCP_SEARCH_MAX_QUERY_VARIANTS", "4"))
@@ -931,4 +973,3 @@ LOGGING = {
         "apps.api.chat_portal": {"handlers": ["console"], "level": "INFO", "propagate": False},
     },
 }
-

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections import OrderedDict
+from collections import OrderedDict, Counter
 
 from django.conf import settings
 from django.core.cache import cache
@@ -37,6 +37,7 @@ from apps.accounts.models import (
     KnowledgeUploadTable,
     KnowledgeUploadTableCell,
     KnowledgeUploadTableRow,
+    KnowledgeUploadShadowChunk,
 )
 from apps.cases.models import Case, CaseHistoryEntry, CasePriority, CaseStatus
 from apps.conversations.models import (
@@ -59,8 +60,10 @@ from apps.knowledge.knowledge_access import (
 from apps.llm.llm_provider import BaseLLMProvider, PromptGenerationError
 from apps.rag.quality_monitor import QualityMonitor
 from apps.rag.rag_logging import rag_log
+from apps.rag.table_semantics import normalize_column_name
 from apps.conversations.response_blocks import normalize_response_blocks
 from core.metrics import latency_monitor
+from core.tenancy import tenant_context
 from opentelemetry import trace as otel_trace
 
 try:  # optional dependency
@@ -626,9 +629,31 @@ class KnowledgeSearchService:
         self.table_column_sample_limit = max(25, int(getattr(settings, "RAG_TABLE_COLUMN_SAMPLE", 200)))
         self._table_column_cache: OrderedDict[uuid.UUID, set[str]] = OrderedDict()
         self.table_rerank_floor = float(getattr(settings, "RAG_TABLE_RERANK_FLOOR", 0.35))
+        self.chunk_quality_min_tokens = max(1, int(getattr(settings, "RAG_CHUNK_MIN_TOKENS", 20)))
+        self.chunk_quality_low_score = float(getattr(settings, "RAG_CHUNK_LOW_QUALITY_SCORE", 0.45))
+        if not (0.0 <= self.chunk_quality_low_score <= 1.0):
+            self.chunk_quality_low_score = 0.45
+        self.text_chunk_penalty_max = float(getattr(settings, "RAG_TEXT_CHUNK_PENALTY_MAX", 0.35))
+        if self.text_chunk_penalty_max <= 0.0:
+            self.text_chunk_penalty_max = 0.35
         self.table_vector_floor = float(getattr(settings, "RAG_TABLE_VECTOR_FLOOR", 0.45))
         self.table_chunk_sample_limit = max(3, int(getattr(settings, "RAG_TABLE_CHUNK_SAMPLE", 6)))
         self.table_context_snippet_cap = max(0, int(getattr(settings, "RAG_TABLE_CONTEXT_SNIPPETS", 2)))
+        self.table_header_match_bonus = float(getattr(settings, "RAG_TABLE_HEADER_MATCH_BONUS", 0.12))
+        self.table_specific_miss_penalty = float(getattr(settings, "RAG_TABLE_SPECIFIC_MISS_PENALTY", 0.25))
+        self.table_specific_min_length = max(
+            2,
+            int(getattr(settings, "RAG_TABLE_SPECIFIC_MIN_LENGTH", 4)),
+        )
+        self.table_generic_df_threshold = float(getattr(settings, "RAG_TABLE_GENERIC_TOKEN_DF", 0.35))
+        self.table_generic_topk = max(0, int(getattr(settings, "RAG_TABLE_GENERIC_TOKEN_TOPK", 40)))
+        self.table_generic_min_tables = max(1, int(getattr(settings, "RAG_TABLE_GENERIC_MIN_TABLES", 2)))
+        self.table_header_token_cache_limit = max(
+            32,
+            int(getattr(settings, "RAG_TABLE_HEADER_TOKEN_CACHE", 256)),
+        )
+        self._table_header_token_cache: OrderedDict[str, set[str]] = OrderedDict()
+        self._table_generic_token_cache: OrderedDict[uuid.UUID, set[str]] = OrderedDict()
         self.table_column_hint_base = {
             "name",
             "title",
@@ -668,6 +693,16 @@ class KnowledgeSearchService:
             "rates",
             "apr",
             "interest",
+            "annual",
+            "renewal",
+            "issuance",
+            "replacement",
+            "subscription",
+            "insurance",
+            "grace",
+            "period",
+            "installment",
+            "transaction",
         }
         # Formats we should NOT treat as queryable tables (documents are read-only evidence, not datasets).
         default_non_queryable_formats = ("pdf", "docx")
@@ -898,32 +933,34 @@ class KnowledgeSearchService:
         """
 
         traits = traits or self.analyze_query(query, business_profile=business_profile)
-        with TRACER.start_as_current_span("knowledge.search") as span:
-            if span.is_recording():
-                span.set_attribute("knowledge.query", traits.original or query)
-                span.set_attribute("knowledge.query_tokens", traits.token_count)
-                if business_profile and getattr(business_profile, "id", None):
-                    span.set_attribute("knowledge.business_id", str(business_profile.id))
-            result = self._search_inner(
-                business_profile=business_profile,
-                query=query,
-                limit=limit,
-                traits=traits,
-                alias_result=alias_result,
-                session_cache=session_cache,
-                identifier_filter=identifier_filter,
-            )
-            if span.is_recording():
-                span.set_attribute("knowledge.status", result.status)
-                span.set_attribute("knowledge.snippet_count", len(result.snippets))
-                diagnostics = result.diagnostics or {}
-                snippet_limit = diagnostics.get("snippet_limit")
-                if isinstance(snippet_limit, int):
-                    span.set_attribute("knowledge.limit", snippet_limit)
-                duration_ms = diagnostics.get("total_duration_ms")
-                if isinstance(duration_ms, (int, float)):
-                    span.set_attribute("knowledge.duration_ms", duration_ms)
-            return result
+        business_id = getattr(business_profile, "id", None) if business_profile else None
+        with tenant_context(business_id):
+            with TRACER.start_as_current_span("knowledge.search") as span:
+                if span.is_recording():
+                    span.set_attribute("knowledge.query", traits.original or query)
+                    span.set_attribute("knowledge.query_tokens", traits.token_count)
+                    if business_profile and getattr(business_profile, "id", None):
+                        span.set_attribute("knowledge.business_id", str(business_profile.id))
+                result = self._search_inner(
+                    business_profile=business_profile,
+                    query=query,
+                    limit=limit,
+                    traits=traits,
+                    alias_result=alias_result,
+                    session_cache=session_cache,
+                    identifier_filter=identifier_filter,
+                )
+                if span.is_recording():
+                    span.set_attribute("knowledge.status", result.status)
+                    span.set_attribute("knowledge.snippet_count", len(result.snippets))
+                    diagnostics = result.diagnostics or {}
+                    snippet_limit = diagnostics.get("snippet_limit")
+                    if isinstance(snippet_limit, int):
+                        span.set_attribute("knowledge.limit", snippet_limit)
+                    duration_ms = diagnostics.get("total_duration_ms")
+                    if isinstance(duration_ms, (int, float)):
+                        span.set_attribute("knowledge.duration_ms", duration_ms)
+                return result
 
     def _search_inner(
         self,
@@ -978,6 +1015,9 @@ class KnowledgeSearchService:
             "request_id": str(request_id),
             "tabular_intent": table_context["has_intent"],
             "tabular_columns_matched": sorted(table_context["matched_columns"])[:5],
+            "tabular_columns_token_match": sorted(table_context.get("matched_columns_tokens") or ())[:5],
+            "tabular_columns_specific": sorted(table_context.get("matched_columns_specific") or ())[:5],
+            "tabular_specific_tokens": sorted(table_context.get("specific_tokens") or ())[:5],
             "snippet_limit": limit,
             "alias_chunks_per_upload": alias_chunk_cap,
             "ann_chunks_per_upload": ann_chunk_cap,
@@ -1125,6 +1165,7 @@ class KnowledgeSearchService:
             feature_state=feature_state,
             diagnostics=diagnostics,
             vector_ceiling=vector_ceiling,
+            table_context=table_context,
         )
         _rag_log(
             "table.search_decision",
@@ -1178,16 +1219,34 @@ class KnowledgeSearchService:
                         "request": diagnostics.get("request_id"),
                     },
                 )
-        chunk_hits, context_hits, route_diag = self._route_chunk_hits(chunk_hits, table_intent=table_intent)
+        chunk_hits, context_hits, route_diag = self._route_chunk_hits(
+            chunk_hits,
+            table_intent=table_intent,
+            table_context=table_context,
+        )
         diagnostics.update(route_diag)
         diagnostics["chunk_candidate_count"] = len(chunk_hits)
+        if table_intent and self.table_context_snippet_cap:
+            parent_hits = self._table_parent_hits(
+                business_profile,
+                chunk_hits,
+                limit=self.table_context_snippet_cap,
+            )
+            if parent_hits:
+                context_hits = tuple(list(context_hits) + list(parent_hits))
+                diagnostics["table_parent_hits"] = len(parent_hits)
         table_snippets: tuple[KnowledgeSnippet, ...] = tuple()
         table_reason: str | None = None
         should_run_table = False
         table_duration_ms: int | None = None
         matched_columns_query = table_context.get("matched_columns_query")
-        has_header_match = bool(matched_columns_query) if isinstance(matched_columns_query, set) else False
-        if tables_available:
+        matched_columns_tokens = table_context.get("matched_columns_tokens")
+        has_header_match = bool(matched_columns_query or matched_columns_tokens) if isinstance(matched_columns_query, set) else False
+        specific_tokens = set(table_context.get("specific_tokens") or ())
+        matched_columns_specific = table_context.get("matched_columns_specific")
+        has_specific_match = bool(matched_columns_specific) if specific_tokens else True
+        table_blocked = bool(table_intent and specific_tokens and not has_specific_match)
+        if tables_available and not table_blocked:
             if not chunk_hits:
                 should_run_table = True
                 table_reason = "no_chunk_candidates"
@@ -1200,6 +1259,8 @@ class KnowledgeSearchService:
             elif table_intent and has_header_match:
                 should_run_table = True
                 table_reason = "header_match"
+        elif table_blocked:
+            diagnostics["table_reason"] = "specific_tokens_missing"
 
         if should_run_table:
             _rag_log(
@@ -1554,6 +1615,7 @@ class KnowledgeSearchService:
                 merged,
                 query_vector if self.embedding_service else None,
                 traits=traits,
+                feature_state=feature_state,
             )
             latency_monitor.observe(
                 "rag.rerank",
@@ -1636,6 +1698,7 @@ class KnowledgeSearchService:
         feature_state: FeatureState | None = None,
         diagnostics: dict[str, object] | None = None,
         vector_ceiling: float | None = None,
+        table_context: Mapping[str, object] | None = None,
     ) -> tuple[ChunkResult, ...]:
         alias_result = alias_result or AliasSearchResult(tuple(), {})
         if alias_result.short_circuit and alias_result.hits:
@@ -1683,6 +1746,8 @@ class KnowledgeSearchService:
             prioritized,
             hybrid.query_vector if self.embedding_service else None,
             traits=traits,
+            feature_state=feature_state,
+            table_context=table_context,
         )
         hybrid.diagnostics["rerank_duration_ms"] = rerank_ms
         filtered = self._apply_vector_threshold(reranked, hybrid.query_vector, ceiling=ceiling)
@@ -2614,12 +2679,43 @@ class KnowledgeSearchService:
             window = max(window, self.entity_neighbor_min + 1)
         return window
 
+    def _text_quality_penalty(self, metadata: Mapping[str, Any]) -> float:
+        if not metadata:
+            return 0.0
+        try:
+            token_count = int(metadata.get("chunk_quality_tokens") or 0)
+        except (TypeError, ValueError):
+            token_count = 0
+        score = None
+        try:
+            raw_score = metadata.get("chunk_quality_score")
+            if raw_score is not None:
+                score = float(raw_score)
+                import math
+
+                if not math.isfinite(score):
+                    score = None
+        except (TypeError, ValueError):
+            score = None
+        heading_only = bool(metadata.get("chunk_heading_only"))
+        penalty = 0.0
+        if score is not None and score < self.chunk_quality_low_score:
+            scale = (self.chunk_quality_low_score - score) / max(self.chunk_quality_low_score, 0.001)
+            penalty = max(penalty, min(self.text_chunk_penalty_max, scale * self.text_chunk_penalty_max))
+        if token_count and token_count < self.chunk_quality_min_tokens:
+            penalty = max(penalty, min(self.text_chunk_penalty_max, 0.2))
+        if heading_only:
+            penalty = max(penalty, min(self.text_chunk_penalty_max, 0.25))
+        return penalty
+
     def _rerank_candidates(
         self,
         candidates: Sequence[ChunkResult],
         query_vector: list[float] | None,
         *,
         traits: QueryTraits,
+        feature_state: FeatureState | None = None,
+        table_context: Mapping[str, object] | None = None,
     ) -> tuple[list[ChunkResult], int]:
         if not candidates:
             return [], 0
@@ -2627,6 +2723,11 @@ class KnowledgeSearchService:
         top_pool = min(len(candidates), self.rerank_pool)
         scored: list[tuple[float, int, ChunkResult]] = []
         tail: list[ChunkResult] = []
+        text_penalty_enabled = bool(feature_state and feature_state.rag_text_chunk_penalty)
+        table_context = table_context or {}
+        table_intent = bool(table_context.get("has_intent"))
+        query_tokens = set(table_context.get("query_tokens") or ())
+        specific_tokens = set(table_context.get("specific_tokens") or ())
         for idx, cand in enumerate(candidates):
             if idx >= top_pool:
                 tail.append(cand)
@@ -2644,10 +2745,12 @@ class KnowledgeSearchService:
             entity_bonus = self._entity_bonus(cand.chunk, traits.tokens, traits.normalized)
             alias_bonus = max(cand.alias_confidence, self._alias_bonus(cand.chunk, traits.tokens, traits.normalized))
             recency_score = cand.recency_score or self._recency_score(cand.chunk.upload)
-            
+
             # NEW: Quality-based penalty for decorative tables (Phase 2.1 + 3.2)
             quality_penalty = 0.0
             chunk_metadata = cand.chunk.metadata if isinstance(cand.chunk.metadata, dict) else {}
+            table_header_bonus = 0.0
+            table_specific_penalty = 0.0
             
             if chunk_metadata.get("is_table_chunk"):
                 # Get quality score from metadata (0.0 = garbage, 1.0 = high quality)
@@ -2675,14 +2778,34 @@ class KnowledgeSearchService:
                 elif is_decorative:
                     # Fallback: if is_decorative flag is set, apply moderate penalty
                     quality_penalty = 0.30
-            
+                if table_intent:
+                    match_info = self._table_chunk_match_info(
+                        cand.chunk,
+                        query_tokens=query_tokens,
+                        specific_tokens=specific_tokens,
+                    )
+                    cand.diagnostics.update(match_info)
+                    if match_info.get("header_match"):
+                        table_header_bonus = self.table_header_match_bonus
+                    if specific_tokens and not match_info.get("specific_match"):
+                        table_specific_penalty = self.table_specific_miss_penalty
+
+            text_penalty = 0.0
+            if text_penalty_enabled and not chunk_metadata.get("is_table_chunk") and not chunk_metadata.get("is_dataset_card"):
+                index_type = chunk_metadata.get("index_type")
+                if index_type in (None, "text"):
+                    text_penalty = self._text_quality_penalty(chunk_metadata)
+
             combined = (
                 self.rerank_weights["vector"] * vector_score
                 + self.rerank_weights["lexical"] * lexical_score
                 + self.rerank_weights["alias"] * alias_bonus
                 + self.rerank_weights["entity"] * entity_bonus
                 + self.rerank_weights["recency"] * recency_score
+                + table_header_bonus
                 - quality_penalty  # NEW: Subtract quality penalty
+                - table_specific_penalty
+                - text_penalty
             )
             cand.diagnostics["score_breakdown"] = {
                 "vector": round(vector_score, 4),
@@ -2690,7 +2813,10 @@ class KnowledgeSearchService:
                 "alias": round(alias_bonus, 4),
                 "entity": round(entity_bonus, 4),
                 "recency": round(recency_score, 4),
+                "table_header_bonus": round(table_header_bonus, 4),
                 "quality_penalty": round(quality_penalty, 4),  # NEW: Include in diagnostics
+                "table_specific_penalty": round(table_specific_penalty, 4),
+                "text_penalty": round(text_penalty, 4),
             }
             cand.rerank_score = combined
             scored.append((combined, -idx, cand))
@@ -2815,28 +2941,223 @@ class KnowledgeSearchService:
                 span.set_attribute("knowledge.snippet_cross_encoder", bool(self.cross_encoder))
             return tuple(reranked), duration_ms
 
+    @staticmethod
+    def _table_tokenize(value: str) -> set[str]:
+        if not value:
+            return set()
+        normalized = QueryNormalizer._normalize_query_text(str(value))
+        normalized = normalized.replace("_", " ").replace("-", " ")
+        lowered = normalized.lower()
+        return {token for token in QueryNormalizer._TOKEN_SPLIT.split(lowered) if token}
+
+    def _table_query_tokens(
+        self,
+        business_profile,
+        traits: QueryTraits,
+    ) -> tuple[set[str], set[str]]:
+        tokens = {token.lower() for token in traits.tokens if token}
+        filler = self._filler_tokens_for_business(business_profile)
+        tokens = {token for token in tokens if token not in filler and not token.isdigit()}
+        normalized_tokens: set[str] = set()
+        for token in tokens:
+            if token.endswith("s") and len(token) > 3:
+                normalized_tokens.add(token[:-1])
+                continue
+            normalized_tokens.add(token)
+        tokens = normalized_tokens
+        generic = set(self.table_query_keywords)
+        generic.update(
+            {
+                "what",
+                "which",
+                "how",
+                "when",
+                "where",
+                "who",
+                "whats",
+                "what's",
+                "is",
+                "are",
+                "was",
+                "were",
+                "do",
+                "does",
+                "did",
+                "can",
+                "could",
+                "should",
+                "would",
+                "egp",
+                "usd",
+                "eur",
+                "gbp",
+                "aed",
+                "sar",
+                "qar",
+                "kwd",
+                "bhd",
+                "omr",
+                "jod",
+            }
+        )
+        generic.update(self._table_generic_tokens_for_business(business_profile))
+        specific = {
+            token
+            for token in tokens
+            if token not in generic and len(token) >= self.table_specific_min_length
+        }
+        return tokens, specific
+
+    def _column_matches_tokens(self, column: str | None, tokens: set[str]) -> bool:
+        if not column or not tokens:
+            return False
+        normalized = normalize_column_name(column)
+        source = normalized or str(column)
+        column_tokens = self._table_tokenize(source)
+        if column_tokens & tokens:
+            return True
+        condensed = (normalized or "").replace("_", "")
+        if condensed and any(token in condensed for token in tokens if token):
+            return True
+        return False
+
+    def _table_header_tokens(self, table_id: str | uuid.UUID | None) -> set[str]:
+        if not table_id:
+            return set()
+        cache_key = str(table_id)
+        cached = self._table_header_token_cache.get(cache_key)
+        if cached is not None:
+            self._table_header_token_cache.move_to_end(cache_key)
+            return cached
+        payload = (
+            KnowledgeUploadTable.objects.filter(id=table_id)
+            .values("column_schema", "title", "section_heading")
+            .first()
+        )
+        tokens: set[str] = set()
+        if payload:
+            for value in payload.get("column_schema") or []:
+                normalized = normalize_column_name(str(value))
+                tokens.update(self._table_tokenize(normalized or str(value)))
+            for value in (payload.get("title"), payload.get("section_heading")):
+                if value:
+                    normalized = normalize_column_name(str(value))
+                    tokens.update(self._table_tokenize(normalized or str(value)))
+        self._table_header_token_cache[cache_key] = tokens
+        if len(self._table_header_token_cache) > self.table_header_token_cache_limit:
+            self._table_header_token_cache.popitem(last=False)
+        return tokens
+
+    def _table_generic_tokens_for_business(self, business_profile) -> set[str]:
+        business_id = getattr(business_profile, "id", None)
+        if not business_id:
+            return set()
+        cached = self._table_generic_token_cache.get(business_id)
+        if cached is not None:
+            self._table_generic_token_cache.move_to_end(business_id)
+            return cached
+        qs = KnowledgeUploadTable.objects.filter(upload__business_profile=business_profile).exclude(
+            upload__visibility=KnowledgeVisibility.INTERNAL,
+        )
+        rows = list(
+            qs.order_by("-updated_at").values_list(
+                "column_schema",
+                "title",
+                "section_heading",
+                "upload__display_name",
+                "upload__source_name",
+                "upload__external_reference",
+            )[: self.table_column_sample_limit]
+        )
+        total_tables = len(rows)
+        if not total_tables:
+            self._table_generic_token_cache[business_id] = set()
+            return set()
+        required_tables = min(self.table_generic_min_tables, total_tables)
+        df: Counter[str] = Counter()
+        for column_schema, title, section_heading, display_name, source_name, external_reference in rows:
+            tokens: set[str] = set()
+            for value in (column_schema or []):
+                normalized = normalize_column_name(str(value))
+                tokens.update(self._table_tokenize(normalized or str(value)))
+            for value in (title, section_heading, display_name, source_name, external_reference):
+                if not value:
+                    continue
+                normalized = normalize_column_name(str(value))
+                tokens.update(self._table_tokenize(normalized or str(value)))
+            for token in tokens:
+                if not token or token.isdigit():
+                    continue
+                if len(token) < self.table_specific_min_length:
+                    continue
+                df[token] += 1
+        generic: set[str] = set()
+        if total_tables:
+            for token, count in df.items():
+                if count < required_tables:
+                    continue
+                if (count / total_tables) >= self.table_generic_df_threshold:
+                    generic.add(token)
+        if self.table_generic_topk > 0 and df:
+            for token, _count in df.most_common(self.table_generic_topk):
+                generic.add(token)
+        self._table_generic_token_cache[business_id] = generic
+        if len(self._table_generic_token_cache) > self.table_header_token_cache_limit:
+            self._table_generic_token_cache.popitem(last=False)
+        return generic
+
+    def _table_chunk_match_info(
+        self,
+        chunk: KnowledgeUploadChunk,
+        *,
+        query_tokens: set[str],
+        specific_tokens: set[str],
+    ) -> dict[str, object]:
+        metadata = chunk.metadata if isinstance(chunk.metadata, dict) else {}
+        header_tokens = self._table_header_tokens(metadata.get("table_id"))
+        header_matches = header_tokens & query_tokens if query_tokens else set()
+        specific_header_matches = header_tokens & specific_tokens if specific_tokens else set()
+        content = (chunk.content or "").lower()
+        specific_content_matches = (
+            {token for token in specific_tokens if token and token in content} if specific_tokens else set()
+        )
+        specific_matches = specific_header_matches | specific_content_matches
+        return {
+            "header_match": bool(header_matches),
+            "header_match_tokens": tuple(sorted(header_matches))[:5],
+            "specific_match": bool(specific_matches),
+            "specific_match_tokens": tuple(sorted(specific_matches))[:5],
+        }
+
     def _table_query_context(self, business_profile, traits: QueryTraits) -> Mapping[str, object]:
         query_text = (traits.normalized or traits.original or "").lower()
-        tokens = set(token.lower() for token in traits.tokens)
+        query_tokens, specific_tokens = self._table_query_tokens(business_profile, traits)
+        tokens = set(query_tokens)
         matched_keywords = tokens & self.table_query_keywords
         columns = self._table_columns_for_business(business_profile)
         hints = self._table_column_hints(business_profile)
         semantic_columns = {column for column in columns if any(hint in column for hint in hints)}
         matched_columns_query = {column for column in columns if column and column in query_text}
-        matched_columns = matched_columns_query or semantic_columns
+        matched_columns_tokens = {column for column in columns if self._column_matches_tokens(column, query_tokens)}
+        matched_columns_specific = {column for column in columns if self._column_matches_tokens(column, specific_tokens)}
+        matched_columns = matched_columns_query or matched_columns_tokens or semantic_columns
         has_currency_token = bool(tokens & {"egp", "usd", "eur", "gbp", "aed", "sar", "qar", "kwd", "bhd", "omr", "jod"})
         has_percent = "%" in query_text
         numeric_table_intent = bool(traits.has_digits and (has_currency_token or has_percent))
-        has_intent = bool(matched_keywords or matched_columns_query or numeric_table_intent)
+        has_intent = bool(matched_keywords or matched_columns_query or matched_columns_tokens or numeric_table_intent)
         return {
             "has_intent": has_intent,
             "matched_columns": matched_columns,
             "matched_columns_query": matched_columns_query,
+            "matched_columns_tokens": matched_columns_tokens,
+            "matched_columns_specific": matched_columns_specific,
             "matched_keywords": matched_keywords,
             "numeric_intent": numeric_table_intent,
             "available_columns": columns,
             "semantic_columns": semantic_columns,
             "matched_column_count": len(matched_columns),
+            "query_tokens": query_tokens,
+            "specific_tokens": specific_tokens,
         }
 
     def _table_columns_for_business(self, business_profile) -> set[str]:
@@ -3597,6 +3918,116 @@ class KnowledgeSearchService:
                 "query": query_preview,
             },
             indent=1,
+            context={
+                "business": business_profile.id,
+                "request": request_id,
+            },
+        )
+        feature_flags = diagnostics.get("feature_flags") if isinstance(diagnostics.get("feature_flags"), dict) else {}
+        if feature_flags.get("rag_eval_logging"):
+            self._log_snippet_previews(
+                business_profile=business_profile,
+                request_id=request_id,
+                result=result,
+            )
+        if feature_flags.get("rag_shadow_retrieval"):
+            self._log_shadow_vector_snapshot(
+                business_profile=business_profile,
+                request_id=request_id,
+                query_text=diagnostics.get("normalized_query") or diagnostics.get("original_query") or "",
+            )
+
+    def _log_snippet_previews(
+        self,
+        *,
+        business_profile,
+        request_id: uuid.UUID,
+        result: KnowledgeSearchResult,
+        limit: int = 3,
+    ) -> None:
+        snippets = result.snippets or ()
+        if not snippets:
+            return
+        preview_limit = max(1, min(limit, len(snippets)))
+        previews: list[dict[str, object]] = []
+        for snippet in snippets[:preview_limit]:
+            content = (snippet.content or "").strip()
+            summary = (snippet.summary or "").strip()
+            preview = content or summary
+            if len(preview) > 240:
+                preview = f"{preview[:240]}..."
+            if len(summary) > 160:
+                summary = f"{summary[:160]}..."
+            previews.append(
+                {
+                    "chunk_id": str(snippet.chunk_id) if snippet.chunk_id else None,
+                    "upload_id": str(snippet.upload_id) if snippet.upload_id else None,
+                    "title": snippet.title,
+                    "summary": summary,
+                    "preview": preview,
+                    "search_stage": snippet.search_stage,
+                    "is_table_chunk": bool(snippet.is_table_chunk),
+                }
+            )
+        _rag_log(
+            "search.snippets",
+            {"count": preview_limit, "items": previews},
+            indent=2,
+            context={
+                "business": business_profile.id,
+                "request": request_id,
+            },
+        )
+
+    def _log_shadow_vector_snapshot(
+        self,
+        *,
+        business_profile,
+        request_id: uuid.UUID,
+        query_text: str,
+        limit: int = 3,
+    ) -> None:
+        query_text = (query_text or "").strip()
+        if not query_text:
+            return
+        query_vector, diagnostics = self._build_query_vector(
+            business_profile=business_profile,
+            query_text=query_text,
+        )
+        if not query_vector:
+            return
+        qs = (
+            KnowledgeUploadShadowChunk.objects.filter(
+                business_profile=business_profile,
+                upload__status=KnowledgeStatus.ACTIVE,
+            )
+            .exclude(upload__visibility=KnowledgeVisibility.INTERNAL)
+            .exclude(embedding__isnull=True)
+            .annotate(distance=CosineDistance("embedding", query_vector))
+            .order_by("distance")[: max(1, limit)]
+        )
+        hits: list[dict[str, object]] = []
+        for chunk in qs:
+            preview = (chunk.content or "").strip()
+            if len(preview) > 200:
+                preview = f"{preview[:200]}..."
+            hits.append(
+                {
+                    "chunk_id": str(chunk.id),
+                    "upload_id": str(chunk.upload_id),
+                    "distance": float(getattr(chunk, "distance", 0.0) or 0.0),
+                    "preview": preview,
+                }
+            )
+        _rag_log(
+            "shadow.vector",
+            {
+                "count": len(hits),
+                "query": query_text[:160] + "..." if len(query_text) > 160 else query_text,
+                "vector_cache_hit": diagnostics.get("vector_cache_hit"),
+                "hits": hits,
+            },
+            indent=2,
             context={
                 "business": business_profile.id,
                 "request": request_id,
@@ -4585,6 +5016,7 @@ class KnowledgeSearchService:
         hits: Sequence[ChunkResult],
         *,
         table_intent: bool,
+        table_context: Mapping[str, object] | None = None,
     ) -> tuple[tuple[ChunkResult, ...], tuple[ChunkResult, ...], dict[str, object]]:
         if not hits:
             return tuple(), tuple(), {"index_route": "empty", "index_route_table_hits": 0, "index_route_text_hits": 0}
@@ -4596,6 +5028,38 @@ class KnowledgeSearchService:
                 table_hits.append(hit)
             else:
                 text_hits.append(hit)
+        specific_tokens = set((table_context or {}).get("specific_tokens") or ())
+        if table_intent and specific_tokens and table_hits:
+            query_tokens = set((table_context or {}).get("query_tokens") or ())
+            filtered_table_hits: list[ChunkResult] = []
+            for hit in table_hits:
+                match_info = self._table_chunk_match_info(
+                    hit.chunk,
+                    query_tokens=query_tokens,
+                    specific_tokens=specific_tokens,
+                )
+                hit.diagnostics.update(match_info)
+                if match_info.get("specific_match"):
+                    filtered_table_hits.append(hit)
+            if filtered_table_hits:
+                removed = len(table_hits) - len(filtered_table_hits)
+                table_hits = filtered_table_hits
+                route = "table_specific"
+                diagnostics = {
+                    "index_route": route,
+                    "index_route_table_hits": len(table_hits),
+                    "index_route_text_hits": len(text_hits),
+                    "table_specific_filtered": removed,
+                }
+                return tuple(table_hits), tuple(text_hits), diagnostics
+            route = "table_specific_fallback_text" if text_hits else "table_specific_empty"
+            diagnostics = {
+                "index_route": route,
+                "index_route_table_hits": 0,
+                "index_route_text_hits": len(text_hits),
+                "table_specific_filtered": len(table_hits),
+            }
+            return tuple(text_hits), tuple(), diagnostics
         if table_intent:
             primary = table_hits or list(hits)
             context = text_hits if table_hits else []
@@ -4610,6 +5074,44 @@ class KnowledgeSearchService:
             "index_route_text_hits": len(text_hits),
         }
         return tuple(primary), tuple(context), diagnostics
+
+    def _table_parent_hits(
+        self,
+        business_profile,
+        hits: Sequence[ChunkResult],
+        *,
+        limit: int = 3,
+    ) -> tuple[ChunkResult, ...]:
+        if not hits:
+            return tuple()
+        table_ids: set[str] = set()
+        hit_ids: set[uuid.UUID] = {hit.chunk_id for hit in hits}
+        for hit in hits:
+            meta = hit.chunk.metadata if isinstance(hit.chunk.metadata, dict) else {}
+            if not meta.get("is_table_chunk"):
+                continue
+            if str(meta.get("table_chunk_role") or "") != "row":
+                continue
+            table_id = meta.get("table_id")
+            if table_id:
+                table_ids.add(str(table_id))
+        if not table_ids:
+            return tuple()
+        parents = (
+            KnowledgeUploadChunk.objects.filter(
+                upload__business_profile=business_profile,
+                metadata__table_id__in=list(table_ids),
+                metadata__table_chunk_role="parent",
+            )
+            .select_related("upload")
+            .order_by("chunk_index")[: max(1, int(limit))]
+        )
+        parent_hits: list[ChunkResult] = []
+        for chunk in parents:
+            if chunk.id in hit_ids:
+                continue
+            parent_hits.append(ChunkResult(chunk=chunk, source_stage="table_parent"))
+        return tuple(parent_hits)
 
     @staticmethod
     def _is_legacy_pdf_table_entity_chunk(chunk: KnowledgeUploadChunk) -> bool:

@@ -2531,20 +2531,26 @@ def dashboard_knowledge_visualizer(request: HttpRequest) -> HttpResponse:
 
     if business:
         try:
-            result = list_documents(business_profile=business, limit=100, offset=0)
-            total_documents = result.total
-            for item in result.items:
-                documents.append(
-                    {
-                        "uuid": str(item.id),
-                        "name": item.name or "Document",
-                        "source_label": item.source_label,
-                        "status_label": item.status_label,
-                        "status_code": item.status,
-                        "status_badge_class": _document_status_class(item.status),
-                        "updated": _format_document_timestamp(item.updated_at),
-                    }
-                )
+            offset = 0
+            limit = 100
+            while True:
+                result = list_documents(business_profile=business, limit=limit, offset=offset)
+                total_documents = result.total
+                for item in result.items:
+                    documents.append(
+                        {
+                            "uuid": str(item.id),
+                            "name": item.name or "Document",
+                            "source_label": item.source_label,
+                            "status_label": item.status_label,
+                            "status_code": item.status,
+                            "status_badge_class": _document_status_class(item.status),
+                            "updated": _format_document_timestamp(item.updated_at),
+                        }
+                    )
+                offset += limit
+                if offset >= total_documents:
+                    break
         except DocumentListValidationError:
             has_error = True
 
