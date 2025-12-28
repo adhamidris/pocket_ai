@@ -62,7 +62,7 @@ class KnowledgeSearchServiceAliasTests(TestCase):
         entity = KnowledgeEntity.objects.create(
             business_profile=self.business,
             upload=self.upload,
-            chunk=self.chunk,
+            chunk_id=self.chunk.id,
             entity_type="trip",
             entity_name="Trip 101",
         )
@@ -136,7 +136,7 @@ class KnowledgeSearchServiceAliasTests(TestCase):
         entity = KnowledgeEntity.objects.create(
             business_profile=self.business,
             upload=self.upload,
-            chunk=chunk,
+            chunk_id=chunk.id,
             entity_type="job",
             entity_name="Michael Page",
         )

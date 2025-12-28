@@ -1080,13 +1080,23 @@ class KnowledgeSearchService:
                     business_profile=business_profile,
                     alias_normalized__in=missing_aliases,
                 )
-                .select_related("entity__chunk__upload")
+                .select_related("entity", "entity__upload")
                 .order_by("alias_normalized")
             )
+            alias_records = list(alias_qs)
+            chunk_ids = [
+                record.entity.chunk_id
+                for record in alias_records
+                if record.entity and record.entity.chunk_id
+            ]
+            chunk_lookup = self._fetch_chunks_by_ids(
+                business_profile=business_profile,
+                chunk_ids=chunk_ids,
+            )
             payloads: dict[str, list[dict[str, str]]] = {}
-            for record in alias_qs:
+            for record in alias_records:
                 entity = record.entity
-                chunk = entity.chunk if entity else None
+                chunk = chunk_lookup.get(entity.chunk_id) if entity else None
                 if not chunk or not chunk.upload or chunk.upload.business_profile_id != business_profile.id:
                     continue
                 entry = {
@@ -1141,13 +1151,23 @@ class KnowledgeSearchService:
             .annotate(sim=TrigramSimilarity("alias_search_vector", query_text))
             .filter(sim__gte=self.alias_fts_threshold)
             .order_by("-sim")[: max(limit, 10)]
-            .select_related("entity__chunk__upload")
+            .select_related("entity", "entity__upload")
+        )
+        alias_records = list(alias_qs)
+        chunk_ids = [
+            record.entity.chunk_id
+            for record in alias_records
+            if record.entity and record.entity.chunk_id
+        ]
+        chunk_lookup = self._fetch_chunks_by_ids(
+            business_profile=business_profile,
+            chunk_ids=chunk_ids,
         )
         seen: set[uuid.UUID] = set()
         hits: list[ChunkResult] = []
-        for record in alias_qs:
+        for record in alias_records:
             entity = record.entity
-            chunk = entity.chunk if entity else None
+            chunk = chunk_lookup.get(entity.chunk_id) if entity else None
             if not chunk or not chunk.upload or chunk.upload.business_profile_id != business_profile.id:
                 continue
             if chunk.id in seen:

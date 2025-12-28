@@ -2967,33 +2967,33 @@ class KnowledgeIngestionService:
                                 status=KnowledgeIngestionJobStatus.COMPLETED,
                                 characters=characters,
                             )
-                    except KnowledgeIngestionError as exc:
-                        self._handle_failure(job, str(exc), exc=exc)
-                        logger.warning("Ingestion failed upload=%s job=%s error=%s", upload.id, job.id, exc)
-                        duration_ms = int((time.perf_counter() - job_started_at) * 1000.0)
-                        job.refresh_from_db(fields=["status"])
-                        structured_log(
-                            "rag",
-                            "ingest.job_done",
-                            {
-                                "job_id": str(job.id),
-                                "upload_id": str(upload.id),
-                                "status": "failed",
-                                "duration_ms": duration_ms,
-                                "error": str(exc)[:200],
-                            },
-                            context={"business": upload.business_profile_id, "upload": upload.id, "job": job.id},
-                            logger_obj=logger,
-                            level=logging.WARNING,
-                        )
-                        result = IngestionJobResult(
-                            job_id=job.id,
-                            upload_id=upload.id,
-                            job_type=job.job_type,
-                            status=job.status,
-                            characters=0,
-                            error=str(exc),
-                        )
+                        except KnowledgeIngestionError as exc:
+                            self._handle_failure(job, str(exc), exc=exc)
+                            logger.warning("Ingestion failed upload=%s job=%s error=%s", upload.id, job.id, exc)
+                            duration_ms = int((time.perf_counter() - job_started_at) * 1000.0)
+                            job.refresh_from_db(fields=["status"])
+                            structured_log(
+                                "rag",
+                                "ingest.job_done",
+                                {
+                                    "job_id": str(job.id),
+                                    "upload_id": str(upload.id),
+                                    "status": "failed",
+                                    "duration_ms": duration_ms,
+                                    "error": str(exc)[:200],
+                                },
+                                context={"business": upload.business_profile_id, "upload": upload.id, "job": job.id},
+                                logger_obj=logger,
+                                level=logging.WARNING,
+                            )
+                            result = IngestionJobResult(
+                                job_id=job.id,
+                                upload_id=upload.id,
+                                job_type=job.job_type,
+                                status=job.status,
+                                characters=0,
+                                error=str(exc),
+                            )
                 if span.is_recording():
                     span.set_attribute("ingest.result_status", result.status.value)
                 return result
@@ -4723,7 +4723,7 @@ class KnowledgeIngestionService:
             entity_model = KnowledgeEntity(
                 business_profile=business,
                 upload=upload,
-                chunk=chunk,
+                chunk_id=chunk.id if chunk else None,
                 entity_type=entity.get("entity_type") or "",
                 entity_name=entity.get("entity_name") or "",
                 primary_label=entity.get("entity_name") or entity.get("entity_type") or "",

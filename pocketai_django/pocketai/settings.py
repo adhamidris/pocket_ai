@@ -970,6 +970,6 @@ LOGGING = {
         "apps.rag.ai_orchestrator": {"handlers": ["console"], "level": "INFO", "propagate": False},
         "apps.mcp.tools": {"handlers": ["console", "rag_file"], "level": "INFO", "propagate": False},
         "apps.mcp.orchestrator": {"handlers": ["console", "rag_file"], "level": "INFO", "propagate": False},
-        "apps.api.chat_portal": {"handlers": ["console"], "level": "INFO", "propagate": False},
+        "apps.api.chat_portal": {"handlers": ["console", "rag_file"], "level": "INFO", "propagate": False},
     },
 }

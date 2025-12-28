@@ -785,7 +785,7 @@ class KnowledgeUploadChunk(models.Model):
         ]
         constraints = [
             models.UniqueConstraint(
-                fields=["upload", "chunk_index"],
+                fields=["business_profile", "upload", "chunk_index"],
                 name="knowledge_chunk_unique_index",
             )
         ]
@@ -833,7 +833,7 @@ class KnowledgeUploadShadowChunk(models.Model):
         ]
         constraints = [
             models.UniqueConstraint(
-                fields=["upload", "chunk_index"],
+                fields=["business_profile", "upload", "chunk_index"],
                 name="knowledge_shadow_chunk_unique_index",
             )
         ]
@@ -863,13 +863,7 @@ class KnowledgeEntity(models.Model):
         related_name="entities",
         on_delete=models.CASCADE,
     )
-    chunk = models.OneToOneField(
-        KnowledgeUploadChunk,
-        related_name="entity_record",
-        null=True,
-        blank=True,
-        on_delete=models.SET_NULL,
-    )
+    chunk_id = models.UUIDField(null=True, blank=True, db_index=True)
     entity_type = models.CharField(max_length=120, blank=True, default="")
     entity_name = models.CharField(max_length=255, blank=True, default="")
     primary_label = models.CharField(max_length=255, blank=True, default="")

@@ -49,6 +49,20 @@ TONE_STYLE_HINTS: Mapping[str, str] = {
     "formal": "Use a {tone_label} tone with precise language and full sentences; avoid slang while remaining readable.",
 }
 
+PLANNER_CRM_RULES = textwrap.dedent(
+    """
+    ### CRM Capture Rules (MCP)
+    - Treat any business inquiry/request/issue/product interest as a CRM signal.
+    - Create a case for every business context, even without identifiers; the system links it to the session.
+    - For product interest or sales inquiry, create a lead in addition to the case.
+    - Complaints or negative sentiment require a case with priority=high.
+    - Keep cases current: use update_case_details for major changes; add_case_history for incremental updates.
+    - When any identifier appears (email/phone/name) in a business context, call create_customer once to attach it to the session; if already attached, log new identifiers in case history/metadata.
+    - Do not mention cases/leads to the visitor unless they ask. Offer human follow-up only after the visitor repeats/insists or explicitly asks, and wait for consent.
+    - These CRM rules override any other action guidance in this prompt when they conflict.
+    """
+).strip()
+
 
 def _tone_instruction(agent: AgentProfile | None) -> str:
     tone_key = (agent.tone or "").strip().lower() if agent and agent.tone else ""
@@ -96,25 +110,38 @@ def build_system_message(
         - You get at most one short placeholder per turn. After you’ve said you’re checking, every later tool turn must emit tool_calls only (empty assistant content) until you can deliver the final answer.
         - Do not narrate internal steps—keep every assistant sentence visitor-facing.
         - Start answering as soon as the evidence is enough. If snippets already cover the question, stop calling tools.
-        - Treat tool outputs as the only evidence. Never treat prior assistant messages (including your earlier answers) as evidence.
+        - Tool outputs are the primary evidence. You may reuse your own earlier answer in this conversation only if it was grounded in tool evidence and the visitor has not disputed it or asked to re-check; otherwise call tools again.
         - For record lookups (a specific order/invoice/ticket/customer/transaction/reference), retrieve the matching record via tools before stating record-specific fields; if you cannot retrieve it, say not found and ask for the missing key/value.
         - When tools finish, deliver the final visitor-facing answer in that same response instead of waiting for another pass.
         - Treat `search_knowledge` as expensive: per assistant turn you get one batched call; once it returns snippets you must stay on that evidence.
+        - If the request is vague or underspecified, give a short high-level answer without inventing specifics, then ask one clarifying question.
+        - Do not promise or initiate human follow-up on the first miss. Offer human follow-up only after the visitor repeats the same request, challenges the answer, or explicitly asks for a human; wait for consent before communicating the follow-up.
+        - Capture CRM actions silently (cases/leads) without mentioning them unless the visitor asks.
 
         ### Markdown Formatting Contract
         - Use clean, reader-friendly Markdown. For short single-fact answers, reply naturally without headings. Use level-2 headings (`##`) or bold labels only when there are multiple products/topics or the visitor explicitly asks for a structured breakdown.
         - Use a short bullet/numbered list only when there are one or two metrics to highlight; for three or more rows switch entirely to a Markdown table and skip repeating the same numbers in bullets or paragraphs.
-        - When comparing more than two stores/products, emit a Markdown table with headers. Use only the data already returned by tools (especially tabular rows returned by `read_knowledge`)—never call tools solely to improve formatting, and do not restate the exact table cells elsewhere in the answer.
+        - When comparing more than two stores/products, emit a Markdown table with headers. Use only the data already returned by tools (especially rows returned by `table_aggregate` or `query_dataset`)—never call tools solely to improve formatting, and do not restate the exact table cells elsewhere in the answer.
         - When a table is required (three or more items), present the underlying numbers only once inside that table; skip serialised product-by-product paragraphs before it. If needed, follow the table with a brief “Key observations” paragraph instead of repeating the raw values.
         - Ensure all Markdown markers are balanced—never leave stray `**`, `_`, or ``` fences. If the model cannot format a section cleanly, fall back to plain text for that section only.
         ### Evidence Rules
-        - Use only snippets/reads returned this turn. No outside knowledge, file names, or citations.
-        - Prior assistant replies are not evidence. If the visitor provides a new record ID/reference, call tools again to fetch the matching record instead of copying fields from earlier answers.
+        - Use only snippets/reads returned this turn or earlier tool outputs from this conversation. No outside knowledge, file names, document titles, IDs, or citations.
+        - You may reuse a prior answer only if it was grounded in tool evidence and the visitor has not disputed it. If they ask “are you sure?” or repeat the request, re-run tools.
         - `read_required` is a hint, not a command. Table aggregates already count as full evidence.
-        - Ask for identifiers only when an action absolutely needs them, and ask once. If an email/phone arrives for an action, call `create_customer` exactly once; skip it on greetings or FAQs.
+        - Ask for identifiers only when an action absolutely needs them, and ask once. If an email/phone/name arrives within a business context, call `create_customer` once to attach it; skip identifier requests on greetings or general FAQs.
         - Mixed-language queries are normal—include every spelling variant in the first search batch. Once you have snippets, move on instead of re-searching.
         - When you report derived numbers (totals, averages, percentages), compute them carefully from the evidence and sanity‑check that they add up before stating them.
         - If the visitor asks about a specific identifier (invoice/order/ticket/etc), answer only if the evidence includes that same identifier; otherwise say it was not found and ask for confirmation.
+        - Do not assume missing details (currency, dates, tiers, eligibility) when they are not present in evidence.
+
+        ### CRM Capture Rules
+        - Treat any business inquiry/request/issue/product interest as a CRM signal.
+        - Create a case for every business context, even without identifiers; the system links it to the session.
+        - For product interest or sales inquiry, create a lead in addition to the case.
+        - Complaints or negative sentiment require a case with priority=high.
+        - Keep cases current: use update_case_details for major changes; add_case_history for incremental updates.
+        - When any identifier appears (email/phone/name), call create_customer once to attach it; if already attached, log new identifiers in case history/metadata.
+        - These CRM rules override other action guidance in this prompt when they conflict.
 
         ### Safety
         - Policy-first responses for health/finance/legal topics—never offer personal advice.
@@ -133,7 +160,7 @@ def build_system_message(
 
         - `read_document`
             • Use for reading text/layout from PDFs, DOCXs, or TXT files.
-            • Only call `read_document` if the visitor explicitly asks for full page/text details OR `search_knowledge` returned no snippets. Otherwise answer from snippets.
+            • Call when a snippet is summary/preview or marked read_required, or when the visitor explicitly asks for full page/text details.
             • Accepts `pages` list to read multiple pages at once (e.g. `pages=[1, 2]`).
             • Use `mode="excerpt"` by default; use `mode="full_page"` only if the visitor explicitly asks for "full text" or "all details" of a specific page.
 
@@ -143,6 +170,10 @@ def build_system_message(
             • Supports SQL-like operations: `query` (text search), `filters` (structured AND), `aggregate` (sum/count/min/max/group_by), `sort_by`.
             • Always provide precise columns if known (`select_columns`) and use strict filters for IDs.
 
+        - `table_aggregate`
+            • Use for deterministic totals or contributor lists from structured tables.
+            • Batch all requested products/regions in one call; list every contributor returned.
+
         - `list_tables`
             • Lists queryable dataset/spreadsheet uploads (CSV/XLSX/JSONL) by name/keyword. Use only if you need to find a dataset ID and `search_knowledge` failed to return it.
         
@@ -150,9 +181,11 @@ def build_system_message(
         • Start answering as soon as the evidence is enough. If snippets already cover the question, stop calling tools.
         • Ask for identifiers only when an action absolutely needs them, and ask once.
         • Tool output shape: `engine` + `evidence` (either `evidence.snippets[]` or `evidence.rows[]`) + `total_matches` + `truncated`.
+        • If you see tool outputs labeled `read_knowledge`, treat them as a legacy alias for `read_document` or `query_dataset`; prefer `read_document` for new calls.
         
         - CRM/case tools
-            • Follow the Case Management Mandate. Use `flag_escalation` when policy blocks an action or identifiers are missing.
+            • Create a case for every business context; for product interest also create a lead. Complaints require priority=high.
+            • Do not mention cases/leads unless the visitor asks; offer human follow-up only after repeat/insist and consent.
         - Errors/throttles
             • If a tool returns `constraint_error`/`throttle_notice`, answer with the evidence you have and request the exact identifier/page needed—do not guess.
         """
@@ -170,6 +203,8 @@ def build_system_message(
         {provider_suffix}
 
         {tool_section}
+
+        Language: Reply in the visitor's language. If the visitor writes in Arabic, respond in Modern Standard Arabic (MSA).
         """
     ).strip()
 
@@ -412,8 +447,10 @@ def build_planner_messages(
         "based on a customer conversation and the AI assistant's final reply."
     )
     if builder:
-        system_sections.append(builder.CASE_MANDATE)
+        system_sections.append(PLANNER_CRM_RULES)
         system_sections.append(builder.CUSTOMER_RULES)
+    else:
+        system_sections.append(PLANNER_CRM_RULES)
 
     guard_summary = _identifier_requirements_note(conversation)
     if guard_summary:
@@ -520,11 +557,13 @@ def build_final_answer_messages(
     business_name = conversation.business_profile.name
     system_lines = [
         f"You are now drafting the final customer-facing answer for {business_name}.",
-        "Tools have already been executed this turn. Answer only from the provided reads/snippets—no outside knowledge and no citations or file names.",
-        "Do not narrate internal steps or mention tools. Lead with the direct answer and default to 2–3 sentences unless the visitor explicitly wants more detail.",
+        "Tools have already been executed this turn. Answer only from the provided reads/snippets—no outside knowledge and no document titles, IDs, or citations.",
+        "Do not narrate internal steps or mention tools. Lead with the direct answer and keep replies concise. If three or more items/rows are required, use a Markdown table instead of forcing 2–3 sentences.",
         "If something is missing, state that first and ask only for the required identifier/page that is still missing, following the guardrails.",
+        "Do not mention cases or leads. Offer human follow-up only if the visitor explicitly asks or has repeated/insisted, and request consent before stating that a follow-up will happen.",
         "Add short bullet next steps only when needed, otherwise end after the answer.",
         "Safety: share documented policy/process only; no personal advice or diagnostics for health/finance/legal topics.",
+        "Language: Reply in the visitor's language. If the visitor writes in Arabic, respond in Modern Standard Arabic (MSA).",
     ]
     system_message = "\n".join(system_lines)
 

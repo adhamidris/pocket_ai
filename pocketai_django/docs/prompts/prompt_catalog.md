@@ -1,10 +1,12 @@
 # Prompt Inventory
 
+Note: For the current MCP runtime behavior, see `docs/prompts/prompt_catalog_new.md`. This file is a historical inventory and may lag behind active prompt text.
+
 This document captures every multi-line prompt template currently in the repository so we can reason about their wording and usage. Each section cites the source file and adds a short explanation before the literal text block.
 
 ---
 
-## MCP Tool Set (`apps/services/mcp/tools.py`)
+## MCP Tool Set (`apps/mcp/tools.py`)
 
 These are the function-call tools exposed to the LLM when running MCP mode; definitions live in `TOOL_DEFINITIONS`. Quick reference:
 
@@ -26,7 +28,7 @@ These are the function-call tools exposed to the LLM when running MCP mode; defi
 
 ---
 
-## `apps/services/mcp/prompts.py`
+## `apps/mcp/prompts.py`
 
 ### `build_system_message` (lines 56-153)
 *Purpose:* Primary MCP system prompt for tool-enabled orchestration. Enforces tone, behavior contract, and tool expectations before any conversation turn.
@@ -151,7 +153,7 @@ Assistant draft (internal, refine as needed): {optional}
 
 ---
 
-## `apps/services/ai_prompt_builder.py`
+## `apps/llm/ai_prompt_builder.py`
 
 ### Prompt constants (lines 37-144)
 *Purpose:* Core blocks reused across both legacy and MCP flows when building classic orchestrator prompts.*
@@ -294,7 +296,7 @@ Ledger directive (chunk focus): When you need more context from a knowledge snip
 
 ## Legacy backup prompts
 
-The repository keeps a frozen copy of the pre-MCP prompt builder in `apps/services/legacy_backup/ai_prompt_builder_legacy.py`. Its text matches the current `PromptBuilder` constants, so refer to that file if you need to diff older behavior.
+The repository keeps a frozen copy of the pre-MCP prompt builder in `apps/rag/legacy_backup/ai_prompt_builder_legacy.py`. Its text matches the current `PromptBuilder` constants, so refer to that file if you need to diff older behavior.
 
 ---
 

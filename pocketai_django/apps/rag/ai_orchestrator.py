@@ -1574,6 +1574,27 @@ class KnowledgeSearchService:
         alias_candidates: Sequence[ChunkResult] | None = None,
         feature_state: FeatureState | None = None,
     ) -> HybridSearchResult:
+        business_id = getattr(business_profile, "id", None) if business_profile else None
+        with tenant_context(business_id):
+            return self._search_free_text_inner(
+                business_profile=business_profile,
+                query=query,
+                limit=limit,
+                traits=traits,
+                alias_candidates=alias_candidates,
+                feature_state=feature_state,
+            )
+
+    def _search_free_text_inner(
+        self,
+        *,
+        business_profile,
+        query: str,
+        limit: int,
+        traits: QueryTraits,
+        alias_candidates: Sequence[ChunkResult] | None = None,
+        feature_state: FeatureState | None = None,
+    ) -> HybridSearchResult:
         with TRACER.start_as_current_span("knowledge.hybrid_search") as span:
             base_qs = self._base_chunk_queryset(business_profile)
             query_text = (query or "").strip() or traits.normalized or traits.original
@@ -1769,78 +1790,89 @@ class KnowledgeSearchService:
     ) -> tuple[list[ChunkResult], dict[str, int]]:
         if not aliases:
             return [], {"cache_hit": 0, "cache_miss": 0}
-        version = self._get_alias_cache_version(business_profile.id)
-        ordered_ids: list[uuid.UUID] = []
-        cache_hit = 0
-        cache_miss = 0
-        missing_aliases: list[str] = []
-        for alias in aliases:
-            key = self._alias_cache_key(business_profile.id, alias, version)
-            cached = cache.get(key)
-            if cached:
-                cache_hit += 1
-                for entry in cached:
-                    try:
-                        ordered_ids.append(uuid.UUID(entry["chunk_id"]))
-                    except (KeyError, ValueError, TypeError):
-                        continue
-            else:
-                cache_miss += 1
-                missing_aliases.append(alias)
+        with tenant_context(business_profile.id if business_profile else None):
+            version = self._get_alias_cache_version(business_profile.id)
+            ordered_ids: list[uuid.UUID] = []
+            cache_hit = 0
+            cache_miss = 0
+            missing_aliases: list[str] = []
+            for alias in aliases:
+                key = self._alias_cache_key(business_profile.id, alias, version)
+                cached = cache.get(key)
+                if cached:
+                    cache_hit += 1
+                    for entry in cached:
+                        try:
+                            ordered_ids.append(uuid.UUID(entry["chunk_id"]))
+                        except (KeyError, ValueError, TypeError):
+                            continue
+                else:
+                    cache_miss += 1
+                    missing_aliases.append(alias)
 
-        if missing_aliases:
-            alias_qs = (
-                KnowledgeAlias.objects.filter(
+            if missing_aliases:
+                alias_qs = (
+                    KnowledgeAlias.objects.filter(
+                        business_profile=business_profile,
+                        alias_normalized__in=missing_aliases,
+                    )
+                    .select_related("entity", "entity__upload")
+                    .order_by("alias_normalized")
+                )
+                alias_records = list(alias_qs)
+                chunk_ids = [
+                    record.entity.chunk_id
+                    for record in alias_records
+                    if record.entity and record.entity.chunk_id
+                ]
+                chunk_lookup = self._fetch_chunks_by_ids(
                     business_profile=business_profile,
-                    alias_normalized__in=missing_aliases,
+                    chunk_ids=chunk_ids,
                 )
-                .select_related("entity__chunk__upload")
-                .order_by("alias_normalized")
+                payloads: dict[str, list[dict[str, str]]] = {}
+                for record in alias_records:
+                    entity = record.entity
+                    chunk = chunk_lookup.get(entity.chunk_id) if entity else None
+                    if not chunk or not chunk.upload or chunk.upload.business_profile_id != business_profile.id:
+                        continue
+                    if chunk.upload.visibility == KnowledgeVisibility.INTERNAL:
+                        continue
+                    entry = {
+                        "chunk_id": str(chunk.id),
+                        "entity_name": entity.entity_name,
+                        "entity_type": entity.entity_type,
+                        "alias": record.alias_normalized,
+                    }
+                    payloads.setdefault(record.alias_normalized, []).append(entry)
+                    ordered_ids.append(chunk.id)
+                for alias_value, payload in payloads.items():
+                    self._cache_alias_payload(business_profile.id, alias_value, payload)
+
+            if not ordered_ids:
+                return [], {"cache_hit": cache_hit, "cache_miss": cache_miss}
+
+            chunk_lookup = self._fetch_chunks_by_ids(
+                business_profile=business_profile,
+                chunk_ids=ordered_ids[:limit],
             )
-            payloads: dict[str, list[dict[str, str]]] = {}
-            for record in alias_qs:
-                entity = record.entity
-                chunk = entity.chunk if entity else None
-                if not chunk or not chunk.upload or chunk.upload.business_profile_id != business_profile.id:
+            hits: list[ChunkResult] = []
+            for identifier in ordered_ids:
+                chunk = chunk_lookup.get(identifier)
+                if not chunk:
                     continue
-                if chunk.upload.visibility == KnowledgeVisibility.INTERNAL:
-                    continue
-                entry = {
-                    "chunk_id": str(chunk.id),
-                    "entity_name": entity.entity_name,
-                    "entity_type": entity.entity_type,
-                    "alias": record.alias_normalized,
-                }
-                payloads.setdefault(record.alias_normalized, []).append(entry)
-                ordered_ids.append(chunk.id)
-            for alias_value, payload in payloads.items():
-                self._cache_alias_payload(business_profile.id, alias_value, payload)
-
-        if not ordered_ids:
-            return [], {"cache_hit": cache_hit, "cache_miss": cache_miss}
-
-        chunk_lookup = self._fetch_chunks_by_ids(
-            business_profile=business_profile,
-            chunk_ids=ordered_ids[:limit],
-        )
-        hits: list[ChunkResult] = []
-        for identifier in ordered_ids:
-            chunk = chunk_lookup.get(identifier)
-            if not chunk:
-                continue
-            hits.append(
-                ChunkResult(
-                    chunk=chunk,
-                    source_stage="alias_exact",
-                    alias_confidence=1.0,
-                    recency_score=self._recency_score(chunk.upload),
-                    rerank_score=1.0,
-                    diagnostics={"alias": str(identifier)},
+                hits.append(
+                    ChunkResult(
+                        chunk=chunk,
+                        source_stage="alias_exact",
+                        alias_confidence=1.0,
+                        recency_score=self._recency_score(chunk.upload),
+                        rerank_score=1.0,
+                        diagnostics={"alias": str(identifier)},
+                    )
                 )
-            )
-            if len(hits) >= limit:
-                break
-        return hits, {"cache_hit": cache_hit, "cache_miss": cache_miss}
+                if len(hits) >= limit:
+                    break
+            return hits, {"cache_hit": cache_hit, "cache_miss": cache_miss}
 
     def _alias_fuzzy_hits(
         self,
@@ -1854,39 +1886,50 @@ class KnowledgeSearchService:
         if not identifier_tokens:
             return []
         query_text = " ".join(identifier_tokens[:4]) or (traits.normalized or traits.original or "")
-        alias_qs = (
-            KnowledgeAlias.objects.filter(business_profile=business_profile)
-            .annotate(sim=TrigramSimilarity("alias_search_vector", query_text))
-            .filter(sim__gte=threshold)
-            .order_by("-sim")[: max(limit, 10)]
-            .select_related("entity__chunk__upload")
-        )
-        seen: set[uuid.UUID] = set()
-        hits: list[ChunkResult] = []
-        for record in alias_qs:
-            entity = record.entity
-            chunk = entity.chunk if entity else None
-            if not chunk or not chunk.upload or chunk.upload.business_profile_id != business_profile.id:
-                continue
-            if chunk.upload.visibility == KnowledgeVisibility.INTERNAL:
-                continue
-            if chunk.id in seen:
-                continue
-            seen.add(chunk.id)
-            confidence = float(getattr(record, "sim", 0.0) or 0.0)
-            hits.append(
-                ChunkResult(
-                    chunk=chunk,
-                    source_stage="alias_fts",
-                    alias_confidence=min(1.0, confidence),
-                    recency_score=self._recency_score(chunk.upload),
-                    rerank_score=min(1.0, confidence),
-                    diagnostics={"alias": record.alias_normalized},
-                )
+        with tenant_context(business_profile.id if business_profile else None):
+            alias_qs = (
+                KnowledgeAlias.objects.filter(business_profile=business_profile)
+                .annotate(sim=TrigramSimilarity("alias_search_vector", query_text))
+                .filter(sim__gte=threshold)
+                .order_by("-sim")[: max(limit, 10)]
+                .select_related("entity", "entity__upload")
             )
-            if len(hits) >= limit:
-                break
-        return hits
+            alias_records = list(alias_qs)
+            chunk_ids = [
+                record.entity.chunk_id
+                for record in alias_records
+                if record.entity and record.entity.chunk_id
+            ]
+            chunk_lookup = self._fetch_chunks_by_ids(
+                business_profile=business_profile,
+                chunk_ids=chunk_ids,
+            )
+            seen: set[uuid.UUID] = set()
+            hits: list[ChunkResult] = []
+            for record in alias_records:
+                entity = record.entity
+                chunk = chunk_lookup.get(entity.chunk_id) if entity else None
+                if not chunk or not chunk.upload or chunk.upload.business_profile_id != business_profile.id:
+                    continue
+                if chunk.upload.visibility == KnowledgeVisibility.INTERNAL:
+                    continue
+                if chunk.id in seen:
+                    continue
+                seen.add(chunk.id)
+                confidence = float(getattr(record, "sim", 0.0) or 0.0)
+                hits.append(
+                    ChunkResult(
+                        chunk=chunk,
+                        source_stage="alias_fts",
+                        alias_confidence=min(1.0, confidence),
+                        recency_score=self._recency_score(chunk.upload),
+                        rerank_score=min(1.0, confidence),
+                        diagnostics={"alias": record.alias_normalized},
+                    )
+                )
+                if len(hits) >= limit:
+                    break
+            return hits
 
     @staticmethod
     def _alias_cache_version_key(business_id: uuid.UUID) -> str:
