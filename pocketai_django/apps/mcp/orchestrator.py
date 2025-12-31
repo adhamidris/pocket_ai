@@ -866,13 +866,15 @@ class McpOrchestratorService:
                         reminder_text = (
                             "Tools are repeating the same document read. Do NOT call tools again. "
                             "Answer now using the snippets already provided. "
-                            "If something is still unclear, ask a single clarifying question."
+                            "If something is still unclear, give a brief high-level response without asking a clarifying "
+                            "question unless a required identifier is missing or the visitor repeats/insists."
                         )
                         if read_document_guardrail_reason == "read_document_throttle":
                             reminder_text = (
                                 "read_document has been throttled. Do NOT call tools again. "
                                 "Answer now using the snippets already provided. "
-                                "If something is still unclear, ask a single clarifying question."
+                                "If something is still unclear, give a brief high-level response without asking a clarifying "
+                                "question unless a required identifier is missing or the visitor repeats/insists."
                             )
                         forced_reminder = {"role": "system", "content": reminder_text}
                         forced_messages = list(loop_messages)
@@ -950,7 +952,8 @@ class McpOrchestratorService:
                                 "content": (
                                     "Tools are not returning new evidence. Do NOT call tools again. "
                                     "Answer now using the snippets/aggregates already provided. "
-                                    "If something is still unclear, ask a single clarifying question."
+                                    "If something is still unclear, give a brief high-level response without asking a clarifying "
+                                    "question unless a required identifier is missing or the visitor repeats/insists."
                                 ),
                             }
                             forced_messages = list(loop_messages)
@@ -3727,8 +3730,9 @@ class McpOrchestratorService:
                 {
                     "role": "system",
                     "content": (
-                        "You cannot call tools right now due to context limits. Ask exactly one clarifying question "
-                        "to narrow the user's request. Keep it short. Do not mention token limits or tools."
+                        "You cannot call tools right now due to context limits. Provide a brief high-level response "
+                        "based on the user's request. Invite them to share a specific detail if they want more precision, "
+                        "but do not ask a direct clarifying question. Do not mention token limits or tools."
                     ),
                 },
                 {"role": "user", "content": fallback_user},

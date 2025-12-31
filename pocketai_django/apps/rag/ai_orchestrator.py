@@ -13,6 +13,7 @@ import hashlib
 import dataclasses
 import logging
 import uuid
+import threading
 from datetime import datetime
 from enum import Enum
 from types import SimpleNamespace
@@ -587,7 +588,18 @@ class KnowledgeSearchService:
         self.read_ready_threshold = max(200, int(getattr(settings, "RAG_READY_CHAR_THRESHOLD", 900)))
         self.table_ready_threshold = max(200, int(getattr(settings, "RAG_READY_TABLE_THRESHOLD", 600)))
         self.cross_encoder_weight = float(getattr(settings, "RAG_CROSS_ENCODER_WEIGHT", 0.6))
-        self.cross_encoder = self._build_cross_encoder()
+        self._cross_encoder_enabled = bool(getattr(settings, "RAG_ENABLE_CROSS_ENCODER", False))
+        self._cross_encoder_model_name = getattr(
+            settings,
+            "RAG_CROSS_ENCODER_MODEL",
+            "cross-encoder/ms-marco-MiniLM-L-6-v2",
+        )
+        self._cross_encoder_device = getattr(settings, "RAG_CROSS_ENCODER_DEVICE", None)
+        self._cross_encoder_local = threading.local()
+        self._cross_encoder_lock = threading.Lock()
+        self._cross_encoder_failed = False
+        self.rerank_budget_ms = max(0, int(getattr(settings, "RAG_RERANK_BUDGET_MS", 0)))
+        self.snippet_rerank_budget_ms = max(0, int(getattr(settings, "RAG_SNIPPET_RERANK_BUDGET_MS", 0)))
         self.alias_result_cap = max(1, int(getattr(settings, "RAG_ALIAS_RESULTS_LIMIT", 4)))
         self.alias_neighbor_window = max(1, int(getattr(settings, "RAG_ALIAS_NEIGHBOR_WINDOW", 1)))
         self.alias_cache_ttl = max(60, int(getattr(settings, "RAG_ALIAS_CACHE_TTL", 900)))
@@ -648,12 +660,18 @@ class KnowledgeSearchService:
         self.table_generic_df_threshold = float(getattr(settings, "RAG_TABLE_GENERIC_TOKEN_DF", 0.35))
         self.table_generic_topk = max(0, int(getattr(settings, "RAG_TABLE_GENERIC_TOKEN_TOPK", 40)))
         self.table_generic_min_tables = max(1, int(getattr(settings, "RAG_TABLE_GENERIC_MIN_TABLES", 2)))
+        self.table_dominant_min_tables = max(1, int(getattr(settings, "RAG_TABLE_DOMINANT_MIN_TABLES", 2)))
+        self.table_dominant_upload_ratio = float(getattr(settings, "RAG_TABLE_DOMINANT_UPLOAD_RATIO", 0.35))
+        self.table_row_label_sample_limit = max(50, int(getattr(settings, "RAG_TABLE_ROW_LABEL_SAMPLE_LIMIT", 200)))
+        self.table_context_cache_limit = max(32, int(getattr(settings, "RAG_TABLE_CONTEXT_CACHE_SIZE", 128)))
         self.table_header_token_cache_limit = max(
             32,
             int(getattr(settings, "RAG_TABLE_HEADER_TOKEN_CACHE", 256)),
         )
         self._table_header_token_cache: OrderedDict[str, set[str]] = OrderedDict()
         self._table_generic_token_cache: OrderedDict[uuid.UUID, set[str]] = OrderedDict()
+        self._table_context_cache: OrderedDict[uuid.UUID, dict[str, object]] = OrderedDict()
+        self._table_row_label_cache: OrderedDict[uuid.UUID, set[str]] = OrderedDict()
         self.table_column_hint_base = {
             "name",
             "title",
@@ -1017,6 +1035,7 @@ class KnowledgeSearchService:
             "tabular_columns_matched": sorted(table_context["matched_columns"])[:5],
             "tabular_columns_token_match": sorted(table_context.get("matched_columns_tokens") or ())[:5],
             "tabular_columns_specific": sorted(table_context.get("matched_columns_specific") or ())[:5],
+            "tabular_row_label_matches": sorted(table_context.get("matched_row_labels") or ())[:5],
             "tabular_specific_tokens": sorted(table_context.get("specific_tokens") or ())[:5],
             "snippet_limit": limit,
             "alias_chunks_per_upload": alias_chunk_cap,
@@ -1024,6 +1043,11 @@ class KnowledgeSearchService:
             "vector_distance_ceiling": vector_ceiling,
             "tables_available": tables_available,
             "tabular_columns_hint": sorted(table_context.get("semantic_columns") or ())[:5],
+            "tabular_table_dominant": bool(table_context.get("table_dominant")),
+            "tabular_table_upload_ratio": table_context.get("table_upload_ratio"),
+            "tabular_table_count": table_context.get("table_count"),
+            "tabular_table_uploads": table_context.get("table_uploads"),
+            "tabular_allow_generic": bool(table_context.get("allow_generic")),
             "alias_short_circuit_blocked": alias_blocked,
             "table_reason": None,
             "chunk_candidate_count": 0,
@@ -1244,8 +1268,14 @@ class KnowledgeSearchService:
         has_header_match = bool(matched_columns_query or matched_columns_tokens) if isinstance(matched_columns_query, set) else False
         specific_tokens = set(table_context.get("specific_tokens") or ())
         matched_columns_specific = table_context.get("matched_columns_specific")
-        has_specific_match = bool(matched_columns_specific) if specific_tokens else True
-        table_blocked = bool(table_intent and specific_tokens and not has_specific_match)
+        matched_row_labels = set(table_context.get("matched_row_labels") or ())
+        allow_generic = bool(table_context.get("allow_generic"))
+        has_specific_match = bool(matched_columns_specific or matched_row_labels) if specific_tokens else True
+        table_blocked = bool(table_intent and specific_tokens and not has_specific_match and not allow_generic)
+        has_table_chunk = any(
+            bool((hit.chunk.metadata or {}).get("is_table_chunk"))
+            for hit in chunk_hits[: self.table_chunk_sample_limit]
+        )
         if tables_available and not table_blocked:
             if not chunk_hits:
                 should_run_table = True
@@ -1253,6 +1283,9 @@ class KnowledgeSearchService:
             elif table_intent and self._chunk_hits_are_weak(chunk_hits, traits):
                 should_run_table = True
                 table_reason = "weak_chunk_candidates"
+            elif table_intent and allow_generic and not has_table_chunk:
+                should_run_table = True
+                table_reason = "schema_context"
             elif table_intent and self._query_has_entity_tokens(business_profile, traits):
                 should_run_table = True
                 table_reason = "entity_query_parallel"
@@ -1456,18 +1489,38 @@ class KnowledgeSearchService:
         return result_obj
 
     def _build_cross_encoder(self):
-        enabled = bool(getattr(settings, "RAG_ENABLE_CROSS_ENCODER", False))
-        if not enabled or CrossEncoder is None:
-            if enabled and CrossEncoder is None:
+        if not self._cross_encoder_enabled or CrossEncoder is None:
+            if self._cross_encoder_enabled and CrossEncoder is None:
                 logger.warning("Cross-encoder reranker requested but sentence_transformers is not installed.")
             return None
-        model_name = getattr(settings, "RAG_CROSS_ENCODER_MODEL", "cross-encoder/ms-marco-MiniLM-L-6-v2")
-        device = getattr(settings, "RAG_CROSS_ENCODER_DEVICE", None)
         try:
-            return CrossEncoder(model_name, device=device)
+            return CrossEncoder(self._cross_encoder_model_name, device=self._cross_encoder_device)
         except Exception as exc:  # pragma: no cover - optional dependency
-            logger.warning("Failed to initialize cross-encoder model=%s error=%s", model_name, exc)
+            logger.warning(
+                "Failed to initialize cross-encoder model=%s error=%s",
+                self._cross_encoder_model_name,
+                exc,
+            )
             return None
+
+    def _get_cross_encoder(self):
+        if not self._cross_encoder_enabled:
+            return None
+        if self._cross_encoder_failed:
+            return None
+        encoder = getattr(self._cross_encoder_local, "instance", None)
+        if encoder is not None:
+            return encoder
+        with self._cross_encoder_lock:
+            encoder = getattr(self._cross_encoder_local, "instance", None)
+            if encoder is not None:
+                return encoder
+            encoder = self._build_cross_encoder()
+            if encoder is None:
+                self._cross_encoder_failed = True
+                return None
+            self._cross_encoder_local.instance = encoder
+        return encoder
 
     def search_by_alias(
         self,
@@ -1643,7 +1696,7 @@ class KnowledgeSearchService:
                 rerank_ms,
                 tags={
                     "business": str(business_profile.id),
-                    "cross_encoder": bool(self.cross_encoder),
+                    "cross_encoder": bool(self._cross_encoder_enabled),
                 },
             )
             diagnostics = {
@@ -2863,12 +2916,23 @@ class KnowledgeSearchService:
             }
             cand.rerank_score = combined
             scored.append((combined, -idx, cand))
-        if self.cross_encoder and traits.normalized:
+        cross_encoder = self._get_cross_encoder() if traits.normalized else None
+        if cross_encoder:
+            if self.rerank_budget_ms:
+                elapsed_ms = int((time.perf_counter() - start) * 1000)
+                if elapsed_ms >= self.rerank_budget_ms:
+                    logger.warning(
+                        "Cross-encoder rerank skipped: budget_exceeded budget_ms=%s elapsed_ms=%s",
+                        self.rerank_budget_ms,
+                        elapsed_ms,
+                    )
+                    cross_encoder = None
+        if cross_encoder:
             head = [item[2] for item in scored[: self.rerank_pool]]
             if head:
                 pairs = [[traits.normalized, (hit.chunk.content or "")] for hit in head]
                 try:
-                    ce_scores = self.cross_encoder.predict(pairs)
+                    ce_scores = cross_encoder.predict(pairs)
                     ce_values = [float(score) for score in ce_scores]
                 except Exception as exc:  # pragma: no cover - optional dependency
                     logger.warning("Cross-encoder rerank failed: %s", exc)
@@ -2955,13 +3019,24 @@ class KnowledgeSearchService:
             head = list(snippets[: self.snippet_rerank_pool])
             scores: list[tuple[float, int, KnowledgeSnippet]] = []
             ce_scores: list[float] | None = None
-            if self.cross_encoder and normalized_query:
+            cross_encoder = self._get_cross_encoder() if normalized_query else None
+            if cross_encoder:
+                if self.snippet_rerank_budget_ms:
+                    elapsed_ms = int((time.perf_counter() - start) * 1000)
+                    if elapsed_ms >= self.snippet_rerank_budget_ms:
+                        logger.warning(
+                            "Cross-encoder snippet rerank skipped: budget_exceeded budget_ms=%s elapsed_ms=%s",
+                            self.snippet_rerank_budget_ms,
+                            elapsed_ms,
+                        )
+                        cross_encoder = None
+            if cross_encoder:
                 pairs = [
                     [normalized_query, "\n".join(filter(None, [snip.summary, snip.content]))]
                     for snip in head
                 ]
                 try:  # pragma: no cover - optional dependency
-                    raw = self.cross_encoder.predict(pairs)
+                    raw = cross_encoder.predict(pairs)
                     ce_scores = [float(val) for val in raw]
                 except Exception as exc:  # pragma: no cover - optional dependency
                     logger.warning("Cross-encoder snippet rerank failed: %s", exc)
@@ -2981,7 +3056,7 @@ class KnowledgeSearchService:
             if span.is_recording():
                 span.set_attribute("knowledge.snippet_rerank_head", len(head))
                 span.set_attribute("knowledge.snippet_rerank_ms", duration_ms)
-                span.set_attribute("knowledge.snippet_cross_encoder", bool(self.cross_encoder))
+                span.set_attribute("knowledge.snippet_cross_encoder", bool(cross_encoder))
             return tuple(reranked), duration_ms
 
     @staticmethod
@@ -3178,22 +3253,29 @@ class KnowledgeSearchService:
         tokens = set(query_tokens)
         matched_keywords = tokens & self.table_query_keywords
         columns = self._table_columns_for_business(business_profile)
+        table_profile = self._table_profile_for_business(business_profile)
+        row_label_tokens = self._table_row_label_tokens_for_business(business_profile)
         hints = self._table_column_hints(business_profile)
         semantic_columns = {column for column in columns if any(hint in column for hint in hints)}
         matched_columns_query = {column for column in columns if column and column in query_text}
         matched_columns_tokens = {column for column in columns if self._column_matches_tokens(column, query_tokens)}
         matched_columns_specific = {column for column in columns if self._column_matches_tokens(column, specific_tokens)}
+        matched_row_labels = {token for token in row_label_tokens if token in tokens}
         matched_columns = matched_columns_query or matched_columns_tokens or semantic_columns
         has_currency_token = bool(tokens & {"egp", "usd", "eur", "gbp", "aed", "sar", "qar", "kwd", "bhd", "omr", "jod"})
         has_percent = "%" in query_text
         numeric_table_intent = bool(traits.has_digits and (has_currency_token or has_percent))
         has_intent = bool(matched_keywords or matched_columns_query or matched_columns_tokens or numeric_table_intent)
+        allow_generic = bool(table_profile.get("dominant") and matched_keywords)
+        if matched_row_labels:
+            allow_generic = True
         return {
             "has_intent": has_intent,
             "matched_columns": matched_columns,
             "matched_columns_query": matched_columns_query,
             "matched_columns_tokens": matched_columns_tokens,
             "matched_columns_specific": matched_columns_specific,
+            "matched_row_labels": matched_row_labels,
             "matched_keywords": matched_keywords,
             "numeric_intent": numeric_table_intent,
             "available_columns": columns,
@@ -3201,6 +3283,11 @@ class KnowledgeSearchService:
             "matched_column_count": len(matched_columns),
             "query_tokens": query_tokens,
             "specific_tokens": specific_tokens,
+            "table_dominant": table_profile.get("dominant"),
+            "table_upload_ratio": table_profile.get("table_upload_ratio"),
+            "table_count": table_profile.get("table_count"),
+            "table_uploads": table_profile.get("table_uploads"),
+            "allow_generic": allow_generic,
         }
 
     def _table_columns_for_business(self, business_profile) -> set[str]:
@@ -3230,6 +3317,87 @@ class KnowledgeSearchService:
         if len(self._table_column_cache) > self.table_column_cache_limit:
             self._table_column_cache.popitem(last=False)
         return columns
+
+    def _table_profile_for_business(self, business_profile) -> dict[str, object]:
+        business_id = getattr(business_profile, "id", None)
+        if not business_id:
+            return {
+                "table_uploads": 0,
+                "total_uploads": 0,
+                "table_upload_ratio": 0.0,
+                "table_count": 0,
+                "dominant": False,
+            }
+        cached = self._table_context_cache.get(business_id)
+        if cached is not None:
+            self._table_context_cache.move_to_end(business_id)
+            return cached
+
+        uploads_qs = KnowledgeUpload.objects.filter(
+            business_profile=business_profile,
+            status=KnowledgeStatus.ACTIVE,
+        ).exclude(visibility=KnowledgeVisibility.INTERNAL)
+        uploads_qs = self._filter_queryable_table_uploads(
+            uploads_qs,
+            format_lookup="ingestion_metadata__format",
+        )
+        total_uploads = uploads_qs.count()
+
+        table_qs = KnowledgeUploadTable.objects.filter(
+            upload__business_profile=business_profile,
+        ).exclude(upload__visibility=KnowledgeVisibility.INTERNAL)
+        table_qs = self._filter_queryable_table_uploads(
+            table_qs,
+            format_lookup="upload__ingestion_metadata__format",
+        )
+        table_uploads = table_qs.values("upload_id").distinct().count()
+        table_count = table_qs.count()
+        upload_ratio = (table_uploads / total_uploads) if total_uploads else 0.0
+        dominant = bool(
+            table_count >= self.table_dominant_min_tables
+            and upload_ratio >= self.table_dominant_upload_ratio
+        )
+        profile = {
+            "table_uploads": table_uploads,
+            "total_uploads": total_uploads,
+            "table_upload_ratio": round(upload_ratio, 4),
+            "table_count": table_count,
+            "dominant": dominant,
+        }
+        self._table_context_cache[business_id] = profile
+        if len(self._table_context_cache) > self.table_context_cache_limit:
+            self._table_context_cache.popitem(last=False)
+        return profile
+
+    def _table_row_label_tokens_for_business(self, business_profile) -> set[str]:
+        business_id = getattr(business_profile, "id", None)
+        if not business_id:
+            return set()
+        cached = self._table_row_label_cache.get(business_id)
+        if cached is not None:
+            self._table_row_label_cache.move_to_end(business_id)
+            return cached
+        cell_qs = KnowledgeUploadTableCell.objects.filter(
+            table__upload__business_profile=business_profile,
+            column_index=0,
+        ).exclude(table__upload__visibility=KnowledgeVisibility.INTERNAL)
+        cell_qs = self._filter_queryable_table_uploads(
+            cell_qs,
+            format_lookup="table__upload__ingestion_metadata__format",
+        ).exclude(row__metadata__row_type="header")
+        labels = list(
+            cell_qs.order_by("-row__updated_at")
+            .values_list("raw_text", flat=True)[: self.table_row_label_sample_limit]
+        )
+        tokens: set[str] = set()
+        for label in labels:
+            if not label:
+                continue
+            tokens.update(self._table_tokenize(str(label)))
+        self._table_row_label_cache[business_id] = tokens
+        if len(self._table_row_label_cache) > self.table_context_cache_limit:
+            self._table_row_label_cache.popitem(last=False)
+        return tokens
 
     def _table_row_result_cap_for_business(self, business_profile, requested: int | None = None) -> int:
         """

@@ -1,0 +1,233 @@
+%PDF-1.4
+1 0 obj
+<< /Type /Catalog /Pages 2 0 R >>
+endobj
+2 0 obj
+<< /Type /Pages /Kids [3 0 R] /Count 1 >>
+endobj
+3 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792]
+   /Resources << /Font << /F1 4 0 R >> >>
+   /Contents 5 0 R >>
+endobj
+4 0 obj
+<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>
+endobj
+5 0 obj
+<< /Length 6741 >>
+stream
+BT
+/F1 10 Tf
+50 770 Td
+14 TL
+(Job ID: J001 | Title: Senior Backend Engineer) Tj
+T*
+(Company: Nile Systems | Location: Cairo, Egypt \(Hybrid\)) Tj
+T*
+(Type: Full-time | Level: Senior | Category: Engineering) Tj
+T*
+(Salary Range: 45,000-60,000 EGP/month | Posted: 2025-09-21) Tj
+T*
+(Tech/Skills: Python, Django, REST, Postgres, Docker) Tj
+T*
+(Description: Lead backend projects, design robust APIs, and mentor junior engineers in a fast-paced B2B environment.) Tj
+T*
+T*
+(Job ID: J002 | Title: Product Manager - Travel Experiences) Tj
+T*
+(Company: Desert Horizon Travel | Location: Giza, Egypt \(On-site\)) Tj
+T*
+(Type: Full-time | Level: Mid-Senior | Category: Product) Tj
+T*
+(Salary Range: 30,000-45,000 EGP/month | Posted: 2025-09-15) Tj
+T*
+(Tech/Skills: Agile, JIRA, A/B testing, CX research) Tj
+T*
+(Description: Own the end-to-end lifecycle of curated travel products, from discovery to launch and optimization.) Tj
+T*
+T*
+(Job ID: J003 | Title: Data Analyst) Tj
+T*
+(Company: Delta Insights | Location: Alexandria, Egypt \(Remote-friendly\)) Tj
+T*
+(Type: Full-time | Level: Mid-level | Category: Analytics) Tj
+T*
+(Salary Range: 25,000-35,000 EGP/month | Posted: 2025-08-30) Tj
+T*
+(Tech/Skills: SQL, Python, Power BI, Excel) Tj
+T*
+(Description: Analyze customer and sales data to deliver dashboards, insights, and recommendations for stakeholders.) Tj
+T*
+T*
+(Job ID: J004 | Title: Frontend Engineer \(React\)) Tj
+T*
+(Company: Skyline Digital Studio | Location: Cairo, Egypt \(Hybrid\)) Tj
+T*
+(Type: Full-time | Level: Mid-Senior | Category: Engineering) Tj
+T*
+(Salary Range: 35,000-50,000 EGP/month | Posted: 2025-10-05) Tj
+T*
+(Tech/Skills: JavaScript, TypeScript, React, Tailwind CSS) Tj
+T*
+(Description: Build responsive, accessible web interfaces and collaborate closely with designers and backend engineers.) Tj
+T*
+T*
+(Job ID: J005 | Title: Customer Success Specialist) Tj
+T*
+(Company: SaaSFlow CRM | Location: Remote \(EMEA\)) Tj
+T*
+(Type: Full-time | Level: Junior-Mid | Category: Customer Success) Tj
+T*
+(Salary Range: 18,000-26,000 EGP/month \(equivalent\) | Posted: 2025-09-05) Tj
+T*
+(Tech/Skills: CRM tools, ticketing systems, basic SQL) Tj
+T*
+(Description: Help onboard new customers, respond to product questions, and drive adoption across SMB accounts.) Tj
+T*
+T*
+(Job ID: J006 | Title: UX/UI Designer) Tj
+T*
+(Company: Oasis Labs | Location: Cairo, Egypt \(On-site\)) Tj
+T*
+(Type: Full-time | Level: Mid-level | Category: Design) Tj
+T*
+(Salary Range: 28,000-38,000 EGP/month | Posted: 2025-08-18) Tj
+T*
+(Tech/Skills: Figma, user research, prototyping) Tj
+T*
+(Description: Design intuitive interfaces for mobile and web apps with a focus on user journeys and visual consistency.) Tj
+T*
+T*
+(Job ID: J007 | Title: DevOps Engineer) Tj
+T*
+(Company: Red Sea Cloud | Location: Hurghada, Egypt \(Hybrid\)) Tj
+T*
+(Type: Full-time | Level: Senior | Category: Engineering) Tj
+T*
+(Salary Range: 45,000-65,000 EGP/month | Posted: 2025-09-28) Tj
+T*
+(Tech/Skills: AWS, CI/CD, Kubernetes, Terraform) Tj
+T*
+(Description: Implement and maintain cloud infrastructure, CI/CD pipelines, and observability for distributed systems.) Tj
+T*
+T*
+(Job ID: J008 | Title: HR Generalist) Tj
+T*
+(Company: Cairo Creative Hub | Location: Cairo, Egypt \(On-site\)) Tj
+T*
+(Type: Full-time | Level: Mid-level | Category: Human Resources) Tj
+T*
+(Salary Range: 18,000-24,000 EGP/month | Posted: 2025-07-30) Tj
+T*
+(Tech/Skills: HRIS, labor law basics, Excel) Tj
+T*
+(Description: Manage recruitment, onboarding, performance cycles, and employee engagement for a growing creative agency.) Tj
+T*
+T*
+(Job ID: J009 | Title: Marketing Specialist - Paid Media) Tj
+T*
+(Company: BrightPath Media | Location: Remote \(Egypt-based\)) Tj
+T*
+(Type: Full-time | Level: Mid-level | Category: Marketing) Tj
+T*
+(Salary Range: 22,000-30,000 EGP/month | Posted: 2025-10-10) Tj
+T*
+(Tech/Skills: Google Ads, Meta Ads, Analytics, copywriting) Tj
+T*
+(Description: Plan, execute, and optimize paid campaigns across search and social channels with clear ROI reporting.) Tj
+T*
+T*
+(Job ID: J010 | Title: Operations Coordinator - Tours & Activities) Tj
+T*
+(Company: Valley Trails | Location: Luxor, Egypt \(On-site\)) Tj
+T*
+(Type: Full-time | Level: Junior-Mid | Category: Operations) Tj
+T*
+(Salary Range: 15,000-20,000 EGP/month | Posted: 2025-09-01) Tj
+T*
+(Tech/Skills: Booking systems, spreadsheets, communication tools) Tj
+T*
+(Description: Coordinate daily tour operations, manage vendor schedules, and support guests before and during their trips.) Tj
+T*
+T*
+(Job ID: J011 | Title: Finance Officer) Tj
+T*
+(Company: GreenLine Logistics | Location: Cairo, Egypt \(On-site\)) Tj
+T*
+(Type: Full-time | Level: Mid-level | Category: Finance) Tj
+T*
+(Salary Range: 25,000-32,000 EGP/month | Posted: 2025-08-05) Tj
+T*
+(Tech/Skills: ERP, Excel, basic SQL, reporting) Tj
+T*
+(Description: Handle financial reporting, budgeting support, and monthly closing activities in a logistics environment.) Tj
+T*
+T*
+(Job ID: J012 | Title: Full Stack Developer) Tj
+T*
+(Company: Sinai Tech Studio | Location: Remote \(Egypt\)) Tj
+T*
+(Type: Full-time | Level: Mid-Senior | Category: Engineering) Tj
+T*
+(Salary Range: 40,000-55,000 EGP/month | Posted: 2025-09-11) Tj
+T*
+(Tech/Skills: Python, Django, React, REST, PostgreSQL) Tj
+T*
+(Description: Deliver end-to-end product features from database schema design to frontend implementation and deployment.) Tj
+T*
+T*
+(Job ID: J013 | Title: Content Writer - B2B SaaS) Tj
+T*
+(Company: Pipeline Growth Studio | Location: Remote \(Global\)) Tj
+T*
+(Type: Contract | Level: Mid-level | Category: Content) Tj
+T*
+(Salary Range: Project-based \(up to 35,000 EGP/month equivalent\) | Posted: 2025-10-02) Tj
+T*
+(Tech/Skills: SEO, content strategy, CMS tools) Tj
+T*
+(Description: Create blog posts, landing pages, and case studies that explain complex SaaS products in simple language.) Tj
+T*
+T*
+(Job ID: J014 | Title: QA Engineer) Tj
+T*
+(Company: HelioSoft | Location: Cairo, Egypt \(Hybrid\)) Tj
+T*
+(Type: Full-time | Level: Mid-level | Category: Quality Assurance) Tj
+T*
+(Salary Range: 25,000-33,000 EGP/month | Posted: 2025-08-25) Tj
+T*
+(Tech/Skills: Test automation, Selenium, API testing) Tj
+T*
+(Description: Design and execute manual and automated tests to ensure high product quality across web and mobile apps.) Tj
+T*
+T*
+(Job ID: J015 | Title: Office Manager) Tj
+T*
+(Company: Blue Dunes Studio | Location: Giza, Egypt \(On-site\)) Tj
+T*
+(Type: Full-time | Level: Mid-level | Category: Administration) Tj
+T*
+(Salary Range: 16,000-22,000 EGP/month | Posted: 2025-07-20) Tj
+T*
+(Tech/Skills: Office tools, scheduling software, basic reporting) Tj
+T*
+(Description: Oversee daily office operations, vendor relations, and administrative support for a small creative team.) Tj
+T*
+T*
+ET
+endstream
+endobj
+xref
+0 6
+0000000000 65535 f 
+0000000009 00000 n 
+0000000058 00000 n 
+0000000115 00000 n 
+0000000247 00000 n 
+0000000317 00000 n 
+trailer
+<< /Size 6 /Root 1 0 R >>
+startxref
+7109
+%%EOF

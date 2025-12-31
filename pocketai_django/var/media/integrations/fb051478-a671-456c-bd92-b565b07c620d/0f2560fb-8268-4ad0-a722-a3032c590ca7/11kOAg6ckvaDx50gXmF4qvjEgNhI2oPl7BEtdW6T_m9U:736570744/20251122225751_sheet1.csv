@@ -1,0 +1,31 @@
+Ticket ID,Customer ID,Email,Plan,Product,Issue Summary,Status,Priority,Created At,Last Updated At
+TCK-1001,CUST-00123,amira.hassan@example.com,Starter,Web App,Cannot log in to account,Open,High,2025-01-03 09:15,2025-01-03 09:15
+TCK-1002,CUST-00456,karim.saeed@example.com,Growth,Mobile App,Push notifications not received,In Progress,Medium,2025-01-03 10:02,2025-01-03 11:20
+TCK-1003,CUST-00291,salma.ali@example.com,Enterprise,Web App,Reports page keeps timing out,Open,High,2025-01-03 10:45,2025-01-03 10:45
+TCK-1004,CUST-00087,mostafa.rami@example.com,Starter,API,API key invalid error,Resolved,Medium,2025-01-02 14:03,2025-01-02 16:40
+TCK-1005,CUST-00342,yara.nabil@example.com,Growth,Dashboard,Usage metrics not refreshing,In Progress,Low,2025-01-04 08:37,2025-01-04 09:10
+TCK-1006,CUST-00577,ahmed.khaled@example.com,Enterprise,Integrations,Slack integration not syncing,Open,High,2025-01-04 09:22,2025-01-04 09:22
+TCK-1007,CUST-00189,laila.farid@example.com,Starter,Billing,Charged twice this month,Open,High,2025-01-04 09:55,2025-01-04 09:55
+TCK-1008,CUST-00411,nour.elmasry@example.com,Growth,Web App,Password reset email missing,Resolved,Medium,2025-01-01 18:40,2025-01-01 19:05
+TCK-1009,CUST-00624,hana.samir@example.com,Growth,Dashboard,Filters not applied correctly,In Progress,Medium,2025-01-05 10:10,2025-01-05 11:00
+TCK-1010,CUST-00702,mazen.adel@example.com,Enterprise,API,Webhook retries failing,Open,High,2025-01-05 10:33,2025-01-05 10:33
+TCK-1011,CUST-00110,omar.hamed@example.com,Starter,Mobile App,App crashes on launch,Open,High,2025-01-05 11:02,2025-01-05 11:02
+TCK-1012,CUST-00205,radwa.sherif@example.com,Growth,Billing,Invoice PDF not downloadable,Resolved,Low,2025-01-02 09:30,2025-01-02 10:12
+TCK-1013,CUST-00844,sherif.kamel@example.com,Enterprise,Web App,Single sign-on not working,In Progress,High,2025-01-06 08:55,2025-01-06 09:40
+TCK-1014,CUST-00064,dina.hosny@example.com,Starter,Dashboard,Timezone showing incorrectly,Open,Low,2025-01-06 09:12,2025-01-06 09:12
+TCK-1015,CUST-00503,ziad.mourad@example.com,Growth,API,Rate limit exceeded too early,Open,Medium,2025-01-06 09:48,2025-01-06 09:48
+TCK-1016,CUST-00917,sara.abdelrahman@example.com,Enterprise,Mobile App,Can’t update profile photo,Resolved,Low,2025-01-03 16:25,2025-01-03 17:00
+TCK-1017,CUST-00301,marwan.samir@example.com,Growth,Integrations,HubSpot sync partial data,In Progress,High,2025-01-07 08:20,2025-01-07 09:05
+TCK-1018,CUST-00277,rania.mahdy@example.com,Starter,Web App,Search results very slow,Open,Medium,2025-01-07 08:47,2025-01-07 08:47
+TCK-1019,CUST-00490,hiba.youssef@example.com,Growth,Billing,Promo code not applied,Resolved,Medium,2025-01-01 11:15,2025-01-01 11:42
+TCK-1020,CUST-00688,kareem.salah@example.com,Enterprise,Dashboard,Custom widget not loading,Open,High,2025-01-07 09:30,2025-01-07 09:30
+TCK-1021,CUST-00157,aya.hussein@example.com,Starter,Mobile App,Unable to change language,In Progress,Low,2025-01-07 10:05,2025-01-07 10:40
+TCK-1022,CUST-00591,mohamed.samir@example.com,Growth,API,OAuth token expired early,Open,Medium,2025-01-08 08:10,2025-01-08 08:10
+TCK-1023,CUST-00756,lina.ragab@example.com,Enterprise,Web App,Team members missing list,In Progress,High,2025-01-08 08:44,2025-01-08 09:18
+TCK-1024,CUST-00039,ahmad.hazem@example.com,Starter,Dashboard,Exported CSV empty,Resolved,Medium,2025-01-03 13:20,2025-01-03 13:55
+TCK-1025,CUST-00368,nesma.fouad@example.com,Growth,Integrations,Google Sheets sync stuck,Open,Medium,2025-01-08 09:02,2025-01-08 09:02
+TCK-1026,CUST-00803,ibrahim.yasin@example.com,Enterprise,Billing,Contract price mismatch,In Progress,High,2025-01-08 09:36,2025-01-08 10:05
+TCK-1027,CUST-00219,salma.galal@example.com,Growth,Mobile App,Old notifications reappearing,Open,Low,2025-01-08 10:01,2025-01-08 10:01
+TCK-1028,CUST-00427,hadi.fekry@example.com,Starter,Web App,Can’t delete workspace,Open,High,2025-01-09 08:25,2025-01-09 08:25
+TCK-1029,CUST-00610,farah.magdy@example.com,Growth,Dashboard,Chart legends overlapping,Resolved,Low,2025-01-02 15:15,2025-01-02 15:50
+TCK-1030,CUST-00972,monir.wael@example.com,Enterprise,API,Webhook signature mismatch,Open,High,2025-01-09 09:05,2025-01-09 09:05

@@ -21,7 +21,7 @@ import threading
 import time
 import uuid
 from bisect import bisect_left
-from collections import Counter
+from collections import Counter, defaultdict
 from datetime import datetime, timezone
 from functools import lru_cache
 import logging
@@ -1952,6 +1952,14 @@ def _search_knowledge_handler(
         1,
         int(getattr(settings, "MCP_SEARCH_MAX_QUERY_VARIANTS", DEFAULT_MAX_SEARCH_QUERY_VARIANTS)),
     )
+    fanout_budget_ms = max(
+        0,
+        int(getattr(settings, "MCP_SEARCH_FANOUT_BUDGET_MS", 0) or 0),
+    )
+    rrf_k = max(
+        1,
+        int(getattr(settings, "MCP_SEARCH_FANOUT_RRF_K", 60) or 60),
+    )
 
     def _prune_queries(values: Sequence[str]) -> list[str]:
         if len(values) <= query_variant_limit:
@@ -2553,10 +2561,32 @@ def _search_knowledge_handler(
 
     executor: ThreadPoolExecutor | None = None
     futures: list[tuple[int, str, Mapping[str, object], str | None, int | None, object]] = []
-    if non_cached_queries > 1:
+    fanout_start = time.perf_counter()
+    use_parallel = non_cached_queries > 1 and fanout_budget_ms <= 0
+    if use_parallel:
         executor = ThreadPoolExecutor(max_workers=min(non_cached_queries, 4), thread_name_prefix="mcp_search")
     try:
         for idx, query_text, intent_info, intent, limit_for_run in pending_specs:
+            if not executor and fanout_budget_ms:
+                elapsed_ms = int((time.perf_counter() - fanout_start) * 1000)
+                if resolved_runs and elapsed_ms >= fanout_budget_ms:
+                    structured_log(
+                        "mcp",
+                        "search.fanout_budget_exceeded",
+                        {
+                            "budget_ms": fanout_budget_ms,
+                            "elapsed_ms": elapsed_ms,
+                            "queries_planned": len(pending_specs),
+                            "queries_run": len(resolved_runs),
+                        },
+                        context={
+                            "conversation": conversation.id,
+                            "business": conversation.business_profile_id,
+                        },
+                        logger_obj=logger,
+                        level=logging.WARNING,
+                    )
+                    break
             if executor:
                 future = executor.submit(
                     service.search,
@@ -2623,19 +2653,47 @@ def _search_knowledge_handler(
     limit_cap = primary_run.get("limit_used")
     clip_limit = int(limit_cap) if isinstance(limit_cap, int) and limit_cap > 0 else None
     deduped_snippets: list[dict[str, object]] = []
-    seen_snippets: set[str] = set()
-    for run in runs:
-        for snippet in run.get("snippets", []):
-            identifier = snippet.get("chunk_id") or snippet.get("id") or snippet.get("upload_id")
-            dedup_key = str(identifier) if identifier else json.dumps(snippet, sort_keys=True, default=str)
-            if dedup_key in seen_snippets:
-                continue
-            seen_snippets.add(dedup_key)
-            deduped_snippets.append(snippet)
+    fusion: dict[str, object] | None = None
+    if len(runs) > 1:
+        rrf_scores: dict[str, float] = defaultdict(float)
+        best_payload: dict[str, dict[str, object]] = {}
+        best_rank: dict[str, int] = {}
+        for run in runs:
+            for rank, snippet in enumerate(run.get("snippets", []), start=1):
+                identifier = snippet.get("chunk_id") or snippet.get("id") or snippet.get("upload_id")
+                if not identifier:
+                    continue
+                key = str(identifier)
+                rrf_scores[key] += 1.0 / (rrf_k + rank)
+                current_best = best_rank.get(key)
+                if current_best is None or rank < current_best:
+                    best_rank[key] = rank
+                    best_payload[key] = snippet
+        ordered = sorted(
+            rrf_scores.items(),
+            key=lambda item: (-item[1], best_rank.get(item[0], 10**9)),
+        )
+        for key, _score in ordered:
+            payload = best_payload.get(key)
+            if payload:
+                deduped_snippets.append(payload)
             if clip_limit and len(deduped_snippets) >= clip_limit:
                 break
-        if clip_limit and len(deduped_snippets) >= clip_limit:
-            break
+        fusion = {"method": "rrf", "k": rrf_k, "runs": len(runs)}
+    else:
+        seen_snippets: set[str] = set()
+        for run in runs:
+            for snippet in run.get("snippets", []):
+                identifier = snippet.get("chunk_id") or snippet.get("id") or snippet.get("upload_id")
+                dedup_key = str(identifier) if identifier else json.dumps(snippet, sort_keys=True, default=str)
+                if dedup_key in seen_snippets:
+                    continue
+                seen_snippets.add(dedup_key)
+                deduped_snippets.append(snippet)
+                if clip_limit and len(deduped_snippets) >= clip_limit:
+                    break
+            if clip_limit and len(deduped_snippets) >= clip_limit:
+                break
 
     for snippet in deduped_snippets:
         context.add_knowledge_result(snippet)
@@ -2648,6 +2706,7 @@ def _search_knowledge_handler(
             "status": primary_run.get("status"),
             "limit": limit_cap,
             "query_length": len(str(primary_run.get("query") or "")),
+            "fusion": fusion,
         },
     )
     context.reserve_characters(int(metrics.get("char_count", 0)))
@@ -2677,6 +2736,8 @@ def _search_knowledge_handler(
         "snippets": deduped_snippets,
         "hint": _search_hint(final_status, query_intent, deduped_snippets, diag),
     }
+    if fusion:
+        payload["fusion"] = fusion
     if len(queries) > 1:
         payload["batched_queries"] = tuple(queries)
     return payload

@@ -1,0 +1,46 @@
+{
+  "type": "mcp_load_test",
+  "started_at": "2025-12-26T16:22:28.909864+00:00",
+  "ended_at": "2025-12-26T16:22:34.090748+00:00",
+  "business_id": "70c8914c-a476-4455-8442-31035698858b",
+  "conversation_id": "9dcf3cfa-7c81-4b92-9bec-2cac0b96ef48",
+  "mode": "search",
+  "queries": [
+    "issuance and renewal fees",
+    "World Elite issuance fee",
+    "EGP 350"
+  ],
+  "iterations": 3,
+  "concurrency": 1,
+  "document_id": null,
+  "intent": "auto",
+  "rate_limits_disabled": false,
+  "tool_counts": {
+    "search_knowledge": 3
+  },
+  "statuses": {
+    "ok": 3
+  },
+  "error_codes": {},
+  "latency_ms": {
+    "p50": 1434.0,
+    "p95": 2315.1,
+    "mean": 1520.0,
+    "max": 2413
+  },
+  "rates": {
+    "error_rate": 0.0,
+    "throttled_rate": 0.0
+  },
+  "thresholds": {
+    "p95_max_ms": 1500,
+    "max_error_rate": 0.02,
+    "max_throttled_rate": 0.02
+  },
+  "violations": {
+    "p95_latency_ms": {
+      "observed": 2315.1,
+      "maximum": 1500.0
+    }
+  }
+}

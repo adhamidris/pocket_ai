@@ -57,6 +57,7 @@ PLANNER_CRM_RULES = textwrap.dedent(
     - For product interest or sales inquiry, create a lead in addition to the case.
     - Complaints or negative sentiment require a case with priority=high.
     - Keep cases current: use update_case_details for major changes; add_case_history for incremental updates.
+    - When new issue context, product interest, or resolution details appear, update the existing case on that same turn.
     - When any identifier appears (email/phone/name) in a business context, call create_customer once to attach it to the session; if already attached, log new identifiers in case history/metadata.
     - Do not mention cases/leads to the visitor unless they ask. Offer human follow-up only after the visitor repeats/insists or explicitly asks, and wait for consent.
     - These CRM rules override any other action guidance in this prompt when they conflict.
@@ -114,7 +115,7 @@ def build_system_message(
         - For record lookups (a specific order/invoice/ticket/customer/transaction/reference), retrieve the matching record via tools before stating record-specific fields; if you cannot retrieve it, say not found and ask for the missing key/value.
         - When tools finish, deliver the final visitor-facing answer in that same response instead of waiting for another pass.
         - Treat `search_knowledge` as expensive: per assistant turn you get one batched call; once it returns snippets you must stay on that evidence.
-        - If the request is vague or underspecified, give a short high-level answer without inventing specifics, then ask one clarifying question.
+        - If the request is vague or underspecified, give a short high-level answer without inventing specifics. Do not ask a clarifying question on the first response unless a required identifier is missing; only ask for clarification after the visitor repeats/insists or explicitly requests more detail.
         - Do not promise or initiate human follow-up on the first miss. Offer human follow-up only after the visitor repeats the same request, challenges the answer, or explicitly asks for a human; wait for consent before communicating the follow-up.
         - Capture CRM actions silently (cases/leads) without mentioning them unless the visitor asks.
 
@@ -126,6 +127,7 @@ def build_system_message(
         - Ensure all Markdown markers are balanced—never leave stray `**`, `_`, or ``` fences. If the model cannot format a section cleanly, fall back to plain text for that section only.
         ### Evidence Rules
         - Use only snippets/reads returned this turn or earlier tool outputs from this conversation. No outside knowledge, file names, document titles, IDs, or citations.
+        - If snippets fully answer the question, respond immediately without additional tool calls or follow-up questions.
         - You may reuse a prior answer only if it was grounded in tool evidence and the visitor has not disputed it. If they ask “are you sure?” or repeat the request, re-run tools.
         - `read_required` is a hint, not a command. Table aggregates already count as full evidence.
         - Ask for identifiers only when an action absolutely needs them, and ask once. If an email/phone/name arrives within a business context, call `create_customer` once to attach it; skip identifier requests on greetings or general FAQs.
@@ -163,6 +165,7 @@ def build_system_message(
             • Call when a snippet is summary/preview or marked read_required, or when the visitor explicitly asks for full page/text details.
             • Accepts `pages` list to read multiple pages at once (e.g. `pages=[1, 2]`).
             • Use `mode="excerpt"` by default; use `mode="full_page"` only if the visitor explicitly asks for "full text" or "all details" of a specific page.
+            • Do not call read_document just to double-check when table row snippets already answer the question.
 
         - `query_dataset`
             • Use for structured CSV/Excel/JSONL datasets.
@@ -559,7 +562,7 @@ def build_final_answer_messages(
         f"You are now drafting the final customer-facing answer for {business_name}.",
         "Tools have already been executed this turn. Answer only from the provided reads/snippets—no outside knowledge and no document titles, IDs, or citations.",
         "Do not narrate internal steps or mention tools. Lead with the direct answer and keep replies concise. If three or more items/rows are required, use a Markdown table instead of forcing 2–3 sentences.",
-        "If something is missing, state that first and ask only for the required identifier/page that is still missing, following the guardrails.",
+        "If something is missing, state that first and request only the required identifier/page for the action. Do not ask clarifying questions for broad requests.",
         "Do not mention cases or leads. Offer human follow-up only if the visitor explicitly asks or has repeated/insisted, and request consent before stating that a follow-up will happen.",
         "Add short bullet next steps only when needed, otherwise end after the answer.",
         "Safety: share documented policy/process only; no personal advice or diagnostics for health/finance/legal topics.",

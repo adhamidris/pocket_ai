@@ -83,7 +83,7 @@ from apps.knowledge.table_normalization import (
 logger = logging.getLogger(__name__)
 TRACER = otel_trace.get_tracer(__name__)
 
-OCR_NORMALIZATION_VERSION = "v1"
+OCR_NORMALIZATION_VERSION = "v2"
 _ARABIC_CHAR_RE = re.compile(r"[\u0600-\u06FF]")
 _ARABIC_DIACRITICS_RE = re.compile(r"[\u0610-\u061A\u064B-\u065F\u06D6-\u06ED]")
 
@@ -2447,10 +2447,25 @@ class KnowledgeIngestionService:
         self.table_parent_max_rows = max(1, int(getattr(settings, "RAG_TABLE_PARENT_MAX_ROWS", 200)))
         self.table_parent_max_chars = max(2000, int(getattr(settings, "RAG_TABLE_PARENT_MAX_CHARS", 16000)))
         self.table_child_max_rows = max(0, int(getattr(settings, "RAG_TABLE_CHILD_MAX_ROWS", 500)))
+        self.table_header_propagation_enabled = bool(
+            getattr(settings, "RAG_TABLE_HEADER_PROPAGATION_ENABLED", True)
+        )
+        self.table_header_propagation_min_overlap = float(
+            getattr(settings, "RAG_TABLE_HEADER_PROPAGATION_MIN_OVERLAP", 0.45)
+        )
+        self.table_dedupe_enabled = bool(getattr(settings, "RAG_TABLE_DEDUPE_ENABLED", True))
+        self.table_dedupe_min_overlap = float(getattr(settings, "RAG_TABLE_DEDUPE_MIN_OVERLAP", 0.6))
+        self.table_postprocess_row_limit = max(
+            5, int(getattr(settings, "RAG_TABLE_POSTPROCESS_ROW_LIMIT", 40))
+        )
         self.ocr_normalization_enabled = bool(getattr(settings, "RAG_OCR_NORMALIZATION_ENABLED", True))
         self.ocr_word_replacements = self._compile_ocr_replacements(
             getattr(settings, "RAG_OCR_NORMALIZATION_REPLACEMENTS", None)
         )
+        self.ocr_percent_fix_enabled = bool(getattr(settings, "RAG_OCR_PERCENT_FIX_ENABLED", True))
+        self.ocr_percent_space_fix_enabled = bool(getattr(settings, "RAG_OCR_PERCENT_SPACE_FIX_ENABLED", True))
+        self.ocr_percent_sanity_max = float(getattr(settings, "RAG_OCR_PERCENT_SANITY_MAX", 100.0))
+        self.ocr_currency_spacing_enabled = bool(getattr(settings, "RAG_OCR_CURRENCY_SPACING_ENABLED", True))
         self.default_json_entity_limit = max(
             1,
             int(getattr(settings, "INGEST_MAX_JSON_ENTITIES_DEFAULT", 200)),
@@ -3320,6 +3335,11 @@ class KnowledgeIngestionService:
             )
             issues.extend(repair_issues)
 
+        postprocess_meta: dict[str, Any] = {}
+        if tables:
+            tables, postprocess_issues, postprocess_meta = self._postprocess_tables(tables)
+            issues.extend(postprocess_issues)
+
 
 
         ingest_config = self._table_ingest_config(upload)
@@ -3369,6 +3389,8 @@ class KnowledgeIngestionService:
                 extraction_meta["azure_di"] = azure_meta
             if repair_meta:
                 extraction_meta["table_repairs"] = repair_meta
+            if postprocess_meta:
+                extraction_meta["table_postprocess"] = postprocess_meta
             metadata["table_extraction"] = extraction_meta
         return ExtractionResult(
             text=text,
@@ -5101,6 +5123,190 @@ class KnowledgeIngestionService:
             'signals': signals,
             'penalties': penalties,
         }
+
+    def _table_row_label_set(self, table: TablePayload) -> set[str]:
+        labels: list[str] = []
+        for row in table.rows:
+            if (row.metadata or {}).get("row_type") == "header":
+                continue
+            first_cell = None
+            for cell in row.cells:
+                if cell.column_index == 0:
+                    first_cell = cell
+                    break
+            if not first_cell and row.cells:
+                first_cell = row.cells[0]
+            raw = str(getattr(first_cell, "raw_text", "") or "").strip() if first_cell else str(row.raw_text or "")
+            if not raw:
+                continue
+            normalized = self._normalize_ocr_text(raw).lower()
+            normalized = re.sub(r"\s+", " ", normalized).strip()
+            if len(normalized) < 3 or not re.search(r"[a-z]", normalized):
+                continue
+            labels.append(normalized)
+            if len(labels) >= self.table_postprocess_row_limit:
+                break
+        return set(labels)
+
+    def _table_schema_is_generic(self, table: TablePayload) -> bool:
+        if not table.column_schema:
+            return True
+        assessment = self._assess_table_quality(table)
+        signals = assessment.get("signals") or {}
+        if signals.get("nonsense_columns"):
+            return True
+        header_confidence = float(signals.get("header_confidence") or 0.0)
+        if header_confidence < 0.3:
+            return True
+        return False
+
+    def _apply_schema_override(
+        self,
+        table: TablePayload,
+        schema: Sequence[str],
+        *,
+        inferred_from: int | None = None,
+    ) -> TablePayload:
+        normalized_schema = [str(col or "").strip() or f"column_{idx+1}" for idx, col in enumerate(schema)]
+        new_rows: list[TableRowPayload] = []
+        for row in table.rows:
+            row_meta = dict(row.metadata or {})
+            if row_meta.get("row_type") == "header":
+                row_meta["row_type"] = "data"
+                row_meta["header_inferred"] = True
+            new_cells: list[TableCellPayload] = []
+            for cell in row.cells:
+                col_key = normalized_schema[cell.column_index] if cell.column_index < len(normalized_schema) else f"column_{cell.column_index+1}"
+                new_cells.append(
+                    TableCellPayload(
+                        row_index=cell.row_index,
+                        column_index=cell.column_index,
+                        column_key=col_key,
+                        raw_text=cell.raw_text,
+                        normalized_value=cell.normalized_value,
+                        bbox=cell.bbox,
+                        confidence=cell.confidence,
+                        metadata=cell.metadata,
+                    )
+                )
+            new_rows.append(
+                TableRowPayload(
+                    row_index=row.row_index,
+                    page_number=row.page_number,
+                    bbox=row.bbox,
+                    raw_text=row.raw_text,
+                    metadata=row_meta,
+                    cells=new_cells,
+                )
+            )
+        table_meta = dict(table.metadata or {})
+        table_meta["header_inferred"] = True
+        if inferred_from is not None:
+            table_meta["header_inferred_from"] = inferred_from
+        return TablePayload(
+            order_index=table.order_index,
+            title=table.title,
+            section_heading=table.section_heading,
+            page_number=table.page_number,
+            bbox=table.bbox,
+            column_schema=normalized_schema,
+            data_dictionary=table.data_dictionary,
+            metadata=table_meta,
+            rows=new_rows,
+        )
+
+    def _postprocess_tables(
+        self,
+        tables: Sequence[TablePayload],
+    ) -> tuple[list[TablePayload], list[IssuePayload], dict[str, Any]]:
+        if not tables:
+            return [], [], {}
+        grouped: dict[int | None, list[TablePayload]] = {}
+        for table in tables:
+            grouped.setdefault(table.page_number, []).append(table)
+        issues: list[IssuePayload] = []
+        meta = {"deduped_tables": 0, "header_inferred": 0}
+        processed: list[TablePayload] = []
+
+        def _jaccard(a: set[str], b: set[str]) -> float:
+            if not a or not b:
+                return 0.0
+            return len(a & b) / max(1, len(a | b))
+
+        for page_number, page_tables in grouped.items():
+            page_tables = sorted(page_tables, key=lambda t: t.order_index)
+            if self.table_dedupe_enabled:
+                deduped: list[TablePayload] = []
+                dedupe_labels: list[set[str]] = []
+                dedupe_quality: list[float] = []
+                for table in page_tables:
+                    labels = self._table_row_label_set(table)
+                    quality = float(self._assess_table_quality(table).get("quality_score") or 0.0)
+                    merged = False
+                    if labels:
+                        for idx, existing in enumerate(deduped):
+                            if len(existing.column_schema) != len(table.column_schema):
+                                continue
+                            overlap = _jaccard(labels, dedupe_labels[idx])
+                            if overlap >= self.table_dedupe_min_overlap:
+                                meta["deduped_tables"] += 1
+                                if quality > dedupe_quality[idx]:
+                                    deduped[idx] = table
+                                    dedupe_labels[idx] = labels
+                                    dedupe_quality[idx] = quality
+                                issues.append(
+                                    IssuePayload(
+                                        code="table_duplicate_suppressed",
+                                        severity=KnowledgeIssueSeverity.INFO.value,
+                                        description="Duplicate table suppressed based on row-label overlap.",
+                                        page_number=page_number,
+                                        table_order_index=table.order_index,
+                                        details={"overlap": round(overlap, 3)},
+                                    )
+                                )
+                                merged = True
+                                break
+                    if not merged:
+                        deduped.append(table)
+                        dedupe_labels.append(labels)
+                        dedupe_quality.append(quality)
+                page_tables = deduped
+
+            prev_schema: list[str] | None = None
+            prev_labels: set[str] | None = None
+            prev_order_index: int | None = None
+            for table in page_tables:
+                labels = self._table_row_label_set(table)
+                is_generic = self._table_schema_is_generic(table)
+                if (
+                    self.table_header_propagation_enabled
+                    and is_generic
+                    and prev_schema
+                    and labels
+                    and prev_labels
+                    and len(prev_schema) == len(table.column_schema)
+                ):
+                    overlap = _jaccard(labels, prev_labels)
+                    if overlap >= self.table_header_propagation_min_overlap:
+                        table = self._apply_schema_override(table, prev_schema, inferred_from=prev_order_index)
+                        meta["header_inferred"] += 1
+                        issues.append(
+                            IssuePayload(
+                                code="table_header_inferred",
+                                severity=KnowledgeIssueSeverity.INFO.value,
+                                description="Table headers inferred from adjacent table on same page.",
+                                page_number=page_number,
+                                table_order_index=table.order_index,
+                                details={"overlap": round(overlap, 3), "source_table": prev_order_index},
+                            )
+                        )
+                if not is_generic and labels:
+                    prev_schema = list(table.column_schema)
+                    prev_labels = labels
+                    prev_order_index = table.order_index
+                processed.append(table)
+
+        return processed, issues, meta
 
     def _persist_structured_artifacts(self, upload: KnowledgeUpload, extraction: ExtractionResult) -> dict[str, Any]:
         KnowledgeUploadPage.objects.filter(upload=upload).delete()
@@ -8363,7 +8569,10 @@ class KnowledgeIngestionService:
     def _compile_ocr_replacements(self, raw: Any) -> list[tuple[re.Pattern[str], str]]:
         defaults = (
             (r"\bfoos\b", "fees"),
+            (r"\bfous\b", "fees"),
             (r"\bfroo\b", "free"),
+            (r"\bfrog\b", "free"),
+            (r"\bfino\b", "free"),
             (r"\bronowal\b", "renewal"),
             (r"\brenowal\b", "renewal"),
             (r"\bbhield\b", "shield"),
@@ -8402,10 +8611,50 @@ class KnowledgeIngestionService:
         text = re.sub(r"\bE\s*G\s*P\b", "EGP", text, flags=re.IGNORECASE)
         text = re.sub(r"\bE\s*G\s*F\b", "EGP", text, flags=re.IGNORECASE)
         text = re.sub(r"\bE\s*6\s*P\b", "EGP", text, flags=re.IGNORECASE)
+        text = re.sub(r"\bE\s*B\s*P\b", "EGP", text, flags=re.IGNORECASE)
+        text = re.sub(r"\bB\s*G\s*P\b", "EGP", text, flags=re.IGNORECASE)
         text = re.sub(r"\bEGF\b", "EGP", text, flags=re.IGNORECASE)
         text = re.sub(r"\bE6P\b", "EGP", text, flags=re.IGNORECASE)
+        text = re.sub(r"\bEBP\b", "EGP", text, flags=re.IGNORECASE)
+        text = re.sub(r"\bBGP\b", "EGP", text, flags=re.IGNORECASE)
         text = re.sub(r"\bL\.?\s*E\.?\b", "EGP", text, flags=re.IGNORECASE)
         return text
+
+    def _normalize_currency_spacing(self, text: str) -> str:
+        if not self.ocr_currency_spacing_enabled:
+            return text
+        return re.sub(r"\bEGP(?=\d)", "EGP ", text)
+
+    def _normalize_percent_spacing(self, text: str) -> str:
+        if not self.ocr_percent_space_fix_enabled:
+            return text
+        def _fix(match: re.Match[str]) -> str:
+            whole = match.group(1)
+            frac = match.group(2)
+            return f"{whole}.{frac}%"
+        text = re.sub(r"\b(\d)\s+(\d{1,2})\s*%", _fix, text)
+        text = re.sub(r"\b(\d{1,3})\s*%\b", r"\1%", text)
+        text = re.sub(r"%\s*%+", "%", text)
+        return text
+
+    def _normalize_percent_sanity(self, text: str) -> str:
+        if not self.ocr_percent_fix_enabled:
+            return text
+        max_val = self.ocr_percent_sanity_max
+        if max_val <= 0:
+            return text
+        def _fix(match: re.Match[str]) -> str:
+            raw = match.group(1)
+            try:
+                value = float(raw)
+            except ValueError:
+                return match.group(0)
+            if value <= max_val or value >= 1000:
+                return match.group(0)
+            fixed = value / 100.0
+            rendered = f"{fixed:.2f}".rstrip("0").rstrip(".")
+            return f"{rendered}%"
+        return re.sub(r"\b(\d{2,3})\s*%\b", _fix, text)
 
     def _normalize_ocr_text(self, text: str) -> str:
         if not self.ocr_normalization_enabled:
@@ -8413,11 +8662,13 @@ class KnowledgeIngestionService:
         text = unicodedata.normalize("NFKC", text)
         text = text.replace("\u00A0", " ").replace("\u2009", " ").replace("\u202F", " ")
         text = self._normalize_currency_tokens(text)
-        text = re.sub(r"(\d)\s*%", r"\1%", text)
+        text = self._normalize_currency_spacing(text)
+        text = self._normalize_percent_spacing(text)
         for pattern, replacement in self.ocr_word_replacements:
             text = pattern.sub(lambda m: self._match_case(replacement, m.group(0)), text)
         if _ARABIC_CHAR_RE.search(text):
             text = self._normalize_arabic_text(text)
+        text = self._normalize_percent_sanity(text)
         text = re.sub(r"\s+", " ", text).strip()
         return text
 

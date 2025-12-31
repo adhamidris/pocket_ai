@@ -6,9 +6,9 @@ venv/
 .venv/
 .env.*
 db.sqlite3
-var/
+# var/
 staticfiles/
-*.log
+# *.log
 
 # Tailwind build artifacts
 frontend/static/css/main.css.map
