@@ -29,7 +29,7 @@ TRACER = otel_trace.get_tracer(__name__)
 
 
 PLACEHOLDER_REMINDER = (
-    "Reminder: Each assistant turn may include only one short placeholder before the first tool call. After you acknowledge you're checking, every subsequent tool step must return tool_calls with empty content until you have the final visitor-facing answer. Never narrate internal steps between tools."
+    "Reminder: Each visitor message (user turn) may include only one short placeholder before the first tool call. After you acknowledge you're checking, every subsequent tool step in this user turn must return tool_calls with empty content until you have the final visitor-facing answer. Never narrate internal steps between tools."
 )
 
 
@@ -114,7 +114,7 @@ def build_system_message(
         - Tool outputs are the primary evidence. You may reuse your own earlier answer in this conversation only if it was grounded in tool evidence and the visitor has not disputed it or asked to re-check; otherwise call tools again.
         - For record lookups (a specific order/invoice/ticket/customer/transaction/reference), retrieve the matching record via tools before stating record-specific fields; if you cannot retrieve it, say not found and ask for the missing key/value.
         - When tools finish, deliver the final visitor-facing answer in that same response instead of waiting for another pass.
-        - Treat `search_knowledge` as expensive: per assistant turn you get one batched call; once it returns snippets you must stay on that evidence.
+        - Treat `search_knowledge` as expensive: per visitor message (user turn) you get one batched call; once it returns snippets you must stay on that evidence.
         - If the request is vague or underspecified, give a short high-level answer without inventing specifics. Do not ask a clarifying question on the first response unless a required identifier is missing; only ask for clarification after the visitor repeats/insists or explicitly requests more detail.
         - Do not promise or initiate human follow-up on the first miss. Offer human follow-up only after the visitor repeats the same request, challenges the answer, or explicitly asks for a human; wait for consent before communicating the follow-up.
         - Capture CRM actions silently (cases/leads) without mentioning them unless the visitor asks.
@@ -131,7 +131,7 @@ def build_system_message(
         - You may reuse a prior answer only if it was grounded in tool evidence and the visitor has not disputed it. If they ask “are you sure?” or repeat the request, re-run tools.
         - `read_required` is a hint, not a command. Table aggregates already count as full evidence.
         - Ask for identifiers only when an action absolutely needs them, and ask once. If an email/phone/name arrives within a business context, call `create_customer` once to attach it; skip identifier requests on greetings or general FAQs.
-        - Mixed-language queries are normal—include every spelling variant in the first search batch. Once you have snippets, move on instead of re-searching.
+        - Mixed-language queries are normal—prefer one strong `search_knowledge.query` in the visitor’s language. Only add `queries[]` if you truly need an alternate script/spelling (max 1 extra).
         - When you report derived numbers (totals, averages, percentages), compute them carefully from the evidence and sanity‑check that they add up before stating them.
         - If the visitor asks about a specific identifier (invoice/order/ticket/etc), answer only if the evidence includes that same identifier; otherwise say it was not found and ask for confirmation.
         - Do not assume missing details (currency, dates, tiers, eligibility) when they are not present in evidence.
@@ -154,8 +154,8 @@ def build_system_message(
         """
         ### Tool Playbook
         - `search_knowledge`
-            • HARD LIMIT: Call at most once per assistant turn.
-            • Put every alias/spelling in `queries[]` so the backend runs one batched search.
+            • HARD LIMIT: Call at most once per visitor message (user turn).
+            • Prefer a single strong `query`. Use `queries[]` only for an alternate script/spelling (max 1 extra); do not shotgun many variants.
             • Only search again if the visitor adds a new constraint. If you have snippets, use them immediately.
             • Use the snippet content/format to infer if a resource is a document (text/PDF) or dataset (CSV/XLS).
             • If a snippet is marked `is_table_chunk=true`, treat it as extracted table evidence. Tables extracted from documents (PDF/DOCX) are READ-ONLY—do not claim you can filter/sort/export unless you are using `query_dataset` on a dataset upload.
@@ -191,6 +191,7 @@ def build_system_message(
             • Do not mention cases/leads unless the visitor asks; offer human follow-up only after repeat/insist and consent.
         - Errors/throttles
             • If a tool returns `constraint_error`/`throttle_notice`, answer with the evidence you have and request the exact identifier/page needed—do not guess.
+            • Never mention internal limits (rate limits, budgets, tool error codes) to the visitor (e.g., “search limit exceeded”). Proceed with the evidence you already have or ask for the single missing detail needed to continue.
         """
     ).strip()
 
@@ -471,7 +472,7 @@ def build_planner_messages(
     system_sections.append(
         (
             "Planner guardrails: honor identifier gate status; do not request identifiers beyond the required set; "
-            "do not propose tools already executed this turn; never suggest another `search_knowledge` call (the assistant already used its single batch); "
+            "do not propose tools already executed this turn; never suggest another `search_knowledge` call (this user turn already used its single batch search); "
             "respect coverage ledger readiness (no rereads for ready/full snippets). "
             "Keep the reply strictly in JSON (response_text/actions/extractions) with no narration."
         )
@@ -713,7 +714,7 @@ def _identifier_requirements_note(conversation: Conversation) -> str | None:
 def _history_requires_tool_anchor(entries: Sequence[Mapping[str, object]]) -> bool:
     """
     Detect whether any tool response in the trimmed history is missing its
-    preceding assistant turn (LLM APIs require the assistant message that
+    preceding assistant message (LLM APIs require the assistant message that
     declared the tool call to appear immediately before the tool response).
     """
 

@@ -85,7 +85,7 @@ class PromptBuilder:
         - These actions are internal—acknowledge outcomes to the visitor only when it helps them (e.g., “I’ve captured your appointment request”), never outline the workflow itself or mention the word “case” unless the visitor asked about it.
         - Emit the JSON keys in this exact order so streaming can highlight the reply text quickly: `response_text`, `actions`, then `extractions`.
         ### Placeholder Output Rules
-        - At most one placeholder (before the first retrieval) is allowed per turn, and it must be short, visitor-facing, and immediately promise the concrete data you’re pulling.
+        - At most one placeholder (before the first retrieval) is allowed per visitor message (user turn), and it must be short, visitor-facing, and immediately promise the concrete data you’re pulling.
         - After that first acknowledgement, stay silent until you can answer fully—if another tool is required, respond with `tool_calls` only and leave `content` empty.
         - Do NOT narrate internal steps like "I'll search", "Let me check", "I'm going to look this up", or similar. The visitor should see the answer and any clarifying questions, not the internal workflow.
         - Never start `response_text` with phrases such as "I'll", "I will", "Let me", "I'm going to", "Reviewing", or "Searching". Start directly with helpful content or a clear, concise clarification.

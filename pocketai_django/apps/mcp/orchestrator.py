@@ -626,16 +626,35 @@ class McpOrchestratorService:
                                     },
                                     logger_obj=logger,
                                 )
-                        knowledge_phase: dict[str, object] | None = None
-                        if self._is_knowledge_tool(tool_name):
-                            knowledge_phase = _emit_phase_start(_knowledge_phase_payload(tool_name, arguments))
+                        policy_tool_result = None
                         duplicate_result = None
                         if tool_name == "search_knowledge":
-                            duplicate_result = self._short_circuit_duplicate_search(
-                                arguments,
-                                tool_context,
-                                conversation,
-                            )
+                            remaining_searches = self._search_budget_remaining(tool_context)
+                            if remaining_searches == 0:
+                                policy_tool_result = {
+                                    "tool": "search_knowledge",
+                                    "status": "blocked",
+                                    "error": "search_unavailable",
+                                    "error_code": "search_budget_exceeded",
+                                    "snippets": [],
+                                    "hint": (
+                                        "Use the snippets already retrieved in this turn. "
+                                        "If more detail is needed, call read_knowledge using the snippet's read_hint.document_id "
+                                        "(do not invent document IDs)."
+                                    ),
+                                }
+                            else:
+                                duplicate_result = self._short_circuit_duplicate_search(
+                                    arguments,
+                                    tool_context,
+                                    conversation,
+                                )
+
+                        knowledge_phase: dict[str, object] | None = None
+                        # Only emit visitor-visible “searching/reading” phases for real tool execution.
+                        # Policy/duplicate short-circuits should not show a second “Searching…” spinner.
+                        if self._is_knowledge_tool(tool_name) and not policy_tool_result and not duplicate_result:
+                            knowledge_phase = _emit_phase_start(_knowledge_phase_payload(tool_name, arguments))
 
                         # Record the signature of the tool call after any hint injection so we can
                         # detect no-progress loops.
@@ -654,6 +673,9 @@ class McpOrchestratorService:
                                 tool_result = cached_table_result
                                 cache_hit = True
                                 call_origin = "cache"
+                            elif policy_tool_result:
+                                tool_result = policy_tool_result
+                                call_origin = "policy"
                             elif duplicate_result:
                                 tool_result = duplicate_result
                                 call_origin = "duplicate"
@@ -843,6 +865,9 @@ class McpOrchestratorService:
                     loop_note = self._tool_loop_note(tool_context)
                     if loop_note:
                         extra_system_messages.append({"role": "system", "content": loop_note})
+                    evidence_note = self._evidence_summary_note(tool_context)
+                    if evidence_note:
+                        extra_system_messages.append({"role": "system", "content": evidence_note})
                     extra_system_messages.append(reminder)
                     loop_messages[insert_at:insert_at] = extra_system_messages
                     if read_document_guardrail_reason:
@@ -901,8 +926,13 @@ class McpOrchestratorService:
                             single_pass_candidate = raw_content.strip()
                         break
                     tools_for_iteration = self.tool_definitions
+                    excluded_tools: set[str] = set()
                     if table_only_workflow:
-                        tools_for_iteration = self._exclude_tool_schemas({"read_document"})
+                        excluded_tools.add("read_document")
+                    if self._search_budget_remaining(tool_context) == 0:
+                        excluded_tools.add("search_knowledge")
+                    if excluded_tools:
+                        tools_for_iteration = self._exclude_tool_schemas(excluded_tools)
                     payload = self._chat_with_context_governor(
                         conversation=conversation,
                         stage="tool_iteration",
@@ -1789,7 +1819,7 @@ class McpOrchestratorService:
     def _record_knowledge_outputs(context: ToolExecutionContext, tool_result: Mapping[str, object]) -> None:
         tool_name = str(tool_result.get("tool") or "").strip() if isinstance(tool_result, Mapping) else ""
         engine = str(tool_result.get("engine") or "").strip() if isinstance(tool_result, Mapping) else ""
-        diagnostics = tool_result.get("diagnostics") if isinstance(tool_result.get("diagnostics"), Mapping) else {}
+        tool_diagnostics = tool_result.get("diagnostics") if isinstance(tool_result.get("diagnostics"), Mapping) else {}
         evidence = tool_result.get("evidence") if isinstance(tool_result.get("evidence"), Mapping) else {}
         table_aggregate_snippet_seen = False
         snippets = tool_result.get("snippets") if isinstance(tool_result, Mapping) else None
@@ -1813,8 +1843,10 @@ class McpOrchestratorService:
                         "suppress_in_prompt": bool(entry.get("suppress_in_prompt")),
                     }
                     context.add_coverage_entry(coverage_entry)
-                    diagnostics = entry.get("source_diagnostics") if isinstance(entry.get("source_diagnostics"), Mapping) else None
-                    if diagnostics and diagnostics.get("table_aggregate") and entry.get("upload_id"):
+                    source_diagnostics = (
+                        entry.get("source_diagnostics") if isinstance(entry.get("source_diagnostics"), Mapping) else {}
+                    )
+                    if source_diagnostics.get("table_aggregate") and entry.get("upload_id"):
                         table_aggregate_snippet_seen = True
                         structured_tables = entry.get("structured_tables") or entry.get("structuredTables") or ()
                         first_table = None
@@ -1825,12 +1857,12 @@ class McpOrchestratorService:
                         table_details = {
                             "snippet_id": entry.get("id"),
                             "upload_id": entry.get("upload_id"),
-                            "table_order_index": diagnostics.get("table_order_index"),
-                            "row_index": diagnostics.get("table_row_index"),
-                            "sheet_name": diagnostics.get("table_sheet_name"),
+                            "table_order_index": source_diagnostics.get("table_order_index"),
+                            "row_index": source_diagnostics.get("table_row_index"),
+                            "sheet_name": source_diagnostics.get("table_sheet_name"),
                             "columns": first_table.get("columns") if isinstance(first_table, Mapping) else None,
-                            "row_total": diagnostics.get("table_row_total") or entry.get("row_total"),
-                            "row_total_display": diagnostics.get("table_row_total_display") or entry.get("row_total_display"),
+                            "row_total": source_diagnostics.get("table_row_total") or entry.get("row_total"),
+                            "row_total_display": source_diagnostics.get("table_row_total_display") or entry.get("row_total_display"),
                             "snippet": McpOrchestratorService._snapshot_snippet(entry),
                         }
                         context.table_aggregate_rows.append({k: v for k, v in table_details.items() if v is not None})
@@ -1846,13 +1878,13 @@ class McpOrchestratorService:
                             "id": entry.get("id") or entry.get("chunk_id"),
                             "label": entry.get("public_label") or entry.get("title") or "Table aggregate",
                             "mode": "table_aggregate",
-                            "table_order_index": diagnostics.get("table_order_index"),
-                            "row_index": diagnostics.get("table_row_index"),
+                            "table_order_index": source_diagnostics.get("table_order_index"),
+                            "row_index": source_diagnostics.get("table_row_index"),
                         }
                         context.add_knowledge_read({k: v for k, v in read_entry.items() if v is not None})
 
         if tool_name == "read_knowledge" and engine in {"table_preview", "file_dataset", "db_preview"}:
-            document_id = str(tool_result.get("document_id") or diagnostics.get("resolved_upload_id") or "").strip()
+            document_id = str(tool_result.get("document_id") or tool_diagnostics.get("resolved_upload_id") or "").strip()
             status_value = str(tool_result.get("status") or "").strip().lower() or "ok"
             if document_id and status_value == "ok":
                 McpOrchestratorService._suppress_table_previews(context, upload_id=document_id)
@@ -1974,14 +2006,22 @@ class McpOrchestratorService:
                 )
         reads = tool_result.get("knowledge_reads") if isinstance(tool_result, Mapping) else None
         if not isinstance(reads, list):
-            reads = diagnostics.get("knowledge_reads") if isinstance(diagnostics.get("knowledge_reads"), list) else None
+            reads = (
+                tool_diagnostics.get("knowledge_reads")
+                if isinstance(tool_diagnostics.get("knowledge_reads"), list)
+                else None
+            )
         if isinstance(reads, list):
             for read in reads:
                 if isinstance(read, Mapping):
                     context.add_knowledge_read(read)
         warnings = tool_result.get("ingestion_warnings") if isinstance(tool_result, Mapping) else None
         if not isinstance(warnings, list):
-            warnings = diagnostics.get("ingestion_warnings") if isinstance(diagnostics.get("ingestion_warnings"), list) else None
+            warnings = (
+                tool_diagnostics.get("ingestion_warnings")
+                if isinstance(tool_diagnostics.get("ingestion_warnings"), list)
+                else None
+            )
         if isinstance(warnings, list):
             for warning in warnings:
                 if isinstance(warning, Mapping):
@@ -2311,8 +2351,6 @@ class McpOrchestratorService:
         for entry in reversed(history):
             if entry.get("query") != normalized:
                 continue
-            if not entry.get("read_required"):
-                continue
             if not entry.get("snippet_count"):
                 continue
             snippet_ids = entry.get("snippet_ids") or []
@@ -2346,6 +2384,25 @@ class McpOrchestratorService:
                 "diagnostics": diagnostics,
             }
         return None
+
+    @staticmethod
+    def _search_budget_remaining(context: ToolExecutionContext | None) -> int | None:
+        """
+        Return remaining search_knowledge calls for this turn.
+
+        None means "unlimited" (budget disabled). 0 means exhausted.
+        """
+
+        if context is None:
+            return None
+        try:
+            limit = int(getattr(context, "_effective_max_searches"))
+        except Exception:
+            limit = int(getattr(context, "max_searches_per_turn", 0) or 0)
+        if limit <= 0:
+            return None
+        used = int(getattr(context, "searches_used", 0) or 0)
+        return max(0, limit - used)
 
     def _persist_table_cache(self, conversation: Conversation, context: ToolExecutionContext) -> None:
         dirty_keys = getattr(context, "table_result_cache_dirty", set())
@@ -2659,6 +2716,77 @@ class McpOrchestratorService:
 
             lines.append(f"- {tool_name} -> {status or 'done'}")
 
+        return "\n".join(lines)
+
+    @staticmethod
+    def _evidence_summary_note(tool_context: ToolExecutionContext | None) -> str | None:
+        """
+        Compact evidence summary to survive prompt budget trimming.
+
+        The context governor may drop tool payloads (and even the transcript) to
+        fit token limits, which can cause the model to re-run expensive tools.
+        This note keeps the best snippet summaries "sticky" as system context so
+        the model can answer without repeating search_knowledge.
+        """
+
+        if not tool_context:
+            return None
+        results = getattr(tool_context, "knowledge_results", None) or []
+        if not isinstance(results, list) or not results:
+            return None
+
+        def _clean(value: object, limit: int) -> str:
+            if value is None:
+                return ""
+            text = str(value).replace("\n", " ").strip()
+            if not text:
+                return ""
+            if len(text) > limit:
+                return text[:limit].rstrip() + "…"
+            return text
+
+        seen: set[tuple[str, str]] = set()
+        summaries: list[str] = []
+        for entry in results:
+            if not isinstance(entry, Mapping):
+                continue
+            chunk_id = str(entry.get("chunk_id") or entry.get("id") or "").strip()
+            upload_id = str(entry.get("upload_id") or "").strip()
+            key = (chunk_id, upload_id)
+            if key in seen:
+                continue
+            seen.add(key)
+            summary = entry.get("summary") or entry.get("content") or ""
+            summary_text = _clean(summary, 360)
+            if not summary_text:
+                continue
+            read_hint = entry.get("read_hint") if isinstance(entry.get("read_hint"), Mapping) else {}
+            doc_id = str(read_hint.get("document_id") or "").strip()
+            page = read_hint.get("page")
+            mode = str(read_hint.get("mode") or "").strip()
+            hint_bits: list[str] = []
+            if doc_id:
+                hint_bits.append(f"document_id={doc_id[:40]}")
+            if page:
+                hint_bits.append(f"page={page}")
+            if mode:
+                hint_bits.append(f"mode={mode}")
+            if hint_bits:
+                summary_text = f"{summary_text} (read_hint: {', '.join(hint_bits)})"
+            summaries.append(summary_text)
+            if len(summaries) >= 4:
+                break
+
+        if not summaries:
+            return None
+
+        lines = [
+            "Evidence summary (system-only): Answer using ONLY this evidence; do NOT call search_knowledge again this turn.",
+            "If you need more detail, use read_knowledge with the snippet's read_hint.document_id (never invent IDs).",
+            "Do NOT include document names/IDs/pages in the user-facing answer.",
+        ]
+        for idx, summary in enumerate(summaries, start=1):
+            lines.append(f"{idx}. {summary}")
         return "\n".join(lines)
 
     @staticmethod

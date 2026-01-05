@@ -140,7 +140,7 @@
               <button type="button" class="inline-flex items-center gap-2 rounded-md border border-input bg-background px-3 py-2 text-xs font-medium hover:bg-accent hover:text-accent-foreground">
                 Sort by activity
               </button>
-              <button type="button" class="inline-flex items-center gap-2 rounded-md bg-primary/10 text-primary px-3 py-2 text-xs font-medium hover:bg-primary/15">
+              <button type="button" class="inline-flex items-center gap-2 rounded-md bg-primary/10 text-primary px-3 py-2 text-xs font-medium hover:bg-primary/15" data-collection-create-open>
                 New collection
               </button>
             </div>
@@ -644,44 +644,59 @@
             </svg>
             Collections
           </div>
-          {% if knowledge_collections %}
-            <div class="grid gap-4 lg:grid-cols-2 xl:grid-cols-3">
-              {% for collection in knowledge_collections %}
-                <div class="relative rounded-lg border border-border/60 bg-card/70 p-4 transition-colors hover:border-primary/35">
-                  <div class="absolute inset-x-0 top-0 h-px bg-gradient-to-r from-primary/35 via-primary/20 to-transparent"></div>
-                  <div class="space-y-1">
-                    <div class="flex items-center gap-2">
-                      <div class="text-sm font-semibold text-foreground">{{ collection.name }}</div>
-                      <span class="inline-flex items-center rounded-full border border-border/60 bg-muted/50 px-2 py-0.5 text-[11px] font-medium text-muted-foreground">{{ collection.visibility_label|default:"Private" }}</span>
-                    </div>
-                    <p class="text-xs text-muted-foreground leading-relaxed">{{ collection.description }}</p>
+          <div class="rounded-xl border border-dashed border-border/60 bg-muted/30 p-6 text-sm text-muted-foreground {% if knowledge_collections %}hidden{% endif %}" data-collections-empty>
+            {{ knowledge_collections_empty_message }}
+          </div>
+          <div class="grid gap-4 lg:grid-cols-2 xl:grid-cols-3 {% if not knowledge_collections %}hidden{% endif %}" data-collections-grid>
+            {% for collection in knowledge_collections %}
+              <div
+                class="relative rounded-lg border border-border/60 bg-card/70 p-4 transition-colors hover:border-primary/35"
+                data-collection-card
+                data-collection-id="{{ collection.uuid }}"
+                data-collection-name="{{ collection.name|escape }}"
+                data-collection-slug="{{ collection.slug|default:''|escape }}"
+                data-collection-visibility="{{ collection.visibility|default:'private'|escape }}"
+                data-collection-description="{{ collection.description|default:''|escape }}"
+              >
+                <div class="absolute inset-x-0 top-0 h-px bg-gradient-to-r from-primary/35 via-primary/20 to-transparent"></div>
+                <button
+                  type="button"
+                  class="absolute right-3 top-3 inline-flex h-8 w-8 items-center justify-center rounded-full border border-border/60 bg-background/70 text-muted-foreground transition hover:bg-background hover:text-foreground"
+                  data-collection-edit-open
+                  aria-label="Edit collection"
+                >
+                  <svg class="h-4 w-4" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" aria-hidden="true">
+                    <path stroke-linecap="round" stroke-linejoin="round" d="m16.862 3.487 3.651 3.651m-2.121-1.53L8.25 15.75l-4.5 1.125 1.125-4.5L15.75 4.875a2.121 2.121 0 0 1 3.0 0Z" />
+                  </svg>
+                </button>
+                <div class="space-y-1">
+                  <div class="flex items-center gap-2">
+                    <div class="text-sm font-semibold text-foreground" data-collection-title>{{ collection.name }}</div>
+                    <span class="inline-flex items-center rounded-full border border-border/60 bg-muted/50 px-2 py-0.5 text-[11px] font-medium text-muted-foreground" data-collection-badge>{{ collection.visibility_label|default:"Private" }}</span>
                   </div>
-                  <div class="mt-3 grid grid-cols-2 gap-2 text-xs text-muted-foreground">
-                    <div class="rounded-md border border-border/60 bg-muted/40 px-3 py-2">
-                      <div class="text-sm font-medium text-foreground">{{ collection.documents|default:0 }}</div>
-                      <div>Documents</div>
-                    </div>
-                    <div class="rounded-md border border-border/60 bg-muted/40 px-3 py-2">
-                      <div class="text-sm font-medium text-foreground">{{ collection.owner|default:"—" }}</div>
-                      <div>Owner</div>
-                    </div>
-                    <div class="rounded-md border border-border/60 bg-muted/40 px-3 py-2">
-                      <div class="text-sm font-medium text-foreground">{{ collection.focus|default:"—" }}</div>
-                      <div>Focus</div>
-                    </div>
-                    <div class="rounded-md border border-border/60 bg-muted/40 px-3 py-2">
-                      <div class="text-sm font-medium text-foreground">{{ collection.updated_at|default:"—" }}</div>
-                      <div>Last update</div>
-                    </div>
+                  <p class="text-xs text-muted-foreground leading-relaxed" data-collection-description>{{ collection.description }}</p>
+                </div>
+                <div class="mt-3 grid grid-cols-2 gap-2 text-xs text-muted-foreground">
+                  <div class="rounded-md border border-border/60 bg-muted/40 px-3 py-2">
+                    <div class="text-sm font-medium text-foreground" data-collection-documents>{{ collection.documents|default:0 }}</div>
+                    <div>Documents</div>
+                  </div>
+                  <div class="rounded-md border border-border/60 bg-muted/40 px-3 py-2">
+                    <div class="text-sm font-medium text-foreground">{{ collection.owner|default:"—" }}</div>
+                    <div>Owner</div>
+                  </div>
+                  <div class="rounded-md border border-border/60 bg-muted/40 px-3 py-2">
+                    <div class="text-sm font-medium text-foreground">{{ collection.focus|default:"—" }}</div>
+                    <div>Focus</div>
+                  </div>
+                  <div class="rounded-md border border-border/60 bg-muted/40 px-3 py-2">
+                    <div class="text-sm font-medium text-foreground" data-collection-updated>{{ collection.updated_at|default:"—" }}</div>
+                    <div>Last update</div>
                   </div>
                 </div>
-              {% endfor %}
-            </div>
-          {% else %}
-            <div class="rounded-xl border border-dashed border-border/60 bg-muted/30 p-6 text-sm text-muted-foreground">
-              {{ knowledge_collections_empty_message }}
-            </div>
-          {% endif %}
+              </div>
+            {% endfor %}
+          </div>
         </div>
 
         <div class="space-y-5 {% if knowledge_active_tab != 'guardrails' %}hidden{% endif %}" data-tab-panel="guardrails" data-guardrails>
@@ -1236,6 +1251,65 @@
   </div>
 {% endif %}
 
+<div class="hidden" data-collection-modal aria-hidden="true">
+  <div class="fixed inset-0 z-40 bg-black/60 backdrop-blur-sm" data-collection-overlay></div>
+  <div class="fixed inset-0 z-50 flex items-center justify-center p-4">
+    <div class="w-full max-w-lg rounded-2xl border border-border/60 bg-background shadow-2xl flex flex-col" data-collection-dialog role="dialog" aria-modal="true" aria-labelledby="collection-dialog-title">
+      <div class="px-6 py-5 border-b border-border/60 flex items-start justify-between gap-4">
+        <div class="space-y-1">
+	          <h2 class="text-xl font-semibold text-foreground" id="collection-dialog-title" data-collection-modal-title>New collection</h2>
+          <p class="text-sm text-muted-foreground">Group documents into collections to control agent access.</p>
+        </div>
+        <button type="button" class="inline-flex h-9 w-9 items-center justify-center rounded-full border border-border/70 bg-background/80 text-muted-foreground transition hover:bg-background" data-collection-close aria-label="Close">
+          <svg class="h-4 w-4" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor">
+            <path stroke-linecap="round" stroke-linejoin="round" d="m8 8 8 8m0-8-8 8" />
+          </svg>
+        </button>
+      </div>
+      <form class="px-6 py-5 space-y-4" data-collection-form>
+        {% csrf_token %}
+        <div class="space-y-2">
+          <label class="text-xs font-semibold uppercase tracking-[0.18em] text-muted-foreground/80" for="collection-name">Name</label>
+          <input id="collection-name" type="text" class="w-full rounded-md border border-input bg-background px-3 py-2 text-sm" maxlength="160" placeholder="e.g. Pricing & Fees" data-collection-name required>
+        </div>
+        <div class="space-y-2">
+          <label class="text-xs font-semibold uppercase tracking-[0.18em] text-muted-foreground/80" for="collection-description">Description</label>
+          <textarea id="collection-description" class="w-full rounded-md border border-input bg-background px-3 py-2 text-sm min-h-[84px]" placeholder="What belongs in this collection?" data-collection-description></textarea>
+        </div>
+        <div class="grid gap-3 sm:grid-cols-2">
+          <div class="space-y-2">
+            <label class="text-xs font-semibold uppercase tracking-[0.18em] text-muted-foreground/80" for="collection-visibility">Visibility</label>
+            <select id="collection-visibility" class="w-full rounded-md border border-input bg-background px-3 py-2 text-sm" data-collection-visibility>
+              <option value="private">Private</option>
+              <option value="agents">Agents Only</option>
+              <option value="business">Entire Business</option>
+            </select>
+          </div>
+          <div class="rounded-lg border border-dashed border-border/60 bg-muted/20 p-3 text-xs text-muted-foreground leading-relaxed">
+            Private collections are only used when explicitly assigned to an agent.
+          </div>
+        </div>
+        <p class="hidden text-sm text-muted-foreground" data-collection-status></p>
+	        <div class="flex items-center justify-end gap-2 pt-2">
+	          <button
+	            type="button"
+	            class="mr-auto hidden inline-flex items-center justify-center rounded-md border border-destructive/40 bg-destructive/10 px-4 py-2 text-sm font-semibold text-destructive hover:bg-destructive/15 transition-colors"
+	            data-collection-delete
+	          >
+	            Delete
+	          </button>
+	          <button type="button" class="inline-flex items-center justify-center rounded-md border border-input bg-background px-4 py-2 text-sm font-medium text-muted-foreground hover:bg-accent hover:text-accent-foreground transition-colors" data-collection-cancel>
+	            Cancel
+	          </button>
+	          <button type="submit" class="inline-flex items-center justify-center rounded-md bg-primary text-primary-foreground px-4 py-2 text-sm font-semibold shadow-sm transition hover:bg-primary/90" data-collection-submit>
+	            Create collection
+	          </button>
+	        </div>
+      </form>
+    </div>
+  </div>
+</div>
+
 <div
   class="fixed inset-0 z-40 bg-background/60 backdrop-blur-sm opacity-0 pointer-events-none transition-opacity duration-300"
   data-document-overlay
@@ -1390,6 +1464,38 @@
           <section class="space-y-3 px-6">
             <div class="flex items-start justify-between gap-3">
               <div>
+                <div class="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Collections</div>
+                <p class="text-xs text-muted-foreground">Use collections to control which agents can retrieve this document.</p>
+              </div>
+              <div class="flex items-center gap-2">
+                <button
+                  type="button"
+                  class="inline-flex items-center gap-2 rounded-md border border-input bg-background px-3 py-1.5 text-xs font-semibold text-muted-foreground transition hover:border-primary/40 hover:text-primary"
+                  data-document-collections-new
+                >
+                  New
+                </button>
+                <button
+                  type="button"
+                  class="inline-flex items-center gap-2 rounded-md border border-input bg-background px-3 py-1.5 text-xs font-semibold text-foreground transition hover:border-primary/40 hover:text-primary disabled:opacity-50 disabled:cursor-not-allowed"
+                  data-document-collections-save
+                  disabled
+                  aria-disabled="true"
+                >
+                  Save
+                </button>
+              </div>
+            </div>
+            <div class="rounded-lg border border-border/60 bg-muted/30 p-3 space-y-2">
+              <div class="text-xs text-muted-foreground hidden" data-document-collections-empty></div>
+              <div class="space-y-2" data-document-collections-list></div>
+              <div class="text-xs text-muted-foreground hidden" data-document-collections-status></div>
+            </div>
+          </section>
+
+          <section class="space-y-3 px-6">
+            <div class="flex items-start justify-between gap-3">
+              <div>
                 <div class="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Guardrails</div>
                 <p class="text-xs text-muted-foreground">Require identifiers before this document is used in answers.</p>
               </div>
@@ -1419,6 +1525,7 @@
 {% endblock %}
 
 {% block extra_js %}
+  {{ knowledge_collections_payload|json_script:"knowledge-collections" }}
   {{ knowledge_guardrail_identifiers|json_script:"knowledge-guardrail-identifiers" }}
 <script>
   document.addEventListener("DOMContentLoaded", function () {
@@ -2569,18 +2676,24 @@
     var fieldCategory = panel.querySelector("[data-document-category]");
     var fieldSensitive = panel.querySelector("[data-document-sensitive]");
     var fieldIntegration = panel.querySelector("[data-document-integration]");
-    var fieldSummary = panel.querySelector("[data-document-summary]");
-    var summaryWrap = panel.querySelector("[data-document-summary-wrap]");
-    var summaryToggle = panel.querySelector("[data-document-summary-toggle]");
-    var guardrailsList = panel.querySelector("[data-document-guardrails-list]");
-    var guardrailsEmpty = panel.querySelector("[data-document-guardrails-empty]");
-    var guardrailsStatus = panel.querySelector("[data-document-guardrails-status]");
-    var guardrailsSave = panel.querySelector("[data-document-guardrails-save]");
+	    var fieldSummary = panel.querySelector("[data-document-summary]");
+	    var summaryWrap = panel.querySelector("[data-document-summary-wrap]");
+	    var summaryToggle = panel.querySelector("[data-document-summary-toggle]");
+	    var collectionsList = panel.querySelector("[data-document-collections-list]");
+	    var collectionsEmpty = panel.querySelector("[data-document-collections-empty]");
+	    var collectionsStatus = panel.querySelector("[data-document-collections-status]");
+	    var collectionsSave = panel.querySelector("[data-document-collections-save]");
+	    var collectionsNew = panel.querySelector("[data-document-collections-new]");
+	    var guardrailsList = panel.querySelector("[data-document-guardrails-list]");
+	    var guardrailsEmpty = panel.querySelector("[data-document-guardrails-empty]");
+	    var guardrailsStatus = panel.querySelector("[data-document-guardrails-status]");
+	    var guardrailsSave = panel.querySelector("[data-document-guardrails-save]");
     var body = document.body;
-    var deleteButton = panel.querySelector("[data-document-delete]");
-    var deleteNotice = panel.querySelector("[data-document-delete-notice]");
-    var deleteButtonLabel = deleteButton ? (deleteButton.textContent || "Delete document").trim() || "Delete document" : "Delete document";
-    var guardrailsSaveLabel = guardrailsSave ? (guardrailsSave.textContent || "Save").trim() || "Save" : "Save";
+	    var deleteButton = panel.querySelector("[data-document-delete]");
+	    var deleteNotice = panel.querySelector("[data-document-delete-notice]");
+	    var deleteButtonLabel = deleteButton ? (deleteButton.textContent || "Delete document").trim() || "Delete document" : "Delete document";
+	    var guardrailsSaveLabel = guardrailsSave ? (guardrailsSave.textContent || "Save").trim() || "Save" : "Save";
+	    var collectionsSaveLabel = collectionsSave ? (collectionsSave.textContent || "Save").trim() || "Save" : "Save";
 
     function clearDeleteNotice() {
       if (!deleteNotice) return;
@@ -2636,10 +2749,10 @@
     var guardrailSelection = new Set();
     var guardrailBaseline = new Set();
     var guardrailDirty = false;
-    var guardrailSaving = false;
-    var guardrailDocumentId = "";
-    var guardrailStatusTimer = null;
-    var guardrailOptions = [];
+	    var guardrailSaving = false;
+	    var guardrailDocumentId = "";
+	    var guardrailStatusTimer = null;
+	    var guardrailOptions = [];
     var guardrailScript = document.getElementById("knowledge-guardrail-identifiers");
     if (guardrailScript && guardrailScript.textContent) {
       try {
@@ -2651,12 +2764,47 @@
         guardrailOptions = [];
       }
     }
-    var guardrailOptionKeys = new Set();
-    guardrailOptions.forEach(function (option) {
-      if (option && option.key) {
-        guardrailOptionKeys.add(option.key);
-      }
-    });
+	    var guardrailOptionKeys = new Set();
+	    guardrailOptions.forEach(function (option) {
+	      if (option && option.key) {
+	        guardrailOptionKeys.add(option.key);
+	      }
+	    });
+
+	    var collectionsCatalog = [];
+	    var collectionsScript = document.getElementById("knowledge-collections");
+	    if (collectionsScript && collectionsScript.textContent) {
+	      try {
+	        var parsedCollections = JSON.parse(collectionsScript.textContent || "[]");
+	        if (Array.isArray(parsedCollections)) {
+	          collectionsCatalog = parsedCollections
+	            .map(function (entry) {
+	              if (!entry) return null;
+	              var id = entry.id || entry.uuid || "";
+	              return {
+	                id: String(id || ""),
+	                name: String(entry.name || ""),
+	                slug: String(entry.slug || ""),
+	                visibility: String(entry.visibility || "private"),
+	                visibilityLabel: String(entry.visibility_label || entry.visibilityLabel || "Private"),
+	              };
+	            })
+	            .filter(function (entry) {
+	              return entry && entry.id && entry.name;
+	            });
+	        }
+	      } catch (_err) {
+	        collectionsCatalog = [];
+	      }
+	    }
+
+	    var documentCollectionsSelection = new Set();
+	    var documentCollectionsBaseline = new Set();
+	    var documentCollectionsDirty = false;
+	    var documentCollectionsSaving = false;
+	    var documentCollectionsDocumentId = "";
+	    var documentCollectionsStatusTimer = null;
+	    var collectionModalContext = { mode: "create", collectionId: "", documentId: "", autoSelect: false };
 
     function formatDate(value) {
       if (!value) {
@@ -2954,12 +3102,169 @@
       updateGuardrailSaveState();
     }
 
-    buildGuardrailOptions();
+	    buildGuardrailOptions();
 
-    function resetGuardrailPanel() {
-      guardrailDocumentId = "";
-      guardrailSelection = new Set();
-      guardrailBaseline = new Set();
+	    function clearDocumentCollectionsStatusTimer() {
+	      if (!documentCollectionsStatusTimer) {
+	        return;
+	      }
+	      window.clearTimeout(documentCollectionsStatusTimer);
+	      documentCollectionsStatusTimer = null;
+	    }
+
+	    function setDocumentCollectionsStatus(message, tone, autoHideMs) {
+	      if (!collectionsStatus) return;
+	      clearDocumentCollectionsStatusTimer();
+	      if (!message) {
+	        collectionsStatus.textContent = "";
+	        collectionsStatus.classList.add("hidden");
+	        collectionsStatus.classList.remove("text-emerald-600", "text-rose-600", "text-muted-foreground");
+	        return;
+	      }
+	      collectionsStatus.textContent = message;
+	      collectionsStatus.classList.remove("hidden", "text-emerald-600", "text-rose-600", "text-muted-foreground");
+	      if (tone === "success") {
+	        collectionsStatus.classList.add("text-emerald-600");
+	      } else if (tone === "error") {
+	        collectionsStatus.classList.add("text-rose-600");
+	      } else {
+	        collectionsStatus.classList.add("text-muted-foreground");
+	      }
+	      if (autoHideMs) {
+	        documentCollectionsStatusTimer = window.setTimeout(function () {
+	          setDocumentCollectionsStatus("");
+	        }, autoHideMs);
+	      }
+	    }
+
+	    function documentCollectionsSelectionsEqual(a, b) {
+	      if (a.size !== b.size) {
+	        return false;
+	      }
+	      for (var value of a) {
+	        if (!b.has(value)) {
+	          return false;
+	        }
+	      }
+	      return true;
+	    }
+
+	    function updateDocumentCollectionsSaveState() {
+	      if (!collectionsSave) return;
+	      var canSave = !documentCollectionsSaving && documentCollectionsDirty && documentCollectionsDocumentId;
+	      collectionsSave.disabled = !canSave;
+	      if (canSave) {
+	        collectionsSave.removeAttribute("aria-disabled");
+	      } else {
+	        collectionsSave.setAttribute("aria-disabled", "true");
+	      }
+	    }
+
+	    function markDocumentCollectionsDirty() {
+	      documentCollectionsDirty = !documentCollectionsSelectionsEqual(documentCollectionsSelection, documentCollectionsBaseline);
+	      updateDocumentCollectionsSaveState();
+	    }
+
+	    function renderDocumentCollectionsOptions() {
+	      if (!collectionsList) return;
+	      collectionsList.innerHTML = "";
+	      if (!collectionsCatalog.length) {
+	        if (collectionsEmpty) {
+	          collectionsEmpty.innerHTML = 'No collections yet. Create one in <a href="?tab=collections" class="text-primary hover:underline">Collections</a>.';
+	          collectionsEmpty.classList.remove("hidden");
+	        }
+	        updateDocumentCollectionsSaveState();
+	        return;
+	      }
+	      if (collectionsEmpty) {
+	        collectionsEmpty.textContent = "";
+	        collectionsEmpty.classList.add("hidden");
+	      }
+
+	      collectionsCatalog.forEach(function (collection) {
+	        if (!collection || !collection.id) {
+	          return;
+	        }
+	        var label = document.createElement("label");
+	        label.className = "flex items-start gap-2 text-sm";
+	        var input = document.createElement("input");
+	        input.type = "checkbox";
+	        input.className = "mt-1 h-4 w-4 rounded border-input text-primary focus:ring-primary";
+	        input.value = collection.id;
+	        input.disabled = !documentCollectionsDocumentId;
+	        input.checked = documentCollectionsSelection.has(collection.id);
+	        input.addEventListener("change", function () {
+	          if (input.checked) {
+	            documentCollectionsSelection.add(collection.id);
+	          } else {
+	            documentCollectionsSelection.delete(collection.id);
+	          }
+	          markDocumentCollectionsDirty();
+	        });
+	        var textWrap = document.createElement("span");
+	        var name = document.createElement("span");
+	        name.className = "font-semibold text-foreground";
+	        name.textContent = collection.name;
+	        var meta = document.createElement("span");
+	        meta.className = "block text-xs text-muted-foreground";
+	        meta.textContent = collection.visibilityLabel || "Private";
+	        textWrap.appendChild(name);
+	        textWrap.appendChild(meta);
+	        label.appendChild(input);
+	        label.appendChild(textWrap);
+	        collectionsList.appendChild(label);
+	      });
+	      updateDocumentCollectionsSaveState();
+	    }
+
+	    function setDocumentCollectionsSelection(collections) {
+	      var ids = [];
+	      if (Array.isArray(collections)) {
+	        collections.forEach(function (entry) {
+	          if (!entry || !entry.id) return;
+	          ids.push(String(entry.id));
+	        });
+	      }
+	      documentCollectionsSelection = new Set(ids);
+	      documentCollectionsBaseline = new Set(ids);
+	      documentCollectionsDirty = false;
+	      renderDocumentCollectionsOptions();
+	      updateDocumentCollectionsSaveState();
+	      setDocumentCollectionsStatus("");
+	    }
+
+	    function resetDocumentCollectionsPanel() {
+	      documentCollectionsDocumentId = "";
+	      documentCollectionsSelection = new Set();
+	      documentCollectionsBaseline = new Set();
+	      documentCollectionsDirty = false;
+	      documentCollectionsSaving = false;
+	      if (collectionsSave) {
+	        collectionsSave.textContent = collectionsSaveLabel;
+	      }
+	      setDocumentCollectionsStatus("");
+	      renderDocumentCollectionsOptions();
+	      updateDocumentCollectionsSaveState();
+	    }
+
+	    function setDocumentCollectionsPending(documentId) {
+	      documentCollectionsDocumentId = documentId || "";
+	      documentCollectionsSelection = new Set();
+	      documentCollectionsBaseline = new Set();
+	      documentCollectionsDirty = false;
+	      documentCollectionsSaving = false;
+	      if (collectionsSave) {
+	        collectionsSave.textContent = collectionsSaveLabel;
+	      }
+	      setDocumentCollectionsStatus("Loading collections...", "info");
+	      renderDocumentCollectionsOptions();
+	      updateDocumentCollectionsSaveState();
+	    }
+
+	    function resetGuardrailPanel() {
+	      guardrailDocumentId = "";
+	      guardrailSelection = new Set();
+	      guardrailBaseline = new Set();
       guardrailDirty = false;
       guardrailSaving = false;
       Object.keys(guardrailInputs).forEach(function (key) {
@@ -3014,10 +3319,10 @@
       }
     }
 
-    function updateCachedGuardrails(documentId, requiredKeys) {
-      if (!documentId) {
-        return;
-      }
+	    function updateCachedGuardrails(documentId, requiredKeys) {
+	      if (!documentId) {
+	        return;
+	      }
       var cached = readCachedDetail(documentId);
       if (!cached || !cached.detail) {
         return;
@@ -3025,9 +3330,21 @@
       if (!cached.detail.guardrails) {
         cached.detail.guardrails = {};
       }
-      cached.detail.guardrails.requiredIdentifiers = requiredKeys || [];
-      cached.fetchedAt = Date.now();
-    }
+	      cached.detail.guardrails.requiredIdentifiers = requiredKeys || [];
+	      cached.fetchedAt = Date.now();
+	    }
+
+	    function updateCachedCollections(documentId, collections) {
+	      if (!documentId) {
+	        return;
+	      }
+	      var cached = readCachedDetail(documentId);
+	      if (!cached || !cached.detail) {
+	        return;
+	      }
+	      cached.detail.collections = collections || [];
+	      cached.fetchedAt = Date.now();
+	    }
 
     function readCachedDetail(documentId) {
       if (!documentId) {
@@ -3077,15 +3394,16 @@
     function schedulePanelReset(options) {
       options = options || {};
       clearClosePanelTimer();
-      closePanelTimer = window.setTimeout(function () {
-        currentDocumentTitle = "";
-        setPanelState("empty");
-        resetGuardrailPanel();
-        if (options.resetSelection !== false) {
-          clearSelection();
-        }
-      }, 320);
-    }
+	      closePanelTimer = window.setTimeout(function () {
+	        currentDocumentTitle = "";
+	        setPanelState("empty");
+	        resetDocumentCollectionsPanel();
+	        resetGuardrailPanel();
+	        if (options.resetSelection !== false) {
+	          clearSelection();
+	        }
+	      }, 320);
+	    }
 
     function fetchDocumentDetail(documentId, dataset, options) {
       options = options || {};
@@ -3205,8 +3523,8 @@
       }
     }
 
-    function prefillFromRow(row) {
-      var dataset = row.dataset || {};
+	    function prefillFromRow(row) {
+	      var dataset = row.dataset || {};
       setDeleteButtonState(dataset.documentId || "");
       currentDocumentTitle = dataset.documentName || "Document";
       if (fieldName) fieldName.textContent = currentDocumentTitle;
@@ -3227,11 +3545,12 @@
       if (fieldCategory) fieldCategory.textContent = dataset.documentCategory || "—";
       if (fieldSensitive) fieldSensitive.textContent = formatBoolean(dataset.documentSensitive === "true");
       if (fieldIntegration) fieldIntegration.textContent = dataset.documentIntegration || "—";
-      renderSummary("Loading summary...");
-      setGuardrailPending(dataset.documentId || "");
-    }
+	      renderSummary("Loading summary...");
+	      setDocumentCollectionsPending(dataset.documentId || "");
+	      setGuardrailPending(dataset.documentId || "");
+	    }
 
-    function populatePanel(detail, dataset) {
+	    function populatePanel(detail, dataset) {
       dataset = dataset || {};
       var summary = (detail && detail.summary) || {};
       currentDocumentTitle = summary.name || dataset.documentName || "Document";
@@ -3270,14 +3589,16 @@
       if (fieldSensitive) fieldSensitive.textContent = formatBoolean(summary.isSensitive || dataset.documentSensitive === "true");
       if (fieldIntegration) fieldIntegration.textContent = summary.integrationName || dataset.documentIntegration || "—";
       renderSummary(detail.summaryText || "No summary available.");
-      var requiredIdentifiers = [];
-      if (detail && detail.guardrails && Array.isArray(detail.guardrails.requiredIdentifiers)) {
-        requiredIdentifiers = detail.guardrails.requiredIdentifiers;
-      }
-      guardrailDocumentId = summary.id || dataset.documentId || "";
-      setGuardrailSelection(requiredIdentifiers);
-      setGuardrailInputsEnabled(Boolean(guardrailOptions.length && guardrailDocumentId));
-      setGuardrailStatus("");
+	      var requiredIdentifiers = [];
+	      if (detail && detail.guardrails && Array.isArray(detail.guardrails.requiredIdentifiers)) {
+	        requiredIdentifiers = detail.guardrails.requiredIdentifiers;
+	      }
+	      documentCollectionsDocumentId = summary.id || dataset.documentId || "";
+	      setDocumentCollectionsSelection(detail && Array.isArray(detail.collections) ? detail.collections : []);
+	      guardrailDocumentId = summary.id || dataset.documentId || "";
+	      setGuardrailSelection(requiredIdentifiers);
+	      setGuardrailInputsEnabled(Boolean(guardrailOptions.length && guardrailDocumentId));
+	      setGuardrailStatus("");
 
       if (fieldAriaTitle) {
         fieldAriaTitle.textContent = currentDocumentTitle;
@@ -3940,12 +4261,482 @@
           closeSheetsModal();
         }
       });
-    }
+	    }
 
-    function bindDocumentRow(row) {
-      if (!row) return;
-      row.addEventListener("click", function (event) {
-        if (event.defaultPrevented) return;
+	    var collectionModal = document.querySelector("[data-collection-modal]");
+	    var isCollectionModalOpen = false;
+		    if (collectionModal) {
+		      var collectionOverlay = collectionModal.querySelector("[data-collection-overlay]");
+		      var collectionDialog = collectionModal.querySelector("[data-collection-dialog]");
+		      var collectionCloseButtons = Array.prototype.slice.call(collectionModal.querySelectorAll("[data-collection-close], [data-collection-cancel]") || []);
+		      var collectionForm = collectionModal.querySelector("[data-collection-form]");
+		      var collectionTitle = collectionModal.querySelector("[data-collection-modal-title]");
+		      var collectionNameField = collectionModal.querySelector("[data-collection-name]");
+		      var collectionDescriptionField = collectionModal.querySelector("[data-collection-description]");
+		      var collectionVisibilityField = collectionModal.querySelector("[data-collection-visibility]");
+		      var collectionStatus = collectionModal.querySelector("[data-collection-status]");
+		      var collectionSubmit = collectionModal.querySelector("[data-collection-submit]");
+		      var collectionDelete = collectionModal.querySelector("[data-collection-delete]");
+		      var collectionSubmitLabel = collectionSubmit ? (collectionSubmit.textContent || "Create collection").trim() : "Create collection";
+		      var collectionCreateButtons = Array.prototype.slice.call(document.querySelectorAll("[data-collection-create-open]") || []);
+		      var collectionsGrid = document.querySelector("[data-collections-grid]");
+		      var collectionsEmptyState = document.querySelector("[data-collections-empty]");
+		      var collectionCreating = false;
+
+	      function setCollectionStatus(message, tone) {
+	        if (!collectionStatus) return;
+	        if (!message) {
+	          collectionStatus.textContent = "";
+	          collectionStatus.classList.add("hidden");
+	          collectionStatus.classList.remove("text-emerald-600", "text-rose-600", "text-muted-foreground");
+	          return;
+	        }
+	        collectionStatus.textContent = message;
+	        collectionStatus.classList.remove("hidden", "text-emerald-600", "text-rose-600", "text-muted-foreground");
+	        if (tone === "success") {
+	          collectionStatus.classList.add("text-emerald-600");
+	        } else if (tone === "error") {
+	          collectionStatus.classList.add("text-rose-600");
+	        } else {
+	          collectionStatus.classList.add("text-muted-foreground");
+	        }
+	      }
+
+	      function setCollectionModalVisible(visible) {
+	        isCollectionModalOpen = visible;
+	        collectionModal.classList.toggle("hidden", !visible);
+	        collectionModal.setAttribute("aria-hidden", visible ? "false" : "true");
+	        if (body) {
+	          body.classList.toggle("overflow-hidden", visible);
+	        }
+	        if (visible && collectionNameField) {
+	          window.setTimeout(function () {
+	            try {
+	              collectionNameField.focus();
+	            } catch (_err) {}
+	          }, 50);
+	        }
+	      }
+
+		      function closeCollectionModal() {
+		        if (!isCollectionModalOpen) {
+		          return;
+		        }
+		        setCollectionModalVisible(false);
+		        collectionModalContext = { mode: "create", collectionId: "", documentId: "", autoSelect: false };
+		        setCollectionStatus("");
+		        if (collectionForm) {
+		          collectionForm.reset();
+		        }
+		        if (collectionTitle) {
+		          collectionTitle.textContent = "New collection";
+		        }
+		        if (collectionDelete) {
+		          collectionDelete.classList.add("hidden");
+		        }
+		        if (collectionSubmit) {
+		          collectionSubmit.textContent = collectionSubmitLabel;
+		        }
+		      }
+
+		      function openCollectionModal(context) {
+		        context = context || {};
+		        collectionModalContext = {
+		          mode: String(context.mode || "create"),
+		          collectionId: String(context.collectionId || ""),
+		          documentId: String(context.documentId || ""),
+		          autoSelect: Boolean(context.autoSelect),
+		        };
+		        setCollectionStatus("");
+		        if (collectionForm) {
+		          collectionForm.reset();
+		        }
+		        var isEdit = collectionModalContext.mode === "edit" && collectionModalContext.collectionId;
+		        if (collectionTitle) {
+		          collectionTitle.textContent = isEdit ? "Edit collection" : "New collection";
+		        }
+		        if (collectionNameField) {
+		          collectionNameField.value = String(context.name || "");
+		        }
+		        if (collectionDescriptionField) {
+		          collectionDescriptionField.value = String(context.description || "");
+		        }
+		        if (collectionVisibilityField) {
+		          collectionVisibilityField.value = String(context.visibility || "private");
+		        }
+		        if (collectionDelete) {
+		          collectionDelete.classList.toggle("hidden", !isEdit);
+		        }
+		        if (collectionSubmit) {
+		          collectionSubmit.textContent = isEdit ? "Save changes" : collectionSubmitLabel;
+		        }
+		        setCollectionModalVisible(true);
+		      }
+
+		      function buildCollectionCard(collection) {
+		        if (!collectionsGrid) return;
+		        var card = document.createElement("div");
+		        card.className =
+		          "relative rounded-lg border border-border/60 bg-card/70 p-4 transition-colors hover:border-primary/35";
+		        card.setAttribute("data-collection-card", "");
+		        card.dataset.collectionId = collection.id;
+		        card.dataset.collectionName = collection.name;
+		        card.dataset.collectionSlug = collection.slug || "";
+		        card.dataset.collectionVisibility = collection.visibility || "private";
+		        card.dataset.collectionDescription = collection.description || "";
+
+		        var topLine = document.createElement("div");
+		        topLine.className =
+		          "absolute inset-x-0 top-0 h-px bg-gradient-to-r from-primary/35 via-primary/20 to-transparent";
+		        card.appendChild(topLine);
+
+		        var editButton = document.createElement("button");
+		        editButton.type = "button";
+		        editButton.className =
+		          "absolute right-3 top-3 inline-flex h-8 w-8 items-center justify-center rounded-full border border-border/60 bg-background/70 text-muted-foreground transition hover:bg-background hover:text-foreground";
+		        editButton.setAttribute("data-collection-edit-open", "");
+		        editButton.setAttribute("aria-label", "Edit collection");
+		        editButton.innerHTML =
+		          '<svg class="h-4 w-4" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" aria-hidden="true">' +
+		          '<path stroke-linecap="round" stroke-linejoin="round" d="m16.862 3.487 3.651 3.651m-2.121-1.53L8.25 15.75l-4.5 1.125 1.125-4.5L15.75 4.875a2.121 2.121 0 0 1 3.0 0Z" />' +
+		          "</svg>";
+		        card.appendChild(editButton);
+
+		        var heading = document.createElement("div");
+		        heading.className = "space-y-1";
+		        var nameRow = document.createElement("div");
+		        nameRow.className = "flex items-center gap-2";
+		        var name = document.createElement("div");
+		        name.className = "text-sm font-semibold text-foreground";
+		        name.setAttribute("data-collection-title", "");
+		        name.textContent = collection.name || "Collection";
+		        var badge = document.createElement("span");
+		        badge.className =
+		          "inline-flex items-center rounded-full border border-border/60 bg-muted/50 px-2 py-0.5 text-[11px] font-medium text-muted-foreground";
+		        badge.setAttribute("data-collection-badge", "");
+		        badge.textContent = collection.visibilityLabel || "Private";
+		        nameRow.appendChild(name);
+		        nameRow.appendChild(badge);
+		        var description = document.createElement("p");
+		        description.className = "text-xs text-muted-foreground leading-relaxed";
+		        description.setAttribute("data-collection-description", "");
+		        description.textContent = collection.description || "";
+	        heading.appendChild(nameRow);
+	        heading.appendChild(description);
+	        card.appendChild(heading);
+
+	        var stats = document.createElement("div");
+	        stats.className = "mt-3 grid grid-cols-2 gap-2 text-xs text-muted-foreground";
+
+	        function statCell(value, label, dataAttr) {
+	          var wrap = document.createElement("div");
+	          wrap.className = "rounded-md border border-border/60 bg-muted/40 px-3 py-2";
+	          var primary = document.createElement("div");
+	          primary.className = "text-sm font-medium text-foreground";
+	          primary.textContent = value;
+	          if (dataAttr) {
+	            primary.setAttribute(dataAttr, "");
+	          }
+	          var secondary = document.createElement("div");
+	          secondary.textContent = label;
+	          wrap.appendChild(primary);
+	          wrap.appendChild(secondary);
+	          return wrap;
+	        }
+
+	        stats.appendChild(statCell(String(collection.documents || 0), "Documents", "data-collection-documents"));
+	        stats.appendChild(statCell("—", "Owner"));
+	        stats.appendChild(statCell("—", "Focus"));
+	        stats.appendChild(statCell(collection.updatedAt ? formatDate(collection.updatedAt) : "—", "Last update", "data-collection-updated"));
+	        card.appendChild(stats);
+
+	        collectionsGrid.appendChild(card);
+	      }
+
+		      function upsertCollectionCatalog(record) {
+		        if (!record || !record.id || !record.name) {
+		          return;
+		        }
+		        var existing = collectionsCatalog.find(function (entry) {
+		          return entry.id === record.id;
+		        });
+		        if (existing) {
+		          existing.name = record.name;
+		          existing.slug = record.slug || existing.slug;
+		          existing.visibility = record.visibility || existing.visibility;
+		          existing.visibilityLabel = record.visibilityLabel || existing.visibilityLabel;
+		          existing.description = record.description || existing.description || "";
+		        } else {
+		          collectionsCatalog.push({
+		            id: record.id,
+		            name: record.name,
+		            slug: record.slug || "",
+		            visibility: record.visibility || "private",
+		            visibilityLabel: record.visibilityLabel || "Private",
+		            description: record.description || "",
+		          });
+		        }
+		        collectionsCatalog.sort(function (a, b) {
+		          return a.name.localeCompare(b.name);
+		        });
+		      }
+
+		      if (collectionCreateButtons.length) {
+		        collectionCreateButtons.forEach(function (button) {
+		          button.addEventListener("click", function () {
+		            openCollectionModal({ mode: "create", autoSelect: false });
+		          });
+		        });
+		      }
+		      if (collectionsNew) {
+		        collectionsNew.addEventListener("click", function () {
+		          if (!documentCollectionsDocumentId) {
+		            return;
+		          }
+		          openCollectionModal({ mode: "create", documentId: documentCollectionsDocumentId, autoSelect: true });
+		        });
+		      }
+
+		      if (collectionsGrid) {
+		        collectionsGrid.addEventListener("click", function (event) {
+		          var target = event.target;
+		          if (!target || typeof target.closest !== "function") {
+		            return;
+		          }
+		          var trigger = target.closest("[data-collection-edit-open]");
+		          if (!trigger) {
+		            return;
+		          }
+		          event.preventDefault();
+		          event.stopPropagation();
+		          var card = trigger.closest("[data-collection-card]");
+		          if (!card) {
+		            return;
+		          }
+		          openCollectionModal({
+		            mode: "edit",
+		            collectionId: card.dataset.collectionId || "",
+		            name: card.dataset.collectionName || "",
+		            description: card.dataset.collectionDescription || "",
+		            visibility: card.dataset.collectionVisibility || "private",
+		          });
+		        });
+		      }
+
+	      if (collectionOverlay) {
+	        collectionOverlay.addEventListener("click", function () {
+	          closeCollectionModal();
+	        });
+	      }
+	      collectionCloseButtons.forEach(function (button) {
+	        button.addEventListener("click", function () {
+	          closeCollectionModal();
+	        });
+	      });
+		      document.addEventListener("keydown", function (event) {
+		        if (event.key === "Escape" && isCollectionModalOpen) {
+		          event.preventDefault();
+		          closeCollectionModal();
+		        }
+		      });
+
+		      if (collectionDelete) {
+		        collectionDelete.addEventListener("click", function () {
+		          var collectionId = collectionModalContext ? collectionModalContext.collectionId : "";
+		          if (!collectionId || !knowledgeBusinessId) {
+		            return;
+		          }
+		          if (!window.confirm("Delete this collection? Documents will remain, but agent scoping and links will be removed.")) {
+		            return;
+		          }
+		          setCollectionStatus("Deleting collection…", "info");
+		          var deleteUrl = "/api/knowledge/collections/" + encodeURIComponent(collectionId) + "/";
+		          if (knowledgeBusinessId) {
+		            deleteUrl += "?business_id=" + encodeURIComponent(knowledgeBusinessId);
+		          }
+		          var headers = { Accept: "application/json" };
+		          if (csrfToken) {
+		            headers["X-CSRFToken"] = csrfToken;
+		          }
+		          fetch(deleteUrl, {
+		            method: "DELETE",
+		            headers: headers,
+		            credentials: "same-origin",
+		          })
+		            .then(function (response) {
+		              if (response.status === 204) {
+		                return null;
+		              }
+		              if (!response.ok) {
+		                return response.json().then(function (data) {
+		                  var message = (data && (data.message || data.error)) || "Unable to delete collection.";
+		                  throw new Error(message);
+		                });
+		              }
+		              return null;
+		            })
+		            .then(function () {
+		              collectionsCatalog = collectionsCatalog.filter(function (entry) {
+		                return entry && entry.id !== collectionId;
+		              });
+		              documentCollectionsSelection.delete(collectionId);
+		              documentCollectionsBaseline.delete(collectionId);
+		              markDocumentCollectionsDirty();
+		              renderDocumentCollectionsOptions();
+		              var selector = "[data-collection-card][data-collection-id='" + collectionId + "']";
+		              var card = document.querySelector(selector);
+		              if (card && card.parentNode) {
+		                card.parentNode.removeChild(card);
+		              }
+		              if (collectionsGrid && collectionsGrid.querySelectorAll("[data-collection-card]").length === 0) {
+		                collectionsGrid.classList.add("hidden");
+		              }
+		              if (collectionsEmptyState && (!collectionsGrid || collectionsGrid.classList.contains("hidden"))) {
+		                collectionsEmptyState.classList.remove("hidden");
+		              }
+		              setCollectionStatus("Collection deleted.", "success");
+		              window.setTimeout(function () {
+		                closeCollectionModal();
+		              }, 250);
+		            })
+		            .catch(function (error) {
+		              setCollectionStatus(error.message || "Unable to delete collection.", "error");
+		            });
+		        });
+		      }
+
+		      if (collectionForm) {
+		        collectionForm.addEventListener("submit", function (event) {
+		          event.preventDefault();
+		          if (collectionCreating) {
+	            return;
+	          }
+	          if (!knowledgeBusinessId) {
+	            setCollectionStatus("Link a business profile before creating collections.", "error");
+	            return;
+	          }
+	          var name = collectionNameField ? (collectionNameField.value || "").trim() : "";
+	          if (!name) {
+	            setCollectionStatus("Collection name is required.", "error");
+	            return;
+	          }
+		          var description = collectionDescriptionField ? (collectionDescriptionField.value || "").trim() : "";
+		          var visibility = collectionVisibilityField ? collectionVisibilityField.value : "private";
+		          var isEdit =
+		            collectionModalContext &&
+		            collectionModalContext.mode === "edit" &&
+		            collectionModalContext.collectionId;
+		          collectionCreating = true;
+		          if (collectionSubmit) {
+		            collectionSubmit.textContent = isEdit ? "Saving…" : "Creating…";
+		            collectionSubmit.disabled = true;
+		          }
+		          setCollectionStatus(isEdit ? "Saving changes…" : "Creating collection…", "info");
+		          var requestUrl = isEdit
+		            ? "/api/knowledge/collections/" + encodeURIComponent(collectionModalContext.collectionId) + "/"
+		            : "/api/knowledge/collections/";
+		          if (knowledgeBusinessId) {
+		            requestUrl += "?business_id=" + encodeURIComponent(knowledgeBusinessId);
+		          }
+		          var headers = {
+		            "Content-Type": "application/json",
+		            Accept: "application/json",
+		          };
+		          if (csrfToken) {
+		            headers["X-CSRFToken"] = csrfToken;
+		          }
+		          fetch(requestUrl, {
+		            method: isEdit ? "PATCH" : "POST",
+		            headers: headers,
+		            credentials: "same-origin",
+		            body: JSON.stringify({ name: name, description: description, visibility: visibility }),
+		          })
+		            .then(function (response) {
+		              if (!response.ok) {
+		                return response.json().then(function (data) {
+		                  var message =
+		                    (data && (data.message || data.error)) ||
+		                    (isEdit ? "Unable to update collection." : "Unable to create collection.");
+		                  throw new Error(message);
+		                });
+		              }
+		              return response.json();
+		            })
+		            .then(function (payload) {
+		              var collection = payload && payload.collection ? payload.collection : null;
+		              if (!collection || !collection.id) {
+		                throw new Error("Invalid collection response.");
+		              }
+		              upsertCollectionCatalog(collection);
+		              renderDocumentCollectionsOptions();
+		              var cardSelector = "[data-collection-card][data-collection-id='" + collection.id + "']";
+		              var existingCard = document.querySelector(cardSelector);
+		              if (existingCard) {
+		                existingCard.dataset.collectionName = collection.name || "";
+		                existingCard.dataset.collectionSlug = collection.slug || "";
+		                existingCard.dataset.collectionVisibility = collection.visibility || "private";
+		                existingCard.dataset.collectionDescription = collection.description || "";
+		                var titleNode = existingCard.querySelector("[data-collection-title]");
+		                if (titleNode) titleNode.textContent = collection.name || "Collection";
+		                var badgeNode = existingCard.querySelector("[data-collection-badge]");
+		                if (badgeNode) badgeNode.textContent = collection.visibilityLabel || "Private";
+		                var descNode = existingCard.querySelector("[data-collection-description]");
+		                if (descNode) descNode.textContent = collection.description || "";
+		                var docsNode = existingCard.querySelector("[data-collection-documents]");
+		                if (docsNode && typeof collection.documents === "number") {
+		                  docsNode.textContent = String(collection.documents);
+		                }
+		                var updatedNode = existingCard.querySelector("[data-collection-updated]");
+		                if (updatedNode) {
+		                  updatedNode.textContent = collection.updatedAt ? formatDate(collection.updatedAt) : "—";
+		                }
+		              }
+		              if (collectionsEmptyState) {
+		                collectionsEmptyState.classList.add("hidden");
+		              }
+		              if (collectionsGrid) {
+		                collectionsGrid.classList.remove("hidden");
+		              }
+		              if (!isEdit && !existingCard) {
+		                buildCollectionCard(collection);
+		              }
+		              if (
+		                collectionModalContext &&
+		                collectionModalContext.autoSelect &&
+	                collectionModalContext.documentId &&
+	                collectionModalContext.documentId === documentCollectionsDocumentId
+	              ) {
+	                documentCollectionsSelection.add(collection.id);
+	                markDocumentCollectionsDirty();
+		                renderDocumentCollectionsOptions();
+		              }
+		              setCollectionStatus(isEdit ? "Collection updated." : "Collection created.", "success");
+		              window.setTimeout(function () {
+		                closeCollectionModal();
+		              }, 400);
+		            })
+		            .catch(function (error) {
+		              setCollectionStatus(
+		                error.message || (isEdit ? "Unable to update collection." : "Unable to create collection."),
+		                "error"
+		              );
+		            })
+		            .finally(function () {
+		              collectionCreating = false;
+		              if (collectionSubmit) {
+		                collectionSubmit.textContent =
+		                  isEdit ? "Save changes" : collectionSubmitLabel;
+		                collectionSubmit.disabled = false;
+		              }
+		            });
+	        });
+	      }
+	    }
+
+	    function bindDocumentRow(row) {
+	      if (!row) return;
+	      row.addEventListener("click", function (event) {
+	        if (event.defaultPrevented) return;
         event.stopPropagation();
         handleRowActivation(row);
       });
@@ -3965,13 +4756,69 @@
       }
     }
 
-    var rows = Array.prototype.slice.call(document.querySelectorAll("[data-document-row]") || []);
-    rows.forEach(bindDocumentRow);
+	    var rows = Array.prototype.slice.call(document.querySelectorAll("[data-document-row]") || []);
+	    rows.forEach(bindDocumentRow);
 
-    if (guardrailsSave) {
-      guardrailsSave.addEventListener("click", function () {
-        if (guardrailsSave.disabled || guardrailSaving) {
-          return;
+	    if (collectionsSave) {
+	      collectionsSave.addEventListener("click", function () {
+	        if (collectionsSave.disabled || documentCollectionsSaving) {
+	          return;
+	        }
+	        if (!documentCollectionsDocumentId || !knowledgeBusinessId) {
+	          return;
+	        }
+	        documentCollectionsSaving = true;
+	        updateDocumentCollectionsSaveState();
+	        collectionsSave.textContent = "Saving...";
+	        setDocumentCollectionsStatus("Saving collections...", "info");
+	        var saveUrl = "/api/knowledge/documents/" + encodeURIComponent(documentCollectionsDocumentId) + "/";
+	        if (knowledgeBusinessId) {
+	          saveUrl += "?business_id=" + encodeURIComponent(knowledgeBusinessId);
+	        }
+	        var headers = {
+	          "Content-Type": "application/json",
+	          Accept: "application/json",
+	        };
+	        if (csrfToken) {
+	          headers["X-CSRFToken"] = csrfToken;
+	        }
+	        var payload = { collectionIds: Array.from(documentCollectionsSelection) };
+	        fetch(saveUrl, {
+	          method: "PATCH",
+	          headers: headers,
+	          credentials: "same-origin",
+	          body: JSON.stringify(payload),
+	        })
+	          .then(function (response) {
+	            if (!response.ok) {
+	              return response.json().then(function (data) {
+	                var message = (data && (data.message || data.error)) || "Unable to save collections.";
+	                throw new Error(message);
+	              });
+	            }
+	            return response.json();
+	          })
+	          .then(function (data) {
+	            var updated = Array.isArray(data && data.collections) ? data.collections : [];
+	            setDocumentCollectionsSelection(updated);
+	            updateCachedCollections(documentCollectionsDocumentId, updated);
+	            setDocumentCollectionsStatus("Collections saved.", "success", 3000);
+	          })
+	          .catch(function (error) {
+	            setDocumentCollectionsStatus(error.message || "Unable to save collections.", "error");
+	          })
+	          .finally(function () {
+	            documentCollectionsSaving = false;
+	            collectionsSave.textContent = collectionsSaveLabel;
+	            updateDocumentCollectionsSaveState();
+	          });
+	      });
+	    }
+
+	    if (guardrailsSave) {
+	      guardrailsSave.addEventListener("click", function () {
+	        if (guardrailsSave.disabled || guardrailSaving) {
+	          return;
         }
         if (!guardrailDocumentId || !knowledgeBusinessId) {
           return;

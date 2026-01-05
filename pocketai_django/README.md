@@ -15,7 +15,8 @@ python manage.py runserver
 
 ## Docs
 
-- `docs/product/` — business & SaaS docs (start with `docs/product/saas_brief.md`)
+- `AGENTS.md` — working agreement for AI coding agents (read first)
+- `docs/product/` — business & SaaS docs (start with `docs/product/saas_brief.md` and `docs/product/technical.md`)
 - `docs/architecture/` — RAG/LLM flow docs
 - `docs/ops/` — rollout/runbooks/load testing
 - `docs/prompts/` — prompt catalogs

@@ -1,6 +1,6 @@
 # RAG Roadmap (Structure-First)
 
-This roadmap reflects the latest research: table structure recognition is the prerequisite for reliable retrieval on complex PDFs. P0/P1 are complete.
+This roadmap reflects the latest research: table structure recognition is the prerequisite for reliable retrieval on complex PDFs. P0/P1/P2 are complete.
 
 ## P0 — Baseline + Safety Rails (Done)
 
@@ -45,18 +45,15 @@ Validation/rollback:
 Effort: 1-2 weeks
 Dependencies: P0
 
-## P2 — Table Structure Recognition (TSR) + Extraction Hybrid (Updated)
+## P2 — Table Structure Recognition (TSR) + Extraction Hybrid (Done)
 
 Objective: produce reliable cell-level tables (rows/columns/headers) for complex PDFs.
 
 Steps:
-- Pick a primary TSR path:
-  - Open-source: UniTable or PP-StructureV3 (HTML/JSON output), or
-  - Managed: Azure Document Intelligence (Markdown/JSON), or
-  - Hybrid: PyMuPDF for text + TSR for tables, with per-table selection.
-- Add confidence scoring for table structure (TEDS/GriTS or proxy quality signals).
+- Implement hybrid table extraction (Azure DI when configured, plus geometry reconstruction, pdfplumber candidates, and heuristic fallback).
+- Add proxy confidence scoring for table structure and use it in extractor selection + VLM repair decisions.
 - Persist table cell provenance (page anchor + cell coords) and structure metadata.
-- Add low-confidence fallback: crop table images and repair with a VLM or DI.
+- Add low-confidence fallback: crop table images and repair with a VLM (applies to any extractor with a bbox).
 - Keep a config switch to select extractor at runtime (pre-launch, default on).
 
 Success metrics:

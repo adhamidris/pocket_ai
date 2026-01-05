@@ -227,6 +227,18 @@ RAG_ALIAS_MAX_CHUNKS_PER_UPLOAD = int(os.getenv("RAG_ALIAS_MAX_CHUNKS_PER_UPLOAD
 RAG_ANN_MAX_CHUNKS_PER_UPLOAD = int(os.getenv("RAG_ANN_MAX_CHUNKS_PER_UPLOAD", "3"))
 RAG_SEARCH_PREVIEW_CHAR_LIMIT = int(os.getenv("RAG_SEARCH_PREVIEW_CHAR_LIMIT", "800"))
 RAG_FTS_ENABLED = os.getenv("RAG_FTS_ENABLED", "true").lower() in {"1", "true", "yes"}
+try:
+    RAG_DB_STATEMENT_TIMEOUT_MS = int(os.getenv("RAG_DB_STATEMENT_TIMEOUT_MS", "15000"))
+except (TypeError, ValueError):
+    RAG_DB_STATEMENT_TIMEOUT_MS = 15000
+if RAG_DB_STATEMENT_TIMEOUT_MS < 0:
+    RAG_DB_STATEMENT_TIMEOUT_MS = 0
+try:
+    RAG_DB_LOCK_TIMEOUT_MS = int(os.getenv("RAG_DB_LOCK_TIMEOUT_MS", "2000"))
+except (TypeError, ValueError):
+    RAG_DB_LOCK_TIMEOUT_MS = 2000
+if RAG_DB_LOCK_TIMEOUT_MS < 0:
+    RAG_DB_LOCK_TIMEOUT_MS = 0
 RAG_RERANK_POOL = int(os.getenv("RAG_RERANK_POOL", "60"))
 RAG_RERANK_BUDGET_MS = int(os.getenv("RAG_RERANK_BUDGET_MS", "0"))
 RAG_SNIPPET_RERANK_BUDGET_MS = int(os.getenv("RAG_SNIPPET_RERANK_BUDGET_MS", "0"))
@@ -301,9 +313,17 @@ RAG_OCR_PERCENT_SANITY_MAX = float(os.getenv("RAG_OCR_PERCENT_SANITY_MAX", "100"
 RAG_OCR_CURRENCY_SPACING_ENABLED = os.getenv("RAG_OCR_CURRENCY_SPACING_ENABLED", "true").lower() in {"1", "true", "yes"}
 # Default to MCP orchestrator for new deployments; can be disabled per-env.
 RAG_USE_MCP_ORCHESTRATOR = os.getenv("RAG_USE_MCP_ORCHESTRATOR", "true").lower() in {"1", "true", "yes"}
-MCP_SEARCH_MAX_QUERY_VARIANTS = int(os.getenv("MCP_SEARCH_MAX_QUERY_VARIANTS", "4"))
+# Retrieval should be predictable by default: one strong query per user turn.
+# Fanout variants can be enabled explicitly via env.
+MCP_SEARCH_MAX_QUERY_VARIANTS = int(os.getenv("MCP_SEARCH_MAX_QUERY_VARIANTS", "1"))
 MCP_SEARCH_FANOUT_BUDGET_MS = int(os.getenv("MCP_SEARCH_FANOUT_BUDGET_MS", "0"))
 MCP_SEARCH_FANOUT_RRF_K = int(os.getenv("MCP_SEARCH_FANOUT_RRF_K", "60"))
+MCP_SEARCH_FANOUT_PARALLEL = os.getenv("MCP_SEARCH_FANOUT_PARALLEL", "false").lower() in {"1", "true", "yes"}
+try:
+    MCP_SEARCH_FANOUT_PARALLEL_MAX_WORKERS = int(os.getenv("MCP_SEARCH_FANOUT_PARALLEL_MAX_WORKERS", "4"))
+except (TypeError, ValueError):
+    MCP_SEARCH_FANOUT_PARALLEL_MAX_WORKERS = 4
+MCP_SEARCH_FANOUT_PARALLEL_MAX_WORKERS = max(1, min(8, MCP_SEARCH_FANOUT_PARALLEL_MAX_WORKERS))
 # MCP prompt-safe tool output limits (evidence packets sent back to the LLM).
 MCP_PROMPT_MAX_SNIPPETS = int(os.getenv("MCP_PROMPT_MAX_SNIPPETS", "4"))
 MCP_PROMPT_SNIPPET_CONTENT_CHARS = int(os.getenv("MCP_PROMPT_SNIPPET_CONTENT_CHARS", "1200"))
@@ -551,6 +571,12 @@ try:
 except (TypeError, ValueError):
     MCP_MAX_TOOL_ITERATIONS = 10
 MCP_MAX_TOOL_ITERATIONS = max(1, min(50, MCP_MAX_TOOL_ITERATIONS))
+try:
+    MCP_MAX_SEARCHES_PER_TURN = int(os.getenv("MCP_MAX_SEARCHES_PER_TURN", "1"))
+except (TypeError, ValueError):
+    MCP_MAX_SEARCHES_PER_TURN = 1
+if MCP_MAX_SEARCHES_PER_TURN < 0:
+    MCP_MAX_SEARCHES_PER_TURN = 0
 try:
     RAG_MAX_CHUNK_READS_PER_TURN = int(os.getenv("RAG_MAX_CHUNK_READS_PER_TURN", "3"))
 except (TypeError, ValueError):

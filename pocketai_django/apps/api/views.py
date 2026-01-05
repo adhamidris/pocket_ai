@@ -18,6 +18,8 @@ from django.utils import timezone
 from django.views.decorators.csrf import csrf_exempt, csrf_protect
 from django.views.decorators.http import require_http_methods
 
+from core.tenancy import tenant_context
+
 from apps.accounts.models import (
     AgentProfile,
     BusinessProfile,
@@ -25,6 +27,7 @@ from apps.accounts.models import (
     IntegrationCredentialEventType,
     KnowledgeAuditAction,
     KnowledgeAuditEvent,
+    KnowledgeCollection,
     KnowledgeIntegration,
     KnowledgeIntegrationStatus,
     KnowledgeIntegrationType,
@@ -70,6 +73,14 @@ from apps.knowledge.documents import (
     list_documents as list_knowledge_documents,
     preview_csv_upload,
     scrape_document_source,
+)
+from apps.knowledge.collections import (
+    KnowledgeCollectionValidationError,
+    create_knowledge_collection,
+    delete_knowledge_collection,
+    list_knowledge_collections,
+    set_upload_collections,
+    update_knowledge_collection,
 )
 from apps.integrations.integration_sync import IntegrationSyncError, IntegrationSyncService
 from apps.integrations.google_drive import (
@@ -782,6 +793,46 @@ def _resolve_business_profile(request: HttpRequest, business_id: str | None) -> 
     )
 
 
+def _resolve_owned_business_profile(
+    request: HttpRequest,
+    business_id: str | None,
+) -> tuple[BusinessProfile | None, JsonResponse | None]:
+    if not request.user.is_authenticated:
+        return None, JsonResponse(
+            {"error": "UNAUTHORIZED", "message": "Login required."},
+            status=HTTPStatus.UNAUTHORIZED,
+        )
+
+    business, error = _resolve_business_profile(request, business_id)
+    if error:
+        return None, error
+    assert business is not None
+
+    if not request.user.business_profiles.filter(id=business.id).exists():
+        return None, JsonResponse(
+            {"error": "FORBIDDEN", "message": "You do not have access to this business profile."},
+            status=HTTPStatus.FORBIDDEN,
+        )
+    return business, None
+
+
+def _visibility_label(value: str | None) -> str:
+    return (value or "").replace("_", " ").title() or "Private"
+
+
+def _serialize_collection(collection: KnowledgeCollection, *, documents: int | None = None) -> dict[str, object]:
+    return {
+        "id": str(collection.id),
+        "name": collection.name,
+        "slug": collection.slug,
+        "description": collection.description or "",
+        "visibility": collection.visibility,
+        "visibilityLabel": _visibility_label(collection.visibility),
+        "documents": int(documents) if documents is not None else None,
+        "updatedAt": _iso(getattr(collection, "updated_at", None)),
+    }
+
+
 def _get_google_integration(business: BusinessProfile, integration_id: uuid.UUID | None = None) -> KnowledgeIntegration | None:
     qs = KnowledgeIntegration.objects.filter(
         business_profile=business,
@@ -1189,6 +1240,16 @@ def _read_document_guardrails(metadata: object) -> list[str]:
 def _serialize_document_detail(detail: DocumentDetail) -> dict:
     payload = {
         "summary": _serialize_document_summary(detail.summary),
+        "collections": [
+            {
+                "id": str(collection.id),
+                "name": collection.name,
+                "slug": collection.slug,
+                "visibility": collection.visibility,
+                "visibilityLabel": _visibility_label(collection.visibility),
+            }
+            for collection in getattr(detail, "collections", ())
+        ],
         "summaryText": detail.summary_text,
         "createdByAgent": detail.created_by_agent,
         "guardrails": {"requiredIdentifiers": _read_document_guardrails(detail.metadata)},
@@ -1556,6 +1617,16 @@ def agent_detail_view(request: HttpRequest, agent_id: uuid.UUID) -> JsonResponse
                     }
                     for doc in detail.knowledge_documents
                 ],
+                "collections": [
+                    {
+                        "id": str(collection.id),
+                        "name": collection.name,
+                        "visibility": collection.visibility,
+                        "visibilityLabel": _visibility_label(collection.visibility),
+                        "updatedAt": _iso(collection.updated_at),
+                    }
+                    for collection in getattr(detail, "knowledge_collections", ())
+                ],
             },
             "stats": {
                 "casesTotal": detail.stats.total_cases,
@@ -1626,6 +1697,127 @@ def agent_action_settings_view(request: HttpRequest, agent_id: uuid.UUID) -> Jso
                 "enabled": setting.enabled,
             }
         }
+    )
+
+
+@require_http_methods(["GET", "PUT"])
+def agent_knowledge_access_view(request: HttpRequest, agent_id: uuid.UUID) -> JsonResponse:
+    if not request.user.is_authenticated:
+        return JsonResponse({"error": "UNAUTHORIZED", "message": "Login required."}, status=HTTPStatus.UNAUTHORIZED)
+
+    agent = (
+        AgentProfile.objects.select_related("business_profile")
+        .prefetch_related("allowed_documents", "allowed_collections")
+        .filter(id=agent_id, user=request.user)
+        .first()
+    )
+    if agent is None:
+        return JsonResponse({"error": "AGENT_NOT_FOUND", "message": "Agent profile not found."}, status=HTTPStatus.NOT_FOUND)
+
+    business = agent.business_profile
+
+    if request.method == "GET":
+        with tenant_context(business.id):
+            collection_ids = list(
+                agent.allowed_collections.filter(business_profile=business).values_list("id", flat=True)
+            )
+            document_ids = list(agent.allowed_documents.filter(business_profile=business).values_list("id", flat=True))
+        return JsonResponse(
+            {
+                "knowledgeAccess": {
+                    "mode": "select" if (collection_ids or document_ids) else "all",
+                    "collectionIds": [str(value) for value in collection_ids],
+                    "documentIds": [str(value) for value in document_ids],
+                }
+            },
+            status=HTTPStatus.OK,
+        )
+
+    try:
+        payload = json.loads(request.body.decode("utf-8") or "{}")
+    except (json.JSONDecodeError, UnicodeDecodeError):
+        return JsonResponse({"error": "INVALID_JSON", "message": "Body must be valid JSON."}, status=HTTPStatus.BAD_REQUEST)
+
+    mode = str(payload.get("mode") or payload.get("knowledgeMode") or "").strip().lower()
+    if mode not in {"all", "select"}:
+        return JsonResponse(
+            {"error": "VALIDATION_ERROR", "message": "mode must be either 'all' or 'select'."},
+            status=HTTPStatus.BAD_REQUEST,
+        )
+
+    collection_ids_raw = payload.get("collectionIds")
+    document_ids_raw = payload.get("documentIds")
+
+    def _parse_id_list(values: object, *, field: str) -> list[uuid.UUID]:
+        if values is None:
+            return []
+        if not isinstance(values, list):
+            raise KnowledgeCollectionValidationError(f"{field} must be a list.", field=field)
+        parsed: list[uuid.UUID] = []
+        seen: set[uuid.UUID] = set()
+        for entry in values:
+            try:
+                entry_id = entry if isinstance(entry, uuid.UUID) else uuid.UUID(str(entry))
+            except (TypeError, ValueError) as exc:
+                raise KnowledgeCollectionValidationError(f"{field} must contain valid UUIDs.", field=field) from exc
+            if entry_id in seen:
+                continue
+            parsed.append(entry_id)
+            seen.add(entry_id)
+        return parsed
+
+    try:
+        collection_ids = _parse_id_list(collection_ids_raw, field="collectionIds")
+        document_ids = _parse_id_list(document_ids_raw, field="documentIds")
+    except KnowledgeCollectionValidationError as exc:
+        response_payload = {"error": "VALIDATION_ERROR", "message": str(exc)}
+        if exc.field:
+            response_payload["field"] = exc.field
+        return JsonResponse(response_payload, status=HTTPStatus.BAD_REQUEST)
+
+    with tenant_context(business.id):
+        if mode == "all":
+            agent.allowed_collections.clear()
+            agent.allowed_documents.clear()
+            updated_collections: list[str] = []
+            updated_documents: list[str] = []
+        else:
+            collections = list(KnowledgeCollection.objects.filter(business_profile=business, id__in=collection_ids).only("id"))
+            found_collections = {collection.id for collection in collections}
+            missing = [str(value) for value in collection_ids if value not in found_collections]
+            if missing:
+                return JsonResponse(
+                    {"error": "VALIDATION_ERROR", "message": f"Unknown collection ids: {', '.join(missing)}", "field": "collectionIds"},
+                    status=HTTPStatus.BAD_REQUEST,
+                )
+
+            documents = list(KnowledgeUpload.objects.filter(business_profile=business, id__in=document_ids).only("id"))
+            found_documents = {doc.id for doc in documents}
+            missing_documents = [str(value) for value in document_ids if value not in found_documents]
+            if missing_documents:
+                return JsonResponse(
+                    {"error": "VALIDATION_ERROR", "message": f"Unknown document ids: {', '.join(missing_documents)}", "field": "documentIds"},
+                    status=HTTPStatus.BAD_REQUEST,
+                )
+
+            agent.allowed_collections.set(collections)
+            if document_ids_raw is not None:
+                agent.allowed_documents.set(documents)
+
+            updated_collections = [str(value) for value in collection_ids]
+            updated_documents = [str(value) for value in document_ids] if document_ids_raw is not None else [
+                str(value) for value in agent.allowed_documents.values_list("id", flat=True)
+            ]
+
+    return JsonResponse(
+        {
+            "knowledgeAccess": {
+                "mode": "select" if (updated_collections or updated_documents) else "all",
+                "collectionIds": updated_collections,
+                "documentIds": updated_documents,
+            }
+        },
+        status=HTTPStatus.OK,
     )
 
 
@@ -1753,7 +1945,16 @@ def knowledge_document_detail(request: HttpRequest, document_id: uuid.UUID):
                     raw_required = guardrails_payload.get(key)
                     break
 
-        if not display_name_provided and raw_required is None:
+        collections_provided = any(key in payload for key in ("collectionIds", "collection_ids", "collections"))
+        collection_ids_raw = None
+        if collections_provided:
+            collection_ids_raw = payload.get("collectionIds")
+            if collection_ids_raw is None:
+                collection_ids_raw = payload.get("collection_ids")
+            if collection_ids_raw is None:
+                collection_ids_raw = payload.get("collections")
+
+        if not display_name_provided and raw_required is None and not collections_provided:
             return JsonResponse(
                 {"error": "VALIDATION_ERROR", "message": "No changes provided."},
                 status=HTTPStatus.BAD_REQUEST,
@@ -1797,22 +1998,58 @@ def knowledge_document_detail(request: HttpRequest, document_id: uuid.UUID):
             upload.metadata = metadata_copy
             update_fields.append("metadata")
 
-        if not update_fields:
-            return JsonResponse(
-                {"error": "VALIDATION_ERROR", "message": "No changes provided."},
-                status=HTTPStatus.BAD_REQUEST,
-            )
+        updated_collections = None
+        if collections_provided:
+            if collection_ids_raw is None:
+                return JsonResponse(
+                    {"error": "VALIDATION_ERROR", "message": "collectionIds must be provided.", "field": "collectionIds"},
+                    status=HTTPStatus.BAD_REQUEST,
+                )
+            if not isinstance(collection_ids_raw, list):
+                return JsonResponse(
+                    {"error": "VALIDATION_ERROR", "message": "collectionIds must be a list.", "field": "collectionIds"},
+                    status=HTTPStatus.BAD_REQUEST,
+                )
+            try:
+                updated_collections = set_upload_collections(
+                    business_profile=business,
+                    upload_id=upload.id,
+                    collection_ids=collection_ids_raw,
+                    added_by=request.user,
+                )
+            except KnowledgeUpload.DoesNotExist:
+                return JsonResponse(
+                    {"error": "DOCUMENT_NOT_FOUND", "message": "Document not found."},
+                    status=HTTPStatus.NOT_FOUND,
+                )
+            except KnowledgeCollectionValidationError as exc:
+                response_payload = {"error": "VALIDATION_ERROR", "message": str(exc)}
+                if exc.field:
+                    response_payload["field"] = exc.field
+                return JsonResponse(response_payload, status=HTTPStatus.BAD_REQUEST)
 
-        upload.save(update_fields=update_fields + ["updated_at"])
+        if update_fields:
+            upload.save(update_fields=update_fields + ["updated_at"])
         logger.info(
             "knowledge_document_update user=%s business=%s document=%s",
             getattr(request.user, "id", None),
             business.id,
             document_id,
         )
-        response_payload = {"success": True, "document": {"id": str(upload.id), "name": upload.display_name}}
+        response_payload: dict[str, object] = {"success": True, "document": {"id": str(upload.id), "name": upload.display_name}}
         if raw_required is not None:
             response_payload["guardrails"] = {"requiredIdentifiers": required_identifiers}
+        if updated_collections is not None:
+            response_payload["collections"] = [
+                {
+                    "id": str(collection.id),
+                    "name": collection.name,
+                    "slug": collection.slug,
+                    "visibility": collection.visibility,
+                    "visibilityLabel": _visibility_label(collection.visibility),
+                }
+                for collection in updated_collections
+            ]
         return JsonResponse(response_payload, status=HTTPStatus.OK)
 
     if request.method == "DELETE":
@@ -1862,6 +2099,143 @@ def knowledge_document_detail(request: HttpRequest, document_id: uuid.UUID):
     )
 
     return JsonResponse({"document": _serialize_document_detail(detail)}, status=HTTPStatus.OK)
+
+
+@require_http_methods(["GET", "POST"])
+def knowledge_collections_collection(request: HttpRequest) -> JsonResponse:
+    business_param = request.GET.get("business_id")
+    business, error = _resolve_owned_business_profile(request, business_param)
+    if error:
+        return error
+    assert business is not None
+
+    if request.method == "GET":
+        limit = request.GET.get("limit") or 200
+        offset = request.GET.get("offset") or 0
+        try:
+            items = list_knowledge_collections(business_profile=business, limit=limit, offset=offset)
+        except KnowledgeCollectionValidationError as exc:
+            payload = {"error": "VALIDATION_ERROR", "message": str(exc)}
+            if exc.field:
+                payload["field"] = exc.field
+            return JsonResponse(payload, status=HTTPStatus.BAD_REQUEST)
+
+        with tenant_context(business.id):
+            total = KnowledgeCollection.objects.filter(business_profile=business).count()
+
+        return JsonResponse(
+            {
+                "items": [
+                    {
+                        "id": str(item.id),
+                        "name": item.name,
+                        "slug": item.slug,
+                        "description": item.description,
+                        "visibility": item.visibility,
+                        "visibilityLabel": _visibility_label(item.visibility),
+                        "documents": item.documents,
+                        "owner": item.owner,
+                        "focus": "—",
+                        "updatedAt": _iso(item.updated_at),
+                    }
+                    for item in items
+                ],
+                "total": total,
+                "limit": int(limit) if str(limit).isdigit() else None,
+                "offset": int(offset) if str(offset).isdigit() else None,
+            },
+            status=HTTPStatus.OK,
+        )
+
+    try:
+        payload = json.loads(request.body.decode("utf-8") or "{}")
+    except (json.JSONDecodeError, UnicodeDecodeError):
+        return JsonResponse({"error": "INVALID_JSON", "message": "Body must be valid JSON."}, status=HTTPStatus.BAD_REQUEST)
+
+    name = str(payload.get("name") or "").strip()
+    description = str(payload.get("description") or "").strip()
+    visibility = payload.get("visibility")
+
+    try:
+        collection = create_knowledge_collection(
+            business_profile=business,
+            created_by=request.user,
+            name=name,
+            description=description,
+            visibility=str(visibility).strip() if visibility else None,
+        )
+    except KnowledgeCollectionValidationError as exc:
+        response_payload = {"error": "VALIDATION_ERROR", "message": str(exc)}
+        if exc.field:
+            response_payload["field"] = exc.field
+        return JsonResponse(response_payload, status=HTTPStatus.BAD_REQUEST)
+
+    return JsonResponse({"collection": _serialize_collection(collection, documents=0)}, status=HTTPStatus.CREATED)
+
+
+@require_http_methods(["GET", "PATCH", "DELETE"])
+def knowledge_collection_detail(request: HttpRequest, collection_id: uuid.UUID) -> JsonResponse:
+    business_param = request.GET.get("business_id")
+    business, error = _resolve_owned_business_profile(request, business_param)
+    if error:
+        return error
+    assert business is not None
+
+    if request.method == "DELETE":
+        try:
+            delete_knowledge_collection(business_profile=business, collection_id=collection_id)
+        except KnowledgeCollection.DoesNotExist:
+            return JsonResponse(
+                {"error": "COLLECTION_NOT_FOUND", "message": "Collection not found."},
+                status=HTTPStatus.NOT_FOUND,
+            )
+        return JsonResponse({}, status=HTTPStatus.NO_CONTENT)
+
+    if request.method == "PATCH":
+        try:
+            payload = json.loads(request.body.decode("utf-8") or "{}")
+        except (json.JSONDecodeError, UnicodeDecodeError):
+            return JsonResponse(
+                {"error": "INVALID_JSON", "message": "Body must be valid JSON."},
+                status=HTTPStatus.BAD_REQUEST,
+            )
+
+        name = payload.get("name")
+        description = payload.get("description")
+        visibility = payload.get("visibility")
+        try:
+            collection = update_knowledge_collection(
+                business_profile=business,
+                collection_id=collection_id,
+                name=str(name).strip() if name is not None else None,
+                description=str(description).strip() if description is not None else None,
+                visibility=str(visibility).strip() if visibility is not None else None,
+            )
+        except KnowledgeCollection.DoesNotExist:
+            return JsonResponse(
+                {"error": "COLLECTION_NOT_FOUND", "message": "Collection not found."},
+                status=HTTPStatus.NOT_FOUND,
+            )
+        except KnowledgeCollectionValidationError as exc:
+            response_payload = {"error": "VALIDATION_ERROR", "message": str(exc)}
+            if exc.field:
+                response_payload["field"] = exc.field
+            return JsonResponse(response_payload, status=HTTPStatus.BAD_REQUEST)
+
+        with tenant_context(business.id):
+            doc_count = collection.links.count()
+
+        return JsonResponse({"collection": _serialize_collection(collection, documents=doc_count)}, status=HTTPStatus.OK)
+
+    with tenant_context(business.id):
+        collection = KnowledgeCollection.objects.filter(business_profile=business, id=collection_id).first()
+        if not collection:
+            return JsonResponse(
+                {"error": "COLLECTION_NOT_FOUND", "message": "Collection not found."},
+                status=HTTPStatus.NOT_FOUND,
+            )
+        doc_count = collection.links.count()
+    return JsonResponse({"collection": _serialize_collection(collection, documents=doc_count)}, status=HTTPStatus.OK)
 
 
 @require_http_methods(["GET"])

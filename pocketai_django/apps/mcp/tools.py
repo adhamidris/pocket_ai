@@ -36,6 +36,7 @@ from django.core.cache import cache
 from django.conf import settings
 
 from apps.accounts.models import (
+    AgentProfile,
     KnowledgeAuditAction,
     KnowledgeAuditEvent,
     KnowledgeStatus,
@@ -73,7 +74,9 @@ except Exception:  # pragma: no cover
 
 logger = logging.getLogger(__name__)
 IDENTIFIER_MAPPING_CACHE_TTL = 300
-DEFAULT_MAX_SEARCH_QUERY_VARIANTS = 4
+# Default to one query per user turn for latency predictability.
+# Additional query variants (fanout) can be enabled via `MCP_SEARCH_MAX_QUERY_VARIANTS`.
+DEFAULT_MAX_SEARCH_QUERY_VARIANTS = 1
 MCP_LOG_PII_DEFAULT = False
 MCP_LOG_SNIPPET_PREVIEWS_DEFAULT = False
 MCP_LOG_FULL_SNIPPET_CONTENT_DEFAULT = False
@@ -853,6 +856,92 @@ def _record_identifier_event_once(
         conversation=conversation,
         upload_ids=list(uploads),
     )
+
+
+_AGENT_UPLOAD_SCOPE_SENTINEL: object = object()
+
+
+def _agent_allowed_uploads(
+    conversation: Conversation,
+    context: ToolExecutionContext,
+) -> set[str] | None:
+    cached = getattr(context, "_agent_allowed_uploads", _AGENT_UPLOAD_SCOPE_SENTINEL)
+    if cached is not _AGENT_UPLOAD_SCOPE_SENTINEL:
+        return cached  # type: ignore[return-value]
+
+    agent_id = getattr(conversation, "agent_profile_id", None)
+    if not agent_id:
+        context._agent_allowed_uploads = None  # type: ignore[attr-defined]
+        return None
+
+    agent = AgentProfile.objects.filter(
+        id=agent_id,
+        business_profile=conversation.business_profile,
+    ).first()
+    if agent is None:
+        context._agent_allowed_uploads = None  # type: ignore[attr-defined]
+        return None
+
+    has_doc_rules = agent.allowed_documents.filter(business_profile=conversation.business_profile).exists()
+    has_collection_rules = agent.allowed_collections.filter(business_profile=conversation.business_profile).exists()
+    if not (has_doc_rules or has_collection_rules):
+        context._agent_allowed_uploads = None  # type: ignore[attr-defined]
+        return None
+
+    upload_ids: set[str] = set()
+    if has_doc_rules:
+        upload_ids.update(
+            str(value)
+            for value in apply_customer_visible_uploads(
+                agent.allowed_documents.filter(
+                    business_profile=conversation.business_profile,
+                    status=KnowledgeStatus.ACTIVE,
+                )
+            ).values_list("id", flat=True)
+        )
+
+    if has_collection_rules:
+        collection_ids = list(
+            agent.allowed_collections.filter(business_profile=conversation.business_profile).values_list("id", flat=True)
+        )
+        if collection_ids:
+            upload_ids.update(
+                str(value)
+                for value in apply_customer_visible_uploads(
+                    KnowledgeUpload.objects.filter(
+                        business_profile=conversation.business_profile,
+                        status=KnowledgeStatus.ACTIVE,
+                        collections__id__in=collection_ids,
+                    )
+                )
+                .values_list("id", flat=True)
+                .distinct()
+            )
+
+    context._agent_allowed_uploads = upload_ids  # type: ignore[attr-defined]
+    return upload_ids
+
+
+def _intersect_upload_scopes(a: set[str] | None, b: set[str] | None) -> set[str] | None:
+    if a is None:
+        return b
+    if b is None:
+        return a
+    return set(a) & set(b)
+
+
+def _scope_upload_ids_to_uuids(scope: set[str] | None) -> list[uuid.UUID] | None:
+    if scope is None:
+        return None
+    if not scope:
+        return []
+    ids: list[uuid.UUID] = []
+    for value in scope:
+        try:
+            ids.append(uuid.UUID(str(value)))
+        except (TypeError, ValueError):
+            continue
+    return ids
 
 
 def _query_intent(query: str) -> dict[str, object]:
@@ -2104,6 +2193,10 @@ def _search_knowledge_handler(
             if cache_token:
                 cache.set(cache_token, cache_payload, IDENTIFIER_MAPPING_CACHE_TTL)
 
+    agent_allowed_uploads = _agent_allowed_uploads(conversation, context)
+    combined_upload_scope = _intersect_upload_scopes(agent_allowed_uploads, allowed_uploads)
+    combined_upload_ids = _scope_upload_ids_to_uuids(combined_upload_scope)
+
     def _tuned_limit(intent: str | None, base_limit: int | None) -> int | None:
         limit_val = base_limit
         if intent == "identifier":
@@ -2131,12 +2224,16 @@ def _search_knowledge_handler(
             "path": diag.get("path"),
             "snippet_count": snippet_count,
             "limit": limit_value,
+            "agent_scope_uploads": len(agent_allowed_uploads) if agent_allowed_uploads is not None else None,
+            "effective_scope_uploads": len(combined_upload_ids) if combined_upload_ids is not None else None,
             "total_ms": diag.get("total_duration_ms"),
             "alias_ms": diag.get("alias_duration_ms"),
             "vector_ms": diag.get("vector_duration_ms"),
             "lexical_ms": diag.get("fts_duration_ms"),
             "rerank_ms": diag.get("rerank_duration_ms"),
             "table_ms": diag.get("table_duration_ms"),
+            "table_context_ms": diag.get("table_context_ms"),
+            "table_presence_ms": diag.get("table_presence_ms"),
             "snippet_rerank_ms": diag.get("snippet_rerank_ms"),
             "chunk_candidates": diag.get("chunk_candidate_count"),
             "alias_hits": diag.get("alias_hits"),
@@ -2230,6 +2327,7 @@ def _search_knowledge_handler(
                 query=query_text,
                 limit=limit_for_run,
                 identifier_filter=identifier_filter,
+                allowed_upload_ids=combined_upload_ids,
             )
         dataset_candidates: list[dict[str, object]] = []
         combined_snippets: list[object] = []
@@ -2241,6 +2339,8 @@ def _search_knowledge_handler(
                     business_profile=conversation.business_profile,
                     identifier_value=identifier_candidate,
                 )
+                if combined_upload_scope is not None:
+                    hits = [hit for hit in hits if getattr(hit, "upload_id", None) in combined_upload_scope]
                 if hits:
                     dataset_candidates = [
                         {
@@ -2562,9 +2662,15 @@ def _search_knowledge_handler(
     executor: ThreadPoolExecutor | None = None
     futures: list[tuple[int, str, Mapping[str, object], str | None, int | None, object]] = []
     fanout_start = time.perf_counter()
-    use_parallel = non_cached_queries > 1 and fanout_budget_ms <= 0
+    fanout_parallel_enabled = bool(getattr(settings, "MCP_SEARCH_FANOUT_PARALLEL", False))
+    max_parallel_workers = int(getattr(settings, "MCP_SEARCH_FANOUT_PARALLEL_MAX_WORKERS", 4) or 4)
+    max_parallel_workers = max(1, min(8, max_parallel_workers))
+    use_parallel = bool(fanout_parallel_enabled and non_cached_queries > 1 and fanout_budget_ms <= 0)
     if use_parallel:
-        executor = ThreadPoolExecutor(max_workers=min(non_cached_queries, 4), thread_name_prefix="mcp_search")
+        executor = ThreadPoolExecutor(
+            max_workers=min(non_cached_queries, max_parallel_workers),
+            thread_name_prefix="mcp_search",
+        )
     try:
         for idx, query_text, intent_info, intent, limit_for_run in pending_specs:
             if not executor and fanout_budget_ms:
@@ -2602,6 +2708,7 @@ def _search_knowledge_handler(
                     query=query_text,
                     limit=limit_for_run,
                     identifier_filter=identifier_filter,
+                    allowed_upload_ids=combined_upload_ids,
                 )
                 run_payload = _execute_single_query(
                     query_text,
@@ -2654,16 +2761,26 @@ def _search_knowledge_handler(
     clip_limit = int(limit_cap) if isinstance(limit_cap, int) and limit_cap > 0 else None
     deduped_snippets: list[dict[str, object]] = []
     fusion: dict[str, object] | None = None
+
+    def _snippet_dedupe_key(snippet: Mapping[str, object]) -> str:
+        content = snippet.get("content")
+        if isinstance(content, str) and content.strip():
+            return f"content:{sha256_hex(content)}"
+        summary = snippet.get("summary")
+        if isinstance(summary, str) and summary.strip():
+            return f"summary:{sha256_hex(summary)}"
+        identifier = snippet.get("chunk_id") or snippet.get("id") or snippet.get("upload_id")
+        if identifier:
+            return f"id:{identifier}"
+        return json.dumps(snippet, sort_keys=True, default=str)
+
     if len(runs) > 1:
         rrf_scores: dict[str, float] = defaultdict(float)
         best_payload: dict[str, dict[str, object]] = {}
         best_rank: dict[str, int] = {}
         for run in runs:
             for rank, snippet in enumerate(run.get("snippets", []), start=1):
-                identifier = snippet.get("chunk_id") or snippet.get("id") or snippet.get("upload_id")
-                if not identifier:
-                    continue
-                key = str(identifier)
+                key = _snippet_dedupe_key(snippet)
                 rrf_scores[key] += 1.0 / (rrf_k + rank)
                 current_best = best_rank.get(key)
                 if current_best is None or rank < current_best:
@@ -2684,8 +2801,7 @@ def _search_knowledge_handler(
         seen_snippets: set[str] = set()
         for run in runs:
             for snippet in run.get("snippets", []):
-                identifier = snippet.get("chunk_id") or snippet.get("id") or snippet.get("upload_id")
-                dedup_key = str(identifier) if identifier else json.dumps(snippet, sort_keys=True, default=str)
+                dedup_key = _snippet_dedupe_key(snippet)
                 if dedup_key in seen_snippets:
                     continue
                 seen_snippets.add(dedup_key)
@@ -2707,6 +2823,11 @@ def _search_knowledge_handler(
             "limit": limit_cap,
             "query_length": len(str(primary_run.get("query") or "")),
             "fusion": fusion,
+            "fanout_budget_ms": fanout_budget_ms,
+            "fanout_parallel_enabled": bool(fanout_parallel_enabled),
+            "fanout_parallel_used": bool(use_parallel),
+            "queries_planned": len(queries),
+            "queries_run": len(runs),
         },
     )
     context.reserve_characters(int(metrics.get("char_count", 0)))
@@ -2799,6 +2920,18 @@ def _read_document_handler(
                 "snippets": [],
             }
         gating_upload_id = upload_record.id
+
+    agent_scope = _agent_allowed_uploads(conversation, context)
+    if agent_scope is not None and gating_upload_id and str(gating_upload_id) not in agent_scope:
+        return {
+            "tool": "read_document",
+            "document_id": document_id,
+            "status": "constraint_error",
+            "error": "forbidden_document",
+            "error_code": "forbidden_document",
+            "snippets": [],
+            "hint": "This agent is not permitted to access that document. Use `search_knowledge` to find allowed sources.",
+        }
 
     if chunk_record:
         chunk_meta = chunk_record.metadata if isinstance(getattr(chunk_record, "metadata", None), Mapping) else {}
@@ -3133,7 +3266,6 @@ def _list_tables_handler(
     conversation: Conversation,
     context: ToolExecutionContext,
 ) -> Mapping[str, object]:
-    del context
     query_input = _coerce_str(arguments.get("query")).strip()
     raw_limit = arguments.get("limit")
     try:
@@ -3196,6 +3328,9 @@ def _list_tables_handler(
         .order_by("-updated_at")
         .distinct()
     )
+    agent_scope = _agent_allowed_uploads(conversation, context)
+    if agent_scope is not None:
+        uploads_qs = uploads_qs.filter(id__in=list(agent_scope))
     if query_input:
         uploads_qs = uploads_qs.filter(
             models.Q(display_name__icontains=query_input)
@@ -3508,6 +3643,19 @@ def _table_aggregate_handler(
             "tool": "table_aggregate",
             "status": "not_found",
             "error": "document not found for this business",
+        }
+
+    agent_scope = _agent_allowed_uploads(conversation, context)
+    if agent_scope is not None and str(upload.id) not in agent_scope:
+        return {
+            "tool": "table_aggregate",
+            "document_id": str(upload.id),
+            "status": "constraint_error",
+            "error": "forbidden_document",
+            "error_code": "forbidden_document",
+            "rows": [],
+            "match_count": 0,
+            "hint": "This agent is not permitted to access that document.",
         }
 
     guard = _identifier_guard(context, conversation)
@@ -4151,6 +4299,19 @@ def _dataset_query_handler(
             "tool": "query_dataset",
             "status": "not_found",
             "error": "document not found for this business",
+        }
+
+    agent_scope = _agent_allowed_uploads(conversation, context)
+    if agent_scope is not None and str(upload.id) not in agent_scope:
+        return {
+            "tool": "query_dataset",
+            "document_id": str(upload.id),
+            "status": "constraint_error",
+            "error": "forbidden_document",
+            "error_code": "forbidden_document",
+            "rows": [],
+            "match_count": 0,
+            "hint": "This agent is not permitted to access that document.",
         }
 
     guard = _identifier_guard(context, conversation)
@@ -5620,11 +5781,23 @@ def _read_knowledge_handler(
     start = time.perf_counter()
     raw_id = _coerce_str(arguments.get("document_id")).strip()
     if not raw_id:
-        return {"tool": "read_knowledge", "status": "error", "error": "document_id is required"}
+        return {
+            "tool": "read_knowledge",
+            "status": "error",
+            "error": "document_id is required",
+            "error_code": "missing_document_id",
+            "hint": "Use snippets[].read_hint.document_id from search_knowledge (do not guess document IDs).",
+        }
     try:
         identifier = uuid.UUID(raw_id)
     except (TypeError, ValueError):
-        return {"tool": "read_knowledge", "status": "error", "error": "document_id must be a valid UUID"}
+        return {
+            "tool": "read_knowledge",
+            "status": "error",
+            "error": "document_id must be a valid UUID",
+            "error_code": "invalid_document_id",
+            "hint": "Use snippets[].read_hint.document_id from search_knowledge (do not guess document IDs).",
+        }
 
     window_seconds = int(getattr(settings, "MCP_TOOL_RATE_LIMIT_WINDOW_SECONDS", 60) or 60)
     try:
@@ -5708,6 +5881,21 @@ def _read_knowledge_handler(
             level=logging.WARNING,
         )
         return payload
+
+    agent_scope = _agent_allowed_uploads(conversation, context)
+    if agent_scope is not None and str(upload_record.id) not in agent_scope:
+        return {
+            "tool": "read_knowledge",
+            "status": "constraint_error",
+            "engine": None,
+            "document_id": raw_id,
+            "evidence": {"snippets": [], "rows": []},
+            "total_matches": 0,
+            "truncated": False,
+            "error": "forbidden_document",
+            "error_code": "forbidden_document",
+            "hint": "This agent is not permitted to access that document.",
+        }
 
     chunk_meta = chunk_record.metadata if chunk_record and isinstance(getattr(chunk_record, "metadata", None), Mapping) else {}
     ingestion_meta = (

@@ -336,6 +336,13 @@ class AgentProfile(models.Model):
         blank=True,
         help_text="Knowledge uploads this agent is permitted to use during conversations.",
     )
+    allowed_collections = models.ManyToManyField(
+        "KnowledgeCollection",
+        through="AgentCollectionAccess",
+        related_name="permitted_agents",
+        blank=True,
+        help_text="Knowledge collections this agent is permitted to use during conversations.",
+    )
     status = models.CharField(
         max_length=32,
         choices=(
@@ -2095,3 +2102,49 @@ class AgentKnowledgeAccess(models.Model):
 
     def __str__(self) -> str:
         return f"{self.agent_profile} -> {self.knowledge_upload}"
+
+
+class AgentCollectionAccess(models.Model):
+    """
+    Through model that tracks explicit knowledge collections granted to an agent.
+
+    Enables collection-level scoping for retrieval and auditing for collection usage.
+    """
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    agent_profile = models.ForeignKey(
+        "AgentProfile",
+        related_name="collection_access_rules",
+        on_delete=models.CASCADE,
+    )
+    collection = models.ForeignKey(
+        "KnowledgeCollection",
+        related_name="agent_access_rules",
+        on_delete=models.CASCADE,
+    )
+    granted_by = models.ForeignKey(
+        User,
+        related_name="agent_collection_grants",
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+    )
+    granted_at = models.DateTimeField(auto_now_add=True)
+    metadata = models.JSONField(
+        default=dict,
+        blank=True,
+        help_text="Optional context about why access was granted.",
+    )
+
+    class Meta:
+        db_table = "accounts_agent_collection_grant"
+        ordering = ("-granted_at",)
+        constraints = [
+            models.UniqueConstraint(
+                fields=["agent_profile", "collection"],
+                name="agent_collection_unique",
+            )
+        ]
+
+    def __str__(self) -> str:
+        return f"{self.agent_profile} -> {self.collection}"

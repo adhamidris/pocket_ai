@@ -2,7 +2,7 @@
 
 ## Product
 - `product/saas_brief.md` — product brief / scope
-- `product/saas-platform-overview.md` — plain-English platform overview
+- `product/technical.md` — technical overview (architecture, RAG, ops targets)
 - `product/business-flow-10092025.md`, `product/final-business-flow.md` — flows and notes
 
 ## Architecture

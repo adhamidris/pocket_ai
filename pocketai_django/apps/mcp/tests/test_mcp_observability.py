@@ -73,6 +73,7 @@ class McpObservabilityTests(TestCase):
             business_industry=self.business.industry or "general services",
         )
         self.assertIn("Do not narrate internal steps", system_prompt)
+        self.assertIn("per visitor message (user turn)", system_prompt)
         final_messages = prompts.build_final_answer_messages(
             conversation=self.conversation,
             user_message="Explain the fees.",

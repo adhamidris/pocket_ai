@@ -1,29 +1,48 @@
-Context for this codebase (please read before changing anything)
+# PocketAI SaaS — Business Brief
 
-This repo is a multi-tenant B2B SaaS platform where each business (tenant) gets its own AI agent for support/sales. Tenants upload their knowledge (docs, PDFs, CSVs, etc.), and end users talk to the agent through a chat portal or embedded widget. The backend is Django + PostgreSQL.
+## One‑liner
+PocketAI is a multi‑tenant B2B SaaS that lets any business launch an AI agent grounded in their own knowledge in minutes—then share it as a link or embed it to handle support and sales conversations at scale.
 
-The AI agent works with RAG + tools:
+## Problem
+Businesses lose leads and overwhelm support teams when answers are scattered across PDFs, policies, spreadsheets, and internal docs. Hiring and training is expensive, and response times on social channels are often too slow.
 
-It searches tenant-specific knowledge and reads snippets.
+## Solution
+PocketAI gives each tenant a configurable AI agent that:
+- Responds in the same language the end user uses (English/Arabic, etc.).
+- Uses the tenant’s uploaded knowledge as the source of truth.
+- Enforces privacy by default and only reveals sensitive information when the tenant enables verification and the conversation actually requires it.
 
-It can call tools to manage CRM-style objects: customers, cases, leads, appointments, etc.
+## Target Customers
+- SMBs and mid‑market teams across industries (general-purpose platform, not niche-specific).
+- Initial geographic focus: MENA (e.g., Egypt, UAE, KSA, Jordan, Kuwait, Qatar).
 
-Then it returns a final answer to the end user (usually via streaming).
+## Core User Journey (Tenant)
+1. Sign up and create one or more agents (each agent can represent a brand, department, or use case).
+2. Create collections (knowledge libraries) and assign collections to agents for tighter relevance and control.
+3. Upload knowledge (PDF, DOCX, TXT/MD, scanned images/PDFs, CSV/XLSX, JSON).
+4. Publish the agent via a hosted portal link (and later: embedded widget / additional channels).
+5. Monitor usage, quality, and operational metrics from the dashboard.
 
-When you change or add code, please:
+## End‑User Experience
+- Fast “live” chat experience with immediate feedback and a complete answer after retrieval.
+- Answers are grounded in tenant-provided knowledge; when information is missing, the agent asks the smallest clarifying question needed to proceed.
 
-Always keep tenant isolation (no cross-tenant data leakage).
+## Safety, Privacy, and Verification
+- Default‑safe handling of sensitive data: the platform detects common PII fields and applies protective rules by default.
+- Tenant-controlled verification: enable email/SMS/WhatsApp OTP flows when customer-specific data access is needed.
+- Platform safety override: the system can refuse to disclose sensitive data even if a tenant misconfigures a knowledge source.
 
-Use the existing RAG + tool patterns instead of hard-coding special logic.
+## Knowledge Lifecycle
+- Tenants can overwrite documents as they update policies/pricing; the system reprocesses and uses the latest version for future answers.
+- Deletion removes the document and its derived retrieval artifacts from the active system (indexes/caches) so it no longer influences responses.
 
-Keep flows simple and product-y: clear UX for non-technical business owners, fast and safe behavior for end users.
+## Auditability and Trust
+- Access and activity audit logs (who accessed what and when) are retained for compliance and dispute resolution.
+- Tenant isolation is foundational: each tenant’s knowledge and conversations are logically separated.
 
-Document understanding principles (RAG):
+## Business Model (High-Level)
+- Subscription-based plans with a free trial period.
+- Plans can scale by usage (e.g., conversations), number of agents, enabled channels, and verification features.
 
-Preserve structure before chunking: tables must be extracted as rows/columns with headers, not flattened text.
-
-Chunk schema-aware: emit header+row child chunks and keep full-table parents for context.
-
-Use confidence gating for tough layouts: route low-confidence tables to higher-fidelity extraction.
-
-Keep provenance: every answer should trace back to a page anchor and table cell coordinates.
+## Positioning
+PocketAI is the “fastest path to a business-ready AI agent”: self‑serve setup, multi‑agent/collection control, privacy by default, and a focus on high-quality answers grounded in real business documents.

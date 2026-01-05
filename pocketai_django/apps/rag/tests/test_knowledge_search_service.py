@@ -245,6 +245,47 @@ class KnowledgeSearchServiceTableTests(TestCase):
         self.assertEqual(snippet.upload_id, self.upload.id)
         self.assertIn("Gold", snippet.summary)
 
+    @mock.patch("apps.rag.ai_orchestrator.build_embedding_service", return_value=None)
+    def test_table_specific_fallback_keeps_table_hits_when_no_text_hits(self, _build_embeddings) -> None:
+        # Add table chunks (as produced by ingestion schema chunking) so hybrid retrieval has candidates.
+        KnowledgeUploadChunk.objects.create(
+            upload=self.upload,
+            business_profile=self.business,
+            chunk_index=0,
+            content="[Table] Card Pricing\nplan: Gold; annual fee: $199",
+            metadata={
+                "is_table_chunk": True,
+                "is_table_preview": True,
+                "table_id": str(self.table.id),
+                "table_chunk_role": "preview",
+                "index_type": "table",
+            },
+        )
+        KnowledgeUploadChunk.objects.create(
+            upload=self.upload,
+            business_profile=self.business,
+            chunk_index=1,
+            content="[Table] Card Pricing\n[Row] 1\nplan: Gold\nannual fee: $199",
+            metadata={
+                "is_table_chunk": True,
+                "is_table_preview": False,
+                "table_id": str(self.table.id),
+                "table_chunk_role": "row",
+                "table_row_index": 1,
+                "index_type": "table",
+            },
+        )
+
+        service = KnowledgeSearchService()
+        # "platinum" becomes a specific token that won't match any table header/row labels in this tenant.
+        result = service.search(
+            business_profile=self.business,
+            query="What is the annual fee for Platinum plan?",
+        )
+        self.assertEqual(result.status, "ok")
+        self.assertTrue(result.snippets)
+        self.assertEqual(result.diagnostics.get("index_route"), "table_specific_fallback_table")
+
 
 class KnowledgeSearchServiceRegressionTests(TestCase):
     def setUp(self) -> None:

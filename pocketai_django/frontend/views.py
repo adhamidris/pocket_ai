@@ -35,6 +35,7 @@ from apps.accounts.models import (
     IdentifierColumnStatus,
     IdentifierSchemaStatus,
     IntegrationSyncFrequency,
+    KnowledgeCollection,
     KnowledgeIntegration,
     KnowledgeIntegrationStatus,
     KnowledgeIntegrationType,
@@ -61,6 +62,7 @@ from apps.accounts.action_controls import list_action_settings
 from apps.accounts.registration import KnowledgeUploadError
 from apps.cases.services import list_cases
 from apps.customers.services import list_customers
+from apps.knowledge.collections import KnowledgeCollectionValidationError, list_knowledge_collections
 from apps.knowledge.documents import DocumentListValidationError, list_documents
 from apps.knowledge.knowledge_ingestion import queue_ingestion_job
 from apps.mcp.identifier_registry import IdentifierRegistryService
@@ -1880,6 +1882,10 @@ def dashboard_agents(request: HttpRequest) -> HttpResponse:
                         "allowed_documents",
                         queryset=KnowledgeUpload.objects.filter(business_profile=business).only("id", "status", "is_active"),
                     ),
+                    Prefetch(
+                        "allowed_collections",
+                        queryset=KnowledgeCollection.objects.filter(business_profile=business).only("id"),
+                    ),
                 )
                 .only("id", "escalation_rule", "business_profile__name", "business_profile__slug")
             }
@@ -1904,28 +1910,32 @@ def dashboard_agents(request: HttpRequest) -> HttpResponse:
                     continue
 
                 allowed_docs = list(getattr(profile, "allowed_documents", []).all())
-                selected_docs = [
-                    doc
-                    for doc in allowed_docs
-                    if getattr(doc, "is_active", True) and getattr(doc, "status", "") != KnowledgeStatus.ARCHIVED
-                ]
-                selected_processing = sum(
-                    1
-                    for doc in selected_docs
-                    if getattr(doc, "status", "") in {KnowledgeStatus.PENDING, KnowledgeStatus.PROCESSING}
-                )
-                selected_failed = sum(1 for doc in selected_docs if getattr(doc, "status", "") == KnowledgeStatus.FAILED)
+                allowed_collections = list(getattr(profile, "allowed_collections", []).all())
+                has_restrictions = bool(allowed_docs or allowed_collections)
 
                 if knowledge_total == 0:
                     agent["knowledge_mode"] = "missing"
                     agent["knowledge_total"] = 0
                     agent["knowledge_processing"] = 0
                     agent["knowledge_failed"] = 0
-                elif allowed_docs:
+                elif has_restrictions:
+                    allowed_doc_ids = [doc.id for doc in allowed_docs]
+                    scoped_qs = active_knowledge_qs.filter(
+                        Q(id__in=allowed_doc_ids) | Q(collections__in=allowed_collections)
+                    ).distinct()
+                    scoped = scoped_qs.aggregate(
+                        total=Count("id", distinct=True),
+                        processing=Count(
+                            "id",
+                            filter=Q(status__in=[KnowledgeStatus.PENDING, KnowledgeStatus.PROCESSING]),
+                            distinct=True,
+                        ),
+                        failed=Count("id", filter=Q(status=KnowledgeStatus.FAILED), distinct=True),
+                    )
                     agent["knowledge_mode"] = "select"
-                    agent["knowledge_total"] = len(selected_docs)
-                    agent["knowledge_processing"] = selected_processing
-                    agent["knowledge_failed"] = selected_failed
+                    agent["knowledge_total"] = int(scoped.get("total") or 0)
+                    agent["knowledge_processing"] = int(scoped.get("processing") or 0)
+                    agent["knowledge_failed"] = int(scoped.get("failed") or 0)
                 else:
                     agent["knowledge_mode"] = "all"
                     agent["knowledge_total"] = knowledge_total
@@ -2374,6 +2384,7 @@ def dashboard_knowledge(request: HttpRequest) -> HttpResponse:
     user_name = _current_user_name(request)
     documents: list[dict[str, object]] = []
     total_documents = 0
+    collections: list[dict[str, object]] = []
     has_error = False
     business = _primary_business_for_user(request.user)
     guardrails = _build_guardrails_snapshot(business)
@@ -2413,6 +2424,27 @@ def dashboard_knowledge(request: HttpRequest) -> HttpResponse:
                     }
                 )
         except DocumentListValidationError:
+            has_error = True
+
+        try:
+            collection_items = list_knowledge_collections(business_profile=business, limit=200, offset=0)
+            for item in collection_items:
+                collections.append(
+                    {
+                        "uuid": str(item.id),
+                        "name": item.name,
+                        "slug": item.slug,
+                        "description": item.description,
+                        "visibility": item.visibility,
+                        "visibility_label": (item.visibility or "").replace("_", " ").title() or "Private",
+                        "documents": item.documents,
+                        "owner": item.owner or "—",
+                        "focus": "—",
+                        "updated_at": _format_document_timestamp(item.updated_at) if item.updated_at else "—",
+                        "updated_at_iso": item.updated_at.isoformat() if item.updated_at else "",
+                    }
+                )
+        except KnowledgeCollectionValidationError:
             has_error = True
 
     stats = [
@@ -2505,7 +2537,8 @@ def dashboard_knowledge(request: HttpRequest) -> HttpResponse:
         "knowledge_integrations_enabled": bool(business),
         "knowledge_business_id": str(business.id) if business else "",
         "knowledge_integrations_connect_url": reverse("frontend:dashboard-knowledge-integrations-connect"),
-        "knowledge_collections": [],
+        "knowledge_collections": collections,
+        "knowledge_collections_payload": collections,
         "knowledge_collections_empty_message": "Group documents into collections to control agent access.",
         "knowledge_panel_empty_title": "Select a document",
         "knowledge_panel_empty_message": "Choose a document to preview summary, classification, and sync details here.",

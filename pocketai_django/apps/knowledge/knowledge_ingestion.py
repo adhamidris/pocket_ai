@@ -3328,7 +3328,7 @@ class KnowledgeIngestionService:
         issues = layout_result.issues + table_issues + geom_issues + suppress_issues + pdfplumber_issues + azure_issues
 
         repair_meta: dict[str, Any] = {}
-        if selected_extractor.startswith("azure") and tables:
+        if tables:
             tables, repair_issues, repair_meta = self._repair_tables_with_vlm(
                 absolute,
                 tables,
@@ -3411,6 +3411,76 @@ class KnowledgeIngestionService:
             return self._extract_text_file(path)
         raise UnsupportedFormatError(f"Unsupported file type {format_hint}.")
 
+    def _estimate_table_structure_confidence(self, table: TablePayload) -> float:
+        """
+        Best-effort proxy for table structure confidence (0.0-1.0).
+
+        Azure DI tables may carry their own `structure_confidence`. For other extractors
+        we derive a conservative estimate from quality signals (row consistency, fill
+        ratio, header confidence) and basic collapse indicators (e.g., single-column
+        tables with multiple data rows).
+        """
+        meta = table.metadata if isinstance(table.metadata, Mapping) else {}
+        detected_via = str(meta.get("detected_via") or "").lower()
+
+        base = 0.82
+        if "azure" in detected_via:
+            base = 0.9
+        elif "geometry" in detected_via:
+            base = 0.86
+        elif "pdfplumber" in detected_via:
+            base = 0.76
+        elif "heuristic" in detected_via:
+            base = 0.72
+
+        assessment = self._assess_table_quality(table)
+        signals = assessment.get("signals") if isinstance(assessment, Mapping) else {}
+        signals = signals if isinstance(signals, Mapping) else {}
+
+        def _num(value: Any) -> float:
+            if isinstance(value, (int, float)):
+                return float(value)
+            try:
+                return float(str(value))
+            except Exception:
+                return 0.0
+
+        row_consistency = max(0.0, min(1.0, _num(signals.get("row_consistency"))))
+        fill_ratio = max(0.0, min(1.0, _num(signals.get("cell_fill_ratio"))))
+        header_confidence = max(0.0, min(1.0, _num(signals.get("header_confidence"))))
+
+        confidence = float(base)
+        if row_consistency:
+            confidence *= 0.6 + (0.4 * row_consistency)
+        if fill_ratio:
+            confidence *= 0.65 + (0.35 * fill_ratio)
+        confidence *= 0.8 + (0.2 * header_confidence)
+
+        schema_cols = len(table.column_schema or [])
+        row_cols = max((len(row.cells or []) for row in (table.rows or [])), default=0)
+        columns = max(schema_cols, row_cols)
+        data_rows = len([row for row in (table.rows or []) if (row.metadata or {}).get("row_type") != "header"])
+
+        if columns <= 1 and data_rows >= 2:
+            confidence = min(confidence, 0.35)
+        if signals.get("row_misalignment"):
+            confidence = min(confidence, 0.55)
+        if signals.get("spaced_characters") or signals.get("nonsense_columns"):
+            confidence = min(confidence, 0.45)
+
+        return round(max(0.0, min(1.0, confidence)), 4)
+
+    def _get_table_structure_confidence(self, table: TablePayload) -> float | None:
+        meta = table.metadata if isinstance(table.metadata, dict) else None
+        if meta is None:
+            return None
+        existing = meta.get("structure_confidence")
+        if isinstance(existing, (int, float)):
+            return max(0.0, min(1.0, float(existing)))
+        estimated = self._estimate_table_structure_confidence(table)
+        meta["structure_confidence"] = estimated
+        return estimated
+
     def _score_table_set(self, tables: Sequence[TablePayload]) -> float:
         if not tables:
             return 0.0
@@ -3418,7 +3488,7 @@ class KnowledgeIngestionService:
         for table in tables:
             assessment = self._assess_table_quality(table)
             quality = float(assessment.get("quality_score") or 0.0)
-            structure_conf = table.metadata.get("structure_confidence") if isinstance(table.metadata, Mapping) else None
+            structure_conf = self._get_table_structure_confidence(table)
             if isinstance(structure_conf, (int, float)):
                 quality *= max(0.2, min(1.0, float(structure_conf)))
             signals = assessment.get("signals") or {}
@@ -3494,6 +3564,18 @@ class KnowledgeIngestionService:
                 )
             ], {}
 
+        candidates: list[tuple[int, float]] = []
+        for idx, table in enumerate(tables):
+            structure_conf = self._get_table_structure_confidence(table)
+            if isinstance(structure_conf, (int, float)) and structure_conf >= self.table_vlm_confidence_threshold:
+                continue
+            if not table.page_number or not table.bbox:
+                continue
+            candidates.append((idx, float(structure_conf) if isinstance(structure_conf, (int, float)) else 0.0))
+
+        if not candidates:
+            return tables, [], {"attempted": 0, "repaired": 0, "skipped": len(tables), "model": self.table_vlm_model}
+
         api_key = os.getenv("OPENAI_API_KEY")
         if not api_key:
             return tables, [
@@ -3516,26 +3598,27 @@ class KnowledgeIngestionService:
             ], {}
 
         client = OpenAI(api_key=api_key)
-        repaired: list[TablePayload] = []
+        repaired: list[TablePayload] = list(tables)
         issues: list[IssuePayload] = []
         meta: dict[str, Any] = {"attempted": 0, "repaired": 0, "model": self.table_vlm_model}
         remaining_budget = max(0, self.table_vlm_max_repairs)
 
-        for table in tables:
-            structure_conf = table.metadata.get("structure_confidence")
-            if isinstance(structure_conf, (int, float)) and structure_conf >= self.table_vlm_confidence_threshold:
-                repaired.append(table)
-                continue
-            if remaining_budget <= 0:
-                repaired.append(table)
-                continue
-            if not table.page_number or not table.bbox:
-                repaired.append(table)
-                continue
+        def _repair_sort_key(item: tuple[int, float]) -> tuple[float, int, int]:
+            index, conf = item
+            table = tables[index]
+            data_rows = len(
+                [row for row in (table.rows or []) if (row.metadata or {}).get("row_type") != "header"]
+            )
+            columns = max(len(table.column_schema or []), max((len(r.cells or []) for r in (table.rows or [])), default=0))
+            return (conf, -data_rows, -columns)
 
-            crop_bytes = self._render_table_crop(path, table.page_number, table.bbox)
+        for idx, conf in sorted(candidates, key=_repair_sort_key):
+            if remaining_budget <= 0:
+                break
+            table = tables[idx]
+
+            crop_bytes = self._render_table_crop(path, int(table.page_number), table.bbox)
             if not crop_bytes:
-                repaired.append(table)
                 continue
 
             meta["attempted"] += 1
@@ -3549,23 +3632,23 @@ class KnowledgeIngestionService:
                         description=f"VLM repair failed for table {table.order_index}.",
                         page_number=table.page_number,
                         table_order_index=table.order_index,
+                        details={"structure_confidence": conf},
                     )
                 )
-                repaired.append(table)
                 continue
 
             vlm_table = self._table_payload_from_vlm(
                 payload=payload,
                 order_index=table.order_index,
-                page_number=table.page_number,
+                page_number=int(table.page_number),
                 bbox=table.bbox,
                 title=table.title,
+                section_heading=table.section_heading,
+                source_metadata=table.metadata,
             )
             if vlm_table:
                 meta["repaired"] += 1
-                repaired.append(vlm_table)
-            else:
-                repaired.append(table)
+                repaired[idx] = vlm_table
 
         return repaired, issues, meta
 
@@ -3573,15 +3656,28 @@ class KnowledgeIngestionService:
     def _render_table_crop(path: Path, page_number: int, bbox: dict[str, float]) -> bytes | None:
         if fitz is None:
             return None
+        doc = None
         try:
+            x0 = float(bbox.get("x0", 0.0))
+            y0 = float(bbox.get("y0", 0.0))
+            x1 = float(bbox.get("x1", 0.0))
+            y1 = float(bbox.get("y1", 0.0))
+            if x1 <= x0 or y1 <= y0:
+                return None
+
             doc = fitz.open(path)
             page = doc[page_number - 1]
-            rect = fitz.Rect(float(bbox.get("x0", 0.0)), float(bbox.get("y0", 0.0)),
-                             float(bbox.get("x1", 0.0)), float(bbox.get("y1", 0.0)))
+            rect = fitz.Rect(x0, y0, x1, y1)
             pix = page.get_pixmap(clip=rect, dpi=200)
             return pix.tobytes("png")
         except Exception:
             return None
+        finally:
+            if doc is not None:
+                try:
+                    doc.close()
+                except Exception:
+                    pass
 
     def _run_vlm_table_repair(self, client: Any, image_bytes: bytes) -> dict[str, Any] | None:
         encoded = base64.b64encode(image_bytes).decode("ascii")
@@ -3646,6 +3742,8 @@ class KnowledgeIngestionService:
         page_number: int,
         bbox: dict[str, float],
         title: str,
+        section_heading: str,
+        source_metadata: Mapping[str, Any] | None = None,
     ) -> TablePayload | None:
         columns = payload.get("columns") or []
         rows = payload.get("rows") or []
@@ -3714,19 +3812,26 @@ class KnowledgeIngestionService:
                 )
             )
 
+        merged_meta: dict[str, Any] = dict(source_metadata or {})
+        base_detected_via = str(merged_meta.get("detected_via") or "").strip() or "vlm"
+        if "vlm" not in base_detected_via.lower():
+            merged_meta["detected_via"] = f"{base_detected_via}+vlm"
+        merged_meta["vlm_model"] = self.table_vlm_model
+        try:
+            existing_conf = float(merged_meta.get("structure_confidence") or 0.0)
+        except (TypeError, ValueError):
+            existing_conf = 0.0
+        merged_meta["structure_confidence"] = max(0.0, min(1.0, max(existing_conf, 0.9)))
+
         return TablePayload(
             order_index=order_index,
             title=title or f"Table {order_index}",
-            section_heading="",
+            section_heading=section_heading or "",
             page_number=page_number,
             bbox=bbox,
             column_schema=column_schema,
             data_dictionary={},
-            metadata={
-                "detected_via": "azure_di+vlm",
-                "structure_confidence": 0.9,
-                "vlm_model": self.table_vlm_model,
-            },
+            metadata=merged_meta,
             rows=table_rows,
         )
 
@@ -3887,6 +3992,11 @@ class KnowledgeIngestionService:
         entity_stats: dict[str, Any] = {}
         with transaction.atomic():
             structured_summary = self._persist_structured_artifacts(upload, extraction)
+            table_profile = self._build_table_profile(extraction.tables or ())
+            if table_profile:
+                ingestion_metadata["table_profile"] = table_profile
+            else:
+                ingestion_metadata.pop("table_profile", None)
             KnowledgeUploadText.objects.update_or_create(upload=upload, defaults=defaults)
             chunk_count, missing_chunk_ids, chunk_objects = self._build_chunks(
                 upload,
@@ -5148,6 +5258,56 @@ class KnowledgeIngestionService:
                 break
         return set(labels)
 
+    def _build_table_profile(self, tables: Sequence[TablePayload]) -> dict[str, Any] | None:
+        if not tables:
+            return None
+        column_limit = max(16, int(getattr(settings, "RAG_TABLE_PROFILE_COLUMN_LIMIT", 256)))
+        token_limit = max(32, int(getattr(settings, "RAG_TABLE_PROFILE_ROW_LABEL_TOKEN_LIMIT", 800)))
+        label_limit = max(8, int(getattr(settings, "RAG_TABLE_PROFILE_ROW_LABEL_SAMPLE_LIMIT", 60)))
+
+        columns: set[str] = set()
+        row_label_tokens: set[str] = set()
+        row_label_samples: list[str] = []
+        token_split = re.compile(r"[^\w]+", flags=re.UNICODE)
+
+        for table in tables:
+            schema = table.column_schema or []
+            for col in schema:
+                lowered = str(col or "").strip().lower()
+                if lowered:
+                    columns.add(lowered)
+                    if len(columns) >= column_limit:
+                        break
+            if len(columns) >= column_limit:
+                columns = set(sorted(columns)[:column_limit])
+
+            labels = self._table_row_label_set(table)
+            for label in labels:
+                if label and len(row_label_samples) < label_limit:
+                    row_label_samples.append(label)
+                for token in token_split.split(label):
+                    cleaned = token.strip().lower()
+                    if not cleaned or cleaned.isdigit():
+                        continue
+                    row_label_tokens.add(cleaned)
+                    if len(row_label_tokens) >= token_limit:
+                        break
+                if len(row_label_tokens) >= token_limit:
+                    break
+
+            if len(columns) >= column_limit and len(row_label_tokens) >= token_limit:
+                break
+
+        profile: dict[str, Any] = {
+            "version": 1,
+            "generated_at": timezone.now().isoformat(),
+            "table_count": len(tables),
+            "columns": sorted(columns)[:column_limit],
+            "row_label_tokens": sorted(row_label_tokens)[:token_limit],
+            "row_label_samples": row_label_samples[:label_limit],
+        }
+        return profile
+
     def _table_schema_is_generic(self, table: TablePayload) -> bool:
         if not table.column_schema:
             return True
@@ -5441,22 +5601,24 @@ class KnowledgeIngestionService:
                 }
             )
             for row_payload in table_payload.rows:
+                row_text = self._table_cell_text(row_payload.raw_text)
                 row_obj = KnowledgeUploadTableRow.objects.create(
                     table=table_obj,
                     row_index=row_payload.row_index,
                     page_number=row_payload.page_number,
                     bbox=row_payload.bbox,
-                    raw_text=row_payload.raw_text,
+                    raw_text=row_text,
                     metadata=row_payload.metadata,
                 )
                 row_lookup[(table_obj.id, row_payload.row_index)] = row_obj
                 for cell_payload in row_payload.cells:
+                    cell_text = self._table_cell_text(cell_payload.raw_text)
                     cell_obj = KnowledgeUploadTableCell.objects.create(
                         table=table_obj,
                         row=row_obj,
                         column_index=cell_payload.column_index,
                         column_key=self._clamp_text(cell_payload.column_key, cell_column_key_max),
-                        raw_text=cell_payload.raw_text,
+                        raw_text=cell_text,
                         normalized_value=cell_payload.normalized_value,
                         bbox=cell_payload.bbox,
                         confidence=cell_payload.confidence,
@@ -8633,7 +8795,7 @@ class KnowledgeIngestionService:
             frac = match.group(2)
             return f"{whole}.{frac}%"
         text = re.sub(r"\b(\d)\s+(\d{1,2})\s*%", _fix, text)
-        text = re.sub(r"\b(\d{1,3})\s*%\b", r"\1%", text)
+        text = re.sub(r"\b(\d{1,3})\s*%", r"\1%", text)
         text = re.sub(r"%\s*%+", "%", text)
         return text
 
@@ -8654,7 +8816,7 @@ class KnowledgeIngestionService:
             fixed = value / 100.0
             rendered = f"{fixed:.2f}".rstrip("0").rstrip(".")
             return f"{rendered}%"
-        return re.sub(r"\b(\d{2,3})\s*%\b", _fix, text)
+        return re.sub(r"\b(\d{2,3})\s*%", _fix, text)
 
     def _normalize_ocr_text(self, text: str) -> str:
         if not self.ocr_normalization_enabled:

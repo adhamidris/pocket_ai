@@ -1,0 +1,118 @@
+from __future__ import annotations
+
+import json
+from unittest.mock import patch
+
+from django.test import TestCase, override_settings
+
+from apps.accounts.models import AgentProfile, BusinessProfile, RegistrationSession, User
+from apps.conversations.models import Conversation
+from apps.mcp.orchestrator import McpOrchestratorService
+
+
+class _SearchTwiceProvider:
+    """
+    Fake provider that attempts to call search_knowledge twice in the same user turn.
+
+    The MCP orchestrator should execute the first search and block the second
+    search call based on the per-turn search budget.
+    """
+
+    def __init__(self) -> None:
+        self.calls = 0
+
+    def chat(self, messages, *, tools=None, on_stream_delta=None, on_tool_call_start=None, response_format=None):
+        self.calls += 1
+
+        if self.calls in {1, 2}:
+            tool_call = {
+                "id": f"call_search_{self.calls}",
+                "type": "function",
+                "function": {
+                    "name": "search_knowledge",
+                    "arguments": json.dumps(
+                        {"query": "credit card fees", "queries": ["credit card fees charges costs"]},
+                        ensure_ascii=False,
+                    ),
+                },
+            }
+            if on_tool_call_start:
+                on_tool_call_start(tool_call)
+            return {"message": {"role": "assistant", "content": "", "tool_calls": [tool_call]}}
+
+        content = "Annual fee example: 100 EGP. Tell me your card type if you want exact fees."
+        return {"message": {"role": "assistant", "content": content}}
+
+
+class McpSearchContractTests(TestCase):
+    def setUp(self) -> None:
+        super().setUp()
+        self.user = User.objects.create(email="mcp-search-contract@example.com", first_name="MCP")
+        self.registration = RegistrationSession.objects.create(user=self.user)
+        self.business = BusinessProfile.objects.create(
+            user=self.user,
+            registration_session=self.registration,
+            name="Search Contract Bank",
+            industry="banking",
+        )
+        self.agent = AgentProfile.objects.create(
+            business_profile=self.business,
+            user=self.user,
+            name="Searcher",
+            role="AI Specialist",
+        )
+        self.conversation = Conversation.objects.create(
+            business_profile=self.business,
+            agent_profile=self.agent,
+            session_token="search-contract-session",
+        )
+
+    @override_settings(MCP_MAX_SEARCHES_PER_TURN=1)
+    @patch("apps.mcp.orchestrator.tools.execute_tool")
+    def test_search_knowledge_runs_once_per_turn(self, execute_tool_mock) -> None:
+        def _fake_execute_tool(name, arguments, *, conversation, context=None):
+            self.assertEqual(name, "search_knowledge")
+            self.assertIsNotNone(context)
+            context.reserve_search()
+            return {
+                "tool": "search_knowledge",
+                "status": "ok",
+                "query": str(arguments.get("query") or ""),
+                "snippets": [
+                    {
+                        "id": "snippet-1",
+                        "title": "Fees",
+                        "public_label": "Fees",
+                        "content": "Annual fee example: 100 EGP",
+                        "read_state": "summary",
+                        "read_required": False,
+                        "search_stage": "hybrid",
+                        "chunk_id": "chunk-1",
+                        "upload_id": "upload-1",
+                        "is_table_chunk": False,
+                    }
+                ],
+            }
+
+        execute_tool_mock.side_effect = _fake_execute_tool
+
+        provider = _SearchTwiceProvider()
+        orchestrator = McpOrchestratorService(agent=self.agent, provider=provider)
+        context = orchestrator.stream_turn(
+            conversation=self.conversation,
+            user_message="Tell me more about credit card fees",
+        )
+
+        self.assertEqual(provider.calls, 3)
+        self.assertIsNotNone(context.tool_context)
+        self.assertEqual(context.tool_context.searches_used, 1)
+
+        execute_tool_mock.assert_called_once()
+
+        search_traces = [t for t in context.tool_trace if t.get("tool") == "search_knowledge"]
+        self.assertEqual(len(search_traces), 2)
+        self.assertEqual(sum(1 for t in search_traces if t.get("origin") == "live"), 1)
+        self.assertEqual(sum(1 for t in search_traces if t.get("origin") == "policy"), 1)
+
+        self.assertNotIn("search limit", context.response_text.lower())
+        self.assertNotIn("budget", context.response_text.lower())

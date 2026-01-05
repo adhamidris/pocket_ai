@@ -23,6 +23,11 @@ urlpatterns = [
     path("agents/", views.agents_collection, name="agents-list"),
     path("agents/<uuid:agent_id>/", views.agent_detail_view, name="agents-detail"),
     path("agents/<uuid:agent_id>/actions/", views.agent_action_settings_view, name="agents-actions"),
+    path(
+        "agents/<uuid:agent_id>/knowledge-access/",
+        views.agent_knowledge_access_view,
+        name="agents-knowledge-access",
+    ),
     path("register/sessions/", views.start_registration, name="register-start"),
     path(
         "register/sessions/<uuid:session_id>/business/",
@@ -55,6 +60,12 @@ urlpatterns = [
     ),
     path("knowledge/documents/scrape/", views.knowledge_document_scrape, name="knowledge-documents-scrape"),
     path("knowledge/documents/preview-csv/", views.knowledge_document_preview_csv, name="knowledge-documents-preview-csv"),
+    path("knowledge/collections/", views.knowledge_collections_collection, name="knowledge-collections-list"),
+    path(
+        "knowledge/collections/<uuid:collection_id>/",
+        views.knowledge_collection_detail,
+        name="knowledge-collections-detail",
+    ),
     path("integrations/", views.integrations_collection, name="integrations-collection"),
     path(
         "integrations/<uuid:integration_id>/sheets/",

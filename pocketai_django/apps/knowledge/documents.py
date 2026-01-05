@@ -189,6 +189,7 @@ class DocumentIssue:
 @dataclass(frozen=True)
 class DocumentDetail:
     summary: DocumentListItem
+    collections: tuple["DocumentCollection", ...]
     description: str
     summary_text: str
     metadata: dict
@@ -202,6 +203,14 @@ class DocumentDetail:
     tables: tuple[DocumentStructuredTable, ...]
     issues: tuple[DocumentIssue, ...]
     chunks: tuple[DocumentChunk, ...]
+
+
+@dataclass(frozen=True)
+class DocumentCollection:
+    id: uuid.UUID
+    name: str
+    slug: str
+    visibility: str
 
 
 @dataclass(frozen=True)
@@ -569,8 +578,19 @@ def get_document_detail(*, business_profile: BusinessProfile, document_id: uuid.
                     )
                 )
 
+        collection_details = tuple(
+            DocumentCollection(
+                id=collection.id,
+                name=collection.name,
+                slug=collection.slug,
+                visibility=collection.visibility,
+            )
+            for collection in upload.collections.all()
+        )
+
         return DocumentDetail(
             summary=summary,
+            collections=collection_details,
             description=upload.description or "",
             summary_text=upload.summary or "",
             metadata=upload.metadata or {},
