@@ -3139,6 +3139,7 @@ class KnowledgeIngestionService:
             processed_ids = [str(chunk.id) for chunk in updated]
             if updated:
                 KnowledgeUploadChunk.objects.bulk_update(updated, ["embedding", "updated_at"])
+                self._try_update_azure_search_embeddings(upload=job.upload, chunks=updated)
             if processed_ids:
                 self._update_upload_embedding_metadata(job.upload, processed_ids=processed_ids)
             self._mark_job_completed(job, extra={"embedded_chunks": processed})
@@ -3936,6 +3937,7 @@ class KnowledgeIngestionService:
         if not normalized:
             raise KnowledgeIngestionError("Extracted document is empty.")
 
+        previous_chunk_count = int(getattr(upload, "chunk_count", 0) or 0)
         now = timezone.now()
         summary = self._build_summary(normalized)
         words = len(normalized.split())
@@ -4077,6 +4079,13 @@ class KnowledgeIngestionService:
                     "updated_at",
                 ]
             )
+            self._schedule_azure_search_index_update(
+                upload=upload,
+                format_hint=extraction.format_hint,
+                now=now,
+                previous_chunk_count=previous_chunk_count,
+                chunk_objects=chunk_objects,
+            )
         if entity_payloads:
             truncated = extraction.metadata.get("json_entities_truncated", 0)
             logger.info(
@@ -4096,6 +4105,154 @@ class KnowledgeIngestionService:
                 )
             except Exception as exc:  # pragma: no cover - monitoring failures must not block ingestion
                 logger.warning("quality.ingestion.monitor_failed business=%s error=%s", upload.business_profile_id, exc)
+
+    def _schedule_azure_search_index_update(
+        self,
+        *,
+        upload: KnowledgeUpload,
+        format_hint: str | None,
+        now: timezone.datetime,
+        previous_chunk_count: int,
+        chunk_objects: Sequence[KnowledgeUploadChunk],
+    ) -> None:
+        """
+        Index freshly ingested chunks into Azure AI Search (P2) after DB commit.
+
+        This is best-effort: ingestion should succeed even if the external index
+        is temporarily unavailable. When Azure search is the active retrieval
+        backend, failures are recorded in upload.ingestion_metadata for visibility.
+        """
+
+        def _on_commit() -> None:
+            try:
+                from apps.rag.azure_ai_search import (
+                    AzureAISearchConfig,
+                    delete_upload,
+                    upsert_upload_chunks,
+                )
+            except Exception:
+                return
+
+            config = AzureAISearchConfig.from_settings()
+            if not config:
+                return
+
+            business_id = getattr(upload, "business_profile_id", None)
+            if not business_id:
+                return
+
+            started = time.perf_counter()
+            status = "ok"
+            error = ""
+            try:
+                with tenant_context(business_id):
+                    collection_ids = list(upload.collections.values_list("id", flat=True))
+                    title = (upload.display_name or upload.source_name or upload.external_reference or str(upload.id)).strip()
+                    chunk_payloads = [
+                        {
+                            "chunk_id": chunk.id,
+                            "chunk_index": chunk.chunk_index,
+                            "content": chunk.content,
+                            "embedding": chunk.embedding,
+                            "metadata": chunk.metadata,
+                        }
+                        for chunk in chunk_objects
+                    ]
+                if previous_chunk_count:
+                    delete_upload(config=config, upload_id=upload.id, chunk_count=previous_chunk_count)
+                upsert_upload_chunks(
+                    config=config,
+                    business_id=uuid.UUID(str(business_id)),
+                    upload_id=upload.id,
+                    title=title,
+                    format_hint=format_hint,
+                    updated_at=now,
+                    collection_ids=collection_ids,
+                    chunks=chunk_payloads,
+                )
+            except Exception as exc:  # pragma: no cover - external dependency
+                status = "failed"
+                error = str(exc)[:300]
+                logger.warning(
+                    "azure_search.index_failed business=%s upload=%s error=%s",
+                    business_id,
+                    upload.id,
+                    error,
+                )
+            finally:
+                duration_ms = int((time.perf_counter() - started) * 1000.0)
+                try:
+                    from apps.rag.ai_orchestrator import KnowledgeSearchService
+
+                    KnowledgeSearchService.invalidate_result_cache(uuid.UUID(str(business_id)))
+                except Exception:
+                    pass
+                try:
+                    with tenant_context(business_id):
+                        refreshed = KnowledgeUpload.objects.filter(id=upload.id).values("ingestion_metadata").first()
+                        meta = dict((refreshed or {}).get("ingestion_metadata") or {})
+                        meta["azure_search"] = {
+                            "status": status,
+                            "index_name": config.index_name,
+                            "chunk_count": int(getattr(upload, "chunk_count", 0) or 0),
+                            "duration_ms": duration_ms,
+                            "indexed_at": now.isoformat(),
+                            "previous_chunk_count": int(previous_chunk_count),
+                            "error": error,
+                        }
+                        KnowledgeUpload.objects.filter(id=upload.id).update(ingestion_metadata=meta)
+                except Exception:
+                    pass
+
+        try:
+            transaction.on_commit(_on_commit)
+        except Exception:  # pragma: no cover - defensive
+            return
+
+    def _try_update_azure_search_embeddings(
+        self,
+        *,
+        upload: KnowledgeUpload,
+        chunks: Sequence[KnowledgeUploadChunk],
+    ) -> None:
+        """
+        Best-effort: when embeddings are generated asynchronously, update the Azure
+        index vectors so hybrid search quality remains stable.
+        """
+
+        try:
+            from apps.rag.azure_ai_search import AzureAISearchConfig, update_chunk_embeddings
+        except Exception:
+            return
+
+        config = AzureAISearchConfig.from_settings()
+        if not config:
+            return
+
+        business_id = getattr(upload, "business_profile_id", None)
+        if not business_id:
+            return
+
+        payloads = [
+            {
+                "chunk_id": chunk.id,
+                "chunk_index": chunk.chunk_index,
+                "embedding": chunk.embedding,
+            }
+            for chunk in chunks
+            if chunk.embedding is not None
+        ]
+        if not payloads:
+            return
+        try:
+            update_chunk_embeddings(config=config, upload_id=upload.id, chunks=payloads)
+        except Exception as exc:  # pragma: no cover - external dependency
+            logger.warning(
+                "azure_search.embedding_update_failed business=%s upload=%s error=%s",
+                business_id,
+                upload.id,
+                str(exc)[:250],
+            )
 
     def _build_quality_report(
         self,

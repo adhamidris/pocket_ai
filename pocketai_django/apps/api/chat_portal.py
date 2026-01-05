@@ -1,20 +1,25 @@
 from __future__ import annotations
 
 import copy
+import hashlib
+import hmac
 import json
 import logging
 import re
+import secrets
 import threading
 import time
 import uuid
-from datetime import datetime
+from datetime import datetime, timedelta
 from queue import Empty, Queue
 from typing import Any, Callable, Iterable, Mapping
 from zoneinfo import ZoneInfo
 
 from django.conf import settings
+from django.core.cache import cache
 from django.db import close_old_connections
 from django.http import HttpRequest, HttpResponse, JsonResponse, StreamingHttpResponse
+from django.utils import timezone
 from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_GET, require_http_methods, require_POST
 from opentelemetry import context as otel_context
@@ -546,6 +551,266 @@ def submit_feedback(request: HttpRequest) -> JsonResponse:
             }
         },
         status=201,
+    )
+
+
+def _verification_hash(value: str) -> str:
+    text = (value or "").strip()
+    if not text:
+        return ""
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+
+def _mask_verification_destination(method: str, destination: str) -> str:
+    text = (destination or "").strip()
+    if not text:
+        return ""
+    if method == "email":
+        if "@" not in text:
+            return "[EMAIL]"
+        local, _, domain = text.partition("@")
+        local = local.strip()
+        domain = domain.strip()
+        if not domain:
+            return "[EMAIL]"
+        return f"{local[:1] or '*'}***@{domain}"
+    if method == "phone":
+        digits = re.sub(r"\D", "", text)
+        if len(digits) < 4:
+            return "***"
+        return f"***{digits[-2:]}"
+    return "***"
+
+
+def _portal_verification_policy(business: BusinessProfile | None) -> dict[str, object]:
+    enabled = bool(getattr(settings, "MCP_VERIFIED_LOOKUP_ENABLED", True))
+    require_for_pii = bool(getattr(settings, "MCP_VERIFIED_LOOKUP_REQUIRE_FOR_PII", True))
+    allow_customer_match = bool(getattr(settings, "MCP_VERIFIED_LOOKUP_ALLOW_CUSTOMER_MATCH", True))
+
+    meta = getattr(business, "metadata", None) if business else None
+    if isinstance(meta, Mapping):
+        cfg = meta.get("verified_lookup") or meta.get("verified_lookup_policy") or {}
+        if isinstance(cfg, Mapping):
+            if cfg.get("enabled") is not None:
+                enabled = bool(cfg.get("enabled"))
+            if cfg.get("require_for_pii") is not None:
+                require_for_pii = bool(cfg.get("require_for_pii"))
+            if cfg.get("requireForPii") is not None:
+                require_for_pii = bool(cfg.get("requireForPii"))
+            if cfg.get("allow_customer_match") is not None:
+                allow_customer_match = bool(cfg.get("allow_customer_match"))
+            if cfg.get("allowCustomerMatch") is not None:
+                allow_customer_match = bool(cfg.get("allowCustomerMatch"))
+    return {
+        "enabled": enabled,
+        "require_for_pii": require_for_pii,
+        "allow_customer_match": allow_customer_match,
+    }
+
+
+def _conversation_is_verified_for_lookup(conversation) -> bool:
+    metadata = conversation.metadata if isinstance(getattr(conversation, "metadata", None), Mapping) else {}
+    marker = metadata.get("verified_lookup") if isinstance(metadata, Mapping) else None
+    if marker is True:
+        return True
+    if isinstance(marker, Mapping):
+        status = str(marker.get("status") or marker.get("state") or "").strip().lower()
+        if status in {"verified", "ok", "passed"}:
+            return True
+        if marker.get("verified") is True:
+            return True
+    return False
+
+
+@csrf_exempt
+@require_POST
+def portal_verification_status(request: HttpRequest) -> JsonResponse:
+    service = _service()
+    try:
+        payload = _parse_json_body(request)
+    except PortalValidationError as exc:
+        return _json_error("invalid_json", str(exc))
+
+    session_token = (payload.get("session_token") or payload.get("sessionToken") or "").strip()
+    if not session_token:
+        return _json_error("validation_error", "session_token is required.")
+    try:
+        conversation = service.get_conversation(session_token=session_token, include_messages=False)
+        session = service.get_session_state(session_token=session_token, conversation=conversation)
+    except PortalNotFoundError as exc:
+        return _json_error("not_found", str(exc), status=404)
+
+    policy = _portal_verification_policy(getattr(conversation, "business_profile", None))
+    verified = _conversation_is_verified_for_lookup(conversation)
+    return JsonResponse(
+        {
+            "session": _session_to_dict(session),
+            "verified_lookup": {
+                "enabled": bool(policy.get("enabled")),
+                "verified": bool(verified),
+            },
+        }
+    )
+
+
+@csrf_exempt
+@require_POST
+def portal_verification_start(request: HttpRequest) -> JsonResponse:
+    service = _service()
+    try:
+        payload = _parse_json_body(request)
+    except PortalValidationError as exc:
+        return _json_error("invalid_json", str(exc))
+
+    session_token = (payload.get("session_token") or payload.get("sessionToken") or "").strip()
+    method = str(payload.get("method") or "").strip().lower()
+    destination = str(payload.get("destination") or payload.get("value") or "").strip()
+    if not session_token or not method or not destination:
+        return _json_error("validation_error", "session_token, method, and destination are required.")
+    if method not in {"email", "phone"}:
+        return _json_error("validation_error", "method must be 'email' or 'phone'.")
+
+    try:
+        conversation = service.get_conversation(session_token=session_token, include_messages=False)
+        session = service.get_session_state(session_token=session_token, conversation=conversation)
+    except PortalNotFoundError as exc:
+        return _json_error("not_found", str(exc), status=404)
+
+    policy = _portal_verification_policy(getattr(conversation, "business_profile", None))
+    if not bool(policy.get("enabled")):
+        return _json_error("verification_disabled", "Verification is disabled for this business.", status=403)
+    if _conversation_is_verified_for_lookup(conversation):
+        return JsonResponse(
+            {
+                "session": _session_to_dict(session),
+                "verified_lookup": {"verified": True},
+            },
+            status=200,
+        )
+
+    ttl_seconds = int(getattr(settings, "PORTAL_VERIFICATION_OTP_TTL_SECONDS", 600) or 600)
+    ttl_seconds = max(60, min(ttl_seconds, 3600))
+    cooldown_seconds = int(getattr(settings, "PORTAL_VERIFICATION_RESEND_COOLDOWN_SECONDS", 30) or 30)
+    cooldown_seconds = max(5, min(cooldown_seconds, 300))
+    max_attempts = int(getattr(settings, "PORTAL_VERIFICATION_MAX_ATTEMPTS", 5) or 5)
+    max_attempts = max(3, min(max_attempts, 10))
+
+    cooldown_key = f"portal:verify:cooldown:{conversation.id}:{method}"
+    if cache.get(cooldown_key):
+        return _json_error("rate_limited", "Please wait a moment before requesting another code.", status=429)
+    cache.set(cooldown_key, True, timeout=cooldown_seconds)
+
+    challenge_id = uuid.uuid4()
+    code = f"{secrets.randbelow(1_000_000):06d}"
+    expires_at = timezone.now() + timedelta(seconds=ttl_seconds)
+    record = {
+        "method": method,
+        "destination_sha256": _verification_hash(destination),
+        "code_sha256": _verification_hash(code),
+        "attempts": 0,
+        "max_attempts": max_attempts,
+        "expires_at": expires_at.isoformat(),
+    }
+    cache_key = f"portal:verify:challenge:{conversation.id}:{challenge_id}"
+    cache.set(cache_key, record, timeout=ttl_seconds)
+
+    # NOTE: For local/dev we can return the code to simplify end-to-end testing.
+    return_code = bool(getattr(settings, "PORTAL_VERIFICATION_DEBUG_RETURN_CODE", False) or getattr(settings, "DEBUG", False))
+    response: dict[str, object] = {
+        "session": _session_to_dict(session),
+        "challenge_id": str(challenge_id),
+        "method": method,
+        "destination": _mask_verification_destination(method, destination),
+        "expires_in": ttl_seconds,
+    }
+    if return_code:
+        response["debug_code"] = code
+    return JsonResponse(response, status=200)
+
+
+@csrf_exempt
+@require_POST
+def portal_verification_confirm(request: HttpRequest) -> JsonResponse:
+    service = _service()
+    try:
+        payload = _parse_json_body(request)
+    except PortalValidationError as exc:
+        return _json_error("invalid_json", str(exc))
+
+    session_token = (payload.get("session_token") or payload.get("sessionToken") or "").strip()
+    challenge_id_raw = str(payload.get("challenge_id") or payload.get("challengeId") or "").strip()
+    code = str(payload.get("code") or "").strip()
+    if not session_token or not challenge_id_raw or not code:
+        return _json_error("validation_error", "session_token, challenge_id, and code are required.")
+    try:
+        challenge_id = uuid.UUID(challenge_id_raw)
+    except (TypeError, ValueError):
+        return _json_error("validation_error", "challenge_id must be a valid UUID.")
+
+    try:
+        conversation = service.get_conversation(session_token=session_token, include_messages=False)
+    except PortalNotFoundError as exc:
+        return _json_error("not_found", str(exc), status=404)
+
+    cache_key = f"portal:verify:challenge:{conversation.id}:{challenge_id}"
+    record = cache.get(cache_key)
+    if not isinstance(record, Mapping):
+        return _json_error("verification_expired", "Verification challenge expired. Request a new code.", status=410)
+
+    expires_at_raw = record.get("expires_at")
+    expires_at: datetime | None = None
+    if isinstance(expires_at_raw, str) and expires_at_raw:
+        try:
+            expires_at = datetime.fromisoformat(expires_at_raw)
+        except ValueError:
+            expires_at = None
+    if expires_at and timezone.is_naive(expires_at):
+        expires_at = timezone.make_aware(expires_at, timezone.get_current_timezone())
+    if expires_at and expires_at < timezone.now():
+        cache.delete(cache_key)
+        return _json_error("verification_expired", "Verification challenge expired. Request a new code.", status=410)
+
+    attempts = int(record.get("attempts") or 0)
+    max_attempts = int(record.get("max_attempts") or 5)
+    if attempts >= max_attempts:
+        cache.delete(cache_key)
+        return _json_error("too_many_attempts", "Too many attempts. Request a new code.", status=429)
+
+    expected = str(record.get("code_sha256") or "")
+    provided = _verification_hash(code)
+    if not expected or not hmac.compare_digest(expected, provided):
+        attempts += 1
+        record_out = dict(record)
+        record_out["attempts"] = attempts
+        ttl_remaining = 60
+        if expires_at:
+            ttl_remaining = max(1, int((expires_at - timezone.now()).total_seconds()))
+        cache.set(cache_key, record_out, timeout=ttl_remaining)
+        return _json_error(
+            "invalid_code",
+            "Invalid code. Please try again.",
+            status=400,
+            extra={"attempts_left": max(0, max_attempts - attempts)},
+        )
+
+    convo_meta = conversation.metadata if isinstance(getattr(conversation, "metadata", None), dict) else {}
+    meta = dict(convo_meta)
+    meta["verified_lookup"] = {
+        "status": "verified",
+        "method": record.get("method"),
+        "verified_at": timezone.now().isoformat(),
+    }
+    conversation.metadata = meta
+    conversation.save(update_fields=["metadata", "last_activity_at"])
+    cache.delete(cache_key)
+
+    session = service.get_session_state(session_token=session_token, conversation=conversation)
+    return JsonResponse(
+        {
+            "session": _session_to_dict(session),
+            "verified_lookup": {"verified": True},
+        },
+        status=200,
     )
 
 
@@ -1532,7 +1797,6 @@ def stream_send(request: HttpRequest) -> StreamingHttpResponse:
 
         final_payload = dict(final_payload)
         persisted_text = final_payload.get("text", "")
-        normalized_streamed = normalized_streamed or ""
         effective_text = normalized_streamed or persisted_text
         message_id_value = final_payload.get("message_id")
         if effective_text and effective_text != persisted_text and message_id_value:

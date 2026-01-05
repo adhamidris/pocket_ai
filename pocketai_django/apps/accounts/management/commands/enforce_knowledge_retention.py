@@ -128,6 +128,7 @@ class Command(BaseCommand):
                     KnowledgeAuditEvent.objects.create(
                         business_profile=upload.business_profile,
                         upload=upload,
+                        upload_id_snapshot=upload.id,
                         action=KnowledgeAuditAction.ARCHIVED,
                         description="Archived by retention policy.",
                         metadata={

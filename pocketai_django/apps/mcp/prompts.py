@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import textwrap
 import uuid
 from typing import Iterable, Mapping, Sequence
@@ -31,6 +32,8 @@ TRACER = otel_trace.get_tracer(__name__)
 PLACEHOLDER_REMINDER = (
     "Reminder: Each visitor message (user turn) may include only one short placeholder before the first tool call. After you acknowledge you're checking, every subsequent tool step in this user turn must return tool_calls with empty content until you have the final visitor-facing answer. Never narrate internal steps between tools."
 )
+
+_ARABIC_CHAR_PATTERN = re.compile(r"[\u0600-\u06FF\u0750-\u077F\u08A0-\u08FF]")
 
 
 STAGE_HISTORY_DEFAULTS: Mapping[str, int] = {
@@ -162,10 +165,11 @@ def build_system_message(
 
         - `read_document`
             • Use for reading text/layout from PDFs, DOCXs, or TXT files.
-            • Call when a snippet is summary/preview or marked read_required, or when the visitor explicitly asks for full page/text details.
+            • Call only when a snippet is marked `read_required=true`, or when the snippet summary/preview clearly lacks the details needed to answer.
             • Accepts `pages` list to read multiple pages at once (e.g. `pages=[1, 2]`).
             • Use `mode="excerpt"` by default; use `mode="full_page"` only if the visitor explicitly asks for "full text" or "all details" of a specific page.
-            • Do not call read_document just to double-check when table row snippets already answer the question.
+            • If multiple snippets point to the same upload/page, read once using the upload_id and a single `pages=[...]` call (avoid repeated reads).
+            • Do not call read_document just to double-check when the snippets already answer the question.
 
         - `query_dataset`
             • Use for structured CSV/Excel/JSONL datasets.
@@ -307,6 +311,29 @@ def build_messages(*, conversation: Conversation, user_message: str) -> list[Map
         if agent:
             messages.append({"role": "system", "content": PLACEHOLDER_REMINDER})
 
+        normalized_user_message = (user_message or "").strip()
+        if normalized_user_message:
+            if _ARABIC_CHAR_PATTERN.search(normalized_user_message):
+                messages.append(
+                    {
+                        "role": "system",
+                        "content": (
+                            "Language enforcement: The visitor is writing in Arabic. Reply ONLY in Modern Standard Arabic (MSA). "
+                            "Do not include English translations unless the visitor asks."
+                        ),
+                    }
+                )
+            else:
+                messages.append(
+                    {
+                        "role": "system",
+                        "content": (
+                            "Language enforcement: The visitor is writing in English. Reply ONLY in English. "
+                            "Do not include Arabic translations unless the visitor asks."
+                        ),
+                    }
+                )
+
         history_limit = 8
         if (
             getattr(settings, "MCP_LONG_CHAT_MEMORY_ENABLED", True)
@@ -316,7 +343,6 @@ def build_messages(*, conversation: Conversation, user_message: str) -> list[Map
 
         transcript_qs = conversation.messages.order_by("-sent_at", "-created_at")[:history_limit]
         transcript = list(reversed(transcript_qs))
-        normalized_user_message = (user_message or "").strip()
         for entry in transcript:
             role = "assistant" if entry.sender == ConversationSender.AI else "user"
             content = entry.body
@@ -767,4 +793,12 @@ def limit_messages_for_stage(
     while start_index > 0 and _history_requires_tool_anchor(trimmed_history):
         start_index -= 1
         trimmed_history = other_entries[start_index:]
+
+    last_user_entry = None
+    for entry in reversed(other_entries):
+        if entry.get("role") == "user" and isinstance(entry.get("content"), str) and entry.get("content", "").strip():
+            last_user_entry = entry
+            break
+    if last_user_entry is not None and not any(entry is last_user_entry for entry in trimmed_history):
+        trimmed_history = [last_user_entry, *trimmed_history]
     return [*system_entries, *trimmed_history]

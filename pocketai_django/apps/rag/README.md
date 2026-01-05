@@ -57,6 +57,9 @@ Quick Start (Dev)
   `python manage.py warm_embeddings`
 - Run RAG eval harness (example):
   `python manage.py run_rag_eval --set=fees-credit-cards --export=var/logs/rag_eval_fees.json`
+- (Optional) Azure AI Search index:
+  - Ensure index: `python manage.py azure_search_ensure_index`
+  - Backfill a tenant: `python manage.py azure_search_backfill --business-id <uuid>`
 
 ASCII Flow (MCP Path)
 ---------------------
@@ -122,6 +125,12 @@ Configuration Touchpoints
 - EMBED_PROVIDER / EMBED_MODEL control embedding backend selection.
 - RAG_FTS_ENABLED + lexical thresholds tune hybrid search behavior.
 - RAG_EVAL_* thresholds used by evaluation harness.
+- RAG_SEARCH_BACKEND selects retrieval backend:
+  - `postgres` (default): Postgres FTS + vector candidates.
+  - `azure`: Azure AI Search provides candidates; Postgres remains the source of truth for chunk content + table artifacts.
+- Azure AI Search env vars (when `RAG_SEARCH_BACKEND=azure`):
+  - `AZURE_SEARCH_ENDPOINT`, `AZURE_SEARCH_ADMIN_KEY`, `AZURE_SEARCH_INDEX_NAME`
+  - Optional: `AZURE_SEARCH_QUERY_KEY`, `AZURE_SEARCH_SEMANTIC_ENABLED`, `AZURE_SEARCH_SEMANTIC_CONFIG`
 
 Boundaries
 ----------

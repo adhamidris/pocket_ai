@@ -3775,3 +3775,419 @@
 2026-01-05 12:05:40,340 [INFO] apps.api.chat_portal: portal.trace [2026-01-05 14:05:40 EET] conversation=2e20fe35-2b3c-4693-816b-50fb5fe6357b business=70c8914c-a476-4455-8442-31035698858b agent=salah orchestrator=mcp
     • plan.ready
         actions=0 extractions=0
+2026-01-05 19:18:54,627 [INFO] apps.api.chat_portal: portal.trace [2026-01-05 21:18:54 EET] conversation=8d8e7d56-9b3c-43e9-86b1-a2d7bfe675c0 business=70c8914c-a476-4455-8442-31035698858b agent=salah orchestrator=mcp
+• request.received
+    body=hi salah, tell me about credit card Heya
+2026-01-05 19:18:54,628 [INFO] apps.api.chat_portal: portal.trace [2026-01-05 21:18:54 EET] conversation=8d8e7d56-9b3c-43e9-86b1-a2d7bfe675c0 business=70c8914c-a476-4455-8442-31035698858b agent=salah orchestrator=mcp
+    • customer.message_recorded
+        id=d32b607a-c987-4f66-bd09-1e9849ae5a9d
+2026-01-05 19:18:54,658 [INFO] apps.api.chat_portal: portal.trace [2026-01-05 21:18:54 EET] conversation=8d8e7d56-9b3c-43e9-86b1-a2d7bfe675c0 business=70c8914c-a476-4455-8442-31035698858b agent=salah orchestrator=mcp
+    • orchestrator.selected
+        mode=mcp provider=DeepSeekToolsProvider
+2026-01-05 19:18:54,659 [INFO] apps.api.chat_portal: portal.trace [2026-01-05 21:18:54 EET] conversation=8d8e7d56-9b3c-43e9-86b1-a2d7bfe675c0 business=70c8914c-a476-4455-8442-31035698858b agent=salah orchestrator=mcp
+    • orchestrator.turn.start
+2026-01-05 19:18:54,680 [INFO] apps.api.chat_portal: portal.trace [2026-01-05 21:18:54 EET] conversation=8d8e7d56-9b3c-43e9-86b1-a2d7bfe675c0 business=70c8914c-a476-4455-8442-31035698858b agent=salah orchestrator=mcp
+        • status
+            {"code": "thinking", "label": "Thinking…"}
+2026-01-05 19:18:54,680 [INFO] apps.mcp.orchestrator: mcp.trace [2026-01-05 21:18:54 EET] stage=prompt.primary business=70c8914c-a476-4455-8442-31035698858b conversation=8d8e7d56-9b3c-43e9-86b1-a2d7bfe675c0
+• messages=[{'role': 'system', 'chars': 9189, 'preview': 'You are Salah, the Account Manager for CIB. Maintain a Friendly tone aligned to the agent profile in the Financial Services space.\n\n        ### Guardrails\n- Keep a Friendly voice—warm, conversational,'}, {'role': 'system', 'chars': 327, 'preview': "Reminder: Each visitor message (user turn) may include only one short placeholder before the first tool call. After you acknowledge you're checking, every subsequent tool step in this user turn must r"}, {'role': 'user', 'chars': 40, 'preview': 'hi salah, tell me about credit card Heya'}]
+2026-01-05 19:18:55,812 [INFO] apps.api.chat_portal: portal.trace [2026-01-05 21:18:55 EET] conversation=8d8e7d56-9b3c-43e9-86b1-a2d7bfe675c0 business=70c8914c-a476-4455-8442-31035698858b agent=salah orchestrator=mcp
+        • status
+            {"code": "responding", "label": "Responding…"}
+2026-01-05 19:18:56,871 [INFO] apps.api.chat_portal: portal.trace [2026-01-05 21:18:56 EET] conversation=8d8e7d56-9b3c-43e9-86b1-a2d7bfe675c0 business=70c8914c-a476-4455-8442-31035698858b agent=salah orchestrator=mcp
+        • status
+            {"code": "searching_start", "label": "Searching knowledge…"}
+2026-01-05 19:18:56,873 [INFO] apps.api.chat_portal: portal.trace [2026-01-05 21:18:56 EET] conversation=8d8e7d56-9b3c-43e9-86b1-a2d7bfe675c0 business=70c8914c-a476-4455-8442-31035698858b agent=salah orchestrator=mcp
+        • status
+            {"code": "searching_knowledge", "label": "Searching knowledge…"}
+2026-01-05 19:18:58,264 [ERROR] apps.mcp.tools: mcp.tool_failed tool=search_knowledge business=70c8914c-a476-4455-8442-31035698858b conversation=8d8e7d56-9b3c-43e9-86b1-a2d7bfe675c0
+Traceback (most recent call last):
+  File "/Users/adham/Desktop/pocket_ai-main 2/pocketai_django/apps/mcp/tools.py", line 723, in execute_tool
+    return handler(arguments, conversation=conversation, context=ctx)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/adham/Desktop/pocket_ai-main 2/pocketai_django/apps/mcp/tools.py", line 2327, in _search_knowledge_handler
+    if cache_payload is not None:
+       ^^^^^^^^^^^^^
+UnboundLocalError: cannot access local variable 'cache_payload' where it is not associated with a value
+2026-01-05 19:18:58,272 [INFO] apps.api.chat_portal: portal.trace [2026-01-05 21:18:58 EET] conversation=8d8e7d56-9b3c-43e9-86b1-a2d7bfe675c0 business=70c8914c-a476-4455-8442-31035698858b agent=salah orchestrator=mcp
+        • status
+            {"code": "searching_complete", "label": "Searching: Heya credit card features benefits", "meta": {"query": "Heya credit card features benefits", "result_count": 0}}
+2026-01-05 19:18:58,273 [INFO] apps.mcp.orchestrator: mcp.trace [2026-01-05 21:18:58 EET] stage=prompt.budget business=70c8914c-a476-4455-8442-31035698858b conversation=8d8e7d56-9b3c-43e9-86b1-a2d7bfe675c0
+• max_input_tokens=6992 message_chars_after=10730 messages=8 response_chars_after=0 stage=tool_iteration streaming=True tokens_est_after=6404 tokens_est_before=6404 tool_chars_after=10616 tools_enabled=True total_chars_after=21346 total_chars_before=21346
+2026-01-05 19:19:02,149 [INFO] apps.mcp.tools: mcp.trace [2026-01-05 21:19:02 EET] stage=table.list business=70c8914c-a476-4455-8442-31035698858b conversation=8d8e7d56-9b3c-43e9-86b1-a2d7bfe675c0
+• limit=5 matched_uploads=0 query_len=16 query_sha256=b5021a731b7f16dff4d2ba2b720e62d55a0f5eb8b2fd9cbba682764c1ac56e7d
+2026-01-05 19:19:02,151 [INFO] apps.mcp.orchestrator: mcp.trace [2026-01-05 21:19:02 EET] stage=prompt.budget business=70c8914c-a476-4455-8442-31035698858b conversation=8d8e7d56-9b3c-43e9-86b1-a2d7bfe675c0
+• max_input_tokens=6992 message_chars_after=11134 messages=10 response_chars_after=0 stage=tool_iteration streaming=True tokens_est_after=6525 tokens_est_before=6525 tool_chars_after=10616 tools_enabled=True total_chars_after=21750 total_chars_before=21750
+2026-01-05 19:19:11,775 [INFO] apps.mcp.orchestrator: mcp.trace [2026-01-05 21:19:11 EET] stage=prompt.budget business=70c8914c-a476-4455-8442-31035698858b conversation=8d8e7d56-9b3c-43e9-86b1-a2d7bfe675c0
+• actions=['dropped_system=4'] max_input_tokens=6992 message_chars_after=11969 messages=7 response_chars_after=0 stage=tool_iteration streaming=True tokens_est_after=6776 tokens_est_before=7095 tool_chars_after=10616 tools_enabled=True total_chars_after=22585 total_chars_before=23649
+2026-01-05 19:19:16,375 [INFO] apps.mcp.orchestrator: mcp.trace [2026-01-05 21:19:16 EET] stage=prompt.budget business=70c8914c-a476-4455-8442-31035698858b conversation=8d8e7d56-9b3c-43e9-86b1-a2d7bfe675c0
+• actions=['dropped_system=4'] max_input_tokens=6992 message_chars_after=12267 messages=7 response_chars_after=0 stage=tool_iteration streaming=True tokens_est_after=6865 tokens_est_before=7191 tool_chars_after=10616 tools_enabled=True total_chars_after=22883 total_chars_before=23969
+2026-01-05 19:19:17,959 [INFO] apps.api.chat_portal: portal.trace [2026-01-05 21:19:17 EET] conversation=8d8e7d56-9b3c-43e9-86b1-a2d7bfe675c0 business=70c8914c-a476-4455-8442-31035698858b agent=salah orchestrator=mcp
+        • status
+            {"code": "answer_started", "label": "Responding…"}
+2026-01-05 19:19:17,963 [INFO] apps.api.chat_portal: portal.trace [2026-01-05 21:19:17 EET] conversation=8d8e7d56-9b3c-43e9-86b1-a2d7bfe675c0 business=70c8914c-a476-4455-8442-31035698858b agent=salah orchestrator=mcp
+        • status
+            {"code": "responding", "label": "Responding…"}
+2026-01-05 19:19:24,089 [INFO] apps.api.chat_portal: portal.trace [2026-01-05 21:19:24 EET] conversation=8d8e7d56-9b3c-43e9-86b1-a2d7bfe675c0 business=70c8914c-a476-4455-8442-31035698858b agent=salah orchestrator=mcp
+        • status
+            {"code": "responding", "label": "Responding…"}
+2026-01-05 19:19:24,090 [INFO] apps.mcp.orchestrator: mcp.trace [2026-01-05 21:19:24 EET] stage=turn.single_pass_candidate business=70c8914c-a476-4455-8442-31035698858b conversation=8d8e7d56-9b3c-43e9-86b1-a2d7bfe675c0
+• content_chars=575
+2026-01-05 19:19:24,090 [INFO] apps.api.chat_portal: portal.trace [2026-01-05 21:19:24 EET] conversation=8d8e7d56-9b3c-43e9-86b1-a2d7bfe675c0 business=70c8914c-a476-4455-8442-31035698858b agent=salah orchestrator=mcp
+        • status
+            {"code": "responding", "label": "Responding…"}
+2026-01-05 19:19:24,091 [INFO] apps.api.chat_portal: portal.trace [2026-01-05 21:19:24 EET] conversation=8d8e7d56-9b3c-43e9-86b1-a2d7bfe675c0 business=70c8914c-a476-4455-8442-31035698858b agent=salah orchestrator=mcp
+        • status
+            {"code": "answer_finalized", "label": "Answer ready"}
+2026-01-05 19:19:24,091 [INFO] apps.api.chat_portal: portal.trace [2026-01-05 21:19:24 EET] conversation=8d8e7d56-9b3c-43e9-86b1-a2d7bfe675c0 business=70c8914c-a476-4455-8442-31035698858b agent=salah orchestrator=mcp
+        • status
+            {"code": "stream_complete"}
+2026-01-05 19:19:24,092 [INFO] apps.mcp.orchestrator: mcp.trace [2026-01-05 21:19:24 EET] stage=turn.metrics business=70c8914c-a476-4455-8442-31035698858b conversation=8d8e7d56-9b3c-43e9-86b1-a2d7bfe675c0
+• characters=0 chunk_pages=0 chunk_reads=0 knowledge_reads=0 tools=4
+2026-01-05 19:19:24,093 [WARNING] apps.mcp.orchestrator: mcp.trace [2026-01-05 21:19:24 EET] stage=turn.summary business=70c8914c-a476-4455-8442-31035698858b conversation=8d8e7d56-9b3c-43e9-86b1-a2d7bfe675c0
+• answer_chars=575 char_budget_minute=64000 char_budget_turn=48000 char_used=0 chunk_pages_used=0 chunk_reads_used=0 duration_ms=29433 error_codes={'tool_failed': 1} llm_strategy=mcp_tools_stream_loop slo=slow slo_warn_ms=15000 streamed_chunks=10 throttle_hits=0 tool_errors=1 tool_total_ms=59.0 tools=4
+2026-01-05 19:19:24,093 [INFO] apps.api.chat_portal: portal.trace [2026-01-05 21:19:24 EET] conversation=8d8e7d56-9b3c-43e9-86b1-a2d7bfe675c0 business=70c8914c-a476-4455-8442-31035698858b agent=salah orchestrator=mcp
+    • stream.completed
+2026-01-05 19:19:24,097 [INFO] apps.api.chat_portal: portal.trace [2026-01-05 21:19:24 EET] conversation=8d8e7d56-9b3c-43e9-86b1-a2d7bfe675c0 business=70c8914c-a476-4455-8442-31035698858b agent=salah orchestrator=mcp
+    • finalize.started
+2026-01-05 19:19:24,098 [INFO] apps.api.chat_portal: portal.trace [2026-01-05 21:19:24 EET] conversation=8d8e7d56-9b3c-43e9-86b1-a2d7bfe675c0 business=70c8914c-a476-4455-8442-31035698858b agent=salah orchestrator=mcp
+    • orchestrator.turn.complete
+2026-01-05 19:19:24,132 [INFO] apps.api.chat_portal: portal response finalized conversation=8d8e7d56-9b3c-43e9-86b1-a2d7bfe675c0 message_id=23817fdb-99ab-40c8-a194-6072392bb287 status=live
+2026-01-05 19:19:24,132 [INFO] apps.api.chat_portal: portal.trace [2026-01-05 21:19:24 EET] conversation=8d8e7d56-9b3c-43e9-86b1-a2d7bfe675c0 business=70c8914c-a476-4455-8442-31035698858b agent=salah orchestrator=mcp
+    • response.persisted
+        message_id=23817fdb-99ab-40c8-a194-6072392bb287
+        extra: {"citations": [], "pending_actions": 0}
+2026-01-05 19:19:24,139 [INFO] apps.api.chat_portal: portal.trace [2026-01-05 21:19:24 EET] conversation=8d8e7d56-9b3c-43e9-86b1-a2d7bfe675c0 business=70c8914c-a476-4455-8442-31035698858b agent=salah orchestrator=mcp
+    • response.dispatched
+        message_id=23817fdb-99ab-40c8-a194-6072392bb287
+2026-01-05 19:19:24,149 [INFO] apps.mcp.orchestrator: mcp.trace [2026-01-05 21:19:24 EET] stage=prompt.planner business=70c8914c-a476-4455-8442-31035698858b conversation=8d8e7d56-9b3c-43e9-86b1-a2d7bfe675c0
+• messages=[{'role': 'system', 'chars': 3145, 'preview': "You are an orchestration planner for CIB. Your job is to propose backend actions and structured extractions based on a customer conversation and the AI assistant's final reply.\n\n### CRM Capture Rules "}, {'role': 'user', 'chars': 955, 'preview': 'Use the latest user message and assistant answer below to decide what actions to take and what extractions to record.\n\nLatest user message:\nhi salah, tell me about credit card Heya\n\nAssistant final an'}]
+2026-01-05 19:19:26,054 [INFO] apps.api.chat_portal: portal.trace [2026-01-05 21:19:26 EET] conversation=8d8e7d56-9b3c-43e9-86b1-a2d7bfe675c0 business=70c8914c-a476-4455-8442-31035698858b agent=salah orchestrator=mcp
+    • planner.completed
+        planned_actions=0 extractions=0
+2026-01-05 19:19:26,054 [INFO] apps.api.chat_portal: portal plan ready conversation=8d8e7d56-9b3c-43e9-86b1-a2d7bfe675c0 actions=[] extractions=[]
+2026-01-05 19:19:26,054 [INFO] apps.api.chat_portal: portal.trace [2026-01-05 21:19:26 EET] conversation=8d8e7d56-9b3c-43e9-86b1-a2d7bfe675c0 business=70c8914c-a476-4455-8442-31035698858b agent=salah orchestrator=mcp
+    • plan.ready
+        actions=0 extractions=0
+2026-01-05 19:38:03,855 [INFO] apps.api.chat_portal: portal.trace [2026-01-05 21:38:03 EET] conversation=b975e5de-3018-4c1b-a487-440984f56593 business=70c8914c-a476-4455-8442-31035698858b agent=salah orchestrator=mcp
+• request.received
+    body=hi salah tell me more about Heya Card
+2026-01-05 19:38:03,857 [INFO] apps.api.chat_portal: portal.trace [2026-01-05 21:38:03 EET] conversation=b975e5de-3018-4c1b-a487-440984f56593 business=70c8914c-a476-4455-8442-31035698858b agent=salah orchestrator=mcp
+    • customer.message_recorded
+        id=82f1c7b3-fe3e-4787-8739-d0ae2159b6d4
+2026-01-05 19:38:03,889 [INFO] apps.api.chat_portal: portal.trace [2026-01-05 21:38:03 EET] conversation=b975e5de-3018-4c1b-a487-440984f56593 business=70c8914c-a476-4455-8442-31035698858b agent=salah orchestrator=mcp
+    • orchestrator.selected
+        mode=mcp provider=DeepSeekToolsProvider
+2026-01-05 19:38:03,889 [INFO] apps.api.chat_portal: portal.trace [2026-01-05 21:38:03 EET] conversation=b975e5de-3018-4c1b-a487-440984f56593 business=70c8914c-a476-4455-8442-31035698858b agent=salah orchestrator=mcp
+    • orchestrator.turn.start
+2026-01-05 19:38:03,914 [INFO] apps.api.chat_portal: portal.trace [2026-01-05 21:38:03 EET] conversation=b975e5de-3018-4c1b-a487-440984f56593 business=70c8914c-a476-4455-8442-31035698858b agent=salah orchestrator=mcp
+        • status
+            {"code": "thinking", "label": "Thinking…"}
+2026-01-05 19:38:03,915 [INFO] apps.mcp.orchestrator: mcp.trace [2026-01-05 21:38:03 EET] stage=prompt.primary business=70c8914c-a476-4455-8442-31035698858b conversation=b975e5de-3018-4c1b-a487-440984f56593
+• messages=[{'role': 'system', 'chars': 9189, 'preview': 'You are Salah, the Account Manager for CIB. Maintain a Friendly tone aligned to the agent profile in the Financial Services space.\n\n        ### Guardrails\n- Keep a Friendly voice—warm, conversational,'}, {'role': 'system', 'chars': 327, 'preview': "Reminder: Each visitor message (user turn) may include only one short placeholder before the first tool call. After you acknowledge you're checking, every subsequent tool step in this user turn must r"}, {'role': 'user', 'chars': 37, 'preview': 'hi salah tell me more about Heya Card'}]
+2026-01-05 19:38:06,105 [INFO] apps.api.chat_portal: portal.trace [2026-01-05 21:38:06 EET] conversation=b975e5de-3018-4c1b-a487-440984f56593 business=70c8914c-a476-4455-8442-31035698858b agent=salah orchestrator=mcp
+        • status
+            {"code": "responding", "label": "Responding…"}
+2026-01-05 19:38:07,642 [INFO] apps.api.chat_portal: portal.trace [2026-01-05 21:38:07 EET] conversation=b975e5de-3018-4c1b-a487-440984f56593 business=70c8914c-a476-4455-8442-31035698858b agent=salah orchestrator=mcp
+        • status
+            {"code": "searching_start", "label": "Searching knowledge…"}
+2026-01-05 19:38:07,644 [INFO] apps.api.chat_portal: portal.trace [2026-01-05 21:38:07 EET] conversation=b975e5de-3018-4c1b-a487-440984f56593 business=70c8914c-a476-4455-8442-31035698858b agent=salah orchestrator=mcp
+        • status
+            {"code": "searching_knowledge", "label": "Searching knowledge…"}
+2026-01-05 19:38:14,746 [INFO] apps.mcp.tools: mcp.trace [2026-01-05 21:38:14 EET] stage=search_knowledge.snippets business=70c8914c-a476-4455-8442-31035698858b conversation=b975e5de-3018-4c1b-a487-440984f56593
+• intent=short query_len=56 query_sha256=c4758714b2ca48474dfb553b33d91e58f6f9ca8ebf1641df671cce0838220b8c read_required=False snippet_count=3 snippets=[{'label': 'Fees and Charges Credit Cards Eng_185', 'upload_id': 'e3f1de19-22d3-4f85-b253-6ac14bb7249f', 'chunk_id': '2c672862-f2fb-443a-87e4-e4a39a10ada4', 'read_state': 'summary', 'read_required': False, 'is_table_chunk': False, 'preview_sha256': 'ad92d19944d0cc9181349ef8871d88c08c64edaab0ca4ae778c6a6350b6eb0c1', 'preview_len': 17, 'full_content_len': 17, 'full_content_sha256': 'ad92d19944d0cc9181349ef8871d88c08c64edaab0ca4ae778c6a6350b6eb0c1', 'summary_len': 17, 'summary_sha256': 'ad92d19944d0cc9181349ef8871d88c08c64edaab0ca4ae778c6a6350b6eb0c1'}, {'label': 'Fees and Charges Credit Cards Eng_185', 'upload_id': 'e3f1de19-22d3-4f85-b253-6ac14bb7249f', 'chunk_id': '637c55d1-0732-4768-9ec6-1d6758934779', 'read_state': 'summary', 'read_required': False, 'is_table_chunk': False, 'preview_sha256': '461a6b36b3afb28bdfbb23408223a5c35e33b4cfb0ba20e55d88de69cd9c622e', 'preview_len': 2, 'full_content_len': 2, 'full_content_sha256': '461a6b36b3afb28bdfbb23408223a5c35e33b4cfb0ba20e55d88de69cd9c622e', 'summary_len': 2, 'summary_sha256': '461a6b36b3afb28bdfbb23408223a5c35e33b4cfb0ba20e55d88de69cd9c622e'}, {'label': 'Fees and Charges Credit Cards Eng_185', 'upload_id': 'e3f1de19-22d3-4f85-b253-6ac14bb7249f', 'chunk_id': 'b949c6d7-8d59-4c74-8492-3c6cf0c7adcc', 'read_state': 'summary', 'read_required': False, 'is_table_chunk': False, 'preview_sha256': 'bb480803a71faa21bcf2b6eed9cb6f21b0c17df2d5a5fd0d191ac21d95d0a06a', 'preview_len': 13, 'full_content_len': 13, 'full_content_sha256': 'bb480803a71faa21bcf2b6eed9cb6f21b0c17df2d5a5fd0d191ac21d95d0a06a', 'summary_len': 13, 'summary_sha256': 'bb480803a71faa21bcf2b6eed9cb6f21b0c17df2d5a5fd0d191ac21d95d0a06a'}]
+2026-01-05 19:38:14,747 [WARNING] apps.mcp.orchestrator: mcp.trace [2026-01-05 21:38:14 EET] stage=search.performance business=70c8914c-a476-4455-8442-31035698858b conversation=b975e5de-3018-4c1b-a487-440984f56593
+• agent_scope_mode=all alias_hits=0 alias_ms=39 chunk_candidates=4 intent=short lexical_ms=17 limit=5 path=hybrid read_required=0 rerank_ms=2423 slo=slow slo_warn_ms=1200 snippet_count=3 status=ok table_context_ms=29 table_presence_ms=1 total_ms=5526 vector_ms=42
+2026-01-05 19:38:15,039 [INFO] apps.mcp.orchestrator: mcp.trace [2026-01-05 21:38:15 EET] stage=tool.search_knowledge business=70c8914c-a476-4455-8442-31035698858b conversation=b975e5de-3018-4c1b-a487-440984f56593
+• char_count=32 chunk_snippet_count=3 fanout_budget_ms=0 fanout_parallel_enabled=False fanout_parallel_used=False issue_snippet_count=3 limit=5 queries_planned=1 queries_run=1 query_length=56 read_state_breakdown={'summary': 3} snippet_count=3 status=ok table_snippet_count=3 table_truncated_count=0 token_estimate=8 upload_snippet_count=0
+2026-01-05 19:38:15,042 [INFO] apps.api.chat_portal: portal.trace [2026-01-05 21:38:15 EET] conversation=b975e5de-3018-4c1b-a487-440984f56593 business=70c8914c-a476-4455-8442-31035698858b agent=salah orchestrator=mcp
+        • status
+            {"code": "searching_complete", "label": "Searching: Heya Card CIB features benefits eligibility requirements", "meta": {"query": "Heya Card CIB features benefits eligibility requirements", "result_count": 3}}
+2026-01-05 19:38:15,044 [INFO] apps.mcp.orchestrator: mcp.trace [2026-01-05 21:38:15 EET] stage=prompt.budget business=70c8914c-a476-4455-8442-31035698858b conversation=b975e5de-3018-4c1b-a487-440984f56593
+• actions=['dropped_system=4'] max_input_tokens=6992 message_chars_after=12299 messages=5 response_chars_after=0 stage=tool_iteration streaming=True tokens_est_after=6875 tokens_est_before=7184 tool_chars_after=10616 tools_enabled=True total_chars_after=22915 total_chars_before=23946
+2026-01-05 19:38:17,371 [INFO] apps.api.chat_portal: portal.trace [2026-01-05 21:38:17 EET] conversation=b975e5de-3018-4c1b-a487-440984f56593 business=70c8914c-a476-4455-8442-31035698858b agent=salah orchestrator=mcp
+        • status
+            {"code": "answer_started", "label": "Responding…"}
+2026-01-05 19:38:17,372 [INFO] apps.api.chat_portal: portal.trace [2026-01-05 21:38:17 EET] conversation=b975e5de-3018-4c1b-a487-440984f56593 business=70c8914c-a476-4455-8442-31035698858b agent=salah orchestrator=mcp
+        • status
+            {"code": "responding", "label": "Responding…"}
+2026-01-05 19:38:18,393 [INFO] apps.api.chat_portal: portal.trace [2026-01-05 21:38:18 EET] conversation=b975e5de-3018-4c1b-a487-440984f56593 business=70c8914c-a476-4455-8442-31035698858b agent=salah orchestrator=mcp
+        • status
+            {"code": "reading_start", "label": "Reading document"}
+2026-01-05 19:38:18,394 [INFO] apps.api.chat_portal: portal.trace [2026-01-05 21:38:18 EET] conversation=b975e5de-3018-4c1b-a487-440984f56593 business=70c8914c-a476-4455-8442-31035698858b agent=salah orchestrator=mcp
+        • status
+            {"code": "reading_document", "label": "Reading document"}
+2026-01-05 19:38:20,666 [INFO] apps.mcp.tools: mcp.trace [2026-01-05 21:38:20 EET] stage=read_document.throttle business=70c8914c-a476-4455-8442-31035698858b
+• (no detail)
+2026-01-05 19:38:20,812 [INFO] apps.mcp.orchestrator: mcp.trace [2026-01-05 21:38:20 EET] stage=tool.read_document business=70c8914c-a476-4455-8442-31035698858b conversation=b975e5de-3018-4c1b-a487-440984f56593
+• char_count=477 chunk_pages_used=1 chunk_reads_used=1 chunk_snippet_count=0 document_id=2c672862-f2fb-443a-87e4-e4a39a10ada4 issue_snippet_count=0 mode=excerpt neighbor=2 pages=[1] read_state_breakdown={'summary': 1} snippet_count=1 table_snippet_count=0 table_truncated_count=0 token_estimate=120 upload_snippet_count=1
+2026-01-05 19:38:20,815 [INFO] apps.mcp.tools: mcp.trace [2026-01-05 21:38:20 EET] stage=read_document.snippets business=70c8914c-a476-4455-8442-31035698858b conversation=b975e5de-3018-4c1b-a487-440984f56593
+• document_id=2c672862-f2fb-443a-87e4-e4a39a10ada4 mode=excerpt neighbor=2 pages=[1] snippet_count=1 snippets=[{'label': 'Fees and Charges Credit Cards Eng_185', 'upload_id': 'e3f1de19-22d3-4f85-b253-6ac14bb7249f', 'chunk_id': 'e3f1de19-22d3-4f85-b253-6ac14bb7249f', 'read_state': 'summary', 'read_required': False, 'is_table_chunk': False, 'preview_sha256': '8600adcfff569cbf32c6d305485b10b6f002ad4302b21e0a3459d08ea0135b0f', 'preview_len': 200, 'full_content_len': 477, 'full_content_sha256': 'c03ad12363cee583b0578c695c91613fc5972a79adb4f4fbc1594e3016bc3ae3', 'summary_len': 477, 'summary_sha256': 'c03ad12363cee583b0578c695c91613fc5972a79adb4f4fbc1594e3016bc3ae3'}]
+2026-01-05 19:38:20,815 [INFO] apps.api.chat_portal: portal.trace [2026-01-05 21:38:20 EET] conversation=b975e5de-3018-4c1b-a487-440984f56593 business=70c8914c-a476-4455-8442-31035698858b agent=salah orchestrator=mcp
+        • status
+            {"code": "reading_document", "label": "Reading: Fees and Charges Credit Cards Eng_185"}
+2026-01-05 19:38:20,816 [INFO] apps.api.chat_portal: portal.trace [2026-01-05 21:38:20 EET] conversation=b975e5de-3018-4c1b-a487-440984f56593 business=70c8914c-a476-4455-8442-31035698858b agent=salah orchestrator=mcp
+        • status
+            {"code": "reading_complete", "label": "Reading document: 2c672862…", "meta": {"document_id": "2c672862-f2fb-443a-87e4-e4a39a10ada4", "snippets_returned": 1}}
+2026-01-05 19:38:20,817 [INFO] apps.mcp.orchestrator: mcp.trace [2026-01-05 21:38:20 EET] stage=prompt.budget business=70c8914c-a476-4455-8442-31035698858b conversation=b975e5de-3018-4c1b-a487-440984f56593
+• actions=['dropped_system=4', 'history_limit=2'] max_input_tokens=6992 message_chars_after=11928 messages=4 response_chars_after=0 stage=tool_iteration streaming=True tokens_est_after=6763 tokens_est_before=7845 tool_chars_after=10616 tools_enabled=True total_chars_after=22544 total_chars_before=26149
+2026-01-05 19:38:23,308 [INFO] apps.api.chat_portal: portal.trace [2026-01-05 21:38:23 EET] conversation=b975e5de-3018-4c1b-a487-440984f56593 business=70c8914c-a476-4455-8442-31035698858b agent=salah orchestrator=mcp
+        • status
+            {"code": "reading_start", "label": "Reading document"}
+2026-01-05 19:38:23,309 [INFO] apps.api.chat_portal: portal.trace [2026-01-05 21:38:23 EET] conversation=b975e5de-3018-4c1b-a487-440984f56593 business=70c8914c-a476-4455-8442-31035698858b agent=salah orchestrator=mcp
+        • status
+            {"code": "reading_document", "label": "Reading document"}
+2026-01-05 19:38:25,478 [INFO] apps.mcp.tools: mcp.trace [2026-01-05 21:38:25 EET] stage=read_document.throttle business=70c8914c-a476-4455-8442-31035698858b
+• (no detail)
+2026-01-05 19:38:25,562 [INFO] apps.mcp.orchestrator: mcp.trace [2026-01-05 21:38:25 EET] stage=tool.read_document business=70c8914c-a476-4455-8442-31035698858b conversation=b975e5de-3018-4c1b-a487-440984f56593
+• char_count=477 chunk_pages_used=2 chunk_reads_used=2 chunk_snippet_count=0 document_id=637c55d1-0732-4768-9ec6-1d6758934779 issue_snippet_count=0 mode=excerpt neighbor=2 pages=[1] read_state_breakdown={'summary': 1} snippet_count=1 table_snippet_count=0 table_truncated_count=0 token_estimate=120 upload_snippet_count=1
+2026-01-05 19:38:25,563 [INFO] apps.mcp.tools: mcp.trace [2026-01-05 21:38:25 EET] stage=read_document.snippets business=70c8914c-a476-4455-8442-31035698858b conversation=b975e5de-3018-4c1b-a487-440984f56593
+• document_id=637c55d1-0732-4768-9ec6-1d6758934779 mode=excerpt neighbor=2 pages=[1] snippet_count=1 snippets=[{'label': 'Fees and Charges Credit Cards Eng_185', 'upload_id': 'e3f1de19-22d3-4f85-b253-6ac14bb7249f', 'chunk_id': 'e3f1de19-22d3-4f85-b253-6ac14bb7249f', 'read_state': 'summary', 'read_required': False, 'is_table_chunk': False, 'preview_sha256': '8600adcfff569cbf32c6d305485b10b6f002ad4302b21e0a3459d08ea0135b0f', 'preview_len': 200, 'full_content_len': 477, 'full_content_sha256': 'c03ad12363cee583b0578c695c91613fc5972a79adb4f4fbc1594e3016bc3ae3', 'summary_len': 477, 'summary_sha256': 'c03ad12363cee583b0578c695c91613fc5972a79adb4f4fbc1594e3016bc3ae3'}]
+2026-01-05 19:38:25,563 [INFO] apps.api.chat_portal: portal.trace [2026-01-05 21:38:25 EET] conversation=b975e5de-3018-4c1b-a487-440984f56593 business=70c8914c-a476-4455-8442-31035698858b agent=salah orchestrator=mcp
+        • status
+            {"code": "reading_document", "label": "Reading: Fees and Charges Credit Cards Eng_185"}
+2026-01-05 19:38:25,564 [INFO] apps.api.chat_portal: portal.trace [2026-01-05 21:38:25 EET] conversation=b975e5de-3018-4c1b-a487-440984f56593 business=70c8914c-a476-4455-8442-31035698858b agent=salah orchestrator=mcp
+        • status
+            {"code": "reading_complete", "label": "Reading document: 637c55d1…", "meta": {"document_id": "637c55d1-0732-4768-9ec6-1d6758934779", "snippets_returned": 1}}
+2026-01-05 19:38:25,565 [INFO] apps.mcp.orchestrator: mcp.trace [2026-01-05 21:38:25 EET] stage=prompt.budget business=70c8914c-a476-4455-8442-31035698858b conversation=b975e5de-3018-4c1b-a487-440984f56593
+• actions=['dropped_system=4', 'history_limit=2'] max_input_tokens=6992 message_chars_after=11928 messages=4 response_chars_after=0 stage=tool_iteration streaming=True tokens_est_after=6763 tokens_est_before=8378 tool_chars_after=10616 tools_enabled=True total_chars_after=22544 total_chars_before=27926
+2026-01-05 19:38:27,684 [INFO] apps.api.chat_portal: portal.trace [2026-01-05 21:38:27 EET] conversation=b975e5de-3018-4c1b-a487-440984f56593 business=70c8914c-a476-4455-8442-31035698858b agent=salah orchestrator=mcp
+        • status
+            {"code": "reading_start", "label": "Reading document"}
+2026-01-05 19:38:27,685 [INFO] apps.api.chat_portal: portal.trace [2026-01-05 21:38:27 EET] conversation=b975e5de-3018-4c1b-a487-440984f56593 business=70c8914c-a476-4455-8442-31035698858b agent=salah orchestrator=mcp
+        • status
+            {"code": "reading_document", "label": "Reading document"}
+2026-01-05 19:38:30,081 [INFO] apps.mcp.tools: mcp.trace [2026-01-05 21:38:30 EET] stage=read_document.throttle business=70c8914c-a476-4455-8442-31035698858b
+• (no detail)
+2026-01-05 19:38:30,154 [INFO] apps.mcp.orchestrator: mcp.trace [2026-01-05 21:38:30 EET] stage=tool.read_document business=70c8914c-a476-4455-8442-31035698858b conversation=b975e5de-3018-4c1b-a487-440984f56593
+• char_count=477 chunk_pages_used=3 chunk_reads_used=3 chunk_snippet_count=0 document_id=b949c6d7-8d59-4c74-8492-3c6cf0c7adcc issue_snippet_count=0 mode=excerpt neighbor=2 pages=[1] read_state_breakdown={'summary': 1} snippet_count=1 table_snippet_count=0 table_truncated_count=0 token_estimate=120 upload_snippet_count=1
+2026-01-05 19:38:30,155 [INFO] apps.mcp.tools: mcp.trace [2026-01-05 21:38:30 EET] stage=read_document.snippets business=70c8914c-a476-4455-8442-31035698858b conversation=b975e5de-3018-4c1b-a487-440984f56593
+• document_id=b949c6d7-8d59-4c74-8492-3c6cf0c7adcc mode=excerpt neighbor=2 pages=[1] snippet_count=1 snippets=[{'label': 'Fees and Charges Credit Cards Eng_185', 'upload_id': 'e3f1de19-22d3-4f85-b253-6ac14bb7249f', 'chunk_id': 'e3f1de19-22d3-4f85-b253-6ac14bb7249f', 'read_state': 'summary', 'read_required': False, 'is_table_chunk': False, 'preview_sha256': '8600adcfff569cbf32c6d305485b10b6f002ad4302b21e0a3459d08ea0135b0f', 'preview_len': 200, 'full_content_len': 477, 'full_content_sha256': 'c03ad12363cee583b0578c695c91613fc5972a79adb4f4fbc1594e3016bc3ae3', 'summary_len': 477, 'summary_sha256': 'c03ad12363cee583b0578c695c91613fc5972a79adb4f4fbc1594e3016bc3ae3'}]
+2026-01-05 19:38:30,155 [INFO] apps.api.chat_portal: portal.trace [2026-01-05 21:38:30 EET] conversation=b975e5de-3018-4c1b-a487-440984f56593 business=70c8914c-a476-4455-8442-31035698858b agent=salah orchestrator=mcp
+        • status
+            {"code": "reading_document", "label": "Reading: Fees and Charges Credit Cards Eng_185"}
+2026-01-05 19:38:30,156 [INFO] apps.api.chat_portal: portal.trace [2026-01-05 21:38:30 EET] conversation=b975e5de-3018-4c1b-a487-440984f56593 business=70c8914c-a476-4455-8442-31035698858b agent=salah orchestrator=mcp
+        • status
+            {"code": "reading_complete", "label": "Reading document: b949c6d7…", "meta": {"document_id": "b949c6d7-8d59-4c74-8492-3c6cf0c7adcc", "snippets_returned": 1}}
+2026-01-05 19:38:30,157 [INFO] apps.mcp.orchestrator: mcp.trace [2026-01-05 21:38:30 EET] stage=prompt.budget business=70c8914c-a476-4455-8442-31035698858b conversation=b975e5de-3018-4c1b-a487-440984f56593
+• actions=['dropped_system=4', 'history_limit=2'] max_input_tokens=6992 message_chars_after=11928 messages=4 response_chars_after=0 stage=tool_iteration streaming=True tokens_est_after=6763 tokens_est_before=8192 tool_chars_after=10616 tools_enabled=True total_chars_after=22544 total_chars_before=27305
+2026-01-05 19:38:32,322 [INFO] apps.api.chat_portal: portal.trace [2026-01-05 21:38:32 EET] conversation=b975e5de-3018-4c1b-a487-440984f56593 business=70c8914c-a476-4455-8442-31035698858b agent=salah orchestrator=mcp
+        • status
+            {"code": "reading_start", "label": "Reading document"}
+2026-01-05 19:38:32,323 [INFO] apps.api.chat_portal: portal.trace [2026-01-05 21:38:32 EET] conversation=b975e5de-3018-4c1b-a487-440984f56593 business=70c8914c-a476-4455-8442-31035698858b agent=salah orchestrator=mcp
+        • status
+            {"code": "reading_document", "label": "Reading document"}
+2026-01-05 19:38:34,484 [INFO] apps.mcp.tools: mcp.trace [2026-01-05 21:38:34 EET] stage=read_document.throttle business=70c8914c-a476-4455-8442-31035698858b
+• (no detail)
+2026-01-05 19:38:34,485 [INFO] apps.api.chat_portal: portal.trace [2026-01-05 21:38:34 EET] conversation=b975e5de-3018-4c1b-a487-440984f56593 business=70c8914c-a476-4455-8442-31035698858b agent=salah orchestrator=mcp
+        • status
+            {"code": "reading_complete", "label": "Reading document: 2c672862…", "meta": {"document_id": "2c672862-f2fb-443a-87e4-e4a39a10ada4", "snippets_returned": 0}}
+2026-01-05 19:38:34,486 [WARNING] apps.mcp.orchestrator: mcp.trace [2026-01-05 21:38:34 EET] stage=tool.loop.force_final business=70c8914c-a476-4455-8442-31035698858b conversation=b975e5de-3018-4c1b-a487-440984f56593
+• reason=read_document_repeat repeat_limit=2 signature=2c672862-f2fb-443a-87e4-e4a39a10ada4:excerpt:1:n2 throttle_hits=1 throttle_limit=2
+2026-01-05 19:38:44,312 [INFO] apps.api.chat_portal: portal.trace [2026-01-05 21:38:44 EET] conversation=b975e5de-3018-4c1b-a487-440984f56593 business=70c8914c-a476-4455-8442-31035698858b agent=salah orchestrator=mcp
+        • status
+            {"code": "responding", "label": "Responding…"}
+2026-01-05 19:38:44,313 [INFO] apps.mcp.orchestrator: mcp.trace [2026-01-05 21:38:44 EET] stage=turn.single_pass_candidate business=70c8914c-a476-4455-8442-31035698858b conversation=b975e5de-3018-4c1b-a487-440984f56593
+• content_chars=659
+2026-01-05 19:38:44,313 [INFO] apps.api.chat_portal: portal.trace [2026-01-05 21:38:44 EET] conversation=b975e5de-3018-4c1b-a487-440984f56593 business=70c8914c-a476-4455-8442-31035698858b agent=salah orchestrator=mcp
+        • status
+            {"code": "responding", "label": "Responding…"}
+2026-01-05 19:38:44,314 [INFO] apps.api.chat_portal: portal.trace [2026-01-05 21:38:44 EET] conversation=b975e5de-3018-4c1b-a487-440984f56593 business=70c8914c-a476-4455-8442-31035698858b agent=salah orchestrator=mcp
+        • status
+            {"code": "answer_finalized", "label": "Answer ready"}
+2026-01-05 19:38:44,314 [INFO] apps.api.chat_portal: portal.trace [2026-01-05 21:38:44 EET] conversation=b975e5de-3018-4c1b-a487-440984f56593 business=70c8914c-a476-4455-8442-31035698858b agent=salah orchestrator=mcp
+        • status
+            {"code": "stream_complete"}
+2026-01-05 19:38:44,315 [INFO] apps.mcp.orchestrator: mcp.trace [2026-01-05 21:38:44 EET] stage=turn.metrics business=70c8914c-a476-4455-8442-31035698858b conversation=b975e5de-3018-4c1b-a487-440984f56593
+• characters=1463 chunk_pages=3 chunk_reads=3 knowledge_reads=6 tools=5
+2026-01-05 19:38:44,316 [WARNING] apps.mcp.orchestrator: mcp.trace [2026-01-05 21:38:44 EET] stage=turn.summary business=70c8914c-a476-4455-8442-31035698858b conversation=b975e5de-3018-4c1b-a487-440984f56593
+• answer_chars=659 char_budget_minute=64000 char_budget_turn=48000 char_used=1463 chunk_pages_used=3 chunk_reads_used=3 duration_ms=40426 error_codes={'chunk_read_budget_exceeded': 1} llm_strategy=mcp_tools_stream_loop slo=slow slo_warn_ms=15000 streamed_chunks=11 throttle_hits=0 tool_errors=0 tool_total_ms=6310.0 tools=5
+2026-01-05 19:38:44,317 [INFO] apps.api.chat_portal: portal.trace [2026-01-05 21:38:44 EET] conversation=b975e5de-3018-4c1b-a487-440984f56593 business=70c8914c-a476-4455-8442-31035698858b agent=salah orchestrator=mcp
+    • stream.completed
+2026-01-05 19:38:44,320 [INFO] apps.api.chat_portal: portal.trace [2026-01-05 21:38:44 EET] conversation=b975e5de-3018-4c1b-a487-440984f56593 business=70c8914c-a476-4455-8442-31035698858b agent=salah orchestrator=mcp
+    • finalize.started
+2026-01-05 19:38:44,320 [INFO] apps.api.chat_portal: portal.trace [2026-01-05 21:38:44 EET] conversation=b975e5de-3018-4c1b-a487-440984f56593 business=70c8914c-a476-4455-8442-31035698858b agent=salah orchestrator=mcp
+    • orchestrator.turn.complete
+2026-01-05 19:38:44,651 [INFO] apps.api.chat_portal: portal response finalized conversation=b975e5de-3018-4c1b-a487-440984f56593 message_id=64464ab6-f13a-44ae-a57d-a3367e374496 status=live
+2026-01-05 19:38:44,651 [INFO] apps.api.chat_portal: portal.trace [2026-01-05 21:38:44 EET] conversation=b975e5de-3018-4c1b-a487-440984f56593 business=70c8914c-a476-4455-8442-31035698858b agent=salah orchestrator=mcp
+    • response.persisted
+        message_id=64464ab6-f13a-44ae-a57d-a3367e374496
+        extra: {"citations": ["Fees and Charges Credit Cards Eng_185 – chunk 1", "Fees and Charges Credit Cards Eng_185 – chunk 3", "Fees and Charges Credit Cards Eng_185 – chunk 2", "Fees and Charges Credit Cards Eng_185 – chunk 1", "Fees and Charges Credit Cards Eng_185 – chunk 3", "Fees and Charges Credit Cards Eng_185 – chunk 2", "Fees and Charges Credit Cards Eng_185 – page 1", "Fees and Charges Credit Cards Eng_185 – page 1", "Fees and Charges Credit Cards Eng_185 – page 1", "Fees and Charges Credit Cards Eng_185 – page 1", "Fees and Charges Credit Cards Eng_185 – page 1", "Fees and Charges Credit Cards Eng_185 – page 1"], "pending_actions": 0}
+2026-01-05 19:38:44,657 [INFO] apps.api.chat_portal: portal.trace [2026-01-05 21:38:44 EET] conversation=b975e5de-3018-4c1b-a487-440984f56593 business=70c8914c-a476-4455-8442-31035698858b agent=salah orchestrator=mcp
+    • response.dispatched
+        message_id=64464ab6-f13a-44ae-a57d-a3367e374496
+2026-01-05 19:38:44,672 [INFO] apps.mcp.orchestrator: mcp.trace [2026-01-05 21:38:44 EET] stage=prompt.planner business=70c8914c-a476-4455-8442-31035698858b conversation=b975e5de-3018-4c1b-a487-440984f56593
+• messages=[{'role': 'system', 'chars': 3145, 'preview': "You are an orchestration planner for CIB. Your job is to propose backend actions and structured extractions based on a customer conversation and the AI assistant's final reply.\n\n### CRM Capture Rules "}, {'role': 'user', 'chars': 2871, 'preview': 'Use the latest user message and assistant answer below to decide what actions to take and what extractions to record.\n\nLatest user message:\nhi salah tell me more about Heya Card\n\nAssistant final answe'}]
+2026-01-05 19:38:52,582 [INFO] apps.api.chat_portal: portal.trace [2026-01-05 21:38:52 EET] conversation=b975e5de-3018-4c1b-a487-440984f56593 business=70c8914c-a476-4455-8442-31035698858b agent=salah orchestrator=mcp
+    • planner.completed
+        planned_actions=0 extractions=0
+2026-01-05 19:38:52,582 [INFO] apps.api.chat_portal: portal plan ready conversation=b975e5de-3018-4c1b-a487-440984f56593 actions=[] extractions=[]
+2026-01-05 19:38:52,583 [INFO] apps.api.chat_portal: portal.trace [2026-01-05 21:38:52 EET] conversation=b975e5de-3018-4c1b-a487-440984f56593 business=70c8914c-a476-4455-8442-31035698858b agent=salah orchestrator=mcp
+    • plan.ready
+        actions=0 extractions=0
+2026-01-05 20:07:07,747 [INFO] apps.api.chat_portal: portal.trace [2026-01-05 22:07:07 EET] conversation=222c6c32-fec1-42bf-a1ba-9af4c3af46ab business=70c8914c-a476-4455-8442-31035698858b agent=salah orchestrator=mcp
+• request.received
+    body=tell me about heya credit card
+2026-01-05 20:07:07,749 [INFO] apps.api.chat_portal: portal.trace [2026-01-05 22:07:07 EET] conversation=222c6c32-fec1-42bf-a1ba-9af4c3af46ab business=70c8914c-a476-4455-8442-31035698858b agent=salah orchestrator=mcp
+    • customer.message_recorded
+        id=b0ab253b-31dd-4e3f-8e15-180890a21010
+2026-01-05 20:07:07,773 [INFO] apps.api.chat_portal: portal.trace [2026-01-05 22:07:07 EET] conversation=222c6c32-fec1-42bf-a1ba-9af4c3af46ab business=70c8914c-a476-4455-8442-31035698858b agent=salah orchestrator=mcp
+    • orchestrator.selected
+        mode=mcp provider=DeepSeekToolsProvider
+2026-01-05 20:07:07,773 [INFO] apps.api.chat_portal: portal.trace [2026-01-05 22:07:07 EET] conversation=222c6c32-fec1-42bf-a1ba-9af4c3af46ab business=70c8914c-a476-4455-8442-31035698858b agent=salah orchestrator=mcp
+    • orchestrator.turn.start
+2026-01-05 20:07:07,795 [INFO] apps.api.chat_portal: portal.trace [2026-01-05 22:07:07 EET] conversation=222c6c32-fec1-42bf-a1ba-9af4c3af46ab business=70c8914c-a476-4455-8442-31035698858b agent=salah orchestrator=mcp
+        • status
+            {"code": "thinking", "label": "Thinking…"}
+2026-01-05 20:07:07,795 [INFO] apps.mcp.orchestrator: mcp.trace [2026-01-05 22:07:07 EET] stage=prompt.primary business=70c8914c-a476-4455-8442-31035698858b conversation=222c6c32-fec1-42bf-a1ba-9af4c3af46ab
+• messages=[{'role': 'system', 'chars': 9336, 'preview': 'You are Salah, the Account Manager for CIB. Maintain a Friendly tone aligned to the agent profile in the Financial Services space.\n\n        ### Guardrails\n- Keep a Friendly voice—warm, conversational,'}, {'role': 'system', 'chars': 327, 'preview': "Reminder: Each visitor message (user turn) may include only one short placeholder before the first tool call. After you acknowledge you're checking, every subsequent tool step in this user turn must r"}, {'role': 'system', 'chars': 139, 'preview': 'Language enforcement: The visitor is writing in English. Reply ONLY in English. Do not include Arabic translations unless the visitor asks.'}, {'role': 'user', 'chars': 30, 'preview': 'tell me about heya credit card'}]
+2026-01-05 20:07:07,796 [INFO] apps.mcp.orchestrator: mcp.trace [2026-01-05 22:07:07 EET] stage=prompt.budget business=70c8914c-a476-4455-8442-31035698858b conversation=222c6c32-fec1-42bf-a1ba-9af4c3af46ab
+• max_input_tokens=6992 message_chars_after=9910 messages=4 response_chars_after=0 stage=initial_pass streaming=True tokens_est_after=6321 tokens_est_before=6321 tool_chars_after=11158 tools_enabled=True total_chars_after=21068 total_chars_before=21068
+2026-01-05 20:07:10,143 [INFO] apps.api.chat_portal: portal.trace [2026-01-05 22:07:10 EET] conversation=222c6c32-fec1-42bf-a1ba-9af4c3af46ab business=70c8914c-a476-4455-8442-31035698858b agent=salah orchestrator=mcp
+        • status
+            {"code": "responding", "label": "Responding…"}
+2026-01-05 20:07:11,403 [INFO] apps.api.chat_portal: portal.trace [2026-01-05 22:07:11 EET] conversation=222c6c32-fec1-42bf-a1ba-9af4c3af46ab business=70c8914c-a476-4455-8442-31035698858b agent=salah orchestrator=mcp
+        • status
+            {"code": "searching_start", "label": "Searching knowledge…"}
+2026-01-05 20:07:11,405 [INFO] apps.api.chat_portal: portal.trace [2026-01-05 22:07:11 EET] conversation=222c6c32-fec1-42bf-a1ba-9af4c3af46ab business=70c8914c-a476-4455-8442-31035698858b agent=salah orchestrator=mcp
+        • status
+            {"code": "searching_knowledge", "label": "Searching knowledge…"}
+2026-01-05 20:07:18,922 [INFO] apps.mcp.tools: mcp.trace [2026-01-05 22:07:18 EET] stage=search_knowledge.snippets business=70c8914c-a476-4455-8442-31035698858b conversation=222c6c32-fec1-42bf-a1ba-9af4c3af46ab
+• intent=short query_len=47 query_sha256=2895a0b6078b7e8b723fcc240a8f0ad3d0621c85828dd69312e1a6a5916d8228 read_required=False snippet_count=3 snippets=[{'label': 'Fees and Charges Credit Cards Eng_185', 'upload_id': 'e3f1de19-22d3-4f85-b253-6ac14bb7249f', 'chunk_id': '2c672862-f2fb-443a-87e4-e4a39a10ada4', 'read_state': 'summary', 'read_required': False, 'is_table_chunk': False, 'preview_sha256': '076b53af00ca5d2f10a7a640827a422e30fbd7176bf5300d5db2a98520401108', 'preview_len': 147, 'full_content_len': 147, 'full_content_sha256': '076b53af00ca5d2f10a7a640827a422e30fbd7176bf5300d5db2a98520401108', 'summary_len': 147, 'summary_sha256': '076b53af00ca5d2f10a7a640827a422e30fbd7176bf5300d5db2a98520401108'}, {'label': 'Fees and Charges Credit Cards Eng_185', 'upload_id': 'e3f1de19-22d3-4f85-b253-6ac14bb7249f', 'chunk_id': 'b7d78467-78ae-4a84-b668-0f00023aad79', 'read_state': 'summary', 'read_required': False, 'is_table_chunk': False, 'preview_sha256': '2946178e25ad0b9ad9ba030e150db6f60dd512f57b3a600e3134f89db1660410', 'preview_len': 200, 'full_content_len': 215, 'full_content_sha256': 'e45a07cf7bf555e1c12f7a21bdc86f9a04caa66e4914dd0a6fe5026e8e67c326', 'summary_len': 215, 'summary_sha256': 'e45a07cf7bf555e1c12f7a21bdc86f9a04caa66e4914dd0a6fe5026e8e67c326'}, {'label': 'Fees and Charges Credit Cards Eng_185', 'upload_id': 'e3f1de19-22d3-4f85-b253-6ac14bb7249f', 'chunk_id': 'b949c6d7-8d59-4c74-8492-3c6cf0c7adcc', 'read_state': 'summary', 'read_required': False, 'is_table_chunk': False, 'preview_sha256': '9078bcb27547de469dd4e2e25c42772dc0e52e2bd14c5969ed40f6dbf80065a2', 'preview_len': 59, 'full_content_len': 59, 'full_content_sha256': '9078bcb27547de469dd4e2e25c42772dc0e52e2bd14c5969ed40f6dbf80065a2', 'summary_len': 59, 'summary_sha256': '9078bcb27547de469dd4e2e25c42772dc0e52e2bd14c5969ed40f6dbf80065a2'}]
+2026-01-05 20:07:18,923 [WARNING] apps.mcp.orchestrator: mcp.trace [2026-01-05 22:07:18 EET] stage=search.performance business=70c8914c-a476-4455-8442-31035698858b conversation=222c6c32-fec1-42bf-a1ba-9af4c3af46ab
+• agent_scope_mode=all alias_hits=0 alias_ms=27 chunk_candidates=4 intent=short lexical_ms=15 limit=5 path=hybrid read_required=0 rerank_ms=2657 slo=slow slo_warn_ms=1200 snippet_count=3 status=ok table_context_ms=37 table_presence_ms=2 total_ms=6065 vector_ms=49
+2026-01-05 20:07:18,923 [INFO] apps.mcp.orchestrator: mcp.trace [2026-01-05 22:07:18 EET] stage=tool.search_knowledge business=70c8914c-a476-4455-8442-31035698858b conversation=222c6c32-fec1-42bf-a1ba-9af4c3af46ab
+• char_count=421 chunk_snippet_count=3 fanout_budget_ms=0 fanout_parallel_enabled=False fanout_parallel_used=False issue_snippet_count=3 limit=5 queries_planned=1 queries_run=1 query_length=47 read_state_breakdown={'summary': 3} snippet_count=3 status=ok table_snippet_count=3 table_truncated_count=0 token_estimate=106 upload_snippet_count=0
+2026-01-05 20:07:18,925 [INFO] apps.api.chat_portal: portal.trace [2026-01-05 22:07:18 EET] conversation=222c6c32-fec1-42bf-a1ba-9af4c3af46ab business=70c8914c-a476-4455-8442-31035698858b agent=salah orchestrator=mcp
+        • status
+            {"code": "searching_complete", "label": "Searching: Heya credit card features benefits requirements", "meta": {"query": "Heya credit card features benefits requirements", "result_count": 3}}
+2026-01-05 20:07:18,926 [INFO] apps.mcp.orchestrator: mcp.trace [2026-01-05 22:07:18 EET] stage=prompt.budget business=70c8914c-a476-4455-8442-31035698858b conversation=222c6c32-fec1-42bf-a1ba-9af4c3af46ab
+• actions=['dropped_system=4', 'fallback=minimal_messages'] max_input_tokens=6992 message_chars_after=10526 messages=4 response_chars_after=0 stage=tool_iteration streaming=True tokens_est_after=6343 tokens_est_before=7624 tool_chars_after=10616 tools_enabled=True total_chars_after=21142 total_chars_before=25414
+2026-01-05 20:07:20,964 [INFO] apps.api.chat_portal: portal.trace [2026-01-05 22:07:20 EET] conversation=222c6c32-fec1-42bf-a1ba-9af4c3af46ab business=70c8914c-a476-4455-8442-31035698858b agent=salah orchestrator=mcp
+        • status
+            {"code": "answer_started", "label": "Responding…"}
+2026-01-05 20:07:20,965 [INFO] apps.api.chat_portal: portal.trace [2026-01-05 22:07:20 EET] conversation=222c6c32-fec1-42bf-a1ba-9af4c3af46ab business=70c8914c-a476-4455-8442-31035698858b agent=salah orchestrator=mcp
+        • status
+            {"code": "responding", "label": "Responding…"}
+2026-01-05 20:07:22,398 [INFO] apps.api.chat_portal: portal.trace [2026-01-05 22:07:22 EET] conversation=222c6c32-fec1-42bf-a1ba-9af4c3af46ab business=70c8914c-a476-4455-8442-31035698858b agent=salah orchestrator=mcp
+        • status
+            {"code": "searching_start", "label": "Searching knowledge…"}
+2026-01-05 20:07:22,399 [INFO] apps.api.chat_portal: portal.trace [2026-01-05 22:07:22 EET] conversation=222c6c32-fec1-42bf-a1ba-9af4c3af46ab business=70c8914c-a476-4455-8442-31035698858b agent=salah orchestrator=mcp
+        • status
+            {"code": "searching_knowledge", "label": "Searching knowledge…"}
+2026-01-05 20:07:23,256 [INFO] apps.mcp.orchestrator: mcp.trace [2026-01-05 22:07:23 EET] stage=prompt.budget business=70c8914c-a476-4455-8442-31035698858b conversation=222c6c32-fec1-42bf-a1ba-9af4c3af46ab
+• actions=['dropped_system=4', 'history_limit=2'] max_input_tokens=6992 message_chars_after=11096 messages=6 response_chars_after=0 stage=tool_iteration streaming=True tokens_est_after=6514 tokens_est_before=7821 tool_chars_after=10616 tools_enabled=True total_chars_after=21712 total_chars_before=26069
+2026-01-05 20:07:25,675 [INFO] apps.api.chat_portal: portal.trace [2026-01-05 22:07:25 EET] conversation=222c6c32-fec1-42bf-a1ba-9af4c3af46ab business=70c8914c-a476-4455-8442-31035698858b agent=salah orchestrator=mcp
+        • status
+            {"code": "reading_start", "label": "Reading document"}
+2026-01-05 20:07:25,677 [INFO] apps.api.chat_portal: portal.trace [2026-01-05 22:07:25 EET] conversation=222c6c32-fec1-42bf-a1ba-9af4c3af46ab business=70c8914c-a476-4455-8442-31035698858b agent=salah orchestrator=mcp
+        • status
+            {"code": "reading_document", "label": "Reading document"}
+2026-01-05 20:07:28,572 [INFO] apps.mcp.tools: mcp.trace [2026-01-05 22:07:28 EET] stage=read_document.throttle business=70c8914c-a476-4455-8442-31035698858b
+• (no detail)
+2026-01-05 20:07:28,607 [INFO] apps.mcp.orchestrator: mcp.trace [2026-01-05 22:07:28 EET] stage=tool.read_document business=70c8914c-a476-4455-8442-31035698858b conversation=222c6c32-fec1-42bf-a1ba-9af4c3af46ab
+• char_count=477 chunk_pages_used=1 chunk_reads_used=1 chunk_snippet_count=0 document_id=e3f1de19-22d3-4f85-b253-6ac14bb7249f issue_snippet_count=0 mode=excerpt neighbor=2 pages=[1] read_state_breakdown={'summary': 1} snippet_count=1 table_snippet_count=0 table_truncated_count=0 token_estimate=120 upload_snippet_count=1
+2026-01-05 20:07:28,609 [INFO] apps.mcp.tools: mcp.trace [2026-01-05 22:07:28 EET] stage=read_document.snippets business=70c8914c-a476-4455-8442-31035698858b conversation=222c6c32-fec1-42bf-a1ba-9af4c3af46ab
+• document_id=e3f1de19-22d3-4f85-b253-6ac14bb7249f mode=excerpt neighbor=2 pages=[1] snippet_count=1 snippets=[{'label': 'Fees and Charges Credit Cards Eng_185', 'upload_id': 'e3f1de19-22d3-4f85-b253-6ac14bb7249f', 'chunk_id': 'e3f1de19-22d3-4f85-b253-6ac14bb7249f', 'read_state': 'summary', 'read_required': False, 'is_table_chunk': False, 'preview_sha256': '8600adcfff569cbf32c6d305485b10b6f002ad4302b21e0a3459d08ea0135b0f', 'preview_len': 200, 'full_content_len': 477, 'full_content_sha256': 'c03ad12363cee583b0578c695c91613fc5972a79adb4f4fbc1594e3016bc3ae3', 'summary_len': 477, 'summary_sha256': 'c03ad12363cee583b0578c695c91613fc5972a79adb4f4fbc1594e3016bc3ae3'}]
+2026-01-05 20:07:28,610 [INFO] apps.api.chat_portal: portal.trace [2026-01-05 22:07:28 EET] conversation=222c6c32-fec1-42bf-a1ba-9af4c3af46ab business=70c8914c-a476-4455-8442-31035698858b agent=salah orchestrator=mcp
+        • status
+            {"code": "reading_document", "label": "Reading: Fees and Charges Credit Cards Eng_185"}
+2026-01-05 20:07:28,610 [INFO] apps.api.chat_portal: portal.trace [2026-01-05 22:07:28 EET] conversation=222c6c32-fec1-42bf-a1ba-9af4c3af46ab business=70c8914c-a476-4455-8442-31035698858b agent=salah orchestrator=mcp
+        • status
+            {"code": "reading_complete", "label": "Reading document: e3f1de19…", "meta": {"document_id": "e3f1de19-22d3-4f85-b253-6ac14bb7249f", "snippets_returned": 1}}
+2026-01-05 20:07:28,612 [INFO] apps.mcp.orchestrator: mcp.trace [2026-01-05 22:07:28 EET] stage=prompt.budget business=70c8914c-a476-4455-8442-31035698858b conversation=222c6c32-fec1-42bf-a1ba-9af4c3af46ab
+• actions=['dropped_system=4', 'history_limit=2'] max_input_tokens=6992 message_chars_after=12691 messages=6 response_chars_after=0 stage=tool_iteration streaming=True tokens_est_after=6992 tokens_est_before=8487 tool_chars_after=10616 tools_enabled=True total_chars_after=23307 total_chars_before=28288
+2026-01-05 20:07:30,654 [INFO] apps.api.chat_portal: portal.trace [2026-01-05 22:07:30 EET] conversation=222c6c32-fec1-42bf-a1ba-9af4c3af46ab business=70c8914c-a476-4455-8442-31035698858b agent=salah orchestrator=mcp
+        • status
+            {"code": "reading_start", "label": "Reading document"}
+2026-01-05 20:07:30,655 [INFO] apps.api.chat_portal: portal.trace [2026-01-05 22:07:30 EET] conversation=222c6c32-fec1-42bf-a1ba-9af4c3af46ab business=70c8914c-a476-4455-8442-31035698858b agent=salah orchestrator=mcp
+        • status
+            {"code": "reading_document", "label": "Reading document"}
+2026-01-05 20:07:33,442 [INFO] apps.mcp.tools: mcp.trace [2026-01-05 22:07:33 EET] stage=read_document.throttle business=70c8914c-a476-4455-8442-31035698858b
+• (no detail)
+2026-01-05 20:07:33,588 [INFO] apps.mcp.orchestrator: mcp.trace [2026-01-05 22:07:33 EET] stage=tool.read_document business=70c8914c-a476-4455-8442-31035698858b conversation=222c6c32-fec1-42bf-a1ba-9af4c3af46ab
+• char_count=17 chunk_pages_used=2 chunk_reads_used=2 chunk_snippet_count=1 document_id=e3f1de19-22d3-4f85-b253-6ac14bb7249f issue_snippet_count=1 mode=excerpt neighbor=2 pages=[2] read_state_breakdown={'summary': 1} snippet_count=1 table_snippet_count=1 table_truncated_count=0 token_estimate=5 upload_snippet_count=0
+2026-01-05 20:07:33,591 [INFO] apps.mcp.tools: mcp.trace [2026-01-05 22:07:33 EET] stage=read_document.snippets business=70c8914c-a476-4455-8442-31035698858b conversation=222c6c32-fec1-42bf-a1ba-9af4c3af46ab
+• document_id=e3f1de19-22d3-4f85-b253-6ac14bb7249f mode=excerpt neighbor=2 pages=[2] snippet_count=1 snippets=[{'label': 'Fees and Charges Credit Cards Eng_185', 'upload_id': 'e3f1de19-22d3-4f85-b253-6ac14bb7249f', 'chunk_id': 'b949c6d7-8d59-4c74-8492-3c6cf0c7adcc', 'read_state': 'summary', 'read_required': False, 'is_table_chunk': False, 'preview_sha256': 'ad92d19944d0cc9181349ef8871d88c08c64edaab0ca4ae778c6a6350b6eb0c1', 'preview_len': 17, 'full_content_len': 17, 'full_content_sha256': 'ad92d19944d0cc9181349ef8871d88c08c64edaab0ca4ae778c6a6350b6eb0c1', 'summary_len': 17, 'summary_sha256': 'ad92d19944d0cc9181349ef8871d88c08c64edaab0ca4ae778c6a6350b6eb0c1'}]
+2026-01-05 20:07:33,591 [INFO] apps.api.chat_portal: portal.trace [2026-01-05 22:07:33 EET] conversation=222c6c32-fec1-42bf-a1ba-9af4c3af46ab business=70c8914c-a476-4455-8442-31035698858b agent=salah orchestrator=mcp
+        • status
+            {"code": "reading_document", "label": "Reading: Fees and Charges Credit Cards Eng_185"}
+2026-01-05 20:07:33,591 [INFO] apps.api.chat_portal: portal.trace [2026-01-05 22:07:33 EET] conversation=222c6c32-fec1-42bf-a1ba-9af4c3af46ab business=70c8914c-a476-4455-8442-31035698858b agent=salah orchestrator=mcp
+        • status
+            {"code": "reading_complete", "label": "Reading document: e3f1de19…", "meta": {"document_id": "e3f1de19-22d3-4f85-b253-6ac14bb7249f", "snippets_returned": 1}}
+2026-01-05 20:07:33,593 [INFO] apps.mcp.orchestrator: mcp.trace [2026-01-05 22:07:33 EET] stage=prompt.budget business=70c8914c-a476-4455-8442-31035698858b conversation=222c6c32-fec1-42bf-a1ba-9af4c3af46ab
+• actions=['dropped_system=4', 'history_limit=2'] max_input_tokens=6992 message_chars_after=11900 messages=6 response_chars_after=0 stage=tool_iteration streaming=True tokens_est_after=6755 tokens_est_before=7828 tool_chars_after=10616 tools_enabled=True total_chars_after=22516 total_chars_before=26094
+2026-01-05 20:07:36,018 [INFO] apps.api.chat_portal: portal.trace [2026-01-05 22:07:36 EET] conversation=222c6c32-fec1-42bf-a1ba-9af4c3af46ab business=70c8914c-a476-4455-8442-31035698858b agent=salah orchestrator=mcp
+        • status
+            {"code": "reading_start", "label": "Reading document"}
+2026-01-05 20:07:36,019 [INFO] apps.api.chat_portal: portal.trace [2026-01-05 22:07:36 EET] conversation=222c6c32-fec1-42bf-a1ba-9af4c3af46ab business=70c8914c-a476-4455-8442-31035698858b agent=salah orchestrator=mcp
+        • status
+            {"code": "reading_document", "label": "Reading document"}
+2026-01-05 20:07:38,985 [INFO] apps.mcp.tools: mcp.trace [2026-01-05 22:07:38 EET] stage=read_document.throttle business=70c8914c-a476-4455-8442-31035698858b
+• (no detail)
+2026-01-05 20:07:38,986 [INFO] apps.api.chat_portal: portal.trace [2026-01-05 22:07:38 EET] conversation=222c6c32-fec1-42bf-a1ba-9af4c3af46ab business=70c8914c-a476-4455-8442-31035698858b agent=salah orchestrator=mcp
+        • status
+            {"code": "reading_complete", "label": "Reading document: e3f1de19…", "meta": {"document_id": "e3f1de19-22d3-4f85-b253-6ac14bb7249f", "snippets_returned": 0}}
+2026-01-05 20:07:38,988 [INFO] apps.mcp.orchestrator: mcp.trace [2026-01-05 22:07:38 EET] stage=prompt.budget business=70c8914c-a476-4455-8442-31035698858b conversation=222c6c32-fec1-42bf-a1ba-9af4c3af46ab
+• actions=['dropped_system=4', 'history_limit=4'] max_input_tokens=6992 message_chars_after=12421 messages=8 response_chars_after=0 stage=tool_iteration streaming=True tokens_est_after=6911 tokens_est_before=7832 tool_chars_after=10616 tools_enabled=True total_chars_after=23037 total_chars_before=26106
+2026-01-05 20:07:40,831 [INFO] apps.api.chat_portal: portal.trace [2026-01-05 22:07:40 EET] conversation=222c6c32-fec1-42bf-a1ba-9af4c3af46ab business=70c8914c-a476-4455-8442-31035698858b agent=salah orchestrator=mcp
+        • status
+            {"code": "reading_start", "label": "Reading document"}
+2026-01-05 20:07:40,832 [INFO] apps.api.chat_portal: portal.trace [2026-01-05 22:07:40 EET] conversation=222c6c32-fec1-42bf-a1ba-9af4c3af46ab business=70c8914c-a476-4455-8442-31035698858b agent=salah orchestrator=mcp
+        • status
+            {"code": "reading_document", "label": "Reading document"}
+2026-01-05 20:07:43,612 [INFO] apps.mcp.tools: mcp.trace [2026-01-05 22:07:43 EET] stage=read_document.throttle business=70c8914c-a476-4455-8442-31035698858b
+• (no detail)
+2026-01-05 20:07:43,642 [INFO] apps.mcp.orchestrator: mcp.trace [2026-01-05 22:07:43 EET] stage=tool.read_document business=70c8914c-a476-4455-8442-31035698858b conversation=222c6c32-fec1-42bf-a1ba-9af4c3af46ab
+• char_count=477 chunk_pages_used=3 chunk_reads_used=3 chunk_snippet_count=0 document_id=e3f1de19-22d3-4f85-b253-6ac14bb7249f issue_snippet_count=0 mode=excerpt neighbor=2 pages=[1] read_state_breakdown={'summary': 1} snippet_count=1 table_snippet_count=0 table_truncated_count=0 token_estimate=120 upload_snippet_count=1
+2026-01-05 20:07:43,645 [INFO] apps.mcp.tools: mcp.trace [2026-01-05 22:07:43 EET] stage=read_document.snippets business=70c8914c-a476-4455-8442-31035698858b conversation=222c6c32-fec1-42bf-a1ba-9af4c3af46ab
+• document_id=e3f1de19-22d3-4f85-b253-6ac14bb7249f mode=excerpt neighbor=2 pages=[1] snippet_count=1 snippets=[{'label': 'Fees and Charges Credit Cards Eng_185', 'upload_id': 'e3f1de19-22d3-4f85-b253-6ac14bb7249f', 'chunk_id': 'e3f1de19-22d3-4f85-b253-6ac14bb7249f', 'read_state': 'summary', 'read_required': False, 'is_table_chunk': False, 'preview_sha256': '8600adcfff569cbf32c6d305485b10b6f002ad4302b21e0a3459d08ea0135b0f', 'preview_len': 200, 'full_content_len': 477, 'full_content_sha256': 'c03ad12363cee583b0578c695c91613fc5972a79adb4f4fbc1594e3016bc3ae3', 'summary_len': 477, 'summary_sha256': 'c03ad12363cee583b0578c695c91613fc5972a79adb4f4fbc1594e3016bc3ae3'}]
+2026-01-05 20:07:43,646 [INFO] apps.api.chat_portal: portal.trace [2026-01-05 22:07:43 EET] conversation=222c6c32-fec1-42bf-a1ba-9af4c3af46ab business=70c8914c-a476-4455-8442-31035698858b agent=salah orchestrator=mcp
+        • status
+            {"code": "reading_document", "label": "Reading: Fees and Charges Credit Cards Eng_185"}
+2026-01-05 20:07:43,646 [INFO] apps.api.chat_portal: portal.trace [2026-01-05 22:07:43 EET] conversation=222c6c32-fec1-42bf-a1ba-9af4c3af46ab business=70c8914c-a476-4455-8442-31035698858b agent=salah orchestrator=mcp
+        • status
+            {"code": "reading_complete", "label": "Reading document: e3f1de19…", "meta": {"document_id": "e3f1de19-22d3-4f85-b253-6ac14bb7249f", "snippets_returned": 1}}
+2026-01-05 20:07:43,646 [WARNING] apps.mcp.orchestrator: mcp.trace [2026-01-05 22:07:43 EET] stage=tool.loop.force_final business=70c8914c-a476-4455-8442-31035698858b conversation=222c6c32-fec1-42bf-a1ba-9af4c3af46ab
+• reason=read_document_repeat repeat_limit=2 signature=e3f1de19-22d3-4f85-b253-6ac14bb7249f:excerpt:1:n2 throttle_hits=1 throttle_limit=2
+2026-01-05 20:07:51,386 [INFO] apps.api.chat_portal: portal.trace [2026-01-05 22:07:51 EET] conversation=222c6c32-fec1-42bf-a1ba-9af4c3af46ab business=70c8914c-a476-4455-8442-31035698858b agent=salah orchestrator=mcp
+        • status
+            {"code": "responding", "label": "Responding…"}
+2026-01-05 20:07:51,388 [INFO] apps.mcp.orchestrator: mcp.trace [2026-01-05 22:07:51 EET] stage=turn.single_pass_candidate business=70c8914c-a476-4455-8442-31035698858b conversation=222c6c32-fec1-42bf-a1ba-9af4c3af46ab
+• content_chars=883
+2026-01-05 20:07:51,388 [INFO] apps.api.chat_portal: portal.trace [2026-01-05 22:07:51 EET] conversation=222c6c32-fec1-42bf-a1ba-9af4c3af46ab business=70c8914c-a476-4455-8442-31035698858b agent=salah orchestrator=mcp
+        • status
+            {"code": "responding", "label": "Responding…"}
+2026-01-05 20:07:51,388 [INFO] apps.api.chat_portal: portal.trace [2026-01-05 22:07:51 EET] conversation=222c6c32-fec1-42bf-a1ba-9af4c3af46ab business=70c8914c-a476-4455-8442-31035698858b agent=salah orchestrator=mcp
+        • status
+            {"code": "answer_finalized", "label": "Answer ready"}
+2026-01-05 20:07:51,390 [INFO] apps.api.chat_portal: portal.trace [2026-01-05 22:07:51 EET] conversation=222c6c32-fec1-42bf-a1ba-9af4c3af46ab business=70c8914c-a476-4455-8442-31035698858b agent=salah orchestrator=mcp
+        • status
+            {"code": "stream_complete"}
+2026-01-05 20:07:51,392 [INFO] apps.mcp.orchestrator: mcp.trace [2026-01-05 22:07:51 EET] stage=turn.metrics business=70c8914c-a476-4455-8442-31035698858b conversation=222c6c32-fec1-42bf-a1ba-9af4c3af46ab
+• characters=1392 chunk_pages=3 chunk_reads=3 knowledge_reads=6 tools=6
+2026-01-05 20:07:51,397 [WARNING] apps.mcp.orchestrator: mcp.trace [2026-01-05 22:07:51 EET] stage=turn.summary business=70c8914c-a476-4455-8442-31035698858b conversation=222c6c32-fec1-42bf-a1ba-9af4c3af46ab
+• answer_chars=883 char_budget_minute=64000 char_budget_turn=48000 char_used=1392 chunk_pages_used=3 chunk_reads_used=3 duration_ms=43622 error_codes={'search_budget_exceeded': 1, 'chunk_read_budget_exceeded': 1} llm_strategy=mcp_tools_stream_loop slo=slow slo_tool_calls_warn=6 slo_warn_ms=15000 streamed_chunks=15 throttle_hits=0 tool_errors=0 tool_total_ms=6432.0 tools=6
+2026-01-05 20:07:51,398 [INFO] apps.api.chat_portal: portal.trace [2026-01-05 22:07:51 EET] conversation=222c6c32-fec1-42bf-a1ba-9af4c3af46ab business=70c8914c-a476-4455-8442-31035698858b agent=salah orchestrator=mcp
+    • stream.completed
+2026-01-05 20:07:51,400 [INFO] apps.api.chat_portal: portal.trace [2026-01-05 22:07:51 EET] conversation=222c6c32-fec1-42bf-a1ba-9af4c3af46ab business=70c8914c-a476-4455-8442-31035698858b agent=salah orchestrator=mcp
+    • finalize.started
+2026-01-05 20:07:51,400 [INFO] apps.api.chat_portal: portal.trace [2026-01-05 22:07:51 EET] conversation=222c6c32-fec1-42bf-a1ba-9af4c3af46ab business=70c8914c-a476-4455-8442-31035698858b agent=salah orchestrator=mcp
+    • orchestrator.turn.complete
+2026-01-05 20:07:51,673 [INFO] apps.api.chat_portal: portal response finalized conversation=222c6c32-fec1-42bf-a1ba-9af4c3af46ab message_id=e41d4736-0881-4be4-8348-b87738ab8ee8 status=live
+2026-01-05 20:07:51,674 [INFO] apps.api.chat_portal: portal.trace [2026-01-05 22:07:51 EET] conversation=222c6c32-fec1-42bf-a1ba-9af4c3af46ab business=70c8914c-a476-4455-8442-31035698858b agent=salah orchestrator=mcp
+    • response.persisted
+        message_id=e41d4736-0881-4be4-8348-b87738ab8ee8
+        extra: {"citations": ["Fees and Charges Credit Cards Eng_185 – chunk 1", "Fees and Charges Credit Cards Eng_185 – chunk 4", "Fees and Charges Credit Cards Eng_185 – chunk 2", "Fees and Charges Credit Cards Eng_185 – chunk 1", "Fees and Charges Credit Cards Eng_185 – chunk 4", "Fees and Charges Credit Cards Eng_185 – chunk 2", "Fees and Charges Credit Cards Eng_185 – page 1", "Fees and Charges Credit Cards Eng_185 – page 1", "Fees and Charges Credit Cards Eng_185 – chunk 1", "Fees and Charges Credit Cards Eng_185 – chunk 1", "Fees and Charges Credit Cards Eng_185 – page 1", "Fees and Charges Credit Cards Eng_185 – page 1"], "pending_actions": 0}
+2026-01-05 20:07:51,679 [INFO] apps.api.chat_portal: portal.trace [2026-01-05 22:07:51 EET] conversation=222c6c32-fec1-42bf-a1ba-9af4c3af46ab business=70c8914c-a476-4455-8442-31035698858b agent=salah orchestrator=mcp
+    • response.dispatched
+        message_id=e41d4736-0881-4be4-8348-b87738ab8ee8
+2026-01-05 20:07:51,689 [INFO] apps.mcp.orchestrator: mcp.trace [2026-01-05 22:07:51 EET] stage=prompt.planner business=70c8914c-a476-4455-8442-31035698858b conversation=222c6c32-fec1-42bf-a1ba-9af4c3af46ab
+• messages=[{'role': 'system', 'chars': 3145, 'preview': "You are an orchestration planner for CIB. Your job is to propose backend actions and structured extractions based on a customer conversation and the AI assistant's final reply.\n\n### CRM Capture Rules "}, {'role': 'user', 'chars': 3154, 'preview': 'Use the latest user message and assistant answer below to decide what actions to take and what extractions to record.\n\nLatest user message:\ntell me about heya credit card\n\nAssistant final answer (alre'}]
+2026-01-05 20:07:59,264 [INFO] apps.api.chat_portal: portal.trace [2026-01-05 22:07:59 EET] conversation=222c6c32-fec1-42bf-a1ba-9af4c3af46ab business=70c8914c-a476-4455-8442-31035698858b agent=salah orchestrator=mcp
+    • planner.completed
+        planned_actions=0 extractions=0
+2026-01-05 20:07:59,264 [INFO] apps.api.chat_portal: portal plan ready conversation=222c6c32-fec1-42bf-a1ba-9af4c3af46ab actions=[] extractions=[]
+2026-01-05 20:07:59,264 [INFO] apps.api.chat_portal: portal.trace [2026-01-05 22:07:59 EET] conversation=222c6c32-fec1-42bf-a1ba-9af4c3af46ab business=70c8914c-a476-4455-8442-31035698858b agent=salah orchestrator=mcp
+    • plan.ready
+        actions=0 extractions=0

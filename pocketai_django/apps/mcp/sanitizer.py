@@ -158,8 +158,11 @@ def is_investigative_filler_with_level(sentence: str, *, filter_level: str = "fr
         r"i['’]ll check (the )?(docs|document|documents)",
         r"let me check (the )?(docs|document|documents)",
         r"let me (search|check|look|find|review)",
+        r"let me read (the )?(docs|document|documents|file|page|details)",
         r"i['’]ll (search|check|look|find|review)",
+        r"i['’]ll read (the )?(docs|document|documents|file|page|details)",
         r"i will (search|check|look|find|review)",
+        r"i will read (the )?(docs|document|documents|file|page|details)",
     )
     for pattern in hard_patterns:
         if re.search(pattern, text):

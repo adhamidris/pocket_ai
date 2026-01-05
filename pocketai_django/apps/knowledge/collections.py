@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import uuid
 from dataclasses import dataclass
 from datetime import datetime
@@ -7,6 +8,7 @@ from typing import Any, Iterable, Sequence
 
 from django.db import transaction
 from django.db.models import Count
+from django.utils import timezone
 
 from core.tenancy import tenant_context
 
@@ -17,6 +19,8 @@ from apps.accounts.models import (
     KnowledgeUpload,
     User,
 )
+
+logger = logging.getLogger(__name__)
 
 
 class KnowledgeCollectionValidationError(ValueError):
@@ -201,7 +205,11 @@ def set_upload_collections(
         seen.add(value)
 
     with tenant_context(business_profile.id):
-        upload = KnowledgeUpload.objects.filter(business_profile=business_profile, id=upload_id).only("id").first()
+        upload = (
+            KnowledgeUpload.objects.filter(business_profile=business_profile, id=upload_id)
+            .only("id", "chunk_count", "business_profile_id")
+            .first()
+        )
         if not upload:
             raise KnowledgeUpload.DoesNotExist
 
@@ -258,6 +266,41 @@ def set_upload_collections(
             if to_update:
                 KnowledgeCollectionLink.objects.bulk_update(to_update, ["position"])
 
+            def _on_commit() -> None:
+                try:
+                    from apps.rag.ai_orchestrator import KnowledgeSearchService
+                    from apps.rag.azure_ai_search import AzureAISearchConfig, update_upload_collections
+                except Exception:
+                    return
+
+                config = AzureAISearchConfig.from_settings()
+                if not config:
+                    return
+                try:
+                    update_upload_collections(
+                        config=config,
+                        upload_id=upload.id,
+                        chunk_count=int(getattr(upload, "chunk_count", 0) or 0),
+                        collection_ids=tuple(requested),
+                        updated_at=timezone.now(),
+                    )
+                except Exception as exc:
+                    logger.warning(
+                        "azure_search.collection_update_failed business=%s upload=%s error=%s",
+                        business_profile.id,
+                        upload.id,
+                        str(exc)[:250],
+                    )
+                    return
+                try:
+                    KnowledgeSearchService.invalidate_result_cache(business_profile.id)
+                except Exception:
+                    return
+
+            try:
+                transaction.on_commit(_on_commit)
+            except Exception:  # pragma: no cover
+                pass
+
         ordered_lookup = {collection.id: collection for collection in collections}
         return tuple(ordered_lookup[collection_id] for collection_id in requested)
-

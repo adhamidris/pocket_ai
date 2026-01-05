@@ -2025,7 +2025,15 @@ class KnowledgeAuditEvent(models.Model):
     upload = models.ForeignKey(
         KnowledgeUpload,
         related_name="audit_events",
-        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+    )
+    upload_id_snapshot = models.UUIDField(
+        null=True,
+        blank=True,
+        db_index=True,
+        help_text="Snapshot of the upload UUID for retention when the upload is deleted.",
     )
     actor_user = models.ForeignKey(
         User,
@@ -2052,10 +2060,12 @@ class KnowledgeAuditEvent(models.Model):
         ordering = ("-occurred_at",)
         indexes = [
             models.Index(fields=["upload", "action"], name="knowledge_audit_action_idx"),
+            models.Index(fields=["upload_id_snapshot", "action"], name="kn_audit_upid_action_idx"),
         ]
 
     def __str__(self) -> str:
-        return f"{self.upload} - {self.get_action_display()}"
+        upload_ref = self.upload or self.upload_id_snapshot or "unknown-upload"
+        return f"{upload_ref} - {self.get_action_display()}"
 
 
 class AgentKnowledgeAccess(models.Model):

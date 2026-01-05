@@ -150,6 +150,19 @@ Verified lookup is a capability that tenants can enable:
 - Supports multi-channel OTP (email/SMS/WhatsApp) via external providers.
 - Once verified, retrieval may be scoped to matching records/uploads and may expose allowed fields.
 
+Current repo behavior:
+- Tabular tools (`read_knowledge` with `intent=table`) enforce “verified lookup required” when the model requests sensitive columns (PII).
+- Unstructured/document snippets are additionally protected with best-effort PII pattern masking before tool evidence is returned to the LLM (configurable via `MCP_TEXT_PII_REDACTION_*`).
+
+Portal verification API (for the public web widget):
+- `POST /api/chat/portal/verify/status/` — whether the session is already verified
+- `POST /api/chat/portal/verify/start/` — start an OTP challenge (email/phone)
+- `POST /api/chat/portal/verify/confirm/` — confirm OTP and mark the conversation as verified
+
+Env knobs:
+- `MCP_VERIFIED_LOOKUP_ENABLED`, `MCP_VERIFIED_LOOKUP_REQUIRE_FOR_PII`, `MCP_VERIFIED_LOOKUP_ALLOW_CUSTOMER_MATCH`
+- `PORTAL_VERIFICATION_OTP_TTL_SECONDS`, `PORTAL_VERIFICATION_RESEND_COOLDOWN_SECONDS`, `PORTAL_VERIFICATION_MAX_ATTEMPTS`
+
 ---
 
 ## Audit logging
@@ -202,7 +215,9 @@ This section describes the recommended production shape. Not all items are imple
 
 ### Retrieval backend options
 - **Current (repo)**: Postgres-backed hybrid retrieval (FTS + vector + table artifacts).
-- **Planned (low-maintenance at scale)**: Azure AI Search for document retrieval (hybrid text+vector), while keeping Postgres for core app data and internal dataset/query features.
+- **Optional (repo, production-friendly)**: Azure AI Search for document retrieval (hybrid text+vector), while keeping Postgres as the source of truth (uploads/chunks/tables) and using Azure only for candidate retrieval.
+  - Enable with `RAG_SEARCH_BACKEND=azure` and Azure search env vars (`AZURE_SEARCH_ENDPOINT`, `AZURE_SEARCH_ADMIN_KEY`, `AZURE_SEARCH_INDEX_NAME`).
+  - Ops commands: `python manage.py azure_search_ensure_index` and `python manage.py azure_search_backfill --business-id <uuid>`.
 
 ---
 
@@ -228,4 +243,3 @@ Suggested SLOs (product-level):
 - Conversations + message persistence: `apps/conversations/`
 - LLM provider integration: `apps/llm/`
 - Operational logs (dev): `var/logs/`
-

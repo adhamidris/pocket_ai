@@ -2324,6 +2324,7 @@ def knowledge_document_download(request: HttpRequest, document_id: uuid.UUID):
         KnowledgeAuditEvent.objects.create(
             business_profile=business,
             upload=upload,
+            upload_id_snapshot=upload.id,
             actor_user=request.user,
             action=KnowledgeAuditAction.EXPORTED,
             description="Knowledge document downloaded.",

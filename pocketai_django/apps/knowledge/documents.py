@@ -612,6 +612,7 @@ def delete_document(*, business_profile: BusinessProfile, document_id: uuid.UUID
     Delete a knowledge upload and any stored artifacts on disk.
     """
 
+    chunk_count = 0
     with tenant_context(business_profile.id):
         upload = (
             KnowledgeUpload.objects.filter(business_profile=business_profile, id=document_id)
@@ -621,6 +622,7 @@ def delete_document(*, business_profile: BusinessProfile, document_id: uuid.UUID
         if upload is None:
             raise KnowledgeUpload.DoesNotExist
 
+        chunk_count = int(getattr(upload, "chunk_count", 0) or 0)
         storage_path = ""
         file_detail = getattr(upload, "file_detail", None)
         if file_detail and file_detail.storage_path:
@@ -628,6 +630,26 @@ def delete_document(*, business_profile: BusinessProfile, document_id: uuid.UUID
 
         upload.delete()
         logger.info("knowledge_document_delete business=%s document=%s", business_profile.id, document_id)
+
+    try:
+        from apps.rag.ai_orchestrator import KnowledgeSearchService
+
+        KnowledgeSearchService.invalidate_result_cache(business_profile.id)
+    except Exception:
+        pass
+    try:
+        from apps.rag.azure_ai_search import AzureAISearchConfig, delete_upload
+
+        config = AzureAISearchConfig.from_settings()
+        if config and chunk_count:
+            delete_upload(config=config, upload_id=document_id, chunk_count=chunk_count)
+    except Exception as exc:
+        logger.warning(
+            "azure_search.delete_failed business=%s document=%s error=%s",
+            business_profile.id,
+            document_id,
+            str(exc)[:250],
+        )
 
     media_root = getattr(settings, "MEDIA_ROOT", "")
     if not media_root:

@@ -69,6 +69,18 @@ part of `BusinessProfile.save` keeps it versioned alongside the tenant record.
   - Single tenant: `python manage.py reembed_missing_chunks --all --business <uuid|slug> --batch-size 32`
   - Single upload: `python manage.py reembed_missing_chunks --all --upload <uuid> --batch-size 32`
 
+## Azure AI Search (optional retrieval backend)
+
+When running with `RAG_SEARCH_BACKEND=azure`, Azure AI Search provides the candidate set for retrieval while Postgres remains the source of truth for chunk content and table artifacts.
+
+Operational commands:
+
+- Ensure the index exists/updated: `python manage.py azure_search_ensure_index`
+- Backfill one tenant: `python manage.py azure_search_backfill --business-id <uuid>`
+
+Minimum required env vars:
+- `AZURE_SEARCH_ENDPOINT`, `AZURE_SEARCH_ADMIN_KEY`, `AZURE_SEARCH_INDEX_NAME`
+
 ## Backfill Workflow
 
 `python manage.py backfill_knowledge_aliases` replays ingestion so entity chunks
