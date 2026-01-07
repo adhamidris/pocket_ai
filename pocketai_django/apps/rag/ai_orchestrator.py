@@ -331,6 +331,18 @@ class QueryNormalizer:
         "info",
         "information",
         "details",
+        "overview",
+        "summary",
+        "feature",
+        "features",
+        "benefit",
+        "benefits",
+        "requirement",
+        "requirements",
+        "eligibility",
+        "eligible",
+        "compare",
+        "comparison",
         "help",
         "find",
         "looking",
@@ -729,16 +741,18 @@ class KnowledgeSearchService:
             "transaction",
         }
         # Formats we should NOT treat as queryable tables (documents are read-only evidence, not datasets).
-        default_non_queryable_formats = ("pdf", "docx")
+        # Default is ("pdf", "docx") but can be overridden via RAG_NON_QUERYABLE_TABLE_FORMATS setting.
+        # Set to empty list [] to enable table-aware retrieval for all formats including PDF.
+        default_non_queryable_formats: tuple[str, ...] = ("pdf", "docx")
         formats_setting = getattr(settings, "RAG_NON_QUERYABLE_TABLE_FORMATS", None)
         if isinstance(formats_setting, (list, tuple, set)):
+            # Allow empty list to mean "no formats excluded" (all formats queryable)
             cleaned: list[str] = []
             for entry in formats_setting:
                 token = str(entry or "").strip().lower()
                 if token:
                     cleaned.append(token)
-            if cleaned:
-                default_non_queryable_formats = tuple(cleaned)
+            default_non_queryable_formats = tuple(cleaned)  # Can be empty tuple
         self.non_queryable_table_formats: set[str] = set(default_non_queryable_formats)
         logger.info("emb.provider %s model=%s", type(self.embedding_service).__name__ if self.embedding_service else None, getattr(self.embedding_service, "model", None))
         self._page_summary_cache: OrderedDict[tuple[uuid.UUID, uuid.UUID], dict[int, Mapping[str, object]]] = OrderedDict()
@@ -2017,7 +2031,12 @@ class KnowledgeSearchService:
             if current >= max_per_upload:
                 continue
             # NEW: Pass query to enable query-aware row sampling
-            table_sample: tuple[Mapping[str, object], ...] | None = self._table_row_sample(chunk, max_columns=4, query=query)
+            table_sample: tuple[Mapping[str, object], ...] | None = self._table_row_sample(
+                chunk,
+                max_columns=6,
+                max_rows=1,
+                query=query,
+            )
             snippets.append(self._chunk_to_snippet(chunk, result=hit, table_row_sample=table_sample))
             per_upload_counts[upload.id] = current + 1
             if len(snippets) >= limit:
@@ -2092,7 +2111,12 @@ class KnowledgeSearchService:
             table_context=table_context,
         )
         hybrid.diagnostics["rerank_duration_ms"] = rerank_ms
-        filtered = self._apply_vector_threshold(reranked, hybrid.query_vector, ceiling=ceiling)
+        filtered = self._apply_vector_threshold(
+            reranked,
+            hybrid.query_vector,
+            ceiling=ceiling,
+            min_keep=limit,
+        )
         if diagnostics is not None:
             diagnostics["vector_candidates_post_threshold"] = len(filtered)
         final = self._mmr_select(filtered, hybrid.query_vector, k=limit, lam=self.mmr_lambda)
@@ -2789,13 +2813,32 @@ class KnowledgeSearchService:
         filler = self._filler_tokens_for_business(business_profile)
         filtered = [token for token in tokens if token and token not in filler]
         min_length = self._significant_token_min_length(business_profile)
-        strong = [(idx, token) for idx, token in enumerate(filtered) if len(token) >= min_length]
-        ranked = sorted(strong, key=lambda pair: (-len(pair[1]), pair[0]))
+        strong = [token for token in filtered if len(token) >= min_length]
         max_tokens = self._fts_condense_max_tokens(business_profile)
-        chosen = [token for _, token in ranked[:max_tokens]]
+        chosen: list[str] = []
+        seen: set[str] = set()
+        for token in strong:
+            if token in seen:
+                continue
+            seen.add(token)
+            chosen.append(token)
+            if len(chosen) >= max_tokens:
+                break
         if not chosen:
             fallback = filtered or tokens
-            chosen = fallback[:max_tokens]
+            chosen = []
+            seen.clear()
+            for token in fallback:
+                if not token:
+                    continue
+                if token in filler:
+                    continue
+                if token in seen:
+                    continue
+                seen.add(token)
+                chosen.append(token)
+                if len(chosen) >= max_tokens:
+                    break
         condensed = " ".join(chosen).strip()
         return condensed or traits.normalized or traits.original or ""
 
@@ -2857,18 +2900,48 @@ class KnowledgeSearchService:
             start = time.perf_counter()
             N = max(limit * 8, 40)
             config = "simple"
-            search_type = "websearch"
+            search_type = "plain"
             vector = SearchVector("content", config=config)
-            query = SearchQuery(condensed_query, search_type=search_type, config=config)
+            token_min_length = self._significant_token_min_length(business_profile)
+            filler = self._filler_tokens_for_business(business_profile)
+            condensed_tokens = tuple(
+                token
+                for token in QueryNormalizer._TOKEN_SPLIT.split(
+                    QueryNormalizer._normalize_query_text(condensed_query).lower()
+                )
+                if token
+            )
+            significant = [token for token in condensed_tokens if len(token) >= token_min_length and token not in filler]
+            combined_query: SearchQuery | None = None
+            for token in significant:
+                token_query = SearchQuery(token, search_type=search_type, config=config)
+                combined_query = token_query if combined_query is None else (combined_query | token_query)
+
+            if combined_query is None:
+                combined_query = SearchQuery(condensed_query, search_type=search_type, config=config)
+
+            generic_anchor_tokens = set(filler)
+            generic_anchor_tokens.update(self.table_query_keywords)
+            generic_anchor_tokens.update(self.table_column_hint_base)
+            generic_anchor_tokens.update({"card", "cards", "credit"})
+            anchor_token = next(
+                (token for token in significant if token not in generic_anchor_tokens),
+                None,
+            )
+            filter_query = (
+                SearchQuery(anchor_token, search_type=search_type, config=config)
+                if anchor_token
+                else combined_query
+            )
             try:
                 fts_qs = (
                     base_qs.annotate(
                         fts_vector=vector,
-                        rank=SearchRank(vector, query, cover_density=True),
+                        rank=SearchRank(vector, combined_query, cover_density=True),
                     )
                     # Apply @@ filter so Postgres can use the GIN index on
                     # `to_tsvector('simple', coalesce(content,''))`.
-                    .filter(fts_vector=query)
+                    .filter(fts_vector=filter_query)
                     .order_by("-rank")[:N]
                 )
                 rows = [(chunk, float(getattr(chunk, "rank", 0.0) or 0.0)) for chunk in fts_qs]
@@ -2908,6 +2981,7 @@ class KnowledgeSearchService:
                 "fts_config": config,
                 "fts_search_type": search_type,
                 "fts_condensed_query": condensed_query,
+                "fts_anchor_token": anchor_token,
                 "fts_candidates": len(hits),
                 "fts_rank_max": round(max_rank, 6) if max_rank else 0.0,
             }
@@ -2934,7 +3008,12 @@ class KnowledgeSearchService:
                 )
                 if token
             )
-            token_filter = self._build_fts_token_filter(condensed_tokens or traits.tokens, min_length=token_min_length)
+            filler = self._filler_tokens_for_business(business_profile)
+            ordered_tokens = tuple(token for token in traits.tokens if token and token not in filler)
+            token_filter = self._build_fts_token_filter(
+                ordered_tokens or condensed_tokens or traits.tokens,
+                min_length=token_min_length,
+            )
             fts_base = base_qs.filter(token_filter) if token_filter else base_qs
             N = max(limit * 8, 40)
             start = time.perf_counter()
@@ -3010,6 +3089,7 @@ class KnowledgeSearchService:
         query_vector: list[float] | None,
         *,
         ceiling: float | None,
+        min_keep: int = 0,
     ) -> list[ChunkResult]:
         threshold = ceiling if ceiling is not None else self.vector_distance_ceiling
         if not threshold or threshold <= 0 or not query_vector:
@@ -3019,7 +3099,18 @@ class KnowledgeSearchService:
             for hit in candidates
             if hit.vector_distance is None or hit.vector_distance <= threshold
         ]
-        return filtered or list(candidates)
+        if not filtered:
+            return list(candidates)
+        if min_keep > 0 and len(filtered) < min_keep:
+            seen = {hit.chunk_id for hit in filtered}
+            for hit in candidates:
+                if hit.chunk_id in seen:
+                    continue
+                filtered.append(hit)
+                seen.add(hit.chunk_id)
+                if len(filtered) >= min_keep:
+                    break
+        return filtered
 
     def _mmr_select(
         self,
@@ -3350,10 +3441,42 @@ class KnowledgeSearchService:
             if head:
                 pairs = [[traits.normalized, (hit.chunk.content or "")] for hit in head]
                 try:
-                    ce_scores = cross_encoder.predict(pairs)
-                    ce_values = [float(score) for score in ce_scores]
+                    # P0 #4: Add timeout wrapper to prevent indefinite hangs
+                    import concurrent.futures
+                    from django.conf import settings
+                    
+                    timeout_s = float(getattr(settings, "RAG_CROSS_ENCODER_TIMEOUT_S", 3.0))
+                    
+                    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+                        future = executor.submit(cross_encoder.predict, pairs)
+                        try:
+                            ce_scores = future.result(timeout=timeout_s)
+                            ce_values = [float(score) for score in ce_scores]
+                        except concurrent.futures.TimeoutError:
+                            logger.warning(
+                                "Cross-encoder rerank timed out after %.1fs (pairs=%d)",
+                                timeout_s,
+                                len(pairs),
+                            )
+                            ce_values = []
                 except Exception as exc:  # pragma: no cover - optional dependency
-                    logger.warning("Cross-encoder rerank failed: %s", exc)
+                    # P0 #5: Graceful fallback on cross-encoder errors (e.g., AlreadyBorrowed)
+                    logger.warning(
+                        "Cross-encoder rerank failed (error=%s); continuing with base fusion scores",
+                        str(exc)[:200],
+                    )
+                    _rag_log(
+                        "retrieval.cross_encoder_failures",
+                        {
+                            "error_type": type(exc).__name__,
+                            "error_msg": str(exc)[:200],
+                            "pairs_count": len(pairs),
+                        },
+                        indent=2,
+                    )
+                    # Set failure flag to prevent repeated attempts in this process
+                    self._cross_encoder_failed = True
+                    ce_values = []
                 else:
                     ce_lookup = {
                         hit.chunk_id: self.cross_encoder_weight * ce_values[idx]
@@ -3538,6 +3661,13 @@ class KnowledgeSearchService:
                 "bhd",
                 "omr",
                 "jod",
+                # Product-category words are too generic to act as “specific table” anchors.
+                # Keeping them out of `specific_tokens` prevents wrong-table drift like
+                # "Heya credit card" -> matching any table that has a `card_type` column.
+                "card",
+                "cards",
+                "credit",
+                "debit",
             }
         )
         generic.update(
@@ -3679,7 +3809,12 @@ class KnowledgeSearchService:
                 if (count / total_tables) >= self.table_generic_df_threshold:
                     generic.add(token)
         if self.table_generic_topk > 0 and df:
-            for token, _count in df.most_common(self.table_generic_topk):
+            # Only treat frequently-occurring tokens as “generic”.
+            # The previous behavior could swallow rare but critical entity tokens (e.g., a product name)
+            # when `table_generic_topk` is large relative to the number of tables.
+            for token, count in df.most_common(self.table_generic_topk):
+                if count < required_tables:
+                    continue
                 generic.add(token)
         self._table_generic_token_cache[scope_key] = generic
         if len(self._table_generic_token_cache) > self.table_header_token_cache_limit:
@@ -3718,6 +3853,14 @@ class KnowledgeSearchService:
         allowed_collection_ids: Sequence[uuid.UUID] | None = None,
         allowed_explicit_upload_ids: Sequence[uuid.UUID] | None = None,
     ) -> Mapping[str, object]:
+        """
+        Build table query context with column/profile metadata.
+        
+        NEW (P0 #3): Checks Redis cache first to avoid 0.5-2s DB scan penalty.
+        Falls back to DB computation if cache miss, then caches result.
+        """
+        from apps.rag.table_profile_cache import get_table_profile_cache, set_table_profile_cache
+        
         query_text = (traits.normalized or traits.original or "").lower()
         query_tokens, specific_tokens = self._table_query_tokens(
             business_profile,
@@ -3728,24 +3871,90 @@ class KnowledgeSearchService:
         )
         tokens = set(query_tokens)
         matched_keywords = tokens & self.table_query_keywords
-        columns = self._table_columns_for_business(
-            business_profile,
-            allowed_upload_ids=allowed_upload_ids,
-            allowed_collection_ids=allowed_collection_ids,
-            allowed_explicit_upload_ids=allowed_explicit_upload_ids,
-        )
-        table_profile = self._table_profile_for_business(
-            business_profile,
-            allowed_upload_ids=allowed_upload_ids,
-            allowed_collection_ids=allowed_collection_ids,
-            allowed_explicit_upload_ids=allowed_explicit_upload_ids,
-        )
-        row_label_tokens = self._table_row_label_tokens_for_business(
-            business_profile,
-            allowed_upload_ids=allowed_upload_ids,
-            allowed_collection_ids=allowed_collection_ids,
-            allowed_explicit_upload_ids=allowed_explicit_upload_ids,
-        )
+        
+        # Try Redis cache first (< 10ms)
+        business_id = getattr(business_profile, "id", None)
+        cached_profile = None
+        if business_id:
+            try:
+                cached_profile = get_table_profile_cache(
+                    business_id,
+                    collection_ids=allowed_collection_ids if allowed_collection_ids else None,
+                )
+            except Exception as exc:
+                # Cache failure shouldn't break retrieval
+                logger.warning(
+                    "table_profile_cache.get_failed business=%s error=%s",
+                    business_id,
+                    str(exc)[:200],
+                )
+        
+        if cached_profile:
+            # Cache hit — use precomputed data
+            _rag_log(
+                "table.context.cache_hit",
+                {"business": business_id, "cache_keys": list(cached_profile.keys())[:10]},
+                indent=2,
+                context={"business": business_id},
+            )
+            columns = set(cached_profile.get("available_columns") or [])
+            row_label_tokens = set(cached_profile.get("row_label_tokens") or [])
+            table_profile = {
+                "table_uploads": cached_profile.get("table_uploads", 0),
+                "total_uploads": cached_profile.get("total_uploads", 0),
+                "table_upload_ratio": cached_profile.get("table_upload_ratio", 0.0),
+                "table_count": cached_profile.get("table_count", 0),
+                "dominant": cached_profile.get("dominant", False),
+            }
+        else:
+            # Cache miss — compute from DB (expensive: 500-2000ms)
+            _rag_log(
+                "table.context.cache_miss",
+                {"business": business_id, "will_compute_and_cache": True},
+                indent=2,
+                context={"business": business_id},
+            )
+            
+            columns = self._table_columns_for_business(
+                business_profile,
+                allowed_upload_ids=allowed_upload_ids,
+                allowed_collection_ids=allowed_collection_ids,
+                allowed_explicit_upload_ids=allowed_explicit_upload_ids,
+            )
+            table_profile = self._table_profile_for_business(
+                business_profile,
+                allowed_upload_ids=allowed_upload_ids,
+                allowed_collection_ids=allowed_collection_ids,
+                allowed_explicit_upload_ids=allowed_explicit_upload_ids,
+            )
+            row_label_tokens = self._table_row_label_tokens_for_business(
+                business_profile,
+                allowed_upload_ids=allowed_upload_ids,
+                allowed_collection_ids=allowed_collection_ids,
+                allowed_explicit_upload_ids=allowed_explicit_upload_ids,
+            )
+            
+            # Cache the computed result for next time
+            if business_id:
+                try:
+                    profile_to_cache = {
+                        "available_columns": columns,  # Will be converted to list by set_table_profile_cache
+                        "row_label_tokens": row_label_tokens,
+                        **table_profile,  # table_uploads, total_uploads, etc.
+                    }
+                    set_table_profile_cache(
+                        business_id,
+                        profile_to_cache,
+                        collection_ids=allowed_collection_ids if allowed_collection_ids else None,
+                    )
+                except Exception as exc:
+                    logger.warning(
+                        "table_profile_cache.set_failed business=%s error=%s",
+                        business_id,
+                        str(exc)[:200],
+                    )
+        
+        # Compute query-specific matching (this MUST be done per-query)
         hints = self._table_column_hints(business_profile)
         semantic_columns = {column for column in columns if any(hint in column for hint in hints)}
         matched_columns_query = {column for column in columns if column and column in query_text}
@@ -4736,13 +4945,34 @@ class KnowledgeSearchService:
         is_table_chunk_flag = bool(chunk_metadata.get("is_table_chunk"))
         
         if table_row_sample and is_table_chunk_flag:
-            pairs = []
-            for entry in table_row_sample:
-                col = entry.get("column") or ""
-                val = entry.get("value") or ""
-                combined = f"{col}: {val}".strip(": ")
-                if combined:
-                    pairs.append(combined)
+            pairs: list[str] = []
+            # Preferred shape: a structured table preview (columns + rows).
+            first = table_row_sample[0] if table_row_sample else None
+            if isinstance(first, Mapping) and isinstance(first.get("columns"), list) and isinstance(first.get("rows"), list):
+                cols = [str(c) for c in (first.get("columns") or [])]
+                rows = first.get("rows") or []
+                first_row = rows[0] if rows else None
+                if isinstance(first_row, list):
+                    for col, val in zip(cols, first_row):
+                        value = str(val or "").strip()
+                        label = str(col or "").strip()
+                        if not value or not label:
+                            continue
+                        pairs.append(f"{label}: {value}")
+                        if len(pairs) >= 8:
+                            break
+            else:
+                # Backward-compatible shape: list of {row, column, value} entries.
+                for entry in table_row_sample:
+                    if not isinstance(entry, Mapping):
+                        continue
+                    col = entry.get("column") or ""
+                    val = entry.get("value") or ""
+                    combined = f"{col}: {val}".strip(": ")
+                    if combined:
+                        pairs.append(combined)
+                        if len(pairs) >= 8:
+                            break
             if pairs:
                 sample_text = "; ".join(pairs)[:500]
         
@@ -4780,6 +5010,22 @@ class KnowledgeSearchService:
         if result and result.vector_distance is not None:
             diagnostics.setdefault("vector_distance", result.vector_distance)
         if is_table_chunk:
+            # Carry table provenance + quality signals so the model can ground answers correctly.
+            for key in (
+                "table_id",
+                "table_order_index",
+                "table_row_index",
+                "table_page_number",
+                "table_title",
+                "table_quality_score",
+                "table_is_decorative",
+            ):
+                if key in diagnostics:
+                    continue
+                value = chunk_metadata.get(key)
+                if value is None or value == "":
+                    continue
+                diagnostics[key] = value
             ingestion_meta = upload.ingestion_metadata if isinstance(getattr(upload, "ingestion_metadata", None), Mapping) else {}
             format_hint = str(ingestion_meta.get("format") or "").strip().lower()
             if format_hint in {"pdf", "docx"}:
@@ -5756,56 +6002,64 @@ class KnowledgeSearchService:
         return enriched
 
     def _table_row_sample(
-        self, 
-        chunk: KnowledgeUploadChunk, 
-        *, 
-        max_columns: int = 4,
+        self,
+        chunk: KnowledgeUploadChunk,
+        *,
+        max_columns: int = 6,
+        max_rows: int = 1,
         query: str | None = None,
     ) -> tuple[Mapping[str, object], ...]:
         """
-        Build a compact key/value sample for table chunks so search snippets
-        carry identifiers without requiring a full read.
-        
-        NOW CHUNK-SCOPED: Uses table_id from chunk metadata to sample from
-        the correct table, not the first table of the upload.
-        
-        NOW QUERY-AWARE: If query provided, selects most relevant row based
-        on token matching instead of always returning first row.
+        Build an answer-ready structured table preview for doc-table chunks.
+
+        - Chunk-scoped: uses `metadata.table_id` to pick the correct table.
+        - Row-accurate: if the chunk is a row chunk, preview that exact row.
+        - Query-aware: for parent/preview chunks, pick the most relevant rows by token overlap.
+
+        Returns a `structuredTables`-compatible payload (columns + rows + provenance metadata)
+        so the LLM can answer table questions without needing an extra `read_document` call.
         """
-        # Only sample for table chunks
         chunk_metadata = chunk.metadata if isinstance(chunk.metadata, dict) else {}
         if not chunk_metadata.get("is_table_chunk"):
             return tuple()
-        
-        # Get table_id from chunk metadata (added during ingestion)
+
         table_id = chunk_metadata.get("table_id")
-        if not table_id:
-            # Fallback for legacy chunks without table_id - use old behavior
+        table = None
+        if table_id:
+            try:
+                from apps.accounts.models import KnowledgeUploadTable
+
+                table = KnowledgeUploadTable.objects.filter(id=table_id).first()
+            except Exception:
+                table = None
+        if table is None:
             upload = chunk.upload
             tables_manager = getattr(upload, "tables", None)
-            if not hasattr(tables_manager, "all"):
+            if not hasattr(tables_manager, "order_by"):
                 return tuple()
             try:
                 table = tables_manager.order_by("order_index").first()
             except Exception:
                 return tuple()
-        else:
-            # NEW: Use the specific table for this chunk
-            try:
-                from apps.accounts.models import KnowledgeUploadTable
-                table = KnowledgeUploadTable.objects.filter(id=table_id).first()
-            except Exception:
-                return tuple()
-        
-        if not table:
+        if table is None:
             return tuple()
-        
+
+        # Prefer the exact row for row chunks.
+        target_row_index = chunk_metadata.get("table_row_index")
+        if isinstance(target_row_index, str) and target_row_index.isdigit():
+            target_row_index = int(target_row_index)
+        if not isinstance(target_row_index, int):
+            target_row_index = None
+
+        max_rows = max(1, int(max_rows))
+        max_columns = max(2, int(max_columns))
+        row_limit = max(1, min(50, max_rows * 25))
+
         try:
-            # Get data rows (exclude headers), limit to top 50 for performance
-            rows = list(
+            row_qs = (
                 table.rows.filter(row_index__isnull=False)
-                .exclude(metadata__row_type='header')
-                .order_by("row_index")[:50]  # PERF: Limit to avoid loading thousands of rows
+                .exclude(metadata__row_type="header")
+                .order_by("row_index")
                 .prefetch_related(
                     Prefetch(
                         "cells",
@@ -5813,46 +6067,77 @@ class KnowledgeSearchService:
                     )
                 )
             )
-            
-            if not rows:
+            if target_row_index is not None:
+                row_qs = row_qs.filter(row_index=target_row_index)
+                selected_rows = list(row_qs[:max_rows])
+            else:
+                rows = list(row_qs[:row_limit])
+                if not rows:
+                    return tuple()
+                if not query or len(rows) <= 1:
+                    selected_rows = rows[:max_rows]
+                else:
+                    # Lightweight token overlap scoring (bounded to first `row_limit` rows).
+                    query_tokens = {tok for tok in (query or "").lower().split() if tok and len(tok) >= 3}
+                    scored: list[tuple[int, int]] = []
+                    for idx, row in enumerate(rows):
+                        score = 0
+                        for cell in row.cells.all():
+                            cell_text = str(cell.raw_text or "").lower()
+                            for tok in query_tokens:
+                                if tok in cell_text:
+                                    score += 1
+                        scored.append((score, idx))
+                    scored.sort(key=lambda item: (item[0], -item[1]), reverse=True)
+                    picked = [rows[idx] for score, idx in scored[:max_rows] if score > 0]
+                    selected_rows = picked if picked else rows[:max_rows]
+
+            if not selected_rows:
                 return tuple()
-            
-            # NEW: Query-aware row selection
-            selected_row = rows[0]  # Default to first row
-            
-            if query and len(rows) > 1:
-                # Tokenize query (simple whitespace split, lowercase)
-                query_tokens = set(query.lower().split())
-                
-                # Score each row by token matches
-                best_score = 0
-                for row in rows:
-                    row_score = 0
-                    cells = list(row.cells.all())
-                    
-                    for cell in cells:
-                        cell_text = str(cell.raw_text or "").lower()
-                        # Count matching query tokens
-                        for token in query_tokens:
-                            if token in cell_text:
-                                row_score += 1
-                    
-                    if row_score > best_score:
-                        best_score = row_score
-                        selected_row = row
-            
-            # Build sample from selected row
-            cells = list(selected_row.cells.all())
-            sample: list[Mapping[str, object]] = []
-            for cell in cells[:max_columns]:
-                sample.append(
-                    {
-                        "row": selected_row.row_index,
-                        "column": cell.column_key or f"column_{(cell.column_index or 0) + 1}",
-                        "value": cell.raw_text,
-                    }
-                )
-            return tuple(sample)
+
+            # Build a compact structured table payload.
+            all_cells = list(selected_rows[0].cells.all()) if selected_rows else []
+            ordered_columns = [
+                (cell.column_index, (cell.column_key or f"column_{(cell.column_index or 0) + 1}"))
+                for cell in all_cells
+            ]
+            ordered_columns.sort(key=lambda item: item[0])
+            column_labels = [label for _, label in ordered_columns]
+            if len(column_labels) > max_columns:
+                column_labels = column_labels[:max_columns]
+
+            rows_payload: list[list[str]] = []
+            for row in selected_rows:
+                cell_lookup = {cell.column_index: (cell.raw_text or "") for cell in row.cells.all()}
+                values: list[str] = []
+                for col_idx, _label in ordered_columns[: len(column_labels)]:
+                    values.append(str(cell_lookup.get(col_idx, "")))
+                rows_payload.append(values)
+
+            structured_table = {
+                "title": table.title or table.section_heading or f"Table {table.order_index}",
+                "columns": column_labels,
+                "rows": rows_payload,
+                "metadata": {
+                    "table_id": str(table.id),
+                    "table_order_index": table.order_index,
+                    "page_number": table.page.page_number if table.page else None,
+                    "row_indexes": [row.row_index for row in selected_rows],
+                    "chunk_role": chunk_metadata.get("table_chunk_role"),
+                },
+            }
+            table_meta = table.metadata if isinstance(getattr(table, "metadata", None), Mapping) else {}
+            if table_meta:
+                quality_score = table_meta.get("quality_score")
+                if isinstance(quality_score, (int, float)):
+                    structured_table["metadata"]["quality_score"] = float(quality_score)
+                is_decorative = table_meta.get("is_decorative")
+                if isinstance(is_decorative, bool):
+                    structured_table["metadata"]["is_decorative"] = is_decorative
+                signals = table_meta.get("quality_signals")
+                if isinstance(signals, Mapping) and signals.get("column_misalignment") is True:
+                    structured_table["metadata"]["column_misalignment"] = True
+            return (structured_table,)
         except Exception:
             return tuple()
 

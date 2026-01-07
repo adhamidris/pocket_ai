@@ -98,19 +98,22 @@ class McpOrchestratorService:
         self.read_document_repeat_limit = max(1, int(getattr(settings, "MCP_READ_DOCUMENT_REPEAT_LIMIT", 2)))
         self.read_document_throttle_limit = max(1, int(getattr(settings, "MCP_READ_DOCUMENT_THROTTLE_LIMIT", 2)))
         self.business_override_key = getattr(settings, "RAG_BUSINESS_OVERRIDE_KEY", "rag_overrides")
-        default_chunk_reads = max(1, int(getattr(settings, "RAG_MAX_CHUNK_READS_PER_TURN", 3)))
+        # Increased from 3 to 8 to allow richer context for table-heavy documents
+        default_chunk_reads = max(1, int(getattr(settings, "RAG_MAX_CHUNK_READS_PER_TURN", 8)))
         self.max_chunk_reads_per_turn = max(
             1,
             int(self._business_override(agent.business_profile, "max_chunk_reads_per_turn", default_chunk_reads)),
         )
-        default_page_windows = max(1, int(getattr(settings, "RAG_MAX_CHUNK_PAGES_PER_TURN", 3)))
+        # Increased from 3 to 8 to allow reading more pages per turn
+        default_page_windows = max(1, int(getattr(settings, "RAG_MAX_CHUNK_PAGES_PER_TURN", 8)))
         self.max_chunk_pages_per_turn = max(
             1,
             int(self._business_override(agent.business_profile, "max_chunk_pages_per_turn", default_page_windows)),
         )
+        # Increased from 48000 to 64000 to accommodate richer table content
         self.default_char_budget_per_turn = max(
             4000,
-            int(getattr(settings, "RAG_MAX_CHAR_BUDGET_PER_TURN", 48000)),
+            int(getattr(settings, "RAG_MAX_CHAR_BUDGET_PER_TURN", 64000)),
         )
         self.default_char_budget_per_minute = max(
             4000,

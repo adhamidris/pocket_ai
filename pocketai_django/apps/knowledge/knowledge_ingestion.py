@@ -1543,35 +1543,65 @@ class AzureDocumentIntelligenceExtractor:
     def _polygon_to_bbox(polygon: Sequence[Any]) -> dict[str, float]:
         xs: list[float] = []
         ys: list[float] = []
-        for point in polygon or []:
-            if isinstance(point, dict):
-                x_val = point.get("x")
-                y_val = point.get("y")
-            elif isinstance(point, (list, tuple)) and len(point) >= 2:
-                x_val, y_val = point[0], point[1]
-            else:
-                continue
-            try:
-                xs.append(float(x_val))
-                ys.append(float(y_val))
-            except (TypeError, ValueError):
-                continue
+        
+        # Handle flat array format: [x1, y1, x2, y2, x3, y3, x4, y4]
+        if polygon and isinstance(polygon, (list, tuple)) and all(isinstance(p, (int, float)) for p in polygon):
+            # Flat array of coordinates - pair them up
+            for i in range(0, len(polygon), 2):
+                if i + 1 < len(polygon):
+                    try:
+                        xs.append(float(polygon[i]))
+                        ys.append(float(polygon[i + 1]))
+                    except (TypeError, ValueError):
+                        continue
+        else:
+            # Dict format [{x, y}] or nested array [[x, y]]
+            for point in polygon or []:
+                if isinstance(point, dict):
+                    x_val = point.get("x")
+                    y_val = point.get("y")
+                elif isinstance(point, (list, tuple)) and len(point) >= 2:
+                    x_val, y_val = point[0], point[1]
+                else:
+                    continue
+                try:
+                    xs.append(float(x_val))
+                    ys.append(float(y_val))
+                except (TypeError, ValueError):
+                    continue
+        
         if not xs or not ys:
             return {}
         return {"x0": min(xs), "y0": min(ys), "x1": max(xs), "y1": max(ys)}
 
     @staticmethod
-    def _bbox_from_regions(regions: Sequence[Mapping[str, Any]] | None) -> tuple[int | None, dict[str, float]]:
+    def _bbox_from_regions(
+        regions: Sequence[Mapping[str, Any]] | None,
+        *,
+        page_unit_scale: Mapping[int, float] | None = None,
+    ) -> tuple[int | None, dict[str, float]]:
         if not regions:
             return None, {}
         first = regions[0] if regions else {}
         page_number = first.get("pageNumber")
-        polygon = first.get("boundingPolygon") or []
+        polygon = first.get("polygon") or first.get("boundingPolygon") or []
         bbox = AzureDocumentIntelligenceExtractor._polygon_to_bbox(polygon)
         try:
             page_number = int(page_number) if page_number is not None else None
         except (TypeError, ValueError):
             page_number = None
+        if bbox and page_unit_scale and page_number is not None:
+            try:
+                scale = float(page_unit_scale.get(page_number, 1.0) or 1.0)
+            except (TypeError, ValueError):
+                scale = 1.0
+            if scale != 1.0:
+                bbox = {
+                    "x0": float(bbox.get("x0", 0.0)) * scale,
+                    "y0": float(bbox.get("y0", 0.0)) * scale,
+                    "x1": float(bbox.get("x1", 0.0)) * scale,
+                    "y1": float(bbox.get("y1", 0.0)) * scale,
+                }
         return page_number, bbox
 
     def _build_analyze_url(self, *, locale: str | None = None) -> str:
@@ -1706,6 +1736,28 @@ class AzureDocumentIntelligenceExtractor:
         if not analyze_result:
             return [], issues, meta
 
+        pages_data = analyze_result.get("pages") or []
+        page_unit_scale: dict[int, float] = {}
+        for page in pages_data:
+            if not isinstance(page, Mapping):
+                continue
+            page_number = page.get("pageNumber")
+            try:
+                page_number_int = int(page_number) if page_number is not None else None
+            except (TypeError, ValueError):
+                page_number_int = None
+            if not page_number_int:
+                continue
+            unit = str(page.get("unit") or "").strip().lower()
+            # Azure DI uses page units (commonly "inch") for polygon coordinates. PyMuPDF uses PDF points (1/72 inch).
+            if unit in {"inch", "in"}:
+                page_unit_scale[page_number_int] = 72.0
+            elif unit in {"point", "pt"}:
+                page_unit_scale[page_number_int] = 1.0
+            else:
+                # Unknown units (e.g., "pixel" for images). Leave unscaled by default.
+                page_unit_scale[page_number_int] = 1.0
+
         tables_data = analyze_result.get("tables") or []
         table_payloads: list[TablePayload] = []
         table_meta: dict[str, Any] = {
@@ -1720,7 +1772,22 @@ class AzureDocumentIntelligenceExtractor:
             row_count = int(table.get("rowCount") or 0)
             col_count = int(table.get("columnCount") or 0)
             cells = table.get("cells") or []
-            page_number, table_bbox = self._bbox_from_regions(table.get("boundingRegions"))
+            
+            # Debug: Check what boundingRegions Azure DI returns
+            bounding_regions = table.get("boundingRegions")
+            if order_index <= 2:  # Log first 2 tables only
+                logger.info(
+                    "azure_di.table_bbox_debug table=%s has_regions=%s region_count=%s first_region=%s",
+                    order_index,
+                    bool(bounding_regions),
+                    len(bounding_regions) if bounding_regions else 0,
+                    bounding_regions[0] if bounding_regions else None,
+                )
+            
+            page_number, table_bbox = self._bbox_from_regions(
+                bounding_regions,
+                page_unit_scale=page_unit_scale,
+            )
             header_rows: set[int] = set()
             cell_confidences: list[float] = []
 
@@ -1771,7 +1838,10 @@ class AzureDocumentIntelligenceExtractor:
                 for col_idx in range(col_count):
                     raw_text = grid[row_idx][col_idx]
                     cell_meta = cell_lookup.get((row_idx, col_idx), {})
-                    cell_page, cell_bbox = self._bbox_from_regions(cell_meta.get("regions"))
+                    cell_page, cell_bbox = self._bbox_from_regions(
+                        cell_meta.get("regions"),
+                        page_unit_scale=page_unit_scale,
+                    )
                     normalized_value = TableDetector._normalize_cell_value(raw_text)
                     column_key = column_schema[col_idx] if col_idx < len(column_schema) else f"column_{col_idx+1}"
                     row_cells.append(
@@ -3565,14 +3635,55 @@ class KnowledgeIngestionService:
                 )
             ], {}
 
-        candidates: list[tuple[int, float]] = []
+        candidates: list[tuple[int, float, bool]] = []
         for idx, table in enumerate(tables):
             structure_conf = self._get_table_structure_confidence(table)
+            
+            # Check for column misalignment (empty header cells with non-empty data)
+            has_column_misalignment = False
+            header_cells: list[str] = []
+            for row in (table.rows or []):
+                if (row.metadata or {}).get("row_type") == "header":
+                    header_cells = [str(cell.raw_text or "") for cell in (row.cells or [])]
+                    break
+            
+            if header_cells:
+                data_rows = [r for r in (table.rows or []) if (r.metadata or {}).get("row_type") != "header"][:5]
+                for col_idx, header_val in enumerate(header_cells):
+                    if not str(header_val or "").strip():  # Empty header
+                        for row in data_rows:
+                            for cell in (row.cells or []):
+                                if cell.column_index == col_idx:
+                                    cell_text = str(cell.raw_text or "").strip()
+                                    if cell_text and len(cell_text) > 2:
+                                        has_column_misalignment = True
+                                        break
+                            if has_column_misalignment:
+                                break
+                    if has_column_misalignment:
+                        break
+            
+            # Trigger VLM repair if confidence is low OR column misalignment detected
             if isinstance(structure_conf, (int, float)) and structure_conf >= self.table_vlm_confidence_threshold:
+                if not has_column_misalignment:
+                    continue
+                # Log that we're triggering repair due to column misalignment
+                logger.info(
+                    "table.vlm.triggered_by_misalignment table=%s conf=%s",
+                    table.order_index,
+                    structure_conf,
+                )
+            
+            # Only require page_number - we'll fallback to full page if bbox is missing
+            if not table.page_number:
                 continue
-            if not table.page_number or not table.bbox:
-                continue
-            candidates.append((idx, float(structure_conf) if isinstance(structure_conf, (int, float)) else 0.0))
+            candidates.append(
+                (
+                    idx,
+                    float(structure_conf) if isinstance(structure_conf, (int, float)) else 0.0,
+                    has_column_misalignment,
+                )
+            )
 
         if not candidates:
             return tables, [], {"attempted": 0, "repaired": 0, "skipped": len(tables), "model": self.table_vlm_model}
@@ -3604,27 +3715,75 @@ class KnowledgeIngestionService:
         meta: dict[str, Any] = {"attempted": 0, "repaired": 0, "model": self.table_vlm_model}
         remaining_budget = max(0, self.table_vlm_max_repairs)
 
-        def _repair_sort_key(item: tuple[int, float]) -> tuple[float, int, int]:
-            index, conf = item
+        def _repair_sort_key(item: tuple[int, float, bool]) -> tuple[int, float, int, int]:
+            index, conf, misaligned = item
             table = tables[index]
             data_rows = len(
                 [row for row in (table.rows or []) if (row.metadata or {}).get("row_type") != "header"]
             )
             columns = max(len(table.column_schema or []), max((len(r.cells or []) for r in (table.rows or [])), default=0))
-            return (conf, -data_rows, -columns)
+            # Prioritize misaligned tables first (they cause wrong value attribution),
+            # then prioritize by low confidence, then larger tables.
+            return (0 if misaligned else 1, conf, -data_rows, -columns)
 
-        for idx, conf in sorted(candidates, key=_repair_sort_key):
+        def _table_hint(table: TablePayload) -> str:
+            parts: list[str] = []
+            if table.title:
+                parts.append(f"Title: {table.title}")
+            if table.section_heading:
+                parts.append(f"Section: {table.section_heading}")
+            # Use non-empty column headers as the primary anchor for full-page extraction.
+            schema = [str(col or '').strip() for col in (table.column_schema or []) if str(col or '').strip()]
+            if schema:
+                parts.append("Columns: " + " | ".join(schema[:10]))
+            # Add a few row-label anchors (first column of early rows).
+            labels: list[str] = []
+            for row in (table.rows or []):
+                if (row.metadata or {}).get("row_type") == "header":
+                    continue
+                first_cell = None
+                for cell in (row.cells or []):
+                    if cell.column_index == 0:
+                        first_cell = cell
+                        break
+                raw = str(getattr(first_cell, "raw_text", "") or "").strip() if first_cell else str(row.raw_text or "").strip()
+                if raw:
+                    labels.append(raw)
+                if len(labels) >= 5:
+                    break
+            if labels:
+                parts.append("Row labels (examples): " + " | ".join(labels))
+            parts.append(f"Order index: {table.order_index} (page {table.page_number})")
+            return "\n".join(parts).strip()
+
+        for idx, conf, _misaligned in sorted(candidates, key=_repair_sort_key):
             if remaining_budget <= 0:
                 break
             table = tables[idx]
 
+            # Try to crop table region, fallback to full page if bbox is missing
             crop_bytes = self._render_table_crop(path, int(table.page_number), table.bbox)
+            render_mode = "crop"
+            if not crop_bytes:
+                # Fallback: render full page when bbox is missing/invalid
+                crop_bytes = self._render_full_page(path, int(table.page_number))
+                render_mode = "full_page"
+                if crop_bytes:
+                    logger.info(
+                        "table.vlm.fallback_full_page table=%s page=%s reason=bbox_missing",
+                        table.order_index,
+                        table.page_number,
+                    )
             if not crop_bytes:
                 continue
 
             meta["attempted"] += 1
             remaining_budget -= 1
-            payload = self._run_vlm_table_repair(client, crop_bytes)
+            # Use a strong hint for full-page extraction (title + columns + row labels).
+            table_hint = _table_hint(table)
+            payload = self._run_vlm_table_repair(
+                client, crop_bytes, render_mode=render_mode, table_hint=table_hint
+            )
             if not payload:
                 issues.append(
                     IssuePayload(
@@ -3633,7 +3792,7 @@ class KnowledgeIngestionService:
                         description=f"VLM repair failed for table {table.order_index}.",
                         page_number=table.page_number,
                         table_order_index=table.order_index,
-                        details={"structure_confidence": conf},
+                        details={"structure_confidence": conf, "render_mode": render_mode},
                     )
                 )
                 continue
@@ -3680,13 +3839,57 @@ class KnowledgeIngestionService:
                 except Exception:
                     pass
 
-    def _run_vlm_table_repair(self, client: Any, image_bytes: bytes) -> dict[str, Any] | None:
+    @staticmethod
+    def _render_full_page(path: Path, page_number: int) -> bytes | None:
+        """Render entire PDF page as PNG for VLM repair when bbox is unavailable."""
+        if fitz is None:
+            return None
+        doc = None
+        try:
+            doc = fitz.open(path)
+            if page_number < 1 or page_number > len(doc):
+                return None
+            page = doc[page_number - 1]
+            # Use lower DPI for full page to keep token cost reasonable
+            pix = page.get_pixmap(dpi=150)
+            return pix.tobytes("png")
+        except Exception:
+            return None
+        finally:
+            if doc is not None:
+                try:
+                    doc.close()
+                except Exception:
+                    pass
+
+    def _run_vlm_table_repair(
+        self,
+        client: Any,
+        image_bytes: bytes,
+        render_mode: str = "crop",
+        table_hint: str | None = None,
+    ) -> dict[str, Any] | None:
         encoded = base64.b64encode(image_bytes).decode("ascii")
-        prompt = (
-            "Extract the table from this image. "
-            "Return strict JSON with keys: columns (array of strings) and rows "
-            "(array of arrays). Rows should contain only data rows (no header row)."
-        )
+        
+        if render_mode == "full_page" and table_hint:
+            prompt = (
+                "Extract the table from this page image.\n"
+                "Select the table that best matches the hint below (it includes expected columns/row labels).\n"
+                "HINT:\n"
+                f"{table_hint}\n\n"
+                "Return strict JSON with keys: columns (array of column header strings) and rows "
+                "(array of arrays with cell values). Rows should contain only data rows (no header row). "
+                "Make sure to capture ALL columns and ALL values correctly."
+            )
+            max_tokens = 4000  # Full page may have more data
+        else:
+            prompt = (
+                "Extract the table from this image. "
+                "Return strict JSON with keys: columns (array of strings) and rows "
+                "(array of arrays). Rows should contain only data rows (no header row)."
+            )
+            max_tokens = 1200
+        
         try:
             response = client.chat.completions.create(
                 model=self.table_vlm_model,
@@ -3702,7 +3905,7 @@ class KnowledgeIngestionService:
                         ],
                     }
                 ],
-                max_tokens=1200,
+                max_tokens=max_tokens,
             )
         except Exception as exc:
             logger.warning("table.vlm.repair_failed error=%s", exc)
@@ -4822,20 +5025,49 @@ class KnowledgeIngestionService:
                     )
                 )
 
-        KnowledgeUploadChunk.objects.bulk_create(chunk_objects, batch_size=100)
+        # Explicitly set tenant context for RLS - ensures app.current_tenant is set
+        # so PostgreSQL row-level security allows the inserts. Without this, RLS
+        # silently discards the rows when bulk_create runs.
+        business_id = upload.business_profile_id
+        with tenant_context(business_id):
+            KnowledgeUploadChunk.objects.bulk_create(chunk_objects, batch_size=100)
+            # Verify chunks were actually persisted (RLS can silently discard)
+            actual_count = KnowledgeUploadChunk.objects.filter(upload=upload).count()
+
+        if actual_count != len(chunk_objects):
+            logger.error(
+                "chunks.persistence_mismatch upload=%s expected=%s actual=%s business=%s "
+                "hint=RLS may have discarded inserts due to missing tenant context",
+                upload.id,
+                len(chunk_objects),
+                actual_count,
+                business_id,
+            )
         logger.info(
-            "chunks.persisted upload=%s count=%s missing_embeddings=%s",
+            "chunks.persisted upload=%s count=%s actual=%s missing_embeddings=%s",
             upload.id,
             len(chunk_objects),
+            actual_count,
             len(missing_chunk_ids),
         )
         if shadow_objects:
             shadow_missing = sum(1 for chunk in shadow_objects if chunk.embedding is None)
-            KnowledgeUploadShadowChunk.objects.bulk_create(shadow_objects, batch_size=100)
+            with tenant_context(business_id):
+                KnowledgeUploadShadowChunk.objects.bulk_create(shadow_objects, batch_size=100)
+                shadow_actual = KnowledgeUploadShadowChunk.objects.filter(upload=upload).count()
+            if shadow_actual != len(shadow_objects):
+                logger.error(
+                    "shadow.chunks.persistence_mismatch upload=%s expected=%s actual=%s business=%s",
+                    upload.id,
+                    len(shadow_objects),
+                    shadow_actual,
+                    business_id,
+                )
             logger.info(
-                "shadow.chunks.persisted upload=%s count=%s missing_embeddings=%s",
+                "shadow.chunks.persisted upload=%s count=%s actual=%s missing_embeddings=%s",
                 upload.id,
                 len(shadow_objects),
+                shadow_actual,
                 shadow_missing,
             )
         if missing_chunk_ids:
@@ -5118,6 +5350,17 @@ class KnowledgeIngestionService:
         KnowledgeSearchService.invalidate_alias_cache(business_id)
         KnowledgeSearchService.invalidate_query_cache(business_id)
         KnowledgeSearchService.invalidate_result_cache(business_id)
+        
+        # P0 #3: Invalidate table profile cache on new uploads
+        try:
+            from apps.rag.table_profile_cache import invalidate_table_profile_cache
+            invalidate_table_profile_cache(business_id)
+        except Exception as exc:
+            logger.warning(
+                "table_profile_cache.invalidate_failed business=%s error=%s",
+                business_id,
+                str(exc)[:200],
+            )
 
     def _embedding_backlog_count(self, business_id: uuid.UUID) -> int:
         return KnowledgeIngestionJob.objects.filter(
@@ -5377,6 +5620,34 @@ class KnowledgeIngestionService:
         if keyword_matches >= 3 and data_row_count <= 2:
             signals['card_mockup'] = True
             penalties += 3
+        
+        # Heuristic 9: Column misalignment detection
+        # Detects when header cells are empty but corresponding data cells have values
+        # This is a common Azure DI extraction error for complex tables
+        if header_cells and rows:
+            data_rows_for_check = [r for r in rows if (r.metadata or {}).get("row_type") != "header"][:5]
+            empty_header_with_data: list[int] = []
+            
+            for col_idx, header_val in enumerate(header_cells):
+                header_empty = not str(header_val or "").strip()
+                if header_empty:
+                    # Check if any data rows have values in this column
+                    for row in data_rows_for_check:
+                        cell_list = list(row.cells or [])
+                        for cell in cell_list:
+                            if cell.column_index == col_idx:
+                                cell_text = str(cell.raw_text or "").strip()
+                                if cell_text and len(cell_text) > 2:
+                                    empty_header_with_data.append(col_idx)
+                                    break
+                        if col_idx in empty_header_with_data:
+                            break
+            
+            if empty_header_with_data:
+                signals['column_misalignment'] = True
+                signals['misaligned_columns'] = empty_header_with_data[:5]
+                # Significant penalty - this causes wrong data attribution
+                penalties += 3
         
         # Calculate quality score (0.0 = garbage, 1.0 = high quality)
         quality_score = max(0.0, 1.0 - (penalties / max_penalties))
@@ -5721,6 +5992,17 @@ class KnowledgeIngestionService:
         for table_payload in extraction.tables:
             # Assess table quality
             quality_assessment = self._assess_table_quality(table_payload)
+            
+            # Log warning for column misalignment (common Azure DI extraction error)
+            if quality_assessment.get('signals', {}).get('column_misalignment'):
+                misaligned_cols = quality_assessment['signals'].get('misaligned_columns', [])
+                logger.warning(
+                    "table.quality.column_misalignment upload=%s table=%s columns=%s "
+                    "hint=Header cells empty but data cells have values; may cause wrong data attribution",
+                    upload.id,
+                    table_payload.order_index,
+                    misaligned_cols,
+                )
             
             # Merge quality data into table metadata
             table_metadata = dict(table_payload.metadata or {})
@@ -9120,10 +9402,15 @@ class KnowledgeIngestionService:
                 continue
             cell_lookup = {cell.column_index: cell.raw_text for cell in row.cells.all()}
             pairs: list[str] = []
+            # Extract row_label from first column (typically the row identifier/name)
+            row_label = ""
             for label, _, idx in column_map:
                 value = self._table_cell_text(cell_lookup.get(idx, ""))
                 if value:
                     pairs.append(f"{label}: {value}")
+                    # First column value becomes the row_label for search indexing
+                    if not row_label:
+                        row_label = value
             if not pairs:
                 continue
             preface = []
@@ -9139,6 +9426,7 @@ class KnowledgeIngestionService:
                     "table_chunk_role": "row",
                     "is_table_preview": False,
                     "table_row_index": row.row_index,
+                    "row_label": row_label,  # Enable row-label search matching
                 }
             )
             payloads.append({"text": text, "metadata": row_meta})

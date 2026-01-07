@@ -635,6 +635,10 @@ def delete_document(*, business_profile: BusinessProfile, document_id: uuid.UUID
         from apps.rag.ai_orchestrator import KnowledgeSearchService
 
         KnowledgeSearchService.invalidate_result_cache(business_profile.id)
+        
+        # P0 #3: Invalidate table profile cache on deletions
+        from apps.rag.table_profile_cache import invalidate_table_profile_cache
+        invalidate_table_profile_cache(business_profile.id)
     except Exception:
         pass
     try:

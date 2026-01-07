@@ -387,182 +387,8 @@ TOOL_DEFINITIONS: tuple[Mapping[str, object], ...] = (
             },
         },
     ),
-    _function_schema(
-        name="read_knowledge",
-        description=(
-            "DEPRECATED: Use read_document or query_dataset. "
-            "Universal reader for backward compatibility."
-        ),
-        properties={
-            "document_id": {
-                "type": "string",
-                "description": "UUID of the upload.",
-            },
-            "intent": {
-                "type": "string",
-                "enum": ["auto", "text", "table"],
-                "description": "Optional hint; leave as auto unless you need to force text vs table routing. Note: PDFs and text documents always route to text mode regardless of this hint.",
-                "default": "auto",
-            },
-            "text": {
-                "type": "object",
-                "description": "Text/PDF excerpt options (ignored for tabular queries).",
-                "properties": {
-                    "page": {
-                        "type": "integer",
-                        "minimum": 1,
-                        "description": "Page number to load (1 = first page of the document, NOT chunk index).",
-                        "default": 1,
-                    },
-                    "offset": {
-                        "type": "integer",
-                        "minimum": 0,
-                        "description": "Optional zero-based chunk index override (rarely needed; prefer page for page-based access).",
-                    },
-                    "mode": {
-                        "type": "string",
-                        "enum": ["excerpt", "full_page"],
-                        "description": "excerpt keeps responses small; full_page returns the entire page content.",
-                        "default": "excerpt",
-                    },
-                    "token_budget": {
-                        "type": "integer",
-                        "description": "Approximate token budget for this page window (used to lower the char cap).",
-                    },
-                    "chunk_neighbor": {
-                        "type": "integer",
-                        "minimum": 0,
-                        "maximum": 3,
-                        "description": "Number of neighbor chunks to stitch around the requested page.",
-                        "default": 1,
-                    },
-                },
-            },
-            "table": {
-                "type": "object",
-                "description": "Tabular query options (CSV/XLSX/XLS/JSONL or table uploads).",
-                "properties": {
-                    "sheet_name": {
-                        "type": "string",
-                        "description": "Optional sheet name for spreadsheets.",
-                    },
-                    "sheet_index": {
-                        "type": "integer",
-                        "description": "Optional sheet index (1-based) for spreadsheets.",
-                        "minimum": 1,
-                    },
-                    "table_order_index": {
-                        "type": "integer",
-                        "description": "Optional table index within the upload (1-based).",
-                        "minimum": 1,
-                    },
-                    "match_column": {
-                        "type": "string",
-                        "description": "Column name to match when filtering rows (case-insensitive).",
-                    },
-                    "match_value": {
-                        "type": "string",
-                        "description": "Exact value for match_column (preferred for IDs).",
-                    },
-                    "match_values": {
-                        "type": "array",
-                        "items": {"type": "string"},
-                        "description": "Batch match values (op=in).",
-                        "minItems": 1,
-                    },
-                    "query": {
-                        "type": "string",
-                        "description": "Optional free-text search across cells (case-insensitive substring).",
-                    },
-                    "filters": {
-                        "type": "array",
-                        "description": "Optional structured filters; all filters are ANDed.",
-                        "items": {
-                            "type": "object",
-                            "properties": {
-                                "column": {"type": "string", "description": "Column/key name."},
-                                "op": {
-                                    "type": "string",
-                                    "enum": ["eq", "contains", "startswith", "endswith", "gt", "gte", "lt", "lte", "in"],
-                                    "description": "Filter operator.",
-                                },
-                                "value": {"type": "string", "description": "Single value for the filter (string form)."},
-                                "values": {
-                                    "type": "array",
-                                    "items": {"type": "string"},
-                                    "description": "Multiple values for op=in.",
-                                    "minItems": 1,
-                                },
-                                "case_sensitive": {
-                                    "type": "boolean",
-                                    "description": "Set true only when matching case-sensitive identifiers.",
-                                    "default": False,
-                                },
-                            },
-                            "required": ["column", "op"],
-                        },
-                    },
-                    "select_columns": {
-                        "type": "array",
-                        "items": {"type": "string"},
-                        "description": "Optional list of columns to return in rows.",
-                    },
-                    "sort_by": {
-                        "type": "string",
-                        "description": "Optional column to sort by (best-effort).",
-                    },
-                    "sort_direction": {
-                        "type": "string",
-                        "enum": ["asc", "desc"],
-                        "default": "asc",
-                    },
-                    "limit": {
-                        "type": "integer",
-                        "minimum": 1,
-                        "maximum": 50,
-                        "default": 20,
-                        "description": "Maximum rows to return (1-50).",
-                    },
-                    "offset": {
-                        "type": "integer",
-                        "minimum": 0,
-                        "default": 0,
-                        "description": "Zero-based row offset within the matched results.",
-                    },
-                    "aggregate": {
-                        "type": "object",
-                        "description": "Optional aggregate instead of returning rows.",
-                        "properties": {
-                            "operation": {
-                                "type": "string",
-                                "enum": ["count", "sum", "min", "max", "group_by"],
-                            },
-                            "column": {"type": "string", "description": "Target column for sum/min/max."},
-                            "group_by": {"type": "string", "description": "Column to group by when operation=group_by."},
-                            "top_groups": {
-                                "type": "integer",
-                                "minimum": 1,
-                                "maximum": 50,
-                                "default": 20,
-                            },
-                        },
-                        "required": ["operation"],
-                    },
-                    "mode": {
-                        "type": "string",
-                        "enum": ["rows", "row_total", "column_sum"],
-                        "description": "rows returns matching rows; row_total sums numeric cells per row; column_sum sums a single column.",
-                        "default": "rows",
-                    },
-                    "value_column": {
-                        "type": "string",
-                        "description": "Column to sum when mode=column_sum.",
-                    },
-                },
-            },
-        },
-        required=("document_id",),
-    ),
+    # read_knowledge REMOVED: Use read_document (text/PDFs) or query_dataset (tables/CSVs)
+    # Legacy handler remains at _read_knowledge_handler() for backward compatibility
     _function_schema(
         name="create_case",
         description="Create a structured customer case with diagnosis and suggested actions.",
@@ -714,7 +540,7 @@ def execute_tool(
             "status": "error",
             "error": "unsupported_tool",
             "error_code": "unsupported_tool",
-            "hint": "Unsupported tool. Use search_knowledge, read_knowledge, or list_tables.",
+            "hint": "Unsupported tool. Use search_knowledge, read_document, or list_tables.",
         }
     ctx = context or ToolExecutionContext()
     business_id = getattr(conversation, "business_profile_id", None)
@@ -2087,8 +1913,8 @@ def _search_hint(
     diag = diagnostics or {}
     if intent == "table":
         return (
-            "These results look tabular. Use read_knowledge with intent=table ONLY for native datasets/spreadsheets (CSV/XLSX/JSONL). "
-            "If the source is a document (PDF/DOCX/TXT) that visually contains a table, use read_knowledge intent=text (or auto) to read the relevant page—"
+            "These results look tabular. Use query_dataset for native datasets/spreadsheets (CSV/XLSX/JSONL). "
+            "If the source is a document (PDF/DOCX/TXT) that visually contains a table, use read_document to read the relevant page—"
             "`is_table_chunk=true` can come from tables extracted from documents and is not a signal that the file is queryable like a spreadsheet. "
             "Use list_tables only to find dataset uploads (document_id + sheet hints) before table queries."
         )
@@ -3135,7 +2961,7 @@ def _read_document_handler(
                     "error_code": "wrong_tool_for_table",
                     "snippets": [],
                     "hint": (
-                        "This upload is a structured dataset/spreadsheet table. Use `read_knowledge` with `intent=table` and "
+                        "This upload is a structured dataset/spreadsheet table. Use `query_dataset` with "
                         f"document_id={upload_id} (and call `list_tables` if you need sheet options)."
                     ),
                 }
@@ -3158,7 +2984,7 @@ def _read_document_handler(
             "error_code": "wrong_tool_for_table",
             "snippets": [],
             "hint": (
-                "This upload is a spreadsheet/structured table. Use `read_knowledge` with `intent=table` and "
+                "This upload is a spreadsheet/structured table. Use `query_dataset` with "
                 f"document_id={upload_id} (and call `list_tables` if you need sheet/table options)."
             ),
         }
@@ -3269,14 +3095,38 @@ def _read_document_handler(
 
     upload_source = chunk_record.upload if chunk_record else upload_record
     knowledge_entry = _match_knowledge_entry(context, [str(identifier), str(gating_upload_id)])
+    
+    # Check if this is a table chunk from a PDF - these need full content, not summaries
+    is_pdf_table_chunk = False
+    if chunk_record:
+        chunk_meta = chunk_record.metadata if isinstance(getattr(chunk_record, "metadata", None), Mapping) else {}
+        if chunk_meta.get("is_table_chunk") or chunk_meta.get("table_chunk_role"):
+            upload = chunk_record.upload
+            ingestion_meta = upload.ingestion_metadata if isinstance(getattr(upload, "ingestion_metadata", None), Mapping) else {}
+            format_hint = str(ingestion_meta.get("format") or "").strip().lower()
+            # Only auto-upgrade for PDFs (not native tabular formats which use query_dataset)
+            if format_hint not in {"csv", "tsv", "xls", "xlsx", "jsonl"}:
+                is_pdf_table_chunk = True
+    
     if mode is None:
-        prefer_full_page = _detect_full_page_intent(
-            conversation,
-            None,
-            document_entry=knowledge_entry,
-            upload=upload_source,
-        )
-        mode = "full_page" if (prefer_full_page and _budget_allows_full_page(context, business_profile=business, service=service)) else "excerpt"
+        # Auto-upgrade to full_page for PDF table chunks to get complete table data
+        if is_pdf_table_chunk:
+            mode = "full_page"
+            structured_log(
+                "mcp",
+                "read_document.table_chunk_upgrade",
+                {"chunk_id": str(identifier), "reason": "pdf_table_chunk"},
+                context={"business": business.id, "conversation": conversation.id},
+                logger_obj=logger,
+            )
+        else:
+            prefer_full_page = _detect_full_page_intent(
+                conversation,
+                None,
+                document_entry=knowledge_entry,
+                upload=upload_source,
+            )
+            mode = "full_page" if (prefer_full_page and _budget_allows_full_page(context, business_profile=business, service=service)) else "excerpt"
 
     downgraded = False
     if mode == "full_page":

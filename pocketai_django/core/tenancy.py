@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+import logging
 from contextlib import contextmanager
 from typing import Iterator
 
 from django.db import connection
+
+logger = logging.getLogger(__name__)
 
 
 def _current_setting(name: str) -> str | None:
@@ -38,6 +41,12 @@ def tenant_context(business_id: object | None, *, bypass: bool = False) -> Itera
 
     if tenant_value != prev_tenant:
         _set_setting("app.current_tenant", tenant_value)
+        logger.debug(
+            "tenant_context.set tenant=%s prev=%s bypass=%s",
+            tenant_value,
+            prev_tenant,
+            bypass,
+        )
     if bypass:
         _set_setting("app.tenant_bypass", "1")
 
@@ -48,6 +57,11 @@ def tenant_context(business_id: object | None, *, bypass: bool = False) -> Itera
             _set_setting("app.tenant_bypass", prev_bypass)
         if tenant_value != prev_tenant:
             _set_setting("app.current_tenant", prev_tenant)
+            logger.debug(
+                "tenant_context.restored tenant=%s from=%s",
+                prev_tenant,
+                tenant_value,
+            )
 
 
 @contextmanager

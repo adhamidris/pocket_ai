@@ -287,16 +287,18 @@ RAG_SEARCH_PREVIEW_CHAR_LIMIT = int(os.getenv("RAG_SEARCH_PREVIEW_CHAR_LIMIT", "
 RAG_FTS_ENABLED = os.getenv("RAG_FTS_ENABLED", "true").lower() in {"1", "true", "yes"}
 try:
     # RAG_DB_STATEMENT_TIMEOUT_MS: Statement timeout (ms) for retrieval DB work.
-    RAG_DB_STATEMENT_TIMEOUT_MS = int(os.getenv("RAG_DB_STATEMENT_TIMEOUT_MS", "15000"))
+    # P0 #4: Reduced from 15s to 5s to prevent long hangs
+    RAG_DB_STATEMENT_TIMEOUT_MS = int(os.getenv("RAG_DB_STATEMENT_TIMEOUT_MS", "5000"))
 except (TypeError, ValueError):
-    RAG_DB_STATEMENT_TIMEOUT_MS = 15000
+    RAG_DB_STATEMENT_TIMEOUT_MS = 5000
 if RAG_DB_STATEMENT_TIMEOUT_MS < 0:
     RAG_DB_STATEMENT_TIMEOUT_MS = 0
 try:
     # RAG_DB_LOCK_TIMEOUT_MS: Lock wait timeout (ms) for retrieval DB work.
-    RAG_DB_LOCK_TIMEOUT_MS = int(os.getenv("RAG_DB_LOCK_TIMEOUT_MS", "2000"))
+    # P0 #4: Reduced from 2s to 1s for faster lock contention detection
+    RAG_DB_LOCK_TIMEOUT_MS = int(os.getenv("RAG_DB_LOCK_TIMEOUT_MS", "1000"))
 except (TypeError, ValueError):
-    RAG_DB_LOCK_TIMEOUT_MS = 2000
+    RAG_DB_LOCK_TIMEOUT_MS = 1000
 if RAG_DB_LOCK_TIMEOUT_MS < 0:
     RAG_DB_LOCK_TIMEOUT_MS = 0
 # RAG_RERANK_POOL: Candidate pool size considered for reranking.
@@ -357,6 +359,13 @@ RAG_TABLE_DOMINANT_UPLOAD_RATIO = float(os.getenv("RAG_TABLE_DOMINANT_UPLOAD_RAT
 RAG_TABLE_ROW_LABEL_SAMPLE_LIMIT = int(os.getenv("RAG_TABLE_ROW_LABEL_SAMPLE_LIMIT", "200"))
 # RAG_TABLE_CONTEXT_CACHE_SIZE: Cache size for table context/profiles.
 RAG_TABLE_CONTEXT_CACHE_SIZE = int(os.getenv("RAG_TABLE_CONTEXT_CACHE_SIZE", "128"))
+# RAG_NON_QUERYABLE_TABLE_FORMATS: Formats excluded from table-aware retrieval (e.g., ["docx"]).
+# Default is empty to allow PDF/DOCX tables to be queryable. Set to ["pdf", "docx"] to disable.
+_raw_non_queryable_formats = os.getenv("RAG_NON_QUERYABLE_TABLE_FORMATS", "").strip()
+if _raw_non_queryable_formats:
+    RAG_NON_QUERYABLE_TABLE_FORMATS = [f.strip().lower() for f in _raw_non_queryable_formats.split(",") if f.strip()]
+else:
+    RAG_NON_QUERYABLE_TABLE_FORMATS = []  # Empty = all formats queryable (PDF tables enabled)
 # RAG_PDFPLUMBER_ENABLED: Enable pdfplumber extraction for PDFs (local ingest path).
 RAG_PDFPLUMBER_ENABLED = os.getenv("RAG_PDFPLUMBER_ENABLED", "true").lower() in {"1", "true", "yes"}
 # RAG_PDF_TABLE_EXTRACTOR: Which PDF table extractor to use ("auto"|"pdfplumber"|...).
@@ -576,6 +585,12 @@ RAG_ENABLE_CROSS_ENCODER = os.getenv("RAG_ENABLE_CROSS_ENCODER", "false").lower(
 RAG_CROSS_ENCODER_MODEL = os.getenv("RAG_CROSS_ENCODER_MODEL", "cross-encoder/ms-marco-MiniLM-L-6-v2")
 # RAG_CROSS_ENCODER_DEVICE: Device override for cross-encoder ("cpu", "cuda", etc).
 RAG_CROSS_ENCODER_DEVICE = os.getenv("RAG_CROSS_ENCODER_DEVICE")
+# RAG_CROSS_ENCODER_TIMEOUT_S: Timeout (seconds) for cross-encoder predict calls (P0 #4: prevents hangs).
+try:
+    RAG_CROSS_ENCODER_TIMEOUT_S = float(os.getenv("RAG_CROSS_ENCODER_TIMEOUT_S", "3.0"))
+except (TypeError, ValueError):
+    RAG_CROSS_ENCODER_TIMEOUT_S = 3.0
+RAG_CROSS_ENCODER_TIMEOUT_S = max(0.5, min(30.0, RAG_CROSS_ENCODER_TIMEOUT_S))
 # TABLE_MAX_ROWS_DEFAULT: Default max rows to scan/preview for table operations.
 TABLE_MAX_ROWS_DEFAULT = int(os.getenv("TABLE_MAX_ROWS_DEFAULT", "5000"))
 # TABLE_MAX_COLUMNS_DEFAULT: Default max columns to include for table operations (0 = unlimited/auto).

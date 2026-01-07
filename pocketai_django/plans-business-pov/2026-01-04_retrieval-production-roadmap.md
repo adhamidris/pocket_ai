@@ -9,6 +9,10 @@
 2. Align prompt + policy to avoid tool thrash:
    - Ensure the “one search per visitor message” rule matches the prompt guidance.
    - Prevent tool misuse (e.g., `read_knowledge` must use tool-provided IDs only).
+3. Fix “entity drift” (wrong document/table) for noisy queries:
+   - Make lexical retrieval robust to extra/generic words (avoid strict “all tokens must match” failure modes).
+   - Preserve and prioritize “anchor tokens” from the visitor message (e.g., product name, plan name, SKU).
+   - Avoid calling dataset-only tools (like `list_tables`) for PDF uploads; rely on document table chunks instead.
 3. Add missing observability:
    - Break down retrieval timing so “where did 300s go?” is attributable (table context, DB waits, rerank, etc.).
 4. Make caching production-like:
@@ -17,6 +21,7 @@
 **Acceptance criteria**
 - p95 retrieval time < 8s for simple queries; no multi-minute hangs.
 - One coherent retrieval attempt per visitor message (no repeated “Searching…” loops).
+- “Tell me about X” returns evidence that explicitly mentions X (no Swype/other-product drift for named-entity queries).
 - Tool traces clearly show where time is spent (no “unexplained” latency buckets).
 
 ### P1 — Improve evidence quality (answerable snippets)
@@ -68,6 +73,11 @@
 - After: one retrieval pass returns table evidence + targeted row/cell expansion; agent answers with a clear breakdown and asks one relevant follow-up (e.g., card type).
 - Success signals: p95 retrieval < 8s; fewer “I’ll search…” duplicate lines; measurable increase in “answer contains concrete fees” rate.
 
+### Scenario 1b: End user asks “tell me about X” (named product)
+- Before: retrieval drifts to a “similar-looking” table (wrong product) when the query contains extra generic words (features/benefits/requirements).
+- After: retrieval anchors on X; evidence packets include the X row/table first; the answer is product-specific and clearly cites the correct fees/features.
+- Success signals: “entity mentioned in evidence” rate > 99%; near-zero wrong-product answers for named-entity queries.
+
 ### Scenario 2: Tenant uploads 5,000 documents and publishes the portal link
 - Before: retrieval gets slower as the tenant grows; fanout multiplies load; intermittent timeouts and vague answers.
 - After: Azure AI Search handles large-scale retrieval; collection scoping keeps the search space small; latency remains consistent.
@@ -87,4 +97,3 @@
 - Before: document might still appear via cached results or delayed index removal.
 - After: delete removes it from search index and invalidates all related caches; audit logs remain as metadata-only evidence of access.
 - Success signals: deleted docs never appear in subsequent retrieval; audit logs remain usable for disputes without storing raw content.
-

@@ -1010,3 +1010,361 @@
 • message_count=2 model=deepseek-chat provider=DeepSeekTools streaming=False tools=[]
 2026-01-05 20:07:59,264 [INFO] apps.llm.llm_provider: llm.trace [2026-01-05 22:07:59 EET] stage=usage
 • completion_tokens=228 model=deepseek-chat prompt_tokens=1396 provider=DeepSeekTools total_tokens=1624
+2026-01-05 21:04:20,814 [INFO] apps.llm.llm_provider: llm.trace [2026-01-05 23:04:20 EET] stage=request
+• message_count=4 model=deepseek-chat provider=DeepSeekTools streaming=True tools=['search_knowledge', 'read_document', 'query_dataset', 'list_tables', 'read_knowledge', 'create_case', 'update_case_status', 'update_case_details', 'add_case_history', 'flag_escalation', 'create_customer', 'update_customer', 'create_lead', 'create_appointment']
+2026-01-05 21:04:25,436 [INFO] apps.llm.llm_provider: llm.trace [2026-01-05 23:04:25 EET] stage=stream.assembled
+• elapsed_ms=4106 finish_reason=tool_calls first_delta_ms=1226
+2026-01-05 21:04:30,858 [INFO] apps.llm.llm_provider: llm.trace [2026-01-05 23:04:30 EET] stage=request
+• message_count=6 model=deepseek-chat provider=DeepSeekTools streaming=True tools=['query_dataset', 'list_tables', 'read_knowledge', 'create_case', 'update_case_status', 'update_case_details', 'add_case_history', 'flag_escalation', 'create_customer', 'update_customer', 'create_lead', 'create_appointment']
+2026-01-05 21:04:38,661 [INFO] apps.llm.llm_provider: llm.trace [2026-01-05 23:04:38 EET] stage=stream.assembled
+• elapsed_ms=7296 finish_reason=tool_calls first_delta_ms=1832
+2026-01-05 21:04:38,734 [INFO] apps.llm.llm_provider: llm.trace [2026-01-05 23:04:38 EET] stage=request
+• message_count=6 model=deepseek-chat provider=DeepSeekTools streaming=True tools=['query_dataset', 'list_tables', 'read_knowledge', 'create_case', 'update_case_status', 'update_case_details', 'add_case_history', 'flag_escalation', 'create_customer', 'update_customer', 'create_lead', 'create_appointment']
+2026-01-05 21:04:42,510 [INFO] apps.llm.llm_provider: llm.trace [2026-01-05 23:04:42 EET] stage=stream.assembled
+• elapsed_ms=3353 finish_reason=tool_calls first_delta_ms=806
+2026-01-05 21:04:42,524 [INFO] apps.llm.llm_provider: llm.trace [2026-01-05 23:04:42 EET] stage=request
+• message_count=8 model=deepseek-chat provider=DeepSeekTools streaming=True tools=['query_dataset', 'list_tables', 'read_knowledge', 'create_case', 'update_case_status', 'update_case_details', 'add_case_history', 'flag_escalation', 'create_customer', 'update_customer', 'create_lead', 'create_appointment']
+2026-01-05 21:04:46,620 [INFO] apps.llm.llm_provider: llm.trace [2026-01-05 23:04:46 EET] stage=stream.assembled
+• elapsed_ms=3582 finish_reason=tool_calls
+2026-01-05 21:04:46,698 [INFO] apps.llm.llm_provider: llm.trace [2026-01-05 23:04:46 EET] stage=request
+• message_count=14 model=deepseek-chat provider=DeepSeekTools streaming=True tools=['query_dataset', 'list_tables', 'read_knowledge', 'create_case', 'update_case_status', 'update_case_details', 'add_case_history', 'flag_escalation', 'create_customer', 'update_customer', 'create_lead', 'create_appointment']
+2026-01-05 21:04:52,647 [INFO] apps.llm.llm_provider: llm.trace [2026-01-05 23:04:52 EET] stage=stream.assembled
+• elapsed_ms=5514 finish_reason=stop first_delta_ms=1842
+2026-01-05 21:04:52,931 [INFO] apps.llm.llm_provider: llm.trace [2026-01-05 23:04:52 EET] stage=request
+• message_count=2 model=deepseek-chat provider=DeepSeekTools streaming=False tools=[]
+2026-01-05 21:05:00,342 [INFO] apps.llm.llm_provider: llm.trace [2026-01-05 23:05:00 EET] stage=usage
+• completion_tokens=205 model=deepseek-chat prompt_tokens=1220 provider=DeepSeekTools total_tokens=1425
+2026-01-05 21:05:04,986 [INFO] apps.llm.llm_provider: llm.trace [2026-01-05 23:05:04 EET] stage=request
+• message_count=4 model=deepseek-chat provider=DeepSeekTools streaming=True tools=['search_knowledge', 'read_document', 'query_dataset', 'list_tables', 'read_knowledge', 'create_case', 'update_case_status', 'update_case_details', 'add_case_history', 'flag_escalation', 'create_customer', 'update_customer', 'create_lead', 'create_appointment']
+2026-01-05 21:05:08,330 [INFO] apps.llm.llm_provider: llm.trace [2026-01-05 23:05:08 EET] stage=stream.assembled
+• elapsed_ms=2969 finish_reason=tool_calls
+2026-01-05 21:05:14,489 [INFO] apps.llm.llm_provider: llm.trace [2026-01-05 23:05:14 EET] stage=request
+• message_count=10 model=deepseek-chat provider=DeepSeekTools streaming=True tools=['query_dataset', 'list_tables', 'read_knowledge', 'create_case', 'update_case_status', 'update_case_details', 'add_case_history', 'flag_escalation', 'create_customer', 'update_customer', 'create_lead', 'create_appointment']
+2026-01-05 21:05:20,207 [INFO] apps.llm.llm_provider: llm.trace [2026-01-05 23:05:20 EET] stage=stream.assembled
+• elapsed_ms=5219 finish_reason=tool_calls
+2026-01-05 21:05:20,313 [INFO] apps.llm.llm_provider: llm.trace [2026-01-05 23:05:20 EET] stage=request
+• message_count=8 model=deepseek-chat provider=DeepSeekTools streaming=True tools=['query_dataset', 'list_tables', 'read_knowledge', 'create_case', 'update_case_status', 'update_case_details', 'add_case_history', 'flag_escalation', 'create_customer', 'update_customer', 'create_lead', 'create_appointment']
+2026-01-05 21:05:25,123 [INFO] apps.llm.llm_provider: llm.trace [2026-01-05 23:05:25 EET] stage=stream.assembled
+• elapsed_ms=4300 finish_reason=tool_calls first_delta_ms=1842
+2026-01-05 21:05:25,140 [INFO] apps.llm.llm_provider: llm.trace [2026-01-05 23:05:25 EET] stage=request
+• message_count=10 model=deepseek-chat provider=DeepSeekTools streaming=True tools=['query_dataset', 'list_tables', 'read_knowledge', 'create_case', 'update_case_status', 'update_case_details', 'add_case_history', 'flag_escalation', 'create_customer', 'update_customer', 'create_lead', 'create_appointment']
+2026-01-05 21:05:32,797 [INFO] apps.llm.llm_provider: llm.trace [2026-01-05 23:05:32 EET] stage=stream.assembled
+• elapsed_ms=7153 finish_reason=stop first_delta_ms=706
+2026-01-05 21:05:33,064 [INFO] apps.llm.llm_provider: llm.trace [2026-01-05 23:05:33 EET] stage=request
+• message_count=2 model=deepseek-chat provider=DeepSeekTools streaming=False tools=[]
+2026-01-05 21:05:41,302 [INFO] apps.llm.llm_provider: llm.trace [2026-01-05 23:05:41 EET] stage=usage
+• completion_tokens=228 model=deepseek-chat prompt_tokens=1145 provider=DeepSeekTools total_tokens=1373
+2026-01-05 21:05:41,303 [INFO] apps.llm.llm_provider: llm.trace [2026-01-05 23:05:41 EET] stage=latency
+• elapsed_ms=8238 model=deepseek-chat provider=deepseek_tools streaming=False
+2026-01-05 21:14:15,189 [INFO] apps.llm.llm_provider: llm.trace [2026-01-05 23:14:15 EET] stage=request
+• message_count=4 model=deepseek-chat provider=DeepSeekTools streaming=True tools=['search_knowledge', 'read_document', 'query_dataset', 'list_tables', 'create_case', 'update_case_status', 'update_case_details', 'add_case_history', 'flag_escalation', 'create_customer', 'update_customer', 'create_lead', 'create_appointment']
+2026-01-05 21:14:19,433 [INFO] apps.llm.llm_provider: llm.trace [2026-01-05 23:14:19 EET] stage=stream.assembled
+• elapsed_ms=3788 finish_reason=tool_calls first_delta_ms=920
+2026-01-05 21:14:24,265 [INFO] apps.llm.llm_provider: llm.trace [2026-01-05 23:14:24 EET] stage=request
+• message_count=10 model=deepseek-chat provider=DeepSeekTools streaming=True tools=['query_dataset', 'list_tables', 'create_case', 'update_case_status', 'update_case_details', 'add_case_history', 'flag_escalation', 'create_customer', 'update_customer', 'create_lead', 'create_appointment']
+2026-01-05 21:14:29,365 [INFO] apps.llm.llm_provider: llm.trace [2026-01-05 23:14:29 EET] stage=stream.assembled
+• elapsed_ms=4606 finish_reason=tool_calls
+2026-01-05 21:14:29,385 [INFO] apps.llm.llm_provider: llm.trace [2026-01-05 23:14:29 EET] stage=request
+• message_count=12 model=deepseek-chat provider=DeepSeekTools streaming=True tools=['query_dataset', 'list_tables', 'create_case', 'update_case_status', 'update_case_details', 'add_case_history', 'flag_escalation', 'create_customer', 'update_customer', 'create_lead', 'create_appointment']
+2026-01-05 21:14:34,282 [INFO] apps.llm.llm_provider: llm.trace [2026-01-05 23:14:34 EET] stage=stream.assembled
+• elapsed_ms=4403 finish_reason=tool_calls
+2026-01-05 21:14:34,483 [INFO] apps.llm.llm_provider: llm.trace [2026-01-05 23:14:34 EET] stage=request
+• message_count=10 model=deepseek-chat provider=DeepSeekTools streaming=True tools=['query_dataset', 'list_tables', 'create_case', 'update_case_status', 'update_case_details', 'add_case_history', 'flag_escalation', 'create_customer', 'update_customer', 'create_lead', 'create_appointment']
+2026-01-05 21:14:42,442 [INFO] apps.llm.llm_provider: llm.trace [2026-01-05 23:14:42 EET] stage=stream.assembled
+• elapsed_ms=7546 finish_reason=stop first_delta_ms=1535
+2026-01-05 21:14:42,737 [INFO] apps.llm.llm_provider: llm.trace [2026-01-05 23:14:42 EET] stage=request
+• message_count=2 model=deepseek-chat provider=DeepSeekTools streaming=False tools=[]
+2026-01-05 21:14:49,540 [INFO] apps.llm.llm_provider: llm.trace [2026-01-05 23:14:49 EET] stage=usage
+• completion_tokens=186 model=deepseek-chat prompt_tokens=1314 provider=DeepSeekTools total_tokens=1500
+2026-01-05 21:14:55,838 [INFO] apps.llm.llm_provider: llm.trace [2026-01-05 23:14:55 EET] stage=request
+• message_count=6 model=deepseek-chat provider=DeepSeekTools streaming=True tools=['search_knowledge', 'read_document', 'query_dataset', 'list_tables', 'create_case', 'update_case_status', 'update_case_details', 'add_case_history', 'flag_escalation', 'create_customer', 'update_customer', 'create_lead', 'create_appointment']
+2026-01-05 21:14:58,960 [INFO] apps.llm.llm_provider: llm.trace [2026-01-05 23:14:58 EET] stage=stream.assembled
+• elapsed_ms=2662 finish_reason=tool_calls
+2026-01-05 21:15:06,362 [INFO] apps.llm.llm_provider: llm.trace [2026-01-05 23:15:06 EET] stage=request
+• message_count=12 model=deepseek-chat provider=DeepSeekTools streaming=True tools=['read_document', 'query_dataset', 'list_tables', 'create_case', 'update_case_status', 'update_case_details', 'add_case_history', 'flag_escalation', 'create_customer', 'update_customer', 'create_lead', 'create_appointment']
+2026-01-05 21:15:11,760 [INFO] apps.llm.llm_provider: llm.trace [2026-01-05 23:15:11 EET] stage=stream.assembled
+• elapsed_ms=4947 finish_reason=tool_calls
+2026-01-05 21:15:11,785 [INFO] apps.llm.llm_provider: llm.trace [2026-01-05 23:15:11 EET] stage=request
+• message_count=13 model=deepseek-chat provider=DeepSeekTools streaming=True tools=['read_document', 'query_dataset', 'list_tables', 'create_case', 'update_case_status', 'update_case_details', 'add_case_history', 'flag_escalation', 'create_customer', 'update_customer', 'create_lead', 'create_appointment']
+2026-01-05 21:15:16,879 [INFO] apps.llm.llm_provider: llm.trace [2026-01-05 23:15:16 EET] stage=stream.assembled
+• elapsed_ms=4607 finish_reason=tool_calls
+2026-01-05 21:15:17,025 [INFO] apps.llm.llm_provider: llm.trace [2026-01-05 23:15:17 EET] stage=request
+• message_count=14 model=deepseek-chat provider=DeepSeekTools streaming=True tools=['read_document', 'query_dataset', 'list_tables', 'create_case', 'update_case_status', 'update_case_details', 'add_case_history', 'flag_escalation', 'create_customer', 'update_customer', 'create_lead', 'create_appointment']
+2026-01-05 21:15:24,252 [INFO] apps.llm.llm_provider: llm.trace [2026-01-05 23:15:24 EET] stage=stream.assembled
+• elapsed_ms=6448 finish_reason=stop first_delta_ms=1328
+2026-01-05 21:15:24,496 [INFO] apps.llm.llm_provider: llm.trace [2026-01-05 23:15:24 EET] stage=request
+• message_count=2 model=deepseek-chat provider=DeepSeekTools streaming=False tools=[]
+2026-01-05 21:15:26,510 [INFO] apps.llm.llm_provider: llm.trace [2026-01-05 23:15:26 EET] stage=usage
+• completion_tokens=19 model=deepseek-chat prompt_tokens=1206 provider=DeepSeekTools total_tokens=1225
+2026-01-05 21:15:26,510 [INFO] apps.llm.llm_provider: llm.trace [2026-01-05 23:15:26 EET] stage=latency
+• elapsed_ms=2013 model=deepseek-chat provider=deepseek_tools streaming=False
+2026-01-05 23:34:40,004 [INFO] apps.llm.llm_provider: llm.trace [2026-01-06 01:34:40 EET] stage=request
+• message_count=4 model=deepseek-chat provider=DeepSeekTools streaming=True tools=['search_knowledge', 'read_document', 'query_dataset', 'list_tables', 'create_case', 'update_case_status', 'update_case_details', 'add_case_history', 'flag_escalation', 'create_customer', 'update_customer', 'create_lead', 'create_appointment']
+2026-01-05 23:34:49,271 [INFO] apps.llm.llm_provider: llm.trace [2026-01-06 01:34:49 EET] stage=stream.assembled
+• elapsed_ms=3799 finish_reason=tool_calls first_delta_ms=1038
+2026-01-05 23:34:55,449 [INFO] apps.llm.llm_provider: llm.trace [2026-01-06 01:34:55 EET] stage=request
+• message_count=10 model=deepseek-chat provider=DeepSeekTools streaming=True tools=['read_document', 'query_dataset', 'list_tables', 'create_case', 'update_case_status', 'update_case_details', 'add_case_history', 'flag_escalation', 'create_customer', 'update_customer', 'create_lead', 'create_appointment']
+2026-01-05 23:35:00,742 [INFO] apps.llm.llm_provider: llm.trace [2026-01-06 01:35:00 EET] stage=stream.assembled
+• elapsed_ms=4811 finish_reason=tool_calls
+2026-01-05 23:35:01,018 [INFO] apps.llm.llm_provider: llm.trace [2026-01-06 01:35:01 EET] stage=request
+• message_count=12 model=deepseek-chat provider=DeepSeekTools streaming=True tools=['read_document', 'query_dataset', 'list_tables', 'create_case', 'update_case_status', 'update_case_details', 'add_case_history', 'flag_escalation', 'create_customer', 'update_customer', 'create_lead', 'create_appointment']
+2026-01-05 23:35:04,313 [INFO] apps.llm.llm_provider: llm.trace [2026-01-06 01:35:04 EET] stage=stream.assembled
+• elapsed_ms=2752 finish_reason=tool_calls
+2026-01-05 23:35:04,374 [INFO] apps.llm.llm_provider: llm.trace [2026-01-06 01:35:04 EET] stage=request
+• message_count=14 model=deepseek-chat provider=DeepSeekTools streaming=True tools=['read_document', 'query_dataset', 'list_tables', 'create_case', 'update_case_status', 'update_case_details', 'add_case_history', 'flag_escalation', 'create_customer', 'update_customer', 'create_lead', 'create_appointment']
+2026-01-05 23:35:15,391 [INFO] apps.llm.llm_provider: llm.trace [2026-01-06 01:35:15 EET] stage=stream.assembled
+• elapsed_ms=10581 finish_reason=stop first_delta_ms=1280
+2026-01-05 23:35:15,661 [INFO] apps.llm.llm_provider: llm.trace [2026-01-06 01:35:15 EET] stage=request
+• message_count=2 model=deepseek-chat provider=DeepSeekTools streaming=False tools=[]
+2026-01-05 23:35:23,681 [INFO] apps.llm.llm_provider: llm.trace [2026-01-06 01:35:23 EET] stage=usage
+• completion_tokens=215 model=deepseek-chat prompt_tokens=1464 provider=DeepSeekTools total_tokens=1679
+2026-01-06 00:00:26,096 [INFO] apps.llm.llm_provider: llm.trace [2026-01-06 02:00:26 EET] stage=request
+• message_count=4 model=deepseek-chat provider=DeepSeekTools streaming=True tools=['search_knowledge', 'read_document', 'query_dataset', 'list_tables', 'create_case', 'update_case_status', 'update_case_details', 'add_case_history', 'flag_escalation', 'create_customer', 'update_customer', 'create_lead', 'create_appointment']
+2026-01-06 00:00:29,461 [INFO] apps.llm.llm_provider: llm.trace [2026-01-06 02:00:29 EET] stage=stream.assembled
+• elapsed_ms=2980 finish_reason=tool_calls first_delta_ms=757
+2026-01-06 00:00:35,543 [INFO] apps.llm.llm_provider: llm.trace [2026-01-06 02:00:35 EET] stage=request
+• message_count=10 model=deepseek-chat provider=DeepSeekTools streaming=True tools=['query_dataset', 'list_tables', 'create_case', 'update_case_status', 'update_case_details', 'add_case_history', 'flag_escalation', 'create_customer', 'update_customer', 'create_lead', 'create_appointment']
+2026-01-06 00:00:40,001 [INFO] apps.llm.llm_provider: llm.trace [2026-01-06 02:00:40 EET] stage=stream.assembled
+• elapsed_ms=4037 finish_reason=tool_calls
+2026-01-06 00:00:40,027 [INFO] apps.llm.llm_provider: llm.trace [2026-01-06 02:00:40 EET] stage=request
+• message_count=12 model=deepseek-chat provider=DeepSeekTools streaming=True tools=['query_dataset', 'list_tables', 'create_case', 'update_case_status', 'update_case_details', 'add_case_history', 'flag_escalation', 'create_customer', 'update_customer', 'create_lead', 'create_appointment']
+2026-01-06 00:00:44,525 [INFO] apps.llm.llm_provider: llm.trace [2026-01-06 02:00:44 EET] stage=stream.assembled
+• elapsed_ms=4014 finish_reason=tool_calls
+2026-01-06 00:00:44,645 [INFO] apps.llm.llm_provider: llm.trace [2026-01-06 02:00:44 EET] stage=request
+• message_count=14 model=deepseek-chat provider=DeepSeekTools streaming=True tools=['query_dataset', 'list_tables', 'create_case', 'update_case_status', 'update_case_details', 'add_case_history', 'flag_escalation', 'create_customer', 'update_customer', 'create_lead', 'create_appointment']
+2026-01-06 00:00:56,716 [INFO] apps.llm.llm_provider: llm.trace [2026-01-06 02:00:56 EET] stage=stream.assembled
+• elapsed_ms=11656 finish_reason=stop first_delta_ms=1755
+2026-01-06 00:00:57,031 [INFO] apps.llm.llm_provider: llm.trace [2026-01-06 02:00:57 EET] stage=request
+• message_count=2 model=deepseek-chat provider=DeepSeekTools streaming=False tools=[]
+2026-01-06 00:01:04,530 [INFO] apps.llm.llm_provider: llm.trace [2026-01-06 02:01:04 EET] stage=usage
+• completion_tokens=214 model=deepseek-chat prompt_tokens=1374 provider=DeepSeekTools total_tokens=1588
+2026-01-06 00:03:27,378 [INFO] apps.llm.llm_provider: llm.trace [2026-01-06 02:03:27 EET] stage=request
+• message_count=6 model=deepseek-chat provider=DeepSeekTools streaming=True tools=['search_knowledge', 'read_document', 'query_dataset', 'list_tables', 'create_case', 'update_case_status', 'update_case_details', 'add_case_history', 'flag_escalation', 'create_customer', 'update_customer', 'create_lead', 'create_appointment']
+2026-01-06 00:03:30,276 [INFO] apps.llm.llm_provider: llm.trace [2026-01-06 02:03:30 EET] stage=stream.assembled
+• elapsed_ms=2427 finish_reason=tool_calls
+2026-01-06 00:03:41,608 [INFO] apps.llm.llm_provider: llm.trace [2026-01-06 02:03:41 EET] stage=request
+• message_count=12 model=deepseek-chat provider=DeepSeekTools streaming=True tools=['query_dataset', 'list_tables', 'create_case', 'update_case_status', 'update_case_details', 'add_case_history', 'flag_escalation', 'create_customer', 'update_customer', 'create_lead', 'create_appointment']
+2026-01-06 00:03:49,491 [INFO] apps.llm.llm_provider: llm.trace [2026-01-06 02:03:49 EET] stage=stream.assembled
+• elapsed_ms=7421 finish_reason=stop first_delta_ms=1737
+2026-01-06 00:03:49,757 [INFO] apps.llm.llm_provider: llm.trace [2026-01-06 02:03:49 EET] stage=request
+• message_count=2 model=deepseek-chat provider=DeepSeekTools streaming=False tools=[]
+2026-01-06 00:04:00,583 [INFO] apps.llm.llm_provider: llm.trace [2026-01-06 02:04:00 EET] stage=usage
+• completion_tokens=243 model=deepseek-chat prompt_tokens=962 provider=DeepSeekTools total_tokens=1205
+2026-01-06 00:04:03,557 [INFO] apps.llm.llm_provider: llm.trace [2026-01-06 02:04:03 EET] stage=request
+• message_count=8 model=deepseek-chat provider=DeepSeekTools streaming=True tools=['search_knowledge', 'read_document', 'query_dataset', 'list_tables', 'create_case', 'update_case_status', 'update_case_details', 'add_case_history', 'flag_escalation', 'create_customer', 'update_customer', 'create_lead', 'create_appointment']
+2026-01-06 00:04:07,167 [INFO] apps.llm.llm_provider: llm.trace [2026-01-06 02:04:07 EET] stage=stream.assembled
+• elapsed_ms=2684 finish_reason=tool_calls
+2026-01-06 00:04:12,509 [INFO] apps.llm.llm_provider: llm.trace [2026-01-06 02:04:12 EET] stage=request
+• message_count=13 model=deepseek-chat provider=DeepSeekTools streaming=True tools=['read_document', 'query_dataset', 'list_tables', 'create_case', 'update_case_status', 'update_case_details', 'add_case_history', 'flag_escalation', 'create_customer', 'update_customer', 'create_lead', 'create_appointment']
+2026-01-06 00:04:17,934 [INFO] apps.llm.llm_provider: llm.trace [2026-01-06 02:04:17 EET] stage=stream.assembled
+• elapsed_ms=4835 finish_reason=tool_calls
+2026-01-06 00:04:18,147 [INFO] apps.llm.llm_provider: llm.trace [2026-01-06 02:04:18 EET] stage=request
+• message_count=13 model=deepseek-chat provider=DeepSeekTools streaming=True tools=['read_document', 'query_dataset', 'list_tables', 'create_case', 'update_case_status', 'update_case_details', 'add_case_history', 'flag_escalation', 'create_customer', 'update_customer', 'create_lead', 'create_appointment']
+2026-01-06 00:04:21,090 [INFO] apps.llm.llm_provider: llm.trace [2026-01-06 02:04:21 EET] stage=stream.assembled
+• elapsed_ms=2467 finish_reason=tool_calls
+2026-01-06 00:04:21,106 [INFO] apps.llm.llm_provider: llm.trace [2026-01-06 02:04:21 EET] stage=request
+• message_count=14 model=deepseek-chat provider=DeepSeekTools streaming=True tools=['read_document', 'query_dataset', 'list_tables', 'create_case', 'update_case_status', 'update_case_details', 'add_case_history', 'flag_escalation', 'create_customer', 'update_customer', 'create_lead', 'create_appointment']
+2026-01-06 00:04:28,112 [INFO] apps.llm.llm_provider: llm.trace [2026-01-06 02:04:28 EET] stage=stream.assembled
+• elapsed_ms=6602 finish_reason=stop first_delta_ms=1212
+2026-01-06 00:04:28,370 [INFO] apps.llm.llm_provider: llm.trace [2026-01-06 02:04:28 EET] stage=request
+• message_count=2 model=deepseek-chat provider=DeepSeekTools streaming=False tools=[]
+2026-01-06 00:04:30,056 [INFO] apps.llm.llm_provider: llm.trace [2026-01-06 02:04:30 EET] stage=usage
+• completion_tokens=23 model=deepseek-chat prompt_tokens=1281 provider=DeepSeekTools total_tokens=1304
+2026-01-06 11:44:24,917 [INFO] apps.llm.llm_provider: llm.trace [2026-01-06 13:44:24 EET] stage=request
+• message_count=4 model=deepseek-chat provider=DeepSeekTools streaming=True tools=['search_knowledge', 'read_document', 'query_dataset', 'list_tables', 'create_case', 'update_case_status', 'update_case_details', 'add_case_history', 'flag_escalation', 'create_customer', 'update_customer', 'create_lead', 'create_appointment']
+2026-01-06 11:44:30,541 [INFO] apps.llm.llm_provider: llm.trace [2026-01-06 13:44:30 EET] stage=stream.assembled
+• elapsed_ms=4957 finish_reason=tool_calls first_delta_ms=753
+2026-01-06 11:44:46,267 [INFO] apps.llm.llm_provider: llm.trace [2026-01-06 13:44:46 EET] stage=request
+• message_count=10 model=deepseek-chat provider=DeepSeekTools streaming=True tools=['query_dataset', 'list_tables', 'create_case', 'update_case_status', 'update_case_details', 'add_case_history', 'flag_escalation', 'create_customer', 'update_customer', 'create_lead', 'create_appointment']
+2026-01-06 11:44:51,714 [INFO] apps.llm.llm_provider: llm.trace [2026-01-06 13:44:51 EET] stage=stream.assembled
+• elapsed_ms=4989 finish_reason=tool_calls
+2026-01-06 11:44:51,744 [INFO] apps.llm.llm_provider: llm.trace [2026-01-06 13:44:51 EET] stage=request
+• message_count=12 model=deepseek-chat provider=DeepSeekTools streaming=True tools=['query_dataset', 'list_tables', 'create_case', 'update_case_status', 'update_case_details', 'add_case_history', 'flag_escalation', 'create_customer', 'update_customer', 'create_lead', 'create_appointment']
+2026-01-06 11:44:57,391 [INFO] apps.llm.llm_provider: llm.trace [2026-01-06 13:44:57 EET] stage=stream.assembled
+• elapsed_ms=5043 finish_reason=tool_calls
+2026-01-06 11:44:57,640 [INFO] apps.llm.llm_provider: llm.trace [2026-01-06 13:44:57 EET] stage=request
+• message_count=14 model=deepseek-chat provider=DeepSeekTools streaming=True tools=['query_dataset', 'list_tables', 'create_case', 'update_case_status', 'update_case_details', 'add_case_history', 'flag_escalation', 'create_customer', 'update_customer', 'create_lead', 'create_appointment']
+2026-01-06 11:45:06,047 [INFO] apps.llm.llm_provider: llm.trace [2026-01-06 13:45:06 EET] stage=stream.assembled
+• elapsed_ms=7994 finish_reason=stop first_delta_ms=1168
+2026-01-06 11:45:06,357 [INFO] apps.llm.llm_provider: llm.trace [2026-01-06 13:45:06 EET] stage=request
+• message_count=2 model=deepseek-chat provider=DeepSeekTools streaming=False tools=[]
+2026-01-06 11:45:16,934 [INFO] apps.llm.llm_provider: llm.trace [2026-01-06 13:45:16 EET] stage=usage
+• completion_tokens=257 model=deepseek-chat prompt_tokens=1349 provider=DeepSeekTools total_tokens=1606
+2026-01-06 13:16:14,260 [INFO] apps.llm.llm_provider: llm.trace [2026-01-06 15:16:14 EET] stage=request
+• message_count=4 model=deepseek-chat provider=DeepSeekTools streaming=True tools=['search_knowledge', 'read_document', 'query_dataset', 'list_tables', 'create_case', 'update_case_status', 'update_case_details', 'add_case_history', 'flag_escalation', 'create_customer', 'update_customer', 'create_lead', 'create_appointment']
+2026-01-06 13:16:18,234 [INFO] apps.llm.llm_provider: llm.trace [2026-01-06 15:16:18 EET] stage=stream.assembled
+• elapsed_ms=3192 finish_reason=tool_calls first_delta_ms=853
+2026-01-06 13:16:25,833 [INFO] apps.llm.llm_provider: llm.trace [2026-01-06 15:16:25 EET] stage=request
+• message_count=10 model=deepseek-chat provider=DeepSeekTools streaming=True tools=['query_dataset', 'list_tables', 'create_case', 'update_case_status', 'update_case_details', 'add_case_history', 'flag_escalation', 'create_customer', 'update_customer', 'create_lead', 'create_appointment']
+2026-01-06 13:16:32,194 [INFO] apps.llm.llm_provider: llm.trace [2026-01-06 15:16:32 EET] stage=stream.assembled
+• elapsed_ms=5686 finish_reason=tool_calls first_delta_ms=615
+2026-01-06 13:16:32,458 [INFO] apps.llm.llm_provider: llm.trace [2026-01-06 15:16:32 EET] stage=request
+• message_count=12 model=deepseek-chat provider=DeepSeekTools streaming=True tools=['query_dataset', 'list_tables', 'create_case', 'update_case_status', 'update_case_details', 'add_case_history', 'flag_escalation', 'create_customer', 'update_customer', 'create_lead', 'create_appointment']
+2026-01-06 13:16:36,224 [INFO] apps.llm.llm_provider: llm.trace [2026-01-06 15:16:36 EET] stage=stream.assembled
+• elapsed_ms=3265 finish_reason=tool_calls
+2026-01-06 13:16:36,237 [INFO] apps.llm.llm_provider: llm.trace [2026-01-06 15:16:36 EET] stage=request
+• message_count=14 model=deepseek-chat provider=DeepSeekTools streaming=True tools=['query_dataset', 'list_tables', 'create_case', 'update_case_status', 'update_case_details', 'add_case_history', 'flag_escalation', 'create_customer', 'update_customer', 'create_lead', 'create_appointment']
+2026-01-06 13:16:46,286 [INFO] apps.llm.llm_provider: llm.trace [2026-01-06 15:16:46 EET] stage=stream.assembled
+• elapsed_ms=9538 finish_reason=stop first_delta_ms=1456
+2026-01-06 13:16:46,546 [INFO] apps.llm.llm_provider: llm.trace [2026-01-06 15:16:46 EET] stage=request
+• message_count=2 model=deepseek-chat provider=DeepSeekTools streaming=False tools=[]
+2026-01-06 13:16:51,348 [INFO] apps.llm.llm_provider: llm.trace [2026-01-06 15:16:51 EET] stage=usage
+• completion_tokens=102 model=deepseek-chat prompt_tokens=1342 provider=DeepSeekTools total_tokens=1444
+2026-01-06 17:44:06,406 [INFO] apps.llm.llm_provider: llm.trace [2026-01-06 19:44:06 EET] stage=request
+• message_count=4 model=deepseek-chat provider=DeepSeekTools streaming=True tools=['search_knowledge', 'read_document', 'query_dataset', 'list_tables', 'create_case', 'update_case_status', 'update_case_details', 'add_case_history', 'flag_escalation', 'create_customer', 'update_customer', 'create_lead', 'create_appointment']
+2026-01-06 17:44:10,482 [INFO] apps.llm.llm_provider: llm.trace [2026-01-06 19:44:10 EET] stage=stream.assembled
+• elapsed_ms=3478 finish_reason=tool_calls first_delta_ms=1749
+2026-01-06 17:44:21,177 [INFO] apps.llm.llm_provider: llm.trace [2026-01-06 19:44:21 EET] stage=request
+• message_count=10 model=deepseek-chat provider=DeepSeekTools streaming=True tools=['query_dataset', 'list_tables', 'create_case', 'update_case_status', 'update_case_details', 'add_case_history', 'flag_escalation', 'create_customer', 'update_customer', 'create_lead', 'create_appointment']
+2026-01-06 17:44:27,883 [INFO] apps.llm.llm_provider: llm.trace [2026-01-06 19:44:27 EET] stage=stream.assembled
+• elapsed_ms=6219 finish_reason=stop first_delta_ms=1425
+2026-01-06 17:44:28,162 [INFO] apps.llm.llm_provider: llm.trace [2026-01-06 19:44:28 EET] stage=request
+• message_count=2 model=deepseek-chat provider=DeepSeekTools streaming=False tools=[]
+2026-01-06 17:44:35,991 [INFO] apps.llm.llm_provider: llm.trace [2026-01-06 19:44:35 EET] stage=usage
+• completion_tokens=221 model=deepseek-chat prompt_tokens=962 provider=DeepSeekTools total_tokens=1183
+2026-01-06 17:44:42,921 [INFO] apps.llm.llm_provider: llm.trace [2026-01-06 19:44:42 EET] stage=request
+• message_count=6 model=deepseek-chat provider=DeepSeekTools streaming=True tools=['search_knowledge', 'read_document', 'query_dataset', 'list_tables', 'create_case', 'update_case_status', 'update_case_details', 'add_case_history', 'flag_escalation', 'create_customer', 'update_customer', 'create_lead', 'create_appointment']
+2026-01-06 17:44:46,026 [INFO] apps.llm.llm_provider: llm.trace [2026-01-06 19:44:46 EET] stage=stream.assembled
+• elapsed_ms=2642 finish_reason=tool_calls
+2026-01-06 17:44:57,719 [INFO] apps.llm.llm_provider: llm.trace [2026-01-06 19:44:57 EET] stage=request
+• message_count=12 model=deepseek-chat provider=DeepSeekTools streaming=True tools=['query_dataset', 'list_tables', 'create_case', 'update_case_status', 'update_case_details', 'add_case_history', 'flag_escalation', 'create_customer', 'update_customer', 'create_lead', 'create_appointment']
+2026-01-06 17:45:03,848 [INFO] apps.llm.llm_provider: llm.trace [2026-01-06 19:45:03 EET] stage=stream.assembled
+• elapsed_ms=5634 finish_reason=tool_calls first_delta_ms=1319
+2026-01-06 17:45:03,978 [INFO] apps.llm.llm_provider: llm.trace [2026-01-06 19:45:03 EET] stage=request
+• message_count=13 model=deepseek-chat provider=DeepSeekTools streaming=True tools=['query_dataset', 'list_tables', 'create_case', 'update_case_status', 'update_case_details', 'add_case_history', 'flag_escalation', 'create_customer', 'update_customer', 'create_lead', 'create_appointment']
+2026-01-06 17:45:10,332 [INFO] apps.llm.llm_provider: llm.trace [2026-01-06 19:45:10 EET] stage=stream.assembled
+• elapsed_ms=5873 finish_reason=tool_calls first_delta_ms=1740
+2026-01-06 17:45:10,341 [INFO] apps.llm.llm_provider: llm.trace [2026-01-06 19:45:10 EET] stage=request
+• message_count=14 model=deepseek-chat provider=DeepSeekTools streaming=True tools=['query_dataset', 'list_tables', 'create_case', 'update_case_status', 'update_case_details', 'add_case_history', 'flag_escalation', 'create_customer', 'update_customer', 'create_lead', 'create_appointment']
+2026-01-06 17:45:15,221 [INFO] apps.llm.llm_provider: llm.trace [2026-01-06 19:45:15 EET] stage=stream.assembled
+• elapsed_ms=4459 finish_reason=stop first_delta_ms=864
+2026-01-06 17:45:15,500 [INFO] apps.llm.llm_provider: llm.trace [2026-01-06 19:45:15 EET] stage=request
+• message_count=2 model=deepseek-chat provider=DeepSeekTools streaming=False tools=[]
+2026-01-06 17:45:17,669 [INFO] apps.llm.llm_provider: llm.trace [2026-01-06 19:45:17 EET] stage=usage
+• completion_tokens=23 model=deepseek-chat prompt_tokens=1131 provider=DeepSeekTools total_tokens=1154
+2026-01-07 12:03:45,794 [INFO] apps.llm.llm_provider: llm.trace [2026-01-07 14:03:45 EET] stage=request
+• message_count=4 model=deepseek-chat provider=DeepSeekTools streaming=True tools=['search_knowledge', 'read_document', 'query_dataset', 'list_tables', 'create_case', 'update_case_status', 'update_case_details', 'add_case_history', 'flag_escalation', 'create_customer', 'update_customer', 'create_lead', 'create_appointment']
+2026-01-07 12:03:49,491 [INFO] apps.llm.llm_provider: llm.trace [2026-01-07 14:03:49 EET] stage=stream.assembled
+• elapsed_ms=3069 finish_reason=tool_calls first_delta_ms=830
+2026-01-07 12:03:56,154 [INFO] apps.llm.llm_provider: llm.trace [2026-01-07 14:03:56 EET] stage=request
+• message_count=10 model=deepseek-chat provider=DeepSeekTools streaming=True tools=['query_dataset', 'list_tables', 'create_case', 'update_case_status', 'update_case_details', 'add_case_history', 'flag_escalation', 'create_customer', 'update_customer', 'create_lead', 'create_appointment']
+2026-01-07 12:04:01,001 [INFO] apps.llm.llm_provider: llm.trace [2026-01-07 14:04:01 EET] stage=stream.assembled
+• elapsed_ms=4386 finish_reason=stop first_delta_ms=852
+2026-01-07 12:04:01,258 [INFO] apps.llm.llm_provider: llm.trace [2026-01-07 14:04:01 EET] stage=request
+• message_count=2 model=deepseek-chat provider=DeepSeekTools streaming=False tools=[]
+2026-01-07 12:04:08,675 [INFO] apps.llm.llm_provider: llm.trace [2026-01-07 14:04:08 EET] stage=usage
+• completion_tokens=204 model=deepseek-chat prompt_tokens=915 provider=DeepSeekTools total_tokens=1119
+2026-01-07 12:04:15,224 [INFO] apps.llm.llm_provider: llm.trace [2026-01-07 14:04:15 EET] stage=request
+• message_count=6 model=deepseek-chat provider=DeepSeekTools streaming=True tools=['search_knowledge', 'read_document', 'query_dataset', 'list_tables', 'create_case', 'update_case_status', 'update_case_details', 'add_case_history', 'flag_escalation', 'create_customer', 'update_customer', 'create_lead', 'create_appointment']
+2026-01-07 12:04:18,061 [INFO] apps.llm.llm_provider: llm.trace [2026-01-07 14:04:18 EET] stage=stream.assembled
+• elapsed_ms=2367 finish_reason=tool_calls
+2026-01-07 12:04:25,345 [INFO] apps.llm.llm_provider: llm.trace [2026-01-07 14:04:25 EET] stage=request
+• message_count=12 model=deepseek-chat provider=DeepSeekTools streaming=True tools=['query_dataset', 'list_tables', 'create_case', 'update_case_status', 'update_case_details', 'add_case_history', 'flag_escalation', 'create_customer', 'update_customer', 'create_lead', 'create_appointment']
+2026-01-07 12:04:30,554 [INFO] apps.llm.llm_provider: llm.trace [2026-01-07 14:04:30 EET] stage=stream.assembled
+• elapsed_ms=4709 finish_reason=tool_calls
+2026-01-07 12:04:30,577 [INFO] apps.llm.llm_provider: llm.trace [2026-01-07 14:04:30 EET] stage=request
+• message_count=13 model=deepseek-chat provider=DeepSeekTools streaming=True tools=['query_dataset', 'list_tables', 'create_case', 'update_case_status', 'update_case_details', 'add_case_history', 'flag_escalation', 'create_customer', 'update_customer', 'create_lead', 'create_appointment']
+2026-01-07 12:04:35,827 [INFO] apps.llm.llm_provider: llm.trace [2026-01-07 14:04:35 EET] stage=stream.assembled
+• elapsed_ms=4759 finish_reason=tool_calls
+2026-01-07 12:04:36,040 [INFO] apps.llm.llm_provider: llm.trace [2026-01-07 14:04:36 EET] stage=request
+• message_count=14 model=deepseek-chat provider=DeepSeekTools streaming=True tools=['query_dataset', 'list_tables', 'create_case', 'update_case_status', 'update_case_details', 'add_case_history', 'flag_escalation', 'create_customer', 'update_customer', 'create_lead', 'create_appointment']
+2026-01-07 12:04:47,013 [INFO] apps.llm.llm_provider: llm.trace [2026-01-07 14:04:47 EET] stage=stream.assembled
+• elapsed_ms=10519 finish_reason=stop first_delta_ms=847
+2026-01-07 12:04:47,280 [INFO] apps.llm.llm_provider: llm.trace [2026-01-07 14:04:47 EET] stage=request
+• message_count=2 model=deepseek-chat provider=DeepSeekTools streaming=False tools=[]
+2026-01-07 12:04:55,461 [INFO] apps.llm.llm_provider: llm.trace [2026-01-07 14:04:55 EET] stage=usage
+• completion_tokens=221 model=deepseek-chat prompt_tokens=1406 provider=DeepSeekTools total_tokens=1627
+2026-01-07 12:05:00,263 [INFO] apps.llm.llm_provider: llm.trace [2026-01-07 14:05:00 EET] stage=request
+• message_count=8 model=deepseek-chat provider=DeepSeekTools streaming=True tools=['search_knowledge', 'read_document', 'query_dataset', 'list_tables', 'create_case', 'update_case_status', 'update_case_details', 'add_case_history', 'flag_escalation', 'create_customer', 'update_customer', 'create_lead', 'create_appointment']
+2026-01-07 12:05:03,530 [INFO] apps.llm.llm_provider: llm.trace [2026-01-07 14:05:03 EET] stage=stream.assembled
+• elapsed_ms=2877 finish_reason=tool_calls
+2026-01-07 12:05:09,279 [INFO] apps.llm.llm_provider: llm.trace [2026-01-07 14:05:09 EET] stage=request
+• message_count=13 model=deepseek-chat provider=DeepSeekTools streaming=True tools=['query_dataset', 'list_tables', 'create_case', 'update_case_status', 'update_case_details', 'add_case_history', 'flag_escalation', 'create_customer', 'update_customer', 'create_lead', 'create_appointment']
+2026-01-07 12:05:14,958 [INFO] apps.llm.llm_provider: llm.trace [2026-01-07 14:05:14 EET] stage=stream.assembled
+• elapsed_ms=5182 finish_reason=tool_calls
+2026-01-07 12:05:14,978 [INFO] apps.llm.llm_provider: llm.trace [2026-01-07 14:05:14 EET] stage=request
+• message_count=13 model=deepseek-chat provider=DeepSeekTools streaming=True tools=['query_dataset', 'list_tables', 'create_case', 'update_case_status', 'update_case_details', 'add_case_history', 'flag_escalation', 'create_customer', 'update_customer', 'create_lead', 'create_appointment']
+2026-01-07 12:05:20,014 [INFO] apps.llm.llm_provider: llm.trace [2026-01-07 14:05:20 EET] stage=stream.assembled
+• elapsed_ms=4608 finish_reason=tool_calls
+2026-01-07 12:05:20,151 [INFO] apps.llm.llm_provider: llm.trace [2026-01-07 14:05:20 EET] stage=request
+• message_count=14 model=deepseek-chat provider=DeepSeekTools streaming=True tools=['query_dataset', 'list_tables', 'create_case', 'update_case_status', 'update_case_details', 'add_case_history', 'flag_escalation', 'create_customer', 'update_customer', 'create_lead', 'create_appointment']
+2026-01-07 12:05:26,118 [INFO] apps.llm.llm_provider: llm.trace [2026-01-07 14:05:26 EET] stage=stream.assembled
+• elapsed_ms=5489 finish_reason=stop first_delta_ms=1126
+2026-01-07 12:05:26,378 [INFO] apps.llm.llm_provider: llm.trace [2026-01-07 14:05:26 EET] stage=request
+• message_count=2 model=deepseek-chat provider=DeepSeekTools streaming=False tools=[]
+2026-01-07 12:05:35,169 [INFO] apps.llm.llm_provider: llm.trace [2026-01-07 14:05:35 EET] stage=usage
+• completion_tokens=213 model=deepseek-chat prompt_tokens=1143 provider=DeepSeekTools total_tokens=1356
+2026-01-07 12:35:24,308 [INFO] apps.llm.llm_provider: llm.trace [2026-01-07 14:35:24 EET] stage=request
+• message_count=4 model=deepseek-chat provider=DeepSeekTools streaming=True tools=['search_knowledge', 'read_document', 'query_dataset', 'list_tables', 'create_case', 'update_case_status', 'update_case_details', 'add_case_history', 'flag_escalation', 'create_customer', 'update_customer', 'create_lead', 'create_appointment']
+2026-01-07 12:35:28,332 [INFO] apps.llm.llm_provider: llm.trace [2026-01-07 14:35:28 EET] stage=stream.assembled
+• elapsed_ms=3175 finish_reason=tool_calls first_delta_ms=1021
+2026-01-07 12:35:42,805 [INFO] apps.llm.llm_provider: llm.trace [2026-01-07 14:35:42 EET] stage=request
+• message_count=10 model=deepseek-chat provider=DeepSeekTools streaming=True tools=['query_dataset', 'list_tables', 'create_case', 'update_case_status', 'update_case_details', 'add_case_history', 'flag_escalation', 'create_customer', 'update_customer', 'create_lead', 'create_appointment']
+2026-01-07 12:35:48,435 [INFO] apps.llm.llm_provider: llm.trace [2026-01-07 14:35:48 EET] stage=stream.assembled
+• elapsed_ms=5153 finish_reason=tool_calls
+2026-01-07 12:35:48,575 [INFO] apps.llm.llm_provider: llm.trace [2026-01-07 14:35:48 EET] stage=request
+• message_count=12 model=deepseek-chat provider=DeepSeekTools streaming=True tools=['query_dataset', 'list_tables', 'create_case', 'update_case_status', 'update_case_details', 'add_case_history', 'flag_escalation', 'create_customer', 'update_customer', 'create_lead', 'create_appointment']
+2026-01-07 12:35:55,561 [INFO] apps.llm.llm_provider: llm.trace [2026-01-07 14:35:55 EET] stage=stream.assembled
+• elapsed_ms=6559 finish_reason=tool_calls first_delta_ms=1699
+2026-01-07 12:35:55,580 [INFO] apps.llm.llm_provider: llm.trace [2026-01-07 14:35:55 EET] stage=request
+• message_count=14 model=deepseek-chat provider=DeepSeekTools streaming=True tools=['query_dataset', 'list_tables', 'create_case', 'update_case_status', 'update_case_details', 'add_case_history', 'flag_escalation', 'create_customer', 'update_customer', 'create_lead', 'create_appointment']
+2026-01-07 12:36:01,506 [INFO] apps.llm.llm_provider: llm.trace [2026-01-07 14:36:01 EET] stage=stream.assembled
+• elapsed_ms=5426 finish_reason=tool_calls
+2026-01-07 12:36:01,640 [INFO] apps.llm.llm_provider: llm.trace [2026-01-07 14:36:01 EET] stage=request
+• message_count=14 model=deepseek-chat provider=DeepSeekTools streaming=True tools=['query_dataset', 'list_tables', 'create_case', 'update_case_status', 'update_case_details', 'add_case_history', 'flag_escalation', 'create_customer', 'update_customer', 'create_lead', 'create_appointment']
+2026-01-07 12:36:07,275 [INFO] apps.llm.llm_provider: llm.trace [2026-01-07 14:36:07 EET] stage=stream.assembled
+• elapsed_ms=5153 finish_reason=tool_calls
+2026-01-07 12:36:07,294 [INFO] apps.llm.llm_provider: llm.trace [2026-01-07 14:36:07 EET] stage=request
+• message_count=15 model=deepseek-chat provider=DeepSeekTools streaming=True tools=[]
+2026-01-07 12:36:12,362 [INFO] apps.llm.llm_provider: llm.trace [2026-01-07 14:36:12 EET] stage=stream.assembled
+• elapsed_ms=4609 finish_reason=stop first_delta_ms=1198
+2026-01-07 12:36:12,713 [INFO] apps.llm.llm_provider: llm.trace [2026-01-07 14:36:12 EET] stage=request
+• message_count=2 model=deepseek-chat provider=DeepSeekTools streaming=False tools=[]
+2026-01-07 12:36:16,250 [INFO] apps.llm.llm_provider: llm.trace [2026-01-07 14:36:16 EET] stage=usage
+• completion_tokens=58 model=deepseek-chat prompt_tokens=1236 provider=DeepSeekTools total_tokens=1294
+2026-01-07 12:36:16,251 [INFO] apps.llm.llm_provider: llm.trace [2026-01-07 14:36:16 EET] stage=latency
+• elapsed_ms=3537 model=deepseek-chat provider=deepseek_tools streaming=False
+2026-01-07 13:24:51,685 [INFO] apps.llm.llm_provider: llm.trace [2026-01-07 15:24:51 EET] stage=request
+• message_count=4 model=deepseek-chat provider=DeepSeekTools streaming=True tools=['search_knowledge', 'read_document', 'query_dataset', 'list_tables', 'create_case', 'update_case_status', 'update_case_details', 'add_case_history', 'flag_escalation', 'create_customer', 'update_customer', 'create_lead', 'create_appointment']
+2026-01-07 13:24:55,592 [INFO] apps.llm.llm_provider: llm.trace [2026-01-07 15:24:55 EET] stage=stream.assembled
+• elapsed_ms=3289 finish_reason=tool_calls first_delta_ms=1023
+2026-01-07 13:25:01,344 [INFO] apps.llm.llm_provider: llm.trace [2026-01-07 15:25:01 EET] stage=request
+• message_count=10 model=deepseek-chat provider=DeepSeekTools streaming=True tools=['query_dataset', 'list_tables', 'create_case', 'update_case_status', 'update_case_details', 'add_case_history', 'flag_escalation', 'create_customer', 'update_customer', 'create_lead', 'create_appointment']
+2026-01-07 13:25:07,902 [INFO] apps.llm.llm_provider: llm.trace [2026-01-07 15:25:07 EET] stage=stream.assembled
+• elapsed_ms=6056 finish_reason=tool_calls first_delta_ms=1002
+2026-01-07 13:25:08,142 [INFO] apps.llm.llm_provider: llm.trace [2026-01-07 15:25:08 EET] stage=request
+• message_count=12 model=deepseek-chat provider=DeepSeekTools streaming=True tools=['query_dataset', 'list_tables', 'create_case', 'update_case_status', 'update_case_details', 'add_case_history', 'flag_escalation', 'create_customer', 'update_customer', 'create_lead', 'create_appointment']
+2026-01-07 13:25:16,806 [INFO] apps.llm.llm_provider: llm.trace [2026-01-07 15:25:16 EET] stage=stream.assembled
+• elapsed_ms=8053 finish_reason=stop first_delta_ms=1203
+2026-01-07 13:25:17,138 [INFO] apps.llm.llm_provider: llm.trace [2026-01-07 15:25:17 EET] stage=request
+• message_count=2 model=deepseek-chat provider=DeepSeekTools streaming=False tools=[]
+2026-01-07 13:25:26,056 [INFO] apps.llm.llm_provider: llm.trace [2026-01-07 15:25:26 EET] stage=usage
+• completion_tokens=222 model=deepseek-chat prompt_tokens=1270 provider=DeepSeekTools total_tokens=1492
+2026-01-07 13:25:26,161 [INFO] apps.llm.llm_provider: llm.trace [2026-01-07 15:25:26 EET] stage=request
+• message_count=6 model=deepseek-chat provider=DeepSeekTools streaming=True tools=['search_knowledge', 'read_document', 'query_dataset', 'list_tables', 'create_case', 'update_case_status', 'update_case_details', 'add_case_history', 'flag_escalation', 'create_customer', 'update_customer', 'create_lead', 'create_appointment']
+2026-01-07 13:25:29,198 [INFO] apps.llm.llm_provider: llm.trace [2026-01-07 15:25:29 EET] stage=stream.assembled
+• elapsed_ms=2621 finish_reason=tool_calls
+2026-01-07 13:25:35,425 [INFO] apps.llm.llm_provider: llm.trace [2026-01-07 15:25:35 EET] stage=request
+• message_count=12 model=deepseek-chat provider=DeepSeekTools streaming=True tools=['query_dataset', 'list_tables', 'create_case', 'update_case_status', 'update_case_details', 'add_case_history', 'flag_escalation', 'create_customer', 'update_customer', 'create_lead', 'create_appointment']
+2026-01-07 13:25:43,495 [INFO] apps.llm.llm_provider: llm.trace [2026-01-07 15:25:43 EET] stage=stream.assembled
+• elapsed_ms=7365 finish_reason=stop first_delta_ms=1344
+2026-01-07 13:25:43,725 [INFO] apps.llm.llm_provider: llm.trace [2026-01-07 15:25:43 EET] stage=request
+• message_count=2 model=deepseek-chat provider=DeepSeekTools streaming=False tools=[]
+2026-01-07 13:25:50,055 [INFO] apps.llm.llm_provider: llm.trace [2026-01-07 15:25:50 EET] stage=usage
+• completion_tokens=150 model=deepseek-chat prompt_tokens=790 provider=DeepSeekTools total_tokens=940
+2026-01-07 13:26:03,772 [INFO] apps.llm.llm_provider: llm.trace [2026-01-07 15:26:03 EET] stage=request
+• message_count=8 model=deepseek-chat provider=DeepSeekTools streaming=True tools=['search_knowledge', 'read_document', 'query_dataset', 'list_tables', 'create_case', 'update_case_status', 'update_case_details', 'add_case_history', 'flag_escalation', 'create_customer', 'update_customer', 'create_lead', 'create_appointment']
+2026-01-07 13:26:08,464 [INFO] apps.llm.llm_provider: llm.trace [2026-01-07 15:26:08 EET] stage=stream.assembled
+• elapsed_ms=4048 finish_reason=tool_calls
+2026-01-07 13:26:15,601 [INFO] apps.llm.llm_provider: llm.trace [2026-01-07 15:26:15 EET] stage=request
+• message_count=13 model=deepseek-chat provider=DeepSeekTools streaming=True tools=['query_dataset', 'list_tables', 'create_case', 'update_case_status', 'update_case_details', 'add_case_history', 'flag_escalation', 'create_customer', 'update_customer', 'create_lead', 'create_appointment']
+2026-01-07 13:26:21,082 [INFO] apps.llm.llm_provider: llm.trace [2026-01-07 15:26:21 EET] stage=stream.assembled
+• elapsed_ms=4912 finish_reason=tool_calls
+2026-01-07 13:26:21,245 [INFO] apps.llm.llm_provider: llm.trace [2026-01-07 15:26:21 EET] stage=request
+• message_count=13 model=deepseek-chat provider=DeepSeekTools streaming=True tools=['query_dataset', 'list_tables', 'create_case', 'update_case_status', 'update_case_details', 'add_case_history', 'flag_escalation', 'create_customer', 'update_customer', 'create_lead', 'create_appointment']
+2026-01-07 13:26:29,435 [INFO] apps.llm.llm_provider: llm.trace [2026-01-07 15:26:29 EET] stage=stream.assembled
+• elapsed_ms=7532 finish_reason=stop first_delta_ms=1536
+2026-01-07 13:26:29,720 [INFO] apps.llm.llm_provider: llm.trace [2026-01-07 15:26:29 EET] stage=request
+• message_count=2 model=deepseek-chat provider=DeepSeekTools streaming=False tools=[]
+2026-01-07 13:26:31,733 [INFO] apps.llm.llm_provider: llm.trace [2026-01-07 15:26:31 EET] stage=usage
+• completion_tokens=23 model=deepseek-chat prompt_tokens=1173 provider=DeepSeekTools total_tokens=1196
