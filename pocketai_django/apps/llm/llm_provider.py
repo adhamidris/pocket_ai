@@ -1110,7 +1110,9 @@ class OpenAIToolsProvider(BaseMcpProvider):
         self.model = model or os.getenv("OPENAI_MODEL", "gpt-4o-mini")
         self.base_url = (base_url or os.getenv("OPENAI_BASE_URL") or "https://api.openai.com").rstrip("/")
         self.timeout = timeout
-        self.temperature = temperature
+        # Temperature from env var, fallback to parameter default
+        env_temp = os.getenv("LLM_TEMPERATURE")
+        self.temperature = float(env_temp) if env_temp else temperature
         self.top_p = top_p
         timeout_cfg = self.timeout
         if httpx and (HTTP_TIMEOUT_CONNECT or HTTP_TIMEOUT_READ):
@@ -1153,10 +1155,17 @@ class OpenAIToolsProvider(BaseMcpProvider):
                 payload: dict[str, Any] = {
                     "model": self.model,
                     "messages": [dict(msg) for msg in messages],
-                    "temperature": self.temperature,
-                    "top_p": self.top_p,
                     "stream": streaming,
                 }
+                # Newer models (o1, o3, gpt-5) don't support temperature/top_p
+                model_lower = self.model.lower()
+                skip_sampling_params = any(
+                    model_lower.startswith(prefix)
+                    for prefix in ("o1", "o3", "gpt-5")
+                )
+                if not skip_sampling_params:
+                    payload["temperature"] = self.temperature
+                    payload["top_p"] = self.top_p
                 if not streaming:
                     # For non-streaming planning calls we request structured JSON content
                     # so the provider can return actions/extractions alongside text.
@@ -1403,7 +1412,9 @@ class DeepSeekToolsProvider(BaseMcpProvider):
         self.model = model or os.getenv("DEEPSEEK_MODEL", "deepseek-chat")
         self.base_url = (base_url or os.getenv("DEEPSEEK_BASE_URL") or "https://api.deepseek.com").rstrip("/")
         self.timeout = timeout
-        self.temperature = temperature
+        # Temperature from env var, fallback to parameter default
+        env_temp = os.getenv("LLM_TEMPERATURE")
+        self.temperature = float(env_temp) if env_temp else temperature
         self.top_p = top_p
         timeout_cfg = self.timeout
         if httpx and (HTTP_TIMEOUT_CONNECT or HTTP_TIMEOUT_READ):
@@ -1739,7 +1750,7 @@ def load_mcp_provider() -> BaseMcpProvider | None:
         if _MCP_PROVIDER_SINGLETON is not None:
             return _MCP_PROVIDER_SINGLETON
 
-        preferred = (os.getenv("MCP_PROVIDER") or os.getenv("LLM_PROVIDER") or "").strip().lower()
+        preferred = (os.getenv("MCP_PROVIDER") or "").strip().lower()
 
         def _try(cls):
             try:

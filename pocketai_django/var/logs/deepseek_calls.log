@@ -1368,3 +1368,713 @@
 • message_count=2 model=deepseek-chat provider=DeepSeekTools streaming=False tools=[]
 2026-01-07 13:26:31,733 [INFO] apps.llm.llm_provider: llm.trace [2026-01-07 15:26:31 EET] stage=usage
 • completion_tokens=23 model=deepseek-chat prompt_tokens=1173 provider=DeepSeekTools total_tokens=1196
+2026-01-07 13:31:01,729 [INFO] apps.llm.llm_provider: llm.trace [2026-01-07 15:31:01 EET] stage=request
+• message_count=9 model=deepseek-chat provider=DeepSeekTools streaming=True tools=['search_knowledge', 'read_document', 'query_dataset', 'list_tables', 'create_case', 'update_case_status', 'update_case_details', 'add_case_history', 'flag_escalation', 'create_customer', 'update_customer', 'create_lead', 'create_appointment']
+2026-01-07 13:31:05,653 [INFO] apps.llm.llm_provider: llm.trace [2026-01-07 15:31:05 EET] stage=stream.assembled
+• elapsed_ms=3377 finish_reason=tool_calls
+2026-01-07 13:31:19,021 [INFO] apps.llm.llm_provider: llm.trace [2026-01-07 15:31:19 EET] stage=request
+• message_count=13 model=deepseek-chat provider=DeepSeekTools streaming=True tools=['read_document', 'query_dataset', 'list_tables', 'create_case', 'update_case_status', 'update_case_details', 'add_case_history', 'flag_escalation', 'create_customer', 'update_customer', 'create_lead', 'create_appointment']
+2026-01-07 13:31:24,778 [INFO] apps.llm.llm_provider: llm.trace [2026-01-07 15:31:24 EET] stage=stream.assembled
+• elapsed_ms=5261 finish_reason=tool_calls
+2026-01-07 13:31:24,792 [INFO] apps.llm.llm_provider: llm.trace [2026-01-07 15:31:24 EET] stage=request
+• message_count=13 model=deepseek-chat provider=DeepSeekTools streaming=True tools=['read_document', 'query_dataset', 'list_tables', 'create_case', 'update_case_status', 'update_case_details', 'add_case_history', 'flag_escalation', 'create_customer', 'update_customer', 'create_lead', 'create_appointment']
+2026-01-07 13:31:29,923 [INFO] apps.llm.llm_provider: llm.trace [2026-01-07 15:31:29 EET] stage=stream.assembled
+• elapsed_ms=4687 finish_reason=tool_calls
+2026-01-07 13:31:30,061 [INFO] apps.llm.llm_provider: llm.trace [2026-01-07 15:31:30 EET] stage=request
+• message_count=14 model=deepseek-chat provider=DeepSeekTools streaming=True tools=['read_document', 'query_dataset', 'list_tables', 'create_case', 'update_case_status', 'update_case_details', 'add_case_history', 'flag_escalation', 'create_customer', 'update_customer', 'create_lead', 'create_appointment']
+2026-01-07 13:31:35,661 [INFO] apps.llm.llm_provider: llm.trace [2026-01-07 15:31:35 EET] stage=stream.assembled
+• elapsed_ms=5118 finish_reason=tool_calls
+2026-01-07 13:31:35,786 [INFO] apps.llm.llm_provider: llm.trace [2026-01-07 15:31:35 EET] stage=request
+• message_count=14 model=deepseek-chat provider=DeepSeekTools streaming=True tools=['read_document', 'query_dataset', 'list_tables', 'create_case', 'update_case_status', 'update_case_details', 'add_case_history', 'flag_escalation', 'create_customer', 'update_customer', 'create_lead', 'create_appointment']
+2026-01-07 13:31:42,323 [INFO] apps.llm.llm_provider: llm.trace [2026-01-07 15:31:42 EET] stage=stream.assembled
+• elapsed_ms=6039 finish_reason=tool_calls first_delta_ms=1402
+2026-01-07 13:31:42,337 [INFO] apps.llm.llm_provider: llm.trace [2026-01-07 15:31:42 EET] stage=request
+• message_count=15 model=deepseek-chat provider=DeepSeekTools streaming=True tools=[]
+2026-01-07 13:32:00,111 [INFO] apps.llm.llm_provider: llm.trace [2026-01-07 15:32:00 EET] stage=stream.assembled
+• elapsed_ms=17059 finish_reason=stop first_delta_ms=1839
+2026-01-07 13:32:00,401 [INFO] apps.llm.llm_provider: llm.trace [2026-01-07 15:32:00 EET] stage=request
+• message_count=2 model=deepseek-chat provider=DeepSeekTools streaming=False tools=[]
+2026-01-07 13:32:15,619 [INFO] apps.llm.llm_provider: llm.trace [2026-01-07 15:32:15 EET] stage=usage
+• completion_tokens=387 model=deepseek-chat prompt_tokens=1622 provider=DeepSeekTools total_tokens=2009
+2026-01-07 14:22:48,424 [INFO] apps.llm.llm_provider: llm.trace [2026-01-07 16:22:48 EET] stage=request
+• message_count=4 model=deepseek-chat provider=DeepSeekTools streaming=True tools=['search_knowledge', 'read_document', 'query_dataset', 'list_tables', 'create_case', 'update_case_status', 'update_case_details', 'add_case_history', 'flag_escalation', 'create_customer', 'update_customer', 'create_lead', 'create_appointment']
+2026-01-07 14:22:51,807 [INFO] apps.llm.llm_provider: llm.trace [2026-01-07 16:22:51 EET] stage=stream.assembled
+• elapsed_ms=2661 finish_reason=tool_calls first_delta_ms=597
+2026-01-07 14:22:52,031 [INFO] apps.llm.llm_provider: llm.trace [2026-01-07 16:22:52 EET] stage=request
+• message_count=10 model=deepseek-chat provider=DeepSeekTools streaming=True tools=['read_document', 'query_dataset', 'list_tables', 'create_case', 'update_case_status', 'update_case_details', 'add_case_history', 'flag_escalation', 'create_customer', 'update_customer', 'create_lead', 'create_appointment']
+2026-01-07 14:22:56,583 [INFO] apps.llm.llm_provider: llm.trace [2026-01-07 16:22:56 EET] stage=stream.assembled
+• elapsed_ms=4058 finish_reason=tool_calls
+2026-01-07 14:22:57,168 [INFO] apps.llm.llm_provider: llm.trace [2026-01-07 16:22:57 EET] stage=request
+• message_count=12 model=deepseek-chat provider=DeepSeekTools streaming=True tools=['read_document', 'query_dataset', 'list_tables', 'create_case', 'update_case_status', 'update_case_details', 'add_case_history', 'flag_escalation', 'create_customer', 'update_customer', 'create_lead', 'create_appointment']
+2026-01-07 14:23:04,710 [INFO] apps.llm.llm_provider: llm.trace [2026-01-07 16:23:04 EET] stage=stream.assembled
+• elapsed_ms=7115 finish_reason=tool_calls first_delta_ms=1728
+2026-01-07 14:23:04,741 [INFO] apps.llm.llm_provider: llm.trace [2026-01-07 16:23:04 EET] stage=request
+• message_count=14 model=deepseek-chat provider=DeepSeekTools streaming=True tools=['read_document', 'query_dataset', 'list_tables', 'create_case', 'update_case_status', 'update_case_details', 'add_case_history', 'flag_escalation', 'create_customer', 'update_customer', 'create_lead', 'create_appointment']
+2026-01-07 14:24:20,676 [INFO] apps.llm.llm_provider: llm.trace [2026-01-07 16:24:20 EET] stage=request
+• message_count=5 model=deepseek-chat provider=DeepSeekTools streaming=True tools=['search_knowledge', 'read_document', 'query_dataset', 'list_tables', 'create_case', 'update_case_status', 'update_case_details', 'add_case_history', 'flag_escalation', 'create_customer', 'update_customer', 'create_lead', 'create_appointment']
+2026-01-07 14:24:24,137 [INFO] apps.llm.llm_provider: llm.trace [2026-01-07 16:24:24 EET] stage=stream.assembled
+• elapsed_ms=2991 finish_reason=tool_calls first_delta_ms=916
+2026-01-07 14:24:24,324 [INFO] apps.llm.llm_provider: llm.trace [2026-01-07 16:24:24 EET] stage=request
+• message_count=11 model=deepseek-chat provider=DeepSeekTools streaming=True tools=['read_document', 'query_dataset', 'list_tables', 'create_case', 'update_case_status', 'update_case_details', 'add_case_history', 'flag_escalation', 'create_customer', 'update_customer', 'create_lead', 'create_appointment']
+2026-01-07 14:24:29,702 [INFO] apps.llm.llm_provider: llm.trace [2026-01-07 16:24:29 EET] stage=stream.assembled
+• elapsed_ms=4958 finish_reason=tool_calls
+2026-01-07 14:24:30,179 [INFO] apps.llm.llm_provider: llm.trace [2026-01-07 16:24:30 EET] stage=request
+• message_count=13 model=deepseek-chat provider=DeepSeekTools streaming=True tools=['read_document', 'query_dataset', 'list_tables', 'create_case', 'update_case_status', 'update_case_details', 'add_case_history', 'flag_escalation', 'create_customer', 'update_customer', 'create_lead', 'create_appointment']
+2026-01-07 14:24:33,899 [INFO] apps.llm.llm_provider: llm.trace [2026-01-07 16:24:33 EET] stage=stream.assembled
+• elapsed_ms=3265 finish_reason=tool_calls first_delta_ms=1524
+2026-01-07 14:24:33,918 [INFO] apps.llm.llm_provider: llm.trace [2026-01-07 16:24:33 EET] stage=request
+• message_count=14 model=deepseek-chat provider=DeepSeekTools streaming=True tools=['read_document', 'query_dataset', 'list_tables', 'create_case', 'update_case_status', 'update_case_details', 'add_case_history', 'flag_escalation', 'create_customer', 'update_customer', 'create_lead', 'create_appointment']
+2026-01-07 14:24:40,043 [INFO] apps.llm.llm_provider: llm.trace [2026-01-07 16:24:40 EET] stage=stream.assembled
+• elapsed_ms=5631 finish_reason=tool_calls
+2026-01-07 14:24:40,075 [INFO] apps.llm.llm_provider: llm.trace [2026-01-07 16:24:40 EET] stage=request
+• message_count=14 model=deepseek-chat provider=DeepSeekTools streaming=True tools=['read_document', 'query_dataset', 'list_tables', 'create_case', 'update_case_status', 'update_case_details', 'add_case_history', 'flag_escalation', 'create_customer', 'update_customer', 'create_lead', 'create_appointment']
+2026-01-07 14:24:46,596 [INFO] apps.llm.llm_provider: llm.trace [2026-01-07 16:24:46 EET] stage=stream.assembled
+• elapsed_ms=6041 finish_reason=tool_calls first_delta_ms=1023
+2026-01-07 14:24:46,787 [INFO] apps.llm.llm_provider: llm.trace [2026-01-07 16:24:46 EET] stage=request
+• message_count=14 model=deepseek-chat provider=DeepSeekTools streaming=True tools=['read_document', 'query_dataset', 'list_tables', 'create_case', 'update_case_status', 'update_case_details', 'add_case_history', 'flag_escalation', 'create_customer', 'update_customer', 'create_lead', 'create_appointment']
+2026-01-07 14:24:52,945 [INFO] apps.llm.llm_provider: llm.trace [2026-01-07 16:24:52 EET] stage=stream.assembled
+• elapsed_ms=5631 finish_reason=tool_calls
+2026-01-07 14:24:52,978 [INFO] apps.llm.llm_provider: llm.trace [2026-01-07 16:24:52 EET] stage=request
+• message_count=14 model=deepseek-chat provider=DeepSeekTools streaming=True tools=['read_document', 'query_dataset', 'list_tables', 'create_case', 'update_case_status', 'update_case_details', 'add_case_history', 'flag_escalation', 'create_customer', 'update_customer', 'create_lead', 'create_appointment']
+2026-01-07 14:24:58,065 [INFO] apps.llm.llm_provider: llm.trace [2026-01-07 16:24:58 EET] stage=stream.assembled
+• elapsed_ms=4299 finish_reason=tool_calls
+2026-01-07 14:24:58,099 [INFO] apps.llm.llm_provider: llm.trace [2026-01-07 16:24:58 EET] stage=request
+• message_count=14 model=deepseek-chat provider=DeepSeekTools streaming=True tools=['read_document', 'query_dataset', 'list_tables', 'create_case', 'update_case_status', 'update_case_details', 'add_case_history', 'flag_escalation', 'create_customer', 'update_customer', 'create_lead', 'create_appointment']
+2026-01-07 14:25:02,775 [INFO] apps.llm.llm_provider: llm.trace [2026-01-07 16:25:02 EET] stage=stream.assembled
+• elapsed_ms=4197 finish_reason=tool_calls first_delta_ms=1440
+2026-01-07 14:25:02,789 [INFO] apps.llm.llm_provider: llm.trace [2026-01-07 16:25:02 EET] stage=request
+• message_count=14 model=deepseek-chat provider=DeepSeekTools streaming=True tools=['read_document', 'query_dataset', 'list_tables', 'create_case', 'update_case_status', 'update_case_details', 'add_case_history', 'flag_escalation', 'create_customer', 'update_customer', 'create_lead', 'create_appointment']
+2026-01-07 14:25:08,451 [INFO] apps.llm.llm_provider: llm.trace [2026-01-07 16:25:08 EET] stage=stream.assembled
+• elapsed_ms=5059 finish_reason=tool_calls first_delta_ms=599
+2026-01-07 14:25:08,555 [INFO] apps.llm.llm_provider: llm.trace [2026-01-07 16:25:08 EET] stage=request
+• message_count=14 model=deepseek-chat provider=DeepSeekTools streaming=True tools=['read_document', 'query_dataset', 'list_tables', 'create_case', 'update_case_status', 'update_case_details', 'add_case_history', 'flag_escalation', 'create_customer', 'update_customer', 'create_lead', 'create_appointment']
+2026-01-07 14:25:15,782 [INFO] apps.llm.llm_provider: llm.trace [2026-01-07 16:25:15 EET] stage=stream.assembled
+• elapsed_ms=6809 finish_reason=tool_calls
+2026-01-07 14:25:15,818 [INFO] apps.llm.llm_provider: llm.trace [2026-01-07 16:25:15 EET] stage=request
+• message_count=14 model=deepseek-chat provider=DeepSeekTools streaming=True tools=['read_document', 'query_dataset', 'list_tables', 'create_case', 'update_case_status', 'update_case_details', 'add_case_history', 'flag_escalation', 'create_customer', 'update_customer', 'create_lead', 'create_appointment']
+2026-01-07 14:25:20,695 [INFO] apps.llm.llm_provider: llm.trace [2026-01-07 16:25:20 EET] stage=stream.assembled
+• elapsed_ms=4402 finish_reason=tool_calls
+2026-01-07 14:25:20,697 [INFO] apps.llm.llm_provider: llm.trace [2026-01-07 16:25:20 EET] stage=request
+• message_count=15 model=deepseek-chat provider=DeepSeekTools streaming=True tools=[]
+2026-01-07 14:25:26,751 [INFO] apps.llm.llm_provider: llm.trace [2026-01-07 16:25:26 EET] stage=stream.assembled
+• elapsed_ms=5646 finish_reason=stop first_delta_ms=1228
+2026-01-07 14:25:26,828 [INFO] apps.llm.llm_provider: llm.trace [2026-01-07 16:25:26 EET] stage=request
+• message_count=2 model=deepseek-chat provider=DeepSeekTools streaming=False tools=[]
+2026-01-07 14:25:28,862 [INFO] apps.llm.llm_provider: llm.trace [2026-01-07 16:25:28 EET] stage=usage
+• completion_tokens=23 model=deepseek-chat prompt_tokens=898 provider=DeepSeekTools total_tokens=921
+2026-01-07 17:18:00,278 [INFO] apps.llm.llm_provider: llm.trace [2026-01-07 19:18:00 EET] stage=request
+• message_count=4 model=deepseek-chat provider=DeepSeekTools streaming=True tools=['search_knowledge', 'read_document', 'query_dataset', 'list_tables', 'create_case', 'update_case_status', 'update_case_details', 'add_case_history', 'flag_escalation', 'create_customer', 'update_customer', 'create_lead', 'create_appointment']
+2026-01-07 17:18:04,158 [INFO] apps.llm.llm_provider: llm.trace [2026-01-07 19:18:04 EET] stage=stream.assembled
+• elapsed_ms=3275 finish_reason=tool_calls first_delta_ms=1057
+2026-01-07 17:18:11,644 [INFO] apps.llm.llm_provider: llm.trace [2026-01-07 19:18:11 EET] stage=request
+• message_count=10 model=deepseek-chat provider=DeepSeekTools streaming=True tools=['query_dataset', 'list_tables', 'create_case', 'update_case_status', 'update_case_details', 'add_case_history', 'flag_escalation', 'create_customer', 'update_customer', 'create_lead', 'create_appointment']
+2026-01-07 17:18:16,793 [INFO] apps.llm.llm_provider: llm.trace [2026-01-07 19:18:16 EET] stage=stream.assembled
+• elapsed_ms=4651 finish_reason=tool_calls
+2026-01-07 17:18:16,819 [INFO] apps.llm.llm_provider: llm.trace [2026-01-07 19:18:16 EET] stage=request
+• message_count=12 model=deepseek-chat provider=DeepSeekTools streaming=True tools=['query_dataset', 'list_tables', 'create_case', 'update_case_status', 'update_case_details', 'add_case_history', 'flag_escalation', 'create_customer', 'update_customer', 'create_lead', 'create_appointment']
+2026-01-07 17:18:21,823 [INFO] apps.llm.llm_provider: llm.trace [2026-01-07 19:18:21 EET] stage=stream.assembled
+• elapsed_ms=4569 finish_reason=tool_calls
+2026-01-07 17:18:22,169 [INFO] apps.llm.llm_provider: llm.trace [2026-01-07 19:18:22 EET] stage=request
+• message_count=14 model=deepseek-chat provider=DeepSeekTools streaming=True tools=['query_dataset', 'list_tables', 'create_case', 'update_case_status', 'update_case_details', 'add_case_history', 'flag_escalation', 'create_customer', 'update_customer', 'create_lead', 'create_appointment']
+2026-01-07 17:18:29,713 [INFO] apps.llm.llm_provider: llm.trace [2026-01-07 19:18:29 EET] stage=stream.assembled
+• elapsed_ms=7028 finish_reason=stop first_delta_ms=1238
+2026-01-07 17:18:30,031 [INFO] apps.llm.llm_provider: llm.trace [2026-01-07 19:18:30 EET] stage=request
+• message_count=2 model=deepseek-chat provider=DeepSeekTools streaming=False tools=[]
+2026-01-07 17:18:37,133 [INFO] apps.llm.llm_provider: llm.trace [2026-01-07 19:18:37 EET] stage=usage
+• completion_tokens=201 model=deepseek-chat prompt_tokens=1296 provider=DeepSeekTools total_tokens=1497
+2026-01-07 17:18:37,134 [INFO] apps.llm.llm_provider: llm.trace [2026-01-07 19:18:37 EET] stage=latency
+• elapsed_ms=7101 model=deepseek-chat provider=deepseek_tools streaming=False
+2026-01-07 17:42:21,382 [INFO] apps.llm.llm_provider: llm.trace [2026-01-07 19:42:21 EET] stage=request
+• message_count=4 model=deepseek-chat provider=DeepSeekTools streaming=True tools=['search_knowledge', 'read_document', 'query_dataset', 'list_tables', 'create_case', 'update_case_status', 'update_case_details', 'add_case_history', 'flag_escalation', 'create_customer', 'update_customer', 'create_lead', 'create_appointment']
+2026-01-07 17:42:25,135 [INFO] apps.llm.llm_provider: llm.trace [2026-01-07 19:42:25 EET] stage=stream.assembled
+• elapsed_ms=3100 finish_reason=tool_calls first_delta_ms=811
+2026-01-07 17:42:29,644 [INFO] apps.llm.llm_provider: llm.trace [2026-01-07 19:42:29 EET] stage=request
+• message_count=10 model=deepseek-chat provider=DeepSeekTools streaming=True tools=['query_dataset', 'list_tables', 'create_case', 'update_case_status', 'update_case_details', 'add_case_history', 'flag_escalation', 'create_customer', 'update_customer', 'create_lead', 'create_appointment']
+2026-01-07 17:42:35,685 [INFO] apps.llm.llm_provider: llm.trace [2026-01-07 19:42:35 EET] stage=stream.assembled
+• elapsed_ms=5289 finish_reason=tool_calls first_delta_ms=710
+2026-01-07 17:42:35,709 [INFO] apps.llm.llm_provider: llm.trace [2026-01-07 19:42:35 EET] stage=request
+• message_count=12 model=deepseek-chat provider=DeepSeekTools streaming=True tools=['query_dataset', 'list_tables', 'create_case', 'update_case_status', 'update_case_details', 'add_case_history', 'flag_escalation', 'create_customer', 'update_customer', 'create_lead', 'create_appointment']
+2026-01-07 17:42:40,876 [INFO] apps.llm.llm_provider: llm.trace [2026-01-07 19:42:40 EET] stage=stream.assembled
+• elapsed_ms=4523 finish_reason=tool_calls
+2026-01-07 17:42:41,103 [INFO] apps.llm.llm_provider: llm.trace [2026-01-07 19:42:41 EET] stage=request
+• message_count=10 model=deepseek-chat provider=DeepSeekTools streaming=True tools=['query_dataset', 'list_tables', 'create_case', 'update_case_status', 'update_case_details', 'add_case_history', 'flag_escalation', 'create_customer', 'update_customer', 'create_lead', 'create_appointment']
+2026-01-07 17:42:45,894 [INFO] apps.llm.llm_provider: llm.trace [2026-01-07 19:42:45 EET] stage=stream.assembled
+• elapsed_ms=3890 finish_reason=tool_calls first_delta_ms=1023
+2026-01-07 17:42:45,897 [INFO] apps.llm.llm_provider: llm.trace [2026-01-07 19:42:45 EET] stage=request
+• message_count=14 model=deepseek-chat provider=DeepSeekTools streaming=True tools=['query_dataset', 'list_tables', 'create_case', 'update_case_status', 'update_case_details', 'add_case_history', 'flag_escalation', 'create_customer', 'update_customer', 'create_lead', 'create_appointment']
+2026-01-07 17:42:54,265 [INFO] apps.llm.llm_provider: llm.trace [2026-01-07 19:42:54 EET] stage=stream.assembled
+• elapsed_ms=7838 finish_reason=stop first_delta_ms=888
+2026-01-07 17:42:54,534 [INFO] apps.llm.llm_provider: llm.trace [2026-01-07 19:42:54 EET] stage=request
+• message_count=2 model=deepseek-chat provider=DeepSeekTools streaming=False tools=[]
+2026-01-07 17:42:58,184 [INFO] apps.llm.llm_provider: llm.trace [2026-01-07 19:42:58 EET] stage=usage
+• completion_tokens=90 model=deepseek-chat prompt_tokens=1352 provider=DeepSeekTools total_tokens=1442
+2026-01-07 17:49:34,582 [INFO] apps.llm.llm_provider: llm.trace [2026-01-07 19:49:34 EET] stage=request
+• message_count=4 model=deepseek-chat provider=DeepSeekTools streaming=True tools=['search_knowledge', 'read_document', 'query_dataset', 'list_tables', 'create_case', 'update_case_status', 'update_case_details', 'add_case_history', 'flag_escalation', 'create_customer', 'update_customer', 'create_lead', 'create_appointment']
+2026-01-07 17:49:37,854 [INFO] apps.llm.llm_provider: llm.trace [2026-01-07 19:49:37 EET] stage=stream.assembled
+• elapsed_ms=2762 finish_reason=tool_calls first_delta_ms=738
+2026-01-07 17:49:42,803 [INFO] apps.llm.llm_provider: llm.trace [2026-01-07 19:49:42 EET] stage=request
+• message_count=10 model=deepseek-chat provider=DeepSeekTools streaming=True tools=['query_dataset', 'list_tables', 'create_case', 'update_case_status', 'update_case_details', 'add_case_history', 'flag_escalation', 'create_customer', 'update_customer', 'create_lead', 'create_appointment']
+2026-01-07 17:49:50,370 [INFO] apps.llm.llm_provider: llm.trace [2026-01-07 19:49:50 EET] stage=stream.assembled
+• elapsed_ms=7128 finish_reason=stop first_delta_ms=1348
+2026-01-07 17:49:50,635 [INFO] apps.llm.llm_provider: llm.trace [2026-01-07 19:49:50 EET] stage=request
+• message_count=2 model=deepseek-chat provider=DeepSeekTools streaming=False tools=[]
+2026-01-07 17:49:57,810 [INFO] apps.llm.llm_provider: llm.trace [2026-01-07 19:49:57 EET] stage=usage
+• completion_tokens=204 model=deepseek-chat prompt_tokens=1103 provider=DeepSeekTools total_tokens=1307
+2026-01-07 17:49:57,811 [INFO] apps.llm.llm_provider: llm.trace [2026-01-07 19:49:57 EET] stage=latency
+• elapsed_ms=7174 model=deepseek-chat provider=deepseek_tools streaming=False
+2026-01-07 17:50:02,550 [INFO] apps.llm.llm_provider: llm.trace [2026-01-07 19:50:02 EET] stage=request
+• message_count=6 model=deepseek-chat provider=DeepSeekTools streaming=True tools=['search_knowledge', 'read_document', 'query_dataset', 'list_tables', 'create_case', 'update_case_status', 'update_case_details', 'add_case_history', 'flag_escalation', 'create_customer', 'update_customer', 'create_lead', 'create_appointment']
+2026-01-07 17:50:05,714 [INFO] apps.llm.llm_provider: llm.trace [2026-01-07 19:50:05 EET] stage=stream.assembled
+• elapsed_ms=2769 finish_reason=tool_calls first_delta_ms=836
+2026-01-07 17:50:09,007 [INFO] apps.llm.llm_provider: llm.trace [2026-01-07 19:50:09 EET] stage=request
+• message_count=12 model=deepseek-chat provider=DeepSeekTools streaming=True tools=['read_document', 'query_dataset', 'list_tables', 'create_case', 'update_case_status', 'update_case_details', 'add_case_history', 'flag_escalation', 'create_customer', 'update_customer', 'create_lead', 'create_appointment']
+2026-01-07 17:50:15,502 [INFO] apps.llm.llm_provider: llm.trace [2026-01-07 19:50:15 EET] stage=stream.assembled
+• elapsed_ms=5972 finish_reason=stop first_delta_ms=1092
+2026-01-07 17:50:15,765 [INFO] apps.llm.llm_provider: llm.trace [2026-01-07 19:50:15 EET] stage=request
+• message_count=2 model=deepseek-chat provider=DeepSeekTools streaming=False tools=[]
+2026-01-07 17:50:18,113 [INFO] apps.llm.llm_provider: llm.trace [2026-01-07 19:50:18 EET] stage=usage
+• completion_tokens=23 model=deepseek-chat prompt_tokens=1073 provider=DeepSeekTools total_tokens=1096
+2026-01-07 18:00:15,740 [INFO] apps.llm.llm_provider: llm.trace [2026-01-07 20:00:15 EET] stage=request
+• message_count=4 model=deepseek-chat provider=DeepSeekTools streaming=True tools=['search_knowledge', 'read_document', 'query_dataset', 'list_tables', 'create_case', 'update_case_status', 'update_case_details', 'add_case_history', 'flag_escalation', 'create_customer', 'update_customer', 'create_lead', 'create_appointment']
+2026-01-07 18:00:19,262 [INFO] apps.llm.llm_provider: llm.trace [2026-01-07 20:00:19 EET] stage=stream.assembled
+• elapsed_ms=2899 finish_reason=tool_calls first_delta_ms=1084
+2026-01-07 18:00:19,378 [INFO] apps.llm.llm_provider: llm.trace [2026-01-07 20:00:19 EET] stage=request
+• message_count=10 model=deepseek-chat provider=DeepSeekTools streaming=True tools=['query_dataset', 'list_tables', 'create_case', 'update_case_status', 'update_case_details', 'add_case_history', 'flag_escalation', 'create_customer', 'update_customer', 'create_lead', 'create_appointment']
+2026-01-07 18:00:26,747 [INFO] apps.llm.llm_provider: llm.trace [2026-01-07 20:00:26 EET] stage=stream.assembled
+• elapsed_ms=6732 finish_reason=stop first_delta_ms=812
+2026-01-07 18:00:26,785 [INFO] apps.llm.llm_provider: llm.trace [2026-01-07 20:00:26 EET] stage=request
+• message_count=2 model=deepseek-chat provider=DeepSeekTools streaming=False tools=[]
+2026-01-07 18:00:33,842 [INFO] apps.llm.llm_provider: llm.trace [2026-01-07 20:00:33 EET] stage=usage
+• completion_tokens=207 model=deepseek-chat prompt_tokens=1109 provider=DeepSeekTools total_tokens=1316
+2026-01-07 18:00:33,843 [INFO] apps.llm.llm_provider: llm.trace [2026-01-07 20:00:33 EET] stage=latency
+• elapsed_ms=7055 model=deepseek-chat provider=deepseek_tools streaming=False
+2026-01-07 18:00:34,793 [INFO] apps.llm.llm_provider: llm.trace [2026-01-07 20:00:34 EET] stage=request
+• message_count=6 model=deepseek-chat provider=DeepSeekTools streaming=True tools=['search_knowledge', 'read_document', 'query_dataset', 'list_tables', 'create_case', 'update_case_status', 'update_case_details', 'add_case_history', 'flag_escalation', 'create_customer', 'update_customer', 'create_lead', 'create_appointment']
+2026-01-07 18:00:38,030 [INFO] apps.llm.llm_provider: llm.trace [2026-01-07 20:00:38 EET] stage=stream.assembled
+• elapsed_ms=2762 finish_reason=tool_calls
+2026-01-07 18:00:43,244 [INFO] apps.llm.llm_provider: llm.trace [2026-01-07 20:00:43 EET] stage=request
+• message_count=8 model=deepseek-chat provider=DeepSeekTools streaming=True tools=['read_document', 'query_dataset', 'list_tables', 'create_case', 'update_case_status', 'update_case_details', 'add_case_history', 'flag_escalation', 'create_customer', 'update_customer', 'create_lead', 'create_appointment']
+2026-01-07 18:00:47,964 [INFO] apps.llm.llm_provider: llm.trace [2026-01-07 20:00:47 EET] stage=stream.assembled
+• elapsed_ms=4198 finish_reason=tool_calls
+2026-01-07 18:00:48,174 [INFO] apps.llm.llm_provider: llm.trace [2026-01-07 20:00:48 EET] stage=request
+• message_count=6 model=deepseek-chat provider=DeepSeekTools streaming=True tools=['read_document', 'query_dataset', 'list_tables', 'create_case', 'update_case_status', 'update_case_details', 'add_case_history', 'flag_escalation', 'create_customer', 'update_customer', 'create_lead', 'create_appointment']
+2026-01-07 18:00:52,981 [INFO] apps.llm.llm_provider: llm.trace [2026-01-07 20:00:52 EET] stage=stream.assembled
+• elapsed_ms=4300 finish_reason=tool_calls first_delta_ms=820
+2026-01-07 18:00:53,280 [INFO] apps.llm.llm_provider: llm.trace [2026-01-07 20:00:53 EET] stage=request
+• message_count=8 model=deepseek-chat provider=DeepSeekTools streaming=True tools=['read_document', 'query_dataset', 'list_tables', 'create_case', 'update_case_status', 'update_case_details', 'add_case_history', 'flag_escalation', 'create_customer', 'update_customer', 'create_lead', 'create_appointment']
+2026-01-07 18:00:57,913 [INFO] apps.llm.llm_provider: llm.trace [2026-01-07 20:00:57 EET] stage=stream.assembled
+• elapsed_ms=4145 finish_reason=tool_calls first_delta_ms=564
+2026-01-07 18:00:57,935 [INFO] apps.llm.llm_provider: llm.trace [2026-01-07 20:00:57 EET] stage=request
+• message_count=14 model=deepseek-chat provider=DeepSeekTools streaming=True tools=['read_document', 'query_dataset', 'list_tables', 'create_case', 'update_case_status', 'update_case_details', 'add_case_history', 'flag_escalation', 'create_customer', 'update_customer', 'create_lead', 'create_appointment']
+2026-01-07 18:01:03,118 [INFO] apps.llm.llm_provider: llm.trace [2026-01-07 20:01:03 EET] stage=stream.assembled
+• elapsed_ms=4784 finish_reason=tool_calls first_delta_ms=1299
+2026-01-07 18:18:19,140 [INFO] apps.llm.llm_provider: llm.trace [2026-01-07 20:18:19 EET] stage=request
+• message_count=4 model=deepseek-chat provider=DeepSeekTools streaming=True tools=['search_knowledge', 'read_document', 'query_dataset', 'list_tables', 'create_case', 'update_case_status', 'update_case_details', 'add_case_history', 'flag_escalation', 'create_customer', 'update_customer', 'create_lead', 'create_appointment']
+2026-01-07 18:18:22,610 [INFO] apps.llm.llm_provider: llm.trace [2026-01-07 20:18:22 EET] stage=stream.assembled
+• elapsed_ms=2687 finish_reason=tool_calls first_delta_ms=946
+2026-01-07 18:18:27,202 [INFO] apps.llm.llm_provider: llm.trace [2026-01-07 20:18:27 EET] stage=request
+• message_count=10 model=deepseek-chat provider=DeepSeekTools streaming=True tools=['query_dataset', 'list_tables', 'create_case', 'update_case_status', 'update_case_details', 'add_case_history', 'flag_escalation', 'create_customer', 'update_customer', 'create_lead', 'create_appointment']
+2026-01-07 18:18:34,898 [INFO] apps.llm.llm_provider: llm.trace [2026-01-07 20:18:34 EET] stage=stream.assembled
+• elapsed_ms=7123 finish_reason=stop first_delta_ms=732
+2026-01-07 18:18:35,179 [INFO] apps.llm.llm_provider: llm.trace [2026-01-07 20:18:35 EET] stage=request
+• message_count=2 model=deepseek-chat provider=DeepSeekTools streaming=False tools=[]
+2026-01-07 18:18:43,037 [INFO] apps.llm.llm_provider: llm.trace [2026-01-07 20:18:43 EET] stage=usage
+• completion_tokens=237 model=deepseek-chat prompt_tokens=1119 provider=DeepSeekTools total_tokens=1356
+2026-01-07 18:18:53,719 [INFO] apps.llm.llm_provider: llm.trace [2026-01-07 20:18:53 EET] stage=request
+• message_count=6 model=deepseek-chat provider=DeepSeekTools streaming=True tools=['search_knowledge', 'read_document', 'query_dataset', 'list_tables', 'create_case', 'update_case_status', 'update_case_details', 'add_case_history', 'flag_escalation', 'create_customer', 'update_customer', 'create_lead', 'create_appointment']
+2026-01-07 18:18:56,649 [INFO] apps.llm.llm_provider: llm.trace [2026-01-07 20:18:56 EET] stage=stream.assembled
+• elapsed_ms=2432 finish_reason=tool_calls
+2026-01-07 18:19:00,483 [INFO] apps.llm.llm_provider: llm.trace [2026-01-07 20:19:00 EET] stage=request
+• message_count=8 model=deepseek-chat provider=DeepSeekTools streaming=True tools=['read_document', 'query_dataset', 'list_tables', 'create_case', 'update_case_status', 'update_case_details', 'add_case_history', 'flag_escalation', 'create_customer', 'update_customer', 'create_lead', 'create_appointment']
+2026-01-07 18:19:05,386 [INFO] apps.llm.llm_provider: llm.trace [2026-01-07 20:19:05 EET] stage=stream.assembled
+• elapsed_ms=4475 finish_reason=stop first_delta_ms=1119
+2026-01-07 18:19:05,634 [INFO] apps.llm.llm_provider: llm.trace [2026-01-07 20:19:05 EET] stage=request
+• message_count=2 model=deepseek-chat provider=DeepSeekTools streaming=False tools=[]
+2026-01-07 18:19:07,377 [INFO] apps.llm.llm_provider: llm.trace [2026-01-07 20:19:07 EET] stage=usage
+• completion_tokens=23 model=deepseek-chat prompt_tokens=921 provider=DeepSeekTools total_tokens=944
+2026-01-07 18:19:20,379 [INFO] apps.llm.llm_provider: llm.trace [2026-01-07 20:19:20 EET] stage=request
+• message_count=8 model=deepseek-chat provider=DeepSeekTools streaming=True tools=['search_knowledge', 'read_document', 'query_dataset', 'list_tables', 'create_case', 'update_case_status', 'update_case_details', 'add_case_history', 'flag_escalation', 'create_customer', 'update_customer', 'create_lead', 'create_appointment']
+2026-01-07 18:19:23,123 [INFO] apps.llm.llm_provider: llm.trace [2026-01-07 20:19:23 EET] stage=stream.assembled
+• elapsed_ms=2252 finish_reason=tool_calls
+2026-01-07 18:19:26,944 [INFO] apps.llm.llm_provider: llm.trace [2026-01-07 20:19:26 EET] stage=request
+• message_count=9 model=deepseek-chat provider=DeepSeekTools streaming=True tools=['read_document', 'query_dataset', 'list_tables', 'create_case', 'update_case_status', 'update_case_details', 'add_case_history', 'flag_escalation', 'create_customer', 'update_customer', 'create_lead', 'create_appointment']
+2026-01-07 18:19:31,198 [INFO] apps.llm.llm_provider: llm.trace [2026-01-07 20:19:31 EET] stage=stream.assembled
+• elapsed_ms=3779 finish_reason=tool_calls
+2026-01-07 18:19:31,258 [INFO] apps.llm.llm_provider: llm.trace [2026-01-07 20:19:31 EET] stage=request
+• message_count=9 model=deepseek-chat provider=DeepSeekTools streaming=True tools=['read_document', 'query_dataset', 'list_tables', 'create_case', 'update_case_status', 'update_case_details', 'add_case_history', 'flag_escalation', 'create_customer', 'update_customer', 'create_lead', 'create_appointment']
+2026-01-07 18:19:37,052 [INFO] apps.llm.llm_provider: llm.trace [2026-01-07 20:19:37 EET] stage=stream.assembled
+• elapsed_ms=5243 finish_reason=tool_calls first_delta_ms=1454
+2026-01-07 18:19:37,317 [INFO] apps.llm.llm_provider: llm.trace [2026-01-07 20:19:37 EET] stage=request
+• message_count=8 model=deepseek-chat provider=DeepSeekTools streaming=True tools=['read_document', 'query_dataset', 'list_tables', 'create_case', 'update_case_status', 'update_case_details', 'add_case_history', 'flag_escalation', 'create_customer', 'update_customer', 'create_lead', 'create_appointment']
+2026-01-07 18:19:41,247 [INFO] apps.llm.llm_provider: llm.trace [2026-01-07 20:19:41 EET] stage=stream.assembled
+• elapsed_ms=3479 finish_reason=tool_calls first_delta_ms=594
+2026-01-07 18:19:41,299 [INFO] apps.llm.llm_provider: llm.trace [2026-01-07 20:19:41 EET] stage=request
+• message_count=15 model=deepseek-chat provider=DeepSeekTools streaming=True tools=[]
+2026-01-07 18:19:47,351 [INFO] apps.llm.llm_provider: llm.trace [2026-01-07 20:19:47 EET] stage=stream.assembled
+• elapsed_ms=5382 finish_reason=stop first_delta_ms=1307
+2026-01-07 18:19:47,601 [INFO] apps.llm.llm_provider: llm.trace [2026-01-07 20:19:47 EET] stage=request
+• message_count=2 model=deepseek-chat provider=DeepSeekTools streaming=False tools=[]
+2026-01-07 18:19:49,506 [INFO] apps.llm.llm_provider: llm.trace [2026-01-07 20:19:49 EET] stage=usage
+• completion_tokens=19 model=deepseek-chat prompt_tokens=1196 provider=DeepSeekTools total_tokens=1215
+2026-01-07 18:19:49,506 [INFO] apps.llm.llm_provider: llm.trace [2026-01-07 20:19:49 EET] stage=latency
+• elapsed_ms=1904 model=deepseek-chat provider=deepseek_tools streaming=False
+2026-01-07 18:42:44,791 [INFO] apps.llm.llm_provider: llm.trace [2026-01-07 20:42:44 EET] stage=request
+• message_count=4 model=gpt-4o-mini provider=OpenAITools streaming=True tools=['search_knowledge', 'read_document', 'query_dataset', 'list_tables', 'create_case', 'update_case_status', 'update_case_details', 'add_case_history', 'flag_escalation', 'create_customer', 'update_customer', 'create_lead', 'create_appointment']
+2026-01-07 18:42:47,303 [INFO] apps.llm.llm_provider: llm.trace [2026-01-07 20:42:47 EET] stage=stream.assembled
+• elapsed_ms=277 finish_reason=stop first_delta_ms=78
+2026-01-07 18:42:49,738 [INFO] apps.llm.llm_provider: llm.trace [2026-01-07 20:42:49 EET] stage=stream.tokens
+• model=gpt-4o-mini tokens=9
+2026-01-07 18:42:57,509 [INFO] apps.llm.llm_provider: llm.trace [2026-01-07 20:42:57 EET] stage=request
+• message_count=6 model=gpt-4o-mini provider=OpenAITools streaming=True tools=['search_knowledge', 'read_document', 'query_dataset', 'list_tables', 'create_case', 'update_case_status', 'update_case_details', 'add_case_history', 'flag_escalation', 'create_customer', 'update_customer', 'create_lead', 'create_appointment']
+2026-01-07 18:42:59,666 [INFO] apps.llm.llm_provider: llm.trace [2026-01-07 20:42:59 EET] stage=stream.assembled
+• elapsed_ms=781 finish_reason=stop first_delta_ms=98
+2026-01-07 18:42:59,670 [INFO] apps.llm.llm_provider: llm.trace [2026-01-07 20:42:59 EET] stage=stream.tokens
+• model=gpt-4o-mini tokens=21
+2026-01-07 18:42:59,715 [INFO] apps.llm.llm_provider: llm.trace [2026-01-07 20:42:59 EET] stage=request
+• message_count=2 model=gpt-4o-mini provider=OpenAITools streaming=False tools=[]
+2026-01-07 18:43:01,545 [INFO] apps.llm.llm_provider: llm.trace [2026-01-07 20:43:01 EET] stage=usage
+• completion_tokens=11 model=gpt-4o-mini prompt_tokens=777 provider=OpenAITools total_tokens=788
+2026-01-07 18:43:01,546 [INFO] apps.llm.llm_provider: llm.trace [2026-01-07 20:43:01 EET] stage=latency
+• elapsed_ms=1829 model=gpt-4o-mini provider=openai_tools streaming=False
+2026-01-07 18:43:06,108 [INFO] apps.llm.llm_provider: llm.trace [2026-01-07 20:43:06 EET] stage=request
+• message_count=8 model=gpt-4o-mini provider=OpenAITools streaming=True tools=['search_knowledge', 'read_document', 'query_dataset', 'list_tables', 'create_case', 'update_case_status', 'update_case_details', 'add_case_history', 'flag_escalation', 'create_customer', 'update_customer', 'create_lead', 'create_appointment']
+2026-01-07 18:43:08,052 [INFO] apps.llm.llm_provider: llm.trace [2026-01-07 20:43:08 EET] stage=stream.assembled
+• elapsed_ms=518 finish_reason=stop first_delta_ms=39
+2026-01-07 18:43:08,055 [INFO] apps.llm.llm_provider: llm.trace [2026-01-07 20:43:08 EET] stage=stream.tokens
+• model=gpt-4o-mini tokens=31
+2026-01-07 18:43:08,101 [INFO] apps.llm.llm_provider: llm.trace [2026-01-07 20:43:08 EET] stage=request
+• message_count=2 model=gpt-4o-mini provider=OpenAITools streaming=False tools=[]
+2026-01-07 18:43:09,091 [INFO] apps.llm.llm_provider: llm.trace [2026-01-07 20:43:09 EET] stage=usage
+• completion_tokens=11 model=gpt-4o-mini prompt_tokens=786 provider=OpenAITools total_tokens=797
+2026-01-07 18:43:09,092 [INFO] apps.llm.llm_provider: llm.trace [2026-01-07 20:43:09 EET] stage=latency
+• elapsed_ms=989 model=gpt-4o-mini provider=openai_tools streaming=False
+2026-01-07 18:43:23,296 [INFO] apps.llm.llm_provider: llm.trace [2026-01-07 20:43:23 EET] stage=request
+• message_count=9 model=gpt-4o-mini provider=OpenAITools streaming=True tools=['search_knowledge', 'read_document', 'query_dataset', 'list_tables', 'create_case', 'update_case_status', 'update_case_details', 'add_case_history', 'flag_escalation', 'create_customer', 'update_customer', 'create_lead', 'create_appointment']
+2026-01-07 18:43:25,423 [INFO] apps.llm.llm_provider: llm.trace [2026-01-07 20:43:25 EET] stage=stream.assembled
+• elapsed_ms=325 finish_reason=stop first_delta_ms=24
+2026-01-07 18:43:25,426 [INFO] apps.llm.llm_provider: llm.trace [2026-01-07 20:43:25 EET] stage=stream.tokens
+• model=gpt-4o-mini tokens=21
+2026-01-07 18:43:25,467 [INFO] apps.llm.llm_provider: llm.trace [2026-01-07 20:43:25 EET] stage=request
+• message_count=2 model=gpt-4o-mini provider=OpenAITools streaming=False tools=[]
+2026-01-07 18:43:27,689 [INFO] apps.llm.llm_provider: llm.trace [2026-01-07 20:43:27 EET] stage=usage
+• completion_tokens=11 model=gpt-4o-mini prompt_tokens=784 provider=OpenAITools total_tokens=795
+2026-01-07 18:43:27,689 [INFO] apps.llm.llm_provider: llm.trace [2026-01-07 20:43:27 EET] stage=latency
+• elapsed_ms=2221 model=gpt-4o-mini provider=openai_tools streaming=False
+2026-01-07 18:43:36,806 [INFO] apps.llm.llm_provider: llm.trace [2026-01-07 20:43:36 EET] stage=request
+• message_count=9 model=gpt-4o-mini provider=OpenAITools streaming=True tools=['search_knowledge', 'read_document', 'query_dataset', 'list_tables', 'create_case', 'update_case_status', 'update_case_details', 'add_case_history', 'flag_escalation', 'create_customer', 'update_customer', 'create_lead', 'create_appointment']
+2026-01-07 18:43:39,108 [INFO] apps.llm.llm_provider: llm.trace [2026-01-07 20:43:39 EET] stage=stream.assembled
+• elapsed_ms=82 finish_reason=tool_calls
+2026-01-07 18:43:44,893 [INFO] apps.llm.llm_provider: llm.trace [2026-01-07 20:43:44 EET] stage=request
+• message_count=13 model=gpt-4o-mini provider=OpenAITools streaming=True tools=['query_dataset', 'list_tables', 'create_case', 'update_case_status', 'update_case_details', 'add_case_history', 'flag_escalation', 'create_customer', 'update_customer', 'create_lead', 'create_appointment']
+2026-01-07 18:43:48,783 [INFO] apps.llm.llm_provider: llm.trace [2026-01-07 20:43:48 EET] stage=stream.assembled
+• elapsed_ms=1440 finish_reason=tool_calls
+2026-01-07 18:43:48,788 [INFO] apps.llm.llm_provider: llm.trace [2026-01-07 20:43:48 EET] stage=request
+• message_count=13 model=gpt-4o-mini provider=OpenAITools streaming=True tools=['query_dataset', 'list_tables', 'create_case', 'update_case_status', 'update_case_details', 'add_case_history', 'flag_escalation', 'create_customer', 'update_customer', 'create_lead', 'create_appointment']
+2026-01-07 18:43:51,826 [INFO] apps.llm.llm_provider: llm.trace [2026-01-07 20:43:51 EET] stage=stream.assembled
+• elapsed_ms=1741 finish_reason=stop first_delta_ms=0
+2026-01-07 18:43:51,828 [INFO] apps.llm.llm_provider: llm.trace [2026-01-07 20:43:51 EET] stage=stream.tokens
+• model=gpt-4o-mini tokens=77
+2026-01-07 18:43:52,108 [INFO] apps.llm.llm_provider: llm.trace [2026-01-07 20:43:52 EET] stage=request
+• message_count=2 model=gpt-4o-mini provider=OpenAITools streaming=False tools=[]
+2026-01-07 18:43:52,112 [INFO] apps.llm.llm_provider: llm.trace [2026-01-07 20:43:52 EET] stage=request
+• message_count=2 model=gpt-4o-mini provider=OpenAITools streaming=False tools=[]
+2026-01-07 18:43:53,573 [INFO] apps.llm.llm_provider: llm.trace [2026-01-07 20:43:53 EET] stage=usage
+• completion_tokens=43 model=gpt-4o-mini prompt_tokens=1001 provider=OpenAITools total_tokens=1044
+2026-01-07 18:43:53,573 [INFO] apps.llm.llm_provider: llm.trace [2026-01-07 20:43:53 EET] stage=latency
+• elapsed_ms=1460 model=gpt-4o-mini provider=openai_tools streaming=False
+2026-01-07 18:43:55,207 [INFO] apps.llm.llm_provider: llm.trace [2026-01-07 20:43:55 EET] stage=usage
+• completion_tokens=47 model=gpt-4o-mini prompt_tokens=277 provider=OpenAITools total_tokens=324
+2026-01-07 18:43:55,208 [INFO] apps.llm.llm_provider: llm.trace [2026-01-07 20:43:55 EET] stage=latency
+• elapsed_ms=3098 model=gpt-4o-mini provider=openai_tools streaming=False
+2026-01-07 18:44:16,140 [INFO] apps.llm.llm_provider: llm.trace [2026-01-07 20:44:16 EET] stage=request
+• message_count=8 model=gpt-4o-mini provider=OpenAITools streaming=True tools=['search_knowledge', 'read_document', 'query_dataset', 'list_tables', 'create_case', 'update_case_status', 'update_case_details', 'add_case_history', 'flag_escalation', 'create_customer', 'update_customer', 'create_lead', 'create_appointment']
+2026-01-07 18:44:18,694 [INFO] apps.llm.llm_provider: llm.trace [2026-01-07 20:44:18 EET] stage=stream.assembled
+• elapsed_ms=150 finish_reason=tool_calls
+2026-01-07 18:44:21,971 [INFO] apps.llm.llm_provider: llm.trace [2026-01-07 20:44:21 EET] stage=request
+• message_count=10 model=gpt-4o-mini provider=OpenAITools streaming=True tools=['read_document', 'query_dataset', 'list_tables', 'create_case', 'update_case_status', 'update_case_details', 'add_case_history', 'flag_escalation', 'create_customer', 'update_customer', 'create_lead', 'create_appointment']
+2026-01-07 18:44:30,395 [INFO] apps.llm.llm_provider: llm.trace [2026-01-07 20:44:30 EET] stage=stream.assembled
+• elapsed_ms=6024 finish_reason=stop first_delta_ms=51
+2026-01-07 18:44:30,401 [INFO] apps.llm.llm_provider: llm.trace [2026-01-07 20:44:30 EET] stage=stream.tokens
+• model=gpt-4o-mini tokens=202
+2026-01-07 18:44:30,658 [INFO] apps.llm.llm_provider: llm.trace [2026-01-07 20:44:30 EET] stage=request
+• message_count=2 model=gpt-4o-mini provider=OpenAITools streaming=False tools=[]
+2026-01-07 18:44:30,660 [INFO] apps.llm.llm_provider: llm.trace [2026-01-07 20:44:30 EET] stage=request
+• message_count=2 model=gpt-4o-mini provider=OpenAITools streaming=False tools=[]
+2026-01-07 18:44:32,523 [INFO] apps.llm.llm_provider: llm.trace [2026-01-07 20:44:32 EET] stage=usage
+• completion_tokens=51 model=gpt-4o-mini prompt_tokens=1226 provider=OpenAITools total_tokens=1277
+2026-01-07 18:44:32,524 [INFO] apps.llm.llm_provider: llm.trace [2026-01-07 20:44:32 EET] stage=latency
+• elapsed_ms=1862 model=gpt-4o-mini provider=openai_tools streaming=False
+2026-01-07 18:44:33,064 [INFO] apps.llm.llm_provider: llm.trace [2026-01-07 20:44:33 EET] stage=usage
+• completion_tokens=85 model=gpt-4o-mini prompt_tokens=498 provider=OpenAITools total_tokens=583
+2026-01-07 18:44:33,065 [INFO] apps.llm.llm_provider: llm.trace [2026-01-07 20:44:33 EET] stage=latency
+• elapsed_ms=2405 model=gpt-4o-mini provider=openai_tools streaming=False
+2026-01-07 18:44:54,128 [INFO] apps.llm.llm_provider: llm.trace [2026-01-07 20:44:54 EET] stage=request
+• message_count=8 model=gpt-4o-mini provider=OpenAITools streaming=True tools=['search_knowledge', 'read_document', 'query_dataset', 'list_tables', 'create_case', 'update_case_status', 'update_case_details', 'add_case_history', 'flag_escalation', 'create_customer', 'update_customer', 'create_lead', 'create_appointment']
+2026-01-07 18:44:55,886 [INFO] apps.llm.llm_provider: llm.trace [2026-01-07 20:44:55 EET] stage=stream.assembled
+• elapsed_ms=216 finish_reason=tool_calls
+2026-01-07 18:45:00,090 [INFO] apps.llm.llm_provider: llm.trace [2026-01-07 20:45:00 EET] stage=request
+• message_count=9 model=gpt-4o-mini provider=OpenAITools streaming=True tools=['read_document', 'query_dataset', 'list_tables', 'create_case', 'update_case_status', 'update_case_details', 'add_case_history', 'flag_escalation', 'create_customer', 'update_customer', 'create_lead', 'create_appointment']
+2026-01-07 18:45:03,119 [INFO] apps.llm.llm_provider: llm.trace [2026-01-07 20:45:03 EET] stage=stream.assembled
+• elapsed_ms=1846 finish_reason=stop first_delta_ms=40
+2026-01-07 18:45:03,127 [INFO] apps.llm.llm_provider: llm.trace [2026-01-07 20:45:03 EET] stage=stream.tokens
+• model=gpt-4o-mini tokens=81
+2026-01-07 18:45:03,372 [INFO] apps.llm.llm_provider: llm.trace [2026-01-07 20:45:03 EET] stage=request
+• message_count=2 model=gpt-4o-mini provider=OpenAITools streaming=False tools=[]
+2026-01-07 18:45:03,374 [INFO] apps.llm.llm_provider: llm.trace [2026-01-07 20:45:03 EET] stage=request
+• message_count=2 model=gpt-4o-mini provider=OpenAITools streaming=False tools=[]
+2026-01-07 18:45:05,046 [INFO] apps.llm.llm_provider: llm.trace [2026-01-07 20:45:05 EET] stage=usage
+• completion_tokens=11 model=gpt-4o-mini prompt_tokens=1092 provider=OpenAITools total_tokens=1103
+2026-01-07 18:45:05,046 [INFO] apps.llm.llm_provider: llm.trace [2026-01-07 20:45:05 EET] stage=latency
+• elapsed_ms=1671 model=gpt-4o-mini provider=openai_tools streaming=False
+2026-01-07 18:45:06,748 [INFO] apps.llm.llm_provider: llm.trace [2026-01-07 20:45:06 EET] stage=usage
+• completion_tokens=113 model=gpt-4o-mini prompt_tokens=431 provider=OpenAITools total_tokens=544
+2026-01-07 18:45:06,749 [INFO] apps.llm.llm_provider: llm.trace [2026-01-07 20:45:06 EET] stage=latency
+• elapsed_ms=3376 model=gpt-4o-mini provider=openai_tools streaming=False
+2026-01-07 18:45:19,259 [INFO] apps.llm.llm_provider: llm.trace [2026-01-07 20:45:19 EET] stage=request
+• message_count=8 model=gpt-4o-mini provider=OpenAITools streaming=True tools=['search_knowledge', 'read_document', 'query_dataset', 'list_tables', 'create_case', 'update_case_status', 'update_case_details', 'add_case_history', 'flag_escalation', 'create_customer', 'update_customer', 'create_lead', 'create_appointment']
+2026-01-07 18:45:20,918 [INFO] apps.llm.llm_provider: llm.trace [2026-01-07 20:45:20 EET] stage=stream.assembled
+• elapsed_ms=202 finish_reason=tool_calls
+2026-01-07 18:45:25,266 [INFO] apps.llm.llm_provider: llm.trace [2026-01-07 20:45:25 EET] stage=request
+• message_count=7 model=gpt-4o-mini provider=OpenAITools streaming=True tools=['read_document', 'query_dataset', 'list_tables', 'create_case', 'update_case_status', 'update_case_details', 'add_case_history', 'flag_escalation', 'create_customer', 'update_customer', 'create_lead', 'create_appointment']
+2026-01-07 18:45:32,183 [INFO] apps.llm.llm_provider: llm.trace [2026-01-07 20:45:32 EET] stage=stream.assembled
+• elapsed_ms=5616 finish_reason=stop first_delta_ms=57
+2026-01-07 18:45:32,197 [INFO] apps.llm.llm_provider: llm.trace [2026-01-07 20:45:32 EET] stage=stream.tokens
+• model=gpt-4o-mini tokens=294
+2026-01-07 18:45:32,479 [INFO] apps.llm.llm_provider: llm.trace [2026-01-07 20:45:32 EET] stage=request
+• message_count=2 model=gpt-4o-mini provider=OpenAITools streaming=False tools=[]
+2026-01-07 18:45:32,482 [INFO] apps.llm.llm_provider: llm.trace [2026-01-07 20:45:32 EET] stage=request
+• message_count=2 model=gpt-4o-mini provider=OpenAITools streaming=False tools=[]
+2026-01-07 18:45:33,409 [INFO] apps.llm.llm_provider: llm.trace [2026-01-07 20:45:33 EET] stage=usage
+• completion_tokens=11 model=gpt-4o-mini prompt_tokens=1293 provider=OpenAITools total_tokens=1304
+2026-01-07 18:45:33,409 [INFO] apps.llm.llm_provider: llm.trace [2026-01-07 20:45:33 EET] stage=latency
+• elapsed_ms=926 model=gpt-4o-mini provider=openai_tools streaming=False
+2026-01-07 18:45:36,280 [INFO] apps.llm.llm_provider: llm.trace [2026-01-07 20:45:36 EET] stage=usage
+• completion_tokens=154 model=gpt-4o-mini prompt_tokens=613 provider=OpenAITools total_tokens=767
+2026-01-07 18:45:36,280 [INFO] apps.llm.llm_provider: llm.trace [2026-01-07 20:45:36 EET] stage=latency
+• elapsed_ms=3800 model=gpt-4o-mini provider=openai_tools streaming=False
+2026-01-07 18:45:43,699 [INFO] apps.llm.llm_provider: llm.trace [2026-01-07 20:45:43 EET] stage=request
+• message_count=8 model=gpt-4o-mini provider=OpenAITools streaming=True tools=['search_knowledge', 'read_document', 'query_dataset', 'list_tables', 'create_case', 'update_case_status', 'update_case_details', 'add_case_history', 'flag_escalation', 'create_customer', 'update_customer', 'create_lead', 'create_appointment']
+2026-01-07 18:45:45,882 [INFO] apps.llm.llm_provider: llm.trace [2026-01-07 20:45:45 EET] stage=stream.assembled
+• elapsed_ms=1005 finish_reason=stop first_delta_ms=0
+2026-01-07 18:45:45,887 [INFO] apps.llm.llm_provider: llm.trace [2026-01-07 20:45:45 EET] stage=stream.tokens
+• model=gpt-4o-mini tokens=50
+2026-01-07 18:45:45,934 [INFO] apps.llm.llm_provider: llm.trace [2026-01-07 20:45:45 EET] stage=request
+• message_count=2 model=gpt-4o-mini provider=OpenAITools streaming=False tools=[]
+2026-01-07 18:45:45,935 [INFO] apps.llm.llm_provider: llm.trace [2026-01-07 20:45:45 EET] stage=request
+• message_count=2 model=gpt-4o-mini provider=OpenAITools streaming=False tools=[]
+2026-01-07 18:45:47,831 [INFO] apps.llm.llm_provider: llm.trace [2026-01-07 20:45:47 EET] stage=usage
+• completion_tokens=50 model=gpt-4o-mini prompt_tokens=810 provider=OpenAITools total_tokens=860
+2026-01-07 18:45:47,831 [INFO] apps.llm.llm_provider: llm.trace [2026-01-07 20:45:47 EET] stage=latency
+• elapsed_ms=1895 model=gpt-4o-mini provider=openai_tools streaming=False
+2026-01-07 18:45:50,406 [INFO] apps.llm.llm_provider: llm.trace [2026-01-07 20:45:50 EET] stage=usage
+• completion_tokens=197 model=gpt-4o-mini prompt_tokens=467 provider=OpenAITools total_tokens=664
+2026-01-07 18:45:50,407 [INFO] apps.llm.llm_provider: llm.trace [2026-01-07 20:45:50 EET] stage=latency
+• elapsed_ms=4472 model=gpt-4o-mini provider=openai_tools streaming=False
+2026-01-07 18:45:53,974 [INFO] apps.llm.llm_provider: llm.trace [2026-01-07 20:45:53 EET] stage=request
+• message_count=8 model=gpt-4o-mini provider=OpenAITools streaming=True tools=['search_knowledge', 'read_document', 'query_dataset', 'list_tables', 'create_case', 'update_case_status', 'update_case_details', 'add_case_history', 'flag_escalation', 'create_customer', 'update_customer', 'create_lead', 'create_appointment']
+2026-01-07 18:45:55,175 [INFO] apps.llm.llm_provider: llm.trace [2026-01-07 20:45:55 EET] stage=stream.assembled
+• elapsed_ms=59 finish_reason=tool_calls
+2026-01-07 18:45:59,750 [INFO] apps.llm.llm_provider: llm.trace [2026-01-07 20:45:59 EET] stage=request
+• message_count=9 model=gpt-4o-mini provider=OpenAITools streaming=True tools=['read_document', 'query_dataset', 'list_tables', 'create_case', 'update_case_status', 'update_case_details', 'add_case_history', 'flag_escalation', 'create_customer', 'update_customer', 'create_lead', 'create_appointment']
+2026-01-07 18:46:02,742 [INFO] apps.llm.llm_provider: llm.trace [2026-01-07 20:46:02 EET] stage=stream.assembled
+• elapsed_ms=1685 finish_reason=stop first_delta_ms=16
+2026-01-07 18:46:02,748 [INFO] apps.llm.llm_provider: llm.trace [2026-01-07 20:46:02 EET] stage=stream.tokens
+• model=gpt-4o-mini tokens=94
+2026-01-07 18:46:02,981 [INFO] apps.llm.llm_provider: llm.trace [2026-01-07 20:46:02 EET] stage=request
+• message_count=2 model=gpt-4o-mini provider=OpenAITools streaming=False tools=[]
+2026-01-07 18:46:02,984 [INFO] apps.llm.llm_provider: llm.trace [2026-01-07 20:46:02 EET] stage=request
+• message_count=2 model=gpt-4o-mini provider=OpenAITools streaming=False tools=[]
+2026-01-07 18:46:04,130 [INFO] apps.llm.llm_provider: llm.trace [2026-01-07 20:46:04 EET] stage=usage
+• completion_tokens=11 model=gpt-4o-mini prompt_tokens=1001 provider=OpenAITools total_tokens=1012
+2026-01-07 18:46:04,131 [INFO] apps.llm.llm_provider: llm.trace [2026-01-07 20:46:04 EET] stage=latency
+• elapsed_ms=1146 model=gpt-4o-mini provider=openai_tools streaming=False
+2026-01-07 18:46:08,537 [INFO] apps.llm.llm_provider: llm.trace [2026-01-07 20:46:08 EET] stage=usage
+• completion_tokens=217 model=gpt-4o-mini prompt_tokens=459 provider=OpenAITools total_tokens=676
+2026-01-07 18:46:08,537 [INFO] apps.llm.llm_provider: llm.trace [2026-01-07 20:46:08 EET] stage=latency
+• elapsed_ms=5555 model=gpt-4o-mini provider=openai_tools streaming=False
+2026-01-07 19:01:36,174 [INFO] apps.llm.llm_provider: llm.trace [2026-01-07 21:01:36 EET] stage=request
+• message_count=4 model=gpt-4o-mini provider=OpenAITools streaming=True tools=['search_knowledge', 'read_document', 'query_dataset', 'list_tables', 'create_case', 'update_case_status', 'update_case_details', 'add_case_history', 'flag_escalation', 'create_customer', 'update_customer', 'create_lead', 'create_appointment']
+2026-01-07 19:01:38,004 [INFO] apps.llm.llm_provider: llm.trace [2026-01-07 21:01:38 EET] stage=stream.assembled
+• elapsed_ms=4 finish_reason=tool_calls
+2026-01-07 19:01:42,364 [INFO] apps.llm.llm_provider: llm.trace [2026-01-07 21:01:42 EET] stage=request
+• message_count=6 model=gpt-4o-mini provider=OpenAITools streaming=True tools=['query_dataset', 'list_tables', 'create_case', 'update_case_status', 'update_case_details', 'add_case_history', 'flag_escalation', 'create_customer', 'update_customer', 'create_lead', 'create_appointment']
+2026-01-07 19:01:45,971 [INFO] apps.llm.llm_provider: llm.trace [2026-01-07 21:01:45 EET] stage=stream.assembled
+• elapsed_ms=2201 finish_reason=stop first_delta_ms=32
+2026-01-07 19:01:46,244 [INFO] apps.llm.llm_provider: llm.trace [2026-01-07 21:01:46 EET] stage=stream.tokens
+• model=gpt-4o-mini tokens=123
+2026-01-07 19:01:46,480 [INFO] apps.llm.llm_provider: llm.trace [2026-01-07 21:01:46 EET] stage=request
+• message_count=2 model=gpt-4o-mini provider=OpenAITools streaming=False tools=[]
+2026-01-07 19:01:47,929 [INFO] apps.llm.llm_provider: llm.trace [2026-01-07 21:01:47 EET] stage=usage
+• completion_tokens=25 model=gpt-4o-mini prompt_tokens=1109 provider=OpenAITools total_tokens=1134
+2026-01-07 19:01:47,929 [INFO] apps.llm.llm_provider: llm.trace [2026-01-07 21:01:47 EET] stage=latency
+• elapsed_ms=1448 model=gpt-4o-mini provider=openai_tools streaming=False
+2026-01-07 19:01:59,531 [INFO] apps.llm.llm_provider: llm.trace [2026-01-07 21:01:59 EET] stage=request
+• message_count=6 model=gpt-4o-mini provider=OpenAITools streaming=True tools=['search_knowledge', 'read_document', 'query_dataset', 'list_tables', 'create_case', 'update_case_status', 'update_case_details', 'add_case_history', 'flag_escalation', 'create_customer', 'update_customer', 'create_lead', 'create_appointment']
+2026-01-07 19:02:01,182 [INFO] apps.llm.llm_provider: llm.trace [2026-01-07 21:02:01 EET] stage=stream.assembled
+• elapsed_ms=150 finish_reason=tool_calls
+2026-01-07 19:02:04,932 [INFO] apps.llm.llm_provider: llm.trace [2026-01-07 21:02:04 EET] stage=request
+• message_count=4 model=gpt-4o-mini provider=OpenAITools streaming=True tools=['read_document', 'query_dataset', 'list_tables', 'create_case', 'update_case_status', 'update_case_details', 'add_case_history', 'flag_escalation', 'create_customer', 'update_customer', 'create_lead', 'create_appointment']
+2026-01-07 19:02:08,851 [INFO] apps.llm.llm_provider: llm.trace [2026-01-07 21:02:08 EET] stage=stream.assembled
+• elapsed_ms=1378 finish_reason=stop first_delta_ms=9
+2026-01-07 19:02:08,860 [INFO] apps.llm.llm_provider: llm.trace [2026-01-07 21:02:08 EET] stage=stream.tokens
+• model=gpt-4o-mini tokens=76
+2026-01-07 19:02:09,100 [INFO] apps.llm.llm_provider: llm.trace [2026-01-07 21:02:09 EET] stage=request
+• message_count=2 model=gpt-4o-mini provider=OpenAITools streaming=False tools=[]
+2026-01-07 19:02:10,250 [INFO] apps.llm.llm_provider: llm.trace [2026-01-07 21:02:10 EET] stage=usage
+• completion_tokens=11 model=gpt-4o-mini prompt_tokens=1000 provider=OpenAITools total_tokens=1011
+2026-01-07 19:02:10,250 [INFO] apps.llm.llm_provider: llm.trace [2026-01-07 21:02:10 EET] stage=latency
+• elapsed_ms=1149 model=gpt-4o-mini provider=openai_tools streaming=False
+2026-01-07 19:02:29,096 [INFO] apps.llm.llm_provider: llm.trace [2026-01-07 21:02:29 EET] stage=request
+• message_count=8 model=gpt-4o-mini provider=OpenAITools streaming=True tools=['search_knowledge', 'read_document', 'query_dataset', 'list_tables', 'create_case', 'update_case_status', 'update_case_details', 'add_case_history', 'flag_escalation', 'create_customer', 'update_customer', 'create_lead', 'create_appointment']
+2026-01-07 19:02:30,397 [INFO] apps.llm.llm_provider: llm.trace [2026-01-07 21:02:30 EET] stage=stream.assembled
+• elapsed_ms=126 finish_reason=tool_calls
+2026-01-07 19:02:33,707 [INFO] apps.llm.llm_provider: llm.trace [2026-01-07 21:02:33 EET] stage=request
+• message_count=13 model=gpt-4o-mini provider=OpenAITools streaming=True tools=['read_document', 'query_dataset', 'list_tables', 'create_case', 'update_case_status', 'update_case_details', 'add_case_history', 'flag_escalation', 'create_customer', 'update_customer', 'create_lead', 'create_appointment']
+2026-01-07 19:02:37,981 [INFO] apps.llm.llm_provider: llm.trace [2026-01-07 21:02:37 EET] stage=stream.assembled
+• elapsed_ms=1258 finish_reason=tool_calls
+2026-01-07 19:02:38,043 [INFO] apps.llm.llm_provider: llm.trace [2026-01-07 21:02:38 EET] stage=request
+• message_count=13 model=gpt-4o-mini provider=OpenAITools streaming=True tools=['read_document', 'query_dataset', 'list_tables', 'create_case', 'update_case_status', 'update_case_details', 'add_case_history', 'flag_escalation', 'create_customer', 'update_customer', 'create_lead', 'create_appointment']
+2026-01-07 19:02:42,705 [INFO] apps.llm.llm_provider: llm.trace [2026-01-07 21:02:42 EET] stage=stream.assembled
+• elapsed_ms=3553 finish_reason=stop first_delta_ms=39
+2026-01-07 19:02:42,710 [INFO] apps.llm.llm_provider: llm.trace [2026-01-07 21:02:42 EET] stage=stream.tokens
+• model=gpt-4o-mini tokens=197
+2026-01-07 19:02:42,955 [INFO] apps.llm.llm_provider: llm.trace [2026-01-07 21:02:42 EET] stage=request
+• message_count=2 model=gpt-4o-mini provider=OpenAITools streaming=False tools=[]
+2026-01-07 19:02:44,353 [INFO] apps.llm.llm_provider: llm.trace [2026-01-07 21:02:44 EET] stage=usage
+• completion_tokens=11 model=gpt-4o-mini prompt_tokens=1130 provider=OpenAITools total_tokens=1141
+2026-01-07 19:02:44,354 [INFO] apps.llm.llm_provider: llm.trace [2026-01-07 21:02:44 EET] stage=latency
+• elapsed_ms=1398 model=gpt-4o-mini provider=openai_tools streaming=False
+2026-01-07 19:04:39,277 [INFO] apps.llm.llm_provider: llm.trace [2026-01-07 21:04:39 EET] stage=request
+• message_count=4 model=gpt-5 provider=OpenAITools streaming=True tools=['search_knowledge', 'read_document', 'query_dataset', 'list_tables', 'create_case', 'update_case_status', 'update_case_details', 'add_case_history', 'flag_escalation', 'create_customer', 'update_customer', 'create_lead', 'create_appointment']
+2026-01-07 19:06:05,741 [INFO] apps.llm.llm_provider: llm.trace [2026-01-07 21:06:05 EET] stage=request
+• message_count=4 model=gpt-5-nano provider=OpenAITools streaming=True tools=['search_knowledge', 'read_document', 'query_dataset', 'list_tables', 'create_case', 'update_case_status', 'update_case_details', 'add_case_history', 'flag_escalation', 'create_customer', 'update_customer', 'create_lead', 'create_appointment']
+2026-01-07 19:08:50,782 [INFO] apps.llm.llm_provider: llm.trace [2026-01-07 21:08:50 EET] stage=request
+• message_count=4 model=gpt-5-nano provider=OpenAITools streaming=True tools=['search_knowledge', 'read_document', 'query_dataset', 'list_tables', 'create_case', 'update_case_status', 'update_case_details', 'add_case_history', 'flag_escalation', 'create_customer', 'update_customer', 'create_lead', 'create_appointment']
+2026-01-07 19:11:17,063 [INFO] apps.llm.llm_provider: llm.trace [2026-01-07 21:11:17 EET] stage=request
+• message_count=4 model=gpt-5-nano provider=OpenAITools streaming=True tools=['search_knowledge', 'read_document', 'query_dataset', 'list_tables', 'create_case', 'update_case_status', 'update_case_details', 'add_case_history', 'flag_escalation', 'create_customer', 'update_customer', 'create_lead', 'create_appointment']
+2026-01-07 19:11:21,514 [INFO] apps.llm.llm_provider: llm.trace [2026-01-07 21:11:21 EET] stage=stream.assembled
+• elapsed_ms=268 finish_reason=stop first_delta_ms=0
+2026-01-07 19:11:23,578 [INFO] apps.llm.llm_provider: llm.trace [2026-01-07 21:11:23 EET] stage=stream.tokens
+• model=gpt-5-nano tokens=43
+2026-01-07 19:11:35,166 [INFO] apps.llm.llm_provider: llm.trace [2026-01-07 21:11:35 EET] stage=request
+• message_count=6 model=gpt-5-nano provider=OpenAITools streaming=True tools=['search_knowledge', 'read_document', 'query_dataset', 'list_tables', 'create_case', 'update_case_status', 'update_case_details', 'add_case_history', 'flag_escalation', 'create_customer', 'update_customer', 'create_lead', 'create_appointment']
+2026-01-07 19:11:42,443 [INFO] apps.llm.llm_provider: llm.trace [2026-01-07 21:11:42 EET] stage=stream.assembled
+• elapsed_ms=407 finish_reason=tool_calls
+2026-01-07 19:11:50,382 [INFO] apps.llm.llm_provider: llm.trace [2026-01-07 21:11:50 EET] stage=request
+• message_count=12 model=gpt-5-nano provider=OpenAITools streaming=True tools=['query_dataset', 'list_tables', 'create_case', 'update_case_status', 'update_case_details', 'add_case_history', 'flag_escalation', 'create_customer', 'update_customer', 'create_lead', 'create_appointment']
+2026-01-07 19:12:22,580 [INFO] apps.llm.llm_provider: llm.trace [2026-01-07 21:12:22 EET] stage=stream.assembled
+• elapsed_ms=1253 finish_reason=stop first_delta_ms=36
+2026-01-07 19:12:22,587 [INFO] apps.llm.llm_provider: llm.trace [2026-01-07 21:12:22 EET] stage=stream.tokens
+• model=gpt-5-nano tokens=135
+2026-01-07 19:12:22,887 [INFO] apps.llm.llm_provider: llm.trace [2026-01-07 21:12:22 EET] stage=request
+• message_count=2 model=gpt-5-nano provider=OpenAITools streaming=False tools=[]
+2026-01-07 19:12:35,080 [INFO] apps.llm.llm_provider: llm.trace [2026-01-07 21:12:35 EET] stage=usage
+• completion_tokens=1756 model=gpt-5-nano prompt_tokens=929 provider=OpenAITools total_tokens=2685
+2026-01-07 19:12:35,081 [INFO] apps.llm.llm_provider: llm.trace [2026-01-07 21:12:35 EET] stage=latency
+• elapsed_ms=12193 model=gpt-5-nano provider=openai_tools streaming=False
+2026-01-07 19:12:35,203 [INFO] apps.llm.llm_provider: llm.trace [2026-01-07 21:12:35 EET] stage=request
+• message_count=8 model=gpt-5-nano provider=OpenAITools streaming=True tools=['search_knowledge', 'read_document', 'query_dataset', 'list_tables', 'create_case', 'update_case_status', 'update_case_details', 'add_case_history', 'flag_escalation', 'create_customer', 'update_customer', 'create_lead', 'create_appointment']
+2026-01-07 19:12:40,189 [INFO] apps.llm.llm_provider: llm.trace [2026-01-07 21:12:40 EET] stage=stream.assembled
+• elapsed_ms=93 finish_reason=tool_calls
+2026-01-07 19:12:43,608 [INFO] apps.llm.llm_provider: llm.trace [2026-01-07 21:12:43 EET] stage=request
+• message_count=8 model=gpt-5-nano provider=OpenAITools streaming=True tools=['read_document', 'query_dataset', 'list_tables', 'create_case', 'update_case_status', 'update_case_details', 'add_case_history', 'flag_escalation', 'create_customer', 'update_customer', 'create_lead', 'create_appointment']
+2026-01-07 19:13:21,744 [INFO] apps.llm.llm_provider: llm.trace [2026-01-07 21:13:21 EET] stage=stream.assembled
+• elapsed_ms=1403 finish_reason=tool_calls
+2026-01-07 19:13:21,756 [INFO] apps.llm.llm_provider: llm.trace [2026-01-07 21:13:21 EET] stage=request
+• message_count=6 model=gpt-5-nano provider=OpenAITools streaming=True tools=['read_document', 'query_dataset', 'list_tables', 'create_case', 'update_case_status', 'update_case_details', 'add_case_history', 'flag_escalation', 'create_customer', 'update_customer', 'create_lead', 'create_appointment']
+2026-01-07 19:14:04,351 [INFO] apps.llm.llm_provider: llm.trace [2026-01-07 21:14:04 EET] stage=stream.assembled
+• elapsed_ms=2296 finish_reason=stop first_delta_ms=0
+2026-01-07 19:14:04,372 [INFO] apps.llm.llm_provider: llm.trace [2026-01-07 21:14:04 EET] stage=stream.tokens
+• model=gpt-5-nano tokens=263
+2026-01-07 19:14:04,667 [INFO] apps.llm.llm_provider: llm.trace [2026-01-07 21:14:04 EET] stage=request
+• message_count=2 model=gpt-5-nano provider=OpenAITools streaming=False tools=[]
+2026-01-07 19:14:15,845 [INFO] apps.llm.llm_provider: llm.trace [2026-01-07 21:14:15 EET] stage=usage
+• completion_tokens=1738 model=gpt-5-nano prompt_tokens=944 provider=OpenAITools total_tokens=2682
+2026-01-07 19:14:15,846 [INFO] apps.llm.llm_provider: llm.trace [2026-01-07 21:14:15 EET] stage=latency
+• elapsed_ms=11177 model=gpt-5-nano provider=openai_tools streaming=False
+2026-01-07 19:15:35,555 [INFO] apps.llm.llm_provider: llm.trace [2026-01-07 21:15:35 EET] stage=request
+• message_count=4 model=gpt-4o-mini provider=OpenAITools streaming=True tools=['search_knowledge', 'read_document', 'query_dataset', 'list_tables', 'create_case', 'update_case_status', 'update_case_details', 'add_case_history', 'flag_escalation', 'create_customer', 'update_customer', 'create_lead', 'create_appointment']
+2026-01-07 19:15:37,380 [INFO] apps.llm.llm_provider: llm.trace [2026-01-07 21:15:37 EET] stage=stream.assembled
+• elapsed_ms=623 finish_reason=stop first_delta_ms=62
+2026-01-07 19:15:37,670 [INFO] apps.llm.llm_provider: llm.trace [2026-01-07 21:15:37 EET] stage=stream.tokens
+• model=gpt-4o-mini tokens=18
+2026-01-07 19:15:47,560 [INFO] apps.llm.llm_provider: llm.trace [2026-01-07 21:15:47 EET] stage=request
+• message_count=6 model=gpt-4o-mini provider=OpenAITools streaming=True tools=['search_knowledge', 'read_document', 'query_dataset', 'list_tables', 'create_case', 'update_case_status', 'update_case_details', 'add_case_history', 'flag_escalation', 'create_customer', 'update_customer', 'create_lead', 'create_appointment']
+2026-01-07 19:15:49,400 [INFO] apps.llm.llm_provider: llm.trace [2026-01-07 21:15:49 EET] stage=stream.assembled
+• elapsed_ms=479 finish_reason=tool_calls
+2026-01-07 19:15:55,829 [INFO] apps.llm.llm_provider: llm.trace [2026-01-07 21:15:55 EET] stage=request
+• message_count=4 model=gpt-4o-mini provider=OpenAITools streaming=True tools=['read_document', 'query_dataset', 'list_tables', 'create_case', 'update_case_status', 'update_case_details', 'add_case_history', 'flag_escalation', 'create_customer', 'update_customer', 'create_lead', 'create_appointment']
+2026-01-07 19:15:59,783 [INFO] apps.llm.llm_provider: llm.trace [2026-01-07 21:15:59 EET] stage=stream.assembled
+• elapsed_ms=3010 finish_reason=stop first_delta_ms=37
+2026-01-07 19:15:59,789 [INFO] apps.llm.llm_provider: llm.trace [2026-01-07 21:15:59 EET] stage=stream.tokens
+• model=gpt-4o-mini tokens=194
+2026-01-07 19:16:00,057 [INFO] apps.llm.llm_provider: llm.trace [2026-01-07 21:16:00 EET] stage=request
+• message_count=2 model=gpt-4o-mini provider=OpenAITools streaming=False tools=[]
+2026-01-07 19:16:01,528 [INFO] apps.llm.llm_provider: llm.trace [2026-01-07 21:16:01 EET] stage=usage
+• completion_tokens=35 model=gpt-4o-mini prompt_tokens=1222 provider=OpenAITools total_tokens=1257
+2026-01-07 19:16:01,529 [INFO] apps.llm.llm_provider: llm.trace [2026-01-07 21:16:01 EET] stage=latency
+• elapsed_ms=1471 model=gpt-4o-mini provider=openai_tools streaming=False
+2026-01-07 19:16:11,492 [INFO] apps.llm.llm_provider: llm.trace [2026-01-07 21:16:11 EET] stage=request
+• message_count=8 model=gpt-4o-mini provider=OpenAITools streaming=True tools=['search_knowledge', 'read_document', 'query_dataset', 'list_tables', 'create_case', 'update_case_status', 'update_case_details', 'add_case_history', 'flag_escalation', 'create_customer', 'update_customer', 'create_lead', 'create_appointment']
+2026-01-07 19:16:13,273 [INFO] apps.llm.llm_provider: llm.trace [2026-01-07 21:16:13 EET] stage=stream.assembled
+• elapsed_ms=110 finish_reason=tool_calls
+2026-01-07 19:16:17,798 [INFO] apps.llm.llm_provider: llm.trace [2026-01-07 21:16:17 EET] stage=request
+• message_count=6 model=gpt-4o-mini provider=OpenAITools streaming=True tools=['read_document', 'query_dataset', 'list_tables', 'create_case', 'update_case_status', 'update_case_details', 'add_case_history', 'flag_escalation', 'create_customer', 'update_customer', 'create_lead', 'create_appointment']
+2026-01-07 19:16:22,021 [INFO] apps.llm.llm_provider: llm.trace [2026-01-07 21:16:22 EET] stage=stream.assembled
+• elapsed_ms=3028 finish_reason=stop first_delta_ms=47
+2026-01-07 19:16:22,032 [INFO] apps.llm.llm_provider: llm.trace [2026-01-07 21:16:22 EET] stage=stream.tokens
+• model=gpt-4o-mini tokens=163
+2026-01-07 19:16:22,283 [INFO] apps.llm.llm_provider: llm.trace [2026-01-07 21:16:22 EET] stage=request
+• message_count=2 model=gpt-4o-mini provider=OpenAITools streaming=False tools=[]
+2026-01-07 19:16:23,840 [INFO] apps.llm.llm_provider: llm.trace [2026-01-07 21:16:23 EET] stage=usage
+• completion_tokens=33 model=gpt-4o-mini prompt_tokens=1171 provider=OpenAITools total_tokens=1204
+2026-01-07 19:16:23,840 [INFO] apps.llm.llm_provider: llm.trace [2026-01-07 21:16:23 EET] stage=latency
+• elapsed_ms=1556 model=gpt-4o-mini provider=openai_tools streaming=False
+2026-01-07 19:16:38,955 [INFO] apps.llm.llm_provider: llm.trace [2026-01-07 21:16:38 EET] stage=request
+• message_count=9 model=gpt-4o-mini provider=OpenAITools streaming=True tools=['search_knowledge', 'read_document', 'query_dataset', 'list_tables', 'create_case', 'update_case_status', 'update_case_details', 'add_case_history', 'flag_escalation', 'create_customer', 'update_customer', 'create_lead', 'create_appointment']
+2026-01-07 19:16:40,316 [INFO] apps.llm.llm_provider: llm.trace [2026-01-07 21:16:40 EET] stage=stream.assembled
+• elapsed_ms=175 finish_reason=tool_calls
+2026-01-07 19:16:44,350 [INFO] apps.llm.llm_provider: llm.trace [2026-01-07 21:16:44 EET] stage=request
+• message_count=4 model=gpt-4o-mini provider=OpenAITools streaming=True tools=['read_document', 'query_dataset', 'list_tables', 'create_case', 'update_case_status', 'update_case_details', 'add_case_history', 'flag_escalation', 'create_customer', 'update_customer', 'create_lead', 'create_appointment']
+2026-01-07 19:16:48,209 [INFO] apps.llm.llm_provider: llm.trace [2026-01-07 21:16:48 EET] stage=stream.assembled
+• elapsed_ms=2765 finish_reason=stop first_delta_ms=4
+2026-01-07 19:16:48,219 [INFO] apps.llm.llm_provider: llm.trace [2026-01-07 21:16:48 EET] stage=stream.tokens
+• model=gpt-4o-mini tokens=120
+2026-01-07 19:16:48,521 [INFO] apps.llm.llm_provider: llm.trace [2026-01-07 21:16:48 EET] stage=request
+• message_count=2 model=gpt-4o-mini provider=OpenAITools streaming=False tools=[]
+2026-01-07 19:16:49,950 [INFO] apps.llm.llm_provider: llm.trace [2026-01-07 21:16:49 EET] stage=usage
+• completion_tokens=31 model=gpt-4o-mini prompt_tokens=1003 provider=OpenAITools total_tokens=1034
+2026-01-07 19:16:49,950 [INFO] apps.llm.llm_provider: llm.trace [2026-01-07 21:16:49 EET] stage=latency
+• elapsed_ms=1428 model=gpt-4o-mini provider=openai_tools streaming=False
+2026-01-07 19:18:39,634 [INFO] apps.llm.llm_provider: llm.trace [2026-01-07 21:18:39 EET] stage=request
+• message_count=9 model=gpt-4o-mini provider=OpenAITools streaming=True tools=['search_knowledge', 'read_document', 'query_dataset', 'list_tables', 'create_case', 'update_case_status', 'update_case_details', 'add_case_history', 'flag_escalation', 'create_customer', 'update_customer', 'create_lead', 'create_appointment']
+2026-01-07 19:18:40,015 [INFO] apps.llm.llm_provider: llm.trace [2026-01-07 21:18:40 EET] stage=request
+• message_count=4 model=gpt-4o-mini provider=OpenAITools streaming=True tools=['search_knowledge', 'read_document', 'query_dataset', 'list_tables', 'create_case', 'update_case_status', 'update_case_details', 'add_case_history', 'flag_escalation', 'create_customer', 'update_customer', 'create_lead', 'create_appointment']
+2026-01-07 19:18:41,636 [INFO] apps.llm.llm_provider: llm.trace [2026-01-07 21:18:41 EET] stage=stream.assembled
+• elapsed_ms=327 finish_reason=stop first_delta_ms=101
+2026-01-07 19:18:41,645 [INFO] apps.llm.llm_provider: llm.trace [2026-01-07 21:18:41 EET] stage=stream.tokens
+• model=gpt-4o-mini tokens=9
+2026-01-07 19:18:42,049 [INFO] apps.llm.llm_provider: llm.trace [2026-01-07 21:18:42 EET] stage=stream.assembled
+• elapsed_ms=1196 finish_reason=stop first_delta_ms=76
+2026-01-07 19:18:42,052 [INFO] apps.llm.llm_provider: llm.trace [2026-01-07 21:18:42 EET] stage=stream.tokens
+• model=gpt-4o-mini tokens=65
+2026-01-07 19:18:42,090 [INFO] apps.llm.llm_provider: llm.trace [2026-01-07 21:18:42 EET] stage=request
+• message_count=2 model=gpt-4o-mini provider=OpenAITools streaming=False tools=[]
+2026-01-07 19:18:42,093 [INFO] apps.llm.llm_provider: llm.trace [2026-01-07 21:18:42 EET] stage=request
+• message_count=2 model=gpt-4o-mini provider=OpenAITools streaming=False tools=[]
+2026-01-07 19:18:43,852 [INFO] apps.llm.llm_provider: llm.trace [2026-01-07 21:18:43 EET] stage=usage
+• completion_tokens=35 model=gpt-4o-mini prompt_tokens=850 provider=OpenAITools total_tokens=885
+2026-01-07 19:18:43,853 [INFO] apps.llm.llm_provider: llm.trace [2026-01-07 21:18:43 EET] stage=latency
+• elapsed_ms=1757 model=gpt-4o-mini provider=openai_tools streaming=False
+2026-01-07 19:18:45,703 [INFO] apps.llm.llm_provider: llm.trace [2026-01-07 21:18:45 EET] stage=usage
+• completion_tokens=89 model=gpt-4o-mini prompt_tokens=361 provider=OpenAITools total_tokens=450
+2026-01-07 19:18:45,703 [INFO] apps.llm.llm_provider: llm.trace [2026-01-07 21:18:45 EET] stage=latency
+• elapsed_ms=3608 model=gpt-4o-mini provider=openai_tools streaming=False
+2026-01-07 19:19:35,232 [INFO] apps.llm.llm_provider: llm.trace [2026-01-07 21:19:35 EET] stage=request
+• message_count=6 model=gpt-4o-mini provider=OpenAITools streaming=True tools=['search_knowledge', 'read_document', 'query_dataset', 'list_tables', 'create_case', 'update_case_status', 'update_case_details', 'add_case_history', 'flag_escalation', 'create_customer', 'update_customer', 'create_lead', 'create_appointment']
+2026-01-07 19:19:36,579 [INFO] apps.llm.llm_provider: llm.trace [2026-01-07 21:19:36 EET] stage=stream.assembled
+• elapsed_ms=144 finish_reason=tool_calls
+2026-01-07 19:19:36,850 [INFO] apps.llm.llm_provider: llm.trace [2026-01-07 21:19:36 EET] stage=request
+• message_count=12 model=gpt-4o-mini provider=OpenAITools streaming=True tools=['read_document', 'query_dataset', 'list_tables', 'create_case', 'update_case_status', 'update_case_details', 'add_case_history', 'flag_escalation', 'create_customer', 'update_customer', 'create_lead', 'create_appointment']
+2026-01-07 19:19:39,039 [INFO] apps.llm.llm_provider: llm.trace [2026-01-07 21:19:39 EET] stage=stream.assembled
+• elapsed_ms=733 finish_reason=tool_calls
+2026-01-07 19:19:39,556 [INFO] apps.llm.llm_provider: llm.trace [2026-01-07 21:19:39 EET] stage=request
+• message_count=13 model=gpt-4o-mini provider=OpenAITools streaming=True tools=['read_document', 'query_dataset', 'list_tables', 'create_case', 'update_case_status', 'update_case_details', 'add_case_history', 'flag_escalation', 'create_customer', 'update_customer', 'create_lead', 'create_appointment']
+2026-01-07 19:19:41,370 [INFO] apps.llm.llm_provider: llm.trace [2026-01-07 21:19:41 EET] stage=stream.assembled
+• elapsed_ms=955 finish_reason=stop first_delta_ms=39
+2026-01-07 19:19:41,381 [INFO] apps.llm.llm_provider: llm.trace [2026-01-07 21:19:41 EET] stage=stream.tokens
+• model=gpt-4o-mini tokens=41
+2026-01-07 19:19:41,418 [INFO] apps.llm.llm_provider: llm.trace [2026-01-07 21:19:41 EET] stage=request
+• message_count=2 model=gpt-4o-mini provider=OpenAITools streaming=False tools=[]
+2026-01-07 19:19:42,994 [INFO] apps.llm.llm_provider: llm.trace [2026-01-07 21:19:42 EET] stage=usage
+• completion_tokens=38 model=gpt-4o-mini prompt_tokens=876 provider=OpenAITools total_tokens=914
+2026-01-07 19:19:42,994 [INFO] apps.llm.llm_provider: llm.trace [2026-01-07 21:19:42 EET] stage=latency
+• elapsed_ms=1575 model=gpt-4o-mini provider=openai_tools streaming=False
+2026-01-07 19:19:51,511 [INFO] apps.llm.llm_provider: llm.trace [2026-01-07 21:19:51 EET] stage=request
+• message_count=8 model=gpt-4o-mini provider=OpenAITools streaming=True tools=['search_knowledge', 'read_document', 'query_dataset', 'list_tables', 'create_case', 'update_case_status', 'update_case_details', 'add_case_history', 'flag_escalation', 'create_customer', 'update_customer', 'create_lead', 'create_appointment']
+2026-01-07 19:19:53,230 [INFO] apps.llm.llm_provider: llm.trace [2026-01-07 21:19:53 EET] stage=stream.assembled
+• elapsed_ms=295 finish_reason=tool_calls
+2026-01-07 19:19:53,401 [INFO] apps.llm.llm_provider: llm.trace [2026-01-07 21:19:53 EET] stage=request
+• message_count=13 model=gpt-4o-mini provider=OpenAITools streaming=True tools=['read_document', 'query_dataset', 'list_tables', 'create_case', 'update_case_status', 'update_case_details', 'add_case_history', 'flag_escalation', 'create_customer', 'update_customer', 'create_lead', 'create_appointment']
+2026-01-07 19:19:55,302 [INFO] apps.llm.llm_provider: llm.trace [2026-01-07 21:19:55 EET] stage=stream.assembled
+• elapsed_ms=577 finish_reason=tool_calls
+2026-01-07 19:19:55,594 [INFO] apps.llm.llm_provider: llm.trace [2026-01-07 21:19:55 EET] stage=request
+• message_count=13 model=gpt-4o-mini provider=OpenAITools streaming=True tools=['read_document', 'query_dataset', 'list_tables', 'create_case', 'update_case_status', 'update_case_details', 'add_case_history', 'flag_escalation', 'create_customer', 'update_customer', 'create_lead', 'create_appointment']
+2026-01-07 19:19:57,479 [INFO] apps.llm.llm_provider: llm.trace [2026-01-07 21:19:57 EET] stage=stream.assembled
+• elapsed_ms=722 finish_reason=tool_calls
+2026-01-07 19:19:57,655 [INFO] apps.llm.llm_provider: llm.trace [2026-01-07 21:19:57 EET] stage=request
+• message_count=14 model=gpt-4o-mini provider=OpenAITools streaming=True tools=['read_document', 'query_dataset', 'list_tables', 'create_case', 'update_case_status', 'update_case_details', 'add_case_history', 'flag_escalation', 'create_customer', 'update_customer', 'create_lead', 'create_appointment']
+2026-01-07 19:19:59,231 [INFO] apps.llm.llm_provider: llm.trace [2026-01-07 21:19:59 EET] stage=stream.assembled
+• elapsed_ms=649 finish_reason=tool_calls
+2026-01-07 19:19:59,428 [INFO] apps.llm.llm_provider: llm.trace [2026-01-07 21:19:59 EET] stage=request
+• message_count=14 model=gpt-4o-mini provider=OpenAITools streaming=True tools=['read_document', 'query_dataset', 'list_tables', 'create_case', 'update_case_status', 'update_case_details', 'add_case_history', 'flag_escalation', 'create_customer', 'update_customer', 'create_lead', 'create_appointment']
+2026-01-07 19:20:01,013 [INFO] apps.llm.llm_provider: llm.trace [2026-01-07 21:20:01 EET] stage=stream.assembled
+• elapsed_ms=840 finish_reason=stop first_delta_ms=42
+2026-01-07 19:20:01,017 [INFO] apps.llm.llm_provider: llm.trace [2026-01-07 21:20:01 EET] stage=stream.tokens
+• model=gpt-4o-mini tokens=59
+2026-01-07 19:20:01,069 [INFO] apps.llm.llm_provider: llm.trace [2026-01-07 21:20:01 EET] stage=request
+• message_count=2 model=gpt-4o-mini provider=OpenAITools streaming=False tools=[]
+2026-01-07 19:20:02,226 [INFO] apps.llm.llm_provider: llm.trace [2026-01-07 21:20:02 EET] stage=usage
+• completion_tokens=11 model=gpt-4o-mini prompt_tokens=900 provider=OpenAITools total_tokens=911
+2026-01-07 19:20:02,227 [INFO] apps.llm.llm_provider: llm.trace [2026-01-07 21:20:02 EET] stage=latency
+• elapsed_ms=1157 model=gpt-4o-mini provider=openai_tools streaming=False
+2026-01-07 19:20:17,575 [INFO] apps.llm.llm_provider: llm.trace [2026-01-07 21:20:17 EET] stage=request
+• message_count=9 model=gpt-4o-mini provider=OpenAITools streaming=True tools=['search_knowledge', 'read_document', 'query_dataset', 'list_tables', 'create_case', 'update_case_status', 'update_case_details', 'add_case_history', 'flag_escalation', 'create_customer', 'update_customer', 'create_lead', 'create_appointment']
+2026-01-07 19:20:18,684 [INFO] apps.llm.llm_provider: llm.trace [2026-01-07 21:20:18 EET] stage=stream.assembled
+• elapsed_ms=198 finish_reason=tool_calls
+2026-01-07 19:20:18,741 [INFO] apps.llm.llm_provider: llm.trace [2026-01-07 21:20:18 EET] stage=request
+• message_count=13 model=gpt-4o-mini provider=OpenAITools streaming=True tools=['read_document', 'query_dataset', 'list_tables', 'create_case', 'update_case_status', 'update_case_details', 'add_case_history', 'flag_escalation', 'create_customer', 'update_customer', 'create_lead', 'create_appointment']
+2026-01-07 19:20:20,594 [INFO] apps.llm.llm_provider: llm.trace [2026-01-07 21:20:20 EET] stage=stream.assembled
+• elapsed_ms=687 finish_reason=tool_calls
+2026-01-07 19:20:21,076 [INFO] apps.llm.llm_provider: llm.trace [2026-01-07 21:20:21 EET] stage=request
+• message_count=13 model=gpt-4o-mini provider=OpenAITools streaming=True tools=['read_document', 'query_dataset', 'list_tables', 'create_case', 'update_case_status', 'update_case_details', 'add_case_history', 'flag_escalation', 'create_customer', 'update_customer', 'create_lead', 'create_appointment']
+2026-01-07 19:20:22,976 [INFO] apps.llm.llm_provider: llm.trace [2026-01-07 21:20:22 EET] stage=stream.assembled
+• elapsed_ms=909 finish_reason=stop first_delta_ms=71
+2026-01-07 19:20:22,981 [INFO] apps.llm.llm_provider: llm.trace [2026-01-07 21:20:22 EET] stage=stream.tokens
+• model=gpt-4o-mini tokens=45
+2026-01-07 19:20:23,037 [INFO] apps.llm.llm_provider: llm.trace [2026-01-07 21:20:23 EET] stage=request
+• message_count=2 model=gpt-4o-mini provider=OpenAITools streaming=False tools=[]
+2026-01-07 19:20:24,736 [INFO] apps.llm.llm_provider: llm.trace [2026-01-07 21:20:24 EET] stage=usage
+• completion_tokens=31 model=gpt-4o-mini prompt_tokens=881 provider=OpenAITools total_tokens=912
+2026-01-07 19:20:24,736 [INFO] apps.llm.llm_provider: llm.trace [2026-01-07 21:20:24 EET] stage=latency
+• elapsed_ms=1698 model=gpt-4o-mini provider=openai_tools streaming=False
+2026-01-07 19:20:46,713 [INFO] apps.llm.llm_provider: llm.trace [2026-01-07 21:20:46 EET] stage=request
+• message_count=9 model=gpt-4o-mini provider=OpenAITools streaming=True tools=['search_knowledge', 'read_document', 'query_dataset', 'list_tables', 'create_case', 'update_case_status', 'update_case_details', 'add_case_history', 'flag_escalation', 'create_customer', 'update_customer', 'create_lead', 'create_appointment']
+2026-01-07 19:20:48,625 [INFO] apps.llm.llm_provider: llm.trace [2026-01-07 21:20:48 EET] stage=stream.assembled
+• elapsed_ms=425 finish_reason=stop first_delta_ms=26
+2026-01-07 19:20:48,627 [INFO] apps.llm.llm_provider: llm.trace [2026-01-07 21:20:48 EET] stage=stream.tokens
+• model=gpt-4o-mini tokens=27
+2026-01-07 19:20:48,662 [INFO] apps.llm.llm_provider: llm.trace [2026-01-07 21:20:48 EET] stage=request
+• message_count=2 model=gpt-4o-mini provider=OpenAITools streaming=False tools=[]
+2026-01-07 19:20:48,666 [INFO] apps.llm.llm_provider: llm.trace [2026-01-07 21:20:48 EET] stage=request
+• message_count=2 model=gpt-4o-mini provider=OpenAITools streaming=False tools=[]
+2026-01-07 19:20:49,816 [INFO] apps.llm.llm_provider: llm.trace [2026-01-07 21:20:49 EET] stage=usage
+• completion_tokens=11 model=gpt-4o-mini prompt_tokens=798 provider=OpenAITools total_tokens=809
+2026-01-07 19:20:49,817 [INFO] apps.llm.llm_provider: llm.trace [2026-01-07 21:20:49 EET] stage=latency
+• elapsed_ms=1149 model=gpt-4o-mini provider=openai_tools streaming=False
+2026-01-07 19:20:50,836 [INFO] apps.llm.llm_provider: llm.trace [2026-01-07 21:20:50 EET] stage=usage
+• completion_tokens=57 model=gpt-4o-mini prompt_tokens=309 provider=OpenAITools total_tokens=366
+2026-01-07 19:20:50,836 [INFO] apps.llm.llm_provider: llm.trace [2026-01-07 21:20:50 EET] stage=latency
+• elapsed_ms=2173 model=gpt-4o-mini provider=openai_tools streaming=False
+2026-01-07 19:20:56,049 [INFO] apps.llm.llm_provider: llm.trace [2026-01-07 21:20:56 EET] stage=request
+• message_count=8 model=gpt-4o-mini provider=OpenAITools streaming=True tools=['search_knowledge', 'read_document', 'query_dataset', 'list_tables', 'create_case', 'update_case_status', 'update_case_details', 'add_case_history', 'flag_escalation', 'create_customer', 'update_customer', 'create_lead', 'create_appointment']
+2026-01-07 19:20:57,336 [INFO] apps.llm.llm_provider: llm.trace [2026-01-07 21:20:57 EET] stage=stream.assembled
+• elapsed_ms=120 finish_reason=tool_calls
+2026-01-07 19:21:01,884 [INFO] apps.llm.llm_provider: llm.trace [2026-01-07 21:21:01 EET] stage=request
+• message_count=9 model=gpt-4o-mini provider=OpenAITools streaming=True tools=['read_document', 'query_dataset', 'list_tables', 'create_case', 'update_case_status', 'update_case_details', 'add_case_history', 'flag_escalation', 'create_customer', 'update_customer', 'create_lead', 'create_appointment']
+2026-01-07 19:21:04,435 [INFO] apps.llm.llm_provider: llm.trace [2026-01-07 21:21:04 EET] stage=stream.assembled
+• elapsed_ms=1040 finish_reason=stop first_delta_ms=110
+2026-01-07 19:21:04,440 [INFO] apps.llm.llm_provider: llm.trace [2026-01-07 21:21:04 EET] stage=stream.tokens
+• model=gpt-4o-mini tokens=31
+2026-01-07 19:21:04,707 [INFO] apps.llm.llm_provider: llm.trace [2026-01-07 21:21:04 EET] stage=request
+• message_count=2 model=gpt-4o-mini provider=OpenAITools streaming=False tools=[]
+2026-01-07 19:21:04,710 [INFO] apps.llm.llm_provider: llm.trace [2026-01-07 21:21:04 EET] stage=request
+• message_count=2 model=gpt-4o-mini provider=OpenAITools streaming=False tools=[]
+2026-01-07 19:21:05,765 [INFO] apps.llm.llm_provider: llm.trace [2026-01-07 21:21:05 EET] stage=usage
+• completion_tokens=11 model=gpt-4o-mini prompt_tokens=1018 provider=OpenAITools total_tokens=1029
+2026-01-07 19:21:05,765 [INFO] apps.llm.llm_provider: llm.trace [2026-01-07 21:21:05 EET] stage=latency
+• elapsed_ms=1053 model=gpt-4o-mini provider=openai_tools streaming=False
+2026-01-07 19:21:08,044 [INFO] apps.llm.llm_provider: llm.trace [2026-01-07 21:21:08 EET] stage=usage
+• completion_tokens=68 model=gpt-4o-mini prompt_tokens=345 provider=OpenAITools total_tokens=413
+2026-01-07 19:21:08,045 [INFO] apps.llm.llm_provider: llm.trace [2026-01-07 21:21:08 EET] stage=latency
+• elapsed_ms=3336 model=gpt-4o-mini provider=openai_tools streaming=False

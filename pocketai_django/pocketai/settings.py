@@ -276,11 +276,13 @@ INGEST_MAX_JSON_ENTITY_CANDIDATES = int(os.getenv("INGEST_MAX_JSON_ENTITY_CANDID
 # INGEST_ALIAS_WARNING_THRESHOLD: Warn when alias extraction exceeds this count (signals noisy ingestion).
 INGEST_ALIAS_WARNING_THRESHOLD = int(os.getenv("INGEST_ALIAS_WARNING_THRESHOLD", "2000"))
 # RAG_MAX_SNIPPETS_PER_SEARCH: Max snippets returned from a single search_knowledge call.
-RAG_MAX_SNIPPETS_PER_SEARCH = int(os.getenv("RAG_MAX_SNIPPETS_PER_SEARCH", "3"))
+# Increased from 3 to 8 to support comprehensive queries on table-heavy documents.
+RAG_MAX_SNIPPETS_PER_SEARCH = int(os.getenv("RAG_MAX_SNIPPETS_PER_SEARCH", "8"))
 # RAG_ALIAS_MAX_CHUNKS_PER_UPLOAD: Per-upload cap for alias/identifier chunks in retrieval.
-RAG_ALIAS_MAX_CHUNKS_PER_UPLOAD = int(os.getenv("RAG_ALIAS_MAX_CHUNKS_PER_UPLOAD", "2"))
+RAG_ALIAS_MAX_CHUNKS_PER_UPLOAD = int(os.getenv("RAG_ALIAS_MAX_CHUNKS_PER_UPLOAD", "3"))
 # RAG_ANN_MAX_CHUNKS_PER_UPLOAD: Per-upload cap for ANN/vector chunks in retrieval.
-RAG_ANN_MAX_CHUNKS_PER_UPLOAD = int(os.getenv("RAG_ANN_MAX_CHUNKS_PER_UPLOAD", "3"))
+# Increased from 3 to 6 to allow more table rows per document in results.
+RAG_ANN_MAX_CHUNKS_PER_UPLOAD = int(os.getenv("RAG_ANN_MAX_CHUNKS_PER_UPLOAD", "6"))
 # RAG_SEARCH_PREVIEW_CHAR_LIMIT: Max characters of preview text included in snippet evidence.
 RAG_SEARCH_PREVIEW_CHAR_LIMIT = int(os.getenv("RAG_SEARCH_PREVIEW_CHAR_LIMIT", "800"))
 # RAG_FTS_ENABLED: Enable lexical (Postgres FTS) retrieval stage.
@@ -302,11 +304,13 @@ except (TypeError, ValueError):
 if RAG_DB_LOCK_TIMEOUT_MS < 0:
     RAG_DB_LOCK_TIMEOUT_MS = 0
 # RAG_RERANK_POOL: Candidate pool size considered for reranking.
-RAG_RERANK_POOL = int(os.getenv("RAG_RERANK_POOL", "60"))
+# Reduced from 60 to 30 to cut rerank latency (was taking 4+ seconds).
+RAG_RERANK_POOL = int(os.getenv("RAG_RERANK_POOL", "30"))
 # RAG_RERANK_BUDGET_MS: Max time budget (ms) for reranking stage (0 disables budget enforcement).
-RAG_RERANK_BUDGET_MS = int(os.getenv("RAG_RERANK_BUDGET_MS", "0"))
+# Default 2000ms prevents reranking from dominating search latency.
+RAG_RERANK_BUDGET_MS = int(os.getenv("RAG_RERANK_BUDGET_MS", "2000"))
 # RAG_SNIPPET_RERANK_BUDGET_MS: Max time budget (ms) for snippet-level reranking (0 disables).
-RAG_SNIPPET_RERANK_BUDGET_MS = int(os.getenv("RAG_SNIPPET_RERANK_BUDGET_MS", "0"))
+RAG_SNIPPET_RERANK_BUDGET_MS = int(os.getenv("RAG_SNIPPET_RERANK_BUDGET_MS", "1000"))
 # RAG_MMR_LAMBDA: MMR diversity/quality tradeoff (0..1; higher = less diversity).
 RAG_MMR_LAMBDA = float(os.getenv("RAG_MMR_LAMBDA", "0.7"))
 # RAG_VECTOR_DISTANCE_CEILING: Maximum allowed vector distance for accepting candidates (lower = stricter).

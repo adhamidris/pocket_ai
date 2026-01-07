@@ -1143,6 +1143,7 @@ class KnowledgeSearchService:
             "tabular_table_count": table_context.get("table_count"),
             "tabular_table_uploads": table_context.get("table_uploads"),
             "tabular_allow_generic": bool(table_context.get("allow_generic")),
+            "tabular_comprehensive_intent": bool(table_context.get("comprehensive_intent")),
             "alias_short_circuit_blocked": alias_blocked,
             "table_reason": None,
             "chunk_candidate_count": 0,
@@ -1312,7 +1313,10 @@ class KnowledgeSearchService:
         # Hierarchical table retrieval: expand parent/preview chunks to row chunks for table-intent queries.
         # Row chunks contain actual answer data (e.g., "EGP 500") while parent chunks often have OCR noise.
         # This enables: table discovery → row expansion → answer from rows (parents for context only).
-        if table_intent and chunk_hits:
+        # EXCEPTION: For comprehensive queries ("list all cards", "every product"), keep preview chunks
+        # as they contain the full table structure needed for enumeration/comparison answers.
+        comprehensive_intent = bool(table_context.get("comprehensive_intent"))
+        if table_intent and not comprehensive_intent and chunk_hits:
             # Check if parent/preview chunks are present in top candidates
             parent_preview_present = any(
                 (hit.chunk.metadata or {}).get("table_chunk_role") == "parent" or
@@ -3966,11 +3970,29 @@ class KnowledgeSearchService:
         has_percent = "%" in query_text
         numeric_table_intent = bool(traits.has_digits and (has_currency_token or has_percent))
         has_intent = bool(matched_keywords or matched_columns_query or matched_columns_tokens or numeric_table_intent)
+
+        # Comprehensive intent: user wants full table overview, not specific row lookup.
+        # For these queries, keep table preview chunks instead of expanding to individual rows.
+        # This is industry-agnostic - works for any tenant's domain (finance, retail, healthcare, etc.)
+        #
+        # Logic:
+        #   - "list all products" → comprehensive (enumeration keyword, no specific row)
+        #   - "show everything" → comprehensive
+        #   - "Gold card fees" → specific (matches "Gold" row label, no enumeration keyword)
+        #   - "compare all plans" → comprehensive (enumeration keyword)
+        #
+        comprehensive_keywords = {"all", "every", "everything", "list", "compare", "comparison", "full", "complete", "entire", "whole", "show"}
+        has_comprehensive_keyword = bool(tokens & comprehensive_keywords)
+        # Comprehensive = enumeration keyword present AND no specific row was identified
+        # If a row label matches, user likely wants that specific row even with "show" keyword
+        comprehensive_intent = has_comprehensive_keyword and not matched_row_labels
+
         allow_generic = bool(table_profile.get("dominant") and matched_keywords)
         if matched_row_labels:
             allow_generic = True
         return {
             "has_intent": has_intent,
+            "comprehensive_intent": comprehensive_intent,
             "matched_columns": matched_columns,
             "matched_columns_query": matched_columns_query,
             "matched_columns_tokens": matched_columns_tokens,

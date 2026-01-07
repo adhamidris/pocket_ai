@@ -189,6 +189,79 @@ def _tool_activity_present(stream_context: StreamingTurnContext | None) -> bool:
     return False
 
 
+# Tools that purely retrieve knowledge (no CRM side effects)
+_KNOWLEDGE_ONLY_TOOLS = frozenset({
+    "search_knowledge",
+    "read_document",
+    "read_knowledge",
+    "table_aggregate",
+    "dataset_query",
+    "query_dataset",
+    "list_tables",
+})
+
+# CRM tools that need planner for action extraction
+_CRM_TOOLS = frozenset({
+    "create_case",
+    "update_case_details",
+    "add_case_history",
+    "create_lead",
+    "create_customer",
+    "update_customer",
+    "get_customer",
+})
+
+
+def _has_crm_signals(stream_context: StreamingTurnContext | None, user_message: str) -> bool:
+    """
+    Detect if this turn has CRM-related signals that warrant running the planner.
+
+    Returns True if:
+    - CRM tools were called (create_case, create_lead, etc.)
+    - Non-knowledge tools were called
+    - User message contains identifiers (email, phone, digits)
+    - User message contains complaint/escalation signals
+    """
+    # Check tool trace for CRM or non-knowledge tools
+    if stream_context:
+        tool_context = getattr(stream_context, "tool_context", None)
+        if tool_context:
+            tool_trace = getattr(tool_context, "tool_trace", [])
+            if isinstance(tool_trace, list):
+                for entry in tool_trace:
+                    if not isinstance(entry, dict):
+                        continue
+                    tool_name = entry.get("tool", "")
+                    # If any CRM tool was called, definitely need planner
+                    if tool_name in _CRM_TOOLS:
+                        return True
+                    # If tool is not knowledge-only, might have side effects
+                    if tool_name and tool_name not in _KNOWLEDGE_ONLY_TOOLS:
+                        return True
+            # Check for identifier filters (indicates customer data was involved)
+            identifier_filters = getattr(tool_context, "identifier_filters", None)
+            if identifier_filters:
+                return True
+
+    # Check message for CRM signals
+    lowered = (user_message or "").lower()
+    # Identifiers (email, phone, digits) suggest action requests
+    if any(ch.isdigit() for ch in lowered):
+        return True
+    if "@" in lowered:  # Email pattern
+        return True
+    # Complaint/escalation keywords
+    crm_keywords = {
+        "complaint", "complain", "angry", "frustrated", "escalate",
+        "manager", "supervisor", "refund", "cancel", "urgent",
+        "problem", "issue", "broken", "not working", "help me",
+    }
+    if any(kw in lowered for kw in crm_keywords):
+        return True
+
+    return False
+
+
 def _business_planner_override(business: BusinessProfile | None) -> bool | None:
     if not business:
         return None
@@ -215,10 +288,18 @@ def _planner_decision(
     override = _business_planner_override(getattr(conversation, "business_profile", None))
     if override is not None:
         return override, "business_override" if not override else None
-    if _tool_activity_present(stream_context):
-        return True, None
+    # Skip planner for low intent messages (greetings, etc.)
     if _is_low_intent_message(user_message):
         return False, "low_intent"
+    # Only run planner if CRM signals are present (not just any tool activity)
+    # This saves ~9s latency for pure knowledge Q&A turns
+    if _has_crm_signals(stream_context, user_message):
+        return True, None
+    # Knowledge-only turns don't need planner
+    if _tool_activity_present(stream_context):
+        return False, "knowledge_only"
+    # No tool activity and no CRM signals - default to running planner
+    # (might be a complex intent that didn't trigger tools)
     return True, None
 
 

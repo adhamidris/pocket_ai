@@ -3422,8 +3422,11 @@ class McpOrchestratorService:
 
         if normalized_name == "read_document":
             for key in ("document_id", "page", "mode", "mode_downgraded", "token_budget", "throttle_notice"):
-                if key in payload and payload.get(key) not in {None, ""}:
-                    compact[key] = payload.get(key)
+                if key in payload:
+                    value = payload.get(key)
+                    # Handle both hashable (str, int) and unhashable (dict) values
+                    if value is not None and value != "":
+                        compact[key] = value
             raw_snippets = payload.get("snippets")
             snippets_out = []
             if isinstance(raw_snippets, list):
