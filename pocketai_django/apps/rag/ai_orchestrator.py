@@ -1468,6 +1468,19 @@ class KnowledgeSearchService:
                 },
             )
             table_start = time.perf_counter()
+            comprehensive_flag = bool(table_context.get("comprehensive_intent"))
+            _rag_log(
+                "table.search_call",
+                {
+                    "query": traits.normalized or traits.original,
+                    "comprehensive_intent_passed": comprehensive_flag,
+                    "table_context_comprehensive": table_context.get("comprehensive_intent"),
+                    "table_reason": table_reason,
+                    "limit": limit,
+                },
+                indent=2,
+                context={"business": business_profile.id},
+            )
             table_snippets = self._table_search_snippets(
                 business_profile=business_profile,
                 query_text=traits.normalized or traits.original,
@@ -1476,6 +1489,7 @@ class KnowledgeSearchService:
                 allowed_upload_ids=allowed_upload_ids,
                 allowed_collection_ids=allowed_collection_ids,
                 allowed_explicit_upload_ids=allowed_explicit_upload_ids,
+                comprehensive_intent=comprehensive_flag,
             )
             table_duration_ms = int((time.perf_counter() - table_start) * 1000)
             diagnostics["table_duration_ms"] = table_duration_ms
@@ -2521,6 +2535,7 @@ class KnowledgeSearchService:
                 normalized_query,
                 str(limit),
                 "table" if table_context.get("has_intent") else "chunk",
+                "comprehensive" if table_context.get("comprehensive_intent") else "specific",
                 "hybrid" if feature_state.hybrid_search else "lexical_only",
                 "alias_on" if feature_state.alias_lookup else "alias_off",
                 "alias_short" if alias_result and alias_result.short_circuit else "alias_none",
@@ -3986,9 +4001,24 @@ class KnowledgeSearchService:
         #
         comprehensive_keywords = {"all", "every", "everything", "list", "compare", "comparison", "full", "complete", "entire", "whole", "show"}
         has_comprehensive_keyword = bool(tokens & comprehensive_keywords)
+        matched_comprehensive_tokens = tokens & comprehensive_keywords
         # Comprehensive = enumeration keyword present AND no specific row was identified
         # If a row label matches, user likely wants that specific row even with "show" keyword
         comprehensive_intent = has_comprehensive_keyword and not matched_row_labels
+
+        # DEBUG: Log comprehensive intent detection
+        _rag_log(
+            "table.comprehensive_detection",
+            {
+                "query_tokens": list(tokens)[:20],
+                "matched_comprehensive_tokens": list(matched_comprehensive_tokens),
+                "has_comprehensive_keyword": has_comprehensive_keyword,
+                "matched_row_labels": list(matched_row_labels)[:10] if matched_row_labels else [],
+                "comprehensive_intent_result": comprehensive_intent,
+            },
+            indent=2,
+            context={"business": business_profile.id if business_profile else None},
+        )
 
         allow_generic = bool(table_profile.get("dominant") and matched_keywords)
         if matched_row_labels:
@@ -4491,11 +4521,26 @@ class KnowledgeSearchService:
         allowed_upload_ids: Sequence[uuid.UUID] | None = None,
         allowed_collection_ids: Sequence[uuid.UUID] | None = None,
         allowed_explicit_upload_ids: Sequence[uuid.UUID] | None = None,
+        comprehensive_intent: bool = False,
     ) -> tuple[KnowledgeSnippet, ...]:
         normalized_query = (query_text or "").strip()
         if not normalized_query:
             return tuple()
         row_cap = self._table_row_result_cap_for_business(business_profile)
+
+        # DEBUG: Log entry into _table_search_snippets
+        _rag_log(
+            "table.search_snippets_entry",
+            {
+                "query": normalized_query[:100],
+                "comprehensive_intent_received": comprehensive_intent,
+                "row_cap": row_cap,
+                "limit": limit,
+                "matched_columns": list(matched_columns)[:10] if matched_columns else [],
+            },
+            indent=3,
+            context={"business": business_profile.id},
+        )
         total_keywords = (
             "total",
             "sum",
@@ -4581,9 +4626,13 @@ class KnowledgeSearchService:
             .order_by("-sim")
             .select_related("row__table__upload")
         )
-        top_cells = list(cell_qs[: row_cap * 3])
+        # For comprehensive queries, collect more candidates to enable table diversification
+        candidate_limit = row_cap * 5 if comprehensive_intent else row_cap * 3
+        top_cells = list(cell_qs[:candidate_limit])
         row_priority: list[uuid.UUID] = []
         cell_diag: dict[uuid.UUID, dict[str, object]] = {}
+        # Track table_id for each row to enable round-robin diversification
+        row_to_table: dict[uuid.UUID, uuid.UUID] = {}
 
         if top_cells:
             for cell in top_cells:
@@ -4599,9 +4648,12 @@ class KnowledgeSearchService:
                     "column_key": cell.column_key,
                     "value": cell.raw_text,
                     "similarity": similarity,
+                    "table_id": table.id,
                 }
                 row_priority.append(row.id)
-                if len(row_priority) >= row_cap:
+                row_to_table[row.id] = table.id
+                # For comprehensive queries, don't break early - collect more for diversification
+                if not comprehensive_intent and len(row_priority) >= row_cap:
                     break
         else:
             # Fallback: match on row.raw_text when no individual cell is similar enough.
@@ -4639,7 +4691,8 @@ class KnowledgeSearchService:
                 .order_by("-sim")
                 .select_related("table__upload")
             )
-            top_rows = list(row_qs[:row_cap])
+            fallback_limit = row_cap * 5 if comprehensive_intent else row_cap
+            top_rows = list(row_qs[:fallback_limit])
             for row in top_rows:
                 if not row or not row.id or row.id in cell_diag:
                     continue
@@ -4652,13 +4705,121 @@ class KnowledgeSearchService:
                     "column_key": None,
                     "value": row.raw_text,
                     "similarity": similarity,
+                    "table_id": table.id,
                 }
                 row_priority.append(row.id)
-                if len(row_priority) >= row_cap:
+                row_to_table[row.id] = table.id
+                # For comprehensive queries, don't break early - collect more for diversification
+                if not comprehensive_intent and len(row_priority) >= row_cap:
                     break
 
         if not row_priority:
+            _rag_log(
+                "table.search_snippets_no_candidates",
+                {"comprehensive_intent": comprehensive_intent, "query": normalized_query[:50]},
+                indent=3,
+                context={"business": business_profile.id},
+            )
             return tuple()
+
+        # DEBUG: Log collected candidates BEFORE diversification
+        table_distribution_before: dict[str, int] = {}
+        for rid in row_priority:
+            tid = row_to_table.get(rid)
+            if tid:
+                key = str(tid)[:8]
+                table_distribution_before[key] = table_distribution_before.get(key, 0) + 1
+        _rag_log(
+            "table.candidates_collected",
+            {
+                "comprehensive_intent": comprehensive_intent,
+                "total_candidates": len(row_priority),
+                "distinct_tables": len(set(row_to_table.values())),
+                "table_distribution": table_distribution_before,
+                "row_cap": row_cap,
+            },
+            indent=3,
+            context={"business": business_profile.id},
+        )
+
+        # Apply round-robin diversification for comprehensive queries ("list all X", "every Y")
+        # This ensures results are spread across multiple tables rather than dominated by one table
+        if comprehensive_intent and len(row_to_table) > 0:
+            distinct_tables = set(row_to_table.values())
+            _rag_log(
+                "table.diversification_check",
+                {
+                    "comprehensive_intent": comprehensive_intent,
+                    "distinct_tables_count": len(distinct_tables),
+                    "will_diversify": len(distinct_tables) > 1,
+                },
+                indent=3,
+                context={"business": business_profile.id},
+            )
+            if len(distinct_tables) > 1:
+                # Group rows by table, preserving similarity order within each table
+                rows_by_table: dict[uuid.UUID, list[uuid.UUID]] = {}
+                for row_id in row_priority:
+                    table_id = row_to_table.get(row_id)
+                    if table_id:
+                        if table_id not in rows_by_table:
+                            rows_by_table[table_id] = []
+                        rows_by_table[table_id].append(row_id)
+
+                # Round-robin selection across tables
+                diversified_priority: list[uuid.UUID] = []
+                table_queues = {tid: list(rows) for tid, rows in rows_by_table.items()}
+                table_order = list(table_queues.keys())  # Stable order
+
+                while len(diversified_priority) < row_cap and table_queues:
+                    for table_id in list(table_order):
+                        if table_id not in table_queues:
+                            continue
+                        queue = table_queues[table_id]
+                        if queue:
+                            diversified_priority.append(queue.pop(0))
+                            if len(diversified_priority) >= row_cap:
+                                break
+                        if not queue:
+                            del table_queues[table_id]
+
+                # Log diversification result with table distribution AFTER
+                table_distribution_after: dict[str, int] = {}
+                for rid in diversified_priority:
+                    tid = row_to_table.get(rid)
+                    if tid:
+                        key = str(tid)[:8]
+                        table_distribution_after[key] = table_distribution_after.get(key, 0) + 1
+                _rag_log(
+                    "table.diversification_applied",
+                    {
+                        "before_count": len(row_priority),
+                        "after_count": len(diversified_priority),
+                        "distinct_tables": len(distinct_tables),
+                        "distribution_before": table_distribution_before,
+                        "distribution_after": table_distribution_after,
+                    },
+                    indent=3,
+                    context={"business": business_profile.id},
+                )
+                row_priority = diversified_priority
+            else:
+                _rag_log(
+                    "table.diversification_skipped",
+                    {"reason": "only_one_table", "distinct_tables": len(distinct_tables)},
+                    indent=3,
+                    context={"business": business_profile.id},
+                )
+        else:
+            _rag_log(
+                "table.diversification_not_applicable",
+                {
+                    "comprehensive_intent": comprehensive_intent,
+                    "row_to_table_count": len(row_to_table),
+                },
+                indent=3,
+                context={"business": business_profile.id},
+            )
         rows = (
             KnowledgeUploadTableRow.objects.filter(id__in=row_priority)
             .select_related("table__upload__business_profile")
