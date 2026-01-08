@@ -163,6 +163,8 @@ class McpOrchestratorService:
                         "mcp.cached_tables",
                         len(getattr(tool_context, "table_result_cache", {}) or {}),
                     )
+            # Load seen items from previous turns (for "are there more?" follow-ups)
+            self._hydrate_seen_items(conversation, tool_context)
 
         if not self.provider:
             raise RuntimeError("MCP provider is not configured.")
@@ -1193,6 +1195,7 @@ class McpOrchestratorService:
 
         self._log_turn_metrics(conversation, tool_context)
         self._persist_table_cache(conversation, tool_context)
+        self._persist_seen_items(conversation, tool_context)
         return {
             "assistant_message": normalized_assistant_msg,
             "tool_context": tool_context,
@@ -2272,6 +2275,90 @@ class McpOrchestratorService:
                 },
                 logger_obj=logger,
             )
+
+    def _hydrate_seen_items(self, conversation: Conversation, context: ToolExecutionContext) -> None:
+        """Load previously-shown chunk/row IDs from conversation metadata.
+
+        This enables "are there more?" follow-up queries by tracking what has already
+        been shown to the user, allowing the system to return NEW items on subsequent queries.
+        """
+        metadata = conversation.metadata if isinstance(conversation.metadata, Mapping) else {}
+        seen_data = metadata.get("mcp_seen_items")
+        if not isinstance(seen_data, Mapping):
+            return
+
+        chunk_ids = seen_data.get("chunk_ids")
+        if isinstance(chunk_ids, list):
+            context.seen_chunk_ids = {str(cid) for cid in chunk_ids if cid}
+
+        row_ids = seen_data.get("row_ids")
+        if isinstance(row_ids, list):
+            context.seen_row_ids = {str(rid) for rid in row_ids if rid}
+
+        if context.seen_chunk_ids or context.seen_row_ids:
+            structured_log(
+                "mcp",
+                "cache.seen_items_hydrate",
+                {
+                    "seen_chunks": len(context.seen_chunk_ids),
+                    "seen_rows": len(context.seen_row_ids),
+                },
+                indent=1,
+                context={
+                    "conversation": conversation.id,
+                    "business": conversation.business_profile_id,
+                },
+                logger_obj=logger,
+            )
+
+    def _persist_seen_items(self, conversation: Conversation, context: ToolExecutionContext) -> None:
+        """Save newly-shown chunk/row IDs to conversation metadata.
+
+        Combines items from previous turns with items shown this turn, capped
+        to prevent unbounded growth.
+        """
+        MAX_SEEN_ITEMS = 200  # Cap to prevent metadata bloat
+
+        all_shown = context.get_all_shown_this_conversation()
+        new_chunk_ids = all_shown.get("chunk_ids", set())
+        new_row_ids = all_shown.get("row_ids", set())
+
+        # Skip if nothing new was shown this turn
+        if not context.newly_shown_chunk_ids and not context.newly_shown_row_ids:
+            return
+
+        metadata = conversation.metadata if isinstance(conversation.metadata, Mapping) else {}
+        new_metadata = dict(metadata)
+
+        # Cap the lists to prevent unbounded growth (keep most recent)
+        chunk_list = list(new_chunk_ids)[-MAX_SEEN_ITEMS:]
+        row_list = list(new_row_ids)[-MAX_SEEN_ITEMS:]
+
+        new_metadata["mcp_seen_items"] = {
+            "chunk_ids": chunk_list,
+            "row_ids": row_list,
+            "updated_at": timezone.now().isoformat(),
+        }
+
+        conversation.metadata = new_metadata
+        conversation.save(update_fields=["metadata"])
+
+        structured_log(
+            "mcp",
+            "cache.seen_items_persist",
+            {
+                "newly_shown_chunks": len(context.newly_shown_chunk_ids),
+                "newly_shown_rows": len(context.newly_shown_row_ids),
+                "total_chunks": len(chunk_list),
+                "total_rows": len(row_list),
+            },
+            indent=1,
+            context={
+                "conversation": conversation.id,
+                "business": conversation.business_profile_id,
+            },
+            logger_obj=logger,
+        )
 
     @staticmethod
     def _record_search_history(context: ToolExecutionContext, arguments: Mapping[str, object], tool_result: Mapping[str, object]) -> None:

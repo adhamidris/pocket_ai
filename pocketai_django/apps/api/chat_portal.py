@@ -27,6 +27,7 @@ from opentelemetry import trace as otel_trace
 
 from apps.accounts.models import BusinessProfile
 from apps.conversations.models import ConversationSender
+from apps.core.logging_utils import LogEmoji
 from apps.rag.ai_orchestrator import (
     ActionDispatcher,
     AiOrchestratorService,
@@ -304,8 +305,13 @@ def _planner_decision(
 
 
 class PortalTraceLogger:
-    """Structured trace logger for portal LLM turns."""
-
+    """
+    Structured trace logger for portal LLM turns.
+    
+    Clean hierarchical output - uses tree characters (├, └) only for
+    showing actual nested structure, not decorative frames.
+    """
+    
     def __init__(
         self,
         *,
@@ -314,68 +320,114 @@ class PortalTraceLogger:
         session_token: str,
         orchestrator_mode: str,
     ) -> None:
+        from apps.core.console_logger import Verbosity, get_verbosity
+        
         self.conversation_id = getattr(conversation, "id", None)
         self.business_id = getattr(getattr(conversation, "business_profile", None), "id", None)
         self.business_slug = getattr(getattr(conversation, "business_profile", None), "slug", None)
         self.agent_slug = getattr(agent, "slug", None)
         self.session_token = session_token
         self.orchestrator_mode = orchestrator_mode
+        self._logged_header = False
+        
         tz_name = getattr(settings, "PORTAL_TRACE_TIMEZONE", "Africa/Cairo")
         try:
             self._timezone = ZoneInfo(tz_name)
-        except Exception:  # pragma: no cover - fallback for missing tz database
+        except Exception:
             self._timezone = ZoneInfo("UTC")
-            tz_name = "UTC"
-        self._timezone_label = tz_name
+        
+        self._console_verbosity = get_verbosity(for_console=True)
 
     def _timestamp(self) -> str:
-        return datetime.now(self._timezone).strftime("%Y-%m-%d %H:%M:%S %Z")
+        return datetime.now(self._timezone).strftime("%H:%M:%S")
 
-    def _stringify(self, value: Any) -> str:
+    def _stringify(self, value: Any, max_len: int | None = None) -> str:
         if value is None:
             return ""
         if isinstance(value, str):
-            return value
-        try:
-            return json.dumps(value, ensure_ascii=False)
-        except Exception:
-            return str(value)
+            result = value
+        else:
+            try:
+                result = json.dumps(value, ensure_ascii=False)
+            except Exception:
+                result = str(value)
+        
+        if max_len and len(result) > max_len:
+            return result[:max_len - 3] + "..."
+        return result
 
     def format_data(self, value: Any) -> str:
         return self._stringify(value)
+    
+    def _log_header(self) -> None:
+        """Log the portal request header - clean format."""
+        if self._logged_header:
+            return
+        
+        self._logged_header = True
+        ts = self._timestamp()
+        
+        # Clean separator and header
+        logger.info("─" * 60)
+        logger.info(f"[{ts}] PORTAL.REQUEST conv={str(self.conversation_id)[:8]}... agent={self.agent_slug}")
 
     def log(self, title: str, detail: str | dict | None = None, *, indent: int = 0, extra: Any | None = None) -> None:
-        base_parts = [
-            f"[{self._timestamp()}]",
-            f"conversation={self.conversation_id}",
-            f"business={self.business_id}",
-            f"agent={self.agent_slug}",
-            f"orchestrator={self.orchestrator_mode}",
-        ]
-        header = "portal.trace " + " ".join(part for part in base_parts if part)
-        indent_prefix = "    " * max(indent, 0)
-        lines: list[str] = []
-        lines.append(f"{indent_prefix}• {title}")
-        if detail:
-            detail_text = self._stringify(detail)
-            for payload_line in detail_text.splitlines():
-                lines.append(f"{indent_prefix}    {payload_line}")
-        if extra:
-            extra_text = self._stringify(extra)
-            for payload_line in extra_text.splitlines():
-                lines.append(f"{indent_prefix}    extra: {payload_line}")
-        logger.info("%s\n%s", header, "\n".join(lines))
+        """Log an event with clean hierarchical formatting."""
+        from apps.core.console_logger import Verbosity
+        
+        # Log header on first event
+        self._log_header()
+        
+        indent_prefix = "  " * max(indent, 0)
+        
+        # Format based on verbosity
+        if self._console_verbosity == Verbosity.MINIMAL:
+            logger.info(f"{indent_prefix}├─ {title}")
+        elif self._console_verbosity == Verbosity.STANDARD:
+            if detail:
+                detail_text = self._stringify(detail, max_len=80)
+                logger.info(f"{indent_prefix}├─ {title}: {detail_text}")
+            else:
+                logger.info(f"{indent_prefix}├─ {title}")
+        else:
+            # Verbose: full details
+            logger.info(f"{indent_prefix}├─ {title}")
+            if detail:
+                detail_text = self._stringify(detail)
+                if len(detail_text) > 100:
+                    for i in range(0, len(detail_text), 100):
+                        logger.info(f"{indent_prefix}│   {detail_text[i:i+100]}")
+                else:
+                    logger.info(f"{indent_prefix}│   {detail_text}")
 
-    def log_status(self, code: str, *, label: str | None = None, meta: dict | None = None, indent: int = 2) -> None:
-        payload: dict[str, Any] = {"code": code}
+    def log_status(self, code: str, *, label: str | None = None, meta: dict | None = None, indent: int = 1) -> None:
+        """Log status events - respects verbosity."""
+        from apps.core.console_logger import Verbosity
+        
+        if self._console_verbosity == Verbosity.MINIMAL:
+            return
+        
+        # Standard: only important status codes
+        important_codes = {"searching_complete", "reading_complete", "answer_finalized", "stream_complete"}
+        if self._console_verbosity == Verbosity.STANDARD and code not in important_codes:
+            return
+        
+        detail = {"code": code}
         if label:
-            payload["label"] = label
+            detail["label"] = label
         if meta:
-            payload["meta"] = meta
-        self.log("status", payload, indent=indent)
+            detail.update(meta)
+        
+        self.log(f"status.{code}", detail, indent=indent)
 
     def log_error(self, title: str, error: Exception | str, *, indent: int = 1) -> None:
-        self.log(f"error.{title}", str(error), indent=indent)
+        """Log an error."""
+        self._log_header()
+        indent_prefix = "  " * indent
+        logger.error(f"{indent_prefix}├─ ERROR: {title}")
+        logger.error(f"{indent_prefix}│   {str(error)}")
+
+
 
 
 def _service() -> ChatPortalService:
@@ -1311,12 +1363,6 @@ def stream_send(request: HttpRequest) -> StreamingHttpResponse:
                 detail=f"planned_actions={len(plan.planned_actions)} extractions={len(plan.extractions)}",
                 indent=1,
             )
-            logger.info(
-                "portal plan ready conversation=%s actions=%s extractions=%s",
-                conversation.id,
-                [action.action.value for action in plan.planned_actions],
-                [extraction.extraction_type.value for extraction in plan.extractions],
-            )
             trace_logger.log(
                 "plan.ready",
                 detail=f"actions={len(plan.planned_actions)} extractions={len(plan.extractions)}",
@@ -1376,18 +1422,6 @@ def stream_send(request: HttpRequest) -> StreamingHttpResponse:
             action_results = []
             if plan.planned_actions:
                 action_results = dispatcher.execute(conversation=conversation, planned_actions=plan.planned_actions)
-                logger.info(
-                    "portal action results conversation=%s results=%s",
-                    conversation.id,
-                    [
-                        {
-                            "action": result.action.value,
-                            "status": result.status,
-                            "error": result.error,
-                        }
-                        for result in action_results
-                    ],
-                )
                 trace_logger.log(
                     "actions.executed",
                     detail=f"count={len(action_results)}",
@@ -1534,12 +1568,6 @@ def stream_send(request: HttpRequest) -> StreamingHttpResponse:
                         final_payload["answer_confidence"] = answer_confidence
                 if base_plan.ingestion_warnings:
                     final_payload["ingestion_warnings"] = [dict(item) for item in base_plan.ingestion_warnings]
-                logger.info(
-                    "portal response finalized conversation=%s message_id=%s status=%s",
-                    conversation.id,
-                    ai_message.id,
-                    session_state.status,
-                )
                 plan_holder["session_status"] = session_state.status
                 extra_payload: dict[str, Any] = {
                     "citations": [snippet.title for snippet in base_plan.citations],

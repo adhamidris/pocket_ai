@@ -754,7 +754,10 @@ class KnowledgeSearchService:
                     cleaned.append(token)
             default_non_queryable_formats = tuple(cleaned)  # Can be empty tuple
         self.non_queryable_table_formats: set[str] = set(default_non_queryable_formats)
-        logger.info("emb.provider %s model=%s", type(self.embedding_service).__name__ if self.embedding_service else None, getattr(self.embedding_service, "model", None))
+        # Enhanced embedding provider log
+        provider_name = type(self.embedding_service).__name__ if self.embedding_service else "None"
+        model_name = getattr(self.embedding_service, "model", "unknown")
+        logger.info("🧮 EMBEDDING PROVIDER %s | Model: %s", provider_name, model_name)
         self._page_summary_cache: OrderedDict[tuple[uuid.UUID, uuid.UUID], dict[int, Mapping[str, object]]] = OrderedDict()
         self._table_presence_cache: OrderedDict[tuple[uuid.UUID, str], bool] = OrderedDict()
 
@@ -3435,7 +3438,7 @@ class KnowledgeSearchService:
                 elapsed_ms = int((time.perf_counter() - start) * 1000)
                 if elapsed_ms >= self.rerank_budget_ms:
                     logger.warning(
-                        "Cross-encoder rerank skipped: budget_exceeded budget_ms=%s elapsed_ms=%s",
+                        "⚠️ Rerank skipped (budget %sms exceeded, elapsed %sms)",
                         self.rerank_budget_ms,
                         elapsed_ms,
                     )
@@ -3458,7 +3461,7 @@ class KnowledgeSearchService:
                             ce_values = [float(score) for score in ce_scores]
                         except concurrent.futures.TimeoutError:
                             logger.warning(
-                                "Cross-encoder rerank timed out after %.1fs (pairs=%d)",
+                                "⏱️ Rerank timeout after %.1fs (%d pairs)",
                                 timeout_s,
                                 len(pairs),
                             )
@@ -3466,8 +3469,8 @@ class KnowledgeSearchService:
                 except Exception as exc:  # pragma: no cover - optional dependency
                     # P0 #5: Graceful fallback on cross-encoder errors (e.g., AlreadyBorrowed)
                     logger.warning(
-                        "Cross-encoder rerank failed (error=%s); continuing with base fusion scores",
-                        str(exc)[:200],
+                        "❌ Rerank failed: %s",
+                        str(exc)[:80],
                     )
                     _rag_log(
                         "retrieval.cross_encoder_failures",
@@ -8894,7 +8897,7 @@ class ActionDispatcher:
                         action_span.set_attribute("action.payload_keys", sorted(plan.payload.keys()))
                         action_span.set_attribute("conversation.id", str(getattr(conversation, "id", "")))
                     if handler is None:
-                        logger.warning("action_dispatcher skipped action %s: no handler", plan.action)
+                        logger.warning("⚠️ Action skipped: %s (no handler)", plan.action.value)
                         if action_span.is_recording():
                             action_span.set_attribute("action.status", "skipped")
                             action_span.set_attribute("action.error", "handler_missing")
@@ -8909,7 +8912,7 @@ class ActionDispatcher:
                         continue
                     try:
                         metadata = handler(conversation=conversation, payload=plan.payload)
-                        logger.info("action_dispatcher applied %s | payload=%s", plan.action, plan.payload)
+                        logger.info("✅ Action applied: %s", plan.action.value)
                         if action_span.is_recording():
                             action_span.set_attribute("action.status", "applied")
                         results.append(
@@ -8920,7 +8923,7 @@ class ActionDispatcher:
                             )
                         )
                     except ActionExecutionError as exc:
-                        logger.warning("action_dispatcher failed %s | error=%s | payload=%s", plan.action, exc, plan.payload)
+                        logger.warning("❌ Action failed: %s (%s)", plan.action.value, str(exc)[:50])
                         if action_span.is_recording():
                             action_span.record_exception(exc)
                             action_span.set_attribute("action.status", "failed")

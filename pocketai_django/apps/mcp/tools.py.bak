@@ -53,7 +53,6 @@ from apps.rag.dataset_router import find_datasets_for_identifier, match_upload_f
 from apps.knowledge.knowledge_access import apply_customer_visible_chunks, apply_customer_visible_uploads
 from apps.knowledge.privacy import column_suggests_pii, redact_free_text, redact_value_for_preview, sha256_hex
 from apps.rag.rag_logging import structured_log
-from apps.core.logging_utils import log_start, log_success, log_warning, log_performance, LogEmoji
 from apps.rag.tabular_limits import ToolRateLimit, enforce_tool_rate_limit, resolve_tabular_tool_limits
 from core.metrics import latency_monitor
 from core.tenancy import tenant_context
@@ -992,135 +991,6 @@ def _budget_allows_full_page(
     remaining = max(0, context.char_budget_per_turn - context.characters_used)
     threshold = max(800, int(inline_cap * 0.6))
     return remaining >= threshold
-
-
-def _apply_seen_item_filter(
-    snippets: list[dict[str, object]],
-    context: ToolExecutionContext,
-    mark_as_seen: bool = False,
-) -> tuple[list[dict[str, object]], dict[str, object]]:
-    """Filter out already-seen snippets and return completeness metadata.
-
-    This enables "are there more?" follow-up queries by automatically excluding
-    items shown in previous turns, so the same query returns NEW results.
-
-    Args:
-        snippets: List of snippet dicts to filter
-        context: Tool execution context with seen_chunk_ids
-        mark_as_seen: If True, mark filtered snippets as seen (do this AFTER clipping)
-
-    Returns:
-        (filtered_snippets, completeness): filtered list and metadata dict
-    """
-    if not snippets:
-        return snippets, {"shown": 0, "total_found": 0, "already_seen": 0, "has_more": False}
-
-    filtered: list[dict[str, object]] = []
-    already_seen_count = 0
-
-    for snippet in snippets:
-        chunk_id = str(snippet.get("chunk_id") or snippet.get("id") or "")
-        if not chunk_id:
-            # No ID to track, include it
-            filtered.append(snippet)
-            continue
-
-        if context.is_chunk_seen(chunk_id):
-            already_seen_count += 1
-            continue
-
-        # Include in filtered list (optionally mark as seen)
-        if mark_as_seen:
-            context.mark_chunk_shown(chunk_id)
-        filtered.append(snippet)
-
-    completeness = {
-        "shown": len(filtered),
-        "total_found": len(snippets),
-        "already_seen": already_seen_count,
-        "has_more": False,  # Will be updated by caller if truncation occurred
-    }
-
-    # If we filtered everything but found items, indicate all were already shown
-    if len(filtered) == 0 and already_seen_count > 0:
-        completeness["all_previously_shown"] = True
-        completeness["message"] = (
-            f"All {already_seen_count} matching results have already been shown in this conversation. "
-            "Try a different search term or ask the user if they need something specific."
-        )
-
-    return filtered, completeness
-
-
-def _mark_snippets_as_seen(snippets: list[dict[str, object]], context: ToolExecutionContext) -> None:
-    """Mark snippets as seen after they've been finalized for the response."""
-    for snippet in snippets:
-        chunk_id = str(snippet.get("chunk_id") or snippet.get("id") or "")
-        if chunk_id:
-            context.mark_chunk_shown(chunk_id)
-
-
-def _apply_seen_row_filter(
-    rows: list[dict[str, object]],
-    document_id: str,
-    context: ToolExecutionContext,
-    mark_as_seen: bool = False,
-) -> tuple[list[dict[str, object]], dict[str, object]]:
-    """Filter out already-seen table rows and return completeness metadata.
-
-    Similar to _apply_seen_item_filter but for table aggregate rows.
-    Uses document_id:row_index as the unique key.
-
-    Args:
-        rows: List of row dicts to filter
-        document_id: Document ID for row key construction
-        context: Tool execution context with seen_row_ids
-        mark_as_seen: If True, mark filtered rows as seen (do this AFTER clipping)
-    """
-    if not rows:
-        return rows, {"shown": 0, "total_found": 0, "already_seen": 0, "has_more": False}
-
-    filtered: list[dict[str, object]] = []
-    already_seen_count = 0
-
-    for row in rows:
-        row_index = row.get("row_index")
-        if row_index is None:
-            # No index to track, include it
-            filtered.append(row)
-            continue
-
-        if context.is_row_seen(document_id, row_index):
-            already_seen_count += 1
-            continue
-
-        # Include in filtered list (optionally mark as seen)
-        if mark_as_seen:
-            context.mark_row_shown(document_id, row_index)
-        filtered.append(row)
-
-    completeness = {
-        "shown": len(filtered),
-        "total_found": len(rows),
-        "already_seen": already_seen_count,
-        "has_more": False,
-    }
-
-    if len(filtered) == 0 and already_seen_count > 0:
-        completeness["all_previously_shown"] = True
-        completeness["message"] = (
-            f"All {already_seen_count} matching rows have already been shown in this conversation."
-        )
-
-    return filtered, completeness
-
-
-def _mark_rows_as_seen(rows: list[dict[str, object]], document_id: str, context: ToolExecutionContext) -> None:
-    """Mark rows as seen after they've been finalized for the response."""
-    for row in rows:
-        row_index = row.get("row_index")
-        if row_index is not None:
-            context.mark_row_shown(document_id, row_index)
 
 
 def _serialize_snippets(snippets: Sequence[object]) -> list[dict[str, object]]:
@@ -2937,40 +2807,6 @@ def _search_knowledge_handler(
             if clip_limit and len(deduped_snippets) >= clip_limit:
                 break
 
-    # Apply seen-item filter FIRST for "are there more?" follow-up support
-    # This filters out items already shown in previous turns so same query returns NEW results
-    # IMPORTANT: Filter before clipping so unseen items from later in the list can be shown
-    # NOTE: mark_as_seen=False because we clip afterwards
-    deduped_snippets, completeness = _apply_seen_item_filter(deduped_snippets, context, mark_as_seen=False)
-
-    # Apply prompt snippet limit AFTER filtering
-    # This ensures we only mark snippets that will actually be shown to the user
-    prompt_max_snippets = max(1, int(getattr(settings, "MCP_PROMPT_MAX_SNIPPETS", 6) or 6))
-    if len(deduped_snippets) > prompt_max_snippets:
-        # Update completeness to reflect the clip
-        completeness["clipped"] = len(deduped_snippets) - prompt_max_snippets
-        completeness["has_more"] = True
-        deduped_snippets = deduped_snippets[:prompt_max_snippets]
-
-    # NOW mark the final clipped list as seen
-    _mark_snippets_as_seen(deduped_snippets, context)
-
-    # Log seen-item filter results for debugging
-    if completeness.get("already_seen", 0) > 0 or completeness.get("clipped", 0) > 0:
-        structured_log(
-            "mcp",
-            "search.seen_filter",
-            {
-                "shown": completeness.get("shown", 0),
-                "already_seen": completeness.get("already_seen", 0),
-                "clipped": completeness.get("clipped", 0),
-                "total_found": completeness.get("total_found", 0),
-                "all_previously_shown": completeness.get("all_previously_shown", False),
-            },
-            context={"conversation": conversation.id, "business": conversation.business_profile_id},
-            logger_obj=logger,
-        )
-
     for snippet in deduped_snippets:
         context.add_knowledge_result(snippet)
 
@@ -3006,12 +2842,6 @@ def _search_knowledge_handler(
     diag["batched_queries"] = queries
 
     query_intent = primary_run.get("query_intent") or primary_run.get("intent")
-
-    # Update hint if all results were previously shown
-    hint = _search_hint(final_status, query_intent, deduped_snippets, diag)
-    if completeness.get("all_previously_shown"):
-        hint = completeness.get("message") or hint
-
     payload = {
         "tool": "search_knowledge",
         "query": primary_run.get("query"),
@@ -3021,13 +2851,8 @@ def _search_knowledge_handler(
         "status": final_status,
         "diagnostics": diag,
         "snippets": deduped_snippets,
-        "hint": hint,
+        "hint": _search_hint(final_status, query_intent, deduped_snippets, diag),
     }
-
-    # Add completeness metadata so LLM knows about filtered/truncated results
-    if completeness.get("already_seen", 0) > 0 or completeness.get("has_more"):
-        payload["completeness"] = completeness
-
     if fusion:
         payload["fusion"] = fusion
     if len(queries) > 1:
@@ -4325,32 +4150,17 @@ def _table_aggregate_handler(
         rows_out.append(row_out)
         running_chars += row_chars
 
-    # Apply seen-row filter for "are there more?" follow-up support
-    # NOTE: mark_as_seen=False because we mark after finalizing the response
-    rows_out, row_completeness = _apply_seen_row_filter(rows_out, str(upload.id), context, mark_as_seen=False)
-
-    # Mark the final rows as seen
-    _mark_rows_as_seen(rows_out, str(upload.id), context)
-
-    # Determine if results were truncated (either by budget or seen-filter)
-    total_available = original_match_count
-    truncated_by_budget = len(rows_out) < original_match_count - row_completeness.get("already_seen", 0)
-
-    if truncated_by_budget or row_completeness.get("already_seen", 0) > 0:
+    if len(rows_out) < original_match_count:
         throttle_notice = {
-            "reason": "prompt_budget" if truncated_by_budget else "already_shown",
+            "reason": "prompt_budget",
             "message": (
-                f"Showing {len(rows_out)} of {total_available} total matching rows. "
-                f"{row_completeness.get('already_seen', 0)} were already shown in this conversation."
-                if row_completeness.get("already_seen", 0) > 0
-                else f"Showing {len(rows_out)} of {total_available} total matching rows due to prompt size limits."
+                "Table aggregate rows were truncated to stay within prompt size limits. "
+                "Narrow the tabular query by providing an exact identifier filter (match_column + match_value or filters), "
+                "and optionally sheet_name and select_columns, then retry."
             ),
             "original_match_count": original_match_count,
             "returned_match_count": len(rows_out),
-            "already_seen_count": row_completeness.get("already_seen", 0),
         }
-        row_completeness["has_more"] = total_available > len(rows_out) + row_completeness.get("already_seen", 0)
-
     duration_ms = int((time.perf_counter() - start) * 1000)
 
     hint = None
@@ -4363,10 +4173,6 @@ def _table_aggregate_handler(
         else:
             hint = "No matching rows found."
 
-    # Update hint if all results were previously shown
-    if row_completeness.get("all_previously_shown"):
-        hint = row_completeness.get("message") or hint
-
     payload = {
         **base_payload,
         "duration_ms": duration_ms,
@@ -4378,10 +4184,6 @@ def _table_aggregate_handler(
     }
     if throttle_notice:
         payload["throttle_notice"] = throttle_notice
-
-    # Add completeness metadata so LLM knows about filtered/truncated results
-    if row_completeness.get("already_seen", 0) > 0 or row_completeness.get("has_more"):
-        payload["completeness"] = row_completeness
 
     def _payload_char_count(value: Mapping[str, object]) -> int:
         return _json_char_len({k: v for k, v in value.items() if v not in (None, "") and v != []})

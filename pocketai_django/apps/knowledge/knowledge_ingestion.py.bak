@@ -71,7 +71,6 @@ from apps.knowledge.privacy import redact_mapping_preview
 from apps.rag.quality_monitor import QualityMonitor
 from apps.rag.rag_logging import structured_log
 from core.tenancy import tenant_context
-from apps.core.logging_utils import log_start, log_success, log_progress, log_warning, log_error, LogEmoji
 from apps.knowledge.table_normalization import (
     NormalizedSheet,
     SheetNormalizationDiagnostics,

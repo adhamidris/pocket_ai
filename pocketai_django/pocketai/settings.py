@@ -53,9 +53,8 @@ if SECRET_KEY == _default_secret_key:
     import sys
     warning_msg = (
         "\n"
-        "⚠️  WARNING: Using insecure default SECRET_KEY!\n"
-        "   This is DANGEROUS in production. Generate a secure key:\n"
-        "   python -c 'from django.core.management.utils import get_random_secret_key; print(get_random_secret_key())'\n"
+        "🔒 WARNING: Using insecure default SECRET_KEY (dangerous in production)\n"
+        "   Generate secure key: python -c 'from django.core.management.utils import get_random_secret_key; print(get_random_secret_key())'\n"
         "   Then set DJANGO_SECRET_KEY environment variable.\n"
     )
     if _is_production():
@@ -483,6 +482,21 @@ MCP_LOG_PII = os.getenv("MCP_LOG_PII", "false").lower() in {"1", "true", "yes"}
 MCP_LOG_SNIPPET_PREVIEWS = os.getenv("MCP_LOG_SNIPPET_PREVIEWS", "false").lower() in {"1", "true", "yes"}
 # MCP_LOG_FULL_SNIPPET_CONTENT: If true, include full snippet content/hashes in logs (only raw when MCP_LOG_PII=true).
 MCP_LOG_FULL_SNIPPET_CONTENT = os.getenv("MCP_LOG_FULL_SNIPPET_CONTENT", "false").lower() in {"1", "true", "yes"}
+
+# Logging verbosity control: "minimal", "standard", "verbose"
+# LOG_VERBOSITY: Global verbosity level (applies to both console and file if not overridden).
+LOG_VERBOSITY = os.getenv("LOG_VERBOSITY", "standard").strip().lower()
+if LOG_VERBOSITY not in {"minimal", "standard", "verbose"}:
+    LOG_VERBOSITY = "standard"
+# LOG_VERBOSITY_CONSOLE: Console-specific verbosity override.
+LOG_VERBOSITY_CONSOLE = os.getenv("LOG_VERBOSITY_CONSOLE", LOG_VERBOSITY).strip().lower()
+if LOG_VERBOSITY_CONSOLE not in {"minimal", "standard", "verbose"}:
+    LOG_VERBOSITY_CONSOLE = LOG_VERBOSITY
+# LOG_VERBOSITY_FILE: File-specific verbosity override (default: verbose for comprehensive file logs).
+LOG_VERBOSITY_FILE = os.getenv("LOG_VERBOSITY_FILE", "verbose").strip().lower()
+if LOG_VERBOSITY_FILE not in {"minimal", "standard", "verbose"}:
+    LOG_VERBOSITY_FILE = "verbose"
+
 # Tabular prompt safety: apply per-upload column privacy + PII masking before tool
 # results are stored/re-injected into prompts.
 # MCP_TABULAR_PRIVACY_ENABLED: Enforce per-upload allow/deny/mask column policies for tabular evidence.
@@ -1278,10 +1292,19 @@ LOGGING = {
         "verbose": {
             "format": "%(asctime)s [%(levelname)s] %(name)s: %(message)s",
         },
+        "http_request": {
+            "()": "django.utils.log.ServerFormatter",
+            "format": "🌐 {server_time} {message}",
+            "style": "{",
+        },
     },
     "handlers": {
         "console": {
             "class": "logging.StreamHandler",
+        },
+        "console_http": {
+            "class": "logging.StreamHandler",
+            "formatter": "http_request",
         },
         "rag_file": {
             "class": "logging.handlers.RotatingFileHandler",
@@ -1298,7 +1321,8 @@ LOGGING = {
             "formatter": "verbose",
         },
     },
-"loggers": {
+    "loggers": {
+        "django.server": {"handlers": ["console_http"], "level": "INFO", "propagate": False},
         "apps.llm.llm_provider": {"handlers": ["console", "deepseek_file"], "level": "INFO", "propagate": False},
         "apps.knowledge.knowledge_ingestion": {"handlers": ["console"], "level": "INFO", "propagate": False},
         "apps.rag.ai_orchestrator": {"handlers": ["console"], "level": "INFO", "propagate": False},
@@ -1307,3 +1331,4 @@ LOGGING = {
         "apps.api.chat_portal": {"handlers": ["console", "rag_file"], "level": "INFO", "propagate": False},
     },
 }
+

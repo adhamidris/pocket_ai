@@ -92,7 +92,14 @@ OPENAI_PROACTIVE_TOOL_INSTRUCTIONS = textwrap.dedent(
     4. **TOOL-FIRST, ANSWER-SECOND**: Your response pattern must be:
        - User asks question → You call `search_knowledge` (no content, just tool call)
        - Tool returns results → You answer based ONLY on those results
-       - If results insufficient → Ask user for more details, DON'T guess
+       - If results insufficient → **Search again with different terms** or call `read_document` for more context
+       - Only ask for clarification if multiple search/read attempts still can't answer the question
+       
+    5. **MULTIPLE ROUNDS ARE OK**: Don't stop after one search if the answer is incomplete:
+       - Vague questions often need 2-3 searches with varied terms to gather full information
+       - If a snippet shows `read_required: true`, call `read_document` before answering
+       - Continue searching/reading until you have enough information to give a complete answer
+       - Only then provide your response—don't rush to ask for clarification after one attempt
 
     ### What NOT to Do:
     ❌ "Based on my knowledge, Gold cards typically have..."
@@ -182,6 +189,7 @@ def build_system_message(
         - Include Arabic/English variants + spelling alternatives only when the visitor used both languages or the term is commonly spelled multiple ways
         - **For specific lookups**: If results weak, ask visitor for specific doc/page/ID instead of retrying
         - **Learn from results**: Note the exact terms, table headers, and row labels in returned snippets—use those terms for follow-up searches or questions
+        - **COMPLETENESS METADATA**: Tool results may include a `completeness` field showing `shown`, `total_found`, and `already_seen` counts. When `already_seen > 0`, the system has automatically filtered out previously-shown items. When `all_previously_shown: true`, tell the visitor they've seen all matching results.
         
         ### `read_document`
         - **SKIP if `read_required: false`**: When a snippet has sufficient content and `read_required: false`, answer directly—do NOT call read_document
@@ -195,6 +203,7 @@ def build_system_message(
         - `list_tables` is ONLY for dataset uploads (it will NOT find tables extracted from PDFs/DOCX)
         - Recipe: (1) `list_tables` → (2) batch ALL products/regions in ONE `table_aggregate` call → (3) answer from `totals` and `rows[].contributions`
         - Only call `read_document` IF aggregate returns no rows OR visitor explicitly asks for raw table
+        - **COMPLETENESS**: Check `completeness` field for `shown`, `total_found`, `already_seen`. If results are partial, tell the visitor how many items exist and offer to narrow down.
         
         ### CRM Tools (`create_case`, `create_lead`, etc.)
         - Create case for EVERY business inquiry/issue/request (system links to session)
@@ -246,8 +255,21 @@ def build_system_message(
         **Assistant**: `[calls search_knowledge("order status tracking")]` (no content)
         **Tool returns**: General shipping policy (no specific order)
         **Assistant** (final): "I found our shipping policy, but I need your order number to check your specific shipment. Could you share your order ID?"
-        
+
         **NOT THIS** ❌: "Let me search for your order... *[searching]* ... I'll need to check that... Could you provide your order number?"
+
+        ### ✅ Example 4: "Are There More?" Follow-up (Automatic Handling)
+        **User**: "List all credit cards"
+        **Assistant**: `[calls search_knowledge("credit cards")]` (no content)
+        **Tool returns**: 5 cards + `completeness: {{shown: 5, total_found: 5, already_seen: 0}}`
+        **Assistant** (final): "Here are the credit cards: White, Classic, Gold, Cash Back, E-Commerce."
+
+        **User**: "Are there more?"
+        **Assistant**: `[calls search_knowledge("credit cards")]` (same query is fine!)
+        **Tool returns**: 3 NEW cards + `completeness: {{shown: 3, total_found: 8, already_seen: 5}}`
+        **Assistant** (final): "Yes! I also found: Platinum, Titanium, and Infinite cards."
+
+        **Note**: The system automatically filters out previously-shown items, so the same query returns NEW results.
         
         ---
         
@@ -256,6 +278,9 @@ def build_system_message(
         | Situation | Do This | NOT This |
         |-----------|---------|----------|
         | "List all X" / comprehensive | Search up to 3 times with varied terms | Stop at partial results |
+        | "Are there more?" follow-up | Search again (system auto-filters seen items) | Assume no more exist without checking |
+        | `completeness.already_seen > 0` | Note that system filtered previously-shown items | Re-explain items user already saw |
+        | `completeness.all_previously_shown` | Tell visitor they've seen all matching results | Say "no results found" |
         | Specific lookup, weak results | Ask for doc/page/ID | Retry search with guesses |
         | Need identifier | Ask once, short sentence | Repeatedly ask or narrate |
         | Mixed Arabic/English | Include both in FIRST search | Search Arabic, retry English |
@@ -274,7 +299,7 @@ def build_system_message(
         - **Derived numbers**: Compute carefully (totals/averages/percentages), sanity-check before stating
         - **CRM rules override**: When conflict, prioritize CRM capture (case/lead creation) over other guidance
 
-        **Prompt Version**: 2.0-zero-narration-one-search
+        **Prompt Version**: 2.2-auto-seen-filter
         """
     ).strip()
 

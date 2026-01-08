@@ -100,6 +100,15 @@ class ToolExecutionContext:
     table_result_cache: dict[tuple, dict[str, object]] = dataclasses.field(default_factory=dict)
     table_result_cache_dirty: set[tuple] = dataclasses.field(default_factory=set)
 
+    # Conversation-level seen-item tracking (for "are there more?" follow-ups)
+    # IDs of chunks/snippets already shown to user in this conversation
+    seen_chunk_ids: set[str] = dataclasses.field(default_factory=set)
+    # IDs of table rows already shown (document_id:row_index format)
+    seen_row_ids: set[str] = dataclasses.field(default_factory=set)
+    # New chunks/rows shown THIS turn (will be persisted after turn)
+    newly_shown_chunk_ids: set[str] = dataclasses.field(default_factory=set)
+    newly_shown_row_ids: set[str] = dataclasses.field(default_factory=set)
+
     def reserve_chunk_reads(self, count: int) -> None:
         """Ensure the requested chunk reads do not exceed the per-turn budget."""
 
@@ -174,6 +183,35 @@ class ToolExecutionContext:
 
     def add_coverage_entry(self, entry: Mapping[str, object]) -> None:
         self.coverage_ledger.append(dict(entry))
+
+    def mark_chunk_shown(self, chunk_id: str) -> None:
+        """Record a chunk as shown to the user this turn."""
+        if chunk_id:
+            self.newly_shown_chunk_ids.add(str(chunk_id))
+
+    def mark_row_shown(self, document_id: str, row_index: int) -> None:
+        """Record a table row as shown to the user this turn."""
+        if document_id is not None and row_index is not None:
+            row_key = f"{document_id}:{row_index}"
+            self.newly_shown_row_ids.add(row_key)
+
+    def is_chunk_seen(self, chunk_id: str) -> bool:
+        """Check if a chunk was already shown in a previous turn."""
+        return str(chunk_id) in self.seen_chunk_ids if chunk_id else False
+
+    def is_row_seen(self, document_id: str, row_index: int) -> bool:
+        """Check if a table row was already shown in a previous turn."""
+        if document_id is None or row_index is None:
+            return False
+        row_key = f"{document_id}:{row_index}"
+        return row_key in self.seen_row_ids
+
+    def get_all_shown_this_conversation(self) -> dict[str, set[str]]:
+        """Return all items shown (previous turns + this turn) for persistence."""
+        return {
+            "chunk_ids": self.seen_chunk_ids | self.newly_shown_chunk_ids,
+            "row_ids": self.seen_row_ids | self.newly_shown_row_ids,
+        }
 @dataclasses.dataclass
 class KnowledgeToolResult:
     """Structured record of knowledge snippets returned by tool calls."""
