@@ -2363,3 +2363,85 @@
 2026-01-08 17:03:25,375 [INFO] apps.llm.llm_provider: 2026-01-08 19:03:25 [INFO] REQUEST. provider=OpenAITools model=gpt-4o-mini tools=[] message_count=2
 2026-01-08 17:03:26,377 [INFO] apps.llm.llm_provider: 2026-01-08 19:03:26 [INFO] USAGE. provider=OpenAITools model=gpt-4o-mini prompt_tokens=812 completion_tokens=11 total_tokens=823
 2026-01-08 17:03:26,378 [INFO] apps.llm.llm_provider: 2026-01-08 19:03:26 [INFO] LATENCY. provider=openai_tools model=gpt-4o-mini elapsed_ms=1002
+2026-01-09 01:16:33,490 [INFO] apps.llm.llm_provider: 2026-01-09 03:16:33 [INFO] REQUEST. provider=OpenAITools model=gpt-4o-mini tools="["search_knowledge", "read_document", "query_dataset", "list_tables", "create_case", "update_case..." message_count=4 streaming=true
+2026-01-09 01:16:36,475 [INFO] apps.llm.llm_provider: 2026-01-09 03:16:36 [INFO] STREAM.ASSEMBLED finish_reason=tool_calls elapsed_ms=15
+2026-01-09 01:16:43,915 [INFO] apps.llm.llm_provider: 2026-01-09 03:16:43 [INFO] REQUEST. provider=OpenAITools model=gpt-4o-mini tools="["search_knowledge", "read_document", "query_dataset", "list_tables", "create_case", "update_case..." message_count=4 streaming=true
+2026-01-09 01:16:46,861 [INFO] apps.llm.llm_provider: 2026-01-09 03:16:46 [INFO] STREAM.ASSEMBLED finish_reason=tool_calls elapsed_ms=177
+2026-01-09 01:16:48,523 [INFO] apps.llm.llm_provider: 2026-01-09 03:16:48 [INFO] REQUEST. provider=OpenAITools model=gpt-4o-mini tools="["read_document", "query_dataset", "list_tables", "create_case", "update_case_status", "update_ca..." message_count=8 streaming=true
+2026-01-09 01:16:51,524 [INFO] apps.llm.llm_provider: 2026-01-09 03:16:51 [INFO] STREAM.ASSEMBLED finish_reason=stop elapsed_ms=1588 first_delta_ms=44
+2026-01-09 01:16:51,769 [INFO] apps.llm.llm_provider: 2026-01-09 03:16:51 [INFO] STREAM.TOKENS model=gpt-4o-mini tokens=96
+2026-01-09 01:16:51,999 [INFO] apps.llm.llm_provider: 2026-01-09 03:16:51 [INFO] REQUEST. provider=OpenAITools model=gpt-4o-mini tools=[] message_count=2
+2026-01-09 01:16:54,601 [INFO] apps.llm.llm_provider: 2026-01-09 03:16:54 [INFO] USAGE. provider=OpenAITools model=gpt-4o-mini prompt_tokens=1057 completion_tokens=66 total_tokens=1123
+2026-01-09 01:16:54,602 [INFO] apps.llm.llm_provider: 2026-01-09 03:16:54 [INFO] LATENCY. provider=openai_tools model=gpt-4o-mini elapsed_ms=2603
+2026-01-09 01:16:54,691 [INFO] apps.llm.llm_provider: 2026-01-09 03:16:54 [INFO] REQUEST. provider=OpenAITools model=gpt-4o-mini tools="["search_knowledge", "read_document", "query_dataset", "list_tables", "create_case", "update_case..." message_count=6 streaming=true
+2026-01-09 01:16:56,377 [INFO] apps.llm.llm_provider: 2026-01-09 03:16:56 [INFO] STREAM.ASSEMBLED finish_reason=tool_calls elapsed_ms=134
+2026-01-09 01:16:56,435 [INFO] apps.llm.llm_provider: 2026-01-09 03:16:56 [INFO] REQUEST. provider=OpenAITools model=gpt-4o-mini tools="["search_knowledge", "read_document", "query_dataset", "list_tables", "create_case", "update_case..." message_count=11 streaming=true
+2026-01-09 01:16:58,083 [INFO] apps.llm.llm_provider: 2026-01-09 03:16:58 [INFO] STREAM.ASSEMBLED finish_reason=stop elapsed_ms=738 first_delta_ms=43
+2026-01-09 01:16:58,084 [INFO] apps.llm.llm_provider: 2026-01-09 03:16:58 [INFO] STREAM.TOKENS model=gpt-4o-mini tokens=29
+2026-01-09 01:16:58,123 [INFO] apps.llm.llm_provider: 2026-01-09 03:16:58 [INFO] REQUEST. provider=OpenAITools model=gpt-4o-mini tools=[] message_count=2
+2026-01-09 01:16:59,004 [INFO] apps.llm.llm_provider: 2026-01-09 03:16:59 [INFO] USAGE. provider=OpenAITools model=gpt-4o-mini prompt_tokens=797 completion_tokens=11 total_tokens=808
+2026-01-09 01:16:59,004 [INFO] apps.llm.llm_provider: 2026-01-09 03:16:59 [INFO] LATENCY. provider=openai_tools model=gpt-4o-mini elapsed_ms=880
+2026-01-09 01:17:03,298 [INFO] apps.llm.llm_provider: 2026-01-09 03:17:03 [INFO] REQUEST. provider=OpenAITools model=gpt-4o-mini tools="["search_knowledge", "read_document", "query_dataset", "list_tables", "create_case", "update_case..." message_count=8 streaming=true
+2026-01-09 01:17:04,606 [INFO] apps.llm.llm_provider: 2026-01-09 03:17:04 [INFO] STREAM.ASSEMBLED finish_reason=tool_calls elapsed_ms=377
+2026-01-09 01:17:08,256 [INFO] apps.llm.llm_provider: 2026-01-09 03:17:08 [INFO] REQUEST. provider=OpenAITools model=gpt-4o-mini tools="["search_knowledge", "read_document", "query_dataset", "list_tables", "create_case", "update_case..." message_count=13 streaming=true
+2026-01-09 01:17:10,120 [INFO] apps.llm.llm_provider: 2026-01-09 03:17:10 [INFO] STREAM.ASSEMBLED finish_reason=tool_calls elapsed_ms=668
+2026-01-09 01:17:10,425 [INFO] apps.llm.llm_provider: 2026-01-09 03:17:10 [INFO] REQUEST. provider=OpenAITools model=gpt-4o-mini tools="["search_knowledge", "read_document", "query_dataset", "list_tables", "create_case", "update_case..." message_count=13 streaming=true
+2026-01-09 01:17:13,186 [INFO] apps.llm.llm_provider: 2026-01-09 03:17:13 [INFO] STREAM.ASSEMBLED finish_reason=stop elapsed_ms=870 first_delta_ms=50
+2026-01-09 01:17:13,192 [INFO] apps.llm.llm_provider: 2026-01-09 03:17:13 [INFO] STREAM.TOKENS model=gpt-4o-mini tokens=55
+2026-01-09 01:17:13,450 [INFO] apps.llm.llm_provider: 2026-01-09 03:17:13 [INFO] REQUEST. provider=OpenAITools model=gpt-4o-mini tools=[] message_count=2
+2026-01-09 01:17:14,376 [INFO] apps.llm.llm_provider: 2026-01-09 03:17:14 [INFO] USAGE. provider=OpenAITools model=gpt-4o-mini prompt_tokens=1104 completion_tokens=11 total_tokens=1115
+2026-01-09 01:17:14,376 [INFO] apps.llm.llm_provider: 2026-01-09 03:17:14 [INFO] LATENCY. provider=openai_tools model=gpt-4o-mini elapsed_ms=924
+2026-01-09 01:17:30,990 [INFO] apps.llm.llm_provider: 2026-01-09 03:17:30 [INFO] REQUEST. provider=OpenAITools model=gpt-4o-mini tools="["search_knowledge", "read_document", "query_dataset", "list_tables", "create_case", "update_case..." message_count=9 streaming=true
+2026-01-09 01:17:35,355 [INFO] apps.llm.llm_provider: 2026-01-09 03:17:35 [INFO] STREAM.ASSEMBLED finish_reason=tool_calls elapsed_ms=2320 first_delta_ms=39
+2026-01-09 01:17:40,357 [INFO] apps.llm.llm_provider: 2026-01-09 03:17:40 [INFO] REQUEST. provider=OpenAITools model=gpt-4o-mini tools="["query_dataset", "list_tables", "create_case", "update_case_status", "update_case_details", "add..." message_count=13 streaming=true
+2026-01-09 01:17:44,698 [INFO] apps.llm.llm_provider: 2026-01-09 03:17:44 [INFO] STREAM.ASSEMBLED finish_reason=stop elapsed_ms=3249 first_delta_ms=75
+2026-01-09 01:17:44,708 [INFO] apps.llm.llm_provider: 2026-01-09 03:17:44 [INFO] STREAM.TOKENS model=gpt-4o-mini tokens=153
+2026-01-09 01:17:44,975 [INFO] apps.llm.llm_provider: 2026-01-09 03:17:44 [INFO] REQUEST. provider=OpenAITools model=gpt-4o-mini tools=[] message_count=2
+2026-01-09 01:17:46,228 [INFO] apps.llm.llm_provider: 2026-01-09 03:17:46 [INFO] USAGE. provider=OpenAITools model=gpt-4o-mini prompt_tokens=1153 completion_tokens=37 total_tokens=1190
+2026-01-09 01:17:46,228 [INFO] apps.llm.llm_provider: 2026-01-09 03:17:46 [INFO] LATENCY. provider=openai_tools model=gpt-4o-mini elapsed_ms=1252
+2026-01-09 11:54:40,853 [INFO] apps.llm.llm_provider: 2026-01-09 13:54:40 [INFO] REQUEST. provider=OpenAITools model=gpt-4o-mini tools="["search_knowledge", "read_document", "query_dataset", "list_tables", "create_case", "update_case..." message_count=4 streaming=true
+2026-01-09 11:54:43,520 [INFO] apps.llm.llm_provider: 2026-01-09 13:54:43 [INFO] STREAM.ASSEMBLED finish_reason=tool_calls elapsed_ms=11
+2026-01-09 11:54:58,871 [INFO] apps.llm.llm_provider: 2026-01-09 13:54:58 [INFO] REQUEST. provider=OpenAITools model=gpt-4o-mini tools="["read_document", "query_dataset", "list_tables", "create_case", "update_case_status", "update_ca..." message_count=4 streaming=true
+2026-01-09 11:55:02,698 [INFO] apps.llm.llm_provider: 2026-01-09 13:55:02 [INFO] STREAM.ASSEMBLED finish_reason=tool_calls elapsed_ms=187
+2026-01-09 11:55:02,782 [INFO] apps.llm.llm_provider: 2026-01-09 13:55:02 [INFO] REQUEST. provider=OpenAITools model=gpt-4o-mini tools=[] message_count=8 streaming=true
+2026-01-09 11:55:05,883 [INFO] apps.llm.llm_provider: 2026-01-09 13:55:05 [INFO] STREAM.ASSEMBLED finish_reason=stop elapsed_ms=1246 first_delta_ms=39
+2026-01-09 11:55:06,209 [INFO] apps.llm.llm_provider: 2026-01-09 13:55:06 [INFO] STREAM.TOKENS model=gpt-4o-mini tokens=90
+2026-01-09 11:55:07,329 [INFO] apps.llm.llm_provider: 2026-01-09 13:55:07 [INFO] REQUEST. provider=OpenAITools model=gpt-4o-mini tools=[] message_count=2
+2026-01-09 11:55:09,360 [INFO] apps.llm.llm_provider: 2026-01-09 13:55:09 [INFO] USAGE. provider=OpenAITools model=gpt-4o-mini prompt_tokens=1248 completion_tokens=11 total_tokens=1259
+2026-01-09 11:55:09,360 [INFO] apps.llm.llm_provider: 2026-01-09 13:55:09 [INFO] LATENCY. provider=openai_tools model=gpt-4o-mini elapsed_ms=2030
+2026-01-09 11:56:54,042 [INFO] apps.llm.llm_provider: 2026-01-09 13:56:54 [INFO] REQUEST. provider=OpenAITools model=gpt-4o-mini tools="["search_knowledge", "read_document", "query_dataset", "list_tables", "create_case", "update_case..." message_count=4 streaming=true
+2026-01-09 11:56:57,787 [INFO] apps.llm.llm_provider: 2026-01-09 13:56:57 [INFO] STREAM.ASSEMBLED finish_reason=tool_calls elapsed_ms=4
+2026-01-09 11:57:04,093 [INFO] apps.llm.llm_provider: 2026-01-09 13:57:04 [INFO] REQUEST. provider=OpenAITools model=gpt-4o-mini tools="["search_knowledge", "read_document", "query_dataset", "list_tables", "create_case", "update_case..." message_count=4 streaming=true
+2026-01-09 11:57:08,399 [INFO] apps.llm.llm_provider: 2026-01-09 13:57:08 [INFO] STREAM.ASSEMBLED finish_reason=tool_calls elapsed_ms=196
+2026-01-09 11:57:11,183 [INFO] apps.llm.llm_provider: 2026-01-09 13:57:11 [INFO] REQUEST. provider=OpenAITools model=gpt-4o-mini tools="["read_document", "query_dataset", "list_tables", "create_case", "update_case_status", "update_ca..." message_count=8 streaming=true
+2026-01-09 11:57:13,821 [INFO] apps.llm.llm_provider: 2026-01-09 13:57:13 [INFO] STREAM.ASSEMBLED finish_reason=stop elapsed_ms=1665 first_delta_ms=49
+2026-01-09 11:57:14,076 [INFO] apps.llm.llm_provider: 2026-01-09 13:57:14 [INFO] STREAM.TOKENS model=gpt-4o-mini tokens=95
+2026-01-09 11:57:14,353 [INFO] apps.llm.llm_provider: 2026-01-09 13:57:14 [INFO] REQUEST. provider=OpenAITools model=gpt-4o-mini tools=[] message_count=2
+2026-01-09 11:57:16,417 [INFO] apps.llm.llm_provider: 2026-01-09 13:57:16 [INFO] USAGE. provider=OpenAITools model=gpt-4o-mini prompt_tokens=1057 completion_tokens=66 total_tokens=1123
+2026-01-09 11:57:16,417 [INFO] apps.llm.llm_provider: 2026-01-09 13:57:16 [INFO] LATENCY. provider=openai_tools model=gpt-4o-mini elapsed_ms=2063
+2026-01-09 11:58:04,097 [INFO] apps.llm.llm_provider: 2026-01-09 13:58:04 [INFO] REQUEST. provider=OpenAITools model=gpt-4o-mini tools="["search_knowledge", "read_document", "query_dataset", "list_tables", "create_case", "update_case..." message_count=4 streaming=true
+2026-01-09 11:58:06,495 [INFO] apps.llm.llm_provider: 2026-01-09 13:58:06 [INFO] STREAM.ASSEMBLED finish_reason=tool_calls elapsed_ms=23
+2026-01-09 11:58:13,484 [INFO] apps.llm.llm_provider: 2026-01-09 13:58:13 [INFO] REQUEST. provider=OpenAITools model=gpt-4o-mini tools="["search_knowledge", "read_document", "query_dataset", "list_tables", "create_case", "update_case..." message_count=11 streaming=true
+2026-01-09 11:58:17,435 [INFO] apps.llm.llm_provider: 2026-01-09 13:58:17 [INFO] STREAM.ASSEMBLED finish_reason=stop elapsed_ms=2210 first_delta_ms=60
+2026-01-09 11:58:17,716 [INFO] apps.llm.llm_provider: 2026-01-09 13:58:17 [INFO] STREAM.TOKENS model=gpt-4o-mini tokens=123
+2026-01-09 11:58:17,944 [INFO] apps.llm.llm_provider: 2026-01-09 13:58:17 [INFO] REQUEST. provider=OpenAITools model=gpt-4o-mini tools=[] message_count=2
+2026-01-09 11:58:19,211 [INFO] apps.llm.llm_provider: 2026-01-09 13:58:19 [INFO] USAGE. provider=OpenAITools model=gpt-4o-mini prompt_tokens=1019 completion_tokens=34 total_tokens=1053
+2026-01-09 11:58:19,212 [INFO] apps.llm.llm_provider: 2026-01-09 13:58:19 [INFO] LATENCY. provider=openai_tools model=gpt-4o-mini elapsed_ms=1267
+2026-01-09 11:59:59,070 [INFO] apps.llm.llm_provider: 2026-01-09 13:59:59 [INFO] REQUEST. provider=OpenAITools model=gpt-4o-mini tools="["search_knowledge", "read_document", "query_dataset", "list_tables", "create_case", "update_case..." message_count=4 streaming=true
+2026-01-09 12:00:01,648 [INFO] apps.llm.llm_provider: 2026-01-09 14:00:01 [INFO] STREAM.ASSEMBLED finish_reason=tool_calls elapsed_ms=11
+2026-01-09 12:00:08,852 [INFO] apps.llm.llm_provider: 2026-01-09 14:00:08 [INFO] REQUEST. provider=OpenAITools model=gpt-4o-mini tools="["search_knowledge", "read_document", "query_dataset", "list_tables", "create_case", "update_case..." message_count=4 streaming=true
+2026-01-09 12:00:11,352 [INFO] apps.llm.llm_provider: 2026-01-09 14:00:11 [INFO] STREAM.ASSEMBLED finish_reason=tool_calls elapsed_ms=15
+2026-01-09 12:00:13,101 [INFO] apps.llm.llm_provider: 2026-01-09 14:00:13 [INFO] REQUEST. provider=OpenAITools model=gpt-4o-mini tools="["read_document", "query_dataset", "list_tables", "create_case", "update_case_status", "update_ca..." message_count=8 streaming=true
+2026-01-09 12:00:16,896 [INFO] apps.llm.llm_provider: 2026-01-09 14:00:16 [INFO] STREAM.ASSEMBLED finish_reason=stop elapsed_ms=2278 first_delta_ms=58
+2026-01-09 12:00:17,167 [INFO] apps.llm.llm_provider: 2026-01-09 14:00:17 [INFO] STREAM.TOKENS model=gpt-4o-mini tokens=100
+2026-01-09 12:00:17,460 [INFO] apps.llm.llm_provider: 2026-01-09 14:00:17 [INFO] REQUEST. provider=OpenAITools model=gpt-4o-mini tools=[] message_count=2
+2026-01-09 12:00:18,892 [INFO] apps.llm.llm_provider: 2026-01-09 14:00:18 [INFO] USAGE. provider=OpenAITools model=gpt-4o-mini prompt_tokens=1074 completion_tokens=30 total_tokens=1104
+2026-01-09 12:00:18,892 [INFO] apps.llm.llm_provider: 2026-01-09 14:00:18 [INFO] LATENCY. provider=openai_tools model=gpt-4o-mini elapsed_ms=1432
+2026-01-09 12:06:30,158 [INFO] apps.llm.llm_provider: 2026-01-09 14:06:30 [INFO] REQUEST. provider=OpenAITools model=gpt-4o-mini tools="["search_knowledge", "read_document", "query_dataset", "list_tables", "create_case", "update_case..." message_count=4 streaming=true
+2026-01-09 12:06:33,550 [INFO] apps.llm.llm_provider: 2026-01-09 14:06:33 [INFO] STREAM.ASSEMBLED finish_reason=tool_calls elapsed_ms=17
+2026-01-09 12:06:42,878 [INFO] apps.llm.llm_provider: 2026-01-09 14:06:42 [INFO] REQUEST. provider=OpenAITools model=gpt-4o-mini tools="["search_knowledge", "read_document", "query_dataset", "list_tables", "create_case", "update_case..." message_count=11 streaming=true
+2026-01-09 12:06:49,538 [INFO] apps.llm.llm_provider: 2026-01-09 14:06:49 [INFO] STREAM.ASSEMBLED finish_reason=stop elapsed_ms=5664 first_delta_ms=43
+2026-01-09 12:06:49,857 [INFO] apps.llm.llm_provider: 2026-01-09 14:06:49 [INFO] STREAM.TOKENS model=gpt-4o-mini tokens=233
+2026-01-09 12:06:50,145 [INFO] apps.llm.llm_provider: 2026-01-09 14:06:50 [INFO] REQUEST. provider=OpenAITools model=gpt-4o-mini tools=[] message_count=2
+2026-01-09 12:06:52,737 [INFO] apps.llm.llm_provider: 2026-01-09 14:06:52 [INFO] USAGE. provider=OpenAITools model=gpt-4o-mini prompt_tokens=1028 completion_tokens=40 total_tokens=1068
+2026-01-09 12:06:52,737 [INFO] apps.llm.llm_provider: 2026-01-09 14:06:52 [INFO] LATENCY. provider=openai_tools model=gpt-4o-mini elapsed_ms=2591
