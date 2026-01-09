@@ -22,6 +22,7 @@ from apps.accounts.models import (
 from apps.conversations.models import Conversation
 from apps.mcp import tools
 from apps.mcp.types import ToolExecutionContext
+from core.tenancy import tenant_context
 
 
 class McpReadDocumentHandlerTests(TestCase):
@@ -38,6 +39,8 @@ class McpReadDocumentHandlerTests(TestCase):
             name="MCP Bank",
             industry="banking",
         )
+        self.tenant_scope = tenant_context(self.business.id)
+        self.tenant_scope.__enter__()
         self.conversation = Conversation.objects.create(
             business_profile=self.business,
             session_token="session-mcp",
@@ -70,6 +73,8 @@ class McpReadDocumentHandlerTests(TestCase):
 
     def tearDown(self) -> None:
         self.embed_patcher.stop()
+        if hasattr(self, "tenant_scope"):
+            self.tenant_scope.__exit__(None, None, None)
         super().tearDown()
 
     def test_excerpt_mode_returns_page_synopsis_and_tracks_budget(self) -> None:
@@ -183,6 +188,8 @@ class McpReadKnowledgeRoutingTests(TestCase):
             name="Docs Co",
             industry="docs",
         )
+        self.tenant_scope = tenant_context(self.business.id)
+        self.tenant_scope.__enter__()
         self.conversation = Conversation.objects.create(
             business_profile=self.business,
             session_token="read-knowledge-session",
@@ -216,6 +223,8 @@ class McpReadKnowledgeRoutingTests(TestCase):
 
     def tearDown(self) -> None:
         self.embed_patcher.stop()
+        if hasattr(self, "tenant_scope"):
+            self.tenant_scope.__exit__(None, None, None)
         super().tearDown()
 
     def test_read_knowledge_forces_text_for_pdf_table_chunk_even_with_table_args(self) -> None:
@@ -252,6 +261,8 @@ class McpListTablesHandlerDatasetOnlyTests(TestCase):
             name="Tables Co",
             industry="tables",
         )
+        self.tenant_scope = tenant_context(self.business.id)
+        self.tenant_scope.__enter__()
         self.conversation = Conversation.objects.create(
             business_profile=self.business,
             session_token="list-tables-session",
@@ -277,6 +288,8 @@ class McpListTablesHandlerDatasetOnlyTests(TestCase):
 
     def tearDown(self) -> None:
         self.embed_patcher.stop()
+        if hasattr(self, "tenant_scope"):
+            self.tenant_scope.__exit__(None, None, None)
         super().tearDown()
 
     def test_list_tables_excludes_pdf_uploads(self) -> None:
@@ -303,6 +316,8 @@ class McpSearchKnowledgeHandlerTests(TestCase):
             name="Search Co",
             industry="analytics",
         )
+        self.tenant_scope = tenant_context(self.business.id)
+        self.tenant_scope.__enter__()
         self.conversation = Conversation.objects.create(
             business_profile=self.business,
             session_token="search-session",
@@ -310,6 +325,8 @@ class McpSearchKnowledgeHandlerTests(TestCase):
 
     def tearDown(self) -> None:
         self.embed_patcher.stop()
+        if hasattr(self, "tenant_scope"):
+            self.tenant_scope.__exit__(None, None, None)
         super().tearDown()
 
     @mock.patch("apps.mcp.tools._knowledge_service")
@@ -450,3 +467,123 @@ class McpSearchKnowledgeHandlerTests(TestCase):
         self.assertNotIn("page", read_hint, "Should NOT have page when no page_number")
         self.assertIn("offset", read_hint, "Should have offset when no page_number")
         self.assertEqual(read_hint["offset"], 7)
+
+    @mock.patch("apps.mcp.tools._knowledge_service")
+    def test_search_knowledge_always_returns_completeness(self, service_factory_mock) -> None:
+        import uuid
+        from apps.rag.ai_orchestrator import KnowledgeSnippet
+
+        snippet_one = KnowledgeSnippet(
+            id=uuid.uuid4(),
+            title="Result One",
+            summary="Summary one",
+            source="file",
+            content="Content one",
+            upload_id=uuid.uuid4(),
+            chunk_id=uuid.uuid4(),
+            chunk_index=1,
+            page_number=1,
+            is_table_chunk=False,
+            read_state="summary",
+        )
+        snippet_two = KnowledgeSnippet(
+            id=uuid.uuid4(),
+            title="Result Two",
+            summary="Summary two",
+            source="file",
+            content="Content two",
+            upload_id=uuid.uuid4(),
+            chunk_id=uuid.uuid4(),
+            chunk_index=2,
+            page_number=2,
+            is_table_chunk=False,
+            read_state="summary",
+        )
+
+        class _DummySearchResult:
+            def __init__(self) -> None:
+                self.snippets = (snippet_one, snippet_two)
+                self.status = "ok"
+                self.diagnostics = {}
+
+        service_mock = mock.Mock()
+        service_mock.search.return_value = _DummySearchResult()
+        service_factory_mock.return_value = service_mock
+
+        context = ToolExecutionContext(
+            max_chunk_reads_per_turn=5,
+            max_chunk_pages_per_turn=5,
+            char_budget_per_turn=5000,
+        )
+        payload = {"query": "credit cards", "limit": 5}
+
+        result = tools._search_knowledge_handler(payload, self.conversation, context)
+
+        self.assertEqual(result["status"], "ok")
+        self.assertEqual(len(result.get("snippets", [])), 2)
+        self.assertIn("completeness", result)
+        completeness = result["completeness"]
+        self.assertEqual(completeness["shown"], 2)
+        self.assertEqual(completeness["total_found"], 2)
+        self.assertEqual(completeness["already_seen"], 0)
+
+    @mock.patch("apps.mcp.tools._knowledge_service")
+    def test_search_knowledge_does_not_filter_seen_items(self, service_factory_mock) -> None:
+        import uuid
+        from apps.rag.ai_orchestrator import KnowledgeSnippet
+
+        chunk_id_one = uuid.uuid4()
+        chunk_id_two = uuid.uuid4()
+        snippet_one = KnowledgeSnippet(
+            id=uuid.uuid4(),
+            title="Result One",
+            summary="Summary one",
+            source="file",
+            content="Content one",
+            upload_id=uuid.uuid4(),
+            chunk_id=chunk_id_one,
+            chunk_index=1,
+            page_number=1,
+            is_table_chunk=False,
+            read_state="summary",
+        )
+        snippet_two = KnowledgeSnippet(
+            id=uuid.uuid4(),
+            title="Result Two",
+            summary="Summary two",
+            source="file",
+            content="Content two",
+            upload_id=uuid.uuid4(),
+            chunk_id=chunk_id_two,
+            chunk_index=2,
+            page_number=2,
+            is_table_chunk=False,
+            read_state="summary",
+        )
+
+        class _DummySearchResult:
+            def __init__(self) -> None:
+                self.snippets = (snippet_one, snippet_two)
+                self.status = "ok"
+                self.diagnostics = {}
+
+        service_mock = mock.Mock()
+        service_mock.search.return_value = _DummySearchResult()
+        service_factory_mock.return_value = service_mock
+
+        context = ToolExecutionContext(
+            max_chunk_reads_per_turn=5,
+            max_chunk_pages_per_turn=5,
+            char_budget_per_turn=5000,
+        )
+        context.seen_chunk_ids = {str(chunk_id_one), str(chunk_id_two)}
+        payload = {"query": "credit cards", "limit": 5}
+
+        result = tools._search_knowledge_handler(payload, self.conversation, context)
+
+        self.assertEqual(result["status"], "ok")
+        self.assertEqual(len(result.get("snippets", [])), 2)
+        completeness = result["completeness"]
+        self.assertEqual(completeness["shown"], 2)
+        self.assertEqual(completeness["already_seen"], 2)
+        self.assertTrue(completeness.get("all_previously_shown"))

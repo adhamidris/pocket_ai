@@ -1289,6 +1289,68 @@ class KnowledgeUploadTable(models.Model):
         return f"Table {self.order_index} for {self.upload_id}"
 
 
+class KnowledgeTableColumn(models.Model):
+    """
+    Indexed representation of table column headers for semantic search.
+    
+    Enables column-header search queries like "what columns are available"
+    or semantic matching of column names to query tokens (e.g. "annual fee"
+    matching column "Annual Fee (EGP)").
+    """
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    table = models.ForeignKey(
+        KnowledgeUploadTable,
+        related_name="columns",
+        on_delete=models.CASCADE,
+    )
+    upload = models.ForeignKey(
+        KnowledgeUpload,
+        related_name="table_columns",
+        on_delete=models.CASCADE,
+    )
+    business_profile = models.ForeignKey(
+        BusinessProfile,
+        related_name="table_columns",
+        on_delete=models.CASCADE,
+    )
+    column_index = models.PositiveIntegerField()
+    column_name = models.CharField(max_length=255)
+    column_normalized = models.CharField(max_length=255, db_index=True)
+    metadata = models.JSONField(default=dict, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = "accounts_knowledge_table_column"
+        ordering = ("table_id", "column_index")
+        indexes = [
+            models.Index(
+                fields=["business_profile", "column_normalized"],
+                name="knowledge_table_col_biz_idx",
+            ),
+            GinIndex(
+                fields=["column_normalized"],
+                name="knowledge_table_col_norm_trgm",
+                opclasses=["gin_trgm_ops"],
+            ),
+            GinIndex(
+                fields=["column_name"],
+                name="knowledge_table_col_name_trgm",
+                opclasses=["gin_trgm_ops"],
+            ),
+        ]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["table", "column_index"],
+                name="knowledge_table_column_unique_index",
+            )
+        ]
+
+    def __str__(self) -> str:
+        return f"Column {self.column_index}: {self.column_name} (table {self.table_id})"
+
+
 class KnowledgeUploadTableRow(models.Model):
     """
     Row-level representation to retain positional accuracy and provenance.

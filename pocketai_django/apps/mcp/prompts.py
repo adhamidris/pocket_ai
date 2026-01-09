@@ -94,12 +94,47 @@ OPENAI_PROACTIVE_TOOL_INSTRUCTIONS = textwrap.dedent(
        - Tool returns results → You answer based ONLY on those results
        - If results insufficient → **Search again with different terms** or call `read_document` for more context
        - Only ask for clarification if multiple search/read attempts still can't answer the question
-       
+
     5. **MULTIPLE ROUNDS ARE OK**: Don't stop after one search if the answer is incomplete:
        - Vague questions often need 2-3 searches with varied terms to gather full information
        - If a snippet shows `read_required: true`, call `read_document` before answering
        - Continue searching/reading until you have enough information to give a complete answer
        - Only then provide your response—don't rush to ask for clarification after one attempt
+
+    ---
+
+    ## COMPREHENSIVE ENUMERATION (CRITICAL FOR "LIST ALL" QUERIES)
+
+    **When the visitor asks for "all", "every", "list", "complete", "full list" of ANY items:**
+
+    ### MANDATORY STEPS:
+    1. `search_knowledge` → Find documents containing the items
+    2. `get_document_structure(document_id)` → Get the COMPLETE list of ALL items from `row_labels`
+    3. Answer with the FULL list from `row_labels`, not just the search snippets
+
+    ### NEVER DO THIS:
+    ❌ Return only 5-6 items when the user asked for "all"
+    ❌ Say "Here are the credit cards" and list only what search_knowledge returned
+    ❌ Claim "that's all" without calling `get_document_structure`
+    ❌ Stop after first search when user wants comprehensive information
+
+    ### ALWAYS DO THIS:
+    ✅ Detect enumeration intent: "list all", "all credit cards", "every product", "what X do you have"
+    ✅ After search, call `get_document_structure` to see the FULL list of items
+    ✅ Return ALL items from `row_labels`, not just search snippets
+    ✅ If `row_labels` shows 15 items, list all 15—not just 5
+
+    ### Example (FOLLOW THIS EXACTLY):
+    **User**: "List all credit cards with fees"
+    **You**: `[search_knowledge("credit cards fees")]` (no content)
+    **Tool**: Returns snippet showing 5 cards + document_id
+    **You**: `[get_document_structure(document_id="...")]` (no content)  ← **CRITICAL STEP**
+    **Tool**: Returns `row_labels: ["White", "Classic", "Gold", "Cash Back", "E-Commerce", "Titanium", "Heya", "Platinum", "World", "World Elite", "EXPLORE Platinum", "EXPLORE World", "CIB Noon", "CIB Talabat", "Swype 12", "Swype 36", "Swype 60"]`
+    **You** (final): List ALL 17 cards with their fees (use read_document if needed for fee details)
+
+    **REMEMBER**: Search results are SUMMARIES. `get_document_structure` reveals the COMPLETE list. For enumeration queries, you MUST use both.
+
+    ---
 
     ### What NOT to Do:
     ❌ "Based on my knowledge, Gold cards typically have..."
@@ -107,17 +142,20 @@ OPENAI_PROACTIVE_TOOL_INSTRUCTIONS = textwrap.dedent(
     ❌ "I believe the annual fee is..."
     ❌ "Let me tell you about..." (without searching first)
     ❌ "I can't provide the entire document" (use read_document if needed)
+    ❌ Return partial results for "list all" queries
 
     ### What TO Do:
     ✅ Call `search_knowledge("Gold card features benefits")` first
     ✅ Answer ONLY from returned snippets
     ✅ If snippet says `read_required: true`, call `read_document`
+    ✅ For "list all" queries, ALWAYS call `get_document_structure` after search
     ✅ If no relevant results, say "I couldn't find information about X in our knowledge base. Could you provide more details?"
 
     ### Remember:
     - You are NOT a general-purpose AI. You are a business-specific assistant.
     - Your knowledge base contains the ONLY correct answers.
     - Answering without searching is ALWAYS wrong, even if it seems right.
+    - For enumeration queries, answering without `get_document_structure` is INCOMPLETE.
     """
 ).strip()
 
@@ -189,7 +227,9 @@ def build_system_message(
         - Include Arabic/English variants + spelling alternatives only when the visitor used both languages or the term is commonly spelled multiple ways
         - **For specific lookups**: If results weak, ask visitor for specific doc/page/ID instead of retrying
         - **Learn from results**: Note the exact terms, table headers, and row labels in returned snippets—use those terms for follow-up searches or questions
-        - **COMPLETENESS METADATA**: Tool results may include a `completeness` field showing `shown`, `total_found`, and `already_seen` counts. When `already_seen > 0`, the system has automatically filtered out previously-shown items. When `all_previously_shown: true`, tell the visitor they've seen all matching results.
+        - **COMPLETENESS METADATA**: Tool results always include `completeness` with `shown`, `total_found`, `already_seen`, and `has_more`/`clipped`.
+        - Results are **NOT auto-filtered**—you may see repeats. Use `already_seen` plus conversation context to avoid re-listing or offer only new items.
+        - When `all_previously_shown: true`, tell the visitor they've already seen all matching results for this search.
         
         ### `read_document`
         - **SKIP if `read_required: false`**: When a snippet has sufficient content and `read_required: false`, answer directly—do NOT call read_document
@@ -203,7 +243,15 @@ def build_system_message(
         - `list_tables` is ONLY for dataset uploads (it will NOT find tables extracted from PDFs/DOCX)
         - Recipe: (1) `list_tables` → (2) batch ALL products/regions in ONE `table_aggregate` call → (3) answer from `totals` and `rows[].contributions`
         - Only call `read_document` IF aggregate returns no rows OR visitor explicitly asks for raw table
-        - **COMPLETENESS**: Check `completeness` field for `shown`, `total_found`, `already_seen`. If results are partial, tell the visitor how many items exist and offer to narrow down.
+        - **COMPLETENESS**: `completeness` is always present. Use `already_seen` to avoid repeating rows. If results are partial (`has_more: true`), tell the visitor how many items exist and offer to narrow down.
+        
+        ### `get_document_structure`
+        - **USE FOR COMPREHENSIVE QUERIES**: "list all", "show every", "complete list", "what cards do you have"
+        - Call AFTER `search_knowledge` discovers a document with relevant tables
+        - Returns: ALL item names (`row_labels`), column headers, and item counts per table
+        - Enables you to answer with **complete information** instead of partial results
+        - Recipe: (1) `search_knowledge` → (2) `get_document_structure(document_id)` → (3) Answer with full list from `row_labels`
+        - **DO NOT guess** at completeness—use this tool to see ALL items before answering
         
         ### CRM Tools (`create_case`, `create_lead`, etc.)
         - Create case for EVERY business inquiry/issue/request (system links to session)
@@ -266,10 +314,20 @@ def build_system_message(
 
         **User**: "Are there more?"
         **Assistant**: `[calls search_knowledge("credit cards")]` (same query is fine!)
-        **Tool returns**: 3 NEW cards + `completeness: {{shown: 3, total_found: 8, already_seen: 5}}`
-        **Assistant** (final): "Yes! I also found: Platinum, Titanium, and Infinite cards."
+        **Tool returns**: 8 cards + `completeness: {{shown: 8, total_found: 8, already_seen: 5}}`
+        **Assistant** (final): "Yes—there are 3 more: Platinum, Titanium, and Infinite."
 
-        **Note**: The system automatically filters out previously-shown items, so the same query returns NEW results.
+        **Note**: Results are not auto-filtered; use `already_seen` and prior context to avoid repeating items.
+        
+        ### ✅ Example 5: Complete Enumeration (Structure → Full List)
+        **User**: "List all your credit cards"
+        **Assistant**: `[calls search_knowledge("credit cards")]` (no content)
+        **Tool returns**: Snippet from doc-456 showing 3 cards + `read_required: true`
+        **Assistant**: `[calls get_document_structure(document_id="doc-456")]` (no content)
+        **Tool returns**: `{{tables: [{{title: "Credit Cards", row_labels: ["Gold", "Platinum", "Classic", "E-Commerce", "Cash Back", "White", "Titanium", ...], row_count: 18}}]}}`
+        **Assistant** (final): "We offer 18 credit cards: Gold, Platinum, Classic, E-Commerce, Cash Back, White, Titanium, Infinite, Rewards, Travel, Business, Premium, Elite, Signature, World, Black, Diamond, and Exclusive."
+
+        **Note**: `get_document_structure` reveals ALL items in the document, enabling a complete answer.
         
         ---
         
@@ -277,10 +335,10 @@ def build_system_message(
 
         | Situation | Do This | NOT This |
         |-----------|---------|----------|
-        | "List all X" / comprehensive | Search up to 3 times with varied terms | Stop at partial results |
+        | "List all X" / comprehensive | `search_knowledge` → `get_document_structure` → Answer with `row_labels` | Stop at partial search results |
         | "Are there more?" follow-up | Search again (system auto-filters seen items) | Assume no more exist without checking |
-        | `completeness.already_seen > 0` | Note that system filtered previously-shown items | Re-explain items user already saw |
-        | `completeness.all_previously_shown` | Tell visitor they've seen all matching results | Say "no results found" |
+        | `completeness.already_seen > 0` | Mention some items repeat and offer only new ones | Re-list everything without checking |
+        | `completeness.all_previously_shown` | Tell visitor they've already seen all matching results | Say "no results found" |
         | Specific lookup, weak results | Ask for doc/page/ID | Retry search with guesses |
         | Need identifier | Ask once, short sentence | Repeatedly ask or narrate |
         | Mixed Arabic/English | Include both in FIRST search | Search Arabic, retry English |
@@ -830,11 +888,80 @@ def _identifier_requirements_note(conversation: Conversation) -> str | None:
     )
 
 
+def _strip_incomplete_tool_chains(entries: list[Mapping[str, object]]) -> list[Mapping[str, object]]:
+    """
+    Strip assistant messages with tool_calls that are missing their corresponding
+    tool responses from the end of the message list.
+
+    This handles the case where limit_messages_for_stage can't fix broken
+    tool_call/response chains by going backwards (e.g., when tool responses
+    simply don't exist in the message list).
+    """
+    if not entries:
+        return entries
+
+    # Work backwards from the end, tracking which tool_call_ids need responses
+    # and removing incomplete chains
+    result = list(entries)
+
+    while result:
+        # Check if the current messages have incomplete tool chains
+        pending_ids: set[str] = set()
+        for entry in result:
+            role = entry.get("role")
+            if role == "assistant":
+                tool_calls = entry.get("tool_calls")
+                if isinstance(tool_calls, Sequence):
+                    for tool_call in tool_calls:
+                        if isinstance(tool_call, Mapping):
+                            tool_id = str(tool_call.get("id") or "").strip()
+                            if tool_id:
+                                pending_ids.add(tool_id)
+            elif role == "tool":
+                tool_call_id = str(entry.get("tool_call_id") or "").strip()
+                pending_ids.discard(tool_call_id)
+
+        if not pending_ids:
+            # All tool_calls have responses, we're done
+            break
+
+        # Find and remove the last assistant message with incomplete tool_calls
+        # and any trailing tool responses that belong to it
+        removed_any = False
+        for i in range(len(result) - 1, -1, -1):
+            entry = result[i]
+            if entry.get("role") == "assistant" and entry.get("tool_calls"):
+                tool_calls = entry.get("tool_calls")
+                if isinstance(tool_calls, Sequence):
+                    has_incomplete = False
+                    for tool_call in tool_calls:
+                        if isinstance(tool_call, Mapping):
+                            tool_id = str(tool_call.get("id") or "").strip()
+                            if tool_id in pending_ids:
+                                has_incomplete = True
+                                break
+                    if has_incomplete:
+                        # Remove this assistant message and any following tool messages
+                        result = result[:i]
+                        removed_any = True
+                        break
+
+        if not removed_any:
+            # Safety: avoid infinite loop if we can't make progress
+            break
+
+    return result
+
+
 def _history_requires_tool_anchor(entries: Sequence[Mapping[str, object]]) -> bool:
     """
     Detect whether any tool response in the trimmed history is missing its
     preceding assistant message (LLM APIs require the assistant message that
     declared the tool call to appear immediately before the tool response).
+
+    Also detect if any assistant message with tool_calls is missing its
+    corresponding tool responses (OpenAI API requires all tool_calls to have
+    matching tool response messages).
     """
 
     pending_ids: set[str] = set()
@@ -852,8 +979,14 @@ def _history_requires_tool_anchor(entries: Sequence[Mapping[str, object]]) -> bo
         elif role == "tool":
             tool_call_id = str(entry.get("tool_call_id") or "").strip()
             if tool_call_id and tool_call_id not in pending_ids:
+                # Tool response without its assistant message
                 return True
-    return False
+            # Remove the tool_call_id from pending since we found its response
+            pending_ids.discard(tool_call_id)
+
+    # If there are still pending tool_call_ids, it means there are assistant
+    # messages with tool_calls but their responses were cut off
+    return len(pending_ids) > 0
 
 
 def limit_messages_for_stage(
@@ -886,6 +1019,11 @@ def limit_messages_for_stage(
     while start_index > 0 and _history_requires_tool_anchor(trimmed_history):
         start_index -= 1
         trimmed_history = other_entries[start_index:]
+
+    # If we've included all messages but still have broken tool_call/response
+    # chains (e.g., assistant message with tool_calls but no responses),
+    # strip incomplete tool call chains from the end.
+    trimmed_history = _strip_incomplete_tool_chains(list(trimmed_history))
 
     last_user_entry = None
     for entry in reversed(other_entries):

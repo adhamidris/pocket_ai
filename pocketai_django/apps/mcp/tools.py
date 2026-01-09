@@ -506,6 +506,26 @@ TOOL_DEFINITIONS: tuple[Mapping[str, object], ...] = (
         },
         required=("topic",),
     ),
+    _function_schema(
+        name="get_document_structure",
+        description="Get the complete structure of a document including all tables, column headers, and row labels (item names). Use this AFTER search_knowledge when answering 'list all', 'show every', or comprehensive queries to discover ALL items in a document.",
+        properties={
+            "document_id": {
+                "type": "string",
+                "description": "UUID of the document upload (from search_knowledge snippets[].read_hint.document_id).",
+            },
+            "table_id": {
+                "type": "string",
+                "description": "Optional: Filter to a specific table by ID.",
+            },
+            "include_row_labels": {
+                "type": "boolean",
+                "description": "Include first-column values as item names/identifiers. Default: true.",
+                "default": True,
+            },
+        },
+        required=("document_id",),
+    ),
 )
 
 
@@ -999,57 +1019,32 @@ def _apply_seen_item_filter(
     context: ToolExecutionContext,
     mark_as_seen: bool = False,
 ) -> tuple[list[dict[str, object]], dict[str, object]]:
-    """Filter out already-seen snippets and return completeness metadata.
+    """Compute seen-item metadata without filtering results.
 
-    This enables "are there more?" follow-up queries by automatically excluding
-    items shown in previous turns, so the same query returns NEW results.
-
-    Args:
-        snippets: List of snippet dicts to filter
-        context: Tool execution context with seen_chunk_ids
-        mark_as_seen: If True, mark filtered snippets as seen (do this AFTER clipping)
-
-    Returns:
-        (filtered_snippets, completeness): filtered list and metadata dict
+    We track which items were previously shown so the LLM can decide
+    whether to repeat or summarize. We no longer suppress repeats.
     """
     if not snippets:
         return snippets, {"shown": 0, "total_found": 0, "already_seen": 0, "has_more": False}
 
-    filtered: list[dict[str, object]] = []
     already_seen_count = 0
-
     for snippet in snippets:
         chunk_id = str(snippet.get("chunk_id") or snippet.get("id") or "")
         if not chunk_id:
-            # No ID to track, include it
-            filtered.append(snippet)
             continue
-
         if context.is_chunk_seen(chunk_id):
             already_seen_count += 1
-            continue
-
-        # Include in filtered list (optionally mark as seen)
         if mark_as_seen:
             context.mark_chunk_shown(chunk_id)
-        filtered.append(snippet)
 
     completeness = {
-        "shown": len(filtered),
+        "shown": len(snippets),
         "total_found": len(snippets),
         "already_seen": already_seen_count,
-        "has_more": False,  # Will be updated by caller if truncation occurred
+        "has_more": False,
     }
 
-    # If we filtered everything but found items, indicate all were already shown
-    if len(filtered) == 0 and already_seen_count > 0:
-        completeness["all_previously_shown"] = True
-        completeness["message"] = (
-            f"All {already_seen_count} matching results have already been shown in this conversation. "
-            "Try a different search term or ask the user if they need something specific."
-        )
-
-    return filtered, completeness
+    return snippets, completeness
 
 
 def _mark_snippets_as_seen(snippets: list[dict[str, object]], context: ToolExecutionContext) -> None:
@@ -1066,53 +1061,28 @@ def _apply_seen_row_filter(
     context: ToolExecutionContext,
     mark_as_seen: bool = False,
 ) -> tuple[list[dict[str, object]], dict[str, object]]:
-    """Filter out already-seen table rows and return completeness metadata.
-
-    Similar to _apply_seen_item_filter but for table aggregate rows.
-    Uses document_id:row_index as the unique key.
-
-    Args:
-        rows: List of row dicts to filter
-        document_id: Document ID for row key construction
-        context: Tool execution context with seen_row_ids
-        mark_as_seen: If True, mark filtered rows as seen (do this AFTER clipping)
-    """
+    """Compute seen-row metadata without filtering results."""
     if not rows:
         return rows, {"shown": 0, "total_found": 0, "already_seen": 0, "has_more": False}
 
-    filtered: list[dict[str, object]] = []
     already_seen_count = 0
-
     for row in rows:
         row_index = row.get("row_index")
         if row_index is None:
-            # No index to track, include it
-            filtered.append(row)
             continue
-
         if context.is_row_seen(document_id, row_index):
             already_seen_count += 1
-            continue
-
-        # Include in filtered list (optionally mark as seen)
         if mark_as_seen:
             context.mark_row_shown(document_id, row_index)
-        filtered.append(row)
 
     completeness = {
-        "shown": len(filtered),
+        "shown": len(rows),
         "total_found": len(rows),
         "already_seen": already_seen_count,
         "has_more": False,
     }
 
-    if len(filtered) == 0 and already_seen_count > 0:
-        completeness["all_previously_shown"] = True
-        completeness["message"] = (
-            f"All {already_seen_count} matching rows have already been shown in this conversation."
-        )
-
-    return filtered, completeness
+    return rows, completeness
 
 
 def _mark_rows_as_seen(rows: list[dict[str, object]], document_id: str, context: ToolExecutionContext) -> None:
@@ -2937,29 +2907,40 @@ def _search_knowledge_handler(
             if clip_limit and len(deduped_snippets) >= clip_limit:
                 break
 
-    # Apply seen-item filter FIRST for "are there more?" follow-up support
-    # This filters out items already shown in previous turns so same query returns NEW results
-    # IMPORTANT: Filter before clipping so unseen items from later in the list can be shown
-    # NOTE: mark_as_seen=False because we clip afterwards
-    deduped_snippets, completeness = _apply_seen_item_filter(deduped_snippets, context, mark_as_seen=False)
+    total_found = len(deduped_snippets)
 
-    # Apply prompt snippet limit AFTER filtering
-    # This ensures we only mark snippets that will actually be shown to the user
+    # Apply prompt snippet limit BEFORE seen-item tracking
+    # This ensures we only track snippets that will actually be shown to the user
     prompt_max_snippets = max(1, int(getattr(settings, "MCP_PROMPT_MAX_SNIPPETS", 6) or 6))
+    clipped = 0
     if len(deduped_snippets) > prompt_max_snippets:
-        # Update completeness to reflect the clip
-        completeness["clipped"] = len(deduped_snippets) - prompt_max_snippets
-        completeness["has_more"] = True
+        clipped = len(deduped_snippets) - prompt_max_snippets
         deduped_snippets = deduped_snippets[:prompt_max_snippets]
+
+    # Track seen items (no filtering)
+    deduped_snippets, completeness = _apply_seen_item_filter(deduped_snippets, context, mark_as_seen=False)
+    completeness["total_found"] = total_found
+    completeness["shown"] = len(deduped_snippets)
+    completeness["has_more"] = clipped > 0
+    if clipped:
+        completeness["clipped"] = clipped
+
+    if completeness["shown"] > 0 and not completeness["has_more"]:
+        if completeness["already_seen"] == completeness["shown"]:
+            completeness["all_previously_shown"] = True
+            completeness["message"] = (
+                f"All {completeness['shown']} matching results have already been shown in this conversation. "
+                "Try a different search term or ask the user if they need something specific."
+            )
 
     # NOW mark the final clipped list as seen
     _mark_snippets_as_seen(deduped_snippets, context)
 
-    # Log seen-item filter results for debugging
+    # Log seen-item tracking results for debugging
     if completeness.get("already_seen", 0) > 0 or completeness.get("clipped", 0) > 0:
         structured_log(
             "mcp",
-            "search.seen_filter",
+            "search.seen_tracking",
             {
                 "shown": completeness.get("shown", 0),
                 "already_seen": completeness.get("already_seen", 0),
@@ -3024,9 +3005,8 @@ def _search_knowledge_handler(
         "hint": hint,
     }
 
-    # Add completeness metadata so LLM knows about filtered/truncated results
-    if completeness.get("already_seen", 0) > 0 or completeness.get("has_more"):
-        payload["completeness"] = completeness
+    # Always include completeness metadata for transparent decisions
+    payload["completeness"] = completeness
 
     if fusion:
         payload["fusion"] = fusion
@@ -3619,6 +3599,259 @@ def _list_tables_handler(
         "limit": limit,
         "results": results,
         "hint": None if results else "No table uploads match this query.",
+    }
+
+
+def _get_document_structure_handler(
+    arguments: Mapping[str, object],
+    conversation: Conversation,
+    context: ToolExecutionContext,
+) -> Mapping[str, object]:
+    """
+    Return the complete structure of a document for LLM-driven enumeration.
+    
+    This tool enables the LLM to see ALL items in a document before formulating
+    a response to "list all" or comprehensive queries. It returns:
+    - Table names/titles
+    - Column headers per table
+    - Row labels (first column values) as item identifiers
+    - Item counts per table
+    
+    Returns:
+        Mapping with document info, tables structure, and row_labels for enumeration.
+    """
+    document_id_raw = _coerce_str(arguments.get("document_id")).strip()
+    table_id_raw = _coerce_str(arguments.get("table_id")).strip() or None
+    include_row_labels = arguments.get("include_row_labels")
+    if include_row_labels is None:
+        include_row_labels = True
+    else:
+        include_row_labels = bool(include_row_labels)
+    
+    # Validate document_id
+    if not document_id_raw:
+        return {
+            "tool": "get_document_structure",
+            "status": "error",
+            "error": "missing_document_id",
+            "error_code": "missing_document_id",
+            "hint": "Provide document_id from search_knowledge snippets[].read_hint.document_id.",
+        }
+    
+    try:
+        document_uuid = uuid.UUID(document_id_raw)
+    except (TypeError, ValueError):
+        return {
+            "tool": "get_document_structure",
+            "status": "error",
+            "error": "invalid_document_id",
+            "error_code": "invalid_document_id",
+            "hint": "document_id must be a valid UUID. Use snippets[].read_hint.document_id from search_knowledge.",
+        }
+    
+    # Rate limiting
+    window_seconds = int(getattr(settings, "MCP_TOOL_RATE_LIMIT_WINDOW_SECONDS", 60) or 60)
+    try:
+        calls_per_minute = int(getattr(settings, "MCP_DOC_STRUCTURE_CALLS_PER_MINUTE", 30) or 0)
+    except (TypeError, ValueError):
+        calls_per_minute = 30
+    calls_per_minute = 0 if calls_per_minute < 0 else calls_per_minute
+    try:
+        enforce_tool_rate_limit(
+            business_profile=conversation.business_profile,
+            tool="get_document_structure",
+            rate_limit=ToolRateLimit(
+                calls_per_minute=None if calls_per_minute <= 0 else calls_per_minute,
+                window_seconds=window_seconds,
+                scope="business",
+            ),
+        )
+    except ToolRateLimitExceeded as exc:
+        return {
+            "tool": "get_document_structure",
+            "status": "throttled",
+            "error": "rate_limited",
+            "error_code": "rate_limited",
+            "hint": str(exc),
+        }
+    
+    # Fetch the upload
+    upload_qs = apply_customer_visible_uploads(
+        KnowledgeUpload.objects.filter(
+            business_profile=conversation.business_profile,
+            status=KnowledgeStatus.ACTIVE,
+            id=document_uuid,
+        )
+    ).only(
+        "id",
+        "display_name",
+        "source_name",
+        "description",
+        "slug",
+        "external_reference",
+    )
+    
+    # Apply agent scope
+    agent_scope = _agent_knowledge_scope(conversation, context)
+    upload_qs = _apply_agent_scope_to_upload_queryset(upload_qs, agent_scope)
+    
+    upload = upload_qs.first()
+    if not upload:
+        return {
+            "tool": "get_document_structure",
+            "status": "not_found",
+            "error": "document_not_found",
+            "error_code": "document_not_found",
+            "document_id": document_id_raw,
+            "hint": "Document not found or not accessible. Use document_id from search_knowledge results.",
+        }
+    
+    # Fetch tables for this upload
+    tables_qs = KnowledgeUploadTable.objects.filter(
+        upload=upload,
+    ).only(
+        "id",
+        "order_index",
+        "title",
+        "section_heading",
+        "column_schema",
+        "metadata",
+    ).order_by("order_index")
+    
+    if table_id_raw:
+        try:
+            table_uuid = uuid.UUID(table_id_raw)
+            tables_qs = tables_qs.filter(id=table_uuid)
+        except (TypeError, ValueError):
+            pass  # Ignore invalid table_id, just don't filter
+    
+    tables = list(tables_qs[:50])  # Cap at 50 tables per document
+    
+    if not tables:
+        display_label = (
+            upload.display_name
+            or upload.source_name
+            or upload.external_reference
+            or upload.slug
+            or str(upload.id)
+        )
+        return {
+            "tool": "get_document_structure",
+            "status": "ok",
+            "document": {
+                "document_id": str(upload.id),
+                "display_name": display_label,
+            },
+            "tables": [],
+            "total_tables": 0,
+            "total_items": 0,
+            "hint": "This document has no tables. Use read_document for text content.",
+        }
+    
+    # Build structure for each table
+    table_structures: list[dict[str, object]] = []
+    total_items = 0
+    
+    for table in tables:
+        column_schema = table.column_schema if isinstance(table.column_schema, (list, tuple)) else []
+        columns: list[str] = []
+        for col in column_schema:
+            if isinstance(col, str):
+                columns.append(col)
+            elif isinstance(col, Mapping):
+                col_name = col.get("name") or col.get("header") or col.get("column")
+                if col_name:
+                    columns.append(str(col_name))
+        
+        title = table.title or table.section_heading or f"Table {table.order_index or 1}"
+        metadata = table.metadata if isinstance(table.metadata, Mapping) else {}
+        sheet_name = metadata.get("sheet_name") if isinstance(metadata.get("sheet_name"), str) else None
+        
+        # Get row labels (first column values) for enumeration
+        row_labels: list[str] = []
+        row_count = 0
+        
+        rows_qs = KnowledgeUploadTableRow.objects.filter(table=table)
+        row_count = rows_qs.count()
+        max_row_labels = 200
+
+        if include_row_labels and row_count:
+            # Fetch rows and their first-column cell values (row labels).
+            rows = list(rows_qs.only("id", "row_index").order_by("row_index")[:max_row_labels])
+            row_ids = [row.id for row in rows]
+            cells_qs = KnowledgeUploadTableCell.objects.filter(
+                row_id__in=row_ids,
+                column_index=0,
+            ).values("row_id", "raw_text")
+
+            cell_map: dict[uuid.UUID, str] = {}
+            for cell in cells_qs:
+                value = cell.get("raw_text")
+                if isinstance(value, str) and value.strip():
+                    cell_map[cell["row_id"]] = value.strip()
+
+            # Build row_labels in row order
+            for row in rows:
+                label = cell_map.get(row.id)
+                if label:
+                    row_labels.append(label)
+        
+        total_items += row_count
+        
+        table_structure: dict[str, object] = {
+            "table_id": str(table.id),
+            "title": title,
+            "order_index": table.order_index,
+            "columns": columns,
+            "column_count": len(columns),
+            "row_count": row_count,
+        }
+        
+        if sheet_name:
+            table_structure["sheet_name"] = sheet_name
+        
+        if include_row_labels and row_labels:
+            table_structure["row_labels"] = row_labels
+            table_structure["labels_shown"] = len(row_labels)
+            if row_count > max_row_labels and len(row_labels) < row_count:
+                table_structure["labels_truncated"] = True
+        
+        table_structures.append(table_structure)
+    
+    display_label = (
+        upload.display_name
+        or upload.source_name
+        or upload.external_reference
+        or upload.slug
+        or str(upload.id)
+    )
+    
+    structured_log(
+        "mcp",
+        "document.structure",
+        {
+            "document_id": str(upload.id),
+            "table_count": len(table_structures),
+            "total_items": total_items,
+            "include_row_labels": include_row_labels,
+        },
+        context={
+            "business": conversation.business_profile_id,
+            "conversation": conversation.id,
+        },
+        logger_obj=logger,
+    )
+    
+    return {
+        "tool": "get_document_structure",
+        "status": "ok",
+        "document": {
+            "document_id": str(upload.id),
+            "display_name": display_label,
+        },
+        "tables": table_structures,
+        "total_tables": len(table_structures),
+        "total_items": total_items,
     }
 
 
@@ -4325,31 +4558,29 @@ def _table_aggregate_handler(
         rows_out.append(row_out)
         running_chars += row_chars
 
-    # Apply seen-row filter for "are there more?" follow-up support
-    # NOTE: mark_as_seen=False because we mark after finalizing the response
+    # Track seen rows (no filtering)
     rows_out, row_completeness = _apply_seen_row_filter(rows_out, str(upload.id), context, mark_as_seen=False)
 
-    # Mark the final rows as seen
-    _mark_rows_as_seen(rows_out, str(upload.id), context)
-
-    # Determine if results were truncated (either by budget or seen-filter)
     total_available = original_match_count
-    truncated_by_budget = len(rows_out) < original_match_count - row_completeness.get("already_seen", 0)
+    row_completeness["total_found"] = total_available
+    row_completeness["shown"] = len(rows_out)
+    row_completeness["has_more"] = total_available > len(rows_out)
+    if row_completeness["shown"] > 0 and not row_completeness["has_more"]:
+        if row_completeness.get("already_seen", 0) == row_completeness["shown"]:
+            row_completeness["all_previously_shown"] = True
+            row_completeness["message"] = (
+                f"All {row_completeness['shown']} matching rows have already been shown in this conversation."
+            )
 
-    if truncated_by_budget or row_completeness.get("already_seen", 0) > 0:
+    if row_completeness["has_more"]:
         throttle_notice = {
-            "reason": "prompt_budget" if truncated_by_budget else "already_shown",
+            "reason": "prompt_budget",
             "message": (
-                f"Showing {len(rows_out)} of {total_available} total matching rows. "
-                f"{row_completeness.get('already_seen', 0)} were already shown in this conversation."
-                if row_completeness.get("already_seen", 0) > 0
-                else f"Showing {len(rows_out)} of {total_available} total matching rows due to prompt size limits."
+                f"Showing {len(rows_out)} of {total_available} total matching rows due to prompt size limits."
             ),
             "original_match_count": original_match_count,
             "returned_match_count": len(rows_out),
-            "already_seen_count": row_completeness.get("already_seen", 0),
         }
-        row_completeness["has_more"] = total_available > len(rows_out) + row_completeness.get("already_seen", 0)
 
     duration_ms = int((time.perf_counter() - start) * 1000)
 
@@ -4363,10 +4594,6 @@ def _table_aggregate_handler(
         else:
             hint = "No matching rows found."
 
-    # Update hint if all results were previously shown
-    if row_completeness.get("all_previously_shown"):
-        hint = row_completeness.get("message") or hint
-
     payload = {
         **base_payload,
         "duration_ms": duration_ms,
@@ -4379,9 +4606,8 @@ def _table_aggregate_handler(
     if throttle_notice:
         payload["throttle_notice"] = throttle_notice
 
-    # Add completeness metadata so LLM knows about filtered/truncated results
-    if row_completeness.get("already_seen", 0) > 0 or row_completeness.get("has_more"):
-        payload["completeness"] = row_completeness
+    # Always include completeness metadata for transparent decisions
+    payload["completeness"] = row_completeness
 
     def _payload_char_count(value: Mapping[str, object]) -> int:
         return _json_char_len({k: v for k, v in value.items() if v not in (None, "") and v != []})
@@ -4418,6 +4644,39 @@ def _table_aggregate_handler(
                         notice_out["returned_match_count"] = len(rows_out)
                     payload["throttle_notice"] = notice_out
                 char_count = _payload_char_count(payload)
+
+    if isinstance(payload.get("completeness"), Mapping):
+        row_completeness = dict(payload["completeness"])
+        already_seen_count = 0
+        for row in rows_out:
+            row_index = row.get("row_index")
+            if row_index is None:
+                continue
+            if context.is_row_seen(str(upload.id), row_index):
+                already_seen_count += 1
+        row_completeness["already_seen"] = already_seen_count
+        row_completeness["shown"] = len(rows_out)
+        row_completeness["total_found"] = total_available
+        row_completeness["has_more"] = total_available > len(rows_out)
+        if row_completeness["shown"] > 0 and not row_completeness["has_more"]:
+            if row_completeness["already_seen"] == row_completeness["shown"]:
+                row_completeness["all_previously_shown"] = True
+                row_completeness["message"] = (
+                    f"All {row_completeness['shown']} matching rows have already been shown in this conversation."
+                )
+            else:
+                row_completeness.pop("all_previously_shown", None)
+                row_completeness.pop("message", None)
+        else:
+            row_completeness.pop("all_previously_shown", None)
+            row_completeness.pop("message", None)
+        payload["completeness"] = row_completeness
+        if row_completeness.get("all_previously_shown"):
+            payload["hint"] = row_completeness.get("message") or payload.get("hint")
+        char_count = _payload_char_count(payload)
+
+    # Mark the final rows as seen (after any trimming)
+    _mark_rows_as_seen(rows_out, str(upload.id), context)
 
     payload["char_count"] = char_count
     payload["token_estimate"] = _estimate_tokens(char_count)
@@ -5876,7 +6135,11 @@ def _dataset_query_handler(
                     "max_display": _format_numeric_display(max_value) if max_value is not None else None,
                 }
             elif aggregate_op == "group_by" and group_counter is not None:
-                most_common = group_counter.most_common(top_groups)
+                # Counter.most_common() has undefined order for equal counts.
+                # Sort by count (desc), then by value (asc) for deterministic results.
+                all_items = list(group_counter.items())
+                all_items.sort(key=lambda x: (-x[1], str(x[0])))
+                most_common = all_items[:top_groups]
                 aggregate_result = {
                     "operation": "group_by",
                     "group_by": group_by_column or None,
@@ -7409,6 +7672,7 @@ _TOOL_HANDLERS: dict[str, ToolHandler] = {
     "read_knowledge": _read_knowledge_handler,
     "read_document": _read_document_handler,
     "list_tables": _list_tables_handler,
+    "get_document_structure": _get_document_structure_handler,
     "table_aggregate": _table_aggregate_handler,
     "list_tables": _list_tables_handler,
     "table_aggregate": _table_aggregate_handler,

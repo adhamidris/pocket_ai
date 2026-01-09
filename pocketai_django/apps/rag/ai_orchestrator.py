@@ -64,6 +64,8 @@ from apps.llm.llm_provider import BaseLLMProvider, PromptGenerationError
 from apps.rag.quality_monitor import QualityMonitor
 from apps.rag.rag_logging import rag_log
 from apps.rag.table_semantics import normalize_column_name
+from apps.rag.query_classifier import QueryClassifier, QueryClassification, QueryIntent
+from apps.rag.retrieval_strategies import StrategyRouter, RetrievalContext, RetrievalHints
 from apps.conversations.response_blocks import normalize_response_blocks
 from core.metrics import latency_monitor
 from core.tenancy import tenant_context
@@ -612,6 +614,13 @@ class KnowledgeSearchService:
         self._cross_encoder_local = threading.local()
         self._cross_encoder_lock = threading.Lock()
         self._cross_encoder_failed = False
+        # Cross-encoder score cache for deterministic results
+        # Key: hash of (query, chunk_content), Value: score
+        self._cross_encoder_cache: dict[str, float] = {}
+        self._cross_encoder_cache_max_size = max(
+            100,
+            int(getattr(settings, "RAG_CROSS_ENCODER_CACHE_SIZE", 500)),
+        )
         self.rerank_budget_ms = max(0, int(getattr(settings, "RAG_RERANK_BUDGET_MS", 0)))
         self.snippet_rerank_budget_ms = max(0, int(getattr(settings, "RAG_SNIPPET_RERANK_BUDGET_MS", 0)))
         self.alias_result_cap = max(1, int(getattr(settings, "RAG_ALIAS_RESULTS_LIMIT", 4)))
@@ -760,6 +769,10 @@ class KnowledgeSearchService:
         logger.info("🧮 EMBEDDING PROVIDER %s | Model: %s", provider_name, model_name)
         self._page_summary_cache: OrderedDict[tuple[uuid.UUID, uuid.UUID], dict[int, Mapping[str, object]]] = OrderedDict()
         self._table_presence_cache: OrderedDict[tuple[uuid.UUID, str], bool] = OrderedDict()
+        
+        # Strategy router for intent-aware retrieval (Phase 3)
+        self.strategy_router = StrategyRouter(self)
+        logger.info("🎯 Strategy router initialized with intent-aware retrieval strategies")
 
     def _business_override(self, business_profile, key: str, default: int | float) -> int | float:
         metadata = getattr(business_profile, "metadata", None)
@@ -1085,6 +1098,41 @@ class KnowledgeSearchService:
             allowed_explicit_upload_ids=allowed_explicit_upload_ids,
         )
         table_context_ms = int((time.perf_counter() - table_context_start) * 1000.0)
+        
+        # Execute retrieval strategy based on classified intent (Phase 3)
+        classification = table_context.get("query_classification")
+        strategy_result = None
+        if classification:
+            retrieval_context = RetrievalContext(
+                business_profile=business_profile,
+                query=query,
+                traits=traits,
+                classification=classification,
+                table_context=table_context,
+                limit=limit,
+                alias_result=alias_result,
+                session_cache=session_cache,
+                identifier_filter=identifier_filter,
+                allowed_upload_ids=allowed_upload_ids,
+                allowed_collection_ids=allowed_collection_ids,
+                allowed_explicit_upload_ids=allowed_explicit_upload_ids,
+                feature_state=feature_state,
+                request_id=uuid.uuid4(),
+            )
+            strategy_result = self.strategy_router.execute(retrieval_context)
+            _rag_log(
+                "strategy.executed",
+                {
+                    "strategy": strategy_result.diagnostics.get("strategy"),
+                    "intent": classification.intent.value,
+                    "confidence": round(classification.confidence, 2),
+                    "effective_limit": strategy_result.effective_limit,
+                    "hints": strategy_result.hints.to_dict(),
+                },
+                indent=1,
+                context={"business": business_profile.id if business_profile else None},
+            )
+        
         table_presence_start = time.perf_counter()
         tables_available = self._business_has_tables(
             business_profile,
@@ -1163,6 +1211,17 @@ class KnowledgeSearchService:
                 alias_duration_ms = None
         if alias_duration_ms is not None:
             diagnostics["alias_duration_ms"] = alias_duration_ms
+        
+        # Add strategy pattern diagnostics (Phase 3)
+        if strategy_result:
+            diagnostics["strategy_name"] = strategy_result.diagnostics.get("strategy")
+            diagnostics["strategy_intent"] = strategy_result.diagnostics.get("intent")
+            diagnostics["strategy_confidence"] = strategy_result.diagnostics.get("confidence")
+            diagnostics["strategy_effective_limit"] = strategy_result.effective_limit
+            diagnostics["strategy_multiplier"] = strategy_result.hints.snippet_limit_multiplier
+            diagnostics["strategy_diversify_tables"] = strategy_result.hints.diversify_tables
+            diagnostics["strategy_comprehensive"] = strategy_result.hints.comprehensive_intent
+        
         cache_key = self._result_cache_key(
             business_profile=business_profile,
             traits=traits,
@@ -1660,6 +1719,81 @@ class KnowledgeSearchService:
                 return None
             self._cross_encoder_local.instance = encoder
         return encoder
+
+    def _cross_encoder_cache_key(self, query: str, content: str) -> str:
+        """Generate a cache key for cross-encoder scores."""
+        import hashlib
+        combined = f"{query.strip().lower()}|||{content[:500]}"
+        return hashlib.sha256(combined.encode()).hexdigest()[:32]
+
+    def _get_cached_cross_encoder_scores(
+        self,
+        cross_encoder,
+        pairs: list[list[str]],
+    ) -> list[float]:
+        """
+        Get cross-encoder scores with caching for deterministic results.
+
+        Checks the cache first, only computes scores for uncached pairs.
+        """
+        results: list[float | None] = [None] * len(pairs)
+        uncached_indices: list[int] = []
+        uncached_pairs: list[list[str]] = []
+
+        # Check cache for each pair
+        for idx, (query, content) in enumerate(pairs):
+            cache_key = self._cross_encoder_cache_key(query, content)
+            cached_score = self._cross_encoder_cache.get(cache_key)
+            if cached_score is not None:
+                results[idx] = cached_score
+            else:
+                uncached_indices.append(idx)
+                uncached_pairs.append([query, content])
+
+        # Compute scores for uncached pairs
+        if uncached_pairs:
+            import concurrent.futures
+            from django.conf import settings
+
+            timeout_s = float(getattr(settings, "RAG_CROSS_ENCODER_TIMEOUT_S", 3.0))
+
+            try:
+                with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+                    future = executor.submit(cross_encoder.predict, uncached_pairs)
+                    try:
+                        ce_scores = future.result(timeout=timeout_s)
+                        computed_scores = [float(score) for score in ce_scores]
+                    except concurrent.futures.TimeoutError:
+                        logger.warning(
+                            "⏱️ Rerank timeout after %.1fs (%d pairs)",
+                            timeout_s,
+                            len(uncached_pairs),
+                        )
+                        computed_scores = [0.0] * len(uncached_pairs)
+            except Exception as exc:
+                logger.warning("❌ Cross-encoder failed: %s", str(exc)[:80])
+                computed_scores = [0.0] * len(uncached_pairs)
+
+            # Store computed scores in cache and results
+            for i, idx in enumerate(uncached_indices):
+                score = computed_scores[i] if i < len(computed_scores) else 0.0
+                results[idx] = score
+
+                # Cache the computed score
+                query, content = pairs[idx]
+                cache_key = self._cross_encoder_cache_key(query, content)
+
+                # Evict old entries if cache is full
+                if len(self._cross_encoder_cache) >= self._cross_encoder_cache_max_size:
+                    keys_to_remove = list(self._cross_encoder_cache.keys())[
+                        : self._cross_encoder_cache_max_size // 10
+                    ]
+                    for key in keys_to_remove:
+                        self._cross_encoder_cache.pop(key, None)
+
+                self._cross_encoder_cache[cache_key] = score
+
+        return [r if r is not None else 0.0 for r in results]
 
     def search_by_alias(
         self,
@@ -2718,15 +2852,37 @@ class KnowledgeSearchService:
         return queryset.filter(combined)
 
     def _merge_candidates(self, *groups: Sequence[ChunkResult]) -> list[ChunkResult]:
-        seen: set[uuid.UUID] = set()
-        merged: list[ChunkResult] = []
+        """
+        Merge candidates from multiple search pathways, keeping the best occurrence
+        of each chunk for deterministic results.
+
+        When the same chunk appears in multiple groups, keep the one with the
+        highest combined score (alias_confidence + lexical_score - vector_distance).
+        This ensures consistent ranking regardless of which search path returns first.
+        """
+        best: dict[uuid.UUID, ChunkResult] = {}
+        order: list[uuid.UUID] = []  # Preserve first-seen order for final output
+
+        def _merge_score(hit: ChunkResult) -> float:
+            # Combine available scores: higher is better
+            # Note: vector_distance is lower-is-better, so we negate it
+            vec_contrib = -(hit.vector_distance or 0.0) if hit.vector_distance else 0.0
+            return hit.alias_confidence + hit.lexical_score + vec_contrib
+
         for group in groups:
             for hit in group:
-                if hit.chunk_id in seen:
-                    continue
-                seen.add(hit.chunk_id)
-                merged.append(hit)
-        return merged
+                cid = hit.chunk_id
+                if cid not in best:
+                    order.append(cid)
+                    best[cid] = hit
+                else:
+                    # Keep the occurrence with the higher merge score
+                    existing_score = _merge_score(best[cid])
+                    new_score = _merge_score(hit)
+                    if new_score > existing_score:
+                        best[cid] = hit
+
+        return [best[cid] for cid in order]
 
     def _vector_candidates(
         self,
@@ -2758,7 +2914,8 @@ class KnowledgeSearchService:
             ann_qs = (
                 base_qs.exclude(embedding__isnull=True)
                 .annotate(distance=CosineDistance("embedding", query_vector))
-                .order_by("distance")[:K]
+                # Secondary sort by id for deterministic tie-breaking
+                .order_by("distance", "id")[:K]
             )
             hits: list[ChunkResult] = []
             distances: list[float] = []
@@ -2964,7 +3121,8 @@ class KnowledgeSearchService:
                     # Apply @@ filter so Postgres can use the GIN index on
                     # `to_tsvector('simple', coalesce(content,''))`.
                     .filter(fts_vector=filter_query)
-                    .order_by("-rank")[:N]
+                    # Secondary sort by id for deterministic tie-breaking
+                    .order_by("-rank", "id")[:N]
                 )
                 rows = [(chunk, float(getattr(chunk, "rank", 0.0) or 0.0)) for chunk in fts_qs]
             except Exception as exc:  # pragma: no cover - DB / config edge cases
@@ -3042,7 +3200,8 @@ class KnowledgeSearchService:
             fts_qs = (
                 fts_base.annotate(sim=TrigramSimilarity("content", condensed_query))
                 .filter(sim__gte=threshold)
-                .order_by("-sim")[:N]
+                # Secondary sort by id for deterministic tie-breaking
+                .order_by("-sim", "id")[:N]
             )
             hits: list[ChunkResult] = []
             for chunk in fts_qs:
@@ -3147,7 +3306,7 @@ class KnowledgeSearchService:
         selected: list[ChunkResult] = []
         remaining = list(candidates)
         while remaining and len(selected) < k:
-            def score(hit: ChunkResult) -> float:
+            def score(hit: ChunkResult) -> tuple[float, str]:
                 vector = self._chunk_embedding(hit)
                 rel = self._cosine_similarity(query_vector, vector) if vector else 0.0
                 diversity = 0.0
@@ -3158,7 +3317,9 @@ class KnowledgeSearchService:
                         if self._chunk_embedding(other)
                     ]
                     diversity = max(sims) if sims else 0.0
-                return lam * rel - (1 - lam) * diversity
+                mmr_score = lam * rel - (1 - lam) * diversity
+                # Stable tie-breaking: use chunk_id as secondary sort key
+                return (mmr_score, str(hit.chunk_id))
             best = max(remaining, key=score)
             selected.append(best)
             remaining.remove(best)
@@ -3463,24 +3624,8 @@ class KnowledgeSearchService:
             if head:
                 pairs = [[traits.normalized, (hit.chunk.content or "")] for hit in head]
                 try:
-                    # P0 #4: Add timeout wrapper to prevent indefinite hangs
-                    import concurrent.futures
-                    from django.conf import settings
-                    
-                    timeout_s = float(getattr(settings, "RAG_CROSS_ENCODER_TIMEOUT_S", 3.0))
-                    
-                    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
-                        future = executor.submit(cross_encoder.predict, pairs)
-                        try:
-                            ce_scores = future.result(timeout=timeout_s)
-                            ce_values = [float(score) for score in ce_scores]
-                        except concurrent.futures.TimeoutError:
-                            logger.warning(
-                                "⏱️ Rerank timeout after %.1fs (%d pairs)",
-                                timeout_s,
-                                len(pairs),
-                            )
-                            ce_values = []
+                    # Use cached cross-encoder scoring for deterministic results
+                    ce_values = self._get_cached_cross_encoder_scores(cross_encoder, pairs)
                 except Exception as exc:  # pragma: no cover - optional dependency
                     # P0 #5: Graceful fallback on cross-encoder errors (e.g., AlreadyBorrowed)
                     logger.warning(
@@ -3499,7 +3644,7 @@ class KnowledgeSearchService:
                     # Set failure flag to prevent repeated attempts in this process
                     self._cross_encoder_failed = True
                     ce_values = []
-                else:
+                if ce_values:
                     ce_lookup = {
                         hit.chunk_id: self.cross_encoder_weight * ce_values[idx]
                         for idx, hit in enumerate(head)
@@ -3510,8 +3655,10 @@ class KnowledgeSearchService:
                             (base + ce_lookup.get(hit.chunk_id, 0.0), order, hit)
                             for base, order, hit in scored
                         ]
-                        scored.sort(key=lambda item: item[0], reverse=True)
-        scored.sort(key=lambda item: item[0], reverse=True)
+                        # Sort by score (desc), then by original index (asc via -idx desc) for stable tie-breaking
+                        scored.sort(key=lambda item: (item[0], item[1]), reverse=True)
+        # Sort by score (desc), then by original index (asc via -idx desc) for stable tie-breaking
+        scored.sort(key=lambda item: (item[0], item[1]), reverse=True)
         reranked = [item[2] for item in scored]
         if tail:
             reranked.extend(tail)
@@ -3611,7 +3758,8 @@ class KnowledgeSearchService:
                 score = ce_score if ce_scores else 0.0
                 score += 0.25 * lexical
                 scores.append((score, -idx, snip))
-            scores.sort(key=lambda item: item[0], reverse=True)
+            # Sort by score (desc), then by original index (asc via -idx desc) for stable tie-breaking
+            scores.sort(key=lambda item: (item[0], item[1]), reverse=True)
             reranked = [item[2] for item in scores]
             if len(snippets) > len(head):
                 reranked.extend(snippets[len(head) :])
@@ -3989,32 +4137,49 @@ class KnowledgeSearchService:
         numeric_table_intent = bool(traits.has_digits and (has_currency_token or has_percent))
         has_intent = bool(matched_keywords or matched_columns_query or matched_columns_tokens or numeric_table_intent)
 
-        # Comprehensive intent: user wants full table overview, not specific row lookup.
-        # For these queries, keep table preview chunks instead of expanding to individual rows.
-        # This is industry-agnostic - works for any tenant's domain (finance, retail, healthcare, etc.)
+        # PHASE 1: Use QueryClassifier for intent detection instead of legacy keyword matching.
+        # This fixes the bug where "list all credit cards" was marked as non-comprehensive
+        # because "credit" matched a row label token.
         #
-        # Logic:
-        #   - "list all products" → comprehensive (enumeration keyword, no specific row)
-        #   - "show everything" → comprehensive
-        #   - "Gold card fees" → specific (matches "Gold" row label, no enumeration keyword)
-        #   - "compare all plans" → comprehensive (enumeration keyword)
+        # The classifier uses proper linguistic analysis:
+        #   - ENUMERATE intent: "list all", "show me every", "what are all the"
+        #   - SPECIFIC_LOOKUP intent: "Gold card fees" (specific entity name)
+        #   - COMPARE intent: "compare X vs Y"
+        #   - AGGREGATE intent: "total fees", "how many cards"
+        #   - EXPLORATORY intent: open-ended queries
         #
-        comprehensive_keywords = {"all", "every", "everything", "list", "compare", "comparison", "full", "complete", "entire", "whole", "show"}
-        has_comprehensive_keyword = bool(tokens & comprehensive_keywords)
-        matched_comprehensive_tokens = tokens & comprehensive_keywords
-        # Comprehensive = enumeration keyword present AND no specific row was identified
-        # If a row label matches, user likely wants that specific row even with "show" keyword
-        comprehensive_intent = has_comprehensive_keyword and not matched_row_labels
+        query_classifier = QueryClassifier(known_entity_names=list(row_label_tokens)[:100])
+        classification = query_classifier.classify(
+            traits.original or traits.normalized or query_text,
+            context={
+                "document_entities": list(row_label_tokens)[:100],
+                "table_schemas": list(columns)[:50],
+            }
+        )
+        
+        # comprehensive_intent is True for ENUMERATE and AGGREGATE intents
+        # These require full table coverage, not just the top-matching rows
+        comprehensive_intent = classification.requires_full_coverage()
+        
+        # Also preserve legacy detection for backward compatibility during transition
+        legacy_comprehensive_keywords = {"all", "every", "everything", "list", "compare", "comparison", "full", "complete", "entire", "whole", "show"}
+        legacy_has_comprehensive_keyword = bool(tokens & legacy_comprehensive_keywords)
+        legacy_comprehensive_tokens = tokens & legacy_comprehensive_keywords
 
-        # DEBUG: Log comprehensive intent detection
+        # DEBUG: Log comprehensive intent detection with both old and new methods
         _rag_log(
             "table.comprehensive_detection",
             {
                 "query_tokens": list(tokens)[:20],
-                "matched_comprehensive_tokens": list(matched_comprehensive_tokens),
-                "has_comprehensive_keyword": has_comprehensive_keyword,
-                "matched_row_labels": list(matched_row_labels)[:10] if matched_row_labels else [],
+                "classifier_intent": classification.intent.value,
+                "classifier_confidence": round(classification.confidence, 2),
+                "classifier_reasoning": classification.reasoning,
                 "comprehensive_intent_result": comprehensive_intent,
+                # Legacy detection (for comparison during transition)
+                "legacy_comprehensive_tokens": list(legacy_comprehensive_tokens),
+                "legacy_has_keyword": legacy_has_comprehensive_keyword,
+                "matched_row_labels": list(matched_row_labels)[:10] if matched_row_labels else [],
+                "legacy_would_be_comprehensive": legacy_has_comprehensive_keyword and not matched_row_labels,
             },
             indent=2,
             context={"business": business_profile.id if business_profile else None},
@@ -4026,6 +4191,7 @@ class KnowledgeSearchService:
         return {
             "has_intent": has_intent,
             "comprehensive_intent": comprehensive_intent,
+            "query_classification": classification,  # New: full classification object
             "matched_columns": matched_columns,
             "matched_columns_query": matched_columns_query,
             "matched_columns_tokens": matched_columns_tokens,

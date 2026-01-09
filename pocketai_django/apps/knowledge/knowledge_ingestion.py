@@ -50,6 +50,7 @@ from apps.accounts.models import (
     KnowledgeUploadPage,
     KnowledgeUploadPageBlock,
     KnowledgeUploadTable,
+    KnowledgeTableColumn,
     KnowledgeUploadTableCell,
     KnowledgeUploadTableRow,
     KnowledgeBlockType,
@@ -70,6 +71,7 @@ from apps.accounts.feature_flags import FeatureFlagService
 from apps.knowledge.privacy import redact_mapping_preview
 from apps.rag.quality_monitor import QualityMonitor
 from apps.rag.rag_logging import structured_log
+from apps.rag.table_semantics import normalize_column_name
 from core.tenancy import tenant_context
 from apps.core.logging_utils import log_start, log_success, log_progress, log_warning, log_error, LogEmoji
 from apps.knowledge.table_normalization import (
@@ -5949,6 +5951,7 @@ class KnowledgeIngestionService:
 
     def _persist_structured_artifacts(self, upload: KnowledgeUpload, extraction: ExtractionResult) -> dict[str, Any]:
         KnowledgeUploadPage.objects.filter(upload=upload).delete()
+        KnowledgeTableColumn.objects.filter(upload=upload).delete()  # PHASE 2: Delete indexed columns
         KnowledgeUploadTable.objects.filter(upload=upload).delete()
         KnowledgeUploadIssue.objects.filter(upload=upload).delete()
 
@@ -6079,6 +6082,28 @@ class KnowledgeIngestionService:
                 metadata=table_metadata,  # Include quality metadata
             )
             table_lookup[(table_payload.order_index, table_payload.page_number)] = table_obj
+            
+            # PHASE 2: Index table columns for column-header search
+            column_objects = []
+            for idx, col_name in enumerate(table_payload.column_schema or []):
+                if not col_name:
+                    continue
+                col_str = str(col_name).strip()
+                if not col_str:
+                    continue
+                column_objects.append(
+                    KnowledgeTableColumn(
+                        table=table_obj,
+                        upload=upload,
+                        business_profile=upload.business_profile,
+                        column_index=idx,
+                        column_name=col_str[:255],
+                        column_normalized=normalize_column_name(col_str)[:255],
+                    )
+                )
+            if column_objects:
+                KnowledgeTableColumn.objects.bulk_create(column_objects, ignore_conflicts=True)
+            
             table_summaries.append(
                 {
                     "order_index": table_payload.order_index,

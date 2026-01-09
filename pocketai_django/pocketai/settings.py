@@ -828,6 +828,28 @@ except (TypeError, ValueError):
     MCP_MAX_SEARCHES_PER_TURN = 1
 if MCP_MAX_SEARCHES_PER_TURN < 0:
     MCP_MAX_SEARCHES_PER_TURN = 0
+
+# MCP enumeration flow controls.
+MCP_ENUMERATION_AUTO_STRUCTURE_ENABLED = os.getenv("MCP_ENUMERATION_AUTO_STRUCTURE_ENABLED", "true").lower() in {"1", "true", "yes"}
+try:
+    # MCP_ENUMERATION_MAX_DOCUMENTS: Max documents to auto-structure per turn.
+    MCP_ENUMERATION_MAX_DOCUMENTS = int(os.getenv("MCP_ENUMERATION_MAX_DOCUMENTS", "3"))
+except (TypeError, ValueError):
+    MCP_ENUMERATION_MAX_DOCUMENTS = 3
+MCP_ENUMERATION_MAX_DOCUMENTS = max(1, min(25, MCP_ENUMERATION_MAX_DOCUMENTS))
+MCP_ENUMERATION_AUTO_FETCH_ENABLED = os.getenv("MCP_ENUMERATION_AUTO_FETCH_ENABLED", "true").lower() in {"1", "true", "yes"}
+try:
+    # MCP_ENUMERATION_AUTO_FETCH_MAX_ROWS: Max rows to auto-fetch per table.
+    MCP_ENUMERATION_AUTO_FETCH_MAX_ROWS = int(os.getenv("MCP_ENUMERATION_AUTO_FETCH_MAX_ROWS", "200"))
+except (TypeError, ValueError):
+    MCP_ENUMERATION_AUTO_FETCH_MAX_ROWS = 200
+MCP_ENUMERATION_AUTO_FETCH_MAX_ROWS = max(1, min(200, MCP_ENUMERATION_AUTO_FETCH_MAX_ROWS))
+try:
+    # MCP_ENUMERATION_AUTO_FETCH_MAX_TABLES: Max tables to auto-fetch per document.
+    MCP_ENUMERATION_AUTO_FETCH_MAX_TABLES = int(os.getenv("MCP_ENUMERATION_AUTO_FETCH_MAX_TABLES", "3"))
+except (TypeError, ValueError):
+    MCP_ENUMERATION_AUTO_FETCH_MAX_TABLES = 3
+MCP_ENUMERATION_AUTO_FETCH_MAX_TABLES = max(1, min(20, MCP_ENUMERATION_AUTO_FETCH_MAX_TABLES))
 try:
     # RAG_MAX_CHUNK_READS_PER_TURN: Max chunk/page reads per turn (document reads via tools).
     RAG_MAX_CHUNK_READS_PER_TURN = int(os.getenv("RAG_MAX_CHUNK_READS_PER_TURN", "3"))
@@ -1331,4 +1353,3 @@ LOGGING = {
         "apps.api.chat_portal": {"handlers": ["console", "rag_file"], "level": "INFO", "propagate": False},
     },
 }
-

@@ -16,11 +16,18 @@ This enables the retrieval layer to select appropriate strategies per intent.
 
 from dataclasses import dataclass, field
 from enum import Enum
+from functools import lru_cache
 from typing import Optional
+import hashlib
 import re
 import logging
 
 logger = logging.getLogger(__name__)
+
+# Module-level cache for query classifications to ensure deterministic results
+# across repeated calls with the same query
+_classification_cache: dict[str, "QueryClassification"] = {}
+_CLASSIFICATION_CACHE_MAX_SIZE = 1000
 
 
 class QueryIntent(Enum):
@@ -196,6 +203,13 @@ class QueryClassifier:
         Returns:
             QueryClassification with intent and metadata
         """
+        # Check cache for deterministic results on repeated queries
+        cache_key = query.strip().lower()
+        if cache_key in _classification_cache:
+            cached = _classification_cache[cache_key]
+            logger.debug(f"Query classification cache hit for '{query[:50]}...'")
+            return cached
+
         context = context or {}
         query_lower = query.lower()
         tokens = set(re.findall(r'\b\w+\b', query_lower))
@@ -226,7 +240,22 @@ class QueryClassifier:
         # Log scores for debugging
         logger.debug(f"Intent scores for '{query}': {scores}")
 
-        max_intent = max(scores, key=scores.get)
+        # Priority order for tie-breaking when scores are equal
+        # (higher index = higher priority when scores tie)
+        intent_priority = {
+            QueryIntent.SPECIFIC_LOOKUP: 0,
+            QueryIntent.COMPARE: 1,
+            QueryIntent.AGGREGATE: 2,
+            QueryIntent.ENUMERATE: 3,
+        }
+
+        # Sort by score descending, then by priority descending for stable tie-breaking
+        sorted_intents = sorted(
+            scores.keys(),
+            key=lambda i: (scores[i], intent_priority.get(i, 0)),
+            reverse=True,
+        )
+        max_intent = sorted_intents[0]
         max_score = scores[max_intent]
 
         # If no strong signal, default to EXPLORATORY
@@ -261,6 +290,15 @@ class QueryClassifier:
             f"intent={intent.value}, confidence={confidence:.2f}, "
             f"scope={scope}, entity_type={entity_type}"
         )
+
+        # Cache the classification for deterministic results on repeated queries
+        # Limit cache size to prevent memory growth
+        if len(_classification_cache) >= _CLASSIFICATION_CACHE_MAX_SIZE:
+            # Remove oldest entries (first ~10% of cache)
+            keys_to_remove = list(_classification_cache.keys())[:_CLASSIFICATION_CACHE_MAX_SIZE // 10]
+            for key in keys_to_remove:
+                _classification_cache.pop(key, None)
+        _classification_cache[cache_key] = classification
 
         return classification
 

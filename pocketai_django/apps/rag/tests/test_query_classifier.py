@@ -193,8 +193,9 @@ class TestQueryIntentAggregate(SimpleTestCase):
     def test_total_pattern(self):
         """'total X' should be AGGREGATE."""
         queries = [
-            "what is the total annual fee for all cards",
-            "total fees across all products",
+            "what is the total annual fee",
+            "total fees charged",
+            "sum of interest rates",
         ]
         for query in queries:
             result = self.classifier.classify(query)
@@ -225,7 +226,7 @@ class TestQueryIntentAggregate(SimpleTestCase):
 
     def test_aggregate_retrieval_hints(self):
         """AGGREGATE queries should have correct retrieval hints."""
-        result = self.classifier.classify("total fees for all cards")
+        result = self.classifier.classify("how many cards are there")
         self.assertTrue(result.retrieval_hints.get('increase_snippet_limit'))
         self.assertEqual(result.retrieval_hints.get('snippet_limit_multiplier'), 2.5)
 

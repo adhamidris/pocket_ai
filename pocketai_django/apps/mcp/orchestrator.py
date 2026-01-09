@@ -35,6 +35,7 @@ from apps.rag.ai_orchestrator import (
     ActionType,
     StreamingTurnContext,
 )
+from apps.rag.query_classifier import QueryClassifier, QueryClassification, QueryIntent
 from apps.rag.rag_logging import structured_log
 from apps.conversations.response_blocks import normalize_response_blocks
 
@@ -165,6 +166,16 @@ class McpOrchestratorService:
                     )
             # Load seen items from previous turns (for "are there more?" follow-ups)
             self._hydrate_seen_items(conversation, tool_context)
+
+        query_classification = self._classify_query_intent(user_message)
+        auto_structure_enabled = self._auto_structure_enabled_for_business(conversation.business_profile)
+        auto_structure_intent = auto_structure_enabled and query_classification.requires_full_coverage()
+        auto_structure_doc_limit = self._auto_structure_doc_limit(conversation.business_profile)
+        auto_structure_docs: set[str] = set()
+        auto_fetch_enabled = self._auto_fetch_enabled_for_business(conversation.business_profile)
+        auto_fetch_max_rows = self._auto_fetch_max_rows(conversation.business_profile)
+        auto_fetch_max_tables = self._auto_fetch_max_tables(conversation.business_profile)
+        auto_fetch_attributes = tuple(query_classification.attributes or ())
 
         if not self.provider:
             raise RuntimeError("MCP provider is not configured.")
@@ -592,6 +603,10 @@ class McpOrchestratorService:
                 current_tool_calls = list(assistant_message.get("tool_calls") or [])
                 if not current_tool_calls:
                     break
+                # Collect document IDs for deferred structure injection to avoid
+                # breaking tool_call/response ordering (OpenAI requires all tool
+                # responses to immediately follow their assistant message).
+                deferred_structure_doc_ids: list[str] = []
                 with TRACER.start_as_current_span("portal.mcp.tool_iteration") as iter_span:
                     if iter_span.is_recording():
                         iter_span.set_attribute("mcp.iteration_index", iteration_index)
@@ -850,8 +865,40 @@ class McpOrchestratorService:
                                 if document_id:
                                     self._satisfy_transcript_snippets(transcript, document_id, tool_context)
 
+                        if (
+                            tool_name == "search_knowledge"
+                            and auto_structure_intent
+                            and isinstance(tool_result, Mapping)
+                            and str(tool_result.get("status") or "").strip().lower() == "ok"
+                        ):
+                            remaining = max(0, auto_structure_doc_limit - len(auto_structure_docs))
+                            if remaining:
+                                candidates = self._extract_structure_upload_ids(tool_result)
+                                for candidate in candidates:
+                                    if candidate in auto_structure_docs:
+                                        continue
+                                    auto_structure_docs.add(candidate)
+                                    deferred_structure_doc_ids.append(candidate)
+                                    if len(deferred_structure_doc_ids) >= remaining:
+                                        break
+
                         # Ask the model again with tools enabled to see if more tool_calls are needed.
                         # Trim tool-loop prompts so each call focuses on the newest inputs.
+
+                    # Inject deferred document structures AFTER all tool responses
+                    # have been added to maintain proper tool_call/response ordering.
+                    if deferred_structure_doc_ids:
+                        self._inject_document_structures(
+                            conversation=conversation,
+                            tool_context=tool_context,
+                            transcript=transcript,
+                            document_ids=deferred_structure_doc_ids,
+                            attributes=auto_fetch_attributes,
+                            auto_fetch_enabled=auto_fetch_enabled,
+                            auto_fetch_max_rows=auto_fetch_max_rows,
+                            auto_fetch_max_tables=auto_fetch_max_tables,
+                        )
+
                     loop_messages = prompts.limit_messages_for_stage(transcript, stage="tool_iteration")
                     reminder = {
                         "role": "system",
@@ -2494,6 +2541,273 @@ class McpOrchestratorService:
         used = int(getattr(context, "searches_used", 0) or 0)
         return max(0, limit - used)
 
+    @staticmethod
+    def _extract_structure_upload_ids(tool_result: Mapping[str, object]) -> list[str]:
+        snippets = tool_result.get("snippets")
+        if not isinstance(snippets, list):
+            return []
+        upload_ids: list[str] = []
+        for snippet in snippets:
+            if not isinstance(snippet, Mapping):
+                continue
+            is_table = bool(
+                snippet.get("is_table_chunk")
+                or snippet.get("structured_table_count")
+                or snippet.get("table_read_only")
+            )
+            if not is_table:
+                continue
+            upload_id = str(snippet.get("upload_id") or "").strip()
+            if upload_id:
+                upload_ids.append(upload_id)
+        return upload_ids
+
+    def _inject_document_structures(
+        self,
+        *,
+        conversation: Conversation,
+        tool_context: ToolExecutionContext,
+        transcript: list[Mapping[str, object]],
+        document_ids: Sequence[str],
+        attributes: Sequence[str] | None = None,
+        auto_fetch_enabled: bool = False,
+        auto_fetch_max_rows: int = 200,
+        auto_fetch_max_tables: int = 3,
+    ) -> int:
+        if not document_ids:
+            return 0
+        tool_calls: list[dict[str, object]] = []
+        tool_messages: list[dict[str, object]] = []
+        auto_fetch_calls: list[dict[str, object]] = []
+        auto_fetch_messages: list[dict[str, object]] = []
+        limits = self._prompt_compaction_limits()
+        numeric_attributes = self._numeric_attribute_tokens(attributes or ())
+        for document_id in document_ids:
+            if not document_id:
+                continue
+            call_id = f"auto_structure_{uuid.uuid4().hex[:8]}"
+            arguments = {"document_id": document_id, "include_row_labels": True}
+            tool_calls.append(
+                {
+                    "id": call_id,
+                    "type": "function",
+                    "function": {
+                        "name": "get_document_structure",
+                        "arguments": json.dumps(arguments, ensure_ascii=False),
+                    },
+                }
+            )
+            call_start = time.perf_counter()
+            try:
+                tool_result = tools.execute_tool(
+                    "get_document_structure",
+                    arguments,
+                    conversation=conversation,
+                    context=tool_context,
+                )
+            except ToolConstraintError as exc:
+                tool_result = self._constraint_error_payload("get_document_structure", exc)
+            call_duration_ms = (time.perf_counter() - call_start) * 1000.0
+
+            result_keys = sorted(tool_result.keys()) if isinstance(tool_result, Mapping) else []
+            status = tool_result.get("status") if isinstance(tool_result, Mapping) else None
+            error_code = tool_result.get("error_code") if isinstance(tool_result, Mapping) else None
+            hint = tool_result.get("hint") if isinstance(tool_result, Mapping) else None
+            tool_context.add_tool_trace(
+                {
+                    "tool": "get_document_structure",
+                    "arguments": arguments,
+                    "result_keys": result_keys,
+                    "status": status,
+                    "error_code": error_code,
+                    "hint": hint,
+                    "duration_ms": int(call_duration_ms),
+                    "origin": "auto",
+                }
+            )
+            if isinstance(tool_result, Mapping):
+                prompt_tool_result = self._compact_tool_payload_for_prompt(
+                    "get_document_structure",
+                    tool_result,
+                    **limits,
+                )
+            else:
+                prompt_tool_result = {
+                    "tool": "get_document_structure",
+                    "result": self._clip_text(tool_result, 2000) if tool_result is not None else None,
+                    "prompt_compact": True,
+                }
+            tool_messages.append(
+                {
+                    "role": "tool",
+                    "tool_call_id": call_id,
+                    "name": "get_document_structure",
+                    "content": json.dumps(prompt_tool_result, ensure_ascii=False),
+                }
+            )
+            if (
+                auto_fetch_enabled
+                and numeric_attributes
+                and isinstance(tool_result, Mapping)
+                and str(tool_result.get("status") or "").strip().lower() == "ok"
+            ):
+                fetch_calls, fetch_messages = self._auto_fetch_table_rows(
+                    conversation=conversation,
+                    tool_context=tool_context,
+                    transcript=transcript,
+                    document_id=document_id,
+                    structure_result=tool_result,
+                    attribute_tokens=sorted(numeric_attributes),
+                    max_rows=auto_fetch_max_rows,
+                    max_tables=auto_fetch_max_tables,
+                )
+                if fetch_calls:
+                    auto_fetch_calls.extend(fetch_calls)
+                    auto_fetch_messages.extend(fetch_messages)
+
+        if tool_calls:
+            transcript.append({"role": "assistant", "content": "", "tool_calls": tool_calls})
+            transcript.extend(tool_messages)
+        if auto_fetch_calls:
+            transcript.append({"role": "assistant", "content": "", "tool_calls": auto_fetch_calls})
+            transcript.extend(auto_fetch_messages)
+        return len(tool_calls)
+
+    def _auto_fetch_table_rows(
+        self,
+        *,
+        conversation: Conversation,
+        tool_context: ToolExecutionContext,
+        transcript: list[Mapping[str, object]],
+        document_id: str,
+        structure_result: Mapping[str, object],
+        attribute_tokens: Sequence[str],
+        max_rows: int,
+        max_tables: int,
+    ) -> tuple[list[dict[str, object]], list[dict[str, object]]]:
+        tables = structure_result.get("tables")
+        if not isinstance(tables, list) or not tables:
+            return ([], [])
+        tool_calls: list[dict[str, object]] = []
+        tool_messages: list[dict[str, object]] = []
+        limits = self._prompt_compaction_limits()
+        candidates: list[dict[str, object]] = []
+        for table in tables:
+            if not isinstance(table, Mapping):
+                continue
+            columns = table.get("columns")
+            if not isinstance(columns, list) or not columns:
+                continue
+            try:
+                row_count = int(table.get("row_count") or 0)
+            except (TypeError, ValueError):
+                row_count = 0
+            if row_count <= 0 or row_count > max_rows:
+                continue
+            matched_columns = self._match_attribute_columns(columns, attribute_tokens)
+            if not matched_columns:
+                continue
+            row_label_column = columns[0] if columns else None
+            columns_out: list[str] = []
+            if isinstance(row_label_column, str) and row_label_column.strip():
+                columns_out.append(row_label_column)
+            for col in matched_columns:
+                if col not in columns_out:
+                    columns_out.append(col)
+            if not columns_out:
+                continue
+            table_order_index = table.get("order_index")
+            sheet_name = table.get("sheet_name")
+            candidates.append(
+                {
+                    "columns": columns_out,
+                    "row_count": row_count,
+                    "table_order_index": table_order_index,
+                    "sheet_name": sheet_name,
+                }
+            )
+
+        if not candidates:
+            return ([], [])
+
+        for candidate in candidates[: max(1, max_tables)]:
+            call_id = f"auto_fetch_{uuid.uuid4().hex[:8]}"
+            arguments: dict[str, object] = {
+                "document_id": document_id,
+                "columns": candidate["columns"],
+                "max_rows": candidate["row_count"],
+            }
+            table_order_index = candidate.get("table_order_index")
+            if table_order_index is not None:
+                arguments["table_order_index"] = table_order_index
+            sheet_name = candidate.get("sheet_name")
+            if isinstance(sheet_name, str) and sheet_name.strip():
+                arguments["sheet_name"] = sheet_name
+            tool_calls.append(
+                {
+                    "id": call_id,
+                    "type": "function",
+                    "function": {
+                        "name": "table_aggregate",
+                        "arguments": json.dumps(arguments, ensure_ascii=False),
+                    },
+                }
+            )
+            call_start = time.perf_counter()
+            try:
+                tool_result = tools.execute_tool(
+                    "table_aggregate",
+                    arguments,
+                    conversation=conversation,
+                    context=tool_context,
+                )
+            except ToolConstraintError as exc:
+                tool_result = self._constraint_error_payload("table_aggregate", exc)
+            call_duration_ms = (time.perf_counter() - call_start) * 1000.0
+
+            result_keys = sorted(tool_result.keys()) if isinstance(tool_result, Mapping) else []
+            status = tool_result.get("status") if isinstance(tool_result, Mapping) else None
+            error_code = tool_result.get("error_code") if isinstance(tool_result, Mapping) else None
+            hint = tool_result.get("hint") if isinstance(tool_result, Mapping) else None
+            tool_context.add_tool_trace(
+                {
+                    "tool": "table_aggregate",
+                    "arguments": arguments,
+                    "result_keys": result_keys,
+                    "status": status,
+                    "error_code": error_code,
+                    "hint": hint,
+                    "duration_ms": int(call_duration_ms),
+                    "origin": "auto",
+                }
+            )
+            if isinstance(tool_result, Mapping):
+                self._record_knowledge_outputs(tool_context, tool_result)
+                if str(tool_result.get("status") or "").strip().lower() == "ok":
+                    resolved_id = str(tool_result.get("document_id") or "").strip()
+                    if resolved_id:
+                        self._satisfy_transcript_snippets(transcript, resolved_id, tool_context)
+                prompt_tool_result = self._compact_tool_payload_for_prompt(
+                    "table_aggregate",
+                    tool_result,
+                    **limits,
+                )
+            else:
+                prompt_tool_result = {
+                    "tool": "table_aggregate",
+                    "result": self._clip_text(tool_result, 2000) if tool_result is not None else None,
+                    "prompt_compact": True,
+                }
+            tool_messages.append(
+                {
+                    "role": "tool",
+                    "tool_call_id": call_id,
+                    "name": "table_aggregate",
+                    "content": json.dumps(prompt_tool_result, ensure_ascii=False),
+                }
+            )
+        return (tool_calls, tool_messages)
+
     def _persist_table_cache(self, conversation: Conversation, context: ToolExecutionContext) -> None:
         dirty_keys = getattr(context, "table_result_cache_dirty", set())
         if not dirty_keys:
@@ -2960,6 +3274,130 @@ class McpOrchestratorService:
         return max(1000, limit)
 
     @staticmethod
+    def _classify_query_intent(user_message: str) -> QueryClassification:
+        classifier = QueryClassifier()
+        try:
+            return classifier.classify(user_message or "")
+        except Exception as exc:
+            logger.warning("query_classifier.failed error=%s", str(exc)[:200])
+            return QueryClassification(
+                intent=QueryIntent.EXPLORATORY,
+                confidence=0.0,
+                reasoning="classifier_failed",
+            )
+
+    def _auto_structure_enabled_for_business(self, business_profile) -> bool:
+        enabled = bool(getattr(settings, "MCP_ENUMERATION_AUTO_STRUCTURE_ENABLED", True))
+        override = self._business_override(
+            business_profile,
+            "mcp_enumeration_auto_structure_enabled",
+            1 if enabled else 0,
+        )
+        try:
+            return bool(int(override))
+        except (TypeError, ValueError):
+            return enabled
+
+    def _auto_structure_doc_limit(self, business_profile) -> int:
+        default = int(getattr(settings, "MCP_ENUMERATION_MAX_DOCUMENTS", 3) or 3)
+        override = self._business_override(business_profile, "mcp_enumeration_max_documents", default)
+        try:
+            limit = int(override)
+        except (TypeError, ValueError):
+            limit = default
+        return max(1, min(25, limit))
+
+    def _auto_fetch_enabled_for_business(self, business_profile) -> bool:
+        enabled = bool(getattr(settings, "MCP_ENUMERATION_AUTO_FETCH_ENABLED", True))
+        override = self._business_override(
+            business_profile,
+            "mcp_enumeration_auto_fetch_enabled",
+            1 if enabled else 0,
+        )
+        try:
+            return bool(int(override))
+        except (TypeError, ValueError):
+            return enabled
+
+    def _auto_fetch_max_rows(self, business_profile) -> int:
+        default = int(getattr(settings, "MCP_ENUMERATION_AUTO_FETCH_MAX_ROWS", 200) or 200)
+        override = self._business_override(business_profile, "mcp_enumeration_auto_fetch_max_rows", default)
+        try:
+            limit = int(override)
+        except (TypeError, ValueError):
+            limit = default
+        return max(1, min(200, limit))
+
+    def _auto_fetch_max_tables(self, business_profile) -> int:
+        default = int(getattr(settings, "MCP_ENUMERATION_AUTO_FETCH_MAX_TABLES", 3) or 3)
+        override = self._business_override(business_profile, "mcp_enumeration_auto_fetch_max_tables", default)
+        try:
+            limit = int(override)
+        except (TypeError, ValueError):
+            limit = default
+        return max(1, min(20, limit))
+
+    @staticmethod
+    def _normalize_attribute_token(value: str) -> str:
+        token = value.strip().lower()
+        if token.endswith("s") and len(token) > 3:
+            token = token[:-1]
+        return token
+
+    @staticmethod
+    def _normalize_column_label(value: str) -> str:
+        if not value:
+            return ""
+        try:
+            return str(tools._normalize_column_name(value) or "")
+        except Exception:
+            normalized = re.sub(r"[^a-z0-9]+", " ", str(value).lower())
+            return normalized.strip()
+
+    @classmethod
+    def _numeric_attribute_tokens(cls, attributes: Sequence[str]) -> set[str]:
+        numeric_tokens = {
+            "fee",
+            "fees",
+            "charge",
+            "charges",
+            "cost",
+            "costs",
+            "price",
+            "prices",
+            "rate",
+            "rates",
+            "interest",
+            "percentage",
+            "percent",
+            "limit",
+            "limits",
+            "annual",
+            "monthly",
+            "issuance",
+            "renewal",
+            "late",
+            "penalty",
+            "apr",
+        }
+        normalized = {cls._normalize_attribute_token(attr) for attr in attributes if isinstance(attr, str)}
+        return {token for token in normalized if token in numeric_tokens}
+
+    @classmethod
+    def _match_attribute_columns(cls, columns: Sequence[str], attribute_tokens: Sequence[str]) -> list[str]:
+        if not columns or not attribute_tokens:
+            return []
+        matched: list[str] = []
+        token_set = set(attribute_tokens)
+        for column in columns:
+            normalized = cls._normalize_column_label(column)
+            if not normalized:
+                continue
+            if any(token in normalized for token in token_set):
+                matched.append(column)
+        return matched
+
+    @staticmethod
     def _estimate_request_tokens(
         *,
         messages: Sequence[Mapping[str, object]],
@@ -3293,6 +3731,59 @@ class McpOrchestratorService:
                         )
                     )
             compact["snippets"] = snippets_out
+            compact["prompt_compact"] = True
+            return compact
+
+        if normalized_name == "get_document_structure":
+            document_in = payload.get("document")
+            if isinstance(document_in, Mapping):
+                document_out: dict[str, object] = {}
+                for key in ("document_id", "display_name"):
+                    value = document_in.get(key)
+                    if isinstance(value, str) and value.strip():
+                        document_out[key] = value.strip()
+                if document_out:
+                    compact["document"] = document_out
+            table_limit = max(1, int(max_snippets))
+            row_label_limit = max(1, int(max_rows))
+            column_limit = max(1, int(max_cells_exact))
+            tables_in = payload.get("tables")
+            tables_out: list[dict[str, object]] = []
+            if isinstance(tables_in, list):
+                for table in tables_in[:table_limit]:
+                    if not isinstance(table, Mapping):
+                        continue
+                    table_out: dict[str, object] = {}
+                    for key in ("table_id", "title", "order_index", "row_count", "column_count", "sheet_name"):
+                        value = table.get(key)
+                        if value is None:
+                            continue
+                        if isinstance(value, str) and not value.strip():
+                            continue
+                        table_out[key] = value
+                    columns = table.get("columns")
+                    if isinstance(columns, list) and columns:
+                        table_out["columns"] = [str(col) for col in columns[:column_limit] if str(col).strip()]
+                    row_labels = table.get("row_labels")
+                    if isinstance(row_labels, list) and row_labels:
+                        trimmed_labels = [str(label) for label in row_labels[:row_label_limit] if str(label).strip()]
+                        if trimmed_labels:
+                            table_out["row_labels"] = trimmed_labels
+                            if len(row_labels) > len(trimmed_labels):
+                                table_out["labels_truncated"] = True
+                    labels_shown = table.get("labels_shown")
+                    if isinstance(labels_shown, int) and labels_shown >= 0:
+                        table_out["labels_shown"] = labels_shown
+                    if table.get("labels_truncated") is True:
+                        table_out["labels_truncated"] = True
+                    if table_out:
+                        tables_out.append(table_out)
+            compact["tables"] = tables_out
+            for key in ("total_tables", "total_items"):
+                value = payload.get(key)
+                if value is None:
+                    continue
+                compact[key] = value
             compact["prompt_compact"] = True
             return compact
 

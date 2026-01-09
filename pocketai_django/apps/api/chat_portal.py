@@ -195,6 +195,7 @@ _KNOWLEDGE_ONLY_TOOLS = frozenset({
     "search_knowledge",
     "read_document",
     "read_knowledge",
+    "get_document_structure",
     "table_aggregate",
     "dataset_query",
     "query_dataset",
