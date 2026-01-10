@@ -141,6 +141,41 @@
   .message-row:hover .message-timestamp {
     opacity: 1;
   }
+
+  /* Simple sidebar collapse */
+  [data-session-sidebar] {
+    position: relative;
+    transition: width 0.2s ease;
+  }
+  [data-session-sidebar][data-collapsed="true"] {
+    width: 4.5rem;
+  }
+  [data-session-sidebar][data-collapsed="true"] [data-sidebar-content] {
+    opacity: 0;
+    max-width: 0;
+    transform: translateX(-6px);
+    pointer-events: none;
+  }
+  [data-session-sidebar] [data-sidebar-content] {
+    overflow: hidden;
+    white-space: nowrap;
+    transition: opacity 0.2s ease, transform 0.2s ease, max-width 0.2s ease;
+  }
+  [data-session-sidebar] span[data-sidebar-content] {
+    display: inline-block;
+  }
+  [data-session-sidebar][data-collapsed="true"] [data-sidebar-header-row] {
+    justify-content: center;
+    gap: 0;
+  }
+  [data-session-sidebar][data-collapsed="true"] [data-new-session-btn] {
+    padding-left: 0.5rem;
+    padding-right: 0.5rem;
+    gap: 0;
+  }
+  [data-session-sidebar][data-collapsed="true"] [data-sidebar-chevron] {
+    transform: rotate(180deg);
+  }
 </style>
 {% endblock %}
 
@@ -155,14 +190,25 @@
   data-initial-status="{{ portal.conversation_status_code }}">
 
   <!-- Sidebar - Session Management -->
-  <aside class="hidden lg:flex flex-col w-64 bg-muted/30 border-r border-border/50" data-session-sidebar>
+  <aside class="hidden lg:flex flex-col w-64 bg-muted/30 border-r border-border/50 z-20 overflow-visible" data-session-sidebar data-collapsed="false">
+    <button
+      type="button"
+      class="absolute top-1/2 right-0 -translate-y-1/2 translate-x-1/2 z-40 h-6 w-6 rounded-full border border-border/60 bg-muted/80 text-muted-foreground hover:text-foreground hover:bg-muted transition-colors flex items-center justify-center shadow-sm"
+      data-sidebar-toggle
+      aria-label="Collapse sidebar"
+      aria-pressed="false"
+    >
+      <svg class="h-3 w-3 transition-transform duration-200" data-sidebar-chevron viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <polyline points="15 18 9 12 15 6"></polyline>
+      </svg>
+    </button>
     <!-- Agent/Brand Header -->
     <div class="p-4 border-b border-border/50">
-      <div class="flex items-center gap-3">
+      <div class="flex items-center gap-3" data-sidebar-header-row>
         <div class="h-9 w-9 rounded-lg bg-primary flex items-center justify-center flex-shrink-0">
           <span class="text-white font-semibold text-sm">{{ portal.agent.initials }}</span>
         </div>
-        <div class="flex-1 min-w-0">
+        <div class="flex-1 min-w-0" data-sidebar-content>
           <div class="flex items-center gap-1.5">
             <p class="text-sm font-medium text-foreground truncate">{{ portal.agent.name }}</p>
             <span class="relative flex h-1.5 w-1.5 flex-shrink-0">
@@ -184,12 +230,12 @@
         <svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
           <path d="M12 5v14M5 12h14"/>
         </svg>
-        New Chat
+        <span data-sidebar-content>New Chat</span>
       </button>
     </div>
 
     <!-- Session History -->
-    <div class="flex-1 overflow-y-auto custom-scrollbar" data-session-history>
+    <div class="flex-1 overflow-y-auto custom-scrollbar" data-session-history data-sidebar-content>
       <!-- Loading state -->
       <div class="px-3 py-2" data-sessions-loading>
         <div class="animate-pulse flex flex-col gap-1.5">

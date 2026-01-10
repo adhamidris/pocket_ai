@@ -87,6 +87,7 @@ class ChatPortalClient {
     this.bindCsatForm();
     this.bindScrollButton();
     this.initSessionManagement();
+    this.initSidebarToggle();
     this.setComposerAvailability(false);
     try {
       await this.bootstrapSession();
@@ -178,6 +179,8 @@ class ChatPortalClient {
       // Prevent duplicate injection
       if (container.dataset.copyInjected === 'true') return;
       if (container.querySelector('button[data-copy-btn]')) return;
+      const row = container.closest(".message-row");
+      if (row && row.classList.contains("flex-row-reverse")) return;
       container.dataset.copyInjected = 'true';
 
       // Smart positioning: try to find the last paragraph to append inline
@@ -1165,12 +1168,12 @@ class ChatPortalClient {
     body.dir = "auto";
     const cleanBody = this.stripInlineResponseBlocks(message.body || "");
     body.innerHTML = this.renderMarkdown(cleanBody);
-    body.dataset.messageBody = "true";
     body.dataset.messageBubble = "true";
 
     if (isCustomer) {
       body.className = "text-base leading-relaxed bg-muted text-foreground px-5 py-3 rounded-2xl rounded-tr-sm text-start inline-block shadow-sm";
     } else {
+      body.dataset.messageBody = "true";
       body.className = "relative group text-base leading-relaxed text-foreground text-start max-w-none break-words pr-8";
       // Copy button will be added by injectCopyButton after message is appended
     }
@@ -1976,6 +1979,40 @@ class ChatPortalClient {
     });
   }
 
+  initSidebarToggle() {
+    const sidebar = this.elements.sessionSidebar;
+    const toggleBtn = sidebar?.querySelector('[data-sidebar-toggle]');
+
+    if (!sidebar || !toggleBtn) return;
+
+    const storageKey = `portal_sidebar_collapsed_${this.businessSlug}_${this.agentSlug}`;
+    const applyCollapsed = (collapsed) => {
+      sidebar.setAttribute('data-collapsed', collapsed ? 'true' : 'false');
+      toggleBtn.setAttribute('aria-pressed', collapsed ? 'true' : 'false');
+      toggleBtn.setAttribute('aria-label', collapsed ? 'Expand sidebar' : 'Collapse sidebar');
+    };
+
+    let saved = null;
+    try {
+      saved = window.localStorage ? window.localStorage.getItem(storageKey) : null;
+    } catch (_err) {
+      saved = null;
+    }
+    applyCollapsed(saved === 'true');
+
+    toggleBtn.addEventListener('click', () => {
+      const next = sidebar.getAttribute('data-collapsed') !== 'true';
+      applyCollapsed(next);
+      try {
+        if (window.localStorage) {
+          window.localStorage.setItem(storageKey, next ? 'true' : 'false');
+        }
+      } catch (_err) {
+        // ignore storage failures
+      }
+    });
+  }
+
   getSessionTokens() {
     try {
       const stored = localStorage.getItem(this.sessionStorageKey);
@@ -2279,4 +2316,3 @@ document.addEventListener("DOMContentLoaded", () => {
   const client = new ChatPortalClient(container);
   client.init();
 });
-
