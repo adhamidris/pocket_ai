@@ -3801,6 +3801,7 @@ class KnowledgeIngestionService:
             if remaining_budget <= 0:
                 break
             table = tables[idx]
+            repair_reason = "misalignment" if _misaligned else "low_confidence"
 
             # Try to crop table region, fallback to full page if bbox is missing
             crop_bytes = self._render_table_crop(path, int(table.page_number), table.bbox)
@@ -3849,6 +3850,23 @@ class KnowledgeIngestionService:
             )
             if vlm_table:
                 meta["repaired"] += 1
+                meta.setdefault("repaired_tables", []).append(
+                    {
+                        "order_index": table.order_index,
+                        "page_number": table.page_number,
+                        "reason": repair_reason,
+                        "render_mode": render_mode,
+                    }
+                )
+                logger.info(
+                    "table.vlm.repaired table=%s page=%s reason=%s render=%s conf=%s model=%s",
+                    table.order_index,
+                    table.page_number,
+                    repair_reason,
+                    render_mode,
+                    conf,
+                    self.table_vlm_model,
+                )
                 repaired[idx] = vlm_table
 
         return repaired, issues, meta
@@ -4766,17 +4784,21 @@ class KnowledgeIngestionService:
                             max_rows=self.table_parent_max_rows,
                             max_chars=self.table_parent_max_chars,
                         )
-                        if parent_text:
-                            parent_meta = dict(base_metadata)
-                            parent_meta.update(
-                                {
-                                    "content_source": "table_parent",
-                                    "table_chunk_role": "parent",
-                                    "is_table_preview": True,
-                                    "table_parent_truncated": truncated,
-                                }
-                            )
-                            table_segment_payloads.append({"text": parent_text, "metadata": parent_meta})
+                        # DISABLED: Parent chunks create column-position ambiguity when LLM
+                        # processes multiple tables with different column orders.
+                        # Row chunks (key: value format) are semantically unambiguous.
+                        # See: llm_confusion_diagnosis.md
+                        # if parent_text:
+                        #     parent_meta = dict(base_metadata)
+                        #     parent_meta.update(
+                        #         {
+                        #             "content_source": "table_parent",
+                        #             "table_chunk_role": "parent",
+                        #             "is_table_preview": True,
+                        #             "table_parent_truncated": truncated,
+                        #         }
+                        #     )
+                        #     table_segment_payloads.append({"text": parent_text, "metadata": parent_meta})
                         row_payloads = self._table_row_chunk_payloads(
                             table=t,
                             column_map=column_map,

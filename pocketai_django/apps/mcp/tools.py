@@ -2431,8 +2431,8 @@ def _search_knowledge_handler(
                     business_profile=conversation.business_profile,
                     identifier_value=identifier_candidate,
                 )
-                if combined_upload_scope is not None:
-                    hits = [hit for hit in hits if getattr(hit, "upload_id", None) in combined_upload_scope]
+                if combined_upload_ids is not None:
+                    hits = [hit for hit in hits if getattr(hit, "upload_id", None) in combined_upload_ids]
                 if hits:
                     dataset_candidates = [
                         {
@@ -3689,6 +3689,7 @@ def _get_document_structure_handler(
         "description",
         "slug",
         "external_reference",
+        "ingestion_metadata",
     )
     
     # Apply agent scope
@@ -3709,13 +3710,14 @@ def _get_document_structure_handler(
     # Fetch tables for this upload
     tables_qs = KnowledgeUploadTable.objects.filter(
         upload=upload,
-    ).only(
+    ).select_related("page").only(
         "id",
         "order_index",
         "title",
         "section_heading",
         "column_schema",
         "metadata",
+        "page__page_number",
     ).order_by("order_index")
     
     if table_id_raw:
@@ -3751,6 +3753,12 @@ def _get_document_structure_handler(
     # Build structure for each table
     table_structures: list[dict[str, object]] = []
     total_items = 0
+    ingestion_meta = upload.ingestion_metadata if isinstance(upload.ingestion_metadata, Mapping) else {}
+    page_count = ingestion_meta.get("page_count")
+    try:
+        page_count = int(page_count) if page_count is not None else None
+    except (TypeError, ValueError):
+        page_count = None
     
     for table in tables:
         column_schema = table.column_schema if isinstance(table.column_schema, (list, tuple)) else []
@@ -3767,6 +3775,19 @@ def _get_document_structure_handler(
         metadata = table.metadata if isinstance(table.metadata, Mapping) else {}
         sheet_name = metadata.get("sheet_name") if isinstance(metadata.get("sheet_name"), str) else None
         
+        page_number: int | None = None
+        if table.page and getattr(table.page, "page_number", None):
+            try:
+                page_number = int(table.page.page_number)
+            except (TypeError, ValueError):
+                page_number = None
+        if page_number is None:
+            raw_page = metadata.get("page_number") or metadata.get("page") or metadata.get("page_index")
+            try:
+                page_number = int(raw_page) if raw_page is not None else None
+            except (TypeError, ValueError):
+                page_number = None
+
         # Get row labels (first column values) for enumeration
         row_labels: list[str] = []
         row_count = 0
@@ -3777,7 +3798,7 @@ def _get_document_structure_handler(
 
         if include_row_labels and row_count:
             # Fetch rows and their first-column cell values (row labels).
-            rows = list(rows_qs.only("id", "row_index").order_by("row_index")[:max_row_labels])
+            rows = list(rows_qs.only("id", "row_index", "page_number").order_by("row_index")[:max_row_labels])
             row_ids = [row.id for row in rows]
             cells_qs = KnowledgeUploadTableCell.objects.filter(
                 row_id__in=row_ids,
@@ -3795,6 +3816,11 @@ def _get_document_structure_handler(
                 label = cell_map.get(row.id)
                 if label:
                     row_labels.append(label)
+                if page_number is None and row.page_number:
+                    try:
+                        page_number = int(row.page_number)
+                    except (TypeError, ValueError):
+                        page_number = None
         
         total_items += row_count
         
@@ -3806,6 +3832,8 @@ def _get_document_structure_handler(
             "column_count": len(columns),
             "row_count": row_count,
         }
+        if page_number:
+            table_structure["page_number"] = page_number
         
         if sheet_name:
             table_structure["sheet_name"] = sheet_name
@@ -3834,6 +3862,7 @@ def _get_document_structure_handler(
             "table_count": len(table_structures),
             "total_items": total_items,
             "include_row_labels": include_row_labels,
+            "page_count": page_count,
         },
         context={
             "business": conversation.business_profile_id,
@@ -3848,6 +3877,7 @@ def _get_document_structure_handler(
         "document": {
             "document_id": str(upload.id),
             "display_name": display_label,
+            "page_count": page_count,
         },
         "tables": table_structures,
         "total_tables": len(table_structures),

@@ -5336,12 +5336,20 @@ class KnowledgeSearchService:
                 summary = sample_text[:500]
         
         truncated = False
-        if content_mode == "abstract":
+        # For table chunks, always use full chunk content so the LLM sees actual cell values
+        # instead of abstract summaries like "Table 1: columns...". This ensures comprehensive
+        # enumeration queries get complete data in a single search.
+        if content_mode == "abstract" and not is_table_chunk_flag:
             content = summary
             read_state = KNOWLEDGE_READ_STATE_SUMMARY
+        elif content_mode == "abstract" and is_table_chunk_flag:
+            # Table chunks: use full content from ingestion (which includes cell values)
+            content, truncated = self._trim_with_flag(chunk.content, max_chars=self.search_preview_char_limit)
+            read_state = KNOWLEDGE_READ_STATE_FULL if content and len(content) >= self.table_ready_threshold else KNOWLEDGE_READ_STATE_PREVIEW
         else:
             content, truncated = self._trim_with_flag(chunk.content, max_chars=self.search_preview_char_limit)
             read_state = KNOWLEDGE_READ_STATE_PREVIEW if truncated else self._read_state_for_content(content, chunk_metadata)
+
         entity_type = chunk_metadata.get("entity_type")
         entity_name = chunk_metadata.get("entity_name")
         entity_business = chunk_metadata.get("entity_business")
@@ -5794,12 +5802,12 @@ class KnowledgeSearchService:
         """
         Extract actual page text from KnowledgeUploadPageBlock entries.
         Returns (text, truncated_flag).
-        
+
         This is the CORRECT way to get page content, not via chunk indices.
         """
         try:
             from apps.accounts.models import KnowledgeUploadPageBlock
-            
+
             blocks = list(
                 KnowledgeUploadPageBlock.objects.filter(
                     upload=upload,
@@ -5808,26 +5816,98 @@ class KnowledgeSearchService:
                 .select_related("page")
                 .order_by("order_index")
             )
-            
+
             if not blocks:
                 return ("", False)
-            
+
             # Combine block texts in order
             page_parts: list[str] = []
             for block in blocks:
                 if block.text:
                     page_parts.append(block.text)
-            
+
             combined = "\n\n".join(page_parts).strip()
-            
+
             if max_chars and len(combined) > max_chars:
                 return (combined[:max_chars], True)
-            
+
             return (combined, False)
-            
+
         except Exception:
             # Fallback if blocks aren't available
             return ("", False)
+
+    def _get_structured_table_content_for_page(
+        self,
+        upload: KnowledgeUpload,
+        page_number: int,
+        max_chars: int | None = None,
+    ) -> tuple[str, bool, bool]:
+        """
+        Get structured table content for a page from table row chunks.
+
+        Returns (content, truncated_flag, has_tables).
+
+        This returns correctly structured key-value pairs from extracted tables,
+        avoiding the column misalignment issues present in raw PageBlock text.
+        """
+        try:
+            from apps.accounts.models import KnowledgeUploadTable, KnowledgeUploadChunk
+
+            # Check if page has tables
+            table_ids = list(
+                KnowledgeUploadTable.objects.filter(
+                    upload=upload,
+                    page__page_number=page_number
+                )
+                .order_by("order_index")
+                .values_list("id", flat=True)
+            )
+
+            if not table_ids:
+                return ("", False, False)
+
+            # Get table row chunks for these tables, ordered by table then row
+            row_chunks = list(
+                KnowledgeUploadChunk.objects.filter(
+                    upload=upload,
+                    metadata__table_id__in=[str(tid) for tid in table_ids],
+                    metadata__table_chunk_role="row",
+                )
+                .order_by("chunk_index")
+            )
+
+            if not row_chunks:
+                return ("", False, False)
+
+            # Build structured content from row chunks
+            content_parts: list[str] = []
+            current_table_id: str | None = None
+
+            for chunk in row_chunks:
+                chunk_meta = chunk.metadata if isinstance(chunk.metadata, dict) else {}
+                table_id = chunk_meta.get("table_id")
+
+                # Add separator between tables
+                if table_id != current_table_id and current_table_id is not None:
+                    content_parts.append("\n---\n")
+                current_table_id = table_id
+
+                if chunk.content:
+                    content_parts.append(chunk.content.strip())
+
+            combined = "\n\n".join(content_parts).strip()
+            truncated = False
+
+            if max_chars and len(combined) > max_chars:
+                combined = combined[:max_chars]
+                truncated = True
+
+            return (combined, truncated, True)
+
+        except Exception as exc:
+            logger.warning("Failed to get structured table content: %s", exc)
+            return ("", False, False)
 
     def load_page_window(
         self,
@@ -5865,6 +5945,7 @@ class KnowledgeSearchService:
         upload_obj = None
         page_text = ""
         page_truncated = False
+        page_source = "none"  # Track source: "structured_tables", "page_blocks", or "none"
         resolved_upload_id = upload_id
         
         # NEW: Resolve chunk_id to upload_id for PageBlocks access (Codex gap fix)
@@ -5909,13 +5990,32 @@ class KnowledgeSearchService:
                 )
                 
                 if upload_obj:
-                    page_text, page_truncated = self._get_page_text_from_blocks(
+                    # PRIORITY: Try structured table content first for pages with tables
+                    # This avoids column misalignment issues in raw PageBlock text
+                    table_content, table_truncated, has_tables = self._get_structured_table_content_for_page(
                         upload_obj,
                         page_index,
                         max_chars=effective_limit
                     )
-                    if page_text:
+
+                    if has_tables and table_content:
+                        # Use structured table content - correctly formatted key-value pairs
+                        page_text = table_content
+                        page_truncated = table_truncated
                         page_from_blocks = True
+                        page_source = "structured_tables"
+                    else:
+                        # Fallback to raw PageBlock text for pages without tables
+                        page_text, page_truncated = self._get_page_text_from_blocks(
+                            upload_obj,
+                            page_index,
+                            max_chars=effective_limit
+                        )
+                        if page_text:
+                            page_from_blocks = True
+                            page_source = "page_blocks"
+                        else:
+                            page_source = "none"
             except Exception:
                 # Fall through to chunk-based approach
                 pass
@@ -5924,7 +6024,7 @@ class KnowledgeSearchService:
         if page_from_blocks and upload_obj:
             synopsis = self._page_synopsis_text(upload_obj, page_index, "")
             label = getattr(upload_obj, "display_name", None) or "Document"
-            
+
             # Use synopsis for excerpt mode, full text for full_page mode
             if normalized_mode != "full_page":
                 content_value = synopsis or page_text[:500]
@@ -5934,15 +6034,15 @@ class KnowledgeSearchService:
                 content_value = page_text
                 read_state = KNOWLEDGE_READ_STATE_PREVIEW if page_truncated else KNOWLEDGE_READ_STATE_FULL
                 truncated_flag = page_truncated
-            
+
             diagnostics = {
                 "page_request": True,
                 "page_number": page_index,
                 "page_mode": normalized_mode,
                 "page_char_limit": effective_limit,
-                "page_source": "page_blocks",  # NEW diagnostic
+                "page_source": page_source,  # Track whether we used structured_tables or page_blocks
             }
-            
+
             return tuple([
                 KnowledgeSnippet(
                     id=upload_obj.id,
@@ -5966,7 +6066,7 @@ class KnowledgeSearchService:
                     entity_type=None,
                     entity_name=None,
                     entity_business=None,
-                    is_table_chunk=False,
+                    is_table_chunk=page_source == "structured_tables",  # Mark as table content
                     aliases=tuple(),
                     search_stage="load_page",
                     confidence_score=1.0,

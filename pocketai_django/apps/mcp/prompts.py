@@ -160,6 +160,147 @@ OPENAI_PROACTIVE_TOOL_INSTRUCTIONS = textwrap.dedent(
 ).strip()
 
 
+# DeepSeek-specific instructions: DeepSeek models tend to be more compliant with 
+# structured instructions but sometimes need stronger reinforcement for multi-step 
+# enumeration workflows. These instructions emphasize the mandatory 3-step pattern.
+DEEPSEEK_COMPREHENSIVE_QUERY_INSTRUCTIONS = textwrap.dedent(
+    """
+    ---
+
+    ## COMPREHENSIVE ENUMERATION PROTOCOL (DeepSeek-Specific)
+
+    **CRITICAL RULE**: When visitor uses enumeration keywords ("list all", "show every", "complete list", "all X", "what X do you have"), you MUST follow the 3-step protocol EXACTLY.
+
+    ### MANDATORY 3-STEP WORKFLOW:
+
+    ```
+    STEP 1: search_knowledge("relevant query")
+      ↓ Returns: snippet preview + document_id
+    STEP 2: get_document_structure(document_id="...")  ← DO NOT SKIP THIS
+      ↓ Returns: row_labels with ALL items
+    STEP 3: Answer with FULL list from row_labels
+    ```
+
+    ### DETECTION PATTERNS (Always Trigger 3-Step):
+    - "list all X"
+    - "all X and their Y"
+    - "show every X"
+    - "complete list of X"
+    - "what X do you have"
+    - "all available X"
+    - "every X with Y"
+
+    ### ANTI-PATTERN (What You're Currently Doing Wrong):
+    ❌ User: "list all credit cards and their fees"
+    ❌ You: `search_knowledge("credit cards fees")` → Returns 5 cards
+    ❌ You: (Answer) "Here are the credit cards: [lists 5 cards]"
+    ❌ **FAILURE**: You stopped after Step 1, missing 12 other cards!
+
+    ### CORRECT PATTERN (What You MUST Do)
+:
+    ✅ User: "list all credit cards and their fees"
+    ✅ You: `search_knowledge("credit cards fees")` → Returns 5 cards + document_id
+    ✅ You: `get_document_structure(document_id="...")` → Returns row_labels: [17 cards]
+    ✅ You: (Answer) "Here are ALL 17 credit cards with their fees: [lists all 17]"
+    ✅ **SUCCESS**: You used Step 2 to verify completeness!
+
+    ---
+
+    ## WHY THIS MATTERS
+
+    **Search results are PREVIEWS, not complete lists:**
+    - `search_knowledge` returns 5-8 most relevant snippets
+    - It will NOT return all items even if 20+ exist
+    - `get_document_structure` shows the ACTUAL full inventory
+
+    **Real Example:**
+    - User asks: "list all credit cards"
+    - Search returns: 5 cards (White, Classic, Gold, Cash Back, E-Commerce)
+    - **But** `get_document_structure` reveals: 17 cards total
+    - **Your job**: Return all 17, not just 5
+
+    ---
+
+    ## IMPLEMENTATION CHECKLIST
+
+    When you see enumeration keywords, ask yourself:
+
+    1. [ ] Did I call `search_knowledge`? (Step 1)
+    2. [ ] Did I get a `document_id` from the results?
+    3. [ ] Did I call `get_document_structure(document_id)`? (Step 2) ← **CRITICAL**
+    4. [ ] Did I use `row_labels` from structure to build my full answer? (Step 3)
+
+    **If you answered NO to #3, you are doing it WRONG.**
+
+    ---
+
+    ## PARALLEL TOOL CALLS (Efficiency Tip)
+
+    You can call Steps 1 and 2 in PARALLEL if you know the document_id from context:
+
+    ```json
+    {
+      "tool_calls": [
+        {"name": "search_knowledge", "arguments": {"query": "credit cards"}},
+        {"name": "get_document_structure", "arguments": {"document_id": "known-doc-id"}}
+      ]
+    }
+    ```
+
+    But if document_id is unknown, you MUST do Step 1 first, then Step 2.
+
+    ---
+
+    ## EXAMPLES (Study These Carefully)
+
+    ### Example 1: Basic Enumeration
+    **User**: "what credit cards do you offer"
+    **You** (Step 1): `[search_knowledge("credit cards")]` (no content)
+    **Tool**: Returns snippet + `document_id: "upload-123"`
+    **You** (Step 2): `[get_document_structure(document_id="upload-123")]` (no content)
+    **Tool**: Returns `tables: [{"title": "Cards", "row_labels": ["White", "Classic", "Gold", ...], "row_count": 17}]`
+    **You** (Step 3): "We offer 17 credit cards: White, Classic, Gold, Cash Back, E-Commerce, Titanium, Heya, Platinum, World, World Elite, EXPLORE Platinum, EXPLORE World, CIB Noon, CIB Talabat, Swype 12, Swype 36, and Swype 60."
+
+    ### Example 2: Enumeration with Details
+    **User**: "list all credit cards and their issuance fees"
+    **You** (Step 1): `[search_knowledge("credit cards issuance fees")]`
+    **Tool**: Returns 5 row chunks with fees + `document_id: "upload-456"`
+    **You** (Step 2): `[get_document_structure(document_id="upload-456")]`
+    **Tool**: Returns `row_labels: [17 cards]` + column headers
+    **You** (Step 3): Since I now know ALL 17 cards exist, I can:
+      - Option A: Use `read_document(mode="full_page")` to get all fees
+      - Option B: Search again with more specific terms to get remaining fees
+      - Option C: Answer with known fees and note "fees for [other cards] available on request"
+    **You**: (Build complete table with all 17 cards and their fees)
+
+    ### Example 3: When get_document_structure Shows Nothing
+    **User**: "list all available warranties"
+    **You**: `[search_knowledge("warranties")]`
+    **Tool**: No results
+    **You**: `[search_knowledge("guarantee coverage")]` (try different terms)
+    **Tool**: Returns snippet from `document_id: "policies-doc"`
+    **You**: `[get_document_structure(document_id="policies-doc")]`
+    **Tool**: Returns `tables: []` (no structured data)
+    **You**: "I found warranty information in our policies document. Let me read the full section for you."
+    **You**: `[read_document(document_id="policies-doc", mode="full_page")]`
+    (Then answer from the full text)
+
+    ---
+
+    ## FINAL REMINDERS
+
+    1. **Search is NOT enough** for "list all" queries
+    2. **ALWAYS call `get_document_structure`** after Step 1 for enumeration
+    3. **Use `row_labels`** as source of truth for completeness
+    4. **If you skip Step 2**, you will give INCOMPLETE answers
+    5. **This is not optional** — it's MANDATORY for enumeration queries
+
+    **Prompt Version**: 2.2-deepseek-enum-v1
+    """
+).strip()
+
+
+
 def _tone_instruction(agent: AgentProfile | None) -> str:
     tone_key = (agent.tone or "").strip().lower() if agent and agent.tone else ""
     tone_label = display_tone_label(agent.tone) if agent else None
@@ -236,7 +377,9 @@ def build_system_message(
         - **ONLY call when**: snippet says `read_state: summary` or `read_state: preview` AND `read_required: true`
         - If a snippet includes `structuredTables` with the needed row/cell values, answer directly—don't call `read_document` just to re-fetch the same table
         - Prefer smallest scope: `mode="excerpt"` (default) over `full_page`
+        - **Comprehensive lists**: If `search_knowledge` + `get_document_structure` confirm the relevant tables, skip `excerpt` and use `mode="full_page"` for the needed pages (batch up to 5 in one call)
         - Accepts `pages=[1, 2]` to read multiple pages at once
+        - **Comprehensive lists**: If you need `read_document`, batch adjacent pages in ONE call (up to 5 pages) instead of multiple sequential reads
         
         ### `table_aggregate`
         - Use for totals/contributor lists from **dataset uploads** (CSV/XLSX/JSONL)
@@ -361,9 +504,11 @@ def build_system_message(
         """
     ).strip()
 
-    # Append OpenAI-specific instructions when using OpenAI provider
+    # Append provider-specific instructions
     if effective_provider == "openai":
         return base_prompt + "\n\n" + OPENAI_PROACTIVE_TOOL_INSTRUCTIONS
+    elif effective_provider == "deepseek":
+        return base_prompt + "\n\n" + DEEPSEEK_COMPREHENSIVE_QUERY_INSTRUCTIONS
 
     return base_prompt
 

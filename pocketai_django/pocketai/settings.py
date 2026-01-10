@@ -1346,7 +1346,7 @@ LOGGING = {
     "loggers": {
         "django.server": {"handlers": ["console_http"], "level": "INFO", "propagate": False},
         "apps.llm.llm_provider": {"handlers": ["console", "deepseek_file"], "level": "INFO", "propagate": False},
-        "apps.knowledge.knowledge_ingestion": {"handlers": ["console"], "level": "INFO", "propagate": False},
+        "apps.knowledge.knowledge_ingestion": {"handlers": ["console", "rag_file"], "level": "INFO", "propagate": False},
         "apps.rag.ai_orchestrator": {"handlers": ["console"], "level": "INFO", "propagate": False},
         "apps.mcp.tools": {"handlers": ["console", "rag_file"], "level": "INFO", "propagate": False},
         "apps.mcp.orchestrator": {"handlers": ["console", "rag_file"], "level": "INFO", "propagate": False},

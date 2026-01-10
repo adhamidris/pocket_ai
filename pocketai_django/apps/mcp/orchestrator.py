@@ -700,6 +700,32 @@ class McpOrchestratorService:
                                 tool_result = duplicate_result
                                 call_origin = "duplicate"
                             else:
+                                if tool_name == "read_document":
+                                    pages_requested = arguments.get("pages")
+                                    if not isinstance(pages_requested, list):
+                                        pages_requested = []
+                                    page_requested = arguments.get("page")
+                                    if page_requested is not None and page_requested not in pages_requested:
+                                        pages_requested.append(page_requested)
+                                    structured_log(
+                                        "mcp",
+                                        "tool.read_document.request",
+                                        {
+                                            "document_id": str(arguments.get("document_id") or ""),
+                                            "pages": pages_requested,
+                                            "page": arguments.get("page"),
+                                            "offset": arguments.get("offset"),
+                                            "mode": arguments.get("mode"),
+                                            "neighbor_window": arguments.get("neighbor_window")
+                                            or arguments.get("chunk_neighbor"),
+                                            "token_budget": arguments.get("token_budget"),
+                                        },
+                                        context={
+                                            "conversation": conversation.id,
+                                            "business": conversation.business_profile_id,
+                                        },
+                                        logger_obj=logger,
+                                    )
                                 call_start = time.perf_counter()
                                 try:
                                     tool_result = tools.execute_tool(
@@ -2807,6 +2833,7 @@ class McpOrchestratorService:
                 }
             )
         return (tool_calls, tool_messages)
+
 
     def _persist_table_cache(self, conversation: Conversation, context: ToolExecutionContext) -> None:
         dirty_keys = getattr(context, "table_result_cache_dirty", set())
