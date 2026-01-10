@@ -31,6 +31,11 @@ backend/.env
 .env
 pocketai_django/.venv/
 .venv/
-
+pocketai_django/var/
+/.log*
+.log*
 .gemini/
 gha-creds-*.json
+
+# User requested ignores
+/var

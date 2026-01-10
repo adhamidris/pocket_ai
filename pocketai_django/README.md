@@ -24,4 +24,4 @@ python manage.py runserver
 ## Notes
 
 - Environment variables are loaded from the repository root `.env` via `pocketai/env.py`.
-- Do not commit virtualenvs or runtime artifacts (`.venv/`, `var/`, `db.sqlite3`).
+- Do not commit virtualenvs or runtime artifacts (`.venv/`, `var/`).

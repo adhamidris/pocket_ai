@@ -7318,7 +7318,12 @@ class AiOrchestratorService:
                 visitor_mentions=visitor_mentions,
             ):
                 continue
-            self._upsert_knowledge_payload(knowledge_payload, self._prepare_prompt_snippet(cached_snippet))
+            prepared = self._prepare_prompt_snippet(cached_snippet)
+            # For table chunks, re-sample rows based on current query to ensure
+            # follow-up questions get query-optimized table data (not stale cache).
+            if prepared.get("is_table_chunk") or prepared.get("needs_table_refresh"):
+                prepared = self._refresh_table_sample(prepared, query)
+            self._upsert_knowledge_payload(knowledge_payload, prepared)
         for snippet in citations:
             serialized = self._serialize_snippet(snippet)
             serialized["status"] = serialized.get("status") or self._determine_snippet_status(serialized)
@@ -8179,7 +8184,57 @@ class AiOrchestratorService:
         payload.pop("last_customer_reference_turn", None)
         return payload
 
+    def _refresh_table_sample(
+        self,
+        cached_entry: dict[str, object],
+        query: str,
+    ) -> dict[str, object]:
+        """
+        For cached table chunks, re-sample rows based on the current query.
 
+        This ensures follow-up questions get query-optimized table data instead
+        of stale row samples from the original query. The cache stores the table
+        reference (chunk_id, is_table_chunk) but not the query-specific rows.
+
+        Args:
+            cached_entry: The cached snippet dict (from knowledge_cache).
+            query: The current user query for row relevance scoring.
+
+        Returns:
+            Updated dict with fresh structuredTables if this is a table chunk,
+            otherwise the original cached_entry unchanged.
+        """
+        # Only refresh table chunks that need it
+        if not cached_entry.get("is_table_chunk") and not cached_entry.get("needs_table_refresh"):
+            return cached_entry
+
+        chunk_id = cached_entry.get("chunk_id")
+        if not chunk_id:
+            return cached_entry
+
+        # Fetch the chunk from DB
+        try:
+            from apps.accounts.models import KnowledgeUploadChunk
+
+            chunk = KnowledgeUploadChunk.objects.filter(id=chunk_id).select_related("upload").first()
+            if not chunk:
+                return cached_entry
+        except Exception:
+            return cached_entry
+
+        # Re-sample with current query for relevance-ranked rows
+        fresh_tables = self._table_row_sample(
+            chunk,
+            max_columns=6,
+            max_rows=3,  # Allow more rows for comprehensive follow-up queries
+            query=query,
+        )
+
+        # Update the cached entry with fresh data
+        refreshed = dict(cached_entry)
+        refreshed["structuredTables"] = list(fresh_tables)
+        refreshed["needs_table_refresh"] = False
+        return refreshed
 
     def _business_override(self, business_profile, key: str, default: int | float) -> int | float:
         metadata = getattr(business_profile, "metadata", None)
@@ -8439,7 +8494,10 @@ class AiOrchestratorService:
             "content": snippet.content or "",
             "content_mode": snippet.content_mode if snippet.content_mode else ("full" if snippet.content else None),
             "public_label": snippet.public_label or "",
-            "structuredTables": list(snippet.structured_tables or ()),
+            # For table chunks, don't cache query-specific row samples.
+            # They'll be refreshed at query time via _refresh_table_sample().
+            "structuredTables": [] if snippet.is_table_chunk else list(snippet.structured_tables or ()),
+            "needs_table_refresh": bool(snippet.is_table_chunk),
             "issues": list(snippet.issues or ()),
             "pageSummaries": list(snippet.page_summaries or ()),
             "read_state": snippet.read_state or KNOWLEDGE_READ_STATE_SUMMARY,
