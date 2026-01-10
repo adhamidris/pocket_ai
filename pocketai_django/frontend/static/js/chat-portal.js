@@ -81,6 +81,7 @@ class ChatPortalClient {
     this.sessionLoadId = 0;
     this.sessionLoadInProgress = false;
     this.sessionSummaries = [];
+    this.pendingSessionTitles = {};
   }
 
   async init() {
@@ -382,14 +383,20 @@ class ChatPortalClient {
           textarea.style.height = targetHeight;
         }
       }
+      const wasEmpty = this.isCurrentSessionEmpty();
       if (this.isSending || this.isStreaming) {
         this.enqueueMessage(message);
         return;
       }
+      if (wasEmpty) {
+        this.updateSessionTitleFromMessage(message);
+        this.currentSessionHasMessages = true;
+        this.updateSessionEmptyState(1);
+      }
       await this.sendMessage(message);
       
       // Mark session as having messages after successful send
-      if (!this.currentSessionHasMessages) {
+      if (!wasEmpty && !this.currentSessionHasMessages) {
         this.currentSessionHasMessages = true;
         this.updateSessionEmptyState();
       }
@@ -2181,6 +2188,8 @@ class ChatPortalClient {
       const item = this.buildSessionItem(session, isActive);
       itemsContainer.appendChild(item);
     }
+
+    this.applyPendingSessionTitles();
   }
 
   buildSessionItem(session, isActive) {
@@ -2197,7 +2206,7 @@ class ChatPortalClient {
 
     // Compact title-only layout
     div.innerHTML = `
-      <span class="flex-1 truncate">${this.escapeHtml(session.title)}</span>
+      <span class="flex-1 truncate" data-session-title>${this.escapeHtml(session.title)}</span>
     `;
 
     // Click to switch session
@@ -2229,6 +2238,66 @@ class ChatPortalClient {
     const div = document.createElement("div");
     div.textContent = text;
     return div.innerHTML;
+  }
+
+  generateSessionTitle(firstMessage, maxLength = 50) {
+    let text = (firstMessage || "").trim();
+    if (!text) return "New conversation";
+    text = text.split(/\s+/).join(" ");
+    if (text.length <= maxLength) return text;
+    let truncated = text.slice(0, maxLength);
+    const lastSpace = truncated.lastIndexOf(" ");
+    if (lastSpace > maxLength / 2) {
+      truncated = truncated.slice(0, lastSpace);
+    }
+    return truncated.replace(/[.,!?;:]+$/, "") + "...";
+  }
+
+  applySessionTitleToDom(sessionToken, title) {
+    if (!sessionToken || !this.elements.sessionsList) return false;
+    const item = this.elements.sessionsList.querySelector(`[data-session-token="${sessionToken}"]`);
+    if (!item) return false;
+    const titleEl = item.querySelector("[data-session-title]") || item.querySelector("span");
+    if (!titleEl) return false;
+    if (titleEl.textContent === title) return true;
+    titleEl.classList.add("transition-opacity", "duration-200");
+    titleEl.classList.add("opacity-0");
+    titleEl.textContent = title;
+    requestAnimationFrame(() => {
+      titleEl.classList.remove("opacity-0");
+    });
+    return true;
+  }
+
+  updateSessionTitle(sessionToken, title) {
+    if (!sessionToken || !title) return;
+    const applied = this.applySessionTitleToDom(sessionToken, title);
+    if (!applied) {
+      this.pendingSessionTitles[sessionToken] = title;
+    } else if (this.pendingSessionTitles[sessionToken]) {
+      delete this.pendingSessionTitles[sessionToken];
+    }
+    if (Array.isArray(this.sessionSummaries) && this.sessionSummaries.length) {
+      this.sessionSummaries = this.sessionSummaries.map((session) => {
+        if (!session || session.session_token !== sessionToken) return session;
+        return { ...session, title };
+      });
+    }
+  }
+
+  updateSessionTitleFromMessage(messageText) {
+    const token = this.currentSessionToken;
+    if (!token) return;
+    const title = this.generateSessionTitle(messageText);
+    this.updateSessionTitle(token, title);
+  }
+
+  applyPendingSessionTitles() {
+    if (!this.pendingSessionTitles || !this.elements.sessionsList) return;
+    const pending = { ...this.pendingSessionTitles };
+    Object.keys(pending).forEach((sessionToken) => {
+      this.updateSessionTitle(sessionToken, pending[sessionToken]);
+    });
   }
 
   findEmptySessionToken() {
