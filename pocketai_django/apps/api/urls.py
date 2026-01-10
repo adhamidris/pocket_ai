@@ -3,7 +3,9 @@ from django.urls import path
 from . import views
 from .chat_portal import (
     bootstrap_session,
+    create_portal_session,
     events,
+    list_portal_sessions,
     messages_endpoint,
     portal_verification_confirm,
     portal_verification_start,
@@ -49,6 +51,8 @@ urlpatterns = [
     ),
     path("chat/portal/resolve/<slug:business_slug>/<slug:agent_slug>/", resolve_portal_handle, name="chat-portal-resolve"),
     path("chat/portal/sessions/", bootstrap_session, name="chat-portal-session"),
+    path("chat/portal/sessions/list/", list_portal_sessions, name="chat-portal-sessions-list"),
+    path("chat/portal/sessions/create/", create_portal_session, name="chat-portal-sessions-create"),
     path("chat/portal/verify/status/", portal_verification_status, name="chat-portal-verify-status"),
     path("chat/portal/verify/start/", portal_verification_start, name="chat-portal-verify-start"),
     path("chat/portal/verify/confirm/", portal_verification_confirm, name="chat-portal-verify-confirm"),

@@ -2001,3 +2001,107 @@ def events(request: HttpRequest) -> StreamingHttpResponse:
     response["Cache-Control"] = "no-cache"
     response["X-Accel-Buffering"] = "no"
     return response
+
+
+# ------------------------------------------------------------------
+# Session Management Endpoints
+# ------------------------------------------------------------------
+
+
+@csrf_exempt
+@require_POST
+def list_portal_sessions(request: HttpRequest) -> JsonResponse:
+    """
+    List session summaries for the given session tokens.
+    
+    Used by the frontend to populate the session history sidebar.
+    Request body:
+    {
+        "business_slug": "acme",
+        "agent_slug": "support",
+        "session_tokens": ["token1", "token2", ...]
+    }
+    """
+    service = _service()
+    try:
+        payload = _parse_json_body(request)
+    except PortalValidationError as exc:
+        return _json_error("invalid_json", str(exc))
+
+    business_slug = (payload.get("business_slug") or payload.get("businessSlug") or "").strip()
+    agent_slug = (payload.get("agent_slug") or payload.get("agentSlug") or "").strip()
+    session_tokens = payload.get("session_tokens") or payload.get("sessionTokens") or []
+
+    if not business_slug or not agent_slug:
+        return _json_error("validation_error", "business_slug and agent_slug are required.")
+
+    if not isinstance(session_tokens, list):
+        return _json_error("validation_error", "session_tokens must be a list.")
+
+    # Sanitize and limit tokens
+    clean_tokens = [str(t).strip() for t in session_tokens if t][:100]
+
+    try:
+        from apps.conversations.portal import PortalSessionSummary
+        sessions = service.list_sessions(
+            business_slug=business_slug,
+            agent_slug=agent_slug,
+            session_tokens=clean_tokens,
+        )
+    except PortalNotFoundError as exc:
+        return _json_error("not_found", str(exc), status=404)
+
+    return JsonResponse({
+        "sessions": [
+            {
+                "session_token": s.session_token,
+                "title": s.title,
+                "started_at": s.started_at.isoformat(),
+                "last_activity_at": s.last_activity_at.isoformat(),
+                "status": s.status,
+                "message_count": s.message_count,
+                "preview": s.preview,
+            }
+            for s in sessions
+        ]
+    })
+
+
+@csrf_exempt
+@require_POST
+def create_portal_session(request: HttpRequest) -> JsonResponse:
+    """
+    Create a new chat session.
+    
+    Used when the user clicks "New Chat" to start a fresh conversation.
+    Request body:
+    {
+        "business_slug": "acme",
+        "agent_slug": "support",
+        "metadata": {}  // optional
+    }
+    """
+    service = _service()
+    try:
+        payload = _parse_json_body(request)
+    except PortalValidationError as exc:
+        return _json_error("invalid_json", str(exc))
+
+    business_slug = (payload.get("business_slug") or payload.get("businessSlug") or "").strip()
+    agent_slug = (payload.get("agent_slug") or payload.get("agentSlug") or "").strip()
+    metadata = payload.get("metadata") or {}
+
+    if not business_slug or not agent_slug:
+        return _json_error("validation_error", "business_slug and agent_slug are required.")
+
+    try:
+        result = service.create_new_session(
+            business_slug=business_slug,
+            agent_slug=agent_slug,
+            metadata=metadata,
+        )
+    except PortalNotFoundError as exc:
+        return _json_error("not_found", str(exc), status=404)
+
+    return JsonResponse(_bootstrap_to_dict(result), status=201)
+

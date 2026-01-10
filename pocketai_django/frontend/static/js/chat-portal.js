@@ -34,7 +34,18 @@ class ChatPortalClient {
       main: container.querySelector("[data-chat-main]"),
       welcome: container.querySelector("[data-chat-welcome]"),
       inputArea: container.querySelector("[data-chat-input-area]"),
+      // Session management elements
+      sessionSidebar: container.querySelector("[data-session-sidebar]"),
+      sessionHistory: container.querySelector("[data-session-history]"),
+      sessionsLoading: container.querySelector("[data-sessions-loading]"),
+      sessionsEmpty: container.querySelector("[data-sessions-empty]"),
+      sessionsList: container.querySelector("[data-sessions-list]"),
+      newSessionBtn: container.querySelector("[data-new-session-btn]"),
     };
+    // Session management state
+    this.sessionTokens = [];
+    this.currentSessionToken = null;
+    this.sessionStorageKey = `chat_sessions_${this.businessSlug}_${this.agentSlug}`;
     this.streamingDedupDone = false;
     this.streamingFinalBodyEl = null;
     this.streamingMessageNode = null;
@@ -64,6 +75,9 @@ class ChatPortalClient {
     this.tableIntentActive = false;
     this.tableIntentTimestamp = 0;
     this.tableIntentWindowMs = 2500;
+    // Session empty state tracking
+    this.currentSessionHasMessages = false;
+    this.sessionCreationInProgress = false;
   }
 
   async init() {
@@ -72,11 +86,17 @@ class ChatPortalClient {
     this.bindSendForm();
     this.bindCsatForm();
     this.bindScrollButton();
+    this.initSessionManagement();
     this.setComposerAvailability(false);
     try {
       await this.bootstrapSession();
       this.renderExistingMessages();
       this.setComposerAvailability(true);
+      
+      // Track this session in localStorage
+      this.trackCurrentSession();
+      // Load session history in sidebar
+      this.loadSessionHistory();
 
       // Auto-focus input now that it is enabled
       if (this.elements.sendForm) {
@@ -121,37 +141,31 @@ class ChatPortalClient {
     const messageBodies = container.querySelectorAll('[data-message-body]');
     console.log('[DEBUG] Found message bodies:', messageBodies.length);
     messageBodies.forEach((el) => {
-      // We rely on data-message-body which is on the body div itself
-      // The dataset.messageId is typically on the wrapper or the body depending on template.
-      // Template: data-message-body data-message-id="{{ forloop.counter }}" is on the body div.
+      // data-message-body only appears on AI messages (not customer) per template
       const messageId = el.dataset.messageId;
       console.log('[DEBUG] Processing message ID:', messageId);
       
-      // Inject Copy Button if it's an AI message (not customer)
-      // Check if it's customer by checking class or parent
-      // Template: if message.sender|lower != 'customer' -> data-message-body
-      // So if it has data-message-body, it is NOT customer (based on template line 220)
-      // "if message.sender|lower != 'customer' data-message-body ..." 
-      
-      // Add relative and group classes
-      el.classList.add("relative", "group", "pr-8"); // pr-8 to avoid text under button
-      
-      // Check if button already exists
-      if (!el.querySelector('button[data-copy-btn]')) {
-         this.injectCopyButton(el);
-      }
+      // Add relative and group classes for AI messages
+      el.classList.add("relative", "group", "pr-8");
 
-      if (!messageId) return;
-      // Find the corresponding JSON script tag
+      if (!messageId) {
+        // No message ID means no markdown to render, just add copy button
+        if (!el.querySelector('button[data-copy-btn]')) {
+          this.injectCopyButton(el);
+        }
+        return;
+      }
+      
+      // Find the corresponding JSON script tag for markdown rendering
       const scriptTag = document.getElementById(messageId);
       if (scriptTag) {
         try {
           const rawMarkdown = JSON.parse(scriptTag.textContent);
-          // console.log('[DEBUG] Raw markdown:', rawMarkdown?.substring?.(0, 100));
           if (rawMarkdown) {
             const rendered = this.renderMarkdown(rawMarkdown);
             el.innerHTML = rendered;
-            this.injectCopyButton(el); // Re-inject after innerHTML wipe
+            // Inject copy button ONLY after innerHTML is set
+            this.injectCopyButton(el);
           }
         } catch (e) {
           console.warn('Failed to parse markdown for message', messageId, e);
@@ -161,7 +175,10 @@ class ChatPortalClient {
   }
 
   injectCopyButton(container) {
+      // Prevent duplicate injection
+      if (container.dataset.copyInjected === 'true') return;
       if (container.querySelector('button[data-copy-btn]')) return;
+      container.dataset.copyInjected = 'true';
 
       // Smart positioning: try to find the last paragraph to append inline
       let target = container;
@@ -366,6 +383,12 @@ class ChatPortalClient {
         return;
       }
       await this.sendMessage(message);
+      
+      // Mark session as having messages after successful send
+      if (!this.currentSessionHasMessages) {
+        this.currentSessionHasMessages = true;
+        this.updateSessionEmptyState();
+      }
     });
   }
 
@@ -1065,6 +1088,9 @@ class ChatPortalClient {
     if (message.sender === "ai") {
       node.classList.add("opacity-0", "translate-y-4", "transition-all", "duration-500", "ease-out");
       container.appendChild(node);
+      // Inject copy button for AI messages
+      const bodyEl = node.querySelector('[data-message-body]');
+      if (bodyEl) this.injectCopyButton(bodyEl);
       // Trigger reflow
       void node.offsetWidth;
       node.classList.remove("opacity-0", "translate-y-4");
@@ -1145,28 +1171,8 @@ class ChatPortalClient {
     if (isCustomer) {
       body.className = "text-base leading-relaxed bg-muted text-foreground px-5 py-3 rounded-2xl rounded-tr-sm text-start inline-block shadow-sm";
     } else {
-      body.className = "relative group text-base leading-relaxed text-foreground text-start max-w-none break-words";
-      
-      // Copy Button for whole message
-      const copyBtn = document.createElement("button");
-      copyBtn.className = "inline-flex items-center gap-1.5 ml-2 px-2 py-1 align-bottom rounded-lg text-xs text-muted-foreground/50 hover:text-foreground hover:bg-muted/50 transition-all w-fit";
-      copyBtn.type = "button";
-      copyBtn.innerHTML = `<svg class="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>`;
-      
-      copyBtn.addEventListener("click", async (e) => {
-        e.stopPropagation();
-        try {
-          await navigator.clipboard.writeText(cleanBody);
-          const originalHtml = copyBtn.innerHTML;
-          copyBtn.innerHTML = `<svg class="h-3 w-3 text-emerald-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"></polyline></svg> <span class="text-[10px] font-medium text-emerald-500">Copied</span>`;
-          setTimeout(() => {
-            copyBtn.innerHTML = originalHtml;
-          }, 2000);
-        } catch (err) {
-          console.warn("Clipboard write failed", err);
-        }
-      });
-      body.appendChild(copyBtn);
+      body.className = "relative group text-base leading-relaxed text-foreground text-start max-w-none break-words pr-8";
+      // Copy button will be added by injectCopyButton after message is appended
     }
     const initialBlocks = Array.isArray(message.metadata?.response_blocks) ? message.metadata.response_blocks : [];
     if (initialBlocks.length) {
@@ -1921,6 +1927,349 @@ class ChatPortalClient {
       panel.classList.add("opacity-0", "translate-y-2");
       setTimeout(() => panel.remove(), 200);
     }, 2600);
+  }
+
+  // ------------------------------------------------------------------
+  // Session Management
+  // ------------------------------------------------------------------
+
+  initSessionManagement() {
+    // Bind new session button
+    if (this.elements.newSessionBtn) {
+      this.elements.newSessionBtn.addEventListener("click", () => this.createNewSession());
+    }
+    // Initialize session empty state
+    this.updateSessionEmptyState();
+    
+    // Bind Recents toggle (expand/collapse)
+    this.initRecentsToggle();
+  }
+
+  initRecentsToggle() {
+    const toggleBtn = this.container.querySelector('[data-recents-toggle]');
+    const chevron = this.container.querySelector('[data-recents-chevron]');
+    const itemsContainer = this.container.querySelector('[data-sessions-items]');
+    
+    if (!toggleBtn || !itemsContainer) return;
+    
+    // Load saved state from localStorage
+    const storageKey = `recents_collapsed_${this.businessSlug}_${this.agentSlug}`;
+    const isCollapsed = localStorage.getItem(storageKey) === 'true';
+    
+    if (isCollapsed) {
+      itemsContainer.classList.add('hidden');
+      if (chevron) chevron.style.transform = 'rotate(-90deg)';
+    }
+    
+    toggleBtn.addEventListener('click', () => {
+      const nowCollapsed = !itemsContainer.classList.contains('hidden');
+      
+      if (nowCollapsed) {
+        itemsContainer.classList.add('hidden');
+        if (chevron) chevron.style.transform = 'rotate(-90deg)';
+        localStorage.setItem(storageKey, 'true');
+      } else {
+        itemsContainer.classList.remove('hidden');
+        if (chevron) chevron.style.transform = '';
+        localStorage.setItem(storageKey, 'false');
+      }
+    });
+  }
+
+  getSessionTokens() {
+    try {
+      const stored = localStorage.getItem(this.sessionStorageKey);
+      if (!stored) return [];
+      const parsed = JSON.parse(stored);
+      return Array.isArray(parsed) ? parsed : [];
+    } catch (e) {
+      console.warn("Failed to load session tokens", e);
+      return [];
+    }
+  }
+
+  saveSessionTokens(tokens) {
+    try {
+      // Keep only the most recent 100 sessions
+      const limited = tokens.slice(0, 100);
+      localStorage.setItem(this.sessionStorageKey, JSON.stringify(limited));
+      this.sessionTokens = limited;
+    } catch (e) {
+      console.warn("Failed to save session tokens", e);
+    }
+  }
+
+  trackCurrentSession() {
+    if (!this.sessionToken) return;
+    
+    this.currentSessionToken = this.sessionToken;
+    const tokens = this.getSessionTokens();
+    
+    // Add current session if it doesn't exist (don't reorder if it does)
+    if (!tokens.includes(this.sessionToken)) {
+      // Add new session at the beginning (newest)
+      tokens.unshift(this.sessionToken);
+      this.saveSessionTokens(tokens);
+    }
+  }
+
+  async loadSessionHistory() {
+    const tokens = this.getSessionTokens();
+    
+    if (tokens.length === 0) {
+      this.showSessionsEmpty();
+      return;
+    }
+
+    this.showSessionsLoading();
+
+    try {
+      const response = await fetch("/api/chat/portal/sessions/list/", {
+        method: "POST",
+        headers: this.jsonHeaders(),
+        body: JSON.stringify({
+          business_slug: this.businessSlug,
+          agent_slug: this.agentSlug,
+          session_tokens: tokens,
+        }),
+      });
+
+      if (!response.ok) {
+        throw new Error("Failed to load sessions");
+      }
+
+      const data = await response.json();
+      const sessions = data.sessions || [];
+
+      if (sessions.length === 0) {
+        this.showSessionsEmpty();
+      } else {
+        this.renderSessionList(sessions);
+      }
+    } catch (error) {
+      console.warn("Failed to load session history", error);
+      this.showSessionsEmpty();
+    }
+  }
+
+  showSessionsLoading() {
+    if (this.elements.sessionsLoading) {
+      this.elements.sessionsLoading.classList.remove("hidden");
+    }
+    if (this.elements.sessionsEmpty) {
+      this.elements.sessionsEmpty.classList.add("hidden");
+    }
+    if (this.elements.sessionsList) {
+      this.elements.sessionsList.classList.add("hidden");
+    }
+  }
+
+  showSessionsEmpty() {
+    if (this.elements.sessionsLoading) {
+      this.elements.sessionsLoading.classList.add("hidden");
+    }
+    if (this.elements.sessionsEmpty) {
+      this.elements.sessionsEmpty.classList.remove("hidden");
+    }
+    if (this.elements.sessionsList) {
+      this.elements.sessionsList.classList.add("hidden");
+    }
+  }
+
+  renderSessionList(sessions) {
+    if (this.elements.sessionsLoading) {
+      this.elements.sessionsLoading.classList.add("hidden");
+    }
+    if (this.elements.sessionsEmpty) {
+      this.elements.sessionsEmpty.classList.add("hidden");
+    }
+    if (!this.elements.sessionsList) return;
+
+    this.elements.sessionsList.classList.remove("hidden");
+    
+    // Find the items container (new structure) or fall back to list itself
+    const itemsContainer = this.elements.sessionsList.querySelector('[data-sessions-items]') || this.elements.sessionsList;
+    itemsContainer.innerHTML = "";
+
+    for (const session of sessions) {
+      const isActive = session.session_token === this.currentSessionToken;
+      const item = this.buildSessionItem(session, isActive);
+      itemsContainer.appendChild(item);
+    }
+  }
+
+  buildSessionItem(session, isActive) {
+    const div = document.createElement("div");
+    div.className = `flex items-center gap-2 px-2 py-1.5 rounded-md cursor-pointer transition-colors text-[13px] ${
+      isActive
+        ? "bg-primary/10 text-primary"
+        : "text-foreground/80 hover:bg-muted/50"
+    }`;
+    div.dataset.sessionToken = session.session_token;
+
+    // Compact title-only layout
+    div.innerHTML = `
+      <span class="flex-1 truncate">${this.escapeHtml(session.title)}</span>
+    `;
+
+    // Click to switch session
+    div.addEventListener("click", () => {
+      if (!isActive) {
+        this.switchToSession(session.session_token);
+      }
+    });
+
+    return div;
+  }
+
+  formatRelativeTime(date) {
+    const now = new Date();
+    const diffMs = now - date;
+    const diffMins = Math.floor(diffMs / (1000 * 60));
+    const diffHours = Math.floor(diffMs / (1000 * 60 * 60));
+    const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24));
+
+    if (diffMins < 1) return "Just now";
+    if (diffMins < 60) return `${diffMins}m ago`;
+    if (diffHours < 24) return `${diffHours}h ago`;
+    if (diffDays < 7) return `${diffDays}d ago`;
+    
+    return date.toLocaleDateString();
+  }
+
+  escapeHtml(text) {
+    const div = document.createElement("div");
+    div.textContent = text;
+    return div.innerHTML;
+  }
+
+  async createNewSession() {
+    // Check if current session is empty
+    if (this.isCurrentSessionEmpty()) {
+      this.showToast(
+        "Start chatting first", 
+        "Please send a message in this chat before creating a new one.",
+        false
+      );
+      return;
+    }
+    
+    // Prevent double-clicking
+    if (this.sessionCreationInProgress) {
+      return;
+    }
+    
+    this.sessionCreationInProgress = true;
+
+    // Disable button while creating
+    if (this.elements.newSessionBtn) {
+      this.elements.newSessionBtn.disabled = true;
+      this.elements.newSessionBtn.classList.add("opacity-50");
+    }
+
+    try {
+      const response = await fetch("/api/chat/portal/sessions/create/", {
+        method: "POST",
+        headers: this.jsonHeaders(),
+        body: JSON.stringify({
+          business_slug: this.businessSlug,
+          agent_slug: this.agentSlug,
+          metadata: this.buildVisitorMetadata(),
+        }),
+      });
+
+      if (!response.ok) {
+        throw new Error("Failed to create session");
+      }
+
+      const data = await response.json();
+      const newToken = data.session?.session_token;
+
+      if (!newToken) {
+        throw new Error("No session token returned");
+      }
+
+      // Update localStorage to use new session and reload
+      try {
+        window.localStorage.setItem(this.sessionCacheKey, newToken);
+      } catch (e) {
+        console.warn("Failed to update session cache", e);
+      }
+      
+      // Reload page with new session
+      window.location.reload();
+    } catch (error) {
+      this.showToast("New chat failed", error.message || "Could not create new conversation.", true);
+      this.sessionCreationInProgress = false;
+      
+      // Re-enable button
+      if (this.elements.newSessionBtn) {
+        this.elements.newSessionBtn.disabled = false;
+        this.elements.newSessionBtn.classList.remove("opacity-50");
+      }
+    }
+  }
+
+  switchToSession(sessionToken) {
+    if (!sessionToken || sessionToken === this.currentSessionToken) return;
+
+    // Update localStorage to set this as the current session
+    try {
+      window.localStorage.setItem(this.sessionCacheKey, sessionToken);
+    } catch (e) {
+      console.warn("Failed to update session cache", e);
+    }
+
+    // Reload page to load the new session
+    window.location.reload();
+  }
+
+  isCurrentSessionEmpty() {
+    /**
+     * Check if current session has any customer messages.
+     * Returns true if no customer messages have been sent.
+     */
+    // Check if we've tracked that messages were sent
+    if (this.currentSessionHasMessages) {
+      return false;
+    }
+    
+    // Also check DOM for customer messages (in case of page reload)
+    const container = this.elements.messagesInner || this.elements.messages;
+    if (!container) return true;
+    
+    // Look for customer message bubbles
+    const messages = container.querySelectorAll('[data-message-body]');
+    for (const msg of messages) {
+      const parent = msg.closest('.message-row');
+      if (parent && parent.classList.contains('flex-row-reverse')) {
+        // This is a customer message (flex-row-reverse class)
+        return false;
+      }
+    }
+    
+    return true;
+  }
+
+  updateSessionEmptyState() {
+    /**
+     * Update the session empty state and button UI accordingly.
+     */
+    const isEmpty = this.isCurrentSessionEmpty();
+    const btn = this.elements.newSessionBtn;
+    
+    if (!btn) return;
+    
+    if (isEmpty) {
+      // Disable new chat button when current session is empty
+      btn.disabled = false; // Keep enabled but show message on click
+      btn.classList.remove('opacity-50', 'cursor-not-allowed');
+    } else {
+      // Enable new chat button when session has messages
+      btn.disabled = false;
+      btn.classList.remove('opacity-50', 'cursor-not-allowed');
+      this.currentSessionHasMessages = true;
+    }
   }
 }
 

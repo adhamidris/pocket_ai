@@ -7,7 +7,7 @@ from datetime import datetime, timedelta
 from typing import Iterable, Sequence
 
 from django.db import transaction
-from django.db.models import Prefetch
+from django.db.models import Count, Prefetch
 from django.utils import timezone
 from django.utils.text import slugify
 
@@ -76,6 +76,17 @@ class PortalSessionBootstrap:
 
 DEFAULT_SESSION_TTL = timedelta(hours=4)
 
+
+@dataclasses.dataclass(frozen=True, slots=True)
+class PortalSessionSummary:
+    """Lightweight session info for session history list."""
+    session_token: str
+    title: str
+    started_at: datetime
+    last_activity_at: datetime
+    status: str
+    message_count: int
+    preview: str
 
 class ChatPortalService:
     """High-level orchestration for public chat portal lifecycle."""
@@ -298,8 +309,125 @@ class ChatPortalService:
                 )
         return tuple(created)
 
+    def list_sessions(
+        self,
+        *,
+        business_slug: str,
+        agent_slug: str,
+        session_tokens: Sequence[str],
+        limit: int = 50,
+    ) -> Sequence[PortalSessionSummary]:
+        """
+        List session summaries for given session tokens.
+        
+        Used by the frontend to display session history in the sidebar.
+        Only returns sessions that belong to the specified business/agent.
+        """
+        if not session_tokens:
+            return ()
+        
+        # Validate business/agent exist
+        business, agent = self.resolve_handle(business_slug, agent_slug)
+        
+        # Fetch conversations matching the tokens
+        conversations = (
+            Conversation.objects
+            .filter(
+                session_token__in=session_tokens,
+                business_profile=business,
+                agent_profile=agent,
+            )
+            .annotate(message_count=Count("messages"))
+            .prefetch_related(
+                Prefetch(
+                    "messages",
+                    queryset=ConversationMessage.objects.filter(
+                        sender=ConversationSender.CUSTOMER
+                    ).order_by("sent_at", "created_at")[:1],
+                    to_attr="first_customer_messages",
+                )
+            )
+            .order_by("-started_at")[:limit]
+        )
+        
+        summaries: list[PortalSessionSummary] = []
+        for conv in conversations:
+            # Generate title from first customer message
+            first_messages = getattr(conv, "first_customer_messages", [])
+            first_msg = first_messages[0] if first_messages else None
+            
+            if first_msg:
+                title = self._generate_session_title(first_msg.body)
+                preview = (first_msg.body or "")[:100]
+            else:
+                title = "New conversation"
+                preview = ""
+            
+            summaries.append(PortalSessionSummary(
+                session_token=conv.session_token,
+                title=title,
+                started_at=conv.started_at,
+                last_activity_at=conv.last_activity_at,
+                status=conv.status,
+                message_count=conv.message_count,
+                preview=preview.strip(),
+            ))
+        
+        return tuple(summaries)
+
+    def create_new_session(
+        self,
+        *,
+        business_slug: str,
+        agent_slug: str,
+        metadata: dict | None = None,
+    ) -> PortalSessionBootstrap:
+        """
+        Create a completely new session (no existing token).
+        
+        This is used when the user clicks "New Chat" to start a fresh conversation.
+        """
+        business, agent = self.resolve_handle(business_slug, agent_slug)
+        conversation = self._get_or_create_conversation(
+            business=business,
+            agent=agent,
+            existing_session_token=None,  # Force new session
+            metadata=metadata or {},
+        )
+        return PortalSessionBootstrap(
+            business=self._serialize_business(business),
+            agent=self._serialize_agent(agent),
+            session=self._serialize_session(conversation),
+            messages=(),  # New session has no messages
+        )
+
+    def _generate_session_title(self, first_message: str, max_length: int = 50) -> str:
+        """
+        Generate a meaningful session title from the first customer message.
+        
+        Truncates at word boundary and adds ellipsis if needed.
+        """
+        text = (first_message or "").strip()
+        if not text:
+            return "New conversation"
+        
+        # Remove newlines and extra whitespace
+        text = " ".join(text.split())
+        
+        if len(text) <= max_length:
+            return text
+        
+        # Truncate at word boundary
+        truncated = text[:max_length]
+        last_space = truncated.rfind(" ")
+        if last_space > max_length // 2:
+            truncated = truncated[:last_space]
+        
+        return truncated.rstrip(".,!?;:") + "..."
+
     # ------------------------------------------------------------------
     # Internal helpers
+
 
     def _get_business_by_slug(self, slug_value: str) -> BusinessProfile:
         if not slug_value:
