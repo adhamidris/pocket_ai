@@ -454,6 +454,8 @@ class ChatPortalClient {
     );
     this.currentSessionHasMessages = effectiveMessages.length > 0;
     this.updateSessionEmptyState(effectiveMessages.length);
+    this.setSessionMessageCount(token, effectiveMessages.length);
+    this.setConversationLayout(effectiveMessages.length > 0);
 
     // Fix FOUC: Only render transcript if container is empty (client-side only),
     // otherwise assume server-side rendering is correct.
@@ -2187,6 +2189,9 @@ class ChatPortalClient {
         : "text-foreground/80 hover:bg-muted/50"
     }`;
     div.dataset.sessionToken = session.session_token;
+    if (typeof session.message_count === "number") {
+      div.dataset.messageCount = String(session.message_count);
+    }
 
     // Compact title-only layout
     div.innerHTML = `
@@ -2222,6 +2227,63 @@ class ChatPortalClient {
     const div = document.createElement("div");
     div.textContent = text;
     return div.innerHTML;
+  }
+
+  getSessionMessageCount(sessionToken) {
+    if (!sessionToken || !this.elements.sessionsList) return null;
+    const item = this.elements.sessionsList.querySelector(`[data-session-token="${sessionToken}"]`);
+    if (!item) return null;
+    const raw = item.dataset.messageCount;
+    if (raw === undefined || raw === "") return null;
+    const parsed = Number(raw);
+    return Number.isFinite(parsed) ? parsed : null;
+  }
+
+  setSessionMessageCount(sessionToken, messageCount) {
+    if (!sessionToken || !this.elements.sessionsList) return;
+    const item = this.elements.sessionsList.querySelector(`[data-session-token="${sessionToken}"]`);
+    if (!item) return;
+    if (typeof messageCount === "number" && Number.isFinite(messageCount)) {
+      item.dataset.messageCount = String(messageCount);
+    } else {
+      delete item.dataset.messageCount;
+    }
+  }
+
+  setConversationLayout(hasMessages) {
+    const inputArea = this.elements.inputArea;
+    if (!inputArea) return;
+    const welcome = this.elements.welcome;
+    const messages = this.elements.messages;
+    const emptyClasses = ["inset-0", "flex", "flex-col", "justify-center", "bg-background"];
+    const activeClasses = [
+      "bottom-0",
+      "left-0",
+      "right-0",
+      "pb-6",
+      "bg-gradient-to-t",
+      "from-background",
+      "via-background",
+      "to-transparent",
+    ];
+
+    if (hasMessages) {
+      inputArea.classList.remove(...emptyClasses);
+      inputArea.classList.add(...activeClasses);
+      if (welcome) {
+        welcome.classList.add("hidden");
+        welcome.classList.remove("opacity-0", "-translate-y-4");
+      }
+      if (messages) {
+        messages.classList.remove("hidden", "opacity-0", "translate-y-4");
+      }
+    } else {
+      inputArea.classList.remove(...activeClasses);
+      inputArea.classList.add(...emptyClasses);
+      if (welcome) {
+        welcome.classList.remove("hidden", "opacity-0", "-translate-y-4");
+      }
+    }
   }
 
   async createNewSession() {
@@ -2302,12 +2364,12 @@ class ChatPortalClient {
     this.prepareForSessionSwitch();
     this.setSessionLoadingState(true);
     this.currentSessionHasMessages = false;
-    this.updateSessionEmptyState(0);
 
     // 1. Update internal state
     this.currentSessionToken = sessionToken;
     this.sessionToken = sessionToken;
     this.container.setAttribute("data-session-token", sessionToken);
+    this.updateSessionEmptyState();
     
     // Update localStorage
     try {
@@ -2328,8 +2390,15 @@ class ChatPortalClient {
       });
     }
 
-    // 3. Render Skeleton
-    this.renderSkeleton();
+    // 3. Render loading state
+    const messageCount = this.getSessionMessageCount(sessionToken);
+    const shouldShowSkeleton = typeof messageCount === "number" ? messageCount > 0 : true;
+    if (shouldShowSkeleton) {
+      this.setConversationLayout(true);
+      this.renderSkeleton();
+    } else {
+      this.renderEmptyConversationState();
+    }
 
     // 4. Fetch and Render Data
     try {
@@ -2390,6 +2459,15 @@ class ChatPortalClient {
     container.appendChild(createSkeletonParams(false, "w-full max-w-lg"));
   }
 
+  renderEmptyConversationState() {
+    const container = this.elements.messagesInner || this.elements.messages;
+    if (container) {
+      container.innerHTML = "";
+      container.removeAttribute("data-session-skeleton");
+    }
+    this.setConversationLayout(false);
+  }
+
   isCurrentSessionEmpty() {
     /**
      * Check if current session has any messages.
@@ -2434,6 +2512,16 @@ class ChatPortalClient {
       btn.setAttribute("aria-disabled", "false");
     }
     this.currentSessionHasMessages = !isEmpty;
+    if (this.currentSessionToken) {
+      if (typeof messageCount === "number") {
+        this.setSessionMessageCount(this.currentSessionToken, messageCount);
+      } else if (!isEmpty) {
+        const existing = this.getSessionMessageCount(this.currentSessionToken);
+        if (!existing || existing === 0) {
+          this.setSessionMessageCount(this.currentSessionToken, 1);
+        }
+      }
+    }
   }
 
   setSessionLoadingState(isLoading) {
