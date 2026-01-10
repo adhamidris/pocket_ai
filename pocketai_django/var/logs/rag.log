@@ -738,3 +738,22 @@
 2026-01-10 15:09:50,711 [INFO] apps.api.chat_portal:   ├─ response.persisted: message_id=f2e31723-2925-40b9-a181-3fb8ab40a0d2
 2026-01-10 15:09:50,712 [INFO] apps.api.chat_portal:   ├─ planner.skipped
 2026-01-10 15:09:50,712 [INFO] apps.api.chat_portal:   ├─ response.dispatched: message_id=f2e31723-2925-40b9-a181-3fb8ab40a0d2
+2026-01-10 16:03:06,305 [INFO] apps.api.chat_portal: ────────────────────────────────────────────────────────────
+2026-01-10 16:03:06,306 [INFO] apps.api.chat_portal: [18:03:06] PORTAL.REQUEST conv=ee18f769... agent=samy
+2026-01-10 16:03:06,306 [INFO] apps.api.chat_portal: ├─ request.received: body=hello
+2026-01-10 16:03:06,306 [INFO] apps.api.chat_portal:   ├─ customer.message_recorded: id=cd7a6598-d062-4119-a4ef-17bdc64f1f41
+2026-01-10 16:03:06,308 [INFO] apps.api.chat_portal:   ├─ orchestrator.selected: mode=mcp provider=OpenAIToolsProvider
+2026-01-10 16:03:06,309 [INFO] apps.api.chat_portal:   ├─ orchestrator.turn.start
+2026-01-10 16:03:06,352 [INFO] apps.mcp.orchestrator: 2026-01-10 18:03:06 [INFO] PROMPT.PRIMARY messages="[{"role": "system", "chars": 17845, "preview": "You are Samy, the Front Desk Representative for AUG Pharma. Maintain a Friendly tone.\n\n## CRITICAL RULES (Read First)\n\n1. **SEARCH BUDGET**: Default is ONE `search_knowledge` call per visitor message."}, {"role": "system", "chars": 327, "preview": "Reminder: Each visitor message (user turn) may include only one short placeholder before the first tool call. After you acknowledge you're checking, every subsequent tool step in this user turn must r"}, {"role": "system", "chars": 139, "preview": "Language enforcement: The visitor is writing in English. Reply ONLY in English. Do not include Arabic translations unless the visitor asks."}, {"role": "user", "chars": 5, "preview": "hello"}]" conversation="ee18f769-a9c5-41ed-9014-1dd64b1c9159" business="ca5f2a9d-a126-456f-9acd-7c20ab71d1f5"
+2026-01-10 16:03:06,353 [DEBUG] apps.mcp.orchestrator: 2026-01-10 18:03:06 [DEBUG] PROMPT.BUDGET stage=initial_pass max_input_tokens=124000 tokens_est_before=7844 tokens_est_after=7844 total_chars_before=26147 total_chars_after=26147 message_chars_after=18394 tool_chars_after=7753 messages=4 tools_enabled=true streaming=true conversation="ee18f769-a9c5-41ed-9014-1dd64b1c9159" business="ca5f2a9d-a126-456f-9acd-7c20ab71d1f5"
+2026-01-10 16:03:08,977 [INFO] apps.mcp.orchestrator: 2026-01-10 18:03:08 [INFO] TURN.SINGLE_PASS strategy=mcp_tools_stream_single_pass content_chars=34 conversation="ee18f769-a9c5-41ed-9014-1dd64b1c9159" business="ca5f2a9d-a126-456f-9acd-7c20ab71d1f5"
+2026-01-10 16:03:08,977 [INFO] apps.api.chat_portal:   ├─ status.answer_finalized: {"code": "answer_finalized", "label": "Answer ready"}
+2026-01-10 16:03:08,977 [INFO] apps.api.chat_portal:   ├─ status.stream_complete: {"code": "stream_complete"}
+2026-01-10 16:03:08,977 [INFO] apps.mcp.orchestrator: 2026-01-10 18:03:08 [INFO] TURN.METRICS business="ca5f2a9d-a126-456f-9acd-7c20ab71d1f5" conversation="ee18f769-a9c5-41ed-9014-1dd64b1c9159"
+2026-01-10 16:03:08,978 [INFO] apps.mcp.orchestrator: 2026-01-10 18:03:08 [INFO] TURN.SUMMARY llm_strategy=mcp_tools_stream_single_pass duration_ms=2667 answer_chars=34 streamed_chunks=8 error_codes={} char_budget_turn=200000 char_budget_minute=400000 business="ca5f2a9d-a126-456f-9acd-7c20ab71d1f5" conversation="ee18f769-a9c5-41ed-9014-1dd64b1c9159"
+2026-01-10 16:03:08,978 [INFO] apps.api.chat_portal:   ├─ stream.completed
+2026-01-10 16:03:08,978 [INFO] apps.api.chat_portal:   ├─ finalize.started
+2026-01-10 16:03:08,978 [INFO] apps.api.chat_portal:   ├─ orchestrator.turn.complete
+2026-01-10 16:03:08,997 [INFO] apps.api.chat_portal:   ├─ response.persisted: message_id=63ef9430-1b16-472b-b33a-be08cf7e25b7
+2026-01-10 16:03:08,997 [INFO] apps.api.chat_portal:   ├─ planner.skipped
+2026-01-10 16:03:08,997 [INFO] apps.api.chat_portal:   ├─ response.dispatched: message_id=63ef9430-1b16-472b-b33a-be08cf7e25b7

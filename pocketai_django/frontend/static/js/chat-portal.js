@@ -80,6 +80,7 @@ class ChatPortalClient {
     this.sessionCreationInProgress = false;
     this.sessionLoadId = 0;
     this.sessionLoadInProgress = false;
+    this.sessionSummaries = [];
   }
 
   async init() {
@@ -2124,6 +2125,7 @@ class ChatPortalClient {
       const data = await response.json();
       const sessions = data.sessions || [];
 
+      this.sessionSummaries = Array.isArray(sessions) ? sessions : [];
       if (sessions.length === 0) {
         this.showSessionsEmpty();
       } else {
@@ -2229,6 +2231,18 @@ class ChatPortalClient {
     return div.innerHTML;
   }
 
+  findEmptySessionToken() {
+    if (Array.isArray(this.sessionSummaries) && this.sessionSummaries.length) {
+      const emptySummary = this.sessionSummaries.find((session) => session && session.message_count === 0);
+      return emptySummary ? emptySummary.session_token : null;
+    }
+    if (this.elements.sessionsList) {
+      const emptyItem = this.elements.sessionsList.querySelector('[data-message-count="0"]');
+      return emptyItem ? emptyItem.dataset.sessionToken : null;
+    }
+    return null;
+  }
+
   getSessionMessageCount(sessionToken) {
     if (!sessionToken || !this.elements.sessionsList) return null;
     const item = this.elements.sessionsList.querySelector(`[data-session-token="${sessionToken}"]`);
@@ -2247,6 +2261,13 @@ class ChatPortalClient {
       item.dataset.messageCount = String(messageCount);
     } else {
       delete item.dataset.messageCount;
+    }
+    if (Array.isArray(this.sessionSummaries) && this.sessionSummaries.length) {
+      this.sessionSummaries = this.sessionSummaries.map((session) => {
+        if (!session || session.session_token !== sessionToken) return session;
+        if (typeof messageCount !== "number" || !Number.isFinite(messageCount)) return session;
+        return { ...session, message_count: messageCount };
+      });
     }
   }
 
@@ -2289,6 +2310,19 @@ class ChatPortalClient {
   async createNewSession() {
     if (this.sessionLoadInProgress) {
       this.showToast("Still loading", "Please wait for the conversation to load.", false);
+      return;
+    }
+    const emptySessionToken = this.findEmptySessionToken();
+    if (emptySessionToken) {
+      if (emptySessionToken === this.currentSessionToken) {
+        this.showToast(
+          "Start chatting first",
+          "Please send a message in this chat before creating a new one.",
+          false
+        );
+        return;
+      }
+      this.switchToSession(emptySessionToken);
       return;
     }
     // Check if current session is empty
