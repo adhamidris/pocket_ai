@@ -78,6 +78,8 @@ class ChatPortalClient {
     // Session empty state tracking
     this.currentSessionHasMessages = false;
     this.sessionCreationInProgress = false;
+    this.sessionLoadId = 0;
+    this.sessionLoadInProgress = false;
   }
 
   async init() {
@@ -90,7 +92,8 @@ class ChatPortalClient {
     this.initSidebarToggle();
     this.setComposerAvailability(false);
     try {
-      await this.bootstrapSession();
+      const bootstrapData = await this.bootstrapSession();
+      if (!bootstrapData) return;
       this.renderExistingMessages();
       this.setComposerAvailability(true);
       
@@ -137,14 +140,11 @@ class ChatPortalClient {
 
   renderExistingMessages() {
     const container = this.elements.messagesInner || this.elements.messages;
-    console.log('[DEBUG] renderExistingMessages called, container:', container);
     if (!container) return;
     const messageBodies = container.querySelectorAll('[data-message-body]');
-    console.log('[DEBUG] Found message bodies:', messageBodies.length);
     messageBodies.forEach((el) => {
       // data-message-body only appears on AI messages (not customer) per template
       const messageId = el.dataset.messageId;
-      console.log('[DEBUG] Processing message ID:', messageId);
       
       // Add relative and group classes for AI messages
       el.classList.add("relative", "group", "pr-8");
@@ -415,12 +415,16 @@ class ChatPortalClient {
     });
   }
 
-  async bootstrapSession() {
+  async bootstrapSession(forceRender = false) {
+    const options = typeof forceRender === "object" && forceRender !== null ? forceRender : { forceRender };
     const preloadedToken = this.readBootstrapScriptToken();
+    const requestId = typeof options.loadId === "number" ? options.loadId : ++this.sessionLoadId;
+    const resolvedToken =
+      options.sessionToken || this.getStoredToken() || this.sessionToken || preloadedToken;
     const payload = {
       business_slug: this.businessSlug,
       agent_slug: this.agentSlug,
-      session_token: this.getStoredToken() || this.sessionToken || preloadedToken,
+      session_token: resolvedToken,
       metadata: this.buildVisitorMetadata(),
     };
     const response = await fetch(this.endpoints.bootstrap, {
@@ -432,23 +436,36 @@ class ChatPortalClient {
       throw new Error("Bootstrap request failed");
     }
     const data = await response.json();
+    if (this.sessionLoadId !== requestId) {
+      return null;
+    }
     this.bootstrapPayload = data;
     const token = data && data.session && data.session.session_token ? data.session.session_token : null;
     if (!token) {
       throw new Error("Session token missing from bootstrap response");
     }
+    if (options.expectedToken && token !== options.expectedToken) {
+      throw new Error("Session is no longer available.");
+    }
     this.persistSessionToken(token);
+    const messages = Array.isArray(data.messages) ? data.messages : [];
+    const effectiveMessages = messages.filter(
+      (message) => !(message && message.metadata && message.metadata.placeholder),
+    );
+    this.currentSessionHasMessages = effectiveMessages.length > 0;
+    this.updateSessionEmptyState(effectiveMessages.length);
 
     // Fix FOUC: Only render transcript if container is empty (client-side only),
     // otherwise assume server-side rendering is correct.
     const container = this.elements.messagesInner || this.elements.messages;
-    if (container && container.children.length === 0) {
-      this.renderTranscript(data.messages || []);
+    if (container && (container.children.length === 0 || options.forceRender)) {
+      this.renderTranscript(messages);
     }
 
     const sessionStatus = data && data.session ? data.session.status : null;
     this.updateStatus(sessionStatus);
     this.updateCsatVisibility(sessionStatus);
+    return data;
   }
 
   async sendMessage(message) {
@@ -544,6 +561,9 @@ class ChatPortalClient {
   }
 
   handleStreamEvent(eventType, data) {
+    if (this.sessionLoadInProgress) {
+      return;
+    }
     if (eventType === "turnPending") {
       this.handleTurnPendingEvent(data);
       return;
@@ -825,6 +845,7 @@ class ChatPortalClient {
     if (!container) return;
 
     container.innerHTML = "";
+    container.removeAttribute("data-session-skeleton");
 
     // Validate message list
     if (!Array.isArray(messages)) return;
@@ -1159,8 +1180,6 @@ class ChatPortalClient {
 
     // Timestamp removed
     
-    content.appendChild(header);
-
     content.appendChild(header);
 
     // Message body
@@ -1752,6 +1771,10 @@ class ChatPortalClient {
         0% { background-position: 0% 50%; }
         100% { background-position: 200% 50%; }
       }
+      @keyframes skeleton-shimmer {
+        0% { background-position: -200% 0; }
+        100% { background-position: 200% 0; }
+      }
       .chat-portal-status-shimmer {
         background: linear-gradient(
           90deg,
@@ -1764,6 +1787,27 @@ class ChatPortalClient {
         -webkit-background-clip: text;
         background-clip: text;
         color: transparent;
+      }
+      .skeleton-loader {
+        background: linear-gradient(90deg, 
+          hsl(var(--muted)/0.5) 25%, 
+          hsl(var(--muted)/0.8) 50%, 
+          hsl(var(--muted)/0.5) 75%
+        );
+        background-size: 200% 100%;
+        animation: skeleton-shimmer 2s infinite linear;
+        border-radius: 0.5rem;
+      }
+      [data-chat-messages][data-session-loading="true"] {
+        opacity: 0.75;
+        transition: opacity 200ms ease;
+      }
+      [data-chat-messages][data-session-loading="false"] {
+        opacity: 1;
+        transition: opacity 200ms ease;
+      }
+      [data-chat-messages][data-session-loading="true"] [data-chat-inner-container] {
+        pointer-events: none;
       }
     `;
     document.head.appendChild(style);
@@ -2137,7 +2181,7 @@ class ChatPortalClient {
 
   buildSessionItem(session, isActive) {
     const div = document.createElement("div");
-    div.className = `flex items-center gap-2 px-2 py-1.5 rounded-md cursor-pointer transition-colors text-[13px] ${
+    div.className = `flex items-center gap-2 px-2 h-10 rounded-lg cursor-pointer transition-colors text-sm font-medium ${
       isActive
         ? "bg-primary/10 text-primary"
         : "text-foreground/80 hover:bg-muted/50"
@@ -2151,7 +2195,7 @@ class ChatPortalClient {
 
     // Click to switch session
     div.addEventListener("click", () => {
-      if (!isActive) {
+      if (session.session_token !== this.currentSessionToken) {
         this.switchToSession(session.session_token);
       }
     });
@@ -2181,6 +2225,10 @@ class ChatPortalClient {
   }
 
   async createNewSession() {
+    if (this.sessionLoadInProgress) {
+      this.showToast("Still loading", "Please wait for the conversation to load.", false);
+      return;
+    }
     // Check if current session is empty
     if (this.isCurrentSessionEmpty()) {
       this.showToast(
@@ -2247,65 +2295,186 @@ class ChatPortalClient {
     }
   }
 
-  switchToSession(sessionToken) {
+  async switchToSession(sessionToken) {
     if (!sessionToken || sessionToken === this.currentSessionToken) return;
 
-    // Update localStorage to set this as the current session
+    const loadId = ++this.sessionLoadId;
+    this.prepareForSessionSwitch();
+    this.setSessionLoadingState(true);
+    this.currentSessionHasMessages = false;
+    this.updateSessionEmptyState(0);
+
+    // 1. Update internal state
+    this.currentSessionToken = sessionToken;
+    this.sessionToken = sessionToken;
+    this.container.setAttribute("data-session-token", sessionToken);
+    
+    // Update localStorage
     try {
       window.localStorage.setItem(this.sessionCacheKey, sessionToken);
     } catch (e) {
       console.warn("Failed to update session cache", e);
     }
 
-    // Reload page to load the new session
-    window.location.reload();
+    // 2. Update UI Highlight
+    if (this.elements.sessionsList) {
+      const items = this.elements.sessionsList.querySelectorAll('[data-session-token]');
+      items.forEach(el => {
+        if (el.dataset.sessionToken === sessionToken) {
+           el.className = "flex items-center gap-2 px-2 h-10 rounded-lg cursor-pointer transition-colors text-sm font-medium bg-primary/10 text-primary";
+        } else {
+           el.className = "flex items-center gap-2 px-2 h-10 rounded-lg cursor-pointer transition-colors text-sm font-medium text-foreground/80 hover:bg-muted/50";
+        }
+      });
+    }
+
+    // 3. Render Skeleton
+    this.renderSkeleton();
+
+    // 4. Fetch and Render Data
+    try {
+      // Re-use bootstrap logic but forcing the new token AND forcing render (overwriting skeleton)
+      const data = await this.bootstrapSession({
+        forceRender: true,
+        expectedToken: sessionToken,
+        sessionToken: sessionToken,
+        loadId,
+      });
+      if (!data || this.sessionLoadId !== loadId) return;
+      this.setSessionLoadingState(false);
+      this.connectEventStream();
+    } catch (error) {
+      if (this.sessionLoadId !== loadId) return;
+      this.setSessionLoadingState(false);
+      this.showToast("Load failed", "Could not load the conversation.", true);
+    }
+  }
+
+  renderSkeleton() {
+    const container = this.elements.messagesInner || this.elements.messages;
+    if (!container) return;
+
+    container.innerHTML = "";
+    container.setAttribute("data-session-skeleton", "true");
+    
+    // Helper to create a skeleton bubble
+    const createSkeletonParams = (isCustomer, widthCls) => {
+        const wrapper = document.createElement('div');
+        wrapper.className = `flex gap-4 items-start py-2 message-row ${isCustomer ? "flex-row-reverse" : ""}`;
+        wrapper.dataset.skeleton = "true";
+        
+        const content = document.createElement('div');
+        content.className = `flex-1 min-w-0 flex flex-col ${isCustomer ? "items-end" : "items-start"}`;
+        
+        const bubble = document.createElement('div');
+        // mimics the message bubble shape
+        bubble.className = `skeleton-loader h-12 ${widthCls}`; 
+        if (isCustomer) {
+            bubble.classList.add("rounded-2xl", "rounded-tr-sm");
+        } else {
+            bubble.classList.add("rounded-lg");
+        }
+        
+        content.appendChild(bubble);
+        wrapper.appendChild(content);
+        return wrapper;
+    };
+
+    // 1. AI Message (Left)
+    container.appendChild(createSkeletonParams(false, "w-3/4 max-w-md"));
+    
+    // 2. User Message (Right)
+    container.appendChild(createSkeletonParams(true, "w-1/2 max-w-sm"));
+    
+    // 3. AI Message (Left)
+    container.appendChild(createSkeletonParams(false, "w-full max-w-lg"));
   }
 
   isCurrentSessionEmpty() {
     /**
-     * Check if current session has any customer messages.
-     * Returns true if no customer messages have been sent.
+     * Check if current session has any messages.
+     * Returns true if no messages have been sent.
      */
+    if (this.sessionLoadInProgress) {
+      return true;
+    }
     // Check if we've tracked that messages were sent
     if (this.currentSessionHasMessages) {
       return false;
     }
     
-    // Also check DOM for customer messages (in case of page reload)
+    // Also check DOM for messages (in case of page reload)
     const container = this.elements.messagesInner || this.elements.messages;
     if (!container) return true;
     
-    // Look for customer message bubbles
-    const messages = container.querySelectorAll('[data-message-body]');
-    for (const msg of messages) {
-      const parent = msg.closest('.message-row');
-      if (parent && parent.classList.contains('flex-row-reverse')) {
-        // This is a customer message (flex-row-reverse class)
-        return false;
-      }
+    // Look for any real message rows (ignore skeletons)
+    const messageRow = container.querySelector('.message-row:not([data-skeleton])');
+    if (messageRow) {
+      this.currentSessionHasMessages = true;
+      return false;
     }
     
     return true;
   }
 
-  updateSessionEmptyState() {
+  updateSessionEmptyState(messageCount = null) {
     /**
      * Update the session empty state and button UI accordingly.
      */
-    const isEmpty = this.isCurrentSessionEmpty();
+    const isEmpty = typeof messageCount === "number" ? messageCount === 0 : this.isCurrentSessionEmpty();
     const btn = this.elements.newSessionBtn;
     
     if (!btn) return;
     
     if (isEmpty) {
-      // Disable new chat button when current session is empty
-      btn.disabled = false; // Keep enabled but show message on click
-      btn.classList.remove('opacity-50', 'cursor-not-allowed');
+      btn.classList.add('opacity-50', 'cursor-not-allowed');
+      btn.setAttribute("aria-disabled", "true");
     } else {
-      // Enable new chat button when session has messages
-      btn.disabled = false;
       btn.classList.remove('opacity-50', 'cursor-not-allowed');
-      this.currentSessionHasMessages = true;
+      btn.setAttribute("aria-disabled", "false");
+    }
+    this.currentSessionHasMessages = !isEmpty;
+  }
+
+  setSessionLoadingState(isLoading) {
+    this.sessionLoadInProgress = isLoading;
+    if (this.elements.messages) {
+      this.elements.messages.setAttribute("data-session-loading", isLoading ? "true" : "false");
+    }
+    this.setComposerAvailability(!isLoading);
+    if (this.elements.sendButton) {
+      this.elements.sendButton.disabled = isLoading;
+      this.elements.sendButton.classList.toggle("opacity-50", isLoading);
+      this.elements.sendButton.classList.toggle("cursor-not-allowed", isLoading);
+    }
+  }
+
+  prepareForSessionSwitch() {
+    if (this.streamController) {
+      try {
+        this.streamController.abort();
+      } catch (_err) {
+        // Ignore abort errors
+      }
+    }
+    this.streamController = null;
+    this.awaitingReply = false;
+    this.isSending = false;
+    this.isStreaming = false;
+    this.streamFinished = true;
+    this.workflowLocked = false;
+    this.usingStateMachine = false;
+    this.pendingMetadataVersion = 0;
+    this.pendingMessageId = null;
+    this.flushQueueAfterTurn = false;
+    this.pendingMessages = [];
+    this.resetStreamingState(true, false);
+    this.clearStreamingStatus();
+    this.updateSendButtonState(false);
+    this.updateComposerNotice(false);
+    if (this.eventSource) {
+      this.eventSource.close();
+      this.eventSource = null;
     }
   }
 }
