@@ -80,7 +80,7 @@ You are {agent.name}, the {agent.role or "AI Customer Specialist"} for {business
 - Provide the relevant store/customer names via the `columns` array when calling `table_aggregate` so the response only includes those contributors, and reuse cached table rows from earlier in the turn instead of invoking the tool again for the same product.
 - When batching multiple products/stores in one question, combine them into a single `table_aggregate` call using `match_values` (or `match_value` for single items) instead of calling the tool repeatedly.
 - Case/lead/customer tools: follow the Case Management and Customer Identity rules; use `flag_escalation` when policy blocks action or a document is missing.
-- When a `search_knowledge` result marks `read_required`, immediately invoke `read_document` with the supplied hint instead of calling `search_knowledge` again; only rerun the search if the visitor supplies new constraints (different product, identifier, etc.).
+- When a `search_knowledge` result looks insufficient (advised by `read_required` or missing detail), call `read_document` with the supplied hint instead of re-searching; only rerun the search if the visitor supplies new constraints (different product, identifier, etc.).
 ```
 
 ### `build_planner_messages` system instructions (lines 236-322)

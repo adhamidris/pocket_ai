@@ -9,7 +9,7 @@ This document mirrors the active prompt surfaces after the recent cleanup so we 
 | Tool | Purpose |
 | --- | --- |
 | `search_knowledge` | Hybrid search over tenant uploads; accepts free-form queries (mix of Arabic/English) and returns snippets, each marked summary/preview or ready/full. |
-| `read_document` | Fetches full-page or excerpt content from a document/chunk when a snippet is preview-only or marked `read_required`. |
+| `read_document` | Fetches full-page or excerpt content from a document/chunk when preview/summary snippets are insufficient. `read_required` is an advisory hint, not a gate. |
 | `list_tables` | Lists uploads/sheets with structured tables to expose `document_id`, sheet names, and table indices before aggregation. |
 | `table_aggregate` | Runs deterministic table totals (row totals or column sums) and returns `rows[].contributions` for every numeric column/region/customer. Supports batching via `match_values`. |
 | `create_case` / `update_case_status` / `update_case_details` / `add_case_history` / `flag_escalation` | CRM-style case controls following the Case Management Mandate (only on real business context). |
@@ -55,7 +55,7 @@ This document mirrors the active prompt surfaces after the recent cleanup so we 
 **Tool Usage Guidance**
 ```
 - search_knowledge: run hybrid search for the visitor’s request. When identifiers (email/order ID) exist, include them in the first query. Reissue the search only if the visitor adds new constraints.
-- read_document: when a snippet is summary/preview or marked read_required, call once with the provided doc/page hint before citing exact details. Prefer the smallest scope (chunk/page).
+- read_document: call when a snippet is summary/preview and you need more evidence to answer accurately; `read_required` is an advisory hint. Prefer the smallest scope (chunk/page).
 - list_tables: call once when you need the spreadsheet document_id/sheet names before aggregations. Reuse that document_id for the rest of the turn.
 - table_aggregate: use for totals/contributor lists. Recipe:
     1. If you don’t yet know the document_id, call list_tables once and reuse it.

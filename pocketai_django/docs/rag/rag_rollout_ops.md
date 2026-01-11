@@ -45,13 +45,13 @@ part of `BusinessProfile.save` keeps it versioned alongside the tenant record.
   avoid warning noise from upstream changes.
 - MCP now short-circuits duplicate `search_knowledge` calls when a prior
   search already produced read-required snippets, prompting the model to issue
-  `read_knowledge` instead of re-running the same query.
+  `read_document` instead of re-running the same query.
 - Prompt guidance now instructs the agent to pack bilingual (Arabic/English)
-  variants into the first `search_knowledge` call and to go straight to
-  `read_knowledge` whenever snippets set `read_required`, so redundant searches
-  are avoided unless the visitor provides new constraints.
+  variants into the first `search_knowledge` call and treat `read_required` as
+  advisory (read when snippets are insufficient), so redundant searches are
+  avoided unless the visitor provides new constraints.
 - Multi-product/store sales queries now prioritize `table_aggregate` before
-  `read_knowledge`, so the model fetches deterministic row totals in one call
+  `read_document`, so the model fetches deterministic row totals in one call
   instead of reading many spreadsheet pages.
 - A new `list_tables` tool lets the model enumerate active spreadsheet uploads (names + sheet hints) per tenant, so it can grab the correct `document_id` once and reuse it across every aggregation instead of running another `search_knowledge`.
 - The `table_aggregate` tool accepts a `columns` array so the agent can request

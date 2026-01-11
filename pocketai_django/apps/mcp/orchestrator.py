@@ -1227,28 +1227,37 @@ class McpOrchestratorService:
         _status_event("answer_finalized", "Answer ready")
         _status_event("stream_complete", "")
 
-        unmet_read_required = False
+        unmet_read_required_count = 0
+        read_required_reasons: set[str] = set()
         table_results_present = False
         for entry in getattr(tool_context, "knowledge_results", []):
             if not isinstance(entry, Mapping):
                 continue
             if entry.get("read_required"):
-                unmet_read_required = True
+                unmet_read_required_count += 1
+                reasons = entry.get("read_required_reasons")
+                if isinstance(reasons, list):
+                    for reason in reasons:
+                        if isinstance(reason, str) and reason:
+                            read_required_reasons.add(reason)
             if entry.get("search_stage") in {"table_direct", "table_blended"}:
                 table_results_present = True
-            if unmet_read_required and table_results_present:
-                break
         no_reads = not getattr(tool_context, "knowledge_reads", [])
-        if no_reads and (unmet_read_required or table_results_present):
-            # Enforce read-before-answer for table/identifier hits
-            final_assistant_message = {
-                "role": "assistant",
-                "content": "",
-                "actions": [],
-                "extractions": [],
-                "placeholder_response": "Need to read the recommended document/page before answering. Use read_hint (doc_id + page + mode).",
-            }
-            answer_text_raw = ""
+        if no_reads and unmet_read_required_count:
+            structured_log(
+                "mcp",
+                "read_required.unfulfilled",
+                {
+                    "read_required_count": unmet_read_required_count,
+                    "table_results_present": table_results_present,
+                    "reasons": sorted(read_required_reasons),
+                },
+                context={
+                    "conversation": conversation.id,
+                    "business": conversation.business_profile_id,
+                },
+                logger_obj=logger,
+            )
 
         clean_answer_text, dropped_sentences = sanitize_with_diagnostics(
             answer_text_raw,
@@ -2483,7 +2492,7 @@ class McpOrchestratorService:
             "snippet_count": len(snippets),
             "read_required": read_required,
             "snippet_ids": snippet_ids,
-            "hint": hint_text or "Existing snippets already require read_knowledge; use the provided read_hint.",
+            "hint": hint_text or "Existing snippets are available; use the provided read_hint if you need more detail.",
         }
         for query_value in queries_to_record:
             history.append(

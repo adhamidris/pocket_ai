@@ -916,6 +916,71 @@ def _query_intent(query: str) -> dict[str, object]:
     }
 
 
+def _snippet_text_for_sufficiency(payload: Mapping[str, object]) -> str:
+    for key in ("content", "summary", "snippet", "preview", "text", "raw_text"):
+        value = payload.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    return ""
+
+
+def _snippet_has_truncation(payload: Mapping[str, object]) -> bool:
+    if payload.get("truncated") or payload.get("partial_index") or payload.get("truncation_note"):
+        return True
+    diagnostics = payload.get("source_diagnostics")
+    if not isinstance(diagnostics, Mapping):
+        return False
+    return any(
+        diagnostics.get(key)
+        for key in (
+            "table_truncated",
+            "truncated_rows",
+            "truncated_columns",
+            "truncated_tables",
+            "truncated_entities",
+            "table_partial_tables",
+            "partial_index",
+        )
+    )
+
+
+def _snippet_has_table_truncation(payload: Mapping[str, object]) -> bool:
+    diagnostics = payload.get("source_diagnostics")
+    if not isinstance(diagnostics, Mapping):
+        return False
+    return any(
+        diagnostics.get(key)
+        for key in (
+            "table_truncated",
+            "truncated_rows",
+            "truncated_columns",
+            "truncated_tables",
+            "table_partial_tables",
+        )
+    )
+
+
+def _compute_read_required(
+    payload: Mapping[str, object],
+) -> tuple[bool, list[str]]:
+    read_state = str(payload.get("read_state") or "summary").strip().lower()
+    if read_state not in {"summary", "preview"}:
+        return False, []
+
+    reasons: list[str] = []
+    snippet_text = _snippet_text_for_sufficiency(payload)
+    if not snippet_text:
+        reasons.append("preview_empty")
+
+    if _snippet_has_truncation(payload):
+        reasons.append("content_truncated")
+
+    if _snippet_has_table_truncation(payload):
+        reasons.append("table_truncated")
+
+    return bool(reasons), reasons
+
+
 def _match_knowledge_entry(
     context: ToolExecutionContext | None,
     identifiers: Sequence[str],
@@ -1915,6 +1980,7 @@ def _log_snippet_payloads(
             "chunk_id": str(chunk_id) if chunk_id else None,
             "read_state": payload.get("read_state"),
             "read_required": bool(payload.get("read_required")),
+            "read_required_reasons": payload.get("read_required_reasons"),
             "is_table_chunk": bool(payload.get("is_table_chunk")),
             "score": payload.get("score"),
             "preview": redact_free_text(preview) if preview and not include_pii else preview,
@@ -2575,6 +2641,7 @@ def _search_knowledge_handler(
                     "llm_hint": decision.hint,
                 }
         read_required = False
+        read_required_reasons_summary: set[str] = set()
         if allowed_uploads is not None:
             snippet_payloads = [payload for payload in snippet_payloads if str(payload.get("upload_id") or "") in allowed_uploads]
             if not snippet_payloads:
@@ -2606,12 +2673,14 @@ def _search_knowledge_handler(
                     "identifier_gate": decision.as_dict() if decision else None,
                     "hint": "No records found for this identifier.",
                 }
-        if intent == "identifier":
-            if len(snippet_payloads) <= 2:
-                read_required = True
-            elif all((payload.get("read_state") or "summary") in {"summary", "preview"} for payload in snippet_payloads):
-                read_required = True
         for payload in snippet_payloads:
+            payload_read_required, reasons = _compute_read_required(payload)
+            payload["read_required"] = payload_read_required
+            if reasons:
+                payload["read_required_reasons"] = reasons
+                read_required_reasons_summary.update(reasons)
+            if payload_read_required:
+                read_required = True
             chunk_id = payload.get("chunk_id") or payload.get("id")
             upload_id = payload.get("upload_id")
             chunk_index = payload.get("chunk_index")
@@ -2650,8 +2719,6 @@ def _search_knowledge_handler(
                 read_hint["offset"] = chunk_index
             
             payload["read_hint"] = read_hint
-            if read_required:
-                payload["read_required"] = True
         if guard and decision and decision.status == "ok":
             applied_filter = decision.as_dict()
             applied_filter["tool"] = "search_knowledge"
@@ -2674,11 +2741,14 @@ def _search_knowledge_handler(
                 upload_ids=list(decision.blocked_uploads or ()),
             )
         snippet_payloads = _sanitize_snippet_payloads_for_prompt(snippet_payloads, conversation=conversation)
+        log_meta = {"query": query_text, "intent": intent, "read_required": read_required}
+        if read_required_reasons_summary:
+            log_meta["read_required_reasons"] = sorted(read_required_reasons_summary)
         _log_snippet_payloads(
             tool="search_knowledge",
             conversation=conversation,
             snippet_payloads=snippet_payloads,
-            meta={"query": query_text, "intent": intent, "read_required": read_required},
+            meta=log_meta,
         )
         _log_search_performance(
             snippets=snippet_payloads,
@@ -2699,6 +2769,10 @@ def _search_knowledge_handler(
             "diagnostics": dict(result.diagnostics or {}),
             "snippets": snippet_payloads,
             "hint": _search_hint(result.status, intent, snippet_payloads, result.diagnostics),
+        }
+        payload["read_required_summary"] = {
+            "any": read_required,
+            "reasons": sorted(read_required_reasons_summary),
         }
         if dataset_candidates:
             payload["dataset_candidates"] = dataset_candidates

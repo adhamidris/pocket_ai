@@ -498,10 +498,8 @@ Flow:
      - `diagnostics` – search route, alias hits, duration, snippet counts, etc.
 4. `_search_knowledge_handler` post-processing:
    - Serializes snippets into a model-friendly payload (public label, coverage hints, `read_hint`).
-   - Marks whether **full reading** is recommended (`read_required`) based on:
-     - Volume of content.
-     - Table presence.
-     - Inline character budgets.
+   - Marks whether **full reading** is recommended (`read_required`) based on snippet-only sufficiency signals:
+     - Summary/preview state plus evidence of incomplete context (truncation, partial tables).
    - Adds ingestion warnings by inspecting issues/diagnostics.
    - Updates identifier guardrails via `IdentifierRegistryService.record_event`.
 5. The orchestrator:
@@ -526,7 +524,7 @@ Use case:
 
 Typical trigger:
 
-- `search_knowledge` marks a snippet with `read_required: true` and includes a `read_hint`:
+- The model decides it needs more evidence from a summary/preview snippet (often flagged by `read_required: true`) and uses the provided `read_hint`:
   - `document_id` – typically `upload_id` or `chunk_id`.
   - `page` – page index.
   - `mode` – `"excerpt"` vs `"full_page"`.
