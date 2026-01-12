@@ -25,6 +25,7 @@ from django.utils import timezone
 from opentelemetry import trace as otel_trace
 
 from apps.accounts.models import AgentProfile, KnowledgeUpload
+from apps.accounts.feature_flags import FeatureFlagService
 from apps.conversations.models import Conversation, ConversationExtractionType, ConversationSender
 from apps.llm.llm_provider import PromptGenerationError, _emit_stream_chunks
 from apps.rag.ai_orchestrator import (
@@ -168,11 +169,16 @@ class McpOrchestratorService:
             self._hydrate_seen_items(conversation, tool_context)
 
         query_classification = self._classify_query_intent(user_message)
+        feature_state = FeatureFlagService.snapshot(conversation.business_profile)
         auto_structure_enabled = self._auto_structure_enabled_for_business(conversation.business_profile)
+        if feature_state.rag_agentic_mode:
+            auto_structure_enabled = False
         auto_structure_intent = auto_structure_enabled and query_classification.requires_full_coverage()
         auto_structure_doc_limit = self._auto_structure_doc_limit(conversation.business_profile)
         auto_structure_docs: set[str] = set()
         auto_fetch_enabled = self._auto_fetch_enabled_for_business(conversation.business_profile)
+        if feature_state.rag_agentic_mode:
+            auto_fetch_enabled = False
         auto_fetch_max_rows = self._auto_fetch_max_rows(conversation.business_profile)
         auto_fetch_max_tables = self._auto_fetch_max_tables(conversation.business_profile)
         auto_fetch_attributes = tuple(query_classification.attributes or ())
@@ -701,6 +707,9 @@ class McpOrchestratorService:
                                 call_origin = "duplicate"
                             else:
                                 if tool_name == "read_document":
+                                    ids_requested = arguments.get("ids")
+                                    if not isinstance(ids_requested, list):
+                                        ids_requested = []
                                     pages_requested = arguments.get("pages")
                                     if not isinstance(pages_requested, list):
                                         pages_requested = []
@@ -712,6 +721,7 @@ class McpOrchestratorService:
                                         "tool.read_document.request",
                                         {
                                             "document_id": str(arguments.get("document_id") or ""),
+                                            "ids": [str(value) for value in ids_requested if str(value).strip()][:10],
                                             "pages": pages_requested,
                                             "page": arguments.get("page"),
                                             "offset": arguments.get("offset"),
@@ -719,6 +729,7 @@ class McpOrchestratorService:
                                             "neighbor_window": arguments.get("neighbor_window")
                                             or arguments.get("chunk_neighbor"),
                                             "token_budget": arguments.get("token_budget"),
+                                            "max_chars": arguments.get("max_chars"),
                                         },
                                         context={
                                             "conversation": conversation.id,
@@ -2580,7 +2591,20 @@ class McpOrchestratorService:
     def _extract_structure_upload_ids(tool_result: Mapping[str, object]) -> list[str]:
         snippets = tool_result.get("snippets")
         if not isinstance(snippets, list):
-            return []
+            results = tool_result.get("results")
+            if not isinstance(results, list):
+                return []
+            upload_ids: list[str] = []
+            for result in results:
+                if not isinstance(result, Mapping):
+                    continue
+                is_table = str(result.get("type") or "").strip().lower() == "table" or result.get("row_count")
+                if not is_table:
+                    continue
+                upload_id = str(result.get("document_id") or "").strip()
+                if upload_id:
+                    upload_ids.append(upload_id)
+            return upload_ids
         upload_ids: list[str] = []
         for snippet in snippets:
             if not isinstance(snippet, Mapping):
@@ -4907,6 +4931,13 @@ class McpOrchestratorService:
         arguments: Mapping[str, object],
         result: Mapping[str, object] | None = None,
     ) -> str | None:
+        ids = arguments.get("ids")
+        if isinstance(ids, list) and ids:
+            cleaned_ids = [str(value).strip() for value in ids if str(value).strip()]
+            if cleaned_ids:
+                max_chars = arguments.get("max_chars")
+                return f"ids:{'|'.join(cleaned_ids)}:max{max_chars}"
+
         doc_id = str(arguments.get("document_id") or (result or {}).get("document_id") or "").strip()
         if not doc_id:
             return None

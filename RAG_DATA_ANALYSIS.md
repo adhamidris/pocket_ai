@@ -131,11 +131,10 @@ The snippet is NOT equivalent to table aggregate. They serve different purposes:
 - Snippet would already be filtered and structured
 - Trade-off: larger index, more storage
 
-### Option C: Smart Skip Logic (Complex)
-- Backend analyzes snippet content before setting read_required
-- If snippet contains EXACTLY ONE matching record → skip read
-- If snippet contains multiple records → require read
-- Trade-off: complex logic, may still fail edge cases
+### Option C: Snippet-Only Sufficiency Signals (Lightweight)
+- Backend flags obvious incompleteness (truncation/partial tables/empty previews)
+- `read_required` is advisory; LLM decides whether to read more
+- Trade-off: fewer hard guarantees, but avoids brittle keyword gates
 
 ### Option D: Hybrid with Confidence Score
 - Return snippet with `confidence: high|medium|low`
@@ -146,7 +145,7 @@ The snippet is NOT equivalent to table aggregate. They serve different purposes:
 
 ## Recommendation
 
-**Short-term:** Keep 2-tool-call behavior (current). It's reliable.
+**Short-term (updated):** Keep `read_required` as a snippet-only insufficiency hint (advisory) and remove forced reads, so the LLM decides when more evidence is needed.
 
 **Long-term (Option B):** Consider row-level indexing during ingestion:
 - Each product row becomes its own searchable chunk

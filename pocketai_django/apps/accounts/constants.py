@@ -14,6 +14,7 @@ FEATURE_FLAG_DEFAULTS: dict[str, bool] = {
     "rag_shadow_ingestion": False,
     "rag_shadow_retrieval": False,
     "rag_eval_logging": False,
+    "rag_agentic_mode": True,  # 2-tool retrieval: search (metadata) → read (content)
 }
 
 _TRUE_VALUES = {"1", "true", "yes", "on", "enabled"}

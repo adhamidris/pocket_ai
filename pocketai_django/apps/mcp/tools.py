@@ -48,7 +48,14 @@ from apps.accounts.models import (
     KnowledgeUploadTableCell,
 )
 from apps.conversations.models import Conversation
-from apps.rag.ai_orchestrator import ActionType, AiOrchestratorService, KnowledgeSearchService, KnowledgeSnippet
+from apps.rag.ai_orchestrator import (
+    ActionType,
+    AiOrchestratorService,
+    KnowledgeSearchService,
+    KnowledgeSnippet,
+    KNOWLEDGE_READ_STATE_FULL,
+    KNOWLEDGE_READ_STATE_PREVIEW,
+)
 from apps.rag.dataset_router import find_datasets_for_identifier, match_upload_for_identifier
 from apps.knowledge.knowledge_access import apply_customer_visible_chunks, apply_customer_visible_uploads
 from apps.knowledge.privacy import column_suggests_pii, redact_free_text, redact_value_for_preview, sha256_hex
@@ -67,6 +74,13 @@ from .types import (
     ToolRateLimitExceeded,
     CharacterBudgetExceeded,
 )
+from .schemas.agentic_rag import (
+    SearchResultItem,
+    SearchResponse,
+    build_search_response,
+    build_error_response as build_agentic_error_response,
+)
+from apps.accounts.feature_flags import FeatureFlagService
 
 try:
     import duckdb  # type: ignore
@@ -289,8 +303,24 @@ TOOL_DEFINITIONS: tuple[Mapping[str, object], ...] = (
     ),
     _function_schema(
         name="read_document",
-        description="Read text or layout from a document (PDF, DOCX, TXT). Use this for reading specific pages or sections.",
+        description=(
+            "Read text or layout from a document (PDF, DOCX, TXT). "
+            "In agentic mode prefer ids[] from search_knowledge; for page reads use document_id + pages."
+        ),
         properties={
+            "ids": {
+                "type": "array",
+                "items": {"type": "string"},
+                "description": "List of chunk IDs from search_knowledge results (agentic mode).",
+                "minItems": 1,
+            },
+            "max_chars": {
+                "type": "integer",
+                "description": "Maximum total characters to return across all ids (agentic mode).",
+                "minimum": 500,
+                "maximum": 20000,
+                "default": 8000,
+            },
             "document_id": {
                 "type": "string",
                 "description": "UUID of the document upload.",
@@ -300,6 +330,16 @@ TOOL_DEFINITIONS: tuple[Mapping[str, object], ...] = (
                 "items": {"type": "integer"},
                 "description": "List of 1-based page numbers to read.",
                 "minItems": 1,
+            },
+            "page": {
+                "type": "integer",
+                "description": "Single 1-based page number to read (use when only one page is needed).",
+                "minimum": 1,
+            },
+            "offset": {
+                "type": "integer",
+                "description": "0-based chunk offset hint used to resolve a nearby page when no page number is known.",
+                "minimum": 0,
             },
             "mode": {
                 "type": "string",
@@ -315,7 +355,7 @@ TOOL_DEFINITIONS: tuple[Mapping[str, object], ...] = (
                 "default": 0,
             },
         },
-        required=("document_id",),
+        required=(),
     ),
     _function_schema(
         name="query_dataset",
@@ -1172,12 +1212,17 @@ def _serialize_snippets(snippets: Sequence[object]) -> list[dict[str, object]]:
             payloads.append(AiOrchestratorService._serialize_snippet(snippet))  # type: ignore[arg-type]
         except Exception:
             continue
-    seen: set[tuple[str | None, str | None]] = set()
+    seen: set[tuple[str, str | None]] = set()
     deduped: list[dict[str, object]] = []
     for entry in payloads:
-        chunk_id = str(entry.get("chunk_id") or "") or None
-        upload_id = str(entry.get("upload_id") or "") or None
-        key = (chunk_id, upload_id)
+        chunk_id = str(entry.get("chunk_id") or "").strip()
+        entry_id = str(entry.get("id") or "").strip()
+        upload_id = str(entry.get("upload_id") or "").strip() or None
+        identity = chunk_id or entry_id
+        if not identity:
+            deduped.append(entry)
+            continue
+        key = (identity, upload_id)
         if key in seen:
             continue
         seen.add(key)
@@ -2138,6 +2183,122 @@ def _build_ingestion_warnings(
     return warnings
 
 
+def _convert_to_agentic_search_response(
+    legacy_payload: Mapping[str, object],
+    *,
+    conversation: Conversation,
+) -> dict[str, object]:
+    """
+    Convert legacy search_knowledge response to agentic format.
+    
+    Agentic format returns metadata and short previews (no full content):
+    - IDs, titles, types, char estimates, previews
+    - LLM must call read_document() to get actual content
+    
+    This enables the clean 2-tool workflow: search → read → answer
+    """
+    snippets = legacy_payload.get("snippets", [])
+    results: list[dict[str, object]] = []
+    
+    for snippet in snippets:
+        if not isinstance(snippet, Mapping):
+            continue
+        
+        # Determine type
+        is_table = bool(snippet.get("is_table_chunk"))
+        content_type = "table" if is_table else "text"
+        
+        # Get IDs
+        chunk_id = str(snippet.get("chunk_id") or snippet.get("id") or "")
+        upload_id = str(snippet.get("upload_id") or "")
+        
+        # Estimate char count from summary/content if available
+        content = snippet.get("content") or ""
+        summary = snippet.get("summary") or ""
+        char_estimate = len(content) if content else len(summary) * 3  # estimate full content
+
+        diagnostics = snippet.get("source_diagnostics") if isinstance(snippet.get("source_diagnostics"), Mapping) else {}
+        row_count = diagnostics.get("table_total_rows") or diagnostics.get("table_row_count") or snippet.get("row_count")
+        column_count = diagnostics.get("table_column_count") or snippet.get("column_count")
+        table_id = diagnostics.get("table_id")
+        row_index = diagnostics.get("row_index") or diagnostics.get("table_row_index")
+        
+        read_hint = snippet.get("read_hint")
+        read_id = ""
+        if isinstance(read_hint, Mapping):
+            read_id = str(read_hint.get("document_id") or "").strip()
+        if not read_id:
+            read_id = chunk_id or upload_id
+        if not chunk_id and read_id:
+            chunk_id = read_id
+
+        result_item: dict[str, object] = {
+            "id": chunk_id,
+            "document_id": upload_id,
+            "title": snippet.get("title") or snippet.get("public_label") or "Untitled",
+            "type": content_type,
+            "source": snippet.get("source_file") or snippet.get("source") or "",
+            "char_estimate": char_estimate,
+        }
+        if read_id:
+            result_item["read_id"] = read_id
+
+        preview_source = summary or content
+        if isinstance(preview_source, str) and preview_source.strip():
+            preview = preview_source.strip()
+            if len(preview) > 240:
+                preview = f"{preview[:240].rstrip()}…"
+            result_item["preview"] = preview
+
+        if isinstance(read_hint, Mapping) and read_hint:
+            result_item["read_hint"] = dict(read_hint)
+        
+        if content_type == "table":
+            if row_count is not None:
+                result_item["row_count"] = row_count
+            if column_count is not None:
+                result_item["column_count"] = column_count
+            if table_id:
+                result_item["table_id"] = table_id
+            if row_index is not None:
+                result_item["row_index"] = row_index
+        
+        results.append(result_item)
+    
+    # Build agentic response
+    status = legacy_payload.get("status", "ok")
+    total_found = legacy_payload.get("completeness", {}).get("total_found", len(results))
+    
+    agentic_response: dict[str, object] = {
+        "tool": "search_knowledge",
+        "status": status if results else "empty",
+        "results": results,
+        "total_found": total_found,
+    }
+    
+    # Add hint only if empty
+    if not results:
+        agentic_response["hint"] = "No matching documents found. Try different search terms."
+    
+    # Log the conversion for debugging
+    structured_log(
+        "mcp",
+        "search.agentic_conversion",
+        {
+            "legacy_snippet_count": len(snippets),
+            "agentic_result_count": len(results),
+            "total_found": total_found,
+        },
+        context={
+            "conversation": conversation.id,
+            "business": conversation.business_profile_id,
+        },
+        logger_obj=logger,
+    )
+    
+    return agentic_response
+
+
 def _search_knowledge_handler(
     arguments: Mapping[str, object],
     conversation: Conversation,
@@ -2698,11 +2859,18 @@ def _search_knowledge_handler(
             else:
                 actual_page = payload.get("page_number")
             
+            is_table_payload = bool(
+                payload.get("is_table_chunk")
+                or payload.get("structured_table_count")
+                or payload.get("table_read_only")
+                or (isinstance(payload_meta, dict) and payload_meta.get("is_table_chunk"))
+            )
+            read_id = str(chunk_id or "").strip() if is_table_payload else str(upload_id or chunk_id or "").strip()
             # Build read_hint with page (if known) or offset (for chunk-based access)
-            mode_hint = "full_page" if intent == "identifier" else "excerpt"
+            mode_hint = "full_page" if is_table_payload else ("full_page" if intent == "identifier" else "excerpt")
             read_hint: dict[str, object] = {
-                # Prefer upload_id so multiple chunks from the same upload/page can be read in one call.
-                "document_id": str(upload_id or chunk_id or ""),
+                # For table chunks, prefer the chunk id so read_document can auto-upgrade to full_page table content.
+                "document_id": read_id,
                 "mode": mode_hint,
             }
             
@@ -3086,7 +3254,355 @@ def _search_knowledge_handler(
         payload["fusion"] = fusion
     if len(queries) > 1:
         payload["batched_queries"] = tuple(queries)
+    
+    # Check if agentic mode is enabled for this business
+    feature_state = FeatureFlagService.snapshot(conversation.business_profile)
+    if feature_state.rag_agentic_mode:
+        return _convert_to_agentic_search_response(payload, conversation=conversation)
+    
     return payload
+
+
+def _convert_to_agentic_read_response(
+    legacy_payload: Mapping[str, object],
+    *,
+    conversation: Conversation,
+    truncated_ids: Sequence[str] | None = None,
+) -> dict[str, object]:
+    """
+    Convert legacy read_document response to agentic format.
+    
+    Agentic format returns structured content:
+    - ID, title, full content, type
+    - Used by LLM to formulate final answer
+    """
+    snippets = legacy_payload.get("snippets", [])
+    contents: list[dict[str, object]] = []
+    total_chars = 0
+    
+    for snippet in snippets:
+        if not isinstance(snippet, Mapping):
+            continue
+        
+        # Determine type
+        is_table = bool(snippet.get("is_table_chunk"))
+        content_type = "table" if is_table else "text"
+        
+        # Get content
+        content = snippet.get("content") or snippet.get("summary") or ""
+        chunk_id = str(snippet.get("chunk_id") or snippet.get("id") or "")
+        
+        content_item: dict[str, object] = {
+            "id": chunk_id,
+            "title": snippet.get("title") or snippet.get("public_label") or "Untitled",
+            "content": content,
+            "type": content_type,
+            "truncated": chunk_id in (truncated_ids or []),
+        }
+        
+        contents.append(content_item)
+        total_chars += len(str(content))
+    
+    # Build agentic response
+    status = legacy_payload.get("status", "ok")
+    
+    agentic_response: dict[str, object] = {
+        "tool": "read_document",
+        "status": "partial" if truncated_ids else status,
+        "contents": contents,
+        "total_chars": total_chars,
+    }
+    
+    if truncated_ids:
+        agentic_response["truncated_ids"] = list(truncated_ids)
+    
+    # Carry forward any errors
+    if legacy_payload.get("error"):
+        agentic_response["error"] = legacy_payload.get("error")
+    
+    # Log the conversion
+    structured_log(
+        "mcp",
+        "read.agentic_conversion",
+        {
+            "legacy_snippet_count": len(snippets),
+            "agentic_content_count": len(contents),
+            "total_chars": total_chars,
+        },
+        context={
+            "conversation": conversation.id,
+            "business": conversation.business_profile_id,
+        },
+        logger_obj=logger,
+    )
+    
+    return agentic_response
+
+
+def _agentic_batch_read_handler(
+    arguments: Mapping[str, object],
+    conversation: Conversation,
+    context: ToolExecutionContext,
+) -> Mapping[str, object]:
+    """
+    Agentic batch read handler.
+    
+    Accepts multiple IDs and a max_chars limit for token control.
+    Delegates to the standard _read_document_handler for each ID.
+    """
+    raw_ids = arguments.get("ids")
+    if not isinstance(raw_ids, (list, tuple)):
+        # Fallback to single document_id
+        return _read_document_handler(arguments, conversation, context)
+    
+    seen_ids: set[str] = set()
+    ordered_ids: list[str] = []
+    for raw_id in raw_ids:
+        doc_id = str(raw_id).strip()
+        if not doc_id or doc_id in seen_ids:
+            continue
+        seen_ids.add(doc_id)
+        ordered_ids.append(doc_id)
+
+    raw_max_chars = arguments.get("max_chars")
+    if raw_max_chars is None:
+        service = _knowledge_service()
+        max_chars = service.inline_char_limit_for_business(conversation.business_profile)
+    else:
+        try:
+            max_chars = int(raw_max_chars)
+        except (TypeError, ValueError):
+            max_chars = 8000
+    max_chars = max(200, max_chars)
+    
+    all_contents: list[dict[str, object]] = []
+    all_snippets: list[dict[str, object]] = []
+    total_chars = 0
+    truncated_ids: list[str] = []
+    errors: list[dict[str, object]] = []
+    
+    for doc_id in ordered_ids:
+        
+        # Check if we've hit the char limit
+        if total_chars >= max_chars:
+            truncated_ids.append(doc_id)
+            continue
+        
+        remaining = max_chars - total_chars
+
+        # Call the standard handler for this ID
+        single_args = dict(arguments)
+        single_args["document_id"] = doc_id
+        single_args["agentic_mode"] = True
+        single_args.pop("ids", None)
+        single_args["max_chars"] = remaining
+        
+        try:
+            result = _read_document_handler(single_args, conversation, context)
+        except Exception as e:
+            errors.append({"id": doc_id, "error": str(e)})
+            continue
+        
+        if result.get("status") == "error" or result.get("status") == "not_found":
+            errors.append({"id": doc_id, "error": result.get("error", "unknown")})
+            continue
+        
+        # Extract snippets and add to contents
+        snippets = result.get("snippets", [])
+        if isinstance(snippets, list):
+            for entry in snippets:
+                if isinstance(entry, Mapping):
+                    all_snippets.append(dict(entry))
+        for snippet in snippets:
+            if not isinstance(snippet, Mapping):
+                continue
+            
+            is_table = bool(snippet.get("is_table_chunk"))
+            content = snippet.get("content") or snippet.get("summary") or ""
+            content_len = len(str(content))
+            
+            # Check char budget
+            remaining = max_chars - total_chars
+            if remaining <= 0:
+                truncated_ids.append(doc_id)
+                break
+            if content_len > remaining:
+                truncated_ids.append(doc_id)
+                all_contents.append({
+                    "id": str(snippet.get("chunk_id") or snippet.get("id") or doc_id),
+                    "title": snippet.get("title") or snippet.get("public_label") or "Untitled",
+                    "content": str(content)[:remaining],
+                    "type": "table" if is_table else "text",
+                    "truncated": True,
+                })
+                total_chars += remaining
+                break
+            
+            all_contents.append({
+                "id": str(snippet.get("chunk_id") or snippet.get("id") or doc_id),
+                "title": snippet.get("title") or snippet.get("public_label") or "Untitled",
+                "content": content,
+                "type": "table" if is_table else "text",
+                "truncated": False,
+            })
+            total_chars += content_len
+    
+    # Build response
+    response: dict[str, object] = {
+        "tool": "read_document",
+        "status": "partial" if truncated_ids else "ok",
+        "contents": all_contents,
+        "total_chars": total_chars,
+    }
+    if all_snippets:
+        response["snippets"] = all_snippets
+    
+    if truncated_ids:
+        response["truncated_ids"] = truncated_ids
+    if errors:
+        response["errors"] = errors
+    
+    structured_log(
+        "mcp",
+        "read.batch_complete",
+        {
+        "requested_ids": len(ordered_ids),
+            "content_count": len(all_contents),
+            "truncated_count": len(truncated_ids),
+            "error_count": len(errors),
+            "total_chars": total_chars,
+            "max_chars": max_chars,
+        },
+        context={
+            "conversation": conversation.id,
+            "business": conversation.business_profile_id,
+        },
+        logger_obj=logger,
+    )
+    
+    return response
+
+
+def _agentic_table_chunk_snippets(
+    *,
+    chunk_record: KnowledgeUploadChunk,
+    business,
+    max_chars: int | None,
+    service: KnowledgeSearchService,
+) -> list[KnowledgeSnippet] | None:
+    chunk_meta = chunk_record.metadata if isinstance(getattr(chunk_record, "metadata", None), Mapping) else {}
+    if not chunk_meta.get("is_table_chunk"):
+        return None
+
+    table_role = str(chunk_meta.get("table_chunk_role") or "").strip().lower()
+    table_row_index = chunk_meta.get("table_row_index")
+    if table_role == "row" or table_row_index is not None:
+        return list(
+            service.load_chunk_contents(
+                business_profile=business,
+                chunk_ids=[str(chunk_record.id)],
+                neighbor=0,
+                max_chars=max_chars,
+            )
+        )
+
+    table_id = chunk_meta.get("table_id")
+    if not table_id:
+        return None
+
+    row_chunks = list(
+        apply_customer_visible_chunks(
+            KnowledgeUploadChunk.objects.filter(
+                upload=chunk_record.upload,
+                business_profile=business,
+                upload__status=KnowledgeStatus.ACTIVE,
+                metadata__table_id=str(table_id),
+                metadata__table_chunk_role="row",
+            )
+        ).order_by("chunk_index")
+    )
+    if not row_chunks:
+        return None
+
+    content_parts = [row.content.strip() for row in row_chunks if row.content]
+    combined = "\n\n".join(content_parts).strip()
+    if not combined:
+        return None
+
+    truncated = False
+    if max_chars and len(combined) > max_chars:
+        combined = combined[:max_chars]
+        truncated = True
+
+    table_title = None
+    table_order_index = None
+    page_number = None
+    try:
+        table_obj = (
+            KnowledgeUploadTable.objects.filter(id=table_id)
+            .select_related("page")
+            .only("id", "title", "section_heading", "order_index", "page__page_number")
+            .first()
+        )
+        if table_obj:
+            table_title = table_obj.title or table_obj.section_heading
+            table_order_index = table_obj.order_index
+            page_number = table_obj.page.page_number if table_obj.page else None
+    except Exception:
+        table_obj = None
+
+    if not table_title:
+        table_title = f"Table {table_order_index}" if table_order_index else "Table"
+
+    summary = combined.splitlines()[0][:280] if combined else table_title
+    trunc_metrics = service._truncation_metrics(chunk_record.upload)
+    partial_index = bool(trunc_metrics.get("partial_index")) if trunc_metrics else False
+    source_diag: dict[str, object] = {
+        "table_id": str(table_id),
+        "table_row_count": len(row_chunks),
+        "table_chunk_role": table_role or "preview",
+        "table_read_only": True,
+    }
+    if truncated:
+        source_diag["partial_content"] = True
+    if trunc_metrics:
+        source_diag.update(trunc_metrics)
+
+    snippet = KnowledgeSnippet(
+        id=chunk_record.id,
+        title=table_title,
+        summary=summary,
+        source=chunk_record.upload.get_source_type_display(),
+        content=combined,
+        content_mode="table_rows",
+        public_label=table_title,
+        structured_tables=tuple(),
+        issues=tuple(),
+        page_summaries=tuple(),
+        read_state=KNOWLEDGE_READ_STATE_PREVIEW if truncated else KNOWLEDGE_READ_STATE_FULL,
+        topic_hints=tuple(),
+        is_pinned=False,
+        upload_id=chunk_record.upload_id,
+        chunk_id=chunk_record.id,
+        chunk_index=chunk_record.chunk_index,
+        page_number=page_number,
+        page_mode=None,
+        entity_type=chunk_meta.get("entity_type"),
+        entity_name=chunk_meta.get("entity_name"),
+        entity_business=chunk_meta.get("entity_business"),
+        is_table_chunk=True,
+        aliases=tuple(chunk_meta.get("aliases") or ()),
+        search_stage="table_rows",
+        confidence_score=1.0,
+        truncated=truncated,
+        source_diagnostics=source_diag,
+        partial_index=partial_index,
+        structured_table_count=1,
+        issue_count=0,
+        structured_table_hint=None,
+    )
+
+    return [snippet]
 
 
 def _read_document_handler(
@@ -3267,148 +3783,174 @@ def _read_document_handler(
             }
 
     
-    # Resolve pages to read
     pages_arg = arguments.get("pages")
     page_arg = arguments.get("page")
-    page_indices: list[int] = []
-    
-    if isinstance(pages_arg, list):
-        for p in pages_arg:
-             try:
-                 page_indices.append(max(1, int(p)))
-             except (TypeError, ValueError):
-                 pass
-    
-    if not page_indices and page_arg is not None:
+    offset_value = arguments.get("offset")
+    explicit_page_request = bool(pages_arg or page_arg is not None or offset_value is not None)
+
+    agentic_mode = bool(arguments.get("agentic_mode"))
+    raw_read_max_chars = arguments.get("max_chars")
+    read_max_chars: int | None = None
+    if raw_read_max_chars is not None:
         try:
-            page_indices.append(max(1, int(page_arg)))
+            read_max_chars = max(200, int(raw_read_max_chars))
         except (TypeError, ValueError):
-            pass
-            
-    if not page_indices:
-        # Check offset
-        offset_value = arguments.get("offset")
-        if offset_value is not None:
+            read_max_chars = None
+
+    service = _knowledge_service()
+    upload_source = chunk_record.upload if chunk_record else upload_record
+    knowledge_entry = _match_knowledge_entry(context, [str(identifier), str(gating_upload_id)])
+    throttle_notice: dict[str, object] | None = None
+    downgraded = False
+
+    snippets: list[Any] = []
+    mode: str | None = None
+    token_budget: int | None = None
+    neighbor_window = 1
+    page_indices: list[int] = []
+    used_table_override = False
+
+    if chunk_record and agentic_mode and not explicit_page_request:
+        table_snippets = _agentic_table_chunk_snippets(
+            chunk_record=chunk_record,
+            business=business,
+            max_chars=read_max_chars,
+            service=service,
+        )
+        if table_snippets:
+            context.reserve_chunk_reads(1)
+            snippets = list(table_snippets)
+            mode = "excerpt"
+            neighbor_window = 0
+            page_indices = []
+            used_table_override = True
+
+    if not used_table_override:
+        # Resolve pages to read
+        if isinstance(pages_arg, list):
+            for p in pages_arg:
+                try:
+                    page_indices.append(max(1, int(p)))
+                except (TypeError, ValueError):
+                    pass
+
+        if not page_indices and page_arg is not None:
+            try:
+                page_indices.append(max(1, int(page_arg)))
+            except (TypeError, ValueError):
+                pass
+
+        if not page_indices and offset_value is not None:
             try:
                 offset_int = int(offset_value)
                 page_indices.append(max(1, offset_int + 1))
             except (TypeError, ValueError):
                 pass
-                
-    if not page_indices:
-        page_indices = [1]
-    
-    # Deduplicate and sort
-    page_indices = sorted(list(set(page_indices)))[:5] # Cap at 5 pages per call to prevent abuse
 
-    raw_mode = _coerce_str(arguments.get("mode")).strip().lower()
-    mode = raw_mode if raw_mode in {"excerpt", "full_page"} else None
+        if not page_indices:
+            page_indices = [1]
 
-    token_budget: int | None = None
-    raw_budget = arguments.get("token_budget")
-    if raw_budget is not None:
+        # Deduplicate and sort
+        page_indices = sorted(list(set(page_indices)))[:5]  # Cap at 5 pages per call to prevent abuse
+
+        raw_mode = _coerce_str(arguments.get("mode")).strip().lower()
+        mode = raw_mode if raw_mode in {"excerpt", "full_page"} else None
+
+        raw_budget = arguments.get("token_budget")
+        if raw_budget is not None:
+            try:
+                token_budget = max(0, int(raw_budget))
+            except (TypeError, ValueError):
+                token_budget = None
+
+        neighbor = arguments.get("neighbor_window") or arguments.get("chunk_neighbor")
         try:
-            token_budget = max(0, int(raw_budget))
+            neighbor_window = int(neighbor)
         except (TypeError, ValueError):
-            token_budget = None
+            neighbor_window = 1
+        neighbor_window = max(0, min(3, neighbor_window))
 
-    neighbor = arguments.get("neighbor_window") or arguments.get("chunk_neighbor")
-    try:
-        neighbor_window = int(neighbor)
-    except (TypeError, ValueError):
-        neighbor_window = 1
-    neighbor_window = max(0, min(3, neighbor_window))
-
-    service = _knowledge_service()
-    throttle_notice: dict[str, object] | None = None
-
-    upload_source = chunk_record.upload if chunk_record else upload_record
-    knowledge_entry = _match_knowledge_entry(context, [str(identifier), str(gating_upload_id)])
-    
-    # Check if this is a table chunk from a PDF - these need full content, not summaries
-    is_pdf_table_chunk = False
-    if chunk_record:
-        chunk_meta = chunk_record.metadata if isinstance(getattr(chunk_record, "metadata", None), Mapping) else {}
-        if chunk_meta.get("is_table_chunk") or chunk_meta.get("table_chunk_role"):
-            upload = chunk_record.upload
-            ingestion_meta = upload.ingestion_metadata if isinstance(getattr(upload, "ingestion_metadata", None), Mapping) else {}
-            format_hint = str(ingestion_meta.get("format") or "").strip().lower()
-            # Only auto-upgrade for PDFs (not native tabular formats which use query_dataset)
-            if format_hint not in {"csv", "tsv", "xls", "xlsx", "jsonl"}:
-                is_pdf_table_chunk = True
-    
-    if mode is None:
-        # Auto-upgrade to full_page for PDF table chunks to get complete table data
-        if is_pdf_table_chunk:
-            mode = "full_page"
-            structured_log(
-                "mcp",
-                "read_document.table_chunk_upgrade",
-                {"chunk_id": str(identifier), "reason": "pdf_table_chunk"},
-                context={"business": business.id, "conversation": conversation.id},
-                logger_obj=logger,
-            )
-        else:
-            prefer_full_page = _detect_full_page_intent(
-                conversation,
-                None,
-                document_entry=knowledge_entry,
-                upload=upload_source,
-            )
-            mode = "full_page" if (prefer_full_page and _budget_allows_full_page(context, business_profile=business, service=service)) else "excerpt"
-
-    downgraded = False
-    if mode == "full_page":
-        throttle_notice = _maybe_throttle_full_page(context, business, service)
-        if throttle_notice:
-            mode = "excerpt"
-            throttle_notice["downgraded_from"] = "full_page"
-            downgraded = True
-    throttle_reason = throttle_notice.get("reason") if throttle_notice else None
-    structured_log(
-        "mcp",
-        "read_document.throttle",
-        {"reason": throttle_reason, "notice": throttle_notice} if throttle_notice else {"reason": throttle_reason},
-        context={"business": business.id},
-        logger_obj=logger,
-    )
-
-    # Enforce per-turn chunk budget only when actually loading the window.
-    # Reserve for each page
-    context.reserve_chunk_reads(len(page_indices))
-    context.reserve_chunk_pages(len(page_indices))
-
-    snippets: list[Any] = []
-    
-    for page_idx in page_indices:
-        # Check cache for each page
-        # Note: We only check cache if single page requested to keep logic simple, 
-        # or we could loop interaction. For now, simplistic cache check for first page only 
-        # is too weak. But fixing cache for multi-page is complex.
-        # We will skip cache read for multi-page for now or just proceed.
-        
+        # Check if this is a table chunk from a PDF - these need full content, not summaries
+        is_pdf_table_chunk = False
         if chunk_record:
-            snippets.extend(
-                service.load_page_window(
-                    business_profile=business,
-                    chunk_id=identifier,
-                    page_index=page_idx,
-                    neighbor=neighbor_window,
-                    mode=mode,
-                    token_budget=token_budget,
+            chunk_meta = chunk_record.metadata if isinstance(getattr(chunk_record, "metadata", None), Mapping) else {}
+            if chunk_meta.get("is_table_chunk") or chunk_meta.get("table_chunk_role"):
+                upload = chunk_record.upload
+                ingestion_meta = upload.ingestion_metadata if isinstance(getattr(upload, "ingestion_metadata", None), Mapping) else {}
+                format_hint = str(ingestion_meta.get("format") or "").strip().lower()
+                # Only auto-upgrade for PDFs (not native tabular formats which use query_dataset)
+                if format_hint not in {"csv", "tsv", "xls", "xlsx", "jsonl"}:
+                    is_pdf_table_chunk = True
+
+        if mode is None:
+            # Auto-upgrade to full_page for PDF table chunks to get complete table data
+            if is_pdf_table_chunk:
+                mode = "full_page"
+                structured_log(
+                    "mcp",
+                    "read_document.table_chunk_upgrade",
+                    {"chunk_id": str(identifier), "reason": "pdf_table_chunk"},
+                    context={"business": business.id, "conversation": conversation.id},
+                    logger_obj=logger,
                 )
-            )
-        else:
-            snippets.extend(
-                service.load_page_window(
-                    business_profile=business,
-                    upload_id=upload_record.id, # type: ignore
-                    page_index=page_idx,
-                    neighbor=neighbor_window,
-                    mode=mode,
-                    token_budget=token_budget,
+            else:
+                prefer_full_page = _detect_full_page_intent(
+                    conversation,
+                    None,
+                    document_entry=knowledge_entry,
+                    upload=upload_source,
                 )
-            )
+                mode = "full_page" if (prefer_full_page and _budget_allows_full_page(context, business_profile=business, service=service)) else "excerpt"
+
+        if mode == "full_page":
+            throttle_notice = _maybe_throttle_full_page(context, business, service)
+            if throttle_notice:
+                mode = "excerpt"
+                throttle_notice["downgraded_from"] = "full_page"
+                downgraded = True
+        throttle_reason = throttle_notice.get("reason") if throttle_notice else None
+        structured_log(
+            "mcp",
+            "read_document.throttle",
+            {"reason": throttle_reason, "notice": throttle_notice} if throttle_notice else {"reason": throttle_reason},
+            context={"business": business.id},
+            logger_obj=logger,
+        )
+
+        # Enforce per-turn chunk budget only when actually loading the window.
+        # Reserve for each page
+        context.reserve_chunk_reads(len(page_indices))
+        context.reserve_chunk_pages(len(page_indices))
+
+        for page_idx in page_indices:
+            # Check cache for each page
+            # Note: We only check cache if single page requested to keep logic simple,
+            # or we could loop interaction. For now, simplistic cache check for first page only
+            # is too weak. But fixing cache for multi-page is complex.
+            # We will skip cache read for multi-page for now or just proceed.
+
+            if chunk_record:
+                snippets.extend(
+                    service.load_page_window(
+                        business_profile=business,
+                        chunk_id=identifier,
+                        page_index=page_idx,
+                        neighbor=neighbor_window,
+                        mode=mode,
+                        token_budget=token_budget,
+                    )
+                )
+            else:
+                snippets.extend(
+                    service.load_page_window(
+                        business_profile=business,
+                        upload_id=upload_record.id,  # type: ignore
+                        page_index=page_idx,
+                        neighbor=neighbor_window,
+                        mode=mode,
+                        token_budget=token_budget,
+                    )
+                )
 
 
     snippet_payloads = _serialize_snippets(snippets)
@@ -3684,6 +4226,9 @@ def _get_document_structure_handler(
     """
     Return the complete structure of a document for LLM-driven enumeration.
     
+    NOTE: In agentic mode (rag_agentic_mode=true), this tool is DEPRECATED.
+    Use search(query) → read(ids) workflow instead.
+    
     This tool enables the LLM to see ALL items in a document before formulating
     a response to "list all" or comprehensive queries. It returns:
     - Table names/titles
@@ -3694,6 +4239,24 @@ def _get_document_structure_handler(
     Returns:
         Mapping with document info, tables structure, and row_labels for enumeration.
     """
+    # Check if agentic mode is enabled - this tool is deprecated in agentic mode
+    feature_state = FeatureFlagService.snapshot(conversation.business_profile)
+    if feature_state.rag_agentic_mode:
+        structured_log(
+            "mcp",
+            "tool.deprecated_in_agentic_mode",
+            {"tool": "get_document_structure"},
+            context={"conversation": conversation.id, "business": conversation.business_profile_id},
+            logger_obj=logger,
+            level=logging.WARNING,
+        )
+        return {
+            "tool": "get_document_structure",
+            "status": "deprecated",
+            "error": "This tool is not needed in agentic mode. Use search() then read(ids) to get document content.",
+            "hint": "Search returns metadata. Call read(ids) with IDs from search results to get full content.",
+        }
+    
     document_id_raw = _coerce_str(arguments.get("document_id")).strip()
     table_id_raw = _coerce_str(arguments.get("table_id")).strip() or None
     include_row_labels = arguments.get("include_row_labels")
@@ -7771,10 +8334,61 @@ def _enforce_single_chunk_read(context: ToolExecutionContext) -> None:
     context.reserve_chunk_reads(1)
 
 
+def _read_document_agentic_wrapper(
+    arguments: Mapping[str, object],
+    conversation: Conversation,
+    context: ToolExecutionContext,
+) -> Mapping[str, object]:
+    """
+    Wrapper for read_document that routes to agentic batch handler when enabled.
+    
+    In agentic mode:
+    - Accepts `ids` parameter for batch reading
+    - Accepts `max_chars` parameter for token control
+    - Returns simplified content-focused response
+    
+    In legacy mode:
+    - Falls through to standard _read_document_handler
+    """
+    feature_state = FeatureFlagService.snapshot(conversation.business_profile)
+    
+    if feature_state.rag_agentic_mode:
+        # Use batch handler (handles both single and multiple IDs)
+        raw_ids = arguments.get("ids")
+        if isinstance(raw_ids, (list, tuple)):
+            return _agentic_batch_read_handler(arguments, conversation, context)
+        document_id = _coerce_str(arguments.get("document_id")).strip()
+        pages = arguments.get("pages")
+        page = arguments.get("page")
+        offset = arguments.get("offset")
+        if document_id and (isinstance(pages, list) and pages or page is not None or offset is not None):
+            # Page-specific read in agentic mode; convert response to agentic format.
+            result = _read_document_handler(arguments, conversation, context)
+            return _convert_to_agentic_read_response(result, conversation=conversation)
+        if document_id:
+            return {
+                "tool": "read_document",
+                "status": "error",
+                "error": "missing_ids_or_pages",
+                "contents": [],
+                "hint": "Provide ids from search_knowledge results (read_id/id), or specify pages/page/offset with document_id.",
+            }
+        return {
+            "tool": "read_document",
+            "status": "error",
+            "error": "missing_ids_or_pages",
+            "contents": [],
+            "hint": "Provide ids from search_knowledge results (read_id/id).",
+        }
+    
+    # Legacy mode - use standard handler
+    return _read_document_handler(arguments, conversation, context)
+
+
 _TOOL_HANDLERS: dict[str, ToolHandler] = {
     "search_knowledge": _search_knowledge_handler,
     "read_knowledge": _read_knowledge_handler,
-    "read_document": _read_document_handler,
+    "read_document": _read_document_agentic_wrapper,  # Uses agentic handler when flag enabled
     "list_tables": _list_tables_handler,
     "get_document_structure": _get_document_structure_handler,
     "table_aggregate": _table_aggregate_handler,

@@ -2178,7 +2178,9 @@ class KnowledgeSearchService:
 
         snippets: list[KnowledgeSnippet] = []
         per_upload_counts: dict[uuid.UUID, int] = {}
-        max_per_upload = self._effective_chunk_cap(business_profile, pathway)
+        # LLM-driven mode: allow more chunks per upload for table diversity
+        # Previously capped to 3-6, now allow full limit to pass through
+        max_per_upload = max(limit, self._effective_chunk_cap(business_profile, pathway))
         for hit in hits:
             chunk = hit.chunk
             upload = chunk.upload
@@ -4792,8 +4794,9 @@ class KnowledgeSearchService:
             .order_by("-sim")
             .select_related("row__table__upload")
         )
-        # For comprehensive queries, collect more candidates to enable table diversification
-        candidate_limit = row_cap * 5 if comprehensive_intent else row_cap * 3
+        # LLM-driven mode: always collect more candidates for table diversity
+        # Let snippet limit (RAG_MAX_SNIPPETS_PER_SEARCH) be the only hard cap
+        candidate_limit = row_cap * 5  # Always use higher limit
         top_cells = list(cell_qs[:candidate_limit])
         row_priority: list[uuid.UUID] = []
         cell_diag: dict[uuid.UUID, dict[str, object]] = {}
@@ -4818,9 +4821,8 @@ class KnowledgeSearchService:
                 }
                 row_priority.append(row.id)
                 row_to_table[row.id] = table.id
-                # For comprehensive queries, don't break early - collect more for diversification
-                if not comprehensive_intent and len(row_priority) >= row_cap:
-                    break
+                # LLM-driven mode: never break early, collect all candidates
+                # Table diversity will be applied after collection
         else:
             # Fallback: match on row.raw_text when no individual cell is similar enough.
             row_qs = KnowledgeUploadTableRow.objects.filter(
@@ -4875,9 +4877,8 @@ class KnowledgeSearchService:
                 }
                 row_priority.append(row.id)
                 row_to_table[row.id] = table.id
-                # For comprehensive queries, don't break early - collect more for diversification
-                if not comprehensive_intent and len(row_priority) >= row_cap:
-                    break
+                # LLM-driven mode: never break early, collect all candidates
+                # Table diversity will be applied after collection
 
         if not row_priority:
             _rag_log(
@@ -4908,9 +4909,9 @@ class KnowledgeSearchService:
             context={"business": business_profile.id},
         )
 
-        # Apply round-robin diversification for comprehensive queries ("list all X", "every Y")
-        # This ensures results are spread across multiple tables rather than dominated by one table
-        if comprehensive_intent and len(row_to_table) > 0:
+        # LLM-driven mode: ALWAYS apply round-robin diversification across tables
+        # This ensures results are spread across multiple tables for full coverage
+        if len(row_to_table) > 0:  # Always diversify, regardless of intent
             distinct_tables = set(row_to_table.values())
             _rag_log(
                 "table.diversification_check",
@@ -4993,6 +4994,44 @@ class KnowledgeSearchService:
         )
         row_map = {row.id: row for row in rows}
         ingestion_diag_cache: dict[uuid.UUID, dict[str, object]] = {}
+        row_chunk_map: dict[tuple[str, int], KnowledgeUploadChunk] = {}
+        row_keys: set[tuple[str, int]] = set()
+        row_upload_ids: set[uuid.UUID] = set()
+        for row in row_map.values():
+            if not row or row.row_index is None:
+                continue
+            table = getattr(row, "table", None)
+            upload_id = getattr(table, "upload_id", None) if table else None
+            if not table or not upload_id:
+                continue
+            row_keys.add((str(table.id), int(row.row_index)))
+            row_upload_ids.add(upload_id)
+        if row_keys:
+            table_ids = {table_id for table_id, _ in row_keys}
+            row_indices = {row_index for _, row_index in row_keys}
+            row_chunks = (
+                KnowledgeUploadChunk.objects.filter(
+                    business_profile=business_profile,
+                    upload_id__in=row_upload_ids,
+                    metadata__table_chunk_role="row",
+                    metadata__table_id__in=list(table_ids),
+                    metadata__table_row_index__in=list(row_indices),
+                )
+                .only("id", "chunk_index", "metadata", "upload_id")
+            )
+            for chunk in row_chunks:
+                chunk_meta = chunk.metadata if isinstance(chunk.metadata, dict) else {}
+                table_id = str(chunk_meta.get("table_id") or "")
+                row_index = chunk_meta.get("table_row_index")
+                try:
+                    row_index_int = int(row_index)
+                except (TypeError, ValueError):
+                    continue
+                if not table_id:
+                    continue
+                key = (table_id, row_index_int)
+                if key not in row_chunk_map:
+                    row_chunk_map[key] = chunk
         snippets: list[KnowledgeSnippet] = []
         for row_id in row_priority:
             row = row_map.get(row_id)
@@ -5078,9 +5117,13 @@ class KnowledgeSearchService:
                 }
             )
             entity_hint = diag.get("value") or diag.get("column_key") or structured_table["title"]
+            row_chunk = row_chunk_map.get((str(table.id), int(row.row_index)))
+            snippet_id = row_chunk.id if row_chunk else row.id
+            snippet_chunk_id = row_chunk.id if row_chunk else None
+            snippet_chunk_index = row_chunk.chunk_index if row_chunk else None
             snippets.append(
                 KnowledgeSnippet(
-                    id=uuid.uuid4(),
+                    id=snippet_id,
                     title=structured_table["title"],
                     summary=summary or structured_table["title"],
                     source="table_direct",
@@ -5093,12 +5136,13 @@ class KnowledgeSearchService:
                     topic_hints=tuple(),
                     is_pinned=False,
                     upload_id=table.upload_id,
-                    chunk_id=None,
-                    chunk_index=None,
+                    chunk_id=snippet_chunk_id,
+                    chunk_index=snippet_chunk_index,
                     entity_type=table.section_heading or "table_row",
                     entity_name=entity_hint,
                     entity_business=business_name,
                     is_table_chunk=True,
+                    page_number=row.page_number or (table.page.page_number if table.page else None),
                     aliases=tuple(),
                     search_stage="table_direct",
                     confidence_score=diag.get("similarity"),

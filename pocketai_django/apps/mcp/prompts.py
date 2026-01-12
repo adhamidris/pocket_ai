@@ -25,6 +25,8 @@ from apps.llm.ai_prompt_builder import PromptBuilder
 from apps.mcp.identifier_registry import IdentifierGuardrail
 from apps.mcp.sanitizer import sanitize_text
 from apps.accounts.agents import display_tone_label
+from apps.accounts.feature_flags import FeatureFlagService
+from apps.mcp.schemas.agentic_prompts import build_agentic_system_prompt, get_tone_instruction
 
 TRACER = otel_trace.get_tracer(__name__)
 
@@ -360,6 +362,7 @@ def build_system_message(
     business_name: str | None = None,
     business_industry: str | None = None,
     provider_name: str | None = None,
+    business_profile=None,  # Optional: for agentic mode feature flag check
 ) -> str:
     """
     Construct the MCP system prompt with CRITICAL one-search policy and zero-narration enforcement.
@@ -369,9 +372,25 @@ def build_system_message(
 
     If provider_name is "openai", appends additional instructions to emphasize proactive
     tool usage (GPT models tend to answer from training data instead of using tools).
+    
+    When rag_agentic_mode is enabled (via feature flag), returns a minimal ~50-line prompt
+    for the 2-tool search→read workflow.
     """
-
+    
     resolved_business_name = business_name or "your business"
+    
+    # Check if agentic mode is enabled
+    if business_profile is not None:
+        feature_state = FeatureFlagService.snapshot(business_profile)
+        if feature_state.rag_agentic_mode:
+            # Use minimal agentic prompt
+            tone = get_tone_instruction(agent.tone) if hasattr(agent, 'tone') and agent.tone else ""
+            return build_agentic_system_prompt(
+                agent,
+                business_name=resolved_business_name,
+                additional_rules=tone,
+            )
+
     tone_label = display_tone_label(agent.tone) or "friendly"
     tone_instruction = _tone_instruction(agent)
 
@@ -639,6 +658,7 @@ def build_messages(*, conversation: Conversation, user_message: str) -> list[Map
                         agent,
                         business_name=business_name,
                         business_industry=business_industry,
+                        business_profile=business_profile,
                     ),
                 }
             )

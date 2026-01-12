@@ -230,6 +230,20 @@ class KnowledgeSearchServiceTableTests(TestCase):
             column_key="annual fee",
             raw_text="$199",
         )
+        self.row_chunk = KnowledgeUploadChunk.objects.create(
+            upload=self.upload,
+            business_profile=self.business,
+            chunk_index=0,
+            content="[Table] Card Pricing\n[Row] 1\nplan: Gold\nannual fee: $199",
+            metadata={
+                "is_table_chunk": True,
+                "table_id": str(self.table.id),
+                "table_chunk_role": "row",
+                "table_row_index": self.row.row_index,
+                "table_page_number": 1,
+                "index_type": "table",
+            },
+        )
 
     @mock.patch("apps.rag.ai_orchestrator.build_embedding_service", return_value=None)
     def test_table_direct_path_returns_row_snippet(self, _build_embeddings) -> None:
@@ -244,6 +258,8 @@ class KnowledgeSearchServiceTableTests(TestCase):
         self.assertEqual(snippet.source, "table_direct")
         self.assertEqual(snippet.upload_id, self.upload.id)
         self.assertIn("Gold", snippet.summary)
+        self.assertEqual(snippet.chunk_id, self.row_chunk.id)
+        self.assertEqual(snippet.id, self.row_chunk.id)
 
     @mock.patch("apps.rag.ai_orchestrator.build_embedding_service", return_value=None)
     def test_table_specific_fallback_keeps_table_hits_when_no_text_hits(self, _build_embeddings) -> None:
