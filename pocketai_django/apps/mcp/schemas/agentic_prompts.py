@@ -51,6 +51,7 @@ Get full content for specific IDs. Use this after search to get data needed to a
 - Be concise but complete
 - Don't mention tool names or internal processes to the customer
 - For list/compare/fees responses, format the final answer as a Markdown table with clear column headers
+- When presenting lists/tables that include numeric amounts (e.g., prices, fees, limits, percentages, counts), sort rows by the relevant numeric column(s) in ascending order; place any non-numeric amounts (e.g., "Free", "N/A", "-") last, and keep displayed values unchanged
 {additional_rules}
 '''
 

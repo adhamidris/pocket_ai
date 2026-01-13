@@ -621,6 +621,41 @@ class KnowledgeSearchService:
             100,
             int(getattr(settings, "RAG_CROSS_ENCODER_CACHE_SIZE", 500)),
         )
+        raw_cross_encoder_policy = str(getattr(settings, "RAG_CROSS_ENCODER_POLICY", "") or "").strip().lower()
+        if raw_cross_encoder_policy not in {"always", "auto", "off"}:
+            raw_cross_encoder_policy = ""
+        if not self._cross_encoder_enabled:
+            self.cross_encoder_policy = "off"
+        elif raw_cross_encoder_policy:
+            self.cross_encoder_policy = raw_cross_encoder_policy
+        else:
+            self.cross_encoder_policy = (
+                "auto"
+                if bool(getattr(settings, "RAG_USE_MCP_ORCHESTRATOR", False))
+                else "always"
+            )
+        self.cross_encoder_auto_min_tokens = max(
+            0,
+            int(getattr(settings, "RAG_CROSS_ENCODER_AUTO_MIN_TOKENS", 4) or 0),
+        )
+        self.cross_encoder_auto_min_candidates = max(
+            0,
+            int(getattr(settings, "RAG_CROSS_ENCODER_AUTO_MIN_CANDIDATES", 12) or 0),
+        )
+        self.cross_encoder_auto_max_pairs = max(
+            1,
+            int(getattr(settings, "RAG_CROSS_ENCODER_AUTO_MAX_PAIRS", 12) or 0),
+        )
+        self.cross_encoder_auto_max_chars = max(
+            200,
+            int(getattr(settings, "RAG_CROSS_ENCODER_AUTO_MAX_CHARS", 1600) or 0),
+        )
+        self.cross_encoder_auto_skip_table_intent = bool(
+            getattr(settings, "RAG_CROSS_ENCODER_AUTO_SKIP_TABLE_INTENT", True)
+        )
+        self.cross_encoder_auto_margin_skip = float(
+            getattr(settings, "RAG_CROSS_ENCODER_AUTO_MARGIN_SKIP", 0.25) or 0.25
+        )
         self.rerank_budget_ms = max(0, int(getattr(settings, "RAG_RERANK_BUDGET_MS", 0)))
         self.snippet_rerank_budget_ms = max(0, int(getattr(settings, "RAG_SNIPPET_RERANK_BUDGET_MS", 0)))
         self.alias_result_cap = max(1, int(getattr(settings, "RAG_ALIAS_RESULTS_LIMIT", 4)))
@@ -1908,6 +1943,7 @@ class KnowledgeSearchService:
         traits: QueryTraits,
         alias_candidates: Sequence[ChunkResult] | None = None,
         feature_state: FeatureState | None = None,
+        table_context: Mapping[str, object] | None = None,
         allowed_upload_ids: Sequence[uuid.UUID] | None = None,
         allowed_collection_ids: Sequence[uuid.UUID] | None = None,
         allowed_explicit_upload_ids: Sequence[uuid.UUID] | None = None,
@@ -1921,6 +1957,7 @@ class KnowledgeSearchService:
                 traits=traits,
                 alias_candidates=alias_candidates,
                 feature_state=feature_state,
+                table_context=table_context,
                 allowed_upload_ids=allowed_upload_ids,
                 allowed_collection_ids=allowed_collection_ids,
                 allowed_explicit_upload_ids=allowed_explicit_upload_ids,
@@ -1935,6 +1972,7 @@ class KnowledgeSearchService:
         traits: QueryTraits,
         alias_candidates: Sequence[ChunkResult] | None = None,
         feature_state: FeatureState | None = None,
+        table_context: Mapping[str, object] | None = None,
         allowed_upload_ids: Sequence[uuid.UUID] | None = None,
         allowed_collection_ids: Sequence[uuid.UUID] | None = None,
         allowed_explicit_upload_ids: Sequence[uuid.UUID] | None = None,
@@ -2112,18 +2150,19 @@ class KnowledgeSearchService:
                 vector_hits,
                 lexical_hits,
             )
-            reranked, rerank_ms = self._rerank_candidates(
+            reranked, rerank_ms, rerank_diag = self._rerank_candidates(
                 merged,
                 query_vector if self.embedding_service else None,
                 traits=traits,
                 feature_state=feature_state,
+                table_context=table_context,
             )
             latency_monitor.observe(
                 "rag.rerank",
                 rerank_ms,
                 tags={
                     "business": str(business_profile.id),
-                    "cross_encoder": bool(self._cross_encoder_enabled),
+                    "cross_encoder": bool(rerank_diag.get("rerank_cross_encoder_attempted")),
                 },
             )
             diagnostics = {
@@ -2136,6 +2175,7 @@ class KnowledgeSearchService:
             }
             diagnostics.update(lexical_diag)
             diagnostics.update(vector_diag)
+            diagnostics.update(rerank_diag)
             if azure_diag:
                 diagnostics.update(azure_diag)
             diagnostics.update(self._vector_distance_stats(vector_hits))
@@ -2230,6 +2270,7 @@ class KnowledgeSearchService:
             traits=traits,
             alias_candidates=alias_candidates,
             feature_state=feature_state,
+            table_context=table_context,
             allowed_upload_ids=allowed_upload_ids,
             allowed_collection_ids=allowed_collection_ids,
             allowed_explicit_upload_ids=allowed_explicit_upload_ids,
@@ -2241,6 +2282,9 @@ class KnowledgeSearchService:
             diagnostics["vector_duration_ms"] = hybrid.diagnostics.get("vector_duration_ms")
             diagnostics["fts_duration_ms"] = hybrid.diagnostics.get("fts_duration_ms")
             diagnostics["rerank_duration_ms"] = hybrid.diagnostics.get("rerank_duration_ms")
+            for key, value in (hybrid.diagnostics or {}).items():
+                if isinstance(key, str) and key.startswith("rerank_cross_encoder_"):
+                    diagnostics[key] = value
             diagnostics["vector_distance_mean"] = hybrid.diagnostics.get("vector_distance_mean")
             diagnostics["vector_distance_min"] = hybrid.diagnostics.get("vector_distance_min")
             diagnostics["vector_distance_max"] = hybrid.diagnostics.get("vector_distance_max")
@@ -2260,7 +2304,7 @@ class KnowledgeSearchService:
         if not prioritized:
             return tuple()
 
-        reranked, rerank_ms = self._rerank_candidates(
+        reranked, rerank_ms, rerank_diag = self._rerank_candidates(
             prioritized,
             hybrid.query_vector if self.embedding_service else None,
             traits=traits,
@@ -2268,6 +2312,7 @@ class KnowledgeSearchService:
             table_context=table_context,
         )
         hybrid.diagnostics["rerank_duration_ms"] = rerank_ms
+        hybrid.diagnostics.update(rerank_diag)
         filtered = self._apply_vector_threshold(
             reranked,
             hybrid.query_vector,
@@ -3506,10 +3551,27 @@ class KnowledgeSearchService:
         traits: QueryTraits,
         feature_state: FeatureState | None = None,
         table_context: Mapping[str, object] | None = None,
-    ) -> tuple[list[ChunkResult], int]:
+    ) -> tuple[list[ChunkResult], int, dict[str, object]]:
         if not candidates:
-            return [], 0
+            return (
+                [],
+                0,
+                {
+                    "rerank_cross_encoder_policy": getattr(self, "cross_encoder_policy", "off"),
+                    "rerank_cross_encoder_attempted": False,
+                    "rerank_cross_encoder_applied": False,
+                    "rerank_cross_encoder_pairs": 0,
+                    "rerank_cross_encoder_skip_reason": "no_candidates",
+                },
+            )
         start = time.perf_counter()
+        rerank_diag: dict[str, object] = {
+            "rerank_cross_encoder_policy": getattr(self, "cross_encoder_policy", "off"),
+            "rerank_cross_encoder_attempted": False,
+            "rerank_cross_encoder_applied": False,
+            "rerank_cross_encoder_pairs": 0,
+            "rerank_cross_encoder_skip_reason": None,
+        }
         top_pool = min(len(candidates), self.rerank_pool)
         scored: list[tuple[float, int, ChunkResult]] = []
         tail: list[ChunkResult] = []
@@ -3610,25 +3672,80 @@ class KnowledgeSearchService:
             }
             cand.rerank_score = combined
             scored.append((combined, -idx, cand))
-        cross_encoder = self._get_cross_encoder() if traits.normalized else None
-        if cross_encoder:
-            if self.rerank_budget_ms:
-                elapsed_ms = int((time.perf_counter() - start) * 1000)
-                if elapsed_ms >= self.rerank_budget_ms:
-                    logger.warning(
-                        "⚠️ Rerank skipped (budget %sms exceeded, elapsed %sms)",
-                        self.rerank_budget_ms,
-                        elapsed_ms,
-                    )
-                    cross_encoder = None
-        if cross_encoder:
-            head = [item[2] for item in scored[: self.rerank_pool]]
-            if head:
-                pairs = [[traits.normalized, (hit.chunk.content or "")] for hit in head]
+        policy = getattr(self, "cross_encoder_policy", "off")
+        cross_encoder = None
+        head: list[ChunkResult] = []
+        if traits.normalized and policy != "off":
+            should_attempt = True
+            if policy == "auto":
                 try:
-                    # Use cached cross-encoder scoring for deterministic results
-                    ce_values = self._get_cached_cross_encoder_scores(cross_encoder, pairs)
-                except Exception as exc:  # pragma: no cover - optional dependency
+                    token_count = int(getattr(traits, "token_count", 0) or 0)
+                except (TypeError, ValueError):
+                    token_count = 0
+                if getattr(self, "cross_encoder_auto_skip_table_intent", True) and table_intent:
+                    rerank_diag["rerank_cross_encoder_skip_reason"] = "table_intent"
+                    should_attempt = False
+                elif token_count and token_count < getattr(self, "cross_encoder_auto_min_tokens", 0):
+                    rerank_diag["rerank_cross_encoder_skip_reason"] = "short_query"
+                    should_attempt = False
+                elif len(scored) < getattr(self, "cross_encoder_auto_min_candidates", 0):
+                    rerank_diag["rerank_cross_encoder_skip_reason"] = "few_candidates"
+                    should_attempt = False
+                else:
+                    ranked_by_base = sorted(scored, key=lambda item: (item[0], item[1]), reverse=True)
+                    margin_window = min(5, len(ranked_by_base))
+                    base_margin = (
+                        ranked_by_base[0][0] - ranked_by_base[margin_window - 1][0]
+                        if margin_window >= 2
+                        else 0.0
+                    )
+                    rerank_diag["rerank_cross_encoder_base_margin"] = round(float(base_margin), 4)
+                    if base_margin >= getattr(self, "cross_encoder_auto_margin_skip", 0.0):
+                        rerank_diag["rerank_cross_encoder_skip_reason"] = "clear_margin"
+                        should_attempt = False
+                    else:
+                        head = [
+                            item[2]
+                            for item in ranked_by_base[
+                                : min(
+                                    len(ranked_by_base),
+                                    int(getattr(self, "cross_encoder_auto_max_pairs", 1) or 1),
+                                )
+                            ]
+                        ]
+            else:
+                head = [item[2] for item in scored[: self.rerank_pool]]
+
+            if should_attempt:
+                if self.rerank_budget_ms:
+                    elapsed_ms = int((time.perf_counter() - start) * 1000)
+                    if elapsed_ms >= self.rerank_budget_ms:
+                        logger.warning(
+                            "⚠️ Rerank skipped (budget %sms exceeded, elapsed %sms)",
+                            self.rerank_budget_ms,
+                            elapsed_ms,
+                        )
+                        rerank_diag["rerank_cross_encoder_skip_reason"] = "budget_exceeded"
+                        should_attempt = False
+
+            if should_attempt and head:
+                cross_encoder = self._get_cross_encoder()
+                if cross_encoder is None:
+                    rerank_diag["rerank_cross_encoder_skip_reason"] = "unavailable"
+
+        if cross_encoder and head:
+            pairs: list[list[str]] = []
+            if policy == "auto":
+                max_chars = int(getattr(self, "cross_encoder_auto_max_chars", 1600) or 1600)
+                pairs = [[traits.normalized, (hit.chunk.content or "")[:max_chars]] for hit in head]
+            else:
+                pairs = [[traits.normalized, (hit.chunk.content or "")] for hit in head]
+            rerank_diag["rerank_cross_encoder_attempted"] = True
+            rerank_diag["rerank_cross_encoder_pairs"] = len(pairs)
+            try:
+                # Use cached cross-encoder scoring for deterministic results
+                ce_values = self._get_cached_cross_encoder_scores(cross_encoder, pairs)
+            except Exception as exc:  # pragma: no cover - optional dependency
                     # P0 #5: Graceful fallback on cross-encoder errors (e.g., AlreadyBorrowed)
                     logger.warning(
                         "❌ Rerank failed: %s",
@@ -3646,26 +3763,31 @@ class KnowledgeSearchService:
                     # Set failure flag to prevent repeated attempts in this process
                     self._cross_encoder_failed = True
                     ce_values = []
-                if ce_values:
-                    ce_lookup = {
-                        hit.chunk_id: self.cross_encoder_weight * ce_values[idx]
-                        for idx, hit in enumerate(head)
-                        if idx < len(ce_values)
-                    }
-                    if ce_lookup:
-                        scored = [
-                            (base + ce_lookup.get(hit.chunk_id, 0.0), order, hit)
-                            for base, order, hit in scored
-                        ]
-                        # Sort by score (desc), then by original index (asc via -idx desc) for stable tie-breaking
-                        scored.sort(key=lambda item: (item[0], item[1]), reverse=True)
+            if ce_values:
+                ce_lookup = {
+                    hit.chunk_id: self.cross_encoder_weight * ce_values[idx]
+                    for idx, hit in enumerate(head)
+                    if idx < len(ce_values)
+                }
+                if ce_lookup:
+                    scored = [
+                        (base + ce_lookup.get(hit.chunk_id, 0.0), order, hit)
+                        for base, order, hit in scored
+                    ]
+                    rerank_diag["rerank_cross_encoder_applied"] = True
+                    # Sort by score (desc), then by original index (asc via -idx desc) for stable tie-breaking
+                    scored.sort(key=lambda item: (item[0], item[1]), reverse=True)
         # Sort by score (desc), then by original index (asc via -idx desc) for stable tie-breaking
         scored.sort(key=lambda item: (item[0], item[1]), reverse=True)
         reranked = [item[2] for item in scored]
         if tail:
             reranked.extend(tail)
         duration_ms = int((time.perf_counter() - start) * 1000)
-        return reranked, duration_ms
+        if rerank_diag.get("rerank_cross_encoder_skip_reason") is None and not rerank_diag.get(
+            "rerank_cross_encoder_attempted"
+        ):
+            rerank_diag["rerank_cross_encoder_skip_reason"] = "not_used"
+        return reranked, duration_ms, rerank_diag
 
     @staticmethod
     def _lexical_overlap_score(chunk: KnowledgeUploadChunk, tokens: tuple[str, ...]) -> float:
@@ -3731,7 +3853,9 @@ class KnowledgeSearchService:
             head = list(snippets[: self.snippet_rerank_pool])
             scores: list[tuple[float, int, KnowledgeSnippet]] = []
             ce_scores: list[float] | None = None
-            cross_encoder = self._get_cross_encoder() if normalized_query else None
+            cross_encoder = None
+            if getattr(self, "cross_encoder_policy", "off") == "always" and normalized_query:
+                cross_encoder = self._get_cross_encoder()
             if cross_encoder:
                 if self.snippet_rerank_budget_ms:
                     elapsed_ms = int((time.perf_counter() - start) * 1000)
@@ -5545,6 +5669,11 @@ class KnowledgeSearchService:
                 "vector_ms": diagnostics.get("vector_duration_ms"),
                 "lexical_ms": diagnostics.get("fts_duration_ms"),
                 "rerank_ms": diagnostics.get("rerank_duration_ms"),
+                "rerank_ce_policy": diagnostics.get("rerank_cross_encoder_policy"),
+                "rerank_ce_attempted": diagnostics.get("rerank_cross_encoder_attempted"),
+                "rerank_ce_applied": diagnostics.get("rerank_cross_encoder_applied"),
+                "rerank_ce_pairs": diagnostics.get("rerank_cross_encoder_pairs"),
+                "rerank_ce_skip": diagnostics.get("rerank_cross_encoder_skip_reason"),
                 "table_ms": diagnostics.get("table_duration_ms"),
                 "table_context_ms": diagnostics.get("table_context_ms"),
                 "table_presence_ms": diagnostics.get("table_presence_ms"),

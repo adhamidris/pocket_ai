@@ -609,6 +609,45 @@ try:
 except (TypeError, ValueError):
     RAG_CROSS_ENCODER_TIMEOUT_S = 3.0
 RAG_CROSS_ENCODER_TIMEOUT_S = max(0.5, min(30.0, RAG_CROSS_ENCODER_TIMEOUT_S))
+# RAG_CROSS_ENCODER_POLICY: "always"|"auto"|"off".
+# - When unset: the retrieval layer defaults to "auto" if MCP orchestrator is enabled, else "always".
+RAG_CROSS_ENCODER_POLICY = (os.getenv("RAG_CROSS_ENCODER_POLICY", "") or "").strip().lower()
+if RAG_CROSS_ENCODER_POLICY not in {"", "always", "auto", "off"}:
+    RAG_CROSS_ENCODER_POLICY = ""
+try:
+    # RAG_CROSS_ENCODER_AUTO_MIN_TOKENS: Minimum query token count to run cross-encoder in "auto".
+    RAG_CROSS_ENCODER_AUTO_MIN_TOKENS = int(os.getenv("RAG_CROSS_ENCODER_AUTO_MIN_TOKENS", "4"))
+except (TypeError, ValueError):
+    RAG_CROSS_ENCODER_AUTO_MIN_TOKENS = 4
+RAG_CROSS_ENCODER_AUTO_MIN_TOKENS = max(0, RAG_CROSS_ENCODER_AUTO_MIN_TOKENS)
+try:
+    # RAG_CROSS_ENCODER_AUTO_MIN_CANDIDATES: Minimum candidate pool size to run cross-encoder in "auto".
+    RAG_CROSS_ENCODER_AUTO_MIN_CANDIDATES = int(os.getenv("RAG_CROSS_ENCODER_AUTO_MIN_CANDIDATES", "12"))
+except (TypeError, ValueError):
+    RAG_CROSS_ENCODER_AUTO_MIN_CANDIDATES = 12
+RAG_CROSS_ENCODER_AUTO_MIN_CANDIDATES = max(0, RAG_CROSS_ENCODER_AUTO_MIN_CANDIDATES)
+try:
+    # RAG_CROSS_ENCODER_AUTO_MAX_PAIRS: Max pairs scored by cross-encoder in "auto".
+    RAG_CROSS_ENCODER_AUTO_MAX_PAIRS = int(os.getenv("RAG_CROSS_ENCODER_AUTO_MAX_PAIRS", "12"))
+except (TypeError, ValueError):
+    RAG_CROSS_ENCODER_AUTO_MAX_PAIRS = 12
+RAG_CROSS_ENCODER_AUTO_MAX_PAIRS = max(1, RAG_CROSS_ENCODER_AUTO_MAX_PAIRS)
+try:
+    # RAG_CROSS_ENCODER_AUTO_MAX_CHARS: Max chars per candidate passed to cross-encoder in "auto".
+    RAG_CROSS_ENCODER_AUTO_MAX_CHARS = int(os.getenv("RAG_CROSS_ENCODER_AUTO_MAX_CHARS", "1600"))
+except (TypeError, ValueError):
+    RAG_CROSS_ENCODER_AUTO_MAX_CHARS = 1600
+RAG_CROSS_ENCODER_AUTO_MAX_CHARS = max(200, RAG_CROSS_ENCODER_AUTO_MAX_CHARS)
+try:
+    # RAG_CROSS_ENCODER_AUTO_MARGIN_SKIP: Skip cross-encoder in "auto" when base-score margin is >= this value.
+    RAG_CROSS_ENCODER_AUTO_MARGIN_SKIP = float(os.getenv("RAG_CROSS_ENCODER_AUTO_MARGIN_SKIP", "0.25"))
+except (TypeError, ValueError):
+    RAG_CROSS_ENCODER_AUTO_MARGIN_SKIP = 0.25
+RAG_CROSS_ENCODER_AUTO_MARGIN_SKIP = max(0.0, min(5.0, RAG_CROSS_ENCODER_AUTO_MARGIN_SKIP))
+# RAG_CROSS_ENCODER_AUTO_SKIP_TABLE_INTENT: Skip cross-encoder in "auto" for table-intent queries.
+RAG_CROSS_ENCODER_AUTO_SKIP_TABLE_INTENT = (
+    os.getenv("RAG_CROSS_ENCODER_AUTO_SKIP_TABLE_INTENT", "true").lower() in {"1", "true", "yes"}
+)
 # TABLE_MAX_ROWS_DEFAULT: Default max rows to scan/preview for table operations.
 TABLE_MAX_ROWS_DEFAULT = int(os.getenv("TABLE_MAX_ROWS_DEFAULT", "5000"))
 # TABLE_MAX_COLUMNS_DEFAULT: Default max columns to include for table operations (0 = unlimited/auto).

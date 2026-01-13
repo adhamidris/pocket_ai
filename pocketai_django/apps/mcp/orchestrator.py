@@ -49,6 +49,8 @@ from .sanitizer import (
 )
 from django.core.cache import cache
 
+from core.tenancy import tenant_context
+
 from .types import (
     BaseMcpProvider,
     ToolExecutionContext,
@@ -238,6 +240,79 @@ class McpOrchestratorService:
                     return len(snippets)
             return 0
 
+        def _resolve_read_label(arguments: Mapping[str, object], *, action_verb: str) -> str:
+            """
+            Best-effort label for read operations that prefers a human document name
+            over opaque UUIDs (especially when read_document is called with ids[]).
+            """
+            try:
+                business_id = getattr(conversation, "business_profile_id", None)
+            except Exception:
+                business_id = None
+
+            resolved_title = ""
+            ids = arguments.get("ids")
+            if business_id and isinstance(ids, Sequence) and not isinstance(ids, (str, bytes, bytearray)) and ids:
+                try:
+                    from apps.accounts.models import KnowledgeUploadChunk
+                except Exception:
+                    KnowledgeUploadChunk = None  # type: ignore[assignment]
+                if KnowledgeUploadChunk is not None:
+                    first_id = str(ids[0]).strip()
+                    if first_id:
+                        try:
+                            with tenant_context(business_id):
+                                resolved_title = (
+                                    KnowledgeUploadChunk.objects.filter(
+                                        id=first_id,
+                                        business_profile_id=business_id,
+                                    )
+                                    .values_list("upload__display_name", flat=True)
+                                    .first()
+                                    or ""
+                                )
+                        except Exception:
+                            resolved_title = ""
+
+            raw_doc_id = arguments.get("document_id")
+            doc_id = str(raw_doc_id).strip() if raw_doc_id is not None else ""
+            if business_id and doc_id and not resolved_title:
+                try:
+                    with tenant_context(business_id):
+                        resolved_title = (
+                            KnowledgeUpload.objects.filter(id=doc_id, business_profile_id=business_id)
+                            .values_list("display_name", flat=True)
+                            .first()
+                            or ""
+                        )
+                except Exception:
+                    resolved_title = ""
+            if business_id and doc_id and not resolved_title:
+                # Some call paths pass a chunk id as document_id; resolve back to the upload name.
+                try:
+                    from apps.accounts.models import KnowledgeUploadChunk
+                except Exception:
+                    KnowledgeUploadChunk = None  # type: ignore[assignment]
+                if KnowledgeUploadChunk is not None:
+                    try:
+                        with tenant_context(business_id):
+                            resolved_title = (
+                                KnowledgeUploadChunk.objects.filter(
+                                    id=doc_id,
+                                    business_profile_id=business_id,
+                                )
+                                .values_list("upload__display_name", flat=True)
+                                .first()
+                                or ""
+                            )
+                    except Exception:
+                        resolved_title = ""
+
+            resolved_title = str(resolved_title or "").strip()
+            if resolved_title:
+                return f"{action_verb} {resolved_title[:80]}"
+            return ""
+
         def _knowledge_phase_payload(tool_name: str, arguments: Mapping[str, object]) -> dict[str, object] | None:
             if tool_name == "search_knowledge":
                 raw_query = arguments.get("query")
@@ -268,14 +343,11 @@ class McpOrchestratorService:
             if tool_name == "read_document":
                 raw_id = arguments.get("document_id")
                 doc_id = str(raw_id).strip() if raw_id is not None else ""
-                short_id = f"{doc_id[:8]}…" if doc_id else ""
                 
                 mode = str(arguments.get("mode") or "").strip().lower()
                 # Pillar 3: Status confidence
                 action_verb = "Scanning" if mode == "full_page" else "Reading"
-                label = f"{action_verb} document"
-                if short_id:
-                    label += f": {short_id}"
+                label = _resolve_read_label(arguments, action_verb=action_verb) or f"{action_verb} document"
                     
                 meta = {"document_id": doc_id} if doc_id else {}
                 return {"code": "reading", "label": label, "meta": meta, "compat_code": "reading_document"}
@@ -296,19 +368,42 @@ class McpOrchestratorService:
             code = str(phase.get("code") or "").strip()
             if not code:
                 return None
-            if code not in active_phase_payloads:
-                label = phase.get("label")
-                meta = phase.get("meta")
-                _status_event(f"{code}_start", label, meta)
-                compat = phase.get("compat_code")
-                if isinstance(compat, str) and compat:
-                    _status_event(compat, label, meta)
-                active_phase_payloads[code] = {
+            label = phase.get("label")
+            meta = phase.get("meta")
+            compat = phase.get("compat_code")
+            existing = active_phase_payloads.get(code)
+            if existing:
+                current_label = str(existing.get("label") or "").strip()
+                next_label = str(label or "").strip()
+                if next_label and next_label != current_label:
+                    existing["label"] = next_label
+                    if isinstance(meta, Mapping) and meta:
+                        existing_meta = existing.get("meta")
+                        if isinstance(existing_meta, dict):
+                            existing_meta.update(dict(meta))
+                        else:
+                            existing["meta"] = dict(meta)
+                    compat_code = str(existing.get("compat_code") or compat or "").strip()
+                    if compat_code:
+                        _status_event(compat_code, next_label, existing.get("meta"))
+                return {
                     "code": code,
                     "label": label,
-                    "meta": dict(meta or {}),
+                    "meta": dict((meta or {})),
                     "compat_code": compat,
                 }
+
+            # Keep the portal spinner minimal: emit a single phase status for searching/reading.
+            if isinstance(compat, str) and compat:
+                _status_event(compat, label, meta)
+            else:
+                _status_event(f"{code}_start", label, meta)
+            active_phase_payloads[code] = {
+                "code": code,
+                "label": label,
+                "meta": dict(meta or {}),
+                "compat_code": compat,
+            }
             return {
                 "code": code,
                 "label": phase.get("label"),
@@ -361,6 +456,19 @@ class McpOrchestratorService:
             except Exception:
                 return
             phase = _knowledge_phase_payload(tool_name, arguments)
+            if isinstance(phase, Mapping):
+                phase_code = str(phase.get("code") or "").strip()
+                phase_label = str(phase.get("label") or "").strip()
+                # Streaming tool-calls can begin before arguments are fully available.
+                # Avoid emitting generic labels that would immediately "upgrade" and flash in the UI.
+                if phase_code == "searching" and phase_label in {"Searching knowledge…", "Searching knowledge..."}:
+                    return
+                if phase_code == "reading":
+                    lowered = phase_label.lower()
+                    if lowered == "reading document" or lowered == "scanning document":
+                        return
+                    if lowered.startswith("reading document:") or lowered.startswith("scanning document:"):
+                        return
             _emit_phase_start(phase)
 
         _status_event("thinking", "Thinking…")
@@ -840,29 +948,6 @@ class McpOrchestratorService:
 
                             if self._is_knowledge_tool(tool_name):
                                 self._record_knowledge_outputs(tool_context, tool_result)
-
-                                if tool_name in {"read_document", "read_knowledge"}:
-                                    snippets = None
-                                    if tool_name == "read_document":
-                                        snippets = tool_result.get("snippets")
-                                    else:
-                                        evidence = (
-                                            tool_result.get("evidence")
-                                            if isinstance(tool_result.get("evidence"), Mapping)
-                                            else {}
-                                        )
-                                        snippets = evidence.get("snippets")
-                                    if isinstance(snippets, list) and snippets:
-                                        first = snippets[0]
-                                        if isinstance(first, Mapping):
-                                            label_source = (
-                                                first.get("public_label") or first.get("title") or first.get("source")
-                                            )
-                                            if isinstance(label_source, str) and label_source.strip():
-                                                _status_event(
-                                                    "reading_document",
-                                                    f"Reading: {label_source.strip()[:80]}",
-                                                )
                         if knowledge_phase:
                             _emit_phase_complete(knowledge_phase, snippet_total=_snippet_count(tool_result))
                         limits = self._prompt_compaction_limits()
