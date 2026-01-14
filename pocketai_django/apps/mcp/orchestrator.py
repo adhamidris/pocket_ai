@@ -233,6 +233,12 @@ class McpOrchestratorService:
             snippets = payload.get("snippets")
             if isinstance(snippets, Sequence) and not isinstance(snippets, (str, bytes, bytearray)):
                 return len(snippets)
+            results = payload.get("results")
+            if isinstance(results, Sequence) and not isinstance(results, (str, bytes, bytearray)):
+                return len(results)
+            contents = payload.get("contents")
+            if isinstance(contents, Sequence) and not isinstance(contents, (str, bytes, bytearray)):
+                return len(contents)
             evidence = payload.get("evidence")
             if isinstance(evidence, Mapping):
                 snippets = evidence.get("snippets")
@@ -1987,7 +1993,19 @@ class McpOrchestratorService:
     def _search_result_is_table(tool_result: Mapping[str, object]) -> bool:
         snippets = tool_result.get("snippets")
         if not isinstance(snippets, list) or not snippets:
-            return False
+            results = tool_result.get("results")
+            if not isinstance(results, list) or not results:
+                return False
+            table_results = 0
+            non_table_results = 0
+            for result in results:
+                if not isinstance(result, Mapping):
+                    continue
+                if str(result.get("type") or "").strip().lower() == "table":
+                    table_results += 1
+                else:
+                    non_table_results += 1
+            return bool(table_results and non_table_results == 0)
         table_snippets = 0
         non_table_snippets = 0
         for snippet in snippets:
@@ -2066,6 +2084,33 @@ class McpOrchestratorService:
                             "row_index": source_diagnostics.get("table_row_index"),
                         }
                         context.add_knowledge_read({k: v for k, v in read_entry.items() if v is not None})
+        elif tool_name == "read_document":
+            # Agentic read_document responses carry `contents[]` (not legacy snippets).
+            # Keep the coverage ledger usable for final-answer prompts without
+            # forcing content-heavy snippet payloads back into the tool envelope.
+            contents = tool_result.get("contents") if isinstance(tool_result, Mapping) else None
+            if isinstance(contents, list):
+                for item in contents[:20]:
+                    if not isinstance(item, Mapping):
+                        continue
+                    content_id = item.get("id")
+                    title = item.get("title") or "Knowledge"
+                    content_type = str(item.get("type") or "").strip().lower()
+                    truncated = bool(item.get("truncated"))
+                    coverage_entry = {
+                        "id": content_id,
+                        "title": title,
+                        "label": title,
+                        "read_state": "partial" if truncated else "full",
+                        "coverage": (),
+                        "search_stage": "read_document",
+                        "chunk_id": content_id,
+                        "upload_id": None,
+                        "page_mode": None,
+                        "is_table_chunk": content_type == "table",
+                        "suppress_in_prompt": False,
+                    }
+                    context.add_coverage_entry(coverage_entry)
 
         if tool_name == "read_knowledge" and engine in {"table_preview", "file_dataset", "db_preview"}:
             document_id = str(tool_result.get("document_id") or tool_diagnostics.get("resolved_upload_id") or "").strip()
@@ -2548,35 +2593,57 @@ class McpOrchestratorService:
         if not query:
             return
         normalized = query.lower()
+        # Legacy contract: tool_result["snippets"] (content-bearing)
         snippets = tool_result.get("snippets") if isinstance(tool_result, Mapping) else None
+        results = None
         if not isinstance(snippets, list) or not snippets:
-            return
+            # Agentic contract: tool_result["results"] (metadata only)
+            results = tool_result.get("results") if isinstance(tool_result, Mapping) else None
+            if not isinstance(results, list) or not results:
+                return
+
         snippet_ids: list[str] = []
         read_required = False
         hint_text = None
-        for snippet in snippets:
-            if not isinstance(snippet, Mapping):
-                continue
-            identifier = snippet.get("chunk_id") or snippet.get("id") or snippet.get("upload_id")
-            if identifier:
-                snippet_ids.append(str(identifier))
-            if snippet.get("read_required"):
-                read_required = True
-            if hint_text is None:
-                read_hint = snippet.get("read_hint")
-                if isinstance(read_hint, Mapping):
-                    doc_id = read_hint.get("document_id")
-                    page = read_hint.get("page")
-                    mode = read_hint.get("mode")
-                    pieces = []
-                    if doc_id:
-                        pieces.append(f"document_id={doc_id}")
-                    if page:
-                        pieces.append(f"page={page}")
-                    if mode:
-                        pieces.append(f"mode={mode}")
-                    if pieces:
-                        hint_text = "Read with " + ", ".join(pieces)
+
+        if isinstance(snippets, list) and snippets:
+            for snippet in snippets:
+                if not isinstance(snippet, Mapping):
+                    continue
+                identifier = snippet.get("chunk_id") or snippet.get("id") or snippet.get("upload_id")
+                if identifier:
+                    snippet_ids.append(str(identifier))
+                if snippet.get("read_required"):
+                    read_required = True
+                if hint_text is None:
+                    read_hint = snippet.get("read_hint")
+                    if isinstance(read_hint, Mapping):
+                        doc_id = read_hint.get("document_id")
+                        page = read_hint.get("page")
+                        mode = read_hint.get("mode")
+                        pieces = []
+                        if doc_id:
+                            pieces.append(f"document_id={doc_id}")
+                        if page:
+                            pieces.append(f"page={page}")
+                        if mode:
+                            pieces.append(f"mode={mode}")
+                        if pieces:
+                            hint_text = "Read with " + ", ".join(pieces)
+        else:
+            # Agentic results: prefer read_id/id for follow-up reads.
+            for result in results or []:
+                if not isinstance(result, Mapping):
+                    continue
+                identifier = result.get("read_id") or result.get("id") or result.get("document_id")
+                if identifier:
+                    snippet_ids.append(str(identifier))
+            if snippet_ids:
+                preview_ids = ", ".join(snippet_ids[:3])
+                suffix = "…" if len(snippet_ids) > 3 else ""
+                hint_text = f"Use read_document ids=[{preview_ids}{suffix}]"
+            # In agentic mode, search previews are not answer-ready by design.
+            read_required = True
         queries_to_record = [normalized]
         extra_queries = arguments.get("queries")
         if isinstance(extra_queries, (list, tuple)):
@@ -2584,12 +2651,24 @@ class McpOrchestratorService:
                 candidate = str(value).strip().lower()
                 if candidate and candidate not in queries_to_record:
                     queries_to_record.append(candidate)
+        cached_results = []
+        total_found = None
+        if isinstance(results, list) and results:
+            total_found = tool_result.get("total_found")
+            cached_results = []
+            for result in results[:16]:
+                if isinstance(result, Mapping):
+                    cached_results.append(dict(result))
         record_payload = {
-            "snippet_count": len(snippets),
+            "snippet_count": len(snippets) if isinstance(snippets, list) else len(results or []),
             "read_required": read_required,
             "snippet_ids": snippet_ids,
             "hint": hint_text or "Existing snippets are available; use the provided read_hint if you need more detail.",
         }
+        if cached_results:
+            record_payload["results"] = cached_results
+        if total_found not in {None, ""}:
+            record_payload["total_found"] = total_found
         for query_value in queries_to_record:
             history.append(
                 {
@@ -2622,8 +2701,15 @@ class McpOrchestratorService:
             if not entry.get("snippet_count"):
                 continue
             snippet_ids = entry.get("snippet_ids") or []
-            hint = entry.get("hint") or "Use read_knowledge with the existing read_hint from the earlier search."
-            hint = hint.replace("read_document", "read_knowledge")
+            feature_state = FeatureFlagService.snapshot(conversation.business_profile)
+            agentic = bool(feature_state.rag_agentic_mode)
+            hint = entry.get("hint") or (
+                "Use read_document with the existing ids from the earlier search."
+                if agentic
+                else "Use read_knowledge with the existing read_hint from the earlier search."
+            )
+            if not agentic:
+                hint = hint.replace("read_document", "read_knowledge")
             structured_log(
                 "mcp",
                 "search.duplicate_short_circuit",
@@ -2642,6 +2728,21 @@ class McpOrchestratorService:
                 "duplicate_query": normalized,
                 "snippet_ids": snippet_ids,
             }
+            cached_results = entry.get("results")
+            if agentic and isinstance(cached_results, list) and cached_results:
+                payload: dict[str, object] = {
+                    "tool": "search_knowledge",
+                    "status": "duplicate",
+                    "error": "duplicate_query",
+                    "results": cached_results,
+                    "hint": hint,
+                    "llm_hint": hint,
+                    "diagnostics": diagnostics,
+                }
+                total_found = entry.get("total_found")
+                if total_found not in {None, ""}:
+                    payload["total_found"] = total_found
+                return payload
             return {
                 "tool": "search_knowledge",
                 "status": "duplicate",
@@ -3861,6 +3962,60 @@ class McpOrchestratorService:
                     gate_out[key] = value
                 if gate_out:
                     compact["identifier_gate"] = gate_out
+            raw_results = payload.get("results")
+            results_out: list[dict[str, object]] = []
+            if isinstance(raw_results, list):
+                preview_chars = max(160, min(360, int(snippet_content_chars)))
+                for result in raw_results[: max(1, max_snippets)]:
+                    if not isinstance(result, Mapping):
+                        continue
+                    entry: dict[str, object] = {}
+                    for key in (
+                        "id",
+                        "read_id",
+                        "document_id",
+                        "title",
+                        "type",
+                        "source",
+                        "char_estimate",
+                        "row_count",
+                        "column_count",
+                        "table_id",
+                        "row_index",
+                    ):
+                        if key not in result:
+                            continue
+                        value = result.get(key)
+                        if value is None:
+                            continue
+                        if isinstance(value, str) and not value.strip():
+                            continue
+                        entry[key] = value
+                    preview = result.get("preview")
+                    if isinstance(preview, str) and preview.strip():
+                        entry["preview"] = self._clip_text(preview.strip(), preview_chars)
+                    read_hint = result.get("read_hint")
+                    if isinstance(read_hint, Mapping) and read_hint:
+                        hint_out: dict[str, object] = {}
+                        for key in ("document_id", "page", "pages", "offset", "mode", "intent"):
+                            value = read_hint.get(key)
+                            if value is None:
+                                continue
+                            if isinstance(value, str) and not value.strip():
+                                continue
+                            if isinstance(value, (list, tuple, set, dict)) and not value:
+                                continue
+                            hint_out[key] = value
+                        if hint_out:
+                            entry["read_hint"] = hint_out
+                    if entry:
+                        results_out.append(entry)
+            if results_out:
+                compact["results"] = results_out
+                if "total_found" in payload and payload.get("total_found") not in {None, ""}:
+                    compact["total_found"] = payload.get("total_found")
+                compact["prompt_compact"] = True
+                return compact
             raw_snippets = payload.get("snippets")
             snippets_out: list[dict[str, object]] = []
             search_content_chars = max(200, min(600, int(snippet_content_chars)))
@@ -3878,6 +4033,56 @@ class McpOrchestratorService:
             compact["snippets"] = snippets_out
             compact["prompt_compact"] = True
             return compact
+
+        if normalized_name == "read_document":
+            raw_contents = payload.get("contents")
+            if isinstance(raw_contents, list):
+                for key in ("document_id", "mode", "page", "pages", "total_chars", "truncated_ids", "errors"):
+                    if key not in payload:
+                        continue
+                    value = payload.get(key)
+                    if value is None:
+                        continue
+                    if isinstance(value, str) and not value.strip():
+                        continue
+                    if isinstance(value, (list, tuple, set, dict)) and not value:
+                        continue
+                    if key == "errors" and isinstance(value, list):
+                        errors_out: list[dict[str, object]] = []
+                        for err in value[:6]:
+                            if not isinstance(err, Mapping):
+                                continue
+                            err_entry: dict[str, object] = {}
+                            if err.get("id"):
+                                err_entry["id"] = err.get("id")
+                            if err.get("error"):
+                                err_entry["error"] = self._clip_text(str(err.get("error")), 200)
+                            if err_entry:
+                                errors_out.append(err_entry)
+                        if errors_out:
+                            compact["errors"] = errors_out
+                        continue
+                    compact[key] = value
+                contents_out: list[dict[str, object]] = []
+                for item in raw_contents[: max(1, max_snippets)]:
+                    if not isinstance(item, Mapping):
+                        continue
+                    entry: dict[str, object] = {}
+                    for key in ("id", "title", "type", "truncated"):
+                        value = item.get(key)
+                        if value is None:
+                            continue
+                        if isinstance(value, str) and not value.strip():
+                            continue
+                        entry[key] = value
+                    content = item.get("content")
+                    if isinstance(content, str) and content.strip():
+                        entry["content"] = self._clip_text(content.strip(), int(snippet_content_chars))
+                    if entry:
+                        contents_out.append(entry)
+                compact["contents"] = contents_out
+                compact["prompt_compact"] = True
+                return compact
 
         if normalized_name == "get_document_structure":
             document_in = payload.get("document")

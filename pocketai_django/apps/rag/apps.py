@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import sys
 
 from django.apps import AppConfig
 from django.conf import settings
@@ -14,6 +15,10 @@ class RagConfig(AppConfig):
     name = "apps.rag"
 
     def ready(self) -> None:
+        # Avoid implicit network/model downloads during test runs.
+        # Local/dev/prod warmup remains available via `warm_embeddings` and docker entrypoints.
+        if "test" in sys.argv:
+            return
         if not getattr(settings, "RAG_USE_MCP_ORCHESTRATOR", False):
             return
         try:

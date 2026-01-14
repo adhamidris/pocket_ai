@@ -36,8 +36,10 @@ Key Flows
    -> final answer (no extra narration between tool calls).
 
 2) Knowledge lookup
-   search_knowledge -> KnowledgeSearchService (apps/rag) -> snippets
-   -> read_knowledge -> compact evidence -> final response.
+   Agentic retrieval (default): `search_knowledge` returns metadata-only matches
+   (`results[]`), then the model calls `read_document(ids[])` to fetch the
+   content it needs. For structured datasets/spreadsheets it uses
+   `list_tables` + `query_dataset`.
 
 3) Guardrails
    IdentifierGate checks required keys before retrieval.
@@ -46,11 +48,15 @@ Key Flows
 Tool Catalog (LLM-facing)
 -------------------------
 - search_knowledge
-  - Batch semantic + lexical search; returns snippets.
-- read_knowledge
-  - Single retrieval tool for text, tables, and datasets (routes internally).
+  - Hybrid semantic + lexical search; returns metadata + short previews (`results[]`), not full content.
 - list_tables
-  - Lists tabular uploads to discover document IDs.
+  - Lists queryable dataset/spreadsheet uploads so the model can grab `document_id` once.
+- read_document
+  - Reads full content for `ids[]` (agentic mode), or page windows via `document_id` + `pages/page/offset`.
+- query_dataset
+  - Queries structured datasets/spreadsheets (filters/sort/aggregate/preview rows).
+- get_document_structure
+  - Lightweight structure overview (tables/sheets/row counts) to aid planning.
 - CRM actions
   - create_case, update_case_status, update_case_details, add_case_history,
     flag_escalation, create_customer, update_customer, create_lead,
@@ -61,12 +67,11 @@ Tool Schema Reference
 Schema lives in `apps/mcp/tools.py` as `TOOL_DEFINITIONS`.
 Use it as the canonical source of parameter names, enums, and limits.
 
-read_knowledge Parameters (high-level)
---------------------------------------
-- document_id (required)
-- intent: auto | text | table
-- text: { page, offset, page_size, neighbor_window, token_budget }
-- table: { sheet_name, match_column, match_value(s), filters, select_columns, sort_by, limit, ... }
+Legacy / Compatibility Tools
+----------------------------
+Some tools remain implemented for backward compatibility, internal routing,
+and load testing (e.g., `read_knowledge`, `dataset_query`, `table_aggregate`),
+but the current LLM-facing contract is the agentic workflow above.
 
 Identifier Guardrails
 ---------------------
@@ -86,71 +91,34 @@ search_knowledge (batched query):
 }
 ```
 
-read_knowledge (text excerpt):
+read_document (agentic batch read):
 ```json
 {
-  "tool": "read_knowledge",
-  "document_id": "a1b2c3d4-1111-2222-3333-444455556666",
-  "intent": "text",
-  "text": { "page": 1, "neighbor_window": 1, "token_budget": 900 }
+  "tool": "read_document",
+  "ids": ["chunk-uuid-1", "chunk-uuid-2"],
+  "max_chars": 12000
 }
 ```
 
-read_knowledge (table lookup by exact identifier):
+list_tables (discover dataset ids):
 ```json
 {
-  "tool": "read_knowledge",
-  "document_id": "aa6c05b8-3724-476b-85b2-7d6c322b67e5",
-  "intent": "table",
-  "table": {
-    "sheet_name": "Data",
-    "match_column": "Invoice Serial",
-    "match_value": "9125779195",
-    "select_columns": [
-      "Invoice Serial",
-      "Invoice Date",
-      "Customer",
-      "Customer Name",
-      "Mat. Code",
-      "Mat. Desc.",
-      "Qty",
-      "Value"
-    ],
-    "limit": 5
-  }
+  "tool": "list_tables",
+  "query": "invoices",
+  "limit": 5
 }
 ```
 
-read_knowledge response envelope (shape):
+query_dataset (structured query/preview):
 ```json
 {
-  "tool": "read_knowledge",
+  "tool": "query_dataset",
   "status": "ok",
-  "engine": "file_dataset",
-  "evidence": {
-    "rows": [
-      { "Invoice Serial": "9125779195", "Invoice Date": "2025-11-16", "...": "..." }
-    ],
-    "snippets": []
-  },
-  "total_matches": 1,
-  "truncated": false,
-  "throttle_notice": null,
-  "diagnostics": { "query_engine": "duckdb" }
+  "dataset_id": "upload-uuid",
+  "query": "invoice 9125779195",
+  "limit": 10
 }
 ```
-
-Tool Response Envelope (read_knowledge)
----------------------------------------
-Common fields:
-- tool: "read_knowledge"
-- status: ok | not_found | error | throttled | constraint_error | disambiguation_required
-- engine: text_page | table_preview | file_dataset | db_preview | null
-- evidence: { snippets: [...], rows: [...] }
-- total_matches: int
-- truncated: bool
-- throttle_notice: { type, message } (optional)
-- diagnostics: { ... } (optional)
 
 Budgets + Memory
 ----------------
@@ -179,7 +147,7 @@ User msg
    ↓
 MCP planner + tool loop (apps/mcp/orchestrator.py)
    ↓
-search_knowledge / read_knowledge (apps/mcp/tools.py)
+search_knowledge → read_document / query_dataset (apps/mcp/tools.py)
    ↓
 RAG retrieval (apps/rag) + knowledge access (apps/knowledge)
    ↓
@@ -215,13 +183,13 @@ Debugging Bad Answers (Quick Checklist)
 1) Confirm the tool call:
    - Look for `stage=tool.request` and `stage=tool.response` in `var/logs/rag.log`.
 2) Verify identifiers:
-   - Ensure requested identifier appears in `evidence.rows` and `total_matches > 0`.
+   - Ensure identifier gating isn’t blocking access (constraint errors / required keys).
 3) Check disambiguation:
    - If `status=disambiguation_required`, the assistant must ask a clarifying question.
 4) Inspect truncation:
-   - If `truncated=true`, narrow filters or reduce columns/rows.
+   - If `status=partial` with `truncated_ids`, re-read only those ids with a higher `max_chars` budget.
 5) Validate routing:
-   - Check `engine` and `diagnostics.query_engine` to confirm dataset vs table preview.
+   - Confirm `read_document` vs `query_dataset` routing for the source type (PDF/DOCX vs CSV/XLSX/JSONL).
 6) Evaluate fallback behavior:
    - If `status=not_found`, the assistant should not fabricate values.
 

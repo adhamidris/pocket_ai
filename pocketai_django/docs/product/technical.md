@@ -50,7 +50,7 @@ If you want a business-only description (for sales, onboarding, or investors), u
 1. Visitor sends a message to the chat portal.
 2. Backend records the customer message to the conversation timeline (tenant-scoped).
 3. Orchestrator builds a prompt window (system + recent history) and calls the LLM provider with tools enabled.
-4. LLM may call tools (e.g., `search_knowledge`, `read_knowledge`) to retrieve evidence.
+4. LLM may call tools (e.g., `search_knowledge`, `read_document`, `query_dataset`) to retrieve evidence.
 5. Orchestrator executes tools server-side and returns tool outputs to the LLM.
 6. LLM streams the final answer to the visitor.
 7. A planner step may run after the answer to propose internal actions (cases/leads/appointments) and extractions.
@@ -83,7 +83,9 @@ The orchestration design aims to be:
 ### Core tool pattern
 Typical “knowledge question”:
 1. `search_knowledge` (batched `queries[]` variants)
-2. Optional targeted read (`read_knowledge` / `read_document`) when summaries aren’t enough
+2. Targeted read depending on source type:
+   - `read_document` for document/chunk reads (PDF/DOCX/TXT and extracted page windows)
+   - `query_dataset` for structured datasets/spreadsheets (CSV/XLSX/JSONL), optionally preceded by `list_tables`
 3. Final answer (tools disabled in the final pass when possible)
 
 ### Tool budgets and policies
@@ -151,7 +153,7 @@ Verified lookup is a capability that tenants can enable:
 - Once verified, retrieval may be scoped to matching records/uploads and may expose allowed fields.
 
 Current repo behavior:
-- Tabular tools (`read_knowledge` with `intent=table`) enforce “verified lookup required” when the model requests sensitive columns (PII).
+- Tabular tools (`query_dataset` / `dataset_query`, legacy `read_knowledge` tabular engines) enforce “verified lookup required” when the model requests sensitive columns (PII).
 - Unstructured/document snippets are additionally protected with best-effort PII pattern masking before tool evidence is returned to the LLM (configurable via `MCP_TEXT_PII_REDACTION_*`).
 
 Portal verification API (for the public web widget):

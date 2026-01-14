@@ -50,6 +50,11 @@ services:
       dockerfile: Dockerfile
     container_name: pocketai_web
     command: /app/scripts/docker-entrypoint.sh
+    env_file:
+      # Docker Compose loads `.env` for interpolation, but does NOT automatically
+      # pass it through to containers. `env_file` ensures ingestion/RAG knobs
+      # (Azure DI, VLM repair, MCP budgets, etc.) actually reach the app.
+      - .env
     environment:
       # Load from .env file
       DJANGO_DEBUG: ${DJANGO_DEBUG:-false}
@@ -108,6 +113,8 @@ services:
       dockerfile: Dockerfile
     container_name: pocketai_worker
     command: /app/scripts/worker-entrypoint.sh
+    env_file:
+      - .env
     environment:
       # Same environment as web
       DJANGO_DEBUG: ${DJANGO_DEBUG:-false}

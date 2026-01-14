@@ -41,37 +41,37 @@ High-level components you’ll see in the flow:
     - `events` – background heartbeat / status SSE.
 
 - **Portal Orchestration**
-  - `ChatPortalService` in `pocketai_django/apps/services/chat_portal.py`.
+  - `ChatPortalService` in `pocketai_django/apps/conversations/portal.py`.
   - Manages `Conversation`, messages, CSAT, feedback, and session lifecycle.
 
 - **LLM Orchestrators**
   - **MCP (tool-calling, primary path)**:
-    - `McpOrchestratorService` in `pocketai_django/apps/services/mcp/orchestrator.py`.
-    - Tools + schemas: `pocketai_django/apps/services/mcp/tools.py`, `prompts.py`.
+    - `McpOrchestratorService` in `pocketai_django/apps/mcp/orchestrator.py`.
+    - Tools + schemas: `pocketai_django/apps/mcp/tools.py`, `prompts.py`.
   - **Legacy orchestrator (fallback)**:
-    - `AiOrchestratorService` in `pocketai_django/apps/services/ai_orchestrator.py`.
+    - `AiOrchestratorService` in `pocketai_django/apps/rag/ai_orchestrator.py`.
 
 - **LLM Providers**
   - Interfaces and concrete implementations (OpenAI, DeepSeek, stub) live in:
-    - `pocketai_django/apps/services/llm_provider.py`.
+    - `pocketai_django/apps/llm/llm_provider.py`.
 
 - **RAG / Knowledge Layer**
   - Search + read logic:
-    - `KnowledgeSearchService` in `pocketai_django/apps/services/ai_orchestrator.py`.
+    - `KnowledgeSearchService` in `pocketai_django/apps/rag/ai_orchestrator.py`.
   - MCP tools wrapping that service:
-    - `search_knowledge`, `read_document`, `table_aggregate` in `pocketai_django/apps/services/mcp/tools.py`.
+    - `search_knowledge`, `read_document` (and internal table helpers) in `pocketai_django/apps/mcp/tools.py`.
 
 - **Post-actions & Extractions**
-  - `ActionDispatcher` and `AiOrchestratorPlan` in `pocketai_django/apps/services/ai_orchestrator.py`.
+  - `ActionDispatcher` and `AiOrchestratorPlan` in `pocketai_django/apps/rag/ai_orchestrator.py`.
   - Case/customer actions, lead/appointment creation, and structured extractions.
 
 - **Tracing & Telemetry**
   - `PortalTraceLogger` in `pocketai_django/apps/api/chat_portal.py`.
-  - `rag_log` / `structured_log` in `pocketai_django/apps/services/rag_logging.py`.
+  - `rag_log` / `structured_log` in `pocketai_django/apps/rag/rag_logging.py`.
 
 If you want to vibe through the flow in code, the usual path is:
 
-`apps/api/urls.py` → `apps/api/chat_portal.py:stream_send` → orchestrator (`apps/services/mcp/orchestrator.py`) → tools (`apps/services/mcp/tools.py`) → LLM provider + RAG services.
+`apps/api/urls.py` → `apps/api/chat_portal.py:stream_send` → orchestrator (`apps/mcp/orchestrator.py`) → tools (`apps/mcp/tools.py`) → LLM provider + RAG services.
 
 ---
 
@@ -152,7 +152,7 @@ You can follow this exactly in `stream_send` inside `pocketai_django/apps/api/ch
 
 - **Endpoint**: `GET /api/chat/portal/resolve/<business_slug>/<agent_slug>/`
 - **View**: `resolve_portal_handle` in `apps/api/chat_portal.py`.
-- **Service**: `ChatPortalService.resolve_handle` in `apps/services/chat_portal.py`.
+- **Service**: `ChatPortalService.resolve_handle` in `apps/conversations/portal.py`.
 
 Flow:
 
@@ -232,7 +232,7 @@ In `stream_send`, there is a feature flag helper:
 If MCP is enabled:
 
 - Import `McpOrchestratorService` from `apps.mcp.orchestrator`.
-- Load MCP provider via `load_mcp_provider()` from `apps/services/llm_provider.py`.
+- Load MCP provider via `load_mcp_provider()` from `apps/llm/llm_provider.py`.
 - Create `McpOrchestratorService(agent=agent, provider=provider)`.
 - Log `orchestrator.selected` with `mode=mcp`.
 
@@ -360,7 +360,7 @@ This gives the portal a **multi-phase UX**:
 
 ## 3. MCP Orchestrator Internals (stream_turn)
 
-Although `stream_send` abstracts it away, most of the “AI magic” lives inside `McpOrchestratorService.stream_turn` in `apps/services/mcp/orchestrator.py`.
+Although `stream_send` abstracts it away, most of the “AI magic” lives inside `McpOrchestratorService.stream_turn` in `apps/mcp/orchestrator.py`.
 
 ### 3.1 Transcript and tool context
 
@@ -472,13 +472,13 @@ Flow:
 1. Model emits a `tool_call` for `search_knowledge` with:
    - `query` – natural language question (often normalized by prompt).
    - `limit` – optional cap on snippet count.
-2. `_search_knowledge_handler` in `apps/services/mcp/tools.py`:
+2. `_search_knowledge_handler` in `apps/mcp/tools.py`:
    - Analyzes query intent (identifier vs free-text vs table-ish).
    - Derives whether aggregation-like terms are present (`total`, `sum`, `aggregate`, etc.).
    - Optionally builds an `identifier_filter` when email/ID is locked or provided:
      - Looks up `IdentifierColumnMapping` rows for the business.
      - Restricts search to specific uploads or identifier columns.
-   - Calls `KnowledgeSearchService.search(...)` in `apps/services/ai_orchestrator.py` with:
+   - Calls `KnowledgeSearchService.search(...)` in `apps/rag/ai_orchestrator.py` with:
      - `business_profile`.
      - `query`.
      - `limit`.
@@ -538,7 +538,7 @@ Flow:
      - `mode` (`"excerpt"` | `"full_page"`).
      - `token_budget`.
      - `chunk_neighbor` window.
-2. `_read_document_handler` in `apps/services/mcp/tools.py`:
+2. `_read_document_handler` in `apps/mcp/tools.py`:
    - Validates `document_id`.
    - Resolves to:
      - A `KnowledgeUploadChunk` (chunk-level read) or
@@ -617,7 +617,7 @@ Flow:
    - `value_column` – which numeric column to aggregate.
    - `columns` – optional subset of columns to include in the preview.
    - `sheet_name` – when the upload has multiple sheets.
-2. `_table_aggregate_handler` in `apps/services/mcp/tools.py`:
+2. `_table_aggregate_handler` in `apps/mcp/tools.py`:
    - Resolves upload and uses the knowledge layer’s structured exports:
      - Rows, cells, normalized column names, numeric hints.
    - Optionally hydrates a **table cache** from conversation metadata (previous aggregates).
@@ -846,18 +846,18 @@ If you want to trace or modify this flow, these are the “anchor” files:
   - `pocketai_django/apps/services/chat_portal.py` (`ChatPortalService`)
 
 - Orchestrators:
-  - `pocketai_django/apps/services/mcp/orchestrator.py` (`McpOrchestratorService`)
-  - `pocketai_django/apps/services/ai_orchestrator.py` (`AiOrchestratorService`, `StreamingTurnContext`, `KnowledgeSearchService`, `ActionDispatcher`, `AiOrchestratorPlan`)
+  - `pocketai_django/apps/mcp/orchestrator.py` (`McpOrchestratorService`)
+  - `pocketai_django/apps/rag/ai_orchestrator.py` (`AiOrchestratorService`, `StreamingTurnContext`, `KnowledgeSearchService`, `ActionDispatcher`, `AiOrchestratorPlan`)
 
 - MCP tools & prompts:
-  - `pocketai_django/apps/services/mcp/tools.py` (`search_knowledge`, `read_document`, `table_aggregate`, action tools)
-  - `pocketai_django/apps/services/mcp/prompts.py`
+  - `pocketai_django/apps/mcp/tools.py` (`search_knowledge`, `read_document`, internal table helpers, action tools)
+  - `pocketai_django/apps/mcp/prompts.py`
 
 - LLM providers:
-  - `pocketai_django/apps/services/llm_provider.py` (`OpenAIChatProvider`, `DeepSeekChatProvider`, `load_default_provider`, `load_mcp_provider`)
+  - `pocketai_django/apps/llm/llm_provider.py` (`OpenAIChatProvider`, `DeepSeekChatProvider`, `load_default_provider`, `load_mcp_provider`)
 
 - Observability:
   - `pocketai_django/apps/api/chat_portal.py` (`PortalTraceLogger`)
-  - `pocketai_django/apps/services/rag_logging.py`
+  - `pocketai_django/apps/rag/rag_logging.py`
 
 Open these in order and you’ll see the **full backend conversation loop** from HTTP request to vector search, document reads, table aggregation, LLM planning, and final SSE response.

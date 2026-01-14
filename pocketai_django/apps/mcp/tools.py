@@ -3381,7 +3381,6 @@ def _agentic_batch_read_handler(
     max_chars = max(200, max_chars)
     
     all_contents: list[dict[str, object]] = []
-    all_snippets: list[dict[str, object]] = []
     total_chars = 0
     truncated_ids: list[str] = []
     errors: list[dict[str, object]] = []
@@ -3414,10 +3413,6 @@ def _agentic_batch_read_handler(
         
         # Extract snippets and add to contents
         snippets = result.get("snippets", [])
-        if isinstance(snippets, list):
-            for entry in snippets:
-                if isinstance(entry, Mapping):
-                    all_snippets.append(dict(entry))
         for snippet in snippets:
             if not isinstance(snippet, Mapping):
                 continue
@@ -3459,8 +3454,6 @@ def _agentic_batch_read_handler(
         "contents": all_contents,
         "total_chars": total_chars,
     }
-    if all_snippets:
-        response["snippets"] = all_snippets
     
     if truncated_ids:
         response["truncated_ids"] = truncated_ids
