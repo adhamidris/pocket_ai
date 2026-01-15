@@ -1,0 +1,706 @@
+
+╭─── Claude Code v2.1.3 ───────────────────────────────────────────────────────╮
+│                                                    │ Tips for getting        │
+│                 Welcome back Adham!                │ started                 │
+│                                                    │ Run /init to create a … │
+│                       ▐▛███▜▌                      │ ─────────────────────── │
+│                      ▝▜█████▛▘                     │ Recent activity         │
+│                        ▘▘ ▝▝                       │ No recent activity      │
+│                                                    │                         │
+│  Opus 4.5 · Claude Pro · adhamidris@outlook.com's  │                         │
+│  Organization                                      │                         │
+│             ~/Desktop/pocket_ai-main 2             │                         │
+╰──────────────────────────────────────────────────────────────────────────────╯
+
+❯ /model 
+  ⎿  Set model to Default (Opus 4.5 · Most capable for complex work)
+
+❯ Okay I think we do have a mess in how we search and rank snippets from    
+  the llm pov, this is the first time testing the RAG when there are many   
+  file uploads.                                                             
+                                                                            
+  I am testing one of the document, asking the llm about items from that    
+  document to see if it'll manage to get it everytime or not.               
+                                                                            
+  query 1:                                                                  
+  what are the fees for Postpone Bills for Guarantee?                       
+                                                                            
+  The fees for postponing bills for guarantee are as follows:               
+                                                                            
+  Condition    Fee (EGP/USD)                                                
+  If the bill hasn't been sent for collection    EGP 30 / USD 6             
+  If the bill has been sent for collection    EGP 30 / USD 6 +              
+  Correspondent Fees + Courier Fees                                         
+  This applies to all account types (Prime, Plus, Wealth).                  
+                                                                            
+  Accuracy - 100% , file read Trade Bills EN[which is the file we're        
+  testing now].                                                             
+                                                                            
+                                                                            
+  query 2[from the same trade bills file];                                  
+                                                                            
+  and Withdraw Bills for                                                    
+  Collection?                                                               
+                                                                            
+  The fees for withdrawing bills for collection are as follows:             
+                                                                            
+  Service    Fee                                                            
+  Cash withdrawal fees from International ATMs    10% of the amount,        
+  minimum EGP 20                                                            
+  Foreign exchange markup fees    3% of the transaction amount              
+  Additionally, here are some related limits and fees:                      
+                                                                            
+  Daily Cash Withdrawal Limit: EGP 30,000                                   
+  Weekly Cash Withdrawal Limit: EGP 120,000                                 
+  E-Wallet Loading Fees: 2% from the total loaded amount, minimum EGP 5     
+  Statement & SMS Fees: EGP 20 per month                                    
+  These fees apply to various account types, including Prime, Plus, and     
+  Wealth segments.                                                          
+                                                                            
+  accuracy: zero[llm used a different file and read it [international       
+  withdrawals], was supposed to read trade bills EN, meaning the snippets   
+  ranked higher on that file.. we're not doing searching right or ranking   
+  is wrong. need to figure out.                                             
+                                                                            
+  query 3[same file trade bills EN];                                        
+  what are the fees for Collection in Favor of CIB Customers Whether Drawn  
+  on CIB or Another Bank                                                    
+                                                                            
+  The fees for collection in favor of CIB customers, whether drawn on CIB   
+  or another bank, are as follows:                                          
+                                                                            
+  Service    Fee                                                            
+  Collection in favor of Damietta Port Authority    0. 2% of the amount,    
+  minimum EGP 10, maximum EGP 150 (for local currency)                      
+  Collection fees for return cheques drawn on CIB's customers    EGP 50 or  
+  USD 7                                                                     
+  Collection fees for return cheques (general)    Collection Fees +         
+  Correspondent Fees + Courier Fees (if any)                                
+  Amend Beneficiary's Account Number on Postdated Cheques    EGP 5 or USD   
+  0. 25                                                                     
+  These fees apply to various account types including Prime and Plus.       
+                                                                            
+  accuracy: zero, llm read [smart wallet] file instead of Trade bills, same 
+  issue with query 2.                                                       
+                                                                            
+                                                                            
+  I am not looking for surgical patching i am looking for root causes, best 
+  practices for agentic RAG, do the needed in-depth investigations, make    
+  sure you read the @README.md ,                                            
+  @pocketai_django/docs/product/saas_brief.md , if docs are outdated; we    
+  have shifted slightly to full agentic RAG[some parts may still be         
+  missing, feel free to share with me if you came across any].              
+  ⎿  Read README.md (44 lines)
+  ⎿  Read pocketai_django/docs/product/saas_brief.md (49 lines)
+
+⏺ I'll investigate the RAG implementation in depth to identify root causes. Let me explore the codebase to understand how document ingestion, search, and ranking work.
+
+⏺ Explore(Explore RAG implementation architecture)
+  ⎿  Done (36 tool uses · 96.8k tokens · 2m 17s)                         
+
+
+⏺ Excellent investigation. Now let me dive deeper into the specific code to identify the root cause. Based on the exploration, there are several likely culprits. Let me read the key files.
+
+⏺ Read(pocketai_django/apps/rag/ai_orchestrator.py)
+  ⎿  Read 200 lines
+
+⏺ Read(pocketai_django/apps/rag/azure_ai_search.py)
+  ⎿  Read 542 lines
+
+⏺ Search(pattern: "**/apps/rag/*.py")
+  ⎿  Found 14 files (ctrl+o to expand)
+
+⏺ Let me read more of the orchestrator to see the search and ranking logic.
+
+⏺ Search(pattern: "def search", path:
+        "pocketai_django/apps/rag/ai_orchestrator.py", output_mode: "content")
+  ⎿  Found 3 lines (ctrl+o to expand)
+
+⏺ Search(pattern: "def _rerank", path:
+        "pocketai_django/apps/rag/ai_orchestrator.py", output_mode: "content")
+  ⎿  Found 1 line (ctrl+o to expand)
+
+⏺ Bash(wc -l "/Users/adham/Desktop/pocket_ai-main
+      2/pocketai_django/apps/rag/ai_orchestrator.py")
+  ⎿     9869 /Users/adham/Desktop/pocket_ai-main                         
+    2/pocketai_django/apps/rag
+    /ai_orchestrator.py
+
+⏺ Read(pocketai_django/apps/rag/ai_orchestrator.py)
+  ⎿  Read 250 lines
+
+⏺ Read(pocketai_django/apps/rag/ai_orchestrator.py)
+  ⎿  Read 250 lines
+
+⏺ Now let me check the MCP orchestrator (the primary path mentioned in the comments) and see how snippets are passed to the LLM.
+
+⏺ Search(pattern: "**/apps/mcp/**/*.py")
+  ⎿  Found 23 files (ctrl+o to expand)
+
+⏺ Search(pattern: "search|retrieval|snippet", path: "pocketai_django/apps/mcp")
+  ⎿  Found 17 files (ctrl+o to expand)
+
+⏺ Read(pocketai_django/apps/mcp/orchestrator.py)
+  ⎿  Read 300 lines
+
+⏺ Read(pocketai_django/apps/mcp/tools.py)
+  ⎿  Read 300 lines
+
+⏺ Let me search for the actual search_knowledge tool implementation and how it picks snippets.
+
+⏺ Search(pattern: "def execute_tool|search_knowledge", path:
+        "pocketai_django/apps/mcp/tools.py", output_mode: "content")
+  ⎿  Found 35 lines (ctrl+o to expand)
+
+⏺ Bash(wc -l "/Users/adham/Desktop/pocket_ai-main
+      2/pocketai_django/apps/mcp/tools.py")
+  ⎿     8406 /Users/adham/Desktop/pocket_ai-main                         
+    2/pocketai_django/apps/mcp
+    /tools.py
+
+⏺ Read(pocketai_django/apps/mcp/tools.py)
+  ⎿  Read 400 lines
+
+⏺ Let me look at how snippets are formatted for the LLM and check the agentic RAG configuration.
+
+⏺ Read(pocketai_django/apps/mcp/schemas/agentic_rag.py)
+  ⎿  Read 195 lines
+
+⏺ Read(pocketai_django/apps/mcp/prompts.py)
+  ⎿  Read 200 lines
+
+⏺ Now let me check the embeddings and vector search implementation to understand how similarity is calculated.
+
+⏺ Read(pocketai_django/apps/rag/embeddings.py)
+  ⎿  Read 185 lines
+
+⏺ Read(pocketai_django/apps/rag/query_classifier.py)
+  ⎿  Read 200 lines
+
+⏺ Let me check how the search results are passed to the LLM and if there's any document context tracking.
+
+⏺ Search(pattern: "document_context|conversation_context|source_document|upload_
+        id.*context", path: "pocketai_django/apps/mcp")
+  ⎿  Found 0 files 
+
+⏺ Read(pocketai_django/apps/rag/ai_orchestrator.py)
+  ⎿  Read 150 lines
+
+⏺ ---
+  RAG Root Cause Analysis
+
+  Based on my deep investigation of the codebase, here's my comprehensive analysis:
+
+  What's Happening
+
+  When you ask "what are the fees for Withdraw Bills for Collection?":
+
+  1. Query → Embedding: The query gets embedded as a 384-dim vector using paraphrase-multilingual-MiniLM-L12-v2
+  2. Vector Search: Azure/Postgres finds chunks with similar embeddings
+  3. Hybrid Search: BM25 lexical search also runs on tokens like "fees", "withdraw", "collection"
+  4. Ranking: Multi-factor scoring: vector(1.0) + lexical(0.8) + alias(1.2) + entity(0.4) + recency(0.25)
+  5. LLM Selection: The LLM receives ranked snippets and answers from top results
+
+  The Problem: Steps 2-4 don't have enough document context discrimination.
+
+  ---
+  Root Causes
+
+  1. Semantic Embedding Collision (Primary)
+
+  All your banking documents share similar vocabulary:
+  - "Trade Bills EN" has: fees, bills, collection, withdraw
+  - "International Withdrawals" has: fees, withdrawal, ATM, cash
+  - "Smart Wallet" has: fees, loading, wallet
+
+  The 384-dim MiniLM model encodes these as semantically similar because they're all "banking fee" concepts. Vector distance between:
+  - "Withdraw Bills for Collection" ↔ "Cash withdrawal from ATMs" = LOW (similar semantics)
+  - But they're from completely different business operations
+
+  Evidence: ai_orchestrator.py:3591 - vector score = 1.0 - cosine_distance, but all fee-related chunks have similar distances.
+
+  2. No Document Context Tracking
+
+  The agentic RAG (MCP orchestrator) treats each search independently:
+
+  # tools.py:2647 - Each search is stateless
+  result = service.search(
+      business_profile=conversation.business_profile,
+      query=query_text,  # No hint about "Trade Bills EN"
+      limit=limit_for_run,
+      ...
+  )
+
+  Missing: When the conversation establishes context (you're testing "Trade Bills EN"), follow-up queries should anchor to that document.
+
+  I searched for document_context|conversation_context|source_document in MCP code - no matches. There's no mechanism to preserve document affinity across turns.
+
+  3. Lexical Search Dilution
+
+  The hybrid search uses BM25 which matches generic tokens:
+  - Query: "fees for Withdraw Bills for Collection"
+  - Tokens: fees, withdraw, bills, collection
+
+  These tokens appear in MANY documents (all fee schedules mention "fees"). The lexical component returns candidates from multiple documents, not just "Trade Bills EN".
+
+  Code path: ai_orchestrator.py:2001-2050 - Azure hybrid search combines vector + text without document-level weighting.
+
+  4. Ranking Weights Missing Document Continuity
+
+  The rerank formula (ai_orchestrator.py:3651-3661):
+  combined = (
+      self.rerank_weights["vector"] * vector_score       # 1.0
+      + self.rerank_weights["lexical"] * lexical_score   # 0.8
+      + self.rerank_weights["alias"] * alias_bonus       # 1.2
+      + self.rerank_weights["entity"] * entity_bonus     # 0.4
+      + self.rerank_weights["recency"] * recency_score   # 0.25
+      # NO document_continuity_bonus!
+  )
+
+  No factor for "this chunk is from the same document the conversation is about".
+
+  5. Query Doesn't Include Source Context
+
+  When you ask about "Trade Bills" fees in query 2 and 3, the system doesn't know you're continuing a conversation about that specific document. Your query 3 is:
+
+  "what are the fees for Collection in Favor of CIB Customers Whether Drawn on CIB or Another Bank"
+
+  This is a VERY specific fee name that probably only exists in Trade Bills EN. But the system searches broadly and finds other documents with "collection" and "fees" tokens.
+
+  ---
+  Best Practices for Agentic RAG (What's Missing)
+
+  Based on industry best practices, here's what your system needs:
+
+  1. Document Context Binding
+
+  After the first relevant search, track the source document:
+  class ToolExecutionContext:
+      active_document_ids: set[UUID] = set()  # Documents mentioned in this conversation
+      primary_document_id: UUID | None = None  # Main document being discussed
+
+  Then in search_knowledge:
+  # If conversation has established document context, prefer those documents
+  if context.primary_document_id:
+      # Add document filter or boost
+      allowed_upload_ids = [context.primary_document_id, *other_allowed]
+
+  2. Query Expansion with Document Context
+
+  When follow-up queries come in, expand them with context:
+  # Current: "fees for Withdraw Bills for Collection"
+  # Expanded: "Trade Bills fees for Withdraw Bills for Collection"
+
+  3. Document Continuity Bonus in Ranking
+
+  Add a new ranking factor:
+  # In _rerank_candidates
+  document_continuity_bonus = 0.0
+  if context.primary_document_id and cand.chunk.upload_id == context.primary_document_id:
+      document_continuity_bonus = 0.5  # Significant boost
+
+  combined = (
+      ... existing factors ...
+      + document_continuity_bonus
+  )
+
+  4. Two-Phase Retrieval
+
+  For follow-up queries:
+  1. First: Search within known context documents
+  2. Fallback: Only if nothing found, expand to full corpus
+
+  5. LLM-Guided Document Anchoring
+
+  In agentic mode, the LLM should receive document metadata and be prompted to prefer previously-cited sources unless the user explicitly asks about something new.
+
+  ---
+  Immediate Fixes I Can Help Implement
+
+  1. Add document_context_bonus to ranking - Boost chunks from documents already cited in the conversation
+  2. Track active_document_ids in ToolExecutionContext - Preserve document affinity across tool calls
+  3. Add preferred_upload_ids parameter to search_knowledge - Allow filtering to specific documents
+  4. Query expansion with document titles - Automatically prepend document context to follow-up queries
+  5. Reduce lexical weight for follow-up queries - When document context exists, trust vector similarity less and document matching more
+
+  Which of these would you like me to implement first?
+
+✻ Churned for 5m 14s
+
+❯ i am not using azure search yet, check our env in root                    
+  @pocketai_django/pocketai/env.py to undderstand more                      
+  ⎿  Read pocketai_django/pocketai/env.py (22 lines)
+
+⏺ Let me check your actual configuration to understand your search backend.
+
+⏺ Read(.env)
+  ⎿  Read 519 lines
+
+⏺ Search(pattern: "RAG_SEARCH_BACKEND|AZURE_SEARCH|EMBED_", path:
+        "pocketai_django", output_mode: "content")
+  ⎿  Found 142 lines (ctrl+o to expand)
+
+⏺ Thanks for clarifying! So you're using:
+  - PostgreSQL with pgvector (not Azure AI Search)
+  - Local FastEmbed with paraphrase-multilingual-MiniLM-L12-v2 (384 dims)
+  - Cross-encoder reranking enabled (mmarco-mMiniLMv2-L12-H384-v1)
+
+  Let me check the actual PostgreSQL search path to understand the exact retrieval logic.
+
+⏺ Read(pocketai_django/apps/rag/ai_orchestrator.py)
+  ⎿  Read 200 lines
+
+⏺ Search(pattern: "def _vector_candidates|def _lexical_candidates", path:
+        "pocketai_django/apps/rag/ai_orchestrator.py", output_mode: "content")
+  ⎿  Found 2 lines (ctrl+o to expand)
+
+⏺ Read(pocketai_django/apps/rag/ai_orchestrator.py)
+  ⎿  Read 200 lines
+
+⏺ Now I have the full picture. Here's the revised analysis for PostgreSQL/pgvector:
+
+  ---
+  Updated Root Cause Analysis (PostgreSQL Backend)
+
+  Your Search Flow
+
+  Query → Embedding (MiniLM-L12) → pgvector CosineDistance → FTS/Trigram → Merge → Cross-Encoder Rerank → LLM
+
+  What's Happening in Your Case
+
+  When you ask: "what are the fees for Withdraw Bills for Collection?"
+
+  1. Vector Search (ai_orchestrator.py:2961-2965):
+  ann_qs = base_qs.exclude(embedding__isnull=True)
+      .annotate(distance=CosineDistance("embedding", query_vector))
+      .order_by("distance", "id")[:K]
+    - Returns chunks sorted by cosine distance
+    - Problem: "Withdraw Bills for Collection" and "Cash withdrawal from ATMs" have similar embeddings because they share banking/fee vocabulary
+    - K = limit * 10 * adaptive_factor (can be 60-600 candidates)
+  2. Lexical Search (ai_orchestrator.py:3071-3114):
+    - FTS on tokens: withdraw, bills, collection, fees
+    - Problem: These tokens appear in MANY documents (Trade Bills, International Withdrawals, etc.)
+    - Returns chunks that match ANY of these tokens
+  3. Merge & Rerank (ai_orchestrator.py:2148-2159):
+  merged = self._merge_candidates(alias_candidates, vector_hits, lexical_hits)
+  reranked, rerank_ms, rerank_diag = self._rerank_candidates(merged, ...)
+    - Merges all candidates, then reranks by weighted score
+    - Cross-encoder (mmarco-mMiniLMv2-L12-H384-v1) helps but can't distinguish document context
+  4. Ranking Formula (ai_orchestrator.py:3651-3661):
+  combined = (
+      1.0 * vector_score +      # Similar embeddings score high
+      0.8 * lexical_score +     # Token matches score high
+      1.2 * alias_bonus +       # Product name matches
+      0.4 * entity_bonus +      # Entity detection
+      0.25 * recency_score      # Recently updated docs
+  )
+  4. Missing: Document context/continuity bonus!
+
+  ---
+  The Core Problem
+
+  Your .env shows you have many similar documents (Trade Bills, International Withdrawals, Smart Wallet, etc.) that all contain:
+  - "fees" vocabulary
+  - Banking terminology
+  - Similar tabular structures
+
+  The 384-dim MiniLM embedding model creates similar vectors for all these because they're semantically related (all about banking fees). There's no mechanism to say "stay within the same document" or "this query is about Trade Bills specifically."
+
+  ---
+  Proposed Fixes
+
+  Fix 1: Add Document Context Tracking (Highest Impact)
+
+  Track which documents were referenced in the conversation and boost those in subsequent searches.
+
+  In apps/mcp/types.py, add to ToolExecutionContext:
+  @dataclass
+  class ToolExecutionContext:
+      # ... existing fields ...
+      referenced_upload_ids: set[str] = field(default_factory=set)
+      primary_upload_id: str | None = None
+
+  In apps/mcp/tools.py, after a search returns results, track the document:
+  # After search results come back, record referenced documents
+  for snippet in snippets:
+      if snippet.get("document_id"):
+          context.referenced_upload_ids.add(snippet["document_id"])
+          if not context.primary_upload_id:
+              context.primary_upload_id = snippet["document_id"]
+
+  Fix 2: Add Document Continuity Bonus to Ranking
+
+  In ai_orchestrator.py:_rerank_candidates, add:
+  # NEW: Document continuity bonus
+  document_bonus = 0.0
+  if session_context and session_context.get("primary_upload_id"):
+      if str(cand.chunk.upload_id) == session_context["primary_upload_id"]:
+          document_bonus = 0.4  # Boost chunks from the same document
+
+  combined = (
+      # ... existing factors ...
+      + document_bonus
+  )
+
+  Fix 3: Filter First, Then Search (For Follow-up Queries)
+
+  When a primary document is established, search within that document first:
+  # In search_knowledge handler
+  if context.primary_upload_id:
+      # First: Search within the primary document
+      result = service.search(
+          ...,
+          allowed_upload_ids=[context.primary_upload_id],
+      )
+      if result.snippets:
+          return result
+      # Fallback: Expand to all documents
+
+  Fix 4: Query Expansion with Document Title
+
+  For follow-up queries, prepend the document context:
+  # Before search
+  if context.primary_upload_id:
+      doc_name = get_upload_display_name(context.primary_upload_id)
+      expanded_query = f"{doc_name}: {query}"  # "Trade Bills EN: fees for Withdraw Bills"
+
+  Fix 5: Add Configuration for Document Affinity
+
+  In .env, add:
+  # Document context tracking
+  RAG_DOCUMENT_CONTEXT_ENABLED=true
+  RAG_DOCUMENT_CONTINUITY_BONUS=0.4      # Boost for same-document chunks
+  RAG_DOCUMENT_AFFINITY_SEARCH_FIRST=true  # Filter to known docs before full search
+
+  ---
+  Quick Diagnostic Test
+
+  To confirm this is the issue, can you:
+
+  1. Check the diagnostics for a failing query - look at source_diagnostics to see which documents the top-ranked snippets come from
+  2. Verify if the first query (which succeeded) was from Trade Bills EN and subsequent queries pulled from other documents
+
+  Would you like me to implement Fix 1 and Fix 2 first? These would give the biggest improvement with minimal code changes.
+
+✻ Cogitated for 1m 6s
+
+❯ but are those quick fixes? i am okay with refactoring if we're not        
+  following current market practices[look up the web to verify]             
+
+⏺ Good point. Let me research current market practices for agentic RAG to ensure we're building this right, not just patching.
+
+⏺ Web Search("agentic RAG best practices 2025 multi-document retrieval ranking
+            production systems")
+  ⎿  Did 1 search in 28s                                                 
+
+
+⏺ Web Search("RAG retrieval accuracy improvements document context tracking
+            LlamaIndex LangChain 2025")
+  ⎿  Did 1 search in 25s                                                 
+
+
+⏺ Web Search("RAG reranking strategies cross-encoder ColBERT hybrid search
+            production 2025")
+  ⎿  Did 1 search in 24s                                                 
+
+
+⏺ Web Search("corrective RAG self-RAG adaptive retrieval query routing
+            multi-document 2025")
+  ⎿  Did 1 search in 31s                                                 
+
+
+⏺ Web Search("RAG conversation context memory document affinity follow-up
+            queries production")
+  ⎿  Did 1 search in 23s                                                 
+
+
+⏺ This is very enlightening. Based on my research, your current system is missing several critical components that are now standard in production agentic RAG. Let me provide a comprehensive comparison:
+
+  ---
+  Your System vs. 2025 Market Best Practices
+  ┌────────────────┬────────────────────┬───────────────────────────┬──────────┐
+  │   Component    │   Your Current     │  Industry Best Practice   │   Gap    │
+  │                │   Implementation   │                           │          │
+  ├────────────────┼────────────────────┼───────────────────────────┼──────────┤
+  │ Query          │ None - raw query   │ Context-aware rewriting   │          │
+  │ Rewriting      │ goes to search     │ for follow-ups ("he" →    │ Critical │
+  │                │                    │ "Einstein")               │          │
+  ├────────────────┼────────────────────┼───────────────────────────┼──────────┤
+  │ Document       │ None - each search │ Conversation-scoped       │          │
+  │ Memory         │  is stateless      │ document cache across     │ Critical │
+  │                │                    │ turns                     │          │
+  ├────────────────┼────────────────────┼───────────────────────────┼──────────┤
+  │ Adaptive       │ Fixed pipeline     │ Decide when/how to        │          │
+  │ Retrieval      │ (always search)    │ retrieve based on query   │ Medium   │
+  │                │                    │ complexity                │          │
+  ├────────────────┼────────────────────┼───────────────────────────┼──────────┤
+  │                │ None - accepts all │ Evaluate retrieval        │          │
+  │ Corrective RAG │  results           │ quality, trigger          │ Medium   │
+  │                │                    │ re-search if poor         │          │
+  ├────────────────┼────────────────────┼───────────────────────────┼──────────┤
+  │                │ Single path (all   │ Route to specific         │          │
+  │ Query Routing  │ docs)              │ indexes/collections based │ Critical │
+  │                │                    │  on context               │          │
+  ├────────────────┼────────────────────┼───────────────────────────┼──────────┤
+  │ Hybrid Search  │ ✅ Vector +        │ ✅ Same                   │ Good     │
+  │                │ Lexical            │                           │          │
+  ├────────────────┼────────────────────┼───────────────────────────┼──────────┤
+  │ Cross-Encoder  │ ✅                 │ ✅ Same (consider ColBERT │ Good     │
+  │ Rerank         │ mmarco-mMiniLMv2   │  for late interaction)    │          │
+  ├────────────────┼────────────────────┼───────────────────────────┼──────────┤
+  │ Multi-hop      │ None               │ Iterative retrieval for   │ Low      │
+  │ Reasoning      │                    │ complex queries           │ priority │
+  └────────────────┴────────────────────┴───────────────────────────┴──────────┘
+  ---
+  What You're Missing (Root Cause of Your Issue)
+
+  1. No Conversation Document Context (Primary Issue)
+
+  From https://haystack.deepset.ai/cookbook/conversational_rag_using_memory:
+  "By incorporating conversational memory, a RAG system can remember earlier parts of a conversation... For example, if a user asks about Einstein and then follows up with 'Where was he born?', the system must understand that 'he' refers to Einstein."
+
+  Your queries 2 & 3 failed because the system doesn't know they're follow-ups about "Trade Bills EN."
+
+  2. No Query Rewriting for Follow-ups
+
+  From https://neo4j.com/blog/genai/advanced-rag-techniques/:
+  "For multi-turn chat, track conversation history and use retrieval-based memory so the system selectively recalls past turns... Combine this with dynamic context windowing so follow-ups inherit the right context."
+
+  Your query "fees for Withdraw Bills for Collection" should be rewritten to "Trade Bills EN: fees for Withdraw Bills for Collection" based on conversation context.
+
+  3. No Document-Scoped Retrieval Caching
+
+  From https://ragaboutit.com/how-to-build-a-production-ready-rag-system-with-langchains-new-memory-management-solving-context-window-limitations/:
+  "Consider implementing retrieval caching that stores and reuses relevant documents across conversation turns. When users explore related topics, avoid redundant retrieval operations by maintaining a conversation-scoped document cache."
+
+  4. No Corrective/Adaptive Retrieval
+
+  From https://www.meilisearch.com/blog/adaptive-rag:
+  "Adaptive RAG decides when and how to retrieve based on the complexity of the question... performs multiple searches, adjusting retrievers, re-ranking hits, and refining queries."
+
+  And from https://www.edenai.co/post/the-2025-guide-to-retrieval-augmented-generation-rag:
+  "CRAG introduces a lightweight retrieval evaluator to assess the quality of retrieved documents, enabling the system to adaptively respond to incorrect, ambiguous, or irrelevant information."
+
+  ---
+  Recommended Refactoring Architecture
+
+  Based on https://humanloop.com/blog/rag-architectures and https://langchain-ai.github.io/langgraph/tutorials/rag/langgraph_adaptive_rag/:
+
+  ┌─────────────────────────────────────────────────────────────────────┐
+  │                    AGENTIC RAG PIPELINE (Refactored)                │
+  ├─────────────────────────────────────────────────────────────────────┤
+  │                                                                     │
+  │  ┌──────────────┐    ┌───────────────────┐    ┌─────────────────┐  │
+  │  │   QUERY      │───▶│  CONTEXT-AWARE    │───▶│  QUERY ROUTER   │  │
+  │  │   INPUT      │    │  QUERY REWRITER   │    │  (Adaptive)     │  │
+  │  └──────────────┘    └───────────────────┘    └────────┬────────┘  │
+  │                              │                         │           │
+  │                              ▼                         ▼           │
+  │                    ┌─────────────────┐       ┌─────────────────┐   │
+  │                    │ CONVERSATION    │       │ DOCUMENT SCOPE  │   │
+  │                    │ MEMORY          │       │ FILTER          │   │
+  │                    │ - doc_context   │       │ - primary_doc   │   │
+  │                    │ - entity_cache  │       │ - fallback_all  │   │
+  │                    │ - turn_history  │       └────────┬────────┘   │
+  │                    └─────────────────┘                │            │
+  │                                                       ▼            │
+  │  ┌───────────────────────────────────────────────────────────────┐ │
+  │  │                    RETRIEVAL LAYER                            │ │
+  │  │  ┌─────────────┐  ┌─────────────┐  ┌─────────────────────┐   │ │
+  │  │  │ Vector      │  │ Lexical     │  │ Document Cache      │   │ │
+  │  │  │ (pgvector)  │  │ (FTS)       │  │ (conversation-scope)│   │ │
+  │  │  └──────┬──────┘  └──────┬──────┘  └──────────┬──────────┘   │ │
+  │  │         └────────────────┴───────────────────▼               │ │
+  │  │                          MERGE + DEDUPE                       │ │
+  │  └───────────────────────────────────────────────────────────────┘ │
+  │                                    │                               │
+  │                                    ▼                               │
+  │  ┌───────────────────────────────────────────────────────────────┐ │
+  │  │                    RERANKING LAYER                            │ │
+  │  │  ┌─────────────────────────────────────────────────────────┐  │ │
+  │  │  │  Cross-Encoder (mmarco) + Document Affinity Bonus       │  │ │
+  │  │  │  + Context Relevance Score                               │  │ │
+  │  │  └─────────────────────────────────────────────────────────┘  │ │
+  │  └───────────────────────────────────────────────────────────────┘ │
+  │                                    │                               │
+  │                                    ▼                               │
+  │  ┌───────────────────────────────────────────────────────────────┐ │
+  │  │                 CORRECTIVE EVALUATION                         │ │
+  │  │  ┌─────────────────────────────────────────────────────────┐  │ │
+  │  │  │  Is retrieval quality sufficient?                       │  │ │
+  │  │  │  - YES → Return results                                  │  │ │
+  │  │  │  - NO  → Expand search / Retry with different terms     │  │ │
+  │  │  └─────────────────────────────────────────────────────────┘  │ │
+  │  └───────────────────────────────────────────────────────────────┘ │
+  │                                                                     │
+  └─────────────────────────────────────────────────────────────────────┘
+
+  ---
+  Proposed Refactoring Plan
+
+  Phase 1: Conversation Context & Query Rewriting (Highest Impact)
+
+  New Components:
+  1. ConversationRAGContext - Tracks document context, entities, and turn history
+  2. QueryRewriter - Rewrites follow-up queries with context
+  3. DocumentAffinityRouter - Routes to known documents first
+
+  Phase 2: Adaptive Retrieval & Corrective RAG
+
+  New Components:
+  1. RetrievalQualityEvaluator - Scores retrieval quality
+  2. AdaptiveRetriever - Decides strategy based on query complexity
+  3. CorrectiveSearchLoop - Re-searches with different terms if quality is low
+
+  Phase 3: Enhanced Reranking
+
+  Improvements:
+  1. Add document continuity bonus to ranking
+  2. Consider ColBERT for late interaction (better for long documents)
+  3. Add context relevance scoring
+
+  ---
+  Should I Start the Refactoring?
+
+  Given the research, I recommend proper refactoring over quick fixes. The issues you're seeing are architectural, not configuration problems.
+
+  I can start with Phase 1 which would:
+  1. Add ConversationRAGContext to track document affinity
+  2. Implement QueryRewriter for context-aware query expansion
+  3. Add document-scoped search (search within known docs first)
+
+  This aligns with patterns from https://medium.com/decoded-by-datacast/llamaindex-vs-langchain-which-should-you-use-for-rag-pipelines-in-2025-f5a12a5d32b6 (context-aware filtering) and https://langchain-ai.github.io/langgraph/tutorials/rag/langgraph_adaptive_rag/.
+
+  Would you like me to proceed with Phase 1?
+
+✻ Brewed for 2m 9s
+
+❯ Would you plan it ahead first? 
+
+⏺ Absolutely. Let me enter plan mode to design a proper implementation strategy.
+                                                                   
+⏺ Entered plan mode
+  Claude is now exploring and designing an implementation approach.
+
+⏺ I'll start by exploring the codebase more deeply to understand existing patterns and design a proper implementation. Let me launch parallel exploration agents.
+
+⏺ 3 Explore agents finished (ctrl+o to expand)
+   ├─ Explore conversation context tracking · 28 tool uses · 63.6k tokens
+   │  ⎿  Done
+   ├─ Explore search pipeline and query flow · 41 tool uses · 53.4k tokens
+   │  ⎿  Done
+   └─ Explore query rewriting patterns · 35 tool uses · 47.9k tokens
+      ⎿  Done
+
+⏺ Excellent exploration results! I now have a comprehensive understanding of the codebase. Let me synthesize the findings and create a detailed implementation plan.
+
+⏺ Plan(Design agentic RAG implementation plan)
+  ⎿  Done (7 tool uses · 0 tokens · 17s)                                 
+
+  ⎿  You've hit your limit · resets 7am (Africa/Cairo)
+     /upgrade to increase your usage limit.
+
+✻ Brewed for 2m 29s
+
+
+

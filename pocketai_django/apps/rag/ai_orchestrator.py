@@ -1019,6 +1019,7 @@ class KnowledgeSearchService:
         allowed_upload_ids: Sequence[uuid.UUID] | None = None,
         allowed_collection_ids: Sequence[uuid.UUID] | None = None,
         allowed_explicit_upload_ids: Sequence[uuid.UUID] | None = None,
+        session_context: Mapping[str, object] | None = None,
     ) -> KnowledgeSearchResult:
         """
         Wrapper that runs knowledge retrieval and emits tracing spans for observability.
@@ -1049,6 +1050,7 @@ class KnowledgeSearchService:
                         allowed_upload_ids=allowed_upload_ids,
                         allowed_collection_ids=allowed_collection_ids,
                         allowed_explicit_upload_ids=allowed_explicit_upload_ids,
+                        session_context=session_context,
                     )
 
                 def _apply_db_timeouts() -> None:
@@ -1115,6 +1117,7 @@ class KnowledgeSearchService:
         allowed_upload_ids: Sequence[uuid.UUID] | None = None,
         allowed_collection_ids: Sequence[uuid.UUID] | None = None,
         allowed_explicit_upload_ids: Sequence[uuid.UUID] | None = None,
+        session_context: Mapping[str, object] | None = None,
     ) -> KnowledgeSearchResult:
         traits = traits or self.analyze_query(query, business_profile=business_profile)
         overall_start = time.perf_counter()
@@ -1389,6 +1392,7 @@ class KnowledgeSearchService:
             allowed_upload_ids=allowed_upload_ids,
             allowed_collection_ids=allowed_collection_ids,
             allowed_explicit_upload_ids=allowed_explicit_upload_ids,
+            session_context=session_context,
         )
         _rag_log(
             "table.search_decision",
@@ -1947,6 +1951,7 @@ class KnowledgeSearchService:
         allowed_upload_ids: Sequence[uuid.UUID] | None = None,
         allowed_collection_ids: Sequence[uuid.UUID] | None = None,
         allowed_explicit_upload_ids: Sequence[uuid.UUID] | None = None,
+        session_context: Mapping[str, object] | None = None,
     ) -> HybridSearchResult:
         business_id = getattr(business_profile, "id", None) if business_profile else None
         with tenant_context(business_id):
@@ -1961,6 +1966,7 @@ class KnowledgeSearchService:
                 allowed_upload_ids=allowed_upload_ids,
                 allowed_collection_ids=allowed_collection_ids,
                 allowed_explicit_upload_ids=allowed_explicit_upload_ids,
+                session_context=session_context,
             )
 
     def _search_free_text_inner(
@@ -1976,6 +1982,7 @@ class KnowledgeSearchService:
         allowed_upload_ids: Sequence[uuid.UUID] | None = None,
         allowed_collection_ids: Sequence[uuid.UUID] | None = None,
         allowed_explicit_upload_ids: Sequence[uuid.UUID] | None = None,
+        session_context: Mapping[str, object] | None = None,
     ) -> HybridSearchResult:
         with TRACER.start_as_current_span("knowledge.hybrid_search") as span:
             base_qs = self._base_chunk_queryset(
@@ -2156,6 +2163,7 @@ class KnowledgeSearchService:
                 traits=traits,
                 feature_state=feature_state,
                 table_context=table_context,
+                session_context=session_context,
             )
             latency_monitor.observe(
                 "rag.rerank",
@@ -2254,6 +2262,7 @@ class KnowledgeSearchService:
         allowed_upload_ids: Sequence[uuid.UUID] | None = None,
         allowed_collection_ids: Sequence[uuid.UUID] | None = None,
         allowed_explicit_upload_ids: Sequence[uuid.UUID] | None = None,
+        session_context: Mapping[str, object] | None = None,
     ) -> tuple[ChunkResult, ...]:
         alias_result = alias_result or AliasSearchResult(tuple(), {})
         if alias_result.short_circuit and alias_result.hits:
@@ -2274,6 +2283,7 @@ class KnowledgeSearchService:
             allowed_upload_ids=allowed_upload_ids,
             allowed_collection_ids=allowed_collection_ids,
             allowed_explicit_upload_ids=allowed_explicit_upload_ids,
+            session_context=session_context,
         )
         if diagnostics is not None:
             diagnostics["vector_distance_ceiling"] = ceiling
@@ -2310,6 +2320,7 @@ class KnowledgeSearchService:
             traits=traits,
             feature_state=feature_state,
             table_context=table_context,
+            session_context=session_context,
         )
         hybrid.diagnostics["rerank_duration_ms"] = rerank_ms
         hybrid.diagnostics.update(rerank_diag)
@@ -3551,6 +3562,7 @@ class KnowledgeSearchService:
         traits: QueryTraits,
         feature_state: FeatureState | None = None,
         table_context: Mapping[str, object] | None = None,
+        session_context: Mapping[str, object] | None = None,
     ) -> tuple[list[ChunkResult], int, dict[str, object]]:
         if not candidates:
             return (
@@ -3648,6 +3660,22 @@ class KnowledgeSearchService:
                 if index_type in (None, "text"):
                     text_penalty = self._text_quality_penalty(chunk_metadata)
 
+            # Document continuity bonus (Conversation-Aware RAG)
+            # Boosts chunks from the same document being discussed in conversation
+            document_continuity_bonus = 0.0
+            if session_context:
+                primary_upload_id = session_context.get("primary_upload_id")
+                if primary_upload_id:
+                    chunk_upload_id = str(cand.chunk.upload_id) if cand.chunk.upload_id else None
+                    if chunk_upload_id and chunk_upload_id == str(primary_upload_id):
+                        # Read weight from settings, default to 0.35
+                        try:
+                            document_continuity_bonus = float(
+                                getattr(settings, "RAG_WEIGHT_DOCUMENT_CONTINUITY", 0.35)
+                            )
+                        except (TypeError, ValueError):
+                            document_continuity_bonus = 0.35
+
             combined = (
                 self.rerank_weights["vector"] * vector_score
                 + self.rerank_weights["lexical"] * lexical_score
@@ -3655,6 +3683,7 @@ class KnowledgeSearchService:
                 + self.rerank_weights["entity"] * entity_bonus
                 + self.rerank_weights["recency"] * recency_score
                 + table_header_bonus
+                + document_continuity_bonus  # NEW: Document continuity bonus
                 - quality_penalty  # NEW: Subtract quality penalty
                 - table_specific_penalty
                 - text_penalty
@@ -3666,6 +3695,7 @@ class KnowledgeSearchService:
                 "entity": round(entity_bonus, 4),
                 "recency": round(recency_score, 4),
                 "table_header_bonus": round(table_header_bonus, 4),
+                "document_continuity_bonus": round(document_continuity_bonus, 4),  # NEW: Include in diagnostics
                 "quality_penalty": round(quality_penalty, 4),  # NEW: Include in diagnostics
                 "table_specific_penalty": round(table_specific_penalty, 4),
                 "text_penalty": round(text_penalty, 4),

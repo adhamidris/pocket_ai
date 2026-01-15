@@ -2500,31 +2500,41 @@ class McpOrchestratorService:
             )
 
     def _hydrate_seen_items(self, conversation: Conversation, context: ToolExecutionContext) -> None:
-        """Load previously-shown chunk/row IDs from conversation metadata.
+        """Load previously-shown chunk/row IDs and document context from conversation metadata.
 
         This enables "are there more?" follow-up queries by tracking what has already
         been shown to the user, allowing the system to return NEW items on subsequent queries.
+
+        Also hydrates document context for conversation-aware RAG (query rewriting,
+        document affinity routing, ranking bonuses).
         """
         metadata = conversation.metadata if isinstance(conversation.metadata, Mapping) else {}
+
+        # Hydrate seen items (existing behavior)
         seen_data = metadata.get("mcp_seen_items")
-        if not isinstance(seen_data, Mapping):
-            return
+        if isinstance(seen_data, Mapping):
+            chunk_ids = seen_data.get("chunk_ids")
+            if isinstance(chunk_ids, list):
+                context.seen_chunk_ids = {str(cid) for cid in chunk_ids if cid}
 
-        chunk_ids = seen_data.get("chunk_ids")
-        if isinstance(chunk_ids, list):
-            context.seen_chunk_ids = {str(cid) for cid in chunk_ids if cid}
+            row_ids = seen_data.get("row_ids")
+            if isinstance(row_ids, list):
+                context.seen_row_ids = {str(rid) for rid in row_ids if rid}
 
-        row_ids = seen_data.get("row_ids")
-        if isinstance(row_ids, list):
-            context.seen_row_ids = {str(rid) for rid in row_ids if rid}
+        # Hydrate document context (NEW: Conversation-Aware RAG)
+        doc_context_data = metadata.get("mcp_document_context")
+        if isinstance(doc_context_data, Mapping):
+            context.hydrate_document_context(doc_context_data)
 
-        if context.seen_chunk_ids or context.seen_row_ids:
+        if context.seen_chunk_ids or context.seen_row_ids or context.primary_upload_id:
             structured_log(
                 "mcp",
                 "cache.seen_items_hydrate",
                 {
                     "seen_chunks": len(context.seen_chunk_ids),
                     "seen_rows": len(context.seen_row_ids),
+                    "primary_upload_id": context.primary_upload_id,
+                    "referenced_docs": len(context.referenced_upload_ids),
                 },
                 indent=1,
                 context={
@@ -2535,10 +2545,12 @@ class McpOrchestratorService:
             )
 
     def _persist_seen_items(self, conversation: Conversation, context: ToolExecutionContext) -> None:
-        """Save newly-shown chunk/row IDs to conversation metadata.
+        """Save newly-shown chunk/row IDs and document context to conversation metadata.
 
         Combines items from previous turns with items shown this turn, capped
         to prevent unbounded growth.
+
+        Also persists document context for conversation-aware RAG.
         """
         MAX_SEEN_ITEMS = 200  # Cap to prevent metadata bloat
 
@@ -2546,22 +2558,33 @@ class McpOrchestratorService:
         new_chunk_ids = all_shown.get("chunk_ids", set())
         new_row_ids = all_shown.get("row_ids", set())
 
-        # Skip if nothing new was shown this turn
-        if not context.newly_shown_chunk_ids and not context.newly_shown_row_ids:
+        # Check if we have anything to persist (seen items OR document context)
+        has_seen_items = context.newly_shown_chunk_ids or context.newly_shown_row_ids
+        has_document_context = context.primary_upload_id or context.referenced_upload_ids
+
+        if not has_seen_items and not has_document_context:
             return
 
         metadata = conversation.metadata if isinstance(conversation.metadata, Mapping) else {}
         new_metadata = dict(metadata)
 
-        # Cap the lists to prevent unbounded growth (keep most recent)
-        chunk_list = list(new_chunk_ids)[-MAX_SEEN_ITEMS:]
-        row_list = list(new_row_ids)[-MAX_SEEN_ITEMS:]
+        # Persist seen items (existing behavior)
+        if has_seen_items:
+            # Cap the lists to prevent unbounded growth (keep most recent)
+            chunk_list = list(new_chunk_ids)[-MAX_SEEN_ITEMS:]
+            row_list = list(new_row_ids)[-MAX_SEEN_ITEMS:]
 
-        new_metadata["mcp_seen_items"] = {
-            "chunk_ids": chunk_list,
-            "row_ids": row_list,
-            "updated_at": timezone.now().isoformat(),
-        }
+            new_metadata["mcp_seen_items"] = {
+                "chunk_ids": chunk_list,
+                "row_ids": row_list,
+                "updated_at": timezone.now().isoformat(),
+            }
+
+        # Persist document context (NEW: Conversation-Aware RAG)
+        if has_document_context:
+            doc_context = context.get_document_context_for_persistence()
+            doc_context["updated_at"] = timezone.now().isoformat()
+            new_metadata["mcp_document_context"] = doc_context
 
         conversation.metadata = new_metadata
         conversation.save(update_fields=["metadata"])
@@ -2572,8 +2595,10 @@ class McpOrchestratorService:
             {
                 "newly_shown_chunks": len(context.newly_shown_chunk_ids),
                 "newly_shown_rows": len(context.newly_shown_row_ids),
-                "total_chunks": len(chunk_list),
-                "total_rows": len(row_list),
+                "total_chunks": len(list(new_chunk_ids)[-MAX_SEEN_ITEMS:]) if has_seen_items else 0,
+                "total_rows": len(list(new_row_ids)[-MAX_SEEN_ITEMS:]) if has_seen_items else 0,
+                "primary_upload_id": context.primary_upload_id,
+                "referenced_docs": len(context.referenced_upload_ids),
             },
             indent=1,
             context={

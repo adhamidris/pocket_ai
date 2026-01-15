@@ -2309,6 +2309,85 @@ def _search_knowledge_handler(
     queries: list[str] = []
     seen_queries: set[str] = set()
 
+    # =========================================================================
+    # DIAGNOSTIC: Log document context state at search start
+    # =========================================================================
+    structured_log(
+        "mcp",
+        "search.context_state",
+        {
+            "query": primary_query,
+            "primary_upload_id": context.primary_upload_id if context else None,
+            "primary_document_title": context.get_primary_document_title() if context else None,
+            "referenced_upload_ids": list(context.referenced_upload_ids)[:5] if context else [],
+            "search_history_count": len(context.search_history) if context else 0,
+        },
+        context={
+            "conversation": conversation.id,
+            "business": conversation.business_profile_id,
+        },
+        logger_obj=logger,
+    )
+
+    # =========================================================================
+    # Context-Aware Query Rewriting (Conversation-Aware RAG)
+    # =========================================================================
+    # Rewrite follow-up queries to include document context for better retrieval.
+    # Example: "fees for withdrawal" -> "Trade Bills EN: fees for withdrawal"
+    rewrite_result = None
+    rewrite_enabled = str(getattr(settings, "RAG_CONTEXT_QUERY_REWRITE_ENABLED", "true")).lower() in {"1", "true", "yes"}
+    if rewrite_enabled and primary_query:
+        try:
+            from apps.rag.query_rewriter import (
+                build_rewrite_context_from_tool_context,
+                get_query_rewriter,
+            )
+
+            rewriter = get_query_rewriter()
+            rewrite_context = build_rewrite_context_from_tool_context(context)
+            rewrite_result = rewriter.rewrite(primary_query, rewrite_context)
+
+            if rewrite_result.context_injected:
+                primary_query = rewrite_result.rewritten_query
+                structured_log(
+                    "mcp",
+                    "search.query_rewrite",
+                    {
+                        "original_query": rewrite_result.original_query,
+                        "rewritten_query": rewrite_result.rewritten_query,
+                        "strategy": rewrite_result.rewrite_strategy,
+                        "confidence": rewrite_result.confidence,
+                        "primary_document": context.primary_upload_id,
+                    },
+                    context={
+                        "conversation": conversation.id,
+                        "business": conversation.business_profile_id,
+                    },
+                    logger_obj=logger,
+                )
+            else:
+                # Log why rewrite was skipped
+                structured_log(
+                    "mcp",
+                    "search.query_rewrite_skipped",
+                    {
+                        "query": primary_query,
+                        "strategy": rewrite_result.rewrite_strategy,
+                        "confidence": rewrite_result.confidence,
+                        "primary_upload_id": context.primary_upload_id if context else None,
+                        "primary_document_title": rewrite_context.primary_document_title,
+                        "has_previous_queries": bool(rewrite_context.previous_queries),
+                    },
+                    context={
+                        "conversation": conversation.id,
+                        "business": conversation.business_profile_id,
+                    },
+                    logger_obj=logger,
+                )
+        except Exception as exc:
+            # Don't fail the search if rewriting fails
+            logger.warning("Query rewriting failed: %s", exc, exc_info=True)
+
     def _append_query(candidate: str) -> None:
         normalized = candidate.strip()
         if not normalized:
@@ -2644,15 +2723,106 @@ def _search_knowledge_handler(
         if precomputed_result is not None:
             result = precomputed_result
         else:
-            result = service.search(
-                business_profile=conversation.business_profile,
-                query=query_text,
-                limit=limit_for_run,
-                identifier_filter=identifier_filter,
-                allowed_upload_ids=combined_upload_ids,
-                allowed_collection_ids=agent_collection_ids,
-                allowed_explicit_upload_ids=agent_explicit_upload_ids,
-            )
+            # Build session_context for conversation-aware ranking
+            session_context = {
+                "primary_upload_id": context.primary_upload_id,
+                "referenced_upload_ids": list(context.referenced_upload_ids),
+                "document_context": context.document_context,
+            } if context else None
+
+            # =========================================================================
+            # Two-Phase Search (Document Affinity Routing)
+            # =========================================================================
+            # If we have a primary document from previous conversation turns,
+            # first search within that document, then fall back to full search
+            # if insufficient results are found.
+
+            affinity_enabled = str(getattr(settings, "RAG_DOCUMENT_AFFINITY_SEARCH_ENABLED", "true")).lower() in {"1", "true", "yes"}
+            affinity_min_results = int(getattr(settings, "RAG_DOCUMENT_AFFINITY_MIN_RESULTS", 2) or 2)
+            result = None
+
+            if affinity_enabled and context and context.primary_upload_id:
+                try:
+                    primary_uuid = uuid.UUID(context.primary_upload_id)
+                    # Phase 1: Search within primary document only
+                    affinity_upload_ids = [primary_uuid]
+                    # Include explicit upload IDs if they exist
+                    if combined_upload_ids is not None:
+                        # Only search primary doc if it's in the allowed set
+                        if primary_uuid in combined_upload_ids:
+                            affinity_upload_ids = [primary_uuid]
+                        else:
+                            affinity_upload_ids = None  # Primary not in allowed, skip affinity
+
+                    if affinity_upload_ids:
+                        affinity_result = service.search(
+                            business_profile=conversation.business_profile,
+                            query=query_text,
+                            limit=limit_for_run,
+                            identifier_filter=identifier_filter,
+                            allowed_upload_ids=affinity_upload_ids,
+                            allowed_collection_ids=agent_collection_ids,
+                            allowed_explicit_upload_ids=agent_explicit_upload_ids,
+                            session_context=session_context,
+                        )
+                        # Check if we got enough results from affinity search
+                        affinity_snippet_count = len(getattr(affinity_result, "snippets", []) or [])
+                        if affinity_snippet_count >= affinity_min_results:
+                            result = affinity_result
+                            structured_log(
+                                "mcp",
+                                "search.affinity_hit",
+                                {
+                                    "query": query_text,
+                                    "primary_upload_id": context.primary_upload_id,
+                                    "snippets_found": affinity_snippet_count,
+                                    "limit": limit_for_run,
+                                },
+                                context={"conversation": conversation.id, "business": conversation.business_profile_id},
+                                logger_obj=logger,
+                            )
+                        else:
+                            structured_log(
+                                "mcp",
+                                "search.affinity_fallback",
+                                {
+                                    "query": query_text,
+                                    "primary_upload_id": context.primary_upload_id,
+                                    "affinity_snippets": affinity_snippet_count,
+                                    "min_required": affinity_min_results,
+                                    "reason": "insufficient_results",
+                                },
+                                context={"conversation": conversation.id, "business": conversation.business_profile_id},
+                                logger_obj=logger,
+                            )
+                except (ValueError, TypeError) as e:
+                    # Invalid UUID, skip affinity search
+                    structured_log(
+                        "mcp",
+                        "search.affinity_skip",
+                        {
+                            "query": query_text,
+                            "primary_upload_id": context.primary_upload_id if context else None,
+                            "reason": "invalid_uuid",
+                            "error": str(e)[:100],
+                        },
+                        context={"conversation": conversation.id, "business": conversation.business_profile_id},
+                        logger_obj=logger,
+                        level=logging.WARNING,
+                    )
+
+            # Phase 2: Full search (if affinity didn't return enough results)
+            if result is None:
+                result = service.search(
+                    business_profile=conversation.business_profile,
+                    query=query_text,
+                    limit=limit_for_run,
+                    identifier_filter=identifier_filter,
+                    allowed_upload_ids=combined_upload_ids,
+                    allowed_collection_ids=agent_collection_ids,
+                    allowed_explicit_upload_ids=agent_explicit_upload_ids,
+                    session_context=session_context,
+                )
         dataset_candidates: list[dict[str, object]] = []
         combined_snippets: list[object] = []
         routing_enabled = str(getattr(settings, "DATASET_KEY_INDEX_ROUTING_ENABLED", "true")).lower() in {"1", "true", "yes"}
@@ -2720,6 +2890,32 @@ def _search_knowledge_handler(
                         )
         combined_snippets.extend(list(getattr(result, "snippets", []) or []))
         snippet_payloads = _serialize_snippets(combined_snippets)
+
+        # =====================================================================
+        # Document Context Tracking (Conversation-Aware RAG)
+        # =====================================================================
+        # Track which documents were referenced in search results for follow-up queries.
+        # This enables query rewriting and document affinity routing.
+        doc_context_enabled = str(getattr(settings, "RAG_DOCUMENT_CONTEXT_ENABLED", "true")).lower() in {"1", "true", "yes"}
+        if doc_context_enabled:
+            for payload in snippet_payloads:
+                upload_id = payload.get("upload_id") or payload.get("document_id")
+                if upload_id:
+                    # Extract document title from snippet
+                    title = payload.get("title", "")
+                    if title and " – " in title:
+                        # Format is often "Document Name – chunk N"
+                        title = title.split(" – ")[0].strip()
+                    elif title and " - " in title:
+                        title = title.split(" - ")[0].strip()
+
+                    context.track_document_reference(
+                        upload_id=str(upload_id),
+                        title=title,
+                        stage=payload.get("search_stage", "unknown"),
+                        confidence=payload.get("confidence_score") if isinstance(payload.get("confidence_score"), (int, float)) else None,
+                    )
+
         if locked_key and locked_value:
             locked_val_norm = str(locked_value).strip()
             filtered_snippets = []
