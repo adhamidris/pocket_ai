@@ -28,6 +28,54 @@ from django.conf import settings
 
 logger = logging.getLogger(__name__)
 
+_STOPWORDS = {
+    "a",
+    "an",
+    "and",
+    "are",
+    "as",
+    "at",
+    "be",
+    "been",
+    "by",
+    "for",
+    "from",
+    "how",
+    "i",
+    "in",
+    "is",
+    "it",
+    "its",
+    "me",
+    "my",
+    "of",
+    "on",
+    "or",
+    "our",
+    "please",
+    "show",
+    "tell",
+    "that",
+    "the",
+    "their",
+    "them",
+    "they",
+    "this",
+    "to",
+    "what",
+    "with",
+    "you",
+    "your",
+}
+
+
+def _tokenize(text: str) -> list[str]:
+    return [token for token in re.findall(r"[\w']+", (text or "").lower()) if token]
+
+
+def _significant_tokens(text: str) -> set[str]:
+    return {token for token in _tokenize(text) if len(token) >= 3 and token not in _STOPWORDS}
+
 
 @dataclass(frozen=True)
 class RewriteContext:
@@ -204,35 +252,57 @@ class ContextAwareQueryRewriter:
             Tuple of (is_followup, confidence)
         """
         confidence = 0.0
-        tokens = query.lower().split()
+        tokens = _tokenize(query)
+        token_count = len(tokens)
+        query_significant = {token for token in tokens if len(token) >= 3 and token not in _STOPWORDS}
 
-        # Short queries are more likely to be follow-ups
-        if len(tokens) <= self.MAX_FOLLOWUP_QUERY_LENGTH:
-            confidence += 0.2
+        # Short queries are more likely to be follow-ups, but shortness alone is not enough.
+        if token_count <= self.MAX_FOLLOWUP_QUERY_LENGTH:
+            confidence += 0.10
+        if token_count <= 6:
+            confidence += 0.10
+        if token_count <= 3:
+            confidence += 0.10
 
         # Check for explicit follow-up indicators
         for pattern in self._followup_patterns:
             if pattern.search(query):
-                confidence += 0.4
+                confidence += 0.35
                 break
 
         # Check for pronouns that reference previous context
         for pattern in self._pronoun_patterns:
             if pattern.search(query):
-                confidence += 0.3
+                confidence += 0.25
                 break
 
-        # Check if query shares tokens with primary document title
+        title_overlap = 0
         if context.primary_document_title:
-            title_tokens = set(context.primary_document_title.lower().split())
-            query_tokens = set(tokens)
-            # If query shares NO tokens with document title, more likely a follow-up
-            if not (title_tokens & query_tokens):
-                confidence += 0.1
+            title_tokens = _significant_tokens(context.primary_document_title)
+            title_overlap = len(title_tokens & query_significant) if title_tokens else 0
+            if title_overlap >= 2:
+                confidence += 0.25
+            elif title_overlap == 1:
+                confidence += 0.15
 
-        # Check if this is the first query (not a follow-up by definition)
-        if not context.previous_queries:
-            confidence *= 0.5  # Reduce confidence for first query
+        prev_overlap = 0
+        if context.previous_queries:
+            prev_tokens = _significant_tokens(context.previous_queries[-1])
+            prev_overlap = len(prev_tokens & query_significant) if prev_tokens else 0
+            if prev_overlap >= 2:
+                confidence += 0.25
+            elif prev_overlap == 1:
+                confidence += 0.15
+
+        # Guardrail: avoid rewriting "new topic" short queries with no overlap or markers.
+        # After a document is read, the system also applies document affinity search; we
+        # keep rewriting conservative to prevent over-biasing unrelated queries.
+        if confidence >= self.min_confidence and token_count <= self.MAX_FOLLOWUP_QUERY_LENGTH:
+            has_marker = any(pattern.search(query) for pattern in self._followup_patterns) or any(
+                pattern.search(query) for pattern in self._pronoun_patterns
+            )
+            if not has_marker and title_overlap == 0 and prev_overlap == 0:
+                confidence = min(confidence, self.min_confidence - 0.01)
 
         is_followup = confidence >= self.min_confidence
         return is_followup, min(confidence, 1.0)
@@ -249,13 +319,16 @@ class ContextAwareQueryRewriter:
         if title_lower in query_lower:
             return True
 
-        # Check for significant word overlap (more than half of title words)
-        title_words = set(title_lower.split())
-        query_words = set(query_lower.split())
-        overlap = title_words & query_words
-
-        if len(overlap) >= len(title_words) / 2:
-            return True
+        # Check for significant word overlap (more than half of significant title words).
+        # Require at least 2 overlapping tokens (where possible) to avoid treating generic
+        # overlaps like "bills" as an explicit document mention.
+        title_tokens = _significant_tokens(title_lower)
+        query_tokens = _significant_tokens(query_lower)
+        if title_tokens:
+            overlap = title_tokens & query_tokens
+            min_required = 2 if len(title_tokens) >= 2 else 1
+            if len(overlap) >= min_required and len(overlap) >= len(title_tokens) / 2:
+                return True
 
         return False
 
@@ -271,7 +344,7 @@ class ContextAwareQueryRewriter:
             return f"{query} (from {title})"
 
 
-def build_rewrite_context_from_tool_context(tool_context) -> RewriteContext:
+def build_rewrite_context_from_tool_context(tool_context, *, conversation=None) -> RewriteContext:
     """
     Build a RewriteContext from a ToolExecutionContext.
 
@@ -290,13 +363,35 @@ def build_rewrite_context_from_tool_context(tool_context) -> RewriteContext:
     # Get document context
     doc_context = tool_context.get_document_context_for_query()
 
-    # Extract previous queries from search history
-    previous_queries = []
-    search_history = getattr(tool_context, "search_history", [])
-    for entry in search_history[-5:]:  # Last 5 queries
-        query = entry.get("query") if isinstance(entry, Mapping) else None
-        if query:
-            previous_queries.append(str(query))
+    previous_queries: list[str] = []
+
+    # Prefer conversation-level customer messages so follow-up detection works across turns.
+    if conversation is not None:
+        try:
+            from apps.conversations.models import ConversationSender
+
+            raw_messages = list(
+                conversation.messages.filter(sender=ConversationSender.CUSTOMER)
+                .order_by("-sent_at", "-created_at")
+                .values_list("body", flat=True)[:6]
+            )
+            raw_messages.reverse()  # chronological
+            if raw_messages:
+                # Drop the most recent customer message (current query) so we only use prior context.
+                raw_messages = raw_messages[:-1]
+            for body in raw_messages[-5:]:
+                if isinstance(body, str) and body.strip():
+                    previous_queries.append(body.strip())
+        except Exception:
+            previous_queries = []
+
+    # Fallback to in-turn search history when conversation messages are unavailable.
+    if not previous_queries:
+        search_history = getattr(tool_context, "search_history", [])
+        for entry in search_history[-5:]:  # Last 5 queries
+            query = entry.get("query") if isinstance(entry, Mapping) else None
+            if query:
+                previous_queries.append(str(query))
 
     return RewriteContext(
         primary_document_title=doc_context.get("primary_document_title"),

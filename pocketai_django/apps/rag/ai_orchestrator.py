@@ -725,6 +725,19 @@ class KnowledgeSearchService:
         # Hierarchical table retrieval: when parent/preview chunks are found, expand to row chunks
         self.table_row_expansion_limit = max(5, int(getattr(settings, "RAG_TABLE_ROW_EXPANSION_LIMIT", 20)))
         self.table_row_expansion_max_parent_context = max(1, int(getattr(settings, "RAG_TABLE_ROW_EXPANSION_MAX_PARENT_CONTEXT", 2)))
+
+        # Parallel table search: run table search alongside vector search (not as fallback)
+        # This fixes semantic collisions where vector search confidently returns wrong results
+        # (e.g., "Withdraw Bills for Collection" matching ATM withdrawal content)
+        self.parallel_table_search_enabled = str(
+            getattr(settings, "RAG_PARALLEL_TABLE_SEARCH_ENABLED", "true")
+        ).lower() in {"1", "true", "yes"}
+        self.parallel_table_min_ratio = float(
+            getattr(settings, "RAG_PARALLEL_TABLE_MIN_RATIO", 0.25)
+        )  # Min table upload ratio to trigger parallel search
+        self.parallel_table_rrf_k = int(
+            getattr(settings, "RAG_PARALLEL_TABLE_RRF_K", 60)
+        )  # RRF K parameter for rank fusion
         self.table_header_token_cache_limit = max(
             32,
             int(getattr(settings, "RAG_TABLE_HEADER_TOKEN_CACHE", 256)),
@@ -1519,6 +1532,7 @@ class KnowledgeSearchService:
         table_snippets: tuple[KnowledgeSnippet, ...] = tuple()
         table_reason: str | None = None
         should_run_table = False
+        is_parallel_table_search = False  # NEW: Track if this is parallel (not fallback) search
         table_duration_ms: int | None = None
         matched_columns_query = table_context.get("matched_columns_query")
         matched_columns_tokens = table_context.get("matched_columns_tokens")
@@ -1533,7 +1547,36 @@ class KnowledgeSearchService:
             bool((hit.chunk.metadata or {}).get("is_table_chunk"))
             for hit in chunk_hits[: self.table_chunk_sample_limit]
         )
-        if tables_available and not table_blocked:
+
+        # NEW: Parallel table search - run table search alongside vector search, not as fallback
+        # This fixes semantic collisions where vector search returns confident but wrong results
+        # (e.g., "Withdraw Bills for Collection" matching ATM withdrawal content)
+        table_upload_ratio = float(table_context.get("table_upload_ratio") or 0)
+        should_run_parallel_table = (
+            self.parallel_table_search_enabled
+            and tables_available
+            and not table_blocked
+            and chunk_hits  # We have vector results (parallel mode, not fallback)
+            and table_upload_ratio >= self.parallel_table_min_ratio
+        )
+
+        if should_run_parallel_table:
+            should_run_table = True
+            is_parallel_table_search = True
+            table_reason = "parallel_multi_strategy"
+            _rag_log(
+                "parallel_table.triggered",
+                {
+                    "query": traits.normalized,
+                    "table_upload_ratio": round(table_upload_ratio, 2),
+                    "min_ratio": self.parallel_table_min_ratio,
+                    "chunk_hits": len(chunk_hits),
+                },
+                indent=2,
+                context={"business": business_profile.id},
+            )
+        elif tables_available and not table_blocked:
+            # Original fallback logic (kept for cases where parallel is disabled or ratio too low)
             if not chunk_hits:
                 should_run_table = True
                 table_reason = "no_chunk_candidates"
@@ -1593,6 +1636,64 @@ class KnowledgeSearchService:
             diagnostics["table_duration_ms"] = table_duration_ms
 
         if table_snippets:
+            # NEW: For parallel table search, use RRF fusion to merge vector + table results
+            if is_parallel_table_search and chunk_hits:
+                diagnostics["path"] = "parallel_rrf"
+                diagnostics["reason"] = "parallel_multi_strategy"
+                diagnostics["table_reason"] = table_reason
+
+                # Convert chunk_hits to snippets for RRF fusion
+                vector_snippets = list(
+                    self._search_chunks(
+                        chunk_hits,
+                        limit=limit * 2,  # Get more candidates for fusion
+                        business_profile=business_profile,
+                        pathway="hybrid",
+                        query=traits.normalized or traits.original or query,
+                    )
+                )
+
+                # RRF fusion of table + vector results
+                rrf_merged = self._rrf_fusion_snippets(
+                    vector_snippets=vector_snippets,
+                    table_snippets=list(table_snippets),
+                    k=self.parallel_table_rrf_k,
+                )
+
+                # Apply reranking to merged results
+                blended, snippet_ms = self._snippet_rerank(
+                    tuple(rrf_merged[:limit * 2]),  # Rerank top candidates
+                    query_text=traits.normalized or traits.original or query,
+                    tokens=traits.tokens,
+                )
+                blended = blended[:limit]  # Final limit
+
+                diagnostics["snippet_rerank_ms"] = snippet_ms
+                diagnostics["total_duration_ms"] = self._duration_ms(overall_start)
+                diagnostics["snippet_count"] = len(blended)
+                diagnostics["rrf_vector_count"] = len(vector_snippets)
+                diagnostics["rrf_table_count"] = len(table_snippets)
+                diagnostics["rrf_merged_count"] = len(rrf_merged)
+
+                status = "ok" if blended else "not_found"
+                result_obj = KnowledgeSearchResult(snippets=tuple(blended), status=status, diagnostics=diagnostics)
+                self._result_cache_set(cache_key, result_obj, limit=limit)
+                self._session_cache_set(session_cache, cache_key, result_obj, limit=limit)
+                self._record_retrieval_event(
+                    business_profile=business_profile,
+                    traits=traits,
+                    alias_result=alias_result,
+                    result=result_obj,
+                    feature_state=feature_state,
+                )
+                self._log_search_summary(
+                    business_profile=business_profile,
+                    request_id=request_id,
+                    result=result_obj,
+                )
+                return result_obj
+
+            # Original blending logic (for fallback table search, not parallel)
             diagnostics["path"] = "table_direct" if not chunk_hits else "table_blended"
             diagnostics["reason"] = table_reason or diagnostics.get("reason") or "table_search"
             if table_reason:
@@ -5633,6 +5734,75 @@ class KnowledgeSearchService:
             return 0
         elapsed = (time.perf_counter() - start) * 1000
         return int(max(0.0, elapsed))
+
+    def _rrf_fusion_snippets(
+        self,
+        *,
+        vector_snippets: Sequence[KnowledgeSnippet],
+        table_snippets: Sequence[KnowledgeSnippet],
+        k: int = 60,
+    ) -> list[KnowledgeSnippet]:
+        """
+        Merge vector and table search results using Reciprocal Rank Fusion (RRF).
+
+        RRF formula: score(d) = Σ 1/(k + rank(d))
+
+        This allows exact-match table results to compete fairly with semantic
+        vector results, fixing cases where vector search confidently returns
+        wrong results (e.g., "Withdraw Bills" matching "ATM withdrawal").
+
+        Args:
+            vector_snippets: Results from vector/hybrid search
+            table_snippets: Results from table-direct search
+            k: RRF constant (higher = more weight to lower-ranked items)
+
+        Returns:
+            Merged and sorted list of snippets
+        """
+        # Track RRF scores by snippet ID
+        rrf_scores: dict[str, float] = {}
+        snippet_map: dict[str, KnowledgeSnippet] = {}
+
+        # Score vector results
+        for rank, snippet in enumerate(vector_snippets, start=1):
+            snippet_id = str(snippet.id)
+            rrf_scores[snippet_id] = rrf_scores.get(snippet_id, 0.0) + 1.0 / (k + rank)
+            if snippet_id not in snippet_map:
+                snippet_map[snippet_id] = snippet
+
+        # Score table results (table results get a small boost for exact matching)
+        # The boost is implicit: table results that also appear in vector results
+        # get scores from both, naturally rising to the top
+        for rank, snippet in enumerate(table_snippets, start=1):
+            snippet_id = str(snippet.id)
+            rrf_scores[snippet_id] = rrf_scores.get(snippet_id, 0.0) + 1.0 / (k + rank)
+            if snippet_id not in snippet_map:
+                snippet_map[snippet_id] = snippet
+
+        # Sort by RRF score descending
+        sorted_ids = sorted(rrf_scores.keys(), key=lambda x: rrf_scores[x], reverse=True)
+
+        # Build merged result list
+        merged: list[KnowledgeSnippet] = []
+        for snippet_id in sorted_ids:
+            snippet = snippet_map[snippet_id]
+            merged.append(snippet)
+
+        _rag_log(
+            "parallel_table.rrf_fusion",
+            {
+                "vector_count": len(vector_snippets),
+                "table_count": len(table_snippets),
+                "merged_count": len(merged),
+                "top_5_scores": [
+                    {"id": sid[:8], "score": round(rrf_scores[sid], 4)}
+                    for sid in sorted_ids[:5]
+                ],
+            },
+            indent=2,
+        )
+
+        return merged
 
     def _record_retrieval_event(
         self,

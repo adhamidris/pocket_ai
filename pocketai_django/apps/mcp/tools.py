@@ -2336,7 +2336,7 @@ def _search_knowledge_handler(
     # Example: "fees for withdrawal" -> "Trade Bills EN: fees for withdrawal"
     rewrite_result = None
     rewrite_enabled = str(getattr(settings, "RAG_CONTEXT_QUERY_REWRITE_ENABLED", "true")).lower() in {"1", "true", "yes"}
-    if rewrite_enabled and primary_query:
+    if rewrite_enabled and primary_query and context and context.has_strong_primary_document():
         try:
             from apps.rag.query_rewriter import (
                 build_rewrite_context_from_tool_context,
@@ -2344,7 +2344,7 @@ def _search_knowledge_handler(
             )
 
             rewriter = get_query_rewriter()
-            rewrite_context = build_rewrite_context_from_tool_context(context)
+            rewrite_context = build_rewrite_context_from_tool_context(context, conversation=conversation)
             rewrite_result = rewriter.rewrite(primary_query, rewrite_context)
 
             if rewrite_result.context_injected:
@@ -2741,7 +2741,7 @@ def _search_knowledge_handler(
             affinity_min_results = int(getattr(settings, "RAG_DOCUMENT_AFFINITY_MIN_RESULTS", 2) or 2)
             result = None
 
-            if affinity_enabled and context and context.primary_upload_id:
+            if affinity_enabled and context and context.primary_upload_id and context.has_strong_primary_document():
                 try:
                     primary_uuid = uuid.UUID(context.primary_upload_id)
                     # Phase 1: Search within primary document only
@@ -4188,6 +4188,16 @@ def _read_document_handler(
     ingestion_warnings = _build_ingestion_warnings(snippet_payloads, knowledge_reads)
     for warning in ingestion_warnings:
         context.add_ingestion_warning(warning)
+
+    if gating_upload_id:
+        upload_title = (
+            getattr(upload_source, "display_name", None)
+            or getattr(upload_source, "filename", None)
+            or getattr(upload_source, "source_name", None)
+            or ""
+        )
+        upload_title = upload_title.strip() if isinstance(upload_title, str) else ""
+        context.track_document_read(str(gating_upload_id), title=upload_title or None)
 
     metrics = _log_tool_metrics(
         tool="read_document",

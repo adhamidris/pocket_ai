@@ -501,16 +501,17 @@ class ChatPortalClient {
     this.streamController = controller;
 
     try {
+      const requestBody = {
+        session_token: this.sessionToken,
+        body: message,
+      };
       const response = await fetch(this.endpoints.streamSend, {
         method: "POST",
         headers: {
           ...this.jsonHeaders(),
           Accept: "text/event-stream",
         },
-        body: JSON.stringify({
-          session_token: this.sessionToken,
-          body: message,
-        }),
+        body: JSON.stringify(requestBody),
         signal: controller.signal,
       });
 
@@ -1217,6 +1218,13 @@ class ChatPortalClient {
     metadataRow.className = "mt-2 text-xs text-muted-foreground space-y-1 hidden";
     content.appendChild(metadataRow);
 
+    if (message.sender === "ai") {
+      const debugRow = document.createElement("div");
+      debugRow.dataset.messageDebug = "true";
+      debugRow.className = "mt-2 text-xs text-muted-foreground hidden";
+      content.appendChild(debugRow);
+    }
+
     wrapper.appendChild(content);
 
     return wrapper;
@@ -1464,6 +1472,155 @@ class ChatPortalClient {
       const body = wrapper.querySelector("[data-message-body]");
       this.renderResponseBlocks(body, metaPayload.response_blocks);
     }
+
+    if (Object.prototype.hasOwnProperty.call(metaPayload, "debug_tools") || Object.prototype.hasOwnProperty.call(metaPayload, "debugTools")) {
+      const debugTools = metaPayload.debug_tools || metaPayload.debugTools || null;
+      this.updateDebugToolsPanel(wrapper, debugTools);
+    }
+  }
+
+  updateDebugToolsPanel(wrapper, debugTools) {
+    if (!wrapper) return;
+    const debugEl = wrapper.querySelector("[data-message-debug]");
+    if (!debugEl) return;
+
+    if (typeof debugTools === "undefined") {
+      return;
+    }
+
+    const payload = debugTools && typeof debugTools === "object" ? debugTools : {};
+    const toolTrace = Array.isArray(payload.tool_trace) ? payload.tool_trace : [];
+    const searchHistory = Array.isArray(payload.search_history) ? payload.search_history : [];
+    const results = Array.isArray(payload.knowledge_results) ? payload.knowledge_results : [];
+    const reads = Array.isArray(payload.knowledge_reads) ? payload.knowledge_reads : [];
+    const coverage = Array.isArray(payload.coverage_ledger) ? payload.coverage_ledger : [];
+    const tableRows = Array.isArray(payload.table_aggregate_rows) ? payload.table_aggregate_rows : [];
+
+    debugEl.innerHTML = "";
+    debugEl.classList.remove("hidden");
+
+    const root = document.createElement("details");
+    root.className = "rounded-lg border border-border/50 bg-muted/20 px-3 py-2";
+
+    const summary = document.createElement("summary");
+    summary.className = "cursor-pointer select-none text-xs font-medium text-muted-foreground";
+    const summaryBits = [];
+    summaryBits.push(`Tools (${toolTrace.length})`);
+    if (searchHistory.length) summaryBits.push(`Searches (${searchHistory.length})`);
+    if (results.length) summaryBits.push(`Evidence (${results.length})`);
+    if (reads.length) summaryBits.push(`Reads (${reads.length})`);
+    summary.textContent = summaryBits.join(" • ");
+    root.appendChild(summary);
+
+    const container = document.createElement("div");
+    container.className = "mt-2 space-y-2";
+
+    const buildSection = (title, items, labelBuilder) => {
+      const section = document.createElement("div");
+      const header = document.createElement("div");
+      header.className = "text-[11px] font-semibold text-muted-foreground/80 uppercase tracking-wide";
+      header.textContent = title;
+      section.appendChild(header);
+
+      items.forEach((item, idx) => {
+        const itemDetails = document.createElement("details");
+        itemDetails.className = "mt-1 rounded-md border border-border/40 bg-background/40 px-2 py-1";
+
+        const itemSummary = document.createElement("summary");
+        itemSummary.className = "cursor-pointer select-none";
+        itemSummary.textContent = labelBuilder(item, idx);
+        itemDetails.appendChild(itemSummary);
+
+        const pre = document.createElement("pre");
+        pre.className = "mt-2 overflow-auto whitespace-pre-wrap break-words text-[11px] leading-relaxed";
+        try {
+          pre.textContent = JSON.stringify(item, null, 2);
+        } catch (_err) {
+          pre.textContent = String(item);
+        }
+        itemDetails.appendChild(pre);
+
+        section.appendChild(itemDetails);
+      });
+
+      return section;
+    };
+
+    if (!toolTrace.length && !searchHistory.length && !results.length && !reads.length && !coverage.length && !tableRows.length) {
+      const empty = document.createElement("div");
+      empty.className = "text-[11px] text-muted-foreground";
+      empty.textContent = "No tool activity recorded for this response.";
+      container.appendChild(empty);
+    }
+
+    if (toolTrace.length) {
+      container.appendChild(
+        buildSection("Tools", toolTrace, (item) => {
+          const tool = item && item.tool ? String(item.tool) : "tool";
+          const status = item && item.status ? String(item.status) : "";
+          const duration = item && typeof item.duration_ms === "number" ? `${Math.round(item.duration_ms)}ms` : "";
+          return [tool, status, duration].filter(Boolean).join(" • ");
+        }),
+      );
+    }
+
+    if (searchHistory.length) {
+      container.appendChild(
+        buildSection("Searches", searchHistory, (item, idx) => {
+          const query = item && item.query ? String(item.query) : `Search ${idx + 1}`;
+          const count =
+            item && typeof item.snippet_count === "number" ? `${item.snippet_count} hits` : "";
+          return [query, count].filter(Boolean).join(" • ");
+        }),
+      );
+    }
+
+    if (results.length) {
+      container.appendChild(
+        buildSection("Evidence", results, (item, idx) => {
+          const title = item && item.title ? String(item.title) : `Result ${idx + 1}`;
+          const readState = item && item.read_state ? String(item.read_state) : "";
+          const stage = item && item.search_stage ? String(item.search_stage) : "";
+          return [title, readState, stage].filter(Boolean).join(" • ");
+        }),
+      );
+    }
+
+    if (reads.length) {
+      container.appendChild(
+        buildSection("Reads", reads, (item, idx) => {
+          const label = item && item.label ? String(item.label) : "";
+          const mode = item && item.mode ? String(item.mode) : "";
+          const fallback = `Read ${idx + 1}`;
+          return [label || fallback, mode].filter(Boolean).join(" • ");
+        }),
+      );
+    }
+
+    if (coverage.length) {
+      container.appendChild(
+        buildSection("Coverage", coverage, (item, idx) => {
+          const label = item && item.label ? String(item.label) : "";
+          const readState = item && item.read_state ? String(item.read_state) : "";
+          const fallback = `Item ${idx + 1}`;
+          return [label || fallback, readState].filter(Boolean).join(" • ");
+        }),
+      );
+    }
+
+    if (tableRows.length) {
+      container.appendChild(
+        buildSection("Table Rows", tableRows, (item, idx) => {
+          const label = item && item.label ? String(item.label) : "";
+          const rowIndex = item && typeof item.row_index !== "undefined" ? `row ${item.row_index}` : "";
+          const fallback = `Row ${idx + 1}`;
+          return [label || fallback, rowIndex].filter(Boolean).join(" • ");
+        }),
+      );
+    }
+
+    root.appendChild(container);
+    debugEl.appendChild(root);
   }
 
   renderStreamingText() {

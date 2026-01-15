@@ -1184,6 +1184,11 @@ PORTAL_ASSET_VERSION = os.getenv("PORTAL_ASSET_VERSION")
 if not PORTAL_ASSET_VERSION:
     PORTAL_ASSET_VERSION = str(int(time.time()))
 
+# PORTAL_DEBUG_TOOL_TRACE: When enabled, include a bounded, sanitized tool trace +
+# search/read payload in portal streaming responses (rendered in the UI under each
+# assistant message). Enabled by default; disable via env if needed.
+PORTAL_DEBUG_TOOL_TRACE = os.getenv("PORTAL_DEBUG_TOOL_TRACE", "true").lower() in {"1", "true", "yes"}
+
 # ==============================================================================
 # SECURITY MIDDLEWARE & HEADERS
 # ==============================================================================

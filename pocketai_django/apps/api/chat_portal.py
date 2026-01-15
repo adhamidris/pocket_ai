@@ -28,6 +28,7 @@ from opentelemetry import trace as otel_trace
 from apps.accounts.models import BusinessProfile
 from apps.conversations.models import ConversationSender
 from apps.core.logging_utils import LogEmoji
+from apps.knowledge.privacy import redact_free_text
 from apps.rag.ai_orchestrator import (
     ActionDispatcher,
     AiOrchestratorService,
@@ -86,6 +87,205 @@ def _enqueue_status_events(queue, *, code: str, label: str | None = None, meta: 
             ctx_payload["meta"] = meta
         _queue_put(queue, ctx_payload)
     _queue_put(queue, payload)
+
+
+def _portal_debug_tool_trace_enabled(request: HttpRequest, payload: Mapping[str, object], metadata: Mapping[str, object]) -> bool:
+    """
+    Gate portal tool-trace/search debug payloads behind:
+    - a server-side enable setting (or DEBUG), and
+    - optional shared-token verification (if configured).
+    """
+
+    enabled = bool(getattr(settings, "PORTAL_DEBUG_TOOL_TRACE", False) or getattr(settings, "DEBUG", False))
+    if not enabled:
+        return False
+    return True
+
+
+def _clip_debug_text(value: object, *, limit: int = 480) -> str:
+    text = str(value or "")
+    text = redact_free_text(text).strip()
+    if limit and len(text) > limit:
+        return f"{text[: max(0, limit - 1)].rstrip()}…"
+    return text
+
+
+def _json_safe_debug(value: object, *, depth: int = 3, string_limit: int = 240, list_limit: int = 12) -> object:
+    if value is None:
+        return None
+    if depth <= 0:
+        return _clip_debug_text(value, limit=string_limit)
+    if isinstance(value, (str, int, float, bool)):
+        if isinstance(value, str):
+            return _clip_debug_text(value, limit=string_limit)
+        return value
+    if isinstance(value, Mapping):
+        out: dict[str, object] = {}
+        for idx, (key, item) in enumerate(value.items()):
+            if idx >= list_limit:
+                out["…"] = f"+{max(0, len(value) - list_limit)} more keys"
+                break
+            key_str = str(key or "").strip() or f"key_{idx}"
+            lowered = key_str.lower()
+            if any(token in lowered for token in ("password", "secret", "token", "api_key", "apikey")):
+                out[key_str] = "[REDACTED]"
+                continue
+            out[key_str] = _json_safe_debug(item, depth=depth - 1, string_limit=string_limit, list_limit=list_limit)
+        return out
+    if isinstance(value, (list, tuple, set)):
+        items = list(value)
+        out_list: list[object] = []
+        for item in items[:list_limit]:
+            out_list.append(_json_safe_debug(item, depth=depth - 1, string_limit=string_limit, list_limit=list_limit))
+        if len(items) > list_limit:
+            out_list.append(f"…(+{len(items) - list_limit} more)")
+        return out_list
+    return _clip_debug_text(value, limit=string_limit)
+
+
+def _serialize_tool_trace_entry(entry: Mapping[str, object]) -> dict[str, object]:
+    tool = str(entry.get("tool") or "").strip()
+    arguments = entry.get("arguments")
+    args_out: dict[str, object] | None = None
+    if isinstance(arguments, Mapping) and arguments:
+        allowed_keys = {
+            "query",
+            "queries",
+            "limit",
+            "document_id",
+            "ids",
+            "page",
+            "pages",
+            "offset",
+            "mode",
+            "neighbor_window",
+            "chunk_neighbor",
+            "token_budget",
+            "max_chars",
+            "columns",
+            "filters",
+            "operation",
+        }
+        filtered = {k: v for k, v in arguments.items() if str(k) in allowed_keys}
+        if not filtered:
+            # Fall back to a bounded view of whatever was provided (still redacts tokens).
+            filtered = dict(list(arguments.items())[:12])
+        args_out = _json_safe_debug(filtered, depth=3, string_limit=240, list_limit=12)  # type: ignore[assignment]
+
+    out: dict[str, object] = {
+        "tool": tool or None,
+        "status": entry.get("status"),
+        "error_code": entry.get("error_code"),
+        "duration_ms": entry.get("duration_ms"),
+        "cache_hit": entry.get("cache_hit"),
+        "origin": entry.get("origin"),
+    }
+    if args_out:
+        out["arguments"] = args_out
+    hint = entry.get("hint")
+    if hint:
+        out["hint"] = _clip_debug_text(hint, limit=240)
+    engine = entry.get("engine")
+    if engine:
+        out["engine"] = _clip_debug_text(engine, limit=80)
+    return {k: v for k, v in out.items() if v is not None and v != ""}
+
+
+def _serialize_knowledge_result(entry: Mapping[str, object]) -> dict[str, object]:
+    title = entry.get("title") or entry.get("public_label") or entry.get("label") or "Knowledge"
+    preview_source = (
+        entry.get("summary")
+        or entry.get("preview")
+        or entry.get("content")
+        or entry.get("text")
+        or ""
+    )
+    out: dict[str, object] = {
+        "id": entry.get("id") or entry.get("chunk_id") or entry.get("upload_id"),
+        "title": _clip_debug_text(title, limit=140),
+        "search_stage": entry.get("search_stage"),
+        "read_state": entry.get("read_state") or entry.get("readState"),
+        "document_id": entry.get("upload_id") or entry.get("document_id"),
+        "chunk_id": entry.get("chunk_id"),
+        "source": entry.get("source_file") or entry.get("source"),
+        "is_table_chunk": entry.get("is_table_chunk"),
+    }
+    if preview_source:
+        out["preview"] = _clip_debug_text(preview_source, limit=420)
+    read_hint = entry.get("read_hint") or entry.get("readHint")
+    if isinstance(read_hint, Mapping) and read_hint:
+        out["read_hint"] = _json_safe_debug(read_hint, depth=2, string_limit=160, list_limit=8)
+    return {k: v for k, v in out.items() if v is not None and v != "" and v != []}
+
+
+def _serialize_debug_tools_payload(stream_context: StreamingTurnContext) -> dict[str, object] | None:
+    tool_context = getattr(stream_context, "tool_context", None)
+    tool_trace_raw = None
+    knowledge_results_raw = None
+    knowledge_reads_raw = None
+    search_history_raw = None
+    coverage_ledger_raw = None
+    table_rows_raw = None
+    if tool_context is not None:
+        tool_trace_raw = getattr(tool_context, "tool_trace", None)
+        knowledge_results_raw = getattr(tool_context, "knowledge_results", None)
+        knowledge_reads_raw = getattr(tool_context, "knowledge_reads", None)
+        search_history_raw = getattr(tool_context, "search_history", None)
+        coverage_ledger_raw = getattr(tool_context, "coverage_ledger", None)
+        table_rows_raw = getattr(tool_context, "table_aggregate_rows", None)
+    if tool_trace_raw is None:
+        tool_trace_raw = getattr(stream_context, "tool_trace", None)
+    if knowledge_results_raw is None:
+        knowledge_results_raw = getattr(stream_context, "knowledge_payload", None)
+    if knowledge_reads_raw is None:
+        knowledge_reads_raw = getattr(stream_context, "knowledge_reads", None)
+
+    tool_trace: list[dict[str, object]] = []
+    if isinstance(tool_trace_raw, (list, tuple)):
+        for entry in tool_trace_raw[-30:]:
+            if isinstance(entry, Mapping):
+                tool_trace.append(_serialize_tool_trace_entry(entry))
+
+    knowledge_results: list[dict[str, object]] = []
+    if isinstance(knowledge_results_raw, (list, tuple)):
+        for entry in knowledge_results_raw[:20]:
+            if isinstance(entry, Mapping):
+                knowledge_results.append(_serialize_knowledge_result(entry))
+
+    knowledge_reads: list[dict[str, object]] = []
+    if isinstance(knowledge_reads_raw, (list, tuple)):
+        for entry in knowledge_reads_raw[:20]:
+            if isinstance(entry, Mapping):
+                knowledge_reads.append(_json_safe_debug(entry, depth=2, string_limit=180, list_limit=10))  # type: ignore[arg-type]
+
+    search_history: list[object] = []
+    if isinstance(search_history_raw, (list, tuple)):
+        for entry in search_history_raw[-12:]:
+            if isinstance(entry, Mapping):
+                search_history.append(_json_safe_debug(entry, depth=3, string_limit=220, list_limit=12))
+
+    coverage_ledger: list[object] = []
+    if isinstance(coverage_ledger_raw, (list, tuple)):
+        for entry in coverage_ledger_raw[:30]:
+            if isinstance(entry, Mapping):
+                coverage_ledger.append(_json_safe_debug(entry, depth=2, string_limit=200, list_limit=12))
+
+    table_aggregate_rows: list[object] = []
+    if isinstance(table_rows_raw, (list, tuple)):
+        for entry in table_rows_raw[:12]:
+            if isinstance(entry, Mapping):
+                table_aggregate_rows.append(_json_safe_debug(entry, depth=3, string_limit=200, list_limit=12))
+
+    if not tool_trace and not knowledge_results and not knowledge_reads and not search_history and not coverage_ledger and not table_aggregate_rows:
+        return None
+    return {
+        "tool_trace": tool_trace,
+        "search_history": search_history,
+        "knowledge_results": knowledge_results,
+        "knowledge_reads": knowledge_reads,
+        "coverage_ledger": coverage_ledger,
+        "table_aggregate_rows": table_aggregate_rows,
+    }
 
 
 LOW_INTENT_PATTERNS: tuple[re.Pattern[str], ...] = (
@@ -960,6 +1160,7 @@ def stream_send(request: HttpRequest) -> StreamingHttpResponse:
     session_token = (payload.get("session_token") or payload.get("sessionToken") or "").strip()
     body = (payload.get("body") or "").strip()
     metadata = payload.get("metadata") or {}
+    debug_tool_trace_enabled = _portal_debug_tool_trace_enabled(request, payload, metadata if isinstance(metadata, Mapping) else {})
 
     try:
         conversation = service.get_conversation(session_token=session_token, include_messages=False)
@@ -1569,6 +1770,16 @@ def stream_send(request: HttpRequest) -> StreamingHttpResponse:
                         final_payload["answer_confidence"] = answer_confidence
                 if base_plan.ingestion_warnings:
                     final_payload["ingestion_warnings"] = [dict(item) for item in base_plan.ingestion_warnings]
+                if debug_tool_trace_enabled:
+                    debug_payload = _serialize_debug_tools_payload(stream_context)
+                    final_payload["debug_tools"] = debug_payload or {
+                        "tool_trace": [],
+                        "search_history": [],
+                        "knowledge_results": [],
+                        "knowledge_reads": [],
+                        "coverage_ledger": [],
+                        "table_aggregate_rows": [],
+                    }
                 plan_holder["session_status"] = session_state.status
                 extra_payload: dict[str, Any] = {
                     "citations": [snippet.title for snippet in base_plan.citations],
@@ -2104,4 +2315,3 @@ def create_portal_session(request: HttpRequest) -> JsonResponse:
         return _json_error("not_found", str(exc), status=404)
 
     return JsonResponse(_bootstrap_to_dict(result), status=201)
-

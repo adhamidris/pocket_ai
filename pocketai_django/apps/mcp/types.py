@@ -9,6 +9,7 @@ system takes shape.
 from __future__ import annotations
 
 import dataclasses
+from datetime import datetime, timezone as dt_timezone
 from typing import Callable, Mapping, Sequence, Tuple
 
 
@@ -232,12 +233,34 @@ class ToolExecutionContext:
     # Document Context Tracking Methods
     # =========================================================================
 
+    @staticmethod
+    def _utc_now_iso() -> str:
+        return datetime.now(tz=dt_timezone.utc).isoformat()
+
+    def has_strong_primary_document(self) -> bool:
+        """
+        Whether the current primary document is "confirmed" by an explicit read.
+
+        We use this to decide when it's safe to apply conversation-scoped retrieval
+        behaviors (affinity search, query rewriting) without overfitting to noisy
+        search results.
+        """
+        if not self.primary_upload_id:
+            return False
+        meta = self.document_context.get(self.primary_upload_id, {})
+        try:
+            return int(meta.get("read_count", 0) or 0) > 0
+        except (TypeError, ValueError):
+            return False
+
     def track_document_reference(
         self,
         upload_id: str,
         title: str | None = None,
         stage: str | None = None,
         confidence: float | None = None,
+        *,
+        update_primary: bool = True,
     ) -> None:
         """
         Track a document that was referenced in search results.
@@ -256,13 +279,16 @@ class ToolExecutionContext:
             self.document_context[upload_id] = {
                 "title": title or "",
                 "search_count": 0,
+                "read_count": 0,
                 "stages": [],
                 "confidences": [],
                 "last_referenced_at": None,
+                "last_read_at": None,
             }
 
         meta = self.document_context[upload_id]
         meta["search_count"] = meta.get("search_count", 0) + 1
+        meta["last_referenced_at"] = self._utc_now_iso()
         if title and not meta.get("title"):
             meta["title"] = title
         if stage:
@@ -276,8 +302,42 @@ class ToolExecutionContext:
             # Keep only last 10 confidence scores
             meta["confidences"] = confidences[-10:]
 
-        # Update primary document if this one has higher engagement
-        self._update_primary_document(upload_id)
+        if update_primary:
+            # Update primary document if this one has higher engagement
+            self._update_primary_document(upload_id)
+
+    def track_document_read(self, upload_id: str, *, title: str | None = None) -> None:
+        """
+        Track an explicit document read.
+
+        This is a stronger signal than "appeared in search results", and should
+        generally drive the primary document for follow-ups.
+        """
+        if not upload_id:
+            return
+        upload_id = str(upload_id)
+        self.referenced_upload_ids.add(upload_id)
+
+        if upload_id not in self.document_context:
+            self.document_context[upload_id] = {
+                "title": title or "",
+                "search_count": 0,
+                "read_count": 0,
+                "stages": [],
+                "confidences": [],
+                "last_referenced_at": None,
+                "last_read_at": None,
+            }
+
+        meta = self.document_context[upload_id]
+        if title and not meta.get("title"):
+            meta["title"] = title
+        meta["read_count"] = meta.get("read_count", 0) + 1
+        meta["last_read_at"] = self._utc_now_iso()
+        meta["last_referenced_at"] = meta.get("last_referenced_at") or meta["last_read_at"]
+
+        # Reads are our strongest conversation signal: treat as the active primary.
+        self.primary_upload_id = upload_id
 
     def _update_primary_document(self, candidate_upload_id: str) -> None:
         """Update primary_upload_id based on document engagement metrics."""
@@ -289,6 +349,14 @@ class ToolExecutionContext:
         # Compare candidate with current primary
         candidate_meta = self.document_context.get(candidate_upload_id, {})
         primary_meta = self.document_context.get(self.primary_upload_id, {})
+
+        # If we've explicitly read the primary document, don't override it based on
+        # noisy search-only references.
+        try:
+            if int(primary_meta.get("read_count", 0) or 0) > 0:
+                return
+        except (TypeError, ValueError):
+            pass
 
         candidate_count = candidate_meta.get("search_count", 0)
         primary_count = primary_meta.get("search_count", 0)
@@ -323,17 +391,59 @@ class ToolExecutionContext:
 
         Returns a serializable dict that can be stored and rehydrated.
         """
+        def _as_int(value: object) -> int:
+            try:
+                return int(value or 0)
+            except (TypeError, ValueError):
+                return 0
+
+        primary_id = str(self.primary_upload_id) if self.primary_upload_id else None
+        sorted_docs = sorted(
+            self.document_context.items(),
+            key=lambda item: (
+                _as_int(item[1].get("read_count")),
+                _as_int(item[1].get("search_count")),
+                str(item[0]),
+            ),
+            reverse=True,
+        )
+        # Keep metadata bounded but ensure the primary doc is included when present.
+        selected_ids: list[str] = []
+        if primary_id and primary_id in self.document_context:
+            selected_ids.append(primary_id)
+        for upload_id, _ in sorted_docs:
+            upload_id = str(upload_id)
+            if upload_id in selected_ids:
+                continue
+            selected_ids.append(upload_id)
+            if len(selected_ids) >= 10:
+                break
+
+        referenced_sorted = sorted(
+            self.referenced_upload_ids,
+            key=lambda upload_id: (
+                _as_int(self.document_context.get(upload_id, {}).get("read_count")),
+                _as_int(self.document_context.get(upload_id, {}).get("search_count")),
+                str(upload_id),
+            ),
+            reverse=True,
+        )[:20]
+
         return {
             "primary_upload_id": self.primary_upload_id,
-            "referenced_uploads": list(self.referenced_upload_ids)[-20:],  # Keep last 20
+            "referenced_uploads": referenced_sorted,  # Keep top 20 by engagement
             "document_metadata": {
                 k: {
                     "title": v.get("title", ""),
                     "search_count": v.get("search_count", 0),
+                    "read_count": v.get("read_count", 0),
                     "stages": v.get("stages", [])[-5:],  # Keep last 5 stages
+                    "last_referenced_at": v.get("last_referenced_at"),
+                    "last_read_at": v.get("last_read_at"),
                     # Don't persist confidences (transient)
                 }
-                for k, v in list(self.document_context.items())[-10:]  # Keep top 10 docs
+                for k in selected_ids
+                for v in [self.document_context.get(k, {})]
             },
         }
 
@@ -354,8 +464,11 @@ class ToolExecutionContext:
             self.document_context[upload_id] = {
                 "title": meta.get("title", ""),
                 "search_count": meta.get("search_count", 0),
+                "read_count": meta.get("read_count", 0),
                 "stages": meta.get("stages", []),
                 "confidences": [],  # Not persisted
+                "last_referenced_at": meta.get("last_referenced_at"),
+                "last_read_at": meta.get("last_read_at"),
             }
 
 
