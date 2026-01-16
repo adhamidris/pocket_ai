@@ -104,6 +104,8 @@ class ToolExecutionContext:
         default_factory=lambda: {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
     )
     llm_usage_entries: list[dict[str, object]] = dataclasses.field(default_factory=list)
+    preplan: dict[str, object] | None = None
+    verification: dict[str, object] | None = None
 
     # Conversation-level seen-item tracking (for "are there more?" follow-ups)
     # IDs of chunks/snippets already shown to user in this conversation

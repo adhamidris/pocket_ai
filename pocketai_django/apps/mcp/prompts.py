@@ -59,6 +59,32 @@ TONE_STYLE_HINTS: Mapping[str, str] = {
     "formal": "Use a {tone_label} tone with precise language and full sentences; avoid slang while remaining readable.",
 }
 
+PREPLAN_OUTPUT_HINT = textwrap.dedent(
+    """
+    Return JSON inside response_text with this shape:
+    {
+      "route": "search" | "read" | "answer" | "dataset" | "list_tables",
+      "search_query": "short query if search is needed",
+      "tools": ["search_knowledge", "read_document", "get_document_structure", "query_dataset", "list_tables"],
+      "clarifying_question": "optional question if key info is missing",
+      "notes": "short reasoning"
+    }
+    Use empty strings/arrays when not applicable.
+    """
+).strip()
+
+VERIFICATION_OUTPUT_HINT = textwrap.dedent(
+    """
+    Return JSON inside response_text with this shape:
+    {
+      "verdict": "supported" | "needs_clarification" | "unsupported",
+      "missing_points": ["short item", "..."],
+      "final_response": "If not supported, provide ONE concise clarification question. Otherwise empty.",
+      "notes": "short reasoning"
+    }
+    """
+).strip()
+
 PLANNER_CRM_RULES = textwrap.dedent(
     """
     ### CRM Capture Rules (MCP)
@@ -932,6 +958,116 @@ def build_planner_messages(
         {"role": "user", "content": user_payload},
     ]
     return messages
+
+
+def build_preplan_messages(
+    *,
+    conversation: Conversation,
+    user_message: str,
+    recent_history: Sequence[Mapping[str, object]] | None = None,
+) -> list[Mapping[str, object]]:
+    """
+    Build a lightweight routing prompt that proposes a minimal tool plan.
+
+    The model returns JSON (inside response_text) describing the recommended
+    first-step tools and a suggested search query, if needed.
+    """
+
+    business_name = conversation.business_profile.name
+    system_sections = [
+        (
+            f"You are a routing planner for {business_name}. "
+            "Decide the minimal first-step tool strategy for the latest user request."
+        ),
+        (
+            "Never invent document IDs or data. If a specific document is required and no ID is known, "
+            "route to search_knowledge first."
+        ),
+        (
+            "If the request is about products, pricing, policies, eligibility, limits, or fees, route to search_knowledge."
+        ),
+        (
+            "If the request is a follow-up that clearly refers to an already-known document or table, "
+            "you may route to read_document or query_dataset, but only if IDs are already available."
+        ),
+        PREPLAN_OUTPUT_HINT,
+        (
+            "You must reply with JSON matching the schema provided via response_format "
+            "(response_text/actions/extractions). Set actions/extractions to empty arrays. "
+            "Keep response_text as the JSON blob described above."
+        ),
+    ]
+    system_message = "\n\n".join(section for section in system_sections if section).strip()
+
+    history_lines: list[str] = []
+    if recent_history:
+        for entry in recent_history:
+            role = str(entry.get("role") or "").strip()
+            content = str(entry.get("content") or "").strip()
+            if not role or not content:
+                continue
+            history_lines.append(f"{role}: {content}")
+    history_block = "\n".join(history_lines[:6]).strip()
+
+    user_payload = f"Latest user message:\n{user_message.strip()}\n"
+    if history_block:
+        user_payload = f"{user_payload}\nRecent context:\n{history_block}\n"
+
+    return [
+        {"role": "system", "content": system_message},
+        {"role": "user", "content": user_payload.strip()},
+    ]
+
+
+def build_verification_messages(
+    *,
+    conversation: Conversation,
+    user_message: str,
+    draft_answer: str,
+    evidence_note: str | None = None,
+) -> list[Mapping[str, object]]:
+    """
+    Build a verification prompt that checks if the draft answer is supported
+    by the available evidence.
+    """
+
+    business_name = conversation.business_profile.name
+    system_sections = [
+        (
+            f"You are a verification agent for {business_name}. "
+            "Check whether the draft answer is fully supported by the evidence."
+        ),
+        (
+            "Only use the evidence provided. If support is insufficient, ask ONE concise clarifying question "
+            "instead of guessing."
+        ),
+        VERIFICATION_OUTPUT_HINT,
+        (
+            "You must reply with JSON matching the schema provided via response_format "
+            "(response_text/actions/extractions). Set actions/extractions to empty arrays. "
+            "Keep response_text as the JSON blob described above."
+        ),
+    ]
+    system_message = "\n\n".join(section for section in system_sections if section).strip()
+
+    evidence_block = evidence_note.strip() if isinstance(evidence_note, str) and evidence_note.strip() else "None"
+    user_payload = textwrap.dedent(
+        f"""
+        User question:
+        {user_message.strip()}
+
+        Draft answer:
+        {draft_answer.strip()}
+
+        Evidence summary:
+        {evidence_block}
+        """
+    ).strip()
+
+    return [
+        {"role": "system", "content": system_message},
+        {"role": "user", "content": user_payload},
+    ]
 
 
 def build_final_answer_messages(

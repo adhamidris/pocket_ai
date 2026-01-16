@@ -537,6 +537,12 @@ PORTAL_VERIFICATION_DEBUG_RETURN_CODE = os.getenv("PORTAL_VERIFICATION_DEBUG_RET
 # MCP prompt/context governor. Defaults are conservative to avoid provider context overflows.
 # MCP_CONTEXT_GOVERNOR_ENABLED: Enable prompt/token budget enforcement across tool outputs.
 MCP_CONTEXT_GOVERNOR_ENABLED = os.getenv("MCP_CONTEXT_GOVERNOR_ENABLED", "true").lower() in {"1", "true", "yes"}
+# MCP_PREPLAN_ENABLED: Enable a lightweight pre-plan routing pass before tool calls.
+MCP_PREPLAN_ENABLED = os.getenv("MCP_PREPLAN_ENABLED", "false").lower() in {"1", "true", "yes"}
+# MCP_VERIFICATION_ENABLED: Enable a lightweight verification pass after answer drafting.
+MCP_VERIFICATION_ENABLED = os.getenv("MCP_VERIFICATION_ENABLED", "false").lower() in {"1", "true", "yes"}
+# MCP_VERIFICATION_BLOCK_STREAMING: When true, delay streaming until verification completes.
+MCP_VERIFICATION_BLOCK_STREAMING = os.getenv("MCP_VERIFICATION_BLOCK_STREAMING", "false").lower() in {"1", "true", "yes"}
 # MCP_MAX_CONTEXT_TOKENS: Model context window size assumed for budgeting.
 MCP_MAX_CONTEXT_TOKENS = int(os.getenv("MCP_MAX_CONTEXT_TOKENS", "8192"))
 # MCP_RESPONSE_TOKEN_RESERVE: Tokens reserved for the model's final answer.

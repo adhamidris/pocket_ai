@@ -188,6 +188,13 @@ class McpOrchestratorService:
         if not self.provider:
             raise RuntimeError("MCP provider is not configured.")
 
+        preplan_enabled = self._preplan_enabled_for_business(conversation.business_profile)
+        verification_enabled = self._verification_enabled_for_business(conversation.business_profile)
+        verification_blocks_streaming = verification_enabled and self._verification_blocks_streaming_for_business(
+            conversation.business_profile
+        )
+        streaming_allowed = not verification_blocks_streaming
+
         transcript = list(messages)
         task_summary_note = self._build_task_summary_note(conversation, user_message, tool_context)
         tool_phase_assistant_message: dict[str, object] | None = None
@@ -207,6 +214,39 @@ class McpOrchestratorService:
         active_phase_payloads: dict[str, dict[str, object]] = {}
         final_answer_started = False
         inline_response_blocks_detected = False
+        preplan_note: str | None = None
+        preplan_payload: dict[str, object] | None = None
+        initial_tools: Iterable[Mapping[str, object]] = self.tool_definitions
+
+        if preplan_enabled:
+            recent_history = [
+                entry for entry in transcript if entry.get("role") in {"user", "assistant"}
+            ]
+            preplan_message = self._run_preplan(
+                conversation=conversation,
+                user_message=user_message,
+                recent_history=recent_history[-6:],
+                tool_context=tool_context,
+            )
+            if preplan_message:
+                preplan_payload = self._parse_preplan_payload(preplan_message)
+            if preplan_payload:
+                tool_context.preplan = dict(preplan_payload)
+                route = str(preplan_payload.get("route") or "").strip()
+                search_query = str(preplan_payload.get("search_query") or "").strip()
+                tools = preplan_payload.get("tools") or []
+                tool_list = [t for t in tools if isinstance(t, str) and t.strip()]
+                note_bits: list[str] = []
+                if route:
+                    note_bits.append(f"route={route}")
+                if search_query:
+                    note_bits.append(f"query=\"{self._clip_text(search_query, 120)}\"")
+                if tool_list:
+                    note_bits.append(f"tools={', '.join(tool_list[:4])}")
+                if note_bits:
+                    preplan_note = "Routing plan (system-only): " + "; ".join(note_bits) + ". Follow unless evidence suggests otherwise."
+                if set(tool_list) == {"search_knowledge"}:
+                    initial_tools = self._include_tool_schemas({"search_knowledge"})
 
 
 
@@ -522,6 +562,15 @@ class McpOrchestratorService:
                 return
             _emit_tokens(text)
 
+        def _emit_final_answer(text: str) -> None:
+            if not text:
+                return
+            nonlocal streaming_mode, final_separator_pending
+            _mark_answer_started()
+            streaming_mode = "final"
+            final_separator_pending = False
+            _emit_stream_chunks(lambda chunk: _append_chunk(chunk, answer_streamed_chunks), text)
+
         def _flush_stream_buffer(stage: str, *, filter_override: str | None = None) -> None:
             nonlocal stream_buffer
             trailing = stream_buffer
@@ -661,6 +710,11 @@ class McpOrchestratorService:
         # Limit the initial payload so the provider only sees the guardrails and
         # the latest transcript entries needed for intent selection.
         primary_messages = prompts.limit_messages_for_stage(transcript, stage="initial_pass")
+        if preplan_note:
+            insert_at = 0
+            while insert_at < len(primary_messages) and primary_messages[insert_at].get("role") == "system":
+                insert_at += 1
+            primary_messages.insert(insert_at, {"role": "system", "content": preplan_note})
         self._log_prompt("primary", conversation=conversation, messages=primary_messages)
         with TRACER.start_as_current_span("portal.mcp.initial_pass") as initial_span:
             if initial_span.is_recording():
@@ -670,8 +724,8 @@ class McpOrchestratorService:
                 conversation=conversation,
                 stage="initial_pass",
                 messages=primary_messages,
-                tools=self.tool_definitions,
-                on_stream_delta=_first_stream_chunk,
+                tools=initial_tools,
+                on_stream_delta=_first_stream_chunk if streaming_allowed else None,
                 on_tool_call_start=_on_stream_tool_call_start,
                 tool_context=tool_context,
             )
@@ -1090,7 +1144,7 @@ class McpOrchestratorService:
                             stage="force_final",
                             messages=forced_messages,
                             tools=None,
-                            on_stream_delta=_answer_stream_chunk,
+                            on_stream_delta=_answer_stream_chunk if streaming_allowed else None,
                             tool_context=tool_context,
                         )
                         assistant_message = self._coerce_assistant_message(forced_payload)
@@ -1120,7 +1174,7 @@ class McpOrchestratorService:
                         stage="tool_iteration",
                         messages=loop_messages,
                         tools=tools_for_iteration,
-                        on_stream_delta=_answer_stream_chunk,
+                        on_stream_delta=_answer_stream_chunk if streaming_allowed else None,
                         on_tool_call_start=_on_stream_tool_call_start,
                         tool_context=tool_context,
                     )
@@ -1176,7 +1230,7 @@ class McpOrchestratorService:
                                 stage="force_final",
                                 messages=forced_messages,
                                 tools=None,
-                                on_stream_delta=_answer_stream_chunk,
+                                on_stream_delta=_answer_stream_chunk if streaming_allowed else None,
                                 tool_context=tool_context,
                             )
                             assistant_message = self._coerce_assistant_message(forced_payload)
@@ -1242,6 +1296,24 @@ class McpOrchestratorService:
                 )
             if not clean_single:
                 clean_single = single_pass_text
+            if verification_enabled:
+                verification_message = self._run_verification(
+                    conversation=conversation,
+                    user_message=user_message,
+                    draft_answer=clean_single,
+                    tool_context=tool_context,
+                )
+                verification_payload = (
+                    self._parse_verification_payload(verification_message)
+                    if verification_message
+                    else None
+                )
+                if verification_payload:
+                    tool_context.verification = dict(verification_payload)
+                    verdict = verification_payload.get("verdict")
+                    override = str(verification_payload.get("final_response") or "").strip()
+                    if not streaming_allowed and verdict in {"needs_clarification", "unsupported"} and override:
+                        clean_single = override
 
             structured_log(
                 "mcp",
@@ -1256,12 +1328,18 @@ class McpOrchestratorService:
                 },
             )
             _status_event("answer_finalized", "Answer ready")
-            _status_event("stream_complete", "")
+            if streaming_allowed:
+                _status_event("stream_complete", "")
             self._log_turn_metrics(conversation, tool_context)
             normalized_assistant = dict(tool_phase_assistant_message or {"role": "assistant"})
             normalized_assistant["content"] = clean_single
             streaming_mode = "final"
-            answer_streamed_chunks[:] = list(first_pass_streamed_chunks)
+            if streaming_allowed:
+                answer_streamed_chunks[:] = list(first_pass_streamed_chunks)
+            else:
+                answer_streamed_chunks.clear()
+                _emit_final_answer(clean_single)
+                _status_event("stream_complete", "")
             final_separator_pending = False
             response_blocks = self._extract_response_blocks(normalized_assistant)
             clean_single = str(normalized_assistant.get("content") or clean_single)
@@ -1331,7 +1409,8 @@ class McpOrchestratorService:
 
         _mark_answer_started()
         _status_event("answer_finalized", "Answer ready")
-        _status_event("stream_complete", "")
+        if streaming_allowed:
+            _status_event("stream_complete", "")
 
         unmet_read_required_count = 0
         read_required_reasons: set[str] = set()
@@ -1375,11 +1454,33 @@ class McpOrchestratorService:
             clean_answer_text = answer_text_raw.strip()
         if not clean_answer_text and answer_streamed_chunks:
             clean_answer_text = "".join(answer_streamed_chunks).strip()
+        if verification_enabled:
+            verification_message = self._run_verification(
+                conversation=conversation,
+                user_message=user_message,
+                draft_answer=clean_answer_text,
+                tool_context=tool_context,
+            )
+            verification_payload = (
+                self._parse_verification_payload(verification_message)
+                if verification_message
+                else None
+            )
+            if verification_payload:
+                tool_context.verification = dict(verification_payload)
+                verdict = verification_payload.get("verdict")
+                override = str(verification_payload.get("final_response") or "").strip()
+                if not streaming_allowed and verdict in {"needs_clarification", "unsupported"} and override:
+                    clean_answer_text = override
         all_dropped = stream_dropped + dropped_sentences
         normalized_assistant_msg = dict(final_assistant_message or {})
         normalized_assistant_msg["content"] = clean_answer_text
         response_blocks = self._extract_response_blocks(normalized_assistant_msg)
         clean_answer_text = str(normalized_assistant_msg.get("content") or clean_answer_text)
+        if not streaming_allowed:
+            answer_streamed_chunks.clear()
+            _emit_final_answer(clean_answer_text)
+            _status_event("stream_complete", "")
 
         self._log_turn_metrics(conversation, tool_context)
         self._persist_table_cache(conversation, tool_context)
@@ -1464,6 +1565,10 @@ class McpOrchestratorService:
             diagnostics["coverage_ledger"] = list(getattr(tool_context, "coverage_ledger", ()))
             diagnostics["knowledge_reads"] = list(getattr(tool_context, "knowledge_reads", ()))
             diagnostics["knowledge_results"] = list(getattr(tool_context, "knowledge_results", ()))
+            if getattr(tool_context, "preplan", None):
+                diagnostics["preplan"] = dict(getattr(tool_context, "preplan") or {})
+            if getattr(tool_context, "verification", None):
+                diagnostics["verification"] = dict(getattr(tool_context, "verification") or {})
             if getattr(tool_context, "table_aggregate_rows", None):
                 diagnostics["table_aggregate_rows"] = list(getattr(tool_context, "table_aggregate_rows"))
             diagnostics["identifier_checks"] = list(getattr(tool_context, "identifier_checks", ()))
@@ -1838,6 +1943,66 @@ class McpOrchestratorService:
             return None
         return self._coerce_assistant_message(payload)
 
+    def _run_preplan(
+        self,
+        *,
+        conversation: Conversation,
+        user_message: str,
+        recent_history: Sequence[Mapping[str, object]] | None = None,
+        tool_context: ToolExecutionContext | None = None,
+    ) -> dict[str, object] | None:
+        if not self.provider:
+            return None
+        preplan_messages = prompts.build_preplan_messages(
+            conversation=conversation,
+            user_message=user_message,
+            recent_history=recent_history,
+        )
+        self._log_prompt("preplan", conversation=conversation, messages=preplan_messages)
+        payload = self._chat_with_context_governor(
+            conversation=conversation,
+            stage="preplan",
+            messages=preplan_messages,
+            tools=None,
+            on_stream_delta=None,
+            response_format=self._final_response_schema(),
+            tool_context=tool_context,
+        )
+        if not isinstance(payload, dict):
+            return None
+        return self._coerce_assistant_message(payload)
+
+    def _run_verification(
+        self,
+        *,
+        conversation: Conversation,
+        user_message: str,
+        draft_answer: str,
+        tool_context: ToolExecutionContext | None = None,
+    ) -> dict[str, object] | None:
+        if not self.provider:
+            return None
+        evidence_note = self._evidence_summary_note(tool_context)
+        verification_messages = prompts.build_verification_messages(
+            conversation=conversation,
+            user_message=user_message,
+            draft_answer=draft_answer,
+            evidence_note=evidence_note,
+        )
+        self._log_prompt("verification", conversation=conversation, messages=verification_messages)
+        payload = self._chat_with_context_governor(
+            conversation=conversation,
+            stage="verification",
+            messages=verification_messages,
+            tools=None,
+            on_stream_delta=None,
+            response_format=self._final_response_schema(),
+            tool_context=tool_context,
+        )
+        if not isinstance(payload, dict):
+            return None
+        return self._coerce_assistant_message(payload)
+
     @staticmethod
     def _merge_planner_into_assistant(
         assistant_message: Mapping[str, object],
@@ -1918,6 +2083,61 @@ class McpOrchestratorService:
                 },
                 "strict": False,
             },
+        }
+
+    @staticmethod
+    def _parse_json_blob(text: str) -> Mapping[str, object] | None:
+        if not text:
+            return None
+        try:
+            parsed = json.loads(text)
+        except json.JSONDecodeError:
+            return None
+        if isinstance(parsed, Mapping):
+            return parsed
+        return None
+
+    def _parse_preplan_payload(self, message: Mapping[str, object]) -> dict[str, object] | None:
+        raw = str(message.get("content") or "").strip()
+        parsed = self._parse_json_blob(raw)
+        if not parsed:
+            return None
+        route = str(parsed.get("route") or "").strip().lower()
+        if route and route not in {"search", "read", "answer", "dataset", "list_tables"}:
+            route = ""
+        tools = parsed.get("tools")
+        tool_list: list[str] = []
+        if isinstance(tools, list):
+            for entry in tools:
+                if isinstance(entry, str) and entry.strip():
+                    tool_list.append(entry.strip())
+        return {
+            "route": route,
+            "search_query": str(parsed.get("search_query") or "").strip(),
+            "tools": tool_list,
+            "clarifying_question": str(parsed.get("clarifying_question") or "").strip(),
+            "notes": str(parsed.get("notes") or "").strip(),
+        }
+
+    def _parse_verification_payload(self, message: Mapping[str, object]) -> dict[str, object] | None:
+        raw = str(message.get("content") or "").strip()
+        parsed = self._parse_json_blob(raw)
+        if not parsed:
+            return None
+        verdict = str(parsed.get("verdict") or "").strip().lower()
+        if verdict and verdict not in {"supported", "needs_clarification", "unsupported"}:
+            verdict = ""
+        missing_points = parsed.get("missing_points")
+        missing: list[str] = []
+        if isinstance(missing_points, list):
+            for entry in missing_points:
+                if isinstance(entry, str) and entry.strip():
+                    missing.append(entry.strip())
+        return {
+            "verdict": verdict,
+            "missing_points": missing,
+            "final_response": str(parsed.get("final_response") or "").strip(),
+            "notes": str(parsed.get("notes") or "").strip(),
         }
 
     @staticmethod
@@ -2005,6 +2225,17 @@ class McpOrchestratorService:
                 continue
             filtered.append(tool_def)
         return filtered
+
+    def _include_tool_schemas(self, included_names: set[str]) -> list[Mapping[str, object]]:
+        if not included_names:
+            return list(self.tool_definitions)
+        filtered: list[Mapping[str, object]] = []
+        for tool_def in self.tool_definitions:
+            name = self._tool_schema_name(tool_def)
+            if not name or name not in included_names:
+                continue
+            filtered.append(tool_def)
+        return filtered or list(self.tool_definitions)
 
     @staticmethod
     def _search_result_is_table(tool_result: Mapping[str, object]) -> bool:
@@ -3547,6 +3778,30 @@ class McpOrchestratorService:
     def _context_governor_enabled_for_business(self, business_profile) -> bool:
         enabled = bool(getattr(settings, "MCP_CONTEXT_GOVERNOR_ENABLED", True))
         override = self._business_override(business_profile, "mcp_context_governor_enabled", 1 if enabled else 0)
+        try:
+            return bool(int(override))
+        except (TypeError, ValueError):
+            return enabled
+
+    def _preplan_enabled_for_business(self, business_profile) -> bool:
+        enabled = bool(getattr(settings, "MCP_PREPLAN_ENABLED", False))
+        override = self._business_override(business_profile, "mcp_preplan_enabled", 1 if enabled else 0)
+        try:
+            return bool(int(override))
+        except (TypeError, ValueError):
+            return enabled
+
+    def _verification_enabled_for_business(self, business_profile) -> bool:
+        enabled = bool(getattr(settings, "MCP_VERIFICATION_ENABLED", False))
+        override = self._business_override(business_profile, "mcp_verification_enabled", 1 if enabled else 0)
+        try:
+            return bool(int(override))
+        except (TypeError, ValueError):
+            return enabled
+
+    def _verification_blocks_streaming_for_business(self, business_profile) -> bool:
+        enabled = bool(getattr(settings, "MCP_VERIFICATION_BLOCK_STREAMING", False))
+        override = self._business_override(business_profile, "mcp_verification_block_streaming", 1 if enabled else 0)
         try:
             return bool(int(override))
         except (TypeError, ValueError):
