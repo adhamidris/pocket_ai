@@ -1479,6 +1479,66 @@ class ChatPortalClient {
     }
   }
 
+  formatTokenCount(count) {
+    const safe = Number.isFinite(count) ? Math.max(0, Math.round(count)) : 0;
+    return safe.toLocaleString("en-US");
+  }
+
+  getUsagePayload(payload) {
+    if (!payload || typeof payload !== "object") return null;
+    const usage = payload.usage || payload.llm_usage || null;
+    if (!usage || typeof usage !== "object") return null;
+    return usage;
+  }
+
+  getRoundTokenCountFromUsage(usage) {
+    if (!usage || typeof usage !== "object") return null;
+    const total = Number(usage.total_tokens);
+    if (!Number.isFinite(total)) return null;
+    return total;
+  }
+
+  calculateChatTokenTotal() {
+    const container = this.elements.messagesInner || this.elements.messages || this.container;
+    if (!container) return null;
+    let total = 0;
+    let hasAny = false;
+    container.querySelectorAll(".message-row").forEach((row) => {
+      const value = Number(row.dataset.roundTokens || NaN);
+      if (!Number.isFinite(value)) return;
+      total += value;
+      hasAny = true;
+    });
+    return hasAny ? total : null;
+  }
+
+  updateTokenTotalDisplays(totalTokens) {
+    const formatted = Number.isFinite(totalTokens) ? this.formatTokenCount(totalTokens) : "—";
+    const container = this.elements.messagesInner || this.elements.messages || this.container;
+    if (!container) return;
+    container.querySelectorAll("[data-token-total]").forEach((node) => {
+      node.textContent = formatted;
+    });
+  }
+
+  buildTokenSummarySegment(roundTokens, totalTokens) {
+    if (!Number.isFinite(roundTokens) || !Number.isFinite(totalTokens)) {
+      return "Tokens unavailable";
+    }
+    const wrap = document.createElement("span");
+    wrap.className = "inline-flex flex-wrap items-center gap-1";
+    const roundSpan = document.createElement("span");
+    roundSpan.dataset.tokenRound = "true";
+    roundSpan.className = "font-semibold text-foreground/80";
+    roundSpan.textContent = this.formatTokenCount(roundTokens);
+    const totalSpan = document.createElement("span");
+    totalSpan.dataset.tokenTotal = "true";
+    totalSpan.className = "font-semibold text-foreground/80";
+    totalSpan.textContent = this.formatTokenCount(totalTokens);
+    wrap.append("Tokens (exact) ", roundSpan, " round / ", totalSpan, " chat");
+    return wrap;
+  }
+
   updateDebugToolsPanel(wrapper, debugTools) {
     if (!wrapper) return;
     const debugEl = wrapper.querySelector("[data-message-debug]");
@@ -1495,6 +1555,14 @@ class ChatPortalClient {
     const reads = Array.isArray(payload.knowledge_reads) ? payload.knowledge_reads : [];
     const coverage = Array.isArray(payload.coverage_ledger) ? payload.coverage_ledger : [];
     const tableRows = Array.isArray(payload.table_aggregate_rows) ? payload.table_aggregate_rows : [];
+    const usage = this.getUsagePayload(payload);
+    const roundTokens = this.getRoundTokenCountFromUsage(usage);
+    if (Number.isFinite(roundTokens)) {
+      wrapper.dataset.roundTokens = String(roundTokens);
+    } else {
+      delete wrapper.dataset.roundTokens;
+    }
+    const totalTokens = this.calculateChatTokenTotal();
 
     debugEl.innerHTML = "";
     debugEl.classList.remove("hidden");
@@ -1509,7 +1577,13 @@ class ChatPortalClient {
     if (searchHistory.length) summaryBits.push(`Searches (${searchHistory.length})`);
     if (results.length) summaryBits.push(`Evidence (${results.length})`);
     if (reads.length) summaryBits.push(`Reads (${reads.length})`);
-    summary.textContent = summaryBits.join(" • ");
+    const tokenSummary = this.buildTokenSummarySegment(roundTokens, totalTokens);
+    if (tokenSummary) summaryBits.push(tokenSummary);
+    summary.innerHTML = "";
+    summaryBits.forEach((segment, idx) => {
+      if (idx > 0) summary.append(" • ");
+      summary.append(segment);
+    });
     root.appendChild(summary);
 
     const container = document.createElement("div");
@@ -1621,6 +1695,7 @@ class ChatPortalClient {
 
     root.appendChild(container);
     debugEl.appendChild(root);
+    this.updateTokenTotalDisplays(totalTokens);
   }
 
   renderStreamingText() {

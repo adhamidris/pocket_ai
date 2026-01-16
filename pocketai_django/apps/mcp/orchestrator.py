@@ -673,6 +673,7 @@ class McpOrchestratorService:
                 tools=self.tool_definitions,
                 on_stream_delta=_first_stream_chunk,
                 on_tool_call_start=_on_stream_tool_call_start,
+                tool_context=tool_context,
             )
         first_message = self._coerce_assistant_message(first_payload)
         first_stream_message = dict(first_message or {})
@@ -1090,6 +1091,7 @@ class McpOrchestratorService:
                             messages=forced_messages,
                             tools=None,
                             on_stream_delta=_answer_stream_chunk,
+                            tool_context=tool_context,
                         )
                         assistant_message = self._coerce_assistant_message(forced_payload)
                         next_tool_calls = []
@@ -1120,6 +1122,7 @@ class McpOrchestratorService:
                         tools=tools_for_iteration,
                         on_stream_delta=_answer_stream_chunk,
                         on_tool_call_start=_on_stream_tool_call_start,
+                        tool_context=tool_context,
                     )
                     assistant_message = self._coerce_assistant_message(payload)
                     next_tool_calls = list(assistant_message.get("tool_calls") or [])
@@ -1174,6 +1177,7 @@ class McpOrchestratorService:
                                 messages=forced_messages,
                                 tools=None,
                                 on_stream_delta=_answer_stream_chunk,
+                                tool_context=tool_context,
                             )
                             assistant_message = self._coerce_assistant_message(forced_payload)
                             next_tool_calls = []
@@ -1560,6 +1564,17 @@ class McpOrchestratorService:
                 on_stream_complete()
             except Exception:  # pragma: no cover - defensive
                 pass
+        llm_usage = None
+        if tool_context and isinstance(getattr(tool_context, "llm_usage", None), Mapping):
+            usage_totals = dict(tool_context.llm_usage)
+            entries = list(getattr(tool_context, "llm_usage_entries", []) or [])
+            if usage_totals.get("total_tokens") or entries:
+                llm_usage = {
+                    "prompt_tokens": int(usage_totals.get("prompt_tokens", 0) or 0),
+                    "completion_tokens": int(usage_totals.get("completion_tokens", 0) or 0),
+                    "total_tokens": int(usage_totals.get("total_tokens", 0) or 0),
+                    "calls": entries,
+                }
         visible_knowledge: tuple[dict[str, object], ...] = tuple()
         if tool_context:
             entries = []
@@ -1588,6 +1603,7 @@ class McpOrchestratorService:
             cached_snippet_count=len(getattr(tool_context, "knowledge_results", ()) or []) if tool_context else 0,
             llm_source=llm_source,
             streamed_chunks=streamed_chunks,
+            llm_usage=llm_usage,
             plan=None,
             tool_context=tool_context,
             response_blocks=response_blocks,
@@ -1816,6 +1832,7 @@ class McpOrchestratorService:
             messages=planner_messages,
             tools=None,
             on_stream_delta=None,
+            tool_context=tool_context,
         )
         if not isinstance(payload, dict):
             return None
@@ -4773,6 +4790,7 @@ class McpOrchestratorService:
         on_stream_delta: Callable[[str], None] | None,
         on_tool_call_start: Callable[[Mapping[str, object]], None] | None = None,
         response_format: Mapping[str, object] | None = None,
+        tool_context: ToolExecutionContext | None = None,
     ) -> Mapping[str, Any]:
         if not self.provider:
             raise PromptGenerationError("MCP provider is not configured.")
@@ -4791,13 +4809,15 @@ class McpOrchestratorService:
             )
 
         try:
-            return self.provider.chat(
+            payload = self.provider.chat(
                 governed_messages,
                 tools=tools,
                 on_stream_delta=on_stream_delta,
                 on_tool_call_start=on_tool_call_start,
                 response_format=response_format,
             )
+            self._record_llm_usage(tool_context, stage, payload)
+            return payload
         except PromptGenerationError as exc:
             err = str(exc).lower()
             if not enabled or not tools:
@@ -4832,13 +4852,54 @@ class McpOrchestratorService:
                 logger_obj=logger,
                 level=logging.WARNING,
             )
-            return self.provider.chat(
+            payload = self.provider.chat(
                 fallback_messages,
                 tools=None,
                 on_stream_delta=on_stream_delta,
                 on_tool_call_start=None,
                 response_format=None,
             )
+            self._record_llm_usage(tool_context, stage, payload)
+            return payload
+
+    @staticmethod
+    def _record_llm_usage(
+        tool_context: ToolExecutionContext | None,
+        stage: str,
+        payload: Mapping[str, object] | None,
+    ) -> None:
+        if not tool_context or not payload or not isinstance(payload, Mapping):
+            return
+        usage = payload.get("usage")
+        if not isinstance(usage, Mapping):
+            return
+        prompt = usage.get("prompt_tokens")
+        completion = usage.get("completion_tokens")
+        total = usage.get("total_tokens")
+        try:
+            prompt_val = int(prompt) if prompt is not None else 0
+        except (TypeError, ValueError):
+            prompt_val = 0
+        try:
+            completion_val = int(completion) if completion is not None else 0
+        except (TypeError, ValueError):
+            completion_val = 0
+        try:
+            total_val = int(total) if total is not None else 0
+        except (TypeError, ValueError):
+            total_val = 0
+        if not total_val and (prompt_val or completion_val):
+            total_val = prompt_val + completion_val
+        model_name = payload.get("model")
+        provider_name = payload.get("provider")
+        tool_context.record_llm_usage(
+            prompt_tokens=prompt_val,
+            completion_tokens=completion_val,
+            total_tokens=total_val,
+            stage=stage,
+            model=model_name if isinstance(model_name, str) else None,
+            provider=provider_name if isinstance(provider_name, str) else None,
+        )
 
     def schedule_memory_update(
         self,

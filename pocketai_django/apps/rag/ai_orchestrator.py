@@ -537,6 +537,7 @@ class StreamingTurnContext:
     cached_snippet_count: int
     llm_source: str
     streamed_chunks: Sequence[str]
+    llm_usage: Mapping[str, object] | None = None
     plan: AiOrchestratorPlan | None = None
     tool_context: object | None = None
     response_blocks: Sequence[Mapping[str, object]] = dataclasses.field(default_factory=tuple)
@@ -7523,6 +7524,7 @@ class LlmPlan:
     extractions: Sequence[ExtractionPlan]
     knowledge_requests: Sequence[str]
     response_blocks: Sequence[Mapping[str, object]] = dataclasses.field(default_factory=tuple)
+    llm_usage: Mapping[str, object] | None = None
 
 
 class AiOrchestratorService:
@@ -7738,6 +7740,54 @@ class AiOrchestratorService:
         iteration_streamed = False
         cache_satisfied_read = False
         forced_read_once = False  # NEW: prevent repeated forced reads
+        llm_usage_summary: dict[str, object] | None = None
+
+        def _merge_llm_usage(usage: Mapping[str, object] | None, *, stage: str) -> None:
+            nonlocal llm_usage_summary
+            if not usage:
+                return
+            prompt = usage.get("prompt_tokens")
+            completion = usage.get("completion_tokens")
+            total = usage.get("total_tokens")
+            try:
+                prompt_val = int(prompt) if prompt is not None else 0
+            except (TypeError, ValueError):
+                prompt_val = 0
+            try:
+                completion_val = int(completion) if completion is not None else 0
+            except (TypeError, ValueError):
+                completion_val = 0
+            try:
+                total_val = int(total) if total is not None else 0
+            except (TypeError, ValueError):
+                total_val = 0
+            if not total_val and (prompt_val or completion_val):
+                total_val = prompt_val + completion_val
+            if llm_usage_summary is None:
+                llm_usage_summary = {
+                    "prompt_tokens": 0,
+                    "completion_tokens": 0,
+                    "total_tokens": 0,
+                    "calls": [],
+                }
+            llm_usage_summary["prompt_tokens"] = int(llm_usage_summary.get("prompt_tokens", 0)) + prompt_val
+            llm_usage_summary["completion_tokens"] = int(llm_usage_summary.get("completion_tokens", 0)) + completion_val
+            llm_usage_summary["total_tokens"] = int(llm_usage_summary.get("total_tokens", 0)) + total_val
+            entry = {
+                "prompt_tokens": prompt_val,
+                "completion_tokens": completion_val,
+                "total_tokens": total_val,
+                "stage": stage,
+            }
+            model = usage.get("model")
+            provider = usage.get("provider")
+            if isinstance(model, str) and model:
+                entry["model"] = model
+            if isinstance(provider, str) and provider:
+                entry["provider"] = provider
+            llm_usage_summary.setdefault("calls", [])
+            if isinstance(llm_usage_summary["calls"], list):
+                llm_usage_summary["calls"].append(entry)
 
 
 
@@ -7773,7 +7823,7 @@ class AiOrchestratorService:
                 except Exception:  # pragma: no cover - defensive
                     logger.exception("stream_complete callback failed")
 
-        for _ in range(max_turns):
+        for iteration_index in range(max_turns):
             self._enforce_snippet_budget(knowledge_payload, budget=prompt_budget)
             prompt_bundle = self.prompt_builder.build(
                 conversation=conversation,
@@ -7790,6 +7840,7 @@ class AiOrchestratorService:
                 final_plan = None
                 _notify_stream_complete_once()
                 break
+            _merge_llm_usage(plan_candidate.llm_usage, stage=f"iteration_{iteration_index + 1}")
             ready_ids_in_payload = {
                 str(s.get("id"))
                 for s in knowledge_payload
@@ -8046,6 +8097,7 @@ class AiOrchestratorService:
             cached_snippet_count=len(cached_entries),
             llm_source=llm_source,
             streamed_chunks=tuple(streamed_chunks),
+            llm_usage=llm_usage_summary,
             response_blocks=response_blocks,
         )
 
@@ -9537,6 +9589,9 @@ class AiOrchestratorService:
                 block_source = raw_payload.get(key)
                 break
         response_blocks = normalize_response_blocks(block_source)
+        llm_usage = raw_payload.get("llm_usage")
+        if not isinstance(llm_usage, Mapping):
+            llm_usage = None
 
         return LlmPlan(
             response_text=text,
@@ -9544,6 +9599,7 @@ class AiOrchestratorService:
             extractions=extractions,
             knowledge_requests=tuple(knowledge_requests),
             response_blocks=response_blocks,
+            llm_usage=llm_usage,
         )
 
     @staticmethod

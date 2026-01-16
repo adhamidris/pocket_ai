@@ -152,6 +152,64 @@ def _log_usage(label: str, model: str | None, usage: Mapping[str, object] | None
     )
 
 
+def _coerce_usage_mapping(usage: object | None) -> Mapping[str, object] | None:
+    if not usage:
+        return None
+    if isinstance(usage, Mapping):
+        return usage
+    for attr in ("model_dump", "to_dict", "dict"):
+        method = getattr(usage, attr, None)
+        if callable(method):
+            try:
+                value = method()
+            except Exception:
+                continue
+            if isinstance(value, Mapping):
+                return value
+    raw = getattr(usage, "__dict__", None)
+    if isinstance(raw, Mapping):
+        return raw
+    return None
+
+
+def _normalize_usage_payload(
+    usage: object | None,
+    *,
+    provider: str | None = None,
+    model: str | None = None,
+) -> dict[str, object] | None:
+    usage_map = _coerce_usage_mapping(usage)
+    if not usage_map:
+        return None
+    prompt = usage_map.get("prompt_tokens")
+    completion = usage_map.get("completion_tokens")
+    total = usage_map.get("total_tokens")
+    try:
+        prompt_val = int(prompt) if prompt is not None else 0
+    except (TypeError, ValueError):
+        prompt_val = 0
+    try:
+        completion_val = int(completion) if completion is not None else 0
+    except (TypeError, ValueError):
+        completion_val = 0
+    try:
+        total_val = int(total) if total is not None else 0
+    except (TypeError, ValueError):
+        total_val = 0
+    if not total_val and (prompt_val or completion_val):
+        total_val = prompt_val + completion_val
+    payload: dict[str, object] = {
+        "prompt_tokens": prompt_val,
+        "completion_tokens": completion_val,
+        "total_tokens": total_val,
+    }
+    if provider:
+        payload["provider"] = provider
+    if model:
+        payload["model"] = model
+    return payload
+
+
 class PromptGenerationError(RuntimeError):
     """Raised when the LLM provider fails to respond."""
 
@@ -247,6 +305,7 @@ class OpenAIChatProvider:
             }
             if streaming:
                 payload["stream"] = True
+                payload["stream_options"] = {"include_usage": True}
             if LOG_TOKEN_ESTIMATE and logger.isEnabledFor(logging.DEBUG):
                 try:
                     char_count, token_est = _message_char_stats(payload.get("messages") or [], self.model)
@@ -292,12 +351,18 @@ class OpenAIChatProvider:
                 raise PromptGenerationError(f"OpenAI error ({status_code}): {raw_body[:200] if raw_body else status_code}")
 
             if streaming:
+                usage_payload = None
                 try:
                     content = self._extract_content(data)
                 except Exception as exc:
                     span.record_exception(exc)
                     span.set_status(Status(StatusCode.ERROR, "stream_missing_content"))
                     raise PromptGenerationError("OpenAI streaming response missing content.") from exc
+                usage_payload = _normalize_usage_payload(
+                    data.get("usage") if isinstance(data, Mapping) else None,
+                    provider="OpenAIChat",
+                    model=self.model,
+                )
                 if logger.isEnabledFor(logging.DEBUG):
                     try:
                         logger.debug("OpenAI stream assembled payload: %s", json.dumps(data, ensure_ascii=False))
@@ -311,6 +376,7 @@ class OpenAIChatProvider:
                     except Exception:
                         logger.debug("Failed to log streaming token estimate.")
             else:
+                usage_payload = None
                 try:
                     data = json.loads(raw_body)
                 except ValueError as exc:
@@ -319,6 +385,11 @@ class OpenAIChatProvider:
                     raise PromptGenerationError("OpenAI response was not valid JSON.") from exc
 
                 _log_usage("OpenAIChat", self.model, data.get("usage") if isinstance(data, Mapping) else None)
+                usage_payload = _normalize_usage_payload(
+                    data.get("usage") if isinstance(data, Mapping) else None,
+                    provider="OpenAIChat",
+                    model=self.model,
+                )
                 structured_log(
                     "llm",
                     "raw_response",
@@ -332,6 +403,8 @@ class OpenAIChatProvider:
                 parsed = json.loads(content)
                 if span.is_recording() and isinstance(parsed, Mapping):
                     span.set_attribute("llm.response_chars", len(content or ""))
+                if usage_payload and isinstance(parsed, dict):
+                    parsed["llm_usage"] = usage_payload
                 return parsed
             except json.JSONDecodeError as exc:
                 span.record_exception(exc)
@@ -444,18 +517,21 @@ class DeepSeekChatProvider(OpenAIChatProvider):
                 "messages": messages,
             }
             self._log_pretty("DeepSeek request payload", request_payload)
+            usage_payload = None
             if streaming:
-                content = self._generate_streaming(messages, on_stream_delta)
+                content, usage_payload = self._generate_streaming(messages, on_stream_delta)
             else:
-                content = self._generate_blocking(messages)
+                content, usage_payload = self._generate_blocking(messages)
             self._log_pretty("DeepSeek raw response", content)
             parsed = self._parse_payload(content)
+            if usage_payload and isinstance(parsed, dict):
+                parsed["llm_usage"] = usage_payload
             self._log_pretty("DeepSeek parsed payload", parsed)
             if span.is_recording():
                 span.set_attribute("llm.response_chars", len(content or ""))
             return parsed
 
-    def _generate_blocking(self, messages: list[Mapping[str, str]]) -> str:
+    def _generate_blocking(self, messages: list[Mapping[str, str]]) -> tuple[str, dict[str, object] | None]:
         try:
             response = self._client.chat.completions.create(
                 model=self.model,
@@ -466,15 +542,26 @@ class DeepSeekChatProvider(OpenAIChatProvider):
             )
         except Exception as exc:
             raise PromptGenerationError(f"DeepSeek request failed: {exc}") from exc
+        usage_payload = _normalize_usage_payload(
+            getattr(response, "usage", None),
+            provider="DeepSeekChat",
+            model=self.model,
+        )
         try:
             _log_usage("DeepSeekChat", self.model, getattr(response, "usage", None))
         except Exception:
             pass
-        return self._stringify_message_content(getattr(response.choices[0], "message", None))
+        content = self._stringify_message_content(getattr(response.choices[0], "message", None))
+        return content, usage_payload
 
-    def _generate_streaming(self, messages: list[Mapping[str, str]], on_stream_delta: Callable[[str], None]) -> str:
+    def _generate_streaming(
+        self,
+        messages: list[Mapping[str, str]],
+        on_stream_delta: Callable[[str], None],
+    ) -> tuple[str, dict[str, object] | None]:
         extractor = _ResponseTextExtractor(on_stream_delta)
         assembled: list[str] = []
+        usage_payload = None
         try:
             stream = self._client.chat.completions.create(
                 model=self.model,
@@ -482,8 +569,15 @@ class DeepSeekChatProvider(OpenAIChatProvider):
                 temperature=self.temperature,
                 top_p=self.top_p,
                 stream=True,
+                stream_options={"include_usage": True},
             )
             for chunk in stream:
+                if usage_payload is None:
+                    usage_payload = _normalize_usage_payload(
+                        getattr(chunk, "usage", None),
+                        provider="DeepSeekChat",
+                        model=self.model,
+                    )
                 delta_text = self._stringify_message_content(getattr(chunk.choices[0], "delta", None))
                 if not delta_text:
                     continue
@@ -497,7 +591,7 @@ class DeepSeekChatProvider(OpenAIChatProvider):
         content = "".join(assembled).strip()
         if not content:
             raise PromptGenerationError("DeepSeek response was empty.")
-        return content
+        return content, usage_payload
 
     @staticmethod
     def _stringify_message_content(payload: Any) -> str:
@@ -961,6 +1055,8 @@ def _consume_chat_completion_stream(
     last_message_content: str | None = None
     last_message_tool_calls: list[dict[str, object]] | None = None
     last_message_payload: dict[str, object] | None = None
+    usage_payload: Mapping[str, object] | None = None
+    model_name: str | None = None
 
     def _normalize_delta(chunk: str) -> str:
         return chunk or ""
@@ -975,6 +1071,13 @@ def _consume_chat_completion_stream(
             data = json.loads(payload)
         except ValueError:
             continue
+        if not model_name:
+            model_raw = data.get("model")
+            if isinstance(model_raw, str) and model_raw:
+                model_name = model_raw
+        usage_raw = data.get("usage")
+        if isinstance(usage_raw, Mapping):
+            usage_payload = usage_raw
         choices = data.get("choices") or []
         if not choices:
             continue
@@ -1082,8 +1185,12 @@ def _consume_chat_completion_stream(
         },
         logger_obj=logger,
     )
-
-    return {"choices": [{"message": message}]}
+    response: dict[str, object] = {"choices": [{"message": message}]}
+    if usage_payload:
+        response["usage"] = dict(usage_payload)
+    if model_name:
+        response["model"] = model_name
+    return response
 
 
 class OpenAIToolsProvider(BaseMcpProvider):
@@ -1157,6 +1264,8 @@ class OpenAIToolsProvider(BaseMcpProvider):
                     "messages": [dict(msg) for msg in messages],
                     "stream": streaming,
                 }
+                if streaming:
+                    payload["stream_options"] = {"include_usage": True}
                 # Newer models (o1, o3, gpt-5) don't support temperature/top_p
                 model_lower = self.model.lower()
                 skip_sampling_params = any(
@@ -1461,6 +1570,8 @@ class DeepSeekToolsProvider(BaseMcpProvider):
                     "top_p": self.top_p,
                     "stream": streaming,
                 }
+                if streaming:
+                    payload["stream_options"] = {"include_usage": True}
                 if tools:
                     payload["tools"] = list(tools)
                     payload["tool_choice"] = "auto"

@@ -191,6 +191,80 @@ def _serialize_tool_trace_entry(entry: Mapping[str, object]) -> dict[str, object
     return {k: v for k, v in out.items() if v is not None and v != ""}
 
 
+def _serialize_llm_usage(usage: Mapping[str, object] | None) -> dict[str, object] | None:
+    if not usage:
+        return None
+    prompt = usage.get("prompt_tokens")
+    completion = usage.get("completion_tokens")
+    total = usage.get("total_tokens")
+    try:
+        prompt_val = int(prompt) if prompt is not None else 0
+    except (TypeError, ValueError):
+        prompt_val = 0
+    try:
+        completion_val = int(completion) if completion is not None else 0
+    except (TypeError, ValueError):
+        completion_val = 0
+    try:
+        total_val = int(total) if total is not None else 0
+    except (TypeError, ValueError):
+        total_val = 0
+    if not total_val and (prompt_val or completion_val):
+        total_val = prompt_val + completion_val
+    out: dict[str, object] = {
+        "prompt_tokens": prompt_val,
+        "completion_tokens": completion_val,
+        "total_tokens": total_val,
+    }
+    calls_raw = usage.get("calls")
+    if isinstance(calls_raw, (list, tuple)):
+        calls: list[dict[str, object]] = []
+        for entry in calls_raw:
+            if not isinstance(entry, Mapping):
+                continue
+            call_prompt = entry.get("prompt_tokens")
+            call_completion = entry.get("completion_tokens")
+            call_total = entry.get("total_tokens")
+            try:
+                call_prompt_val = int(call_prompt) if call_prompt is not None else 0
+            except (TypeError, ValueError):
+                call_prompt_val = 0
+            try:
+                call_completion_val = int(call_completion) if call_completion is not None else 0
+            except (TypeError, ValueError):
+                call_completion_val = 0
+            try:
+                call_total_val = int(call_total) if call_total is not None else 0
+            except (TypeError, ValueError):
+                call_total_val = 0
+            if not call_total_val and (call_prompt_val or call_completion_val):
+                call_total_val = call_prompt_val + call_completion_val
+            call_entry: dict[str, object] = {
+                "prompt_tokens": call_prompt_val,
+                "completion_tokens": call_completion_val,
+                "total_tokens": call_total_val,
+            }
+            stage = entry.get("stage")
+            if stage:
+                call_entry["stage"] = stage
+            model = entry.get("model")
+            if model:
+                call_entry["model"] = model
+            provider = entry.get("provider")
+            if provider:
+                call_entry["provider"] = provider
+            calls.append(call_entry)
+        if calls:
+            out["calls"] = calls
+    provider = usage.get("provider")
+    if provider:
+        out["provider"] = provider
+    model = usage.get("model")
+    if model:
+        out["model"] = model
+    return out
+
+
 def _serialize_knowledge_result(entry: Mapping[str, object]) -> dict[str, object]:
     title = entry.get("title") or entry.get("public_label") or entry.get("label") or "Knowledge"
     preview_source = (
@@ -226,6 +300,7 @@ def _serialize_debug_tools_payload(stream_context: StreamingTurnContext) -> dict
     search_history_raw = None
     coverage_ledger_raw = None
     table_rows_raw = None
+    llm_usage_raw = getattr(stream_context, "llm_usage", None)
     if tool_context is not None:
         tool_trace_raw = getattr(tool_context, "tool_trace", None)
         knowledge_results_raw = getattr(tool_context, "knowledge_results", None)
@@ -276,7 +351,17 @@ def _serialize_debug_tools_payload(stream_context: StreamingTurnContext) -> dict
             if isinstance(entry, Mapping):
                 table_aggregate_rows.append(_json_safe_debug(entry, depth=3, string_limit=200, list_limit=12))
 
-    if not tool_trace and not knowledge_results and not knowledge_reads and not search_history and not coverage_ledger and not table_aggregate_rows:
+    llm_usage = _serialize_llm_usage(llm_usage_raw if isinstance(llm_usage_raw, Mapping) else None)
+
+    if (
+        not tool_trace
+        and not knowledge_results
+        and not knowledge_reads
+        and not search_history
+        and not coverage_ledger
+        and not table_aggregate_rows
+        and not llm_usage
+    ):
         return None
     return {
         "tool_trace": tool_trace,
@@ -285,6 +370,7 @@ def _serialize_debug_tools_payload(stream_context: StreamingTurnContext) -> dict
         "knowledge_reads": knowledge_reads,
         "coverage_ledger": coverage_ledger,
         "table_aggregate_rows": table_aggregate_rows,
+        "usage": llm_usage,
     }
 
 

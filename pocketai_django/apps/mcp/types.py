@@ -100,6 +100,10 @@ class ToolExecutionContext:
     table_column_filters: dict[str, list[str]] = dataclasses.field(default_factory=dict)
     table_result_cache: dict[tuple, dict[str, object]] = dataclasses.field(default_factory=dict)
     table_result_cache_dirty: set[tuple] = dataclasses.field(default_factory=set)
+    llm_usage: dict[str, int] = dataclasses.field(
+        default_factory=lambda: {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
+    )
+    llm_usage_entries: list[dict[str, object]] = dataclasses.field(default_factory=list)
 
     # Conversation-level seen-item tracking (for "are there more?" follow-ups)
     # IDs of chunks/snippets already shown to user in this conversation
@@ -194,6 +198,32 @@ class ToolExecutionContext:
                 "You have already searched the knowledge base this turn. Use read_knowledge to get more details "
                 "from the snippets you received, or answer based on what you found."
             )
+
+    def record_llm_usage(
+        self,
+        *,
+        prompt_tokens: int,
+        completion_tokens: int,
+        total_tokens: int,
+        stage: str | None = None,
+        model: str | None = None,
+        provider: str | None = None,
+    ) -> None:
+        self.llm_usage["prompt_tokens"] = int(self.llm_usage.get("prompt_tokens", 0)) + max(0, prompt_tokens)
+        self.llm_usage["completion_tokens"] = int(self.llm_usage.get("completion_tokens", 0)) + max(0, completion_tokens)
+        self.llm_usage["total_tokens"] = int(self.llm_usage.get("total_tokens", 0)) + max(0, total_tokens)
+        entry: dict[str, object] = {
+            "prompt_tokens": max(0, prompt_tokens),
+            "completion_tokens": max(0, completion_tokens),
+            "total_tokens": max(0, total_tokens),
+        }
+        if stage:
+            entry["stage"] = stage
+        if model:
+            entry["model"] = model
+        if provider:
+            entry["provider"] = provider
+        self.llm_usage_entries.append(entry)
 
     def add_ingestion_warning(self, warning: Mapping[str, object]) -> None:
         """Record an ingestion warning so the orchestrator can surface it later."""
