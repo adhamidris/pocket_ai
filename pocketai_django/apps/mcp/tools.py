@@ -3269,6 +3269,29 @@ def _search_knowledge_handler(
                                     logger_obj=logger,
                                 )
 
+                                # Track refinement in context (Phase 4)
+                                context.track_refinement(
+                                    original_query=query_text,
+                                    refined_query=refined_query,
+                                    reason=critique_result.explanation,
+                                    verdict=critique_result.verdict,
+                                    auto_applied=True,
+                                )
+
+                    # Track non-applied refinement suggestions (when auto-refine disabled or failed)
+                    if (
+                        critique_result.verdict == "mismatch"
+                        and critique_result.suggested_refinement
+                        and not is_refined_query
+                    ):
+                        context.track_refinement(
+                            original_query=query_text,
+                            refined_query=critique_result.suggested_refinement,
+                            reason=critique_result.explanation,
+                            verdict=critique_result.verdict,
+                            auto_applied=False,
+                        )
+
             except Exception as e:
                 # Critique failure should not block retrieval
                 structured_log(

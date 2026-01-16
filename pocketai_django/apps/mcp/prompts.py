@@ -97,7 +97,13 @@ OPENAI_PROACTIVE_TOOL_INSTRUCTIONS = textwrap.dedent(
        - If results insufficient → **Search again with different terms** or call `read_document` for more context
        - Only ask for clarification if multiple search/read attempts still can't answer the question
 
-    5. **MULTIPLE ROUNDS ARE OK**: Don't stop after one search if the answer is incomplete:
+    5. **RETRIEVAL CRITIQUE HINTS**: When search results include a `hint` field with text like "Results may not match query intent" or a `retrieval_critique` with `verdict: "mismatch"`:
+       - **DO NOT ignore the hint** — the system detected that results may be wrong
+       - If `suggested_refinement` is provided, **immediately search again** with that exact query
+       - If `refinement_applied: true`, results have already been auto-corrected — use them confidently
+       - Example: hint says "Consider searching for: 'Trade Bills Withdraw fees'" → call `search_knowledge("Trade Bills Withdraw fees")`
+
+    6. **MULTIPLE ROUNDS ARE OK**: Don't stop after one search if the answer is incomplete:
        - Vague questions often need 2-3 searches with varied terms to gather full information
        - If a snippet shows `read_required: true`, treat it as a warning that context may be incomplete; read only if you need more evidence to answer accurately
        - Continue searching/reading until you have enough information to give a complete answer
@@ -428,6 +434,10 @@ def build_system_message(
         - Include Arabic/English variants + spelling alternatives only when the visitor used both languages or the term is commonly spelled multiple ways
         - **For specific lookups**: If results weak, ask visitor for specific doc/page/ID instead of retrying
         - **Learn from results**: Note the exact terms, table headers, and row labels in returned snippets—use those terms for follow-up searches or questions
+        - **RETRIEVAL CRITIQUE**: If results include `hint` with "Results may not match" or `retrieval_critique.verdict: "mismatch"`:
+          - System detected semantic mismatch—results may be from wrong topic
+          - If `suggested_refinement` provided, **search again with that exact query**
+          - If `refinement_applied: true`, results are already corrected—use confidently
         - **COMPLETENESS METADATA**: Tool results always include `completeness` with `shown`, `total_found`, `already_seen`, and `has_more`/`clipped`.
         - Results are **NOT auto-filtered**—you may see repeats. Use `already_seen` plus conversation context to avoid re-listing or offer only new items.
         - When `all_previously_shown: true`, tell the visitor they've already seen all matching results for this search.
