@@ -2688,6 +2688,7 @@ def _search_knowledge_handler(
         )
         aggregation_query = any(keyword in normalized_query for keyword in aggregation_keywords)
         limit_for_run = limit_override if limit_override is not None else _tuned_limit(intent, requested_limit)
+        is_refined_query = False  # Track if auto-refinement was applied (prevents loops)
         search_cache_key = _search_cache_key(
             query_text,
             limit_for_run,
@@ -3126,6 +3127,162 @@ def _search_knowledge_handler(
             limit_value=limit_for_run,
             status=result.status,
         )
+
+        # =====================================================================
+        # Confidence-Gated Retrieval Critique (Phase 2 Agentic RAG)
+        # =====================================================================
+        # Compute confidence score and optionally invoke LLM critique for
+        # low-confidence results. This catches semantic collisions that
+        # parallel table search might miss.
+        confidence_result = None
+        critique_result = None
+        critique_enabled = str(getattr(settings, "RAG_RETRIEVAL_CRITIQUE_ENABLED", "true")).lower() in {"1", "true", "yes"}
+
+        if critique_enabled and snippet_payloads:
+            try:
+                from apps.rag.retrieval_critique import (
+                    get_confidence_scorer,
+                    get_retrieval_critique,
+                )
+
+                scorer = get_confidence_scorer()
+                confidence_result = scorer.compute(
+                    query=query_text,
+                    snippets=snippet_payloads,
+                    diagnostics=dict(result.diagnostics or {}),
+                )
+
+                structured_log(
+                    "mcp",
+                    "search.confidence",
+                    {
+                        "query": query_text[:50],
+                        "score": round(confidence_result.score, 3),
+                        "should_critique": confidence_result.should_critique,
+                        "reasons": confidence_result.reasons[:3],
+                    },
+                    context={
+                        "conversation": conversation.id,
+                        "business": conversation.business_profile_id,
+                    },
+                    logger_obj=logger,
+                )
+
+                # Invoke LLM critique if confidence is low
+                if confidence_result.should_critique:
+                    critique = get_retrieval_critique()
+                    critique_result = critique.evaluate(
+                        query=query_text,
+                        top_results=snippet_payloads[:5],
+                    )
+
+                    structured_log(
+                        "mcp",
+                        "search.critique",
+                        {
+                            "query": query_text[:50],
+                            "verdict": critique_result.verdict,
+                            "confidence": critique_result.confidence,
+                            "explanation": critique_result.explanation[:100],
+                            "suggested_refinement": critique_result.suggested_refinement,
+                        },
+                        context={
+                            "conversation": conversation.id,
+                            "business": conversation.business_profile_id,
+                        },
+                        logger_obj=logger,
+                    )
+
+                    # =============================================================
+                    # Auto-Refinement: Re-search with suggested query if mismatch
+                    # =============================================================
+                    auto_refine_enabled = str(
+                        getattr(settings, "RAG_RETRIEVAL_CRITIQUE_AUTO_REFINE", "true")
+                    ).lower() in {"1", "true", "yes"}
+
+                    if (
+                        auto_refine_enabled
+                        and critique_result.verdict == "mismatch"
+                        and critique_result.suggested_refinement
+                        and not is_refined_query  # Prevent infinite loops
+                    ):
+                        refined_query = critique_result.suggested_refinement
+                        structured_log(
+                            "mcp",
+                            "search.auto_refine",
+                            {
+                                "original_query": query_text[:50],
+                                "refined_query": refined_query[:50],
+                                "reason": critique_result.explanation[:100],
+                            },
+                            context={
+                                "conversation": conversation.id,
+                                "business": conversation.business_profile_id,
+                            },
+                            logger_obj=logger,
+                        )
+
+                        # Re-run search with refined query
+                        refined_result = service.search(
+                            business_profile=conversation.business_profile,
+                            query=refined_query,
+                            limit=limit_for_run,
+                            identifier_filter=identifier_filter,
+                            allowed_upload_ids=combined_upload_ids,
+                            allowed_collection_ids=agent_collection_ids,
+                            allowed_explicit_upload_ids=agent_explicit_upload_ids,
+                            session_context=session_context,
+                        )
+
+                        if refined_result and refined_result.snippets:
+                            # Build refined snippet payloads
+                            refined_snippet_payloads = []
+                            for snippet in refined_result.snippets:
+                                refined_payload = _snippet_to_payload(snippet, context, search_intent=intent)
+                                refined_payload["refinement_source"] = "auto_critique"
+                                refined_snippet_payloads.append(refined_payload)
+
+                            # Sanitize and use refined results
+                            refined_snippet_payloads = _sanitize_snippet_payloads_for_prompt(
+                                refined_snippet_payloads, conversation=conversation
+                            )
+
+                            if refined_snippet_payloads:
+                                # Replace original results with refined ones
+                                original_snippets = snippet_payloads
+                                snippet_payloads = refined_snippet_payloads
+                                result = refined_result
+                                is_refined_query = True
+
+                                structured_log(
+                                    "mcp",
+                                    "search.auto_refine.success",
+                                    {
+                                        "original_count": len(original_snippets),
+                                        "refined_count": len(snippet_payloads),
+                                        "refined_query": refined_query[:50],
+                                    },
+                                    context={
+                                        "conversation": conversation.id,
+                                        "business": conversation.business_profile_id,
+                                    },
+                                    logger_obj=logger,
+                                )
+
+            except Exception as e:
+                # Critique failure should not block retrieval
+                structured_log(
+                    "mcp",
+                    "search.critique_error",
+                    {"query": query_text[:50], "error": str(e)[:100]},
+                    context={"conversation": conversation.id},
+                    logger_obj=logger,
+                    level=logging.WARNING,
+                )
+
+        # Track refinement in payload
+        refinement_applied = is_refined_query
+
         payload = {
             "tool": "search_knowledge",
             "query": query_text,
@@ -3139,6 +3296,28 @@ def _search_knowledge_handler(
             "snippets": snippet_payloads,
             "hint": _search_hint(result.status, intent, snippet_payloads, result.diagnostics),
         }
+
+        # Add confidence and critique info to payload
+        if confidence_result:
+            payload["retrieval_confidence"] = confidence_result.as_dict()
+        if critique_result:
+            payload["retrieval_critique"] = critique_result.as_dict()
+            # Update hint based on refinement status
+            if refinement_applied:
+                # Auto-refinement succeeded - update hint to inform about refined results
+                payload["refinement_applied"] = True
+                payload["original_query"] = query_text
+                payload["refined_query"] = critique_result.suggested_refinement
+                payload["hint"] = (
+                    f"Query was auto-refined for better results. "
+                    f"Original: '{query_text}' → Refined: '{critique_result.suggested_refinement}'"
+                )
+            elif critique_result.verdict == "mismatch" and critique_result.suggested_refinement:
+                # Mismatch detected but refinement not applied (disabled or failed)
+                payload["hint"] = (
+                    f"Results may not match query intent. {critique_result.explanation} "
+                    f"Consider searching for: '{critique_result.suggested_refinement}'"
+                )
         payload["read_required_summary"] = {
             "any": read_required,
             "reasons": sorted(read_required_reasons_summary),
