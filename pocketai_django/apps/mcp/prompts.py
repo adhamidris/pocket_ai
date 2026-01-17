@@ -218,6 +218,8 @@ def build_system_message(
         - Read when previews are too thin to answer confidently.
         - Prefer smaller scopes (`excerpt`) unless a full table is needed.
         - Batch related pages/ids to reduce round-trips.
+        - Prefer one comprehensive batched read over multiple small reads (extra tool-loop turns can cost more overall).
+        - Avoid setting very low `max_chars` unless you intentionally want a quick peek; use higher values to prevent truncation-driven re-reads.
         - If existing evidence is sufficient, answer without an extra read.
 
         ### `get_document_structure`
