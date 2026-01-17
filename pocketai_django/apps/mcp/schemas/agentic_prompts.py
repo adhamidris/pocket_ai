@@ -34,7 +34,7 @@ Use this to discover what information exists.
 ### read_document(ids, max_chars)
 Get full content for specific IDs. Use this after search to get data needed to answer.
 - `ids`: list of `read_id` values (or `id`) from search_knowledge results
-- `max_chars`: maximum characters to return across all ids (set higher for full pages, "list all", or large tables; use the max when you expect lots of content)
+- `max_chars`: maximum characters to return across all ids (set higher for "list all" or large tables)
 
 ## Workflow
 
@@ -43,7 +43,6 @@ Get full content for specific IDs. Use this after search to get data needed to a
 2. **Examine results**: Look at titles, types, row counts, and previews to understand what exists
 3. **Read what you need**: Use a single read_document call with ALL relevant `ids` at once
    - Prefer batching over multiple read rounds: one comprehensive read is usually cheaper than multiple smaller reads that trigger extra tool-loop LLM calls.
-   - Avoid tiny `max_chars` (e.g. ~2000) unless you intentionally want a quick peek; it often causes truncation and forces additional reads.
 4. **Answer completely**: For "list all" queries, read ALL matching results in one call and set `max_chars` high enough to cover all rows
 5. **Handle truncation**: If read_document returns `truncated_ids`, re-read only those ids with higher `max_chars` or a narrower scope
 6. **Try again if needed**: If results don't match, search with different terms
@@ -109,7 +108,6 @@ Arguments:
 - max_chars: Maximum total characters to return (set higher for list-all or table-heavy answers)
 
 Prefer a single call with all ids instead of multiple read_document calls.
-If you expect full-page/table content, use a high max_chars (up to 20000) to avoid truncation-driven re-reads.
 Use document_id + pages only when you explicitly need a specific page.
 Returns the actual content needed to answer the user's question.
 For tables, returns the full table data.
