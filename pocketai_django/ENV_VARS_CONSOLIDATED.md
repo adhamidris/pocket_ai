@@ -44,12 +44,13 @@ LLM_TEMPERATURE=0.3
 ### Search Controls (Recommended: LLM-Driven)
 ```bash
 # How many times the LLM can call search_knowledge per user message
-# Set to 3 for comprehensive queries ("list all X")
-MCP_MAX_SEARCHES_PER_TURN=3
+# Set to 1 to encourage a single batched search per turn (use `queries=[...]`)
+# Increase to allow follow-up/refinement searches when needed
+MCP_MAX_SEARCHES_PER_TURN=1
 
 # How many query variants to try PER search call (internal expansion)
-# Keep at 1 for predictable latency
-MCP_SEARCH_MAX_QUERY_VARIANTS=1
+# 3 is a good default for batched sub-queries; set to 1 to disable fanout
+MCP_SEARCH_MAX_QUERY_VARIANTS=3
 ```
 
 **Total queries per turn** = `MCP_MAX_SEARCHES_PER_TURN × MCP_SEARCH_MAX_QUERY_VARIANTS` = **3**
@@ -97,8 +98,8 @@ OPENAI_MODEL=gpt-4o-mini
 LLM_TEMPERATURE=0.3
 
 # === SEARCH (LLM-DRIVEN) ===
-MCP_MAX_SEARCHES_PER_TURN=3
-MCP_SEARCH_MAX_QUERY_VARIANTS=1
+MCP_MAX_SEARCHES_PER_TURN=1
+MCP_SEARCH_MAX_QUERY_VARIANTS=3
 MCP_SEARCH_KNOWLEDGE_CALLS_PER_MINUTE=120
 ```
 
@@ -126,22 +127,21 @@ LLM_TEMPERATURE=0.3
 
 ## Search Strategy Comparison
 
-### Option A: LLM-Driven (Recommended)
-```bash
-MCP_MAX_SEARCHES_PER_TURN=3
-MCP_SEARCH_MAX_QUERY_VARIANTS=1
-```
-- ✅ LLM decides when to search again
-- ✅ Adapts to query complexity
-- ✅ Predictable latency per search
-
-### Option B: System-Driven
+### Option A: Agentic Batched Search (Recommended)
 ```bash
 MCP_MAX_SEARCHES_PER_TURN=1
 MCP_SEARCH_MAX_QUERY_VARIANTS=3
 ```
-- ✅ Automatic query expansion
-- ❌ LLM can't adapt to partial results
-- ❌ Higher latency per search
+- ✅ Single tool call per turn (lower tool-loop overhead)
+- ✅ Handles multi-part questions via `queries=[...]` (fused + deduped results)
+- ✅ Keeps prompt evidence bounded (snippets still capped)
 
-**We recommend Option A (LLM-driven)** for better control and adaptability.
+### Option B: Strict Single Query (Lowest Latency)
+```bash
+MCP_MAX_SEARCHES_PER_TURN=1
+MCP_SEARCH_MAX_QUERY_VARIANTS=1
+```
+- ✅ Most predictable/fastest search
+- ❌ More likely to miss relevant docs when wording varies
+
+If you want an escape hatch for refinement, set `MCP_MAX_SEARCHES_PER_TURN=2` (one batched search + one fallback search).

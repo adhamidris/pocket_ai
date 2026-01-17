@@ -40,7 +40,7 @@ from apps.rag.query_classifier import QueryClassifier, QueryClassification, Quer
 from apps.rag.rag_logging import structured_log
 from apps.conversations.response_blocks import normalize_response_blocks
 
-from . import prompts, tools
+from . import prompts, tools as mcp_tools
 from .sanitizer import (
     extract_sentences,
     is_investigative_filler_with_level,
@@ -97,7 +97,7 @@ class McpOrchestratorService:
     def __init__(self, *, agent: AgentProfile, provider: BaseMcpProvider | None) -> None:
         self.agent = agent
         self.provider = provider
-        self.tool_definitions = tools.TOOL_DEFINITIONS
+        self.tool_definitions = mcp_tools.TOOL_DEFINITIONS
         self.max_tool_iterations = int(getattr(settings, "MCP_MAX_TOOL_ITERATIONS", 10))
         self.read_document_repeat_limit = max(1, int(getattr(settings, "MCP_READ_DOCUMENT_REPEAT_LIMIT", 2)))
         self.read_document_throttle_limit = max(1, int(getattr(settings, "MCP_READ_DOCUMENT_THROTTLE_LIMIT", 2)))
@@ -234,8 +234,8 @@ class McpOrchestratorService:
                 tool_context.preplan = dict(preplan_payload)
                 route = str(preplan_payload.get("route") or "").strip()
                 search_query = str(preplan_payload.get("search_query") or "").strip()
-                tools = preplan_payload.get("tools") or []
-                tool_list = [t for t in tools if isinstance(t, str) and t.strip()]
+                planned_tools = preplan_payload.get("tools") or []
+                tool_list = [t for t in planned_tools if isinstance(t, str) and t.strip()]
                 note_bits: list[str] = []
                 if route:
                     note_bits.append(f"route={route}")
@@ -834,8 +834,8 @@ class McpOrchestratorService:
                                     "snippets": [],
                                     "hint": (
                                         "Use the snippets already retrieved in this turn. "
-                                        "If more detail is needed, call read_knowledge using the snippet's read_hint.document_id "
-                                        "(do not invent document IDs)."
+                                        "If more detail is needed, call read_document using the existing snippet IDs "
+                                        "(do not invent IDs)."
                                     ),
                                 }
                             else:
@@ -908,7 +908,7 @@ class McpOrchestratorService:
                                     )
                                 call_start = time.perf_counter()
                                 try:
-                                    tool_result = tools.execute_tool(
+                                    tool_result = mcp_tools.execute_tool(
                                         tool_name,
                                         arguments,
                                         conversation=conversation,
@@ -1310,8 +1310,33 @@ class McpOrchestratorService:
                 )
                 if verification_payload:
                     tool_context.verification = dict(verification_payload)
-                    verdict = verification_payload.get("verdict")
-                    override = str(verification_payload.get("final_response") or "").strip()
+                elif verification_message:
+                    raw_verification = str(verification_message.get("content") or "").strip()
+                    if raw_verification:
+                        tool_context.verification = {
+                            "verdict": "parse_error",
+                            "missing_points": [],
+                            "final_response": "",
+                            "notes": self._clip_text(raw_verification, 320),
+                        }
+                if getattr(tool_context, "verification", None):
+                    snapshot = dict(getattr(tool_context, "verification") or {})
+                    structured_log(
+                        "mcp",
+                        "verification.result",
+                        {
+                            "verdict": snapshot.get("verdict"),
+                            "missing_points": len(snapshot.get("missing_points") or ()),
+                            "override": bool(str(snapshot.get("final_response") or "").strip()),
+                        },
+                        context={
+                            "conversation": conversation.id,
+                            "business": conversation.business_profile_id,
+                        },
+                        logger_obj=logger,
+                    )
+                    verdict = snapshot.get("verdict")
+                    override = str(snapshot.get("final_response") or "").strip()
                     if not streaming_allowed and verdict in {"needs_clarification", "unsupported"} and override:
                         clean_single = override
 
@@ -1468,8 +1493,33 @@ class McpOrchestratorService:
             )
             if verification_payload:
                 tool_context.verification = dict(verification_payload)
-                verdict = verification_payload.get("verdict")
-                override = str(verification_payload.get("final_response") or "").strip()
+            elif verification_message:
+                raw_verification = str(verification_message.get("content") or "").strip()
+                if raw_verification:
+                    tool_context.verification = {
+                        "verdict": "parse_error",
+                        "missing_points": [],
+                        "final_response": "",
+                        "notes": self._clip_text(raw_verification, 320),
+                    }
+            if getattr(tool_context, "verification", None):
+                snapshot = dict(getattr(tool_context, "verification") or {})
+                structured_log(
+                    "mcp",
+                    "verification.result",
+                    {
+                        "verdict": snapshot.get("verdict"),
+                        "missing_points": len(snapshot.get("missing_points") or ()),
+                        "override": bool(str(snapshot.get("final_response") or "").strip()),
+                    },
+                    context={
+                        "conversation": conversation.id,
+                        "business": conversation.business_profile_id,
+                    },
+                    logger_obj=logger,
+                )
+                verdict = snapshot.get("verdict")
+                override = str(snapshot.get("final_response") or "").strip()
                 if not streaming_allowed and verdict in {"needs_clarification", "unsupported"} and override:
                     clean_answer_text = override
         all_dropped = stream_dropped + dropped_sentences
@@ -2087,14 +2137,45 @@ class McpOrchestratorService:
 
     @staticmethod
     def _parse_json_blob(text: str) -> Mapping[str, object] | None:
+        """
+        Parse a JSON object from a model response.
+
+        Models sometimes wrap JSON in markdown fences or add extra prose.
+        This helper is intentionally tolerant so preplan/verification payloads
+        can still be recovered.
+        """
+
         if not text:
             return None
-        try:
-            parsed = json.loads(text)
-        except json.JSONDecodeError:
+
+        candidate = str(text).strip()
+        if not candidate:
             return None
-        if isinstance(parsed, Mapping):
+
+        # Unwrap ```json ... ``` fences when present.
+        fence_match = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", candidate, flags=re.DOTALL | re.IGNORECASE)
+        if fence_match:
+            candidate = fence_match.group(1).strip()
+
+        def _try_parse(blob: str) -> Mapping[str, object] | None:
+            try:
+                parsed = json.loads(blob)
+            except json.JSONDecodeError:
+                return None
+            return parsed if isinstance(parsed, Mapping) else None
+
+        parsed = _try_parse(candidate)
+        if parsed:
             return parsed
+
+        # Best-effort: extract the first {...} region and try again.
+        start = candidate.find("{")
+        end = candidate.rfind("}")
+        if start != -1 and end != -1 and end > start:
+            parsed = _try_parse(candidate[start : end + 1])
+            if parsed:
+                return parsed
+
         return None
 
     def _parse_preplan_payload(self, message: Mapping[str, object]) -> dict[str, object] | None:
@@ -2974,15 +3055,7 @@ class McpOrchestratorService:
             if not entry.get("snippet_count"):
                 continue
             snippet_ids = entry.get("snippet_ids") or []
-            feature_state = FeatureFlagService.snapshot(conversation.business_profile)
-            agentic = bool(feature_state.rag_agentic_mode)
-            hint = entry.get("hint") or (
-                "Use read_document with the existing ids from the earlier search."
-                if agentic
-                else "Use read_knowledge with the existing read_hint from the earlier search."
-            )
-            if not agentic:
-                hint = hint.replace("read_document", "read_knowledge")
+            hint = entry.get("hint") or "Use read_document with the existing ids from the earlier search."
             structured_log(
                 "mcp",
                 "search.duplicate_short_circuit",
@@ -3117,7 +3190,7 @@ class McpOrchestratorService:
             )
             call_start = time.perf_counter()
             try:
-                tool_result = tools.execute_tool(
+                tool_result = mcp_tools.execute_tool(
                     "get_document_structure",
                     arguments,
                     conversation=conversation,
@@ -3273,7 +3346,7 @@ class McpOrchestratorService:
             )
             call_start = time.perf_counter()
             try:
-                tool_result = tools.execute_tool(
+                tool_result = mcp_tools.execute_tool(
                     "table_aggregate",
                     arguments,
                     conversation=conversation,
@@ -3606,35 +3679,43 @@ class McpOrchestratorService:
                 lines.append(f"- search_knowledge(query={_clean_list(query)}) -> {status or 'done'}")
                 continue
 
-            if tool_name == "read_knowledge":
+            if tool_name == "read_document":
                 doc_id = args.get("document_id") or ""
-                intent = str(args.get("intent") or "").strip().lower()
-                table_args = args.get("table") if isinstance(args.get("table"), Mapping) else {}
-                text_args = args.get("text") if isinstance(args.get("text"), Mapping) else {}
-                if intent == "table" or (isinstance(table_args, Mapping) and table_args):
-                    match_col = table_args.get("match_column") or ""
-                    match_vals = table_args.get("match_values") or table_args.get("match_value") or table_args.get("query") or ""
-                    sheet_name = table_args.get("sheet_name") or ""
-                    lines.append(
-                        "- read_knowledge(table "
-                        f"doc={_clean(doc_id, 40)}, "
-                        f"sheet={_clean(sheet_name, 40)}, "
-                        f"match_column={_clean(match_col, 60)}, "
-                        f"match_values={_clean_list(match_vals)}"
-                        f") -> {status or 'done'}"
-                    )
-                else:
-                    page = text_args.get("page") or ""
-                    mode = text_args.get("mode") or ""
-                    lines.append(
-                        "- read_knowledge(text "
-                        f"doc={_clean(doc_id, 40)}, page={_clean(page, 20)}, mode={_clean(mode, 20)}"
-                        f") -> {status or 'done'}"
-                    )
+                ids = args.get("ids") or []
+                pages = args.get("pages") or []
+                mode = args.get("mode") or ""
+                max_chars = args.get("max_chars")
+                parts: list[str] = []
+                if ids:
+                    parts.append(f"ids={_clean_list(ids)}")
+                if doc_id:
+                    parts.append(f"document_id={_clean(doc_id, 40)}")
+                if pages:
+                    parts.append(f"pages={_clean_list(pages, limit_items=5, per_item=12)}")
+                if mode:
+                    parts.append(f"mode={_clean(mode, 20)}")
+                if max_chars is not None:
+                    parts.append(f"max_chars={_clean(max_chars, 10)}")
+                detail = ", ".join(parts)
+                lines.append(f"- read_document({detail}) -> {status or 'done'}")
                 continue
 
-            if tool_name in {"read_document", "table_aggregate", "dataset_query"}:
-                lines.append(f"- deprecated_retrieval_tool(use read_knowledge) -> {status or 'done'}")
+            if tool_name == "get_document_structure":
+                doc_id = args.get("document_id") or ""
+                lines.append(f"- get_document_structure(document_id={_clean(doc_id, 40)}) -> {status or 'done'}")
+                continue
+
+            if tool_name == "table_aggregate":
+                doc_id = args.get("document_id") or ""
+                match_col = args.get("match_column") or ""
+                match_vals = args.get("match_values") or args.get("match_value") or ""
+                lines.append(
+                    "- table_aggregate("
+                    f"document_id={_clean(doc_id, 40)}, "
+                    f"match_column={_clean(match_col, 60)}, "
+                    f"match_values={_clean_list(match_vals)}"
+                    f") -> {status or 'done'}"
+                )
                 continue
 
             lines.append(f"- {tool_name} -> {status or 'done'}")
@@ -3705,7 +3786,7 @@ class McpOrchestratorService:
 
         lines = [
             "Evidence summary (system-only): Answer using ONLY this evidence; do NOT call search_knowledge again this turn.",
-            "If you need more detail, use read_knowledge with the snippet's read_hint.document_id (never invent IDs).",
+            "If you need more detail, use read_document with the snippet IDs (or read_hint.document_id/pages when present). Never invent IDs.",
             "Do NOT include document names/IDs/pages in the user-facing answer.",
         ]
         for idx, summary in enumerate(summaries, start=1):
@@ -3892,7 +3973,7 @@ class McpOrchestratorService:
         if not value:
             return ""
         try:
-            return str(tools._normalize_column_name(value) or "")
+            return str(mcp_tools._normalize_column_name(value) or "")
         except Exception:
             normalized = re.sub(r"[^a-z0-9]+", " ", str(value).lower())
             return normalized.strip()

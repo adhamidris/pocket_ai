@@ -446,10 +446,11 @@ RAG_OCR_PERCENT_SANITY_MAX = float(os.getenv("RAG_OCR_PERCENT_SANITY_MAX", "100"
 RAG_OCR_CURRENCY_SPACING_ENABLED = os.getenv("RAG_OCR_CURRENCY_SPACING_ENABLED", "true").lower() in {"1", "true", "yes"}
 # RAG_USE_MCP_ORCHESTRATOR: Use the MCP orchestrator for RAG turns (default true).
 RAG_USE_MCP_ORCHESTRATOR = os.getenv("RAG_USE_MCP_ORCHESTRATOR", "true").lower() in {"1", "true", "yes"}
-# Retrieval should be predictable by default: one strong query per user turn.
-# Fanout variants can be enabled explicitly via env.
+# Retrieval is predictable by default: one strong query per user turn.
+# When the caller provides explicit batched queries (tool arg: `queries=[...]`),
+# we can safely fan out a few variants to improve recall without increasing prompt tokens.
 # MCP_SEARCH_MAX_QUERY_VARIANTS: Max query rewrites/fanout variants per user message.
-MCP_SEARCH_MAX_QUERY_VARIANTS = int(os.getenv("MCP_SEARCH_MAX_QUERY_VARIANTS", "1"))
+MCP_SEARCH_MAX_QUERY_VARIANTS = int(os.getenv("MCP_SEARCH_MAX_QUERY_VARIANTS", "3"))
 # MCP_SEARCH_FANOUT_BUDGET_MS: Fanout time budget (ms); 0 disables fanout.
 MCP_SEARCH_FANOUT_BUDGET_MS = int(os.getenv("MCP_SEARCH_FANOUT_BUDGET_MS", "0"))
 # MCP_SEARCH_FANOUT_RRF_K: RRF k parameter for combining fanout results.

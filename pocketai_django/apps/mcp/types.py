@@ -197,7 +197,7 @@ class ToolExecutionContext:
         if self.searches_used > effective_limit:
             raise SearchBudgetExceeded(
                 f"Search limit exceeded ({self.searches_used} calls this turn, max {effective_limit}). "
-                "You have already searched the knowledge base this turn. Use read_knowledge to get more details "
+                "You have already searched the knowledge base this turn. Use read_document to get more details "
                 "from the snippets you received, or answer based on what you found."
             )
 
