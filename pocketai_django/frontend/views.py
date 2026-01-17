@@ -2082,6 +2082,18 @@ def dashboard_leads(request: HttpRequest) -> HttpResponse:
     return render(request, "frontend/leads.html", context)
 
 
+@login_required
+def dashboard_mcp(request: HttpRequest) -> HttpResponse:
+    user_name = _current_user_name(request)
+    business = _primary_business_for_user(request.user)
+    get_token(request)
+    context = {
+        "user_name": user_name,
+        "business_id": str(business.id) if business else "",
+    }
+    return render(request, "frontend/mcp.html", context)
+
+
 def _format_document_size(size_bytes: int | None) -> str:
     if not size_bytes:
         return "—"

@@ -159,6 +159,21 @@
         </svg>
         <span class="sidebar-label">Knowledge</span>
       </a>
+      <a
+        href="{% url 'frontend:dashboard-mcp' %}"
+        class="sidebar-link w-full block text-left px-3 py-2 rounded-md text-sm flex items-center gap-3 {% if active == 'mcp' %}bg-primary/10 text-primary{% else %}hover:bg-muted/60{% endif %}"
+        title="MCP Connector (Beta)"
+      >
+        <svg class="sidebar-icon h-4 w-4 {% if active == 'mcp' %}text-primary{% else %}text-muted-foreground{% endif %}" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor">
+          <path stroke-linecap="round" stroke-linejoin="round" d="M12 7.5a4.5 4.5 0 1 0 0 9 4.5 4.5 0 0 0 0-9Z" />
+          <path stroke-linecap="round" stroke-linejoin="round" d="M19.5 12a7.5 7.5 0 0 0-15 0" />
+          <path stroke-linecap="round" stroke-linejoin="round" d="M12 3v2.25m0 13.5V21" />
+        </svg>
+        <span class="sidebar-label flex items-center gap-2">
+          <span>MCP Connector</span>
+          <span class="inline-flex h-5 items-center rounded-full border border-amber-500/30 bg-amber-500/10 px-2 text-[9px] font-semibold uppercase tracking-wide text-amber-400">Beta</span>
+        </span>
+      </a>
     </nav>
     <button
       type="button"

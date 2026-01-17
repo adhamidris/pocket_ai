@@ -41,6 +41,8 @@ from apps.rag.rag_logging import structured_log
 from apps.conversations.response_blocks import normalize_response_blocks
 
 from . import prompts, tools as mcp_tools
+from .connectors import build_remote_tool_definitions, list_enabled_mcp_connections_for_agent, mcp_connection_auth_headers
+from .remote_client import McpRemoteError, call_mcp_tool_streamable_http
 from .sanitizer import (
     extract_sentences,
     is_investigative_filler_with_level,
@@ -98,6 +100,7 @@ class McpOrchestratorService:
         self.agent = agent
         self.provider = provider
         self.tool_definitions = mcp_tools.TOOL_DEFINITIONS
+        self._remote_tool_registry: dict[str, tuple[object, str]] = {}
         self.max_tool_iterations = int(getattr(settings, "MCP_MAX_TOOL_ITERATIONS", 10))
         self.read_document_repeat_limit = max(1, int(getattr(settings, "MCP_READ_DOCUMENT_REPEAT_LIMIT", 2)))
         self.read_document_throttle_limit = max(1, int(getattr(settings, "MCP_READ_DOCUMENT_THROTTLE_LIMIT", 2)))
@@ -169,6 +172,15 @@ class McpOrchestratorService:
                     )
             # Load seen items from previous turns (for "are there more?" follow-ups)
             self._hydrate_seen_items(conversation, tool_context)
+
+        # External MCP connections (per-agent) extend the tool catalog.
+        remote_connections = list_enabled_mcp_connections_for_agent(self.agent)
+        remote_tool_defs, remote_registry = build_remote_tool_definitions(remote_connections)
+        self._remote_tool_registry = remote_registry
+        if remote_tool_defs:
+            self.tool_definitions = tuple(list(mcp_tools.TOOL_DEFINITIONS) + remote_tool_defs)
+        else:
+            self.tool_definitions = mcp_tools.TOOL_DEFINITIONS
 
         query_classification = self._classify_query_intent(user_message)
         feature_state = FeatureFlagService.snapshot(conversation.business_profile)
@@ -908,12 +920,23 @@ class McpOrchestratorService:
                                     )
                                 call_start = time.perf_counter()
                                 try:
-                                    tool_result = mcp_tools.execute_tool(
-                                        tool_name,
-                                        arguments,
-                                        conversation=conversation,
-                                        context=tool_context,
-                                    )
+                                    remote_entry = self._remote_tool_registry.get(tool_name)
+                                    if remote_entry:
+                                        connection, remote_tool_name = remote_entry
+                                        tool_result = self._execute_remote_mcp_tool(
+                                            tool_name=tool_name,
+                                            remote_tool_name=remote_tool_name,
+                                            connection=connection,
+                                            arguments=arguments,
+                                            conversation=conversation,
+                                        )
+                                    else:
+                                        tool_result = mcp_tools.execute_tool(
+                                            tool_name,
+                                            arguments,
+                                            conversation=conversation,
+                                            context=tool_context,
+                                        )
                                 except ToolConstraintError as exc:
                                     structured_log(
                                         "mcp",
@@ -928,6 +951,39 @@ class McpOrchestratorService:
                                         level=logging.WARNING,
                                     )
                                     tool_result = self._constraint_error_payload(tool_name, exc)
+                                except McpRemoteError as exc:
+                                    structured_log(
+                                        "mcp",
+                                        "tool.remote_error",
+                                        {"tool": tool_name, "error": str(exc)},
+                                        indent=1,
+                                        context={"conversation": conversation.id, "business": conversation.business_profile_id},
+                                        logger_obj=logger,
+                                        level=logging.WARNING,
+                                    )
+                                    tool_result = {
+                                        "tool": tool_name,
+                                        "status": "error",
+                                        "error_code": "mcp_remote_error",
+                                        "error": str(exc),
+                                        "hint": "Verify the MCP server URL and authentication, then test the connection.",
+                                    }
+                                except Exception as exc:  # pragma: no cover - defensive
+                                    structured_log(
+                                        "mcp",
+                                        "tool.unhandled_error",
+                                        {"tool": tool_name, "error": str(exc)},
+                                        indent=1,
+                                        context={"conversation": conversation.id, "business": conversation.business_profile_id},
+                                        logger_obj=logger,
+                                        level=logging.ERROR,
+                                    )
+                                    tool_result = {
+                                        "tool": tool_name,
+                                        "status": "error",
+                                        "error_code": "tool_failed",
+                                        "error": str(exc),
+                                    }
                                 finally:
                                     call_duration_ms = (time.perf_counter() - call_start) * 1000.0
                         if tool_name == "search_knowledge" and isinstance(tool_result, Mapping):
@@ -4312,6 +4368,55 @@ class McpOrchestratorService:
                 continue
             compact[key] = value
 
+        if normalized_name.startswith("mcp_"):
+            is_error = payload.get("is_error")
+            if isinstance(is_error, bool):
+                compact["is_error"] = is_error
+            remote = payload.get("remote")
+            if isinstance(remote, Mapping):
+                remote_out: dict[str, object] = {}
+                for key in ("connection_id", "connection_name", "tool"):
+                    value = remote.get(key)
+                    if isinstance(value, str) and value.strip():
+                        remote_out[key] = value.strip()
+                if remote_out:
+                    compact["remote"] = remote_out
+
+            text = payload.get("text")
+            if isinstance(text, str) and text.strip():
+                compact["text"] = self._clip_text(text.strip(), int(snippet_content_chars))
+
+            content_in = payload.get("content")
+            content_out: list[dict[str, object]] = []
+            if isinstance(content_in, list):
+                for item in content_in[:6]:
+                    if not isinstance(item, Mapping):
+                        continue
+                    item_type = item.get("type")
+                    if not isinstance(item_type, str) or not item_type.strip():
+                        continue
+                    entry: dict[str, object] = {"type": item_type.strip()}
+                    if item_type == "text" and isinstance(item.get("text"), str) and item.get("text").strip():
+                        entry["text"] = self._clip_text(item.get("text").strip(), int(snippet_content_chars))
+                    elif item_type == "resource_link":
+                        uri = item.get("uri")
+                        if isinstance(uri, str) and uri.strip():
+                            entry["uri"] = uri.strip()
+                        name = item.get("name")
+                        if isinstance(name, str) and name.strip():
+                            entry["name"] = self._clip_text(name.strip(), 200)
+                    elif item_type == "structured" and item.get("data") is not None:
+                        try:
+                            blob = json.dumps(item.get("data"), ensure_ascii=False, default=str)
+                        except Exception:
+                            blob = str(item.get("data"))
+                        entry["data"] = self._clip_text(blob, 2000)
+                    content_out.append(entry)
+            if content_out:
+                compact["content"] = content_out
+            compact["prompt_compact"] = True
+            return compact
+
         if normalized_name == "search_knowledge":
             for key in ("query", "intent", "required_identifiers", "provided_identifiers", "match_policy"):
                 if key not in payload:
@@ -5579,6 +5684,85 @@ class McpOrchestratorService:
             "hint": hint,
             "llm_hint": hint,
             "snippets": [],
+        }
+
+    def _execute_remote_mcp_tool(
+        self,
+        *,
+        tool_name: str,
+        remote_tool_name: str,
+        connection: object,
+        arguments: Mapping[str, object],
+        conversation: Conversation,
+    ) -> Mapping[str, object]:
+        """
+        Execute an externally configured MCP tool call by forwarding to the remote MCP server.
+
+        Returned mapping is shaped to be prompt-friendly and to flow through existing
+        tool trace + compaction logic.
+        """
+
+        connection_id = getattr(connection, "id", None)
+        connection_name = getattr(connection, "name", None) or ""
+        endpoint_url = getattr(connection, "server_url", None) or ""
+        connection_status = str(getattr(connection, "status", "") or "").lower()
+
+        remote_meta = {
+            "connection_id": str(connection_id) if connection_id else None,
+            "connection_name": connection_name or None,
+            "tool": remote_tool_name,
+            "endpoint_url": endpoint_url,
+        }
+
+        if connection_status and connection_status != "enabled":
+            return {
+                "tool": tool_name,
+                "status": "blocked",
+                "error_code": "mcp_disabled",
+                "error": "MCP connection is disabled.",
+                "hint": "Enable this MCP connection to use its tools.",
+                "remote": remote_meta,
+            }
+
+        headers = mcp_connection_auth_headers(connection)  # type: ignore[arg-type]
+        try:
+            result = call_mcp_tool_streamable_http(
+                endpoint_url=endpoint_url,
+                tool_name=remote_tool_name,
+                arguments=dict(arguments),
+                headers=headers,
+            )
+        except McpRemoteError as exc:
+            structured_log(
+                "mcp",
+                "remote_tool_call_failed",
+                {"tool": tool_name, "remote_tool": remote_tool_name, "error": str(exc)},
+                indent=1,
+                context={"conversation": conversation.id, "business": conversation.business_profile_id},
+                logger_obj=logger,
+                level=logging.WARNING,
+            )
+            return {
+                "tool": tool_name,
+                "status": "error",
+                "error_code": "mcp_call_failed",
+                "error": str(exc),
+                "hint": "Test the MCP connection and verify authentication.",
+                "remote": remote_meta,
+            }
+
+        is_error = bool(result.get("is_error"))
+        status = "error" if is_error else "ok"
+        error_code = "mcp_tool_error" if is_error else None
+
+        return {
+            "tool": tool_name,
+            "status": status,
+            **({"error_code": error_code} if error_code else {}),
+            "is_error": is_error,
+            "text": str(result.get("text") or ""),
+            "content": result.get("content") if isinstance(result.get("content"), list) else [],
+            "remote": remote_meta,
         }
 
     @staticmethod

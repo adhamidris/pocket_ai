@@ -145,6 +145,12 @@ Integrations (Google Drive)
 - POST `/api/integrations/google/resources/save/` — save selected resources
 - POST `/api/integrations/google/sync/` — sync now
 
+MCP Connector (BETA)
+- GET/POST `/api/mcp/connections/` — list/create MCP connections
+- GET/PUT/DELETE `/api/mcp/connections/<connection_id>/` — connection detail/update/delete
+- POST `/api/mcp/connections/<connection_id>/test/` — test connection and cache tool schemas
+- GET/POST `/api/mcp/connections/<connection_id>/agents/` — view/update per-agent opt-outs
+
 Cases + Customers
 - GET  `/api/cases/` — list cases
 - GET  `/api/cases/<case_id>/` — case detail

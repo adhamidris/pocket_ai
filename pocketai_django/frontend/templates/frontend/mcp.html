@@ -1,0 +1,730 @@
+{% extends "frontend/base_app.html" %}
+
+{% block title %}MCP Connector (BETA) | Pocket AI{% endblock %}
+
+{% block content %}
+<div class="min-h-screen bg-background flex">
+  {% include "frontend/components/dashboard/sidebar.html" with active="mcp" user_name=user_name %}
+  <main class="flex-1 overflow-auto">
+    <div class="w-full px-4 md:px-6 lg:px-8 py-6 space-y-6">
+      <header class="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+        <div class="space-y-1.5">
+          <div class="flex flex-wrap items-center gap-2">
+            <h1 class="text-xl md:text-2xl font-semibold text-gradient-hero">MCP Connector</h1>
+            <span class="inline-flex items-center rounded-full border border-amber-500/30 bg-amber-500/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-amber-400">Beta</span>
+          </div>
+          <p class="text-sm text-muted-foreground">Connect MCP servers, toggle them on/off, and control which agents can use them.</p>
+        </div>
+        <div class="flex flex-wrap items-center justify-start md:justify-end gap-2">
+          <button
+            type="button"
+            class="inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-lg text-sm font-medium ring-offset-background transition-all duration-300 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50 [&_svg]:pointer-events-none [&_svg]:size-4 [&_svg]:shrink-0 border border-input bg-background hover:bg-accent hover:text-accent-foreground hover:border-primary/50 h-10 px-4 py-2"
+            data-mcp-open-marketplace
+          >
+            Browse marketplace
+          </button>
+          <button
+            type="button"
+            class="inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-lg text-sm font-medium ring-offset-background transition-all duration-300 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50 [&_svg]:pointer-events-none [&_svg]:size-4 [&_svg]:shrink-0 bg-primary text-primary-foreground hover:bg-primary/90 shadow-sm hover:shadow-md h-10 px-4 py-2"
+            data-mcp-open-create
+          >
+            <svg class="h-4 w-4" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" aria-hidden="true">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M12 4v16m8-8H4" />
+            </svg>
+            Add MCP server
+          </button>
+        </div>
+      </header>
+
+      <section class="rounded-xl border border-border/60 bg-card/60 backdrop-blur p-4">
+        <div class="flex items-start gap-3">
+          <svg class="mt-0.5 h-5 w-5 text-amber-500" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M12 9v3.75m0 3h.007M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z" />
+          </svg>
+          <div class="space-y-1">
+            <div class="text-sm font-semibold text-foreground">Beta feature</div>
+            <div class="text-xs text-muted-foreground">Tool schemas are cached when you run “Test connection”. Agents inherit MCP connections by default (opt out per agent).</div>
+          </div>
+        </div>
+      </section>
+
+      <section class="space-y-4" data-mcp-tabs data-active-tab="connections">
+        <div class="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+          <div class="inline-flex rounded-lg border border-border/40 bg-muted/70 p-1" data-tabs-list>
+            <button type="button" class="rounded-md px-3 py-1.5 text-xs font-semibold tracking-wide uppercase transition-colors bg-primary text-primary-foreground shadow-sm" data-tab-button="connections">Connections</button>
+            <button type="button" class="rounded-md px-3 py-1.5 text-xs font-semibold tracking-wide uppercase transition-colors text-muted-foreground hover:text-primary" data-tab-button="marketplace">Marketplace</button>
+          </div>
+          <div class="flex flex-wrap items-center gap-2 md:ml-auto">
+            <button type="button" class="inline-flex items-center gap-2 rounded-md border border-input bg-background px-3 py-2 text-xs font-medium hover:bg-accent hover:text-accent-foreground" data-mcp-refresh>
+              Refresh
+            </button>
+          </div>
+        </div>
+
+        <div class="space-y-4" data-tab-panel="connections">
+          <div class="rounded-xl border border-border/70 bg-background/60 p-4">
+            <div class="flex items-center justify-between gap-3">
+              <div>
+                <div class="text-sm font-semibold text-foreground">Your MCP connections</div>
+                <div class="text-xs text-muted-foreground">Enable/disable connections, test connectivity, and manage agent opt-outs.</div>
+              </div>
+              <div class="text-xs text-muted-foreground" data-mcp-count>—</div>
+            </div>
+          </div>
+
+          <div class="space-y-3" data-mcp-connection-list>
+            <div class="rounded-xl border border-border/60 bg-muted/30 p-6 text-sm text-muted-foreground">Loading MCP connections…</div>
+          </div>
+        </div>
+
+        <div class="space-y-4 hidden" data-tab-panel="marketplace">
+          <div class="rounded-xl border border-border/70 bg-background/60 p-4">
+            <div class="flex items-center justify-between gap-3">
+              <div>
+                <div class="text-sm font-semibold text-foreground">Marketplace</div>
+                <div class="text-xs text-muted-foreground">Curated MCP server templates. Provide your server URL to connect.</div>
+              </div>
+              <div class="text-xs text-muted-foreground" data-mcp-marketplace-count>—</div>
+            </div>
+          </div>
+          <div class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4" data-mcp-marketplace-grid></div>
+        </div>
+      </section>
+    </div>
+  </main>
+</div>
+
+<div class="hidden" data-mcp-modal data-state="closed" aria-hidden="true">
+  <div class="fixed inset-0 z-40 bg-black/60 backdrop-blur-sm transition-opacity" data-mcp-modal-overlay></div>
+  <div class="fixed inset-x-4 top-10 z-50 mx-auto max-w-lg rounded-xl border border-border/60 bg-card p-5 shadow-lg opacity-0 transition-opacity duration-150" role="dialog" aria-modal="true" data-mcp-modal-content tabindex="-1">
+    <div class="flex items-start justify-between gap-3">
+      <div class="space-y-0.5">
+        <div class="text-sm font-semibold text-foreground" data-mcp-modal-title>Add MCP server</div>
+        <div class="text-xs text-muted-foreground">SSE/HTTP remote MCP servers only.</div>
+      </div>
+      <button type="button" class="h-8 w-8 inline-flex items-center justify-center rounded-md border border-border/60 hover:bg-accent/50" data-mcp-modal-close aria-label="Close">
+        <svg class="h-4 w-4 text-muted-foreground" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor">
+          <path stroke-linecap="round" stroke-linejoin="round" d="M6 18 18 6M6 6l12 12" />
+        </svg>
+      </button>
+    </div>
+
+    <div class="mt-4 space-y-4">
+      <div class="space-y-1.5">
+        <label class="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Name</label>
+        <input type="text" class="w-full h-10 rounded-md border border-border/60 bg-muted/60 px-3 text-sm focus-visible:ring-0 focus-visible:border-border" data-mcp-field="name" placeholder="e.g. GitHub Tools" />
+      </div>
+      <div class="space-y-1.5">
+        <label class="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Server URL</label>
+        <input type="url" class="w-full h-10 rounded-md border border-border/60 bg-muted/60 px-3 text-sm focus-visible:ring-0 focus-visible:border-border" data-mcp-field="serverUrl" placeholder="https://your-domain.com/mcp" />
+        <div class="text-[11px] text-muted-foreground">Use the MCP endpoint (Streamable HTTP) or legacy SSE endpoint.</div>
+      </div>
+
+      <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
+        <div class="space-y-1.5">
+          <label class="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Auth</label>
+          <select class="w-full h-10 rounded-md border border-border/60 bg-muted/60 px-3 text-sm focus-visible:ring-0 focus-visible:border-border" data-mcp-field="authType">
+            <option value="none">No auth</option>
+            <option value="bearer">Bearer token</option>
+            <option value="header">Custom header</option>
+          </select>
+        </div>
+        <div class="flex items-center gap-2 pt-6">
+          <input type="checkbox" class="h-4 w-4 rounded border-border/60" data-mcp-field="enabled" checked />
+          <label class="text-sm text-muted-foreground">Enabled</label>
+        </div>
+      </div>
+
+      <div class="space-y-3 hidden" data-mcp-auth-panel="bearer">
+        <div class="space-y-1.5">
+          <label class="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Bearer token</label>
+          <input type="password" class="w-full h-10 rounded-md border border-border/60 bg-muted/60 px-3 text-sm focus-visible:ring-0 focus-visible:border-border" data-mcp-field="bearerToken" placeholder="Paste token" autocomplete="off" />
+        </div>
+      </div>
+
+      <div class="space-y-3 hidden" data-mcp-auth-panel="header">
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
+          <div class="space-y-1.5">
+            <label class="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Header name</label>
+            <input type="text" class="w-full h-10 rounded-md border border-border/60 bg-muted/60 px-3 text-sm focus-visible:ring-0 focus-visible:border-border" data-mcp-field="headerName" placeholder="e.g. X-API-Key" />
+          </div>
+          <div class="space-y-1.5">
+            <label class="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Header value</label>
+            <input type="password" class="w-full h-10 rounded-md border border-border/60 bg-muted/60 px-3 text-sm focus-visible:ring-0 focus-visible:border-border" data-mcp-field="headerValue" placeholder="Secret value" autocomplete="off" />
+          </div>
+        </div>
+      </div>
+
+      <div class="rounded-lg border border-border/60 bg-muted/30 p-3 text-xs text-muted-foreground hidden" data-mcp-modal-error></div>
+      <div class="flex items-center justify-between gap-3 pt-1">
+        <button type="button" class="inline-flex items-center gap-2 rounded-md border border-input bg-background px-3 py-2 text-xs font-medium hover:bg-accent hover:text-accent-foreground" data-mcp-modal-cancel>Cancel</button>
+        <div class="flex items-center gap-2">
+          <button type="button" class="inline-flex items-center gap-2 rounded-md border border-input bg-background px-3 py-2 text-xs font-medium hover:bg-accent hover:text-accent-foreground" data-mcp-modal-test>Test connection</button>
+          <button type="button" class="inline-flex items-center gap-2 rounded-md bg-primary text-primary-foreground px-4 py-2 text-xs font-semibold hover:bg-primary/90" data-mcp-modal-save>Save</button>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="hidden" data-mcp-agents-modal data-state="closed" aria-hidden="true">
+  <div class="fixed inset-0 z-40 bg-black/60 backdrop-blur-sm transition-opacity" data-mcp-agents-overlay></div>
+  <div class="fixed inset-x-4 top-10 z-50 mx-auto max-w-lg rounded-xl border border-border/60 bg-card p-5 shadow-lg opacity-0 transition-opacity duration-150" role="dialog" aria-modal="true" data-mcp-agents-content tabindex="-1">
+    <div class="flex items-start justify-between gap-3">
+      <div class="space-y-0.5">
+        <div class="text-sm font-semibold text-foreground">Agent access</div>
+        <div class="text-xs text-muted-foreground">Opt out specific agents while keeping others enabled.</div>
+      </div>
+      <button type="button" class="h-8 w-8 inline-flex items-center justify-center rounded-md border border-border/60 hover:bg-accent/50" data-mcp-agents-close aria-label="Close">
+        <svg class="h-4 w-4 text-muted-foreground" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor">
+          <path stroke-linecap="round" stroke-linejoin="round" d="M6 18 18 6M6 6l12 12" />
+        </svg>
+      </button>
+    </div>
+    <div class="mt-4 space-y-3">
+      <div class="text-xs text-muted-foreground" data-mcp-agents-subtitle>—</div>
+      <div class="space-y-2 max-h-[52vh] overflow-auto pr-1" data-mcp-agents-list></div>
+      <div class="flex items-center justify-end gap-2 pt-2">
+        <button type="button" class="inline-flex items-center gap-2 rounded-md border border-input bg-background px-3 py-2 text-xs font-medium hover:bg-accent hover:text-accent-foreground" data-mcp-agents-done>Done</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+  (function () {
+    var businessId = "{{ business_id|escapejs }}";
+
+    function getCookie(name) {
+      var value = "; " + document.cookie;
+      var parts = value.split("; " + name + "=");
+      if (parts.length === 2) {
+        return parts.pop().split(";").shift();
+      }
+      return "";
+    }
+
+    function escapeHtml(value) {
+      var div = document.createElement("div");
+      div.textContent = value == null ? "" : String(value);
+      return div.innerHTML;
+    }
+
+    function apiFetch(url, options) {
+      var opts = options || {};
+      var headers = opts.headers || {};
+      headers["Content-Type"] = headers["Content-Type"] || "application/json";
+      headers["X-CSRFToken"] = headers["X-CSRFToken"] || getCookie("csrftoken");
+      headers["X-Requested-With"] = headers["X-Requested-With"] || "XMLHttpRequest";
+      opts.headers = headers;
+      return fetch(url, opts).then(function (resp) {
+        return resp.text().then(function (text) {
+          var payload = {};
+          try {
+            payload = text ? JSON.parse(text) : {};
+          } catch (_err) {
+            payload = {};
+          }
+          if (!resp.ok) {
+            var message = (payload && (payload.message || payload.error)) || "Request failed.";
+            var error = new Error(message);
+            error.payload = payload;
+            error.status = resp.status;
+            throw error;
+          }
+          return payload;
+        });
+      });
+    }
+
+    var tabRoot = document.querySelector("[data-mcp-tabs]");
+    var connectionsPanel = document.querySelector('[data-tab-panel="connections"]');
+    var marketplacePanel = document.querySelector('[data-tab-panel="marketplace"]');
+    var listEl = document.querySelector("[data-mcp-connection-list]");
+    var countEl = document.querySelector("[data-mcp-count]");
+    var marketplaceGrid = document.querySelector("[data-mcp-marketplace-grid]");
+    var marketplaceCount = document.querySelector("[data-mcp-marketplace-count]");
+
+    var modalWrap = document.querySelector("[data-mcp-modal]");
+    var modalOverlay = document.querySelector("[data-mcp-modal-overlay]");
+    var modalContent = document.querySelector("[data-mcp-modal-content]");
+    var modalClose = document.querySelector("[data-mcp-modal-close]");
+    var modalCancel = document.querySelector("[data-mcp-modal-cancel]");
+    var modalSave = document.querySelector("[data-mcp-modal-save]");
+    var modalTest = document.querySelector("[data-mcp-modal-test]");
+    var modalTitle = document.querySelector("[data-mcp-modal-title]");
+    var modalError = document.querySelector("[data-mcp-modal-error]");
+
+    var agentsWrap = document.querySelector("[data-mcp-agents-modal]");
+    var agentsOverlay = document.querySelector("[data-mcp-agents-overlay]");
+    var agentsContent = document.querySelector("[data-mcp-agents-content]");
+    var agentsClose = document.querySelector("[data-mcp-agents-close]");
+    var agentsDone = document.querySelector("[data-mcp-agents-done]");
+    var agentsList = document.querySelector("[data-mcp-agents-list]");
+    var agentsSubtitle = document.querySelector("[data-mcp-agents-subtitle]");
+
+    var modalFields = {
+      name: document.querySelector('[data-mcp-field="name"]'),
+      serverUrl: document.querySelector('[data-mcp-field="serverUrl"]'),
+      authType: document.querySelector('[data-mcp-field="authType"]'),
+      enabled: document.querySelector('[data-mcp-field="enabled"]'),
+      bearerToken: document.querySelector('[data-mcp-field="bearerToken"]'),
+      headerName: document.querySelector('[data-mcp-field="headerName"]'),
+      headerValue: document.querySelector('[data-mcp-field="headerValue"]')
+    };
+
+    var bearerPanel = document.querySelector('[data-mcp-auth-panel="bearer"]');
+    var headerPanel = document.querySelector('[data-mcp-auth-panel="header"]');
+
+    var openCreateButtons = document.querySelectorAll("[data-mcp-open-create]");
+    var openMarketplaceButtons = document.querySelectorAll("[data-mcp-open-marketplace]");
+    var refreshButton = document.querySelector("[data-mcp-refresh]");
+
+    var editingConnectionId = null;
+    var currentSourceType = "manual";
+    var currentMarketplaceKey = "";
+    var activeAgentsConnection = null;
+
+    function setTab(tab) {
+      var connectionsBtn = document.querySelector('[data-tab-button="connections"]');
+      var marketplaceBtn = document.querySelector('[data-tab-button="marketplace"]');
+      var active = tab === "marketplace" ? "marketplace" : "connections";
+      if (tabRoot) {
+        tabRoot.setAttribute("data-active-tab", active);
+      }
+      if (connectionsPanel) {
+        connectionsPanel.classList.toggle("hidden", active !== "connections");
+      }
+      if (marketplacePanel) {
+        marketplacePanel.classList.toggle("hidden", active !== "marketplace");
+      }
+      if (connectionsBtn) {
+        connectionsBtn.classList.toggle("bg-primary", active === "connections");
+        connectionsBtn.classList.toggle("text-primary-foreground", active === "connections");
+        connectionsBtn.classList.toggle("shadow-sm", active === "connections");
+        connectionsBtn.classList.toggle("text-muted-foreground", active !== "connections");
+      }
+      if (marketplaceBtn) {
+        marketplaceBtn.classList.toggle("bg-primary", active === "marketplace");
+        marketplaceBtn.classList.toggle("text-primary-foreground", active === "marketplace");
+        marketplaceBtn.classList.toggle("shadow-sm", active === "marketplace");
+        marketplaceBtn.classList.toggle("text-muted-foreground", active !== "marketplace");
+      }
+    }
+
+    function showModal(show) {
+      if (!modalWrap || !modalContent) return;
+      modalWrap.classList.toggle("hidden", !show);
+      modalWrap.setAttribute("data-state", show ? "open" : "closed");
+      modalWrap.setAttribute("aria-hidden", show ? "false" : "true");
+      window.requestAnimationFrame(function () {
+        modalContent.classList.toggle("opacity-0", !show);
+      });
+      if (show) {
+        modalContent.focus();
+      }
+    }
+
+    function showAgentsModal(show) {
+      if (!agentsWrap || !agentsContent) return;
+      agentsWrap.classList.toggle("hidden", !show);
+      agentsWrap.setAttribute("data-state", show ? "open" : "closed");
+      agentsWrap.setAttribute("aria-hidden", show ? "false" : "true");
+      window.requestAnimationFrame(function () {
+        agentsContent.classList.toggle("opacity-0", !show);
+      });
+      if (show) {
+        agentsContent.focus();
+      }
+    }
+
+    function setModalError(message) {
+      if (!modalError) return;
+      var text = (message || "").toString().trim();
+      modalError.textContent = text;
+      modalError.classList.toggle("hidden", !text);
+    }
+
+    function setAuthPanels() {
+      var type = (modalFields.authType && modalFields.authType.value) || "none";
+      if (bearerPanel) bearerPanel.classList.toggle("hidden", type !== "bearer");
+      if (headerPanel) headerPanel.classList.toggle("hidden", type !== "header");
+    }
+
+    function resetModal() {
+      editingConnectionId = null;
+      currentSourceType = "manual";
+      currentMarketplaceKey = "";
+      if (modalTitle) modalTitle.textContent = "Add MCP server";
+      setModalError("");
+      modalFields.name.value = "";
+      modalFields.serverUrl.value = "";
+      modalFields.authType.value = "none";
+      modalFields.enabled.checked = true;
+      modalFields.bearerToken.value = "";
+      modalFields.headerName.value = "";
+      modalFields.headerValue.value = "";
+      setAuthPanels();
+    }
+
+    function openCreate(prefill) {
+      resetModal();
+      var data = prefill || {};
+      if (data.name) modalFields.name.value = data.name;
+      if (data.serverUrl) modalFields.serverUrl.value = data.serverUrl;
+      if (data.recommendedAuth) modalFields.authType.value = data.recommendedAuth;
+      if (data.sourceType) currentSourceType = data.sourceType;
+      if (data.marketplaceKey) currentMarketplaceKey = data.marketplaceKey;
+      setAuthPanels();
+      showModal(true);
+    }
+
+    function openEdit(connection) {
+      resetModal();
+      editingConnectionId = connection.id;
+      currentSourceType = connection.sourceType || "manual";
+      currentMarketplaceKey = connection.marketplaceKey || "";
+      if (modalTitle) modalTitle.textContent = "Edit MCP server";
+      modalFields.name.value = connection.name || "";
+      modalFields.serverUrl.value = connection.serverUrl || "";
+      modalFields.authType.value = connection.authType || "none";
+      modalFields.enabled.checked = connection.status === "enabled";
+      if (connection.authType === "header" && connection.headerName) {
+        modalFields.headerName.value = connection.headerName;
+      }
+      setAuthPanels();
+      showModal(true);
+    }
+
+    function renderConnections(connections) {
+      if (!listEl) return;
+      var rows = connections || [];
+      if (countEl) {
+        countEl.textContent = rows.length ? rows.length + " connections" : "No connections";
+      }
+      if (!rows.length) {
+        listEl.innerHTML = '<div class="rounded-xl border border-border/60 bg-muted/30 p-6 text-sm text-muted-foreground">No MCP connections yet. Add one from the marketplace or manually.</div>';
+        return;
+      }
+      listEl.innerHTML = "";
+      rows.forEach(function (conn) {
+        var statusBadge = conn.status === "enabled"
+          ? '<span class="inline-flex items-center rounded-full border border-emerald-500/30 bg-emerald-500/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-emerald-400">Enabled</span>'
+          : '<span class="inline-flex items-center rounded-full border border-border/60 bg-muted/40 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">Disabled</span>';
+        var toolMeta = conn.toolCount ? (conn.toolCount + " tools") : "No tools cached";
+        var errorMeta = conn.lastError ? ('<div class="text-[11px] text-rose-400 truncate" title="' + escapeHtml(conn.lastError) + '">' + escapeHtml(conn.lastError) + "</div>") : "";
+
+        var el = document.createElement("div");
+        el.className = "rounded-xl border border-border/70 bg-background/60 p-4 shadow-sm";
+        el.innerHTML =
+          '<div class="flex items-start justify-between gap-4">' +
+            '<div class="min-w-0 space-y-1">' +
+              '<div class="flex flex-wrap items-center gap-2">' +
+                '<div class="text-sm font-semibold text-foreground truncate">' + escapeHtml(conn.name || "MCP Connection") + "</div>" +
+                statusBadge +
+                (conn.sourceType === "marketplace" ? '<span class="inline-flex items-center rounded-full border border-amber-500/30 bg-amber-500/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-amber-400">Marketplace</span>' : "") +
+              "</div>" +
+              '<div class="text-xs text-muted-foreground truncate" title="' + escapeHtml(conn.serverUrl || "") + '">' + escapeHtml(conn.serverUrl || "") + "</div>" +
+              '<div class="text-[11px] text-muted-foreground">' +
+                escapeHtml(toolMeta) +
+                (conn.lastTestedAt ? " · Tested" : "") +
+              "</div>" +
+              errorMeta +
+            "</div>" +
+            '<div class="flex flex-col items-end gap-2 shrink-0">' +
+              '<label class="inline-flex items-center gap-2 text-xs text-muted-foreground">' +
+                '<input type="checkbox" class="h-4 w-4 rounded border-border/60" data-mcp-toggle="' + escapeHtml(conn.id) + '"' + (conn.status === "enabled" ? " checked" : "") + " />" +
+                "<span>Enabled</span>" +
+              "</label>" +
+              '<div class="flex items-center gap-2">' +
+                '<button type="button" class="inline-flex items-center gap-2 rounded-md border border-input bg-background px-3 py-2 text-xs font-medium hover:bg-accent hover:text-accent-foreground" data-mcp-test="' + escapeHtml(conn.id) + '">Test</button>' +
+                '<button type="button" class="inline-flex items-center gap-2 rounded-md border border-input bg-background px-3 py-2 text-xs font-medium hover:bg-accent hover:text-accent-foreground" data-mcp-agents="' + escapeHtml(conn.id) + '">Agents</button>' +
+                '<button type="button" class="inline-flex items-center gap-2 rounded-md bg-primary/10 text-primary px-3 py-2 text-xs font-semibold hover:bg-primary/15" data-mcp-edit="' + escapeHtml(conn.id) + '">Edit</button>' +
+              "</div>" +
+              '<div class="text-[11px] text-muted-foreground">Assigned ' + escapeHtml(String((conn.agents && conn.agents.assigned) || 0)) + "/" + escapeHtml(String((conn.agents && conn.agents.total) || 0)) + "</div>" +
+            "</div>" +
+          "</div>";
+
+        el.__conn = conn;
+        listEl.appendChild(el);
+      });
+    }
+
+    function renderMarketplace(items) {
+      if (!marketplaceGrid) return;
+      var rows = items || [];
+      if (marketplaceCount) {
+        marketplaceCount.textContent = rows.length ? rows.length + " templates" : "—";
+      }
+      marketplaceGrid.innerHTML = "";
+      rows.forEach(function (item) {
+        var el = document.createElement("div");
+        el.className = "rounded-xl border border-border/70 bg-background/60 p-5 shadow-sm";
+        el.innerHTML =
+          '<div class="space-y-3">' +
+            '<div class="flex items-start justify-between gap-3">' +
+              '<div class="min-w-0">' +
+                '<div class="text-sm font-semibold text-foreground">' + escapeHtml(item.name || "MCP Server") + "</div>" +
+                '<div class="text-xs text-muted-foreground mt-1">' + escapeHtml(item.description || "") + "</div>" +
+              "</div>" +
+              (item.badge ? '<span class="inline-flex items-center rounded-full border border-border/60 bg-muted/40 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">' + escapeHtml(item.badge) + "</span>" : "") +
+            "</div>" +
+            '<div class="flex items-center justify-between gap-2 pt-2">' +
+              (item.docsUrl ? '<a class="text-xs text-primary hover:underline" href="' + escapeHtml(item.docsUrl) + '" target="_blank" rel="noreferrer">Docs</a>' : '<span class="text-xs text-muted-foreground">Docs</span>') +
+              '<button type="button" class="inline-flex items-center gap-2 rounded-md bg-primary text-primary-foreground px-3 py-2 text-xs font-semibold hover:bg-primary/90" data-mcp-market-add="' + escapeHtml(item.key) + '">Add</button>' +
+            "</div>" +
+          "</div>";
+        el.__item = item;
+        marketplaceGrid.appendChild(el);
+      });
+    }
+
+    function loadAll() {
+      if (!listEl) return;
+      listEl.innerHTML = '<div class="rounded-xl border border-border/60 bg-muted/30 p-6 text-sm text-muted-foreground">Loading MCP connections…</div>';
+      return apiFetch("/api/mcp/connections/", { method: "GET" }).then(function (data) {
+        renderConnections(data.connections || []);
+        renderMarketplace(data.marketplace || []);
+        return data;
+      }).catch(function (err) {
+        listEl.innerHTML = '<div class="rounded-xl border border-rose-500/30 bg-rose-500/10 p-6 text-sm text-rose-300">Failed to load MCP connections: ' + escapeHtml(err.message || "Error") + "</div>";
+      });
+    }
+
+    function collectFormPayload() {
+      var authType = modalFields.authType.value;
+      var payload = {
+        businessId: businessId || undefined,
+        name: modalFields.name.value.trim(),
+        serverUrl: modalFields.serverUrl.value.trim(),
+        enabled: Boolean(modalFields.enabled.checked)
+      };
+      if (!editingConnectionId) {
+        payload.sourceType = currentSourceType || "manual";
+        if (currentMarketplaceKey) payload.marketplaceKey = currentMarketplaceKey;
+      }
+      if (authType === "bearer") {
+        payload.auth = { type: "bearer", token: modalFields.bearerToken.value.trim() };
+      } else if (authType === "header") {
+        payload.auth = { type: "header", headerName: modalFields.headerName.value.trim(), headerValue: modalFields.headerValue.value.trim() };
+      } else {
+        payload.auth = { type: "none" };
+      }
+      return payload;
+    }
+
+    function saveConnection() {
+      setModalError("");
+      var payload = collectFormPayload();
+      var url = "/api/mcp/connections/";
+      var method = "POST";
+      if (editingConnectionId) {
+        url = "/api/mcp/connections/" + encodeURIComponent(editingConnectionId) + "/";
+        method = "PUT";
+      }
+      return apiFetch(url, { method: method, body: JSON.stringify(payload) }).then(function () {
+        showModal(false);
+        return loadAll();
+      }).catch(function (err) {
+        setModalError(err.message || "Unable to save.");
+      });
+    }
+
+    function testCurrent() {
+      setModalError("");
+      if (!editingConnectionId) {
+        var createPayload = collectFormPayload();
+        return apiFetch("/api/mcp/connections/", { method: "POST", body: JSON.stringify(createPayload) })
+          .then(function (data) {
+            var conn = data && data.connection;
+            if (conn && conn.id) {
+              editingConnectionId = conn.id;
+              if (modalTitle) modalTitle.textContent = "Edit MCP server";
+            }
+            return apiFetch("/api/mcp/connections/" + encodeURIComponent(editingConnectionId) + "/test/", { method: "POST", body: JSON.stringify({ businessId: businessId || undefined }) });
+          })
+          .then(function () { return loadAll(); })
+          .catch(function (err) {
+            setModalError(err.message || "Test failed.");
+          });
+      }
+      return apiFetch("/api/mcp/connections/" + encodeURIComponent(editingConnectionId) + "/test/", { method: "POST", body: JSON.stringify({ businessId: businessId || undefined }) }).then(function () {
+        return loadAll();
+      }).catch(function (err) {
+        setModalError(err.message || "Test failed.");
+      });
+    }
+
+    function openAgents(connectionId, connectionName) {
+      activeAgentsConnection = connectionId;
+      agentsSubtitle.textContent = connectionName ? ("Connection: " + connectionName) : "—";
+      agentsList.innerHTML = '<div class="rounded-lg border border-border/60 bg-muted/30 p-4 text-sm text-muted-foreground">Loading agents…</div>';
+      showAgentsModal(true);
+      apiFetch("/api/mcp/connections/" + encodeURIComponent(connectionId) + "/agents/", { method: "GET" }).then(function (data) {
+        var agents = data.agents || [];
+        if (!agents.length) {
+          agentsList.innerHTML = '<div class="rounded-lg border border-border/60 bg-muted/30 p-4 text-sm text-muted-foreground">No agents found.</div>';
+          return;
+        }
+        agentsList.innerHTML = "";
+        agents.forEach(function (agent) {
+          var row = document.createElement("div");
+          row.className = "flex items-center justify-between gap-3 rounded-lg border border-border/60 bg-background/60 px-3 py-2";
+          row.innerHTML =
+            '<div class="min-w-0">' +
+              '<div class="text-sm font-medium text-foreground truncate">' + escapeHtml(agent.name || "Agent") + "</div>" +
+              '<div class="text-[11px] text-muted-foreground">' + escapeHtml(agent.statusLabel || "") + "</div>" +
+            "</div>" +
+            '<label class="inline-flex items-center gap-2 text-xs text-muted-foreground">' +
+              '<input type="checkbox" class="h-4 w-4 rounded border-border/60" data-mcp-agent-toggle="' + escapeHtml(agent.id) + '"' + (agent.enabled ? " checked" : "") + " />" +
+              "<span>Enabled</span>" +
+            "</label>";
+          agentsList.appendChild(row);
+        });
+      }).catch(function (err) {
+        agentsList.innerHTML = '<div class="rounded-lg border border-rose-500/30 bg-rose-500/10 p-4 text-sm text-rose-300">Failed to load agents: ' + escapeHtml(err.message || "Error") + "</div>";
+      });
+    }
+
+    function toggleAgent(agentId, enabled) {
+      if (!activeAgentsConnection) return;
+      return apiFetch("/api/mcp/connections/" + encodeURIComponent(activeAgentsConnection) + "/agents/", {
+        method: "POST",
+        body: JSON.stringify({ businessId: businessId || undefined, agentId: agentId, enabled: enabled })
+      }).then(function () {
+        return loadAll();
+      }).catch(function (err) {
+        console.warn("Agent toggle failed", err);
+      });
+    }
+
+    document.addEventListener("click", function (event) {
+      var target = event.target;
+      if (!target || typeof target.closest !== "function") return;
+
+      var tabBtn = target.closest("[data-tab-button]");
+      if (tabBtn) {
+        setTab(tabBtn.getAttribute("data-tab-button"));
+        return;
+      }
+
+      var refresh = target.closest("[data-mcp-refresh]");
+      if (refresh) {
+        loadAll();
+        return;
+      }
+
+      var marketAdd = target.closest("[data-mcp-market-add]");
+      if (marketAdd) {
+        var key = marketAdd.getAttribute("data-mcp-market-add");
+        var card = marketAdd.closest("div");
+        var item = card && card.__item;
+        if (item && item.key === key) {
+          openCreate({ name: item.name, serverUrl: item.serverUrl || "", recommendedAuth: item.recommendedAuth || "none", sourceType: "marketplace", marketplaceKey: item.key });
+        } else {
+          openCreate({});
+        }
+        return;
+      }
+
+      var edit = target.closest("[data-mcp-edit]");
+      if (edit) {
+        var id = edit.getAttribute("data-mcp-edit");
+        var container = edit.closest("div");
+        var card = edit.closest(".rounded-xl");
+        var conn = card && card.__conn;
+        if (conn && conn.id === id) {
+          openEdit(conn);
+        }
+        return;
+      }
+
+      var testBtn = target.closest("[data-mcp-test]");
+      if (testBtn) {
+        var testId = testBtn.getAttribute("data-mcp-test");
+        apiFetch("/api/mcp/connections/" + encodeURIComponent(testId) + "/test/", { method: "POST", body: JSON.stringify({ businessId: businessId || undefined }) })
+          .then(function () { return loadAll(); })
+          .catch(function (err) { console.warn("Test failed", err); });
+        return;
+      }
+
+      var agentsBtn = target.closest("[data-mcp-agents]");
+      if (agentsBtn) {
+        var agentsId = agentsBtn.getAttribute("data-mcp-agents");
+        var card2 = agentsBtn.closest(".rounded-xl");
+        var conn2 = card2 && card2.__conn;
+        openAgents(agentsId, conn2 ? conn2.name : "");
+        return;
+      }
+
+      var openCreateBtn = target.closest("[data-mcp-open-create]");
+      if (openCreateBtn) {
+        openCreate({});
+        return;
+      }
+
+      var openMarketBtn = target.closest("[data-mcp-open-marketplace]");
+      if (openMarketBtn) {
+        setTab("marketplace");
+        return;
+      }
+
+      var closeModal = target.closest("[data-mcp-modal-close], [data-mcp-modal-cancel]");
+      if (closeModal) {
+        showModal(false);
+        return;
+      }
+      var closeAgents = target.closest("[data-mcp-agents-close], [data-mcp-agents-done]");
+      if (closeAgents) {
+        activeAgentsConnection = null;
+        showAgentsModal(false);
+        return;
+      }
+    });
+
+    document.addEventListener("change", function (event) {
+      var target = event.target;
+      if (!target) return;
+      if (target.matches('[data-mcp-field="authType"]')) {
+        setAuthPanels();
+        return;
+      }
+      if (target.matches("[data-mcp-toggle]")) {
+        var id = target.getAttribute("data-mcp-toggle");
+        apiFetch("/api/mcp/connections/" + encodeURIComponent(id) + "/", {
+          method: "PUT",
+          body: JSON.stringify({ businessId: businessId || undefined, enabled: Boolean(target.checked) })
+        }).then(function () { return loadAll(); }).catch(function (err) {
+          console.warn("Toggle failed", err);
+          loadAll();
+        });
+      }
+      if (target.matches("[data-mcp-agent-toggle]")) {
+        var agentId = target.getAttribute("data-mcp-agent-toggle");
+        toggleAgent(agentId, Boolean(target.checked));
+      }
+    });
+
+    if (modalOverlay) {
+      modalOverlay.addEventListener("click", function () { showModal(false); });
+    }
+    if (agentsOverlay) {
+      agentsOverlay.addEventListener("click", function () { showAgentsModal(false); });
+    }
+    if (modalSave) {
+      modalSave.addEventListener("click", function () { saveConnection(); });
+    }
+    if (modalTest) {
+      modalTest.addEventListener("click", function () { testCurrent(); });
+    }
+    document.addEventListener("keydown", function (event) {
+      if (event.key === "Escape") {
+        showModal(false);
+        showAgentsModal(false);
+      }
+    });
+
+    loadAll();
+  })();
+</script>
+{% endblock %}

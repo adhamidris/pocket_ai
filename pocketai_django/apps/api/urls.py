@@ -1,6 +1,7 @@
 from django.urls import path
 
 from . import views
+from . import mcp_connections
 from .chat_portal import (
     bootstrap_session,
     create_portal_session,
@@ -101,4 +102,8 @@ urlpatterns = [
     path("businesses/<uuid:business_id>/identifier-guardrails/", views.identifier_guardrails_overview, name="identifier-guardrails"),
     path("businesses/<uuid:business_id>/identifier-eval/", views.identifier_eval, name="identifier-eval"),
     path("businesses/<uuid:business_id>/identifier-events/", views.identifier_events, name="identifier-events"),
+    path("mcp/connections/", mcp_connections.mcp_connections_collection, name="mcp-connections"),
+    path("mcp/connections/<uuid:connection_id>/", mcp_connections.mcp_connection_detail, name="mcp-connection-detail"),
+    path("mcp/connections/<uuid:connection_id>/test/", mcp_connections.mcp_connection_test, name="mcp-connection-test"),
+    path("mcp/connections/<uuid:connection_id>/agents/", mcp_connections.mcp_connection_agents, name="mcp-connection-agents"),
 ]

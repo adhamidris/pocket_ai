@@ -492,6 +492,31 @@ class IntegrationCredentialEventType(models.TextChoices):
     ROTATION_REQUIRED = "rotation_required", "Rotation Required"
 
 
+class McpConnectionSourceType(models.TextChoices):
+    MARKETPLACE = "marketplace", "Marketplace"
+    MANUAL = "manual", "Manual"
+
+
+class McpConnectionStatus(models.TextChoices):
+    ENABLED = "enabled", "Enabled"
+    DISABLED = "disabled", "Disabled"
+
+
+class McpConnectionAuthType(models.TextChoices):
+    NONE = "none", "No auth"
+    BEARER = "bearer", "Bearer token"
+    HEADER = "header", "Custom header"
+
+
+class McpConnectionAuditAction(models.TextChoices):
+    CREATED = "created", "Created"
+    UPDATED = "updated", "Updated"
+    ENABLED = "enabled", "Enabled"
+    DISABLED = "disabled", "Disabled"
+    AGENT_OPTED_OUT = "agent_opted_out", "Agent Opted Out"
+    AGENT_OPTED_IN = "agent_opted_in", "Agent Opted In"
+
+
 def default_knowledge_integration_settings() -> dict[str, Any]:
     """Provide a predictable structure for integration.settings JSON."""
 
@@ -1927,6 +1952,248 @@ class IntegrationCredentialEvent(models.Model):
 
     def __str__(self) -> str:  # pragma: no cover - human readable only
         return f"{self.integration_id}:{self.event_type}"
+
+
+class McpConnection(models.Model):
+    """
+    Represents an MCP server connection configured for a workspace (business).
+
+    Connections are assigned to all agents by default. Opt-outs are stored in
+    McpConnectionAgentOptOut.
+    """
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    business_profile = models.ForeignKey(
+        BusinessProfile,
+        related_name="mcp_connections",
+        on_delete=models.CASCADE,
+    )
+    created_by = models.ForeignKey(
+        User,
+        related_name="mcp_connections",
+        on_delete=models.CASCADE,
+    )
+    name = models.CharField(max_length=160)
+    slug = models.SlugField(max_length=160, blank=True, db_index=True, default="")
+    source_type = models.CharField(
+        max_length=24,
+        choices=McpConnectionSourceType.choices,
+        default=McpConnectionSourceType.MANUAL,
+    )
+    marketplace_key = models.CharField(
+        max_length=80,
+        blank=True,
+        default="",
+        help_text="Optional identifier for a curated marketplace entry.",
+    )
+    server_url = models.URLField(max_length=500)
+    status = models.CharField(
+        max_length=16,
+        choices=McpConnectionStatus.choices,
+        default=McpConnectionStatus.ENABLED,
+    )
+    auth_type = models.CharField(
+        max_length=16,
+        choices=McpConnectionAuthType.choices,
+        default=McpConnectionAuthType.NONE,
+    )
+    credentials_encrypted = models.TextField(blank=True, default="")
+    credentials_key_version = models.PositiveSmallIntegerField(default=1)
+    credentials_last_rotated_at = models.DateTimeField(null=True, blank=True)
+    credential_error_count = models.PositiveSmallIntegerField(default=0)
+    metadata = models.JSONField(default=dict, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = "accounts_mcp_connection"
+        ordering = ("name",)
+        indexes = [
+            models.Index(fields=["business_profile", "status"], name="mcp_conn_business_status_idx"),
+            models.Index(fields=["business_profile", "slug"], name="mcp_conn_business_slug_idx"),
+        ]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["business_profile", "slug"],
+                condition=~models.Q(slug=""),
+                name="mcp_conn_slug_unique",
+            )
+        ]
+
+    def __str__(self) -> str:  # pragma: no cover - human readable only
+        return f"{self.name} ({self.business_profile_id})"
+
+    def _credential_tenant(self) -> str:
+        business_id = self.business_profile_id or getattr(self.business_profile, "id", None)
+        if not business_id:
+            raise ValueError("Business profile must be saved before storing credentials.")
+        return str(business_id)
+
+    def _cache_credentials(self, payload: dict[str, Any]) -> None:
+        self._cached_credentials = dict(payload)
+
+    def _get_cached_credentials(self) -> dict[str, Any] | None:
+        return getattr(self, "_cached_credentials", None)
+
+    def _clear_cached_credentials(self) -> None:
+        if hasattr(self, "_cached_credentials"):
+            delattr(self, "_cached_credentials")
+
+    @property
+    def credentials(self) -> dict[str, Any]:
+        cached = self._get_cached_credentials()
+        if cached is not None:
+            return dict(cached)
+        tenant = self.business_profile_id or getattr(self.business_profile, "id", None)
+        if not tenant or not self.credentials_encrypted:
+            self._cache_credentials({})
+            return {}
+        manager = get_secret_manager()
+        try:
+            payload = manager.decrypt(self.credentials_encrypted, tenant=str(tenant))
+        except IntegrationSecretError as exc:
+            logger.warning("mcp_credentials_decrypt_failed connection=%s error=%s", self.id, exc)
+            payload = {}
+        self._cache_credentials(payload)
+        return dict(payload)
+
+    @credentials.setter
+    def credentials(self, value: dict[str, Any] | None) -> None:
+        payload = dict(value or {})
+        if not payload:
+            self.credentials_encrypted = ""
+            self.credentials_key_version = 1
+            self.credentials_last_rotated_at = None
+            self.credential_error_count = 0
+            self._cache_credentials({})
+            return
+        manager = get_secret_manager()
+        ciphertext = manager.encrypt(payload, tenant=self._credential_tenant())
+        self.credentials_encrypted = ciphertext
+        self.credentials_key_version = manager.key_version
+        self.credentials_last_rotated_at = timezone.now()
+        self.credential_error_count = 0
+        self._cache_credentials(payload)
+
+    def has_credentials(self) -> bool:
+        return bool(self.credentials_encrypted)
+
+    def credentials_need_rotation(self) -> bool:
+        return credentials_are_stale(self.credentials_last_rotated_at)
+
+    def refresh_from_db(self, *args: Any, **kwargs: Any) -> None:
+        super().refresh_from_db(*args, **kwargs)
+        self._clear_cached_credentials()
+
+    def save(self, *args: Any, **kwargs: Any) -> None:
+        if not self.slug:
+            base_slug = slugify(self.name) or "mcp"
+            candidate = base_slug
+            suffix = 1
+            while McpConnection.objects.filter(
+                business_profile=self.business_profile,
+                slug=candidate,
+            ).exclude(pk=self.pk).exists():
+                suffix += 1
+                candidate = f"{base_slug}-{suffix}"
+            self.slug = candidate
+        super().save(*args, **kwargs)
+
+
+class McpConnectionAgentOptOut(models.Model):
+    """
+    Stores explicit opt-outs from an MCP connection for a specific agent.
+
+    Default behavior: all agents inherit all enabled MCP connections unless opted out.
+    """
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    connection = models.ForeignKey(
+        McpConnection,
+        related_name="agent_opt_outs",
+        on_delete=models.CASCADE,
+    )
+    agent_profile = models.ForeignKey(
+        AgentProfile,
+        related_name="mcp_opt_outs",
+        on_delete=models.CASCADE,
+    )
+    opted_out_by = models.ForeignKey(
+        User,
+        related_name="mcp_opt_out_events",
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+    )
+    opted_out_at = models.DateTimeField(auto_now_add=True)
+    metadata = models.JSONField(default=dict, blank=True)
+
+    class Meta:
+        db_table = "accounts_mcp_connection_opt_out"
+        ordering = ("-opted_out_at",)
+        constraints = [
+            models.UniqueConstraint(
+                fields=["connection", "agent_profile"],
+                name="mcp_conn_agent_opt_out_unique",
+            )
+        ]
+        indexes = [
+            models.Index(fields=["connection", "opted_out_at"], name="mcp_conn_opt_out_idx"),
+            models.Index(fields=["agent_profile", "opted_out_at"], name="mcp_agent_opt_out_idx"),
+        ]
+
+    def __str__(self) -> str:  # pragma: no cover - human readable only
+        return f"{self.connection_id} -> {self.agent_profile_id} (opted out)"
+
+
+class McpConnectionAuditEvent(models.Model):
+    """
+    Immutable log of key MCP connection events for compliance and debugging.
+    """
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    business_profile = models.ForeignKey(
+        BusinessProfile,
+        related_name="mcp_audit_events",
+        on_delete=models.CASCADE,
+    )
+    connection = models.ForeignKey(
+        McpConnection,
+        related_name="audit_events",
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+    )
+    connection_id_snapshot = models.UUIDField(
+        null=True,
+        blank=True,
+        db_index=True,
+        help_text="Snapshot of the connection UUID for retention when the connection is deleted.",
+    )
+    actor_user = models.ForeignKey(
+        User,
+        related_name="mcp_audit_events",
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+    )
+    action = models.CharField(max_length=32, choices=McpConnectionAuditAction.choices)
+    description = models.TextField(blank=True)
+    metadata = models.JSONField(default=dict, blank=True)
+    occurred_at = models.DateTimeField(default=timezone.now, db_index=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = "accounts_mcp_connection_audit_event"
+        ordering = ("-occurred_at",)
+        indexes = [
+            models.Index(fields=["connection", "action"], name="mcp_audit_action_idx"),
+            models.Index(fields=["connection_id_snapshot", "action"], name="mcp_audit_snap_action_idx"),
+        ]
+
+    def __str__(self) -> str:  # pragma: no cover - human readable only
+        ref = self.connection_id_snapshot or getattr(self.connection, "id", None) or "unknown-connection"
+        return f"{ref} - {self.get_action_display()}"
 
 
 class KnowledgeIngestionJob(models.Model):
