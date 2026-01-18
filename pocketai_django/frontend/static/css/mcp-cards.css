@@ -1,0 +1,418 @@
+/* MCP Tool Card Component */
+/* Scoped styles for the tool execution cards in the chat portal */
+
+.mcp-card {
+  display: inline-flex;
+  flex-direction: column;
+  width: fit-content;
+  max-width: 100%;
+  /* Max width constraint usually handled by JS/Containers, but good safety */
+  min-width: 0;
+  
+  /* Glassmorphism Configuration */
+  background: rgba(255, 255, 255, 0.4);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border: 1px solid rgba(0, 0, 0, 0.08);
+  box-shadow: 
+    0 4px 6px -1px rgba(0, 0, 0, 0.02),
+    0 2px 4px -1px rgba(0, 0, 0, 0.02),
+    inset 0 1px 0 rgba(255, 255, 255, 0.6);
+    
+  border-radius: 14px;
+  overflow: hidden;
+  transition: all 0.3s cubic-bezier(0.2, 0.8, 0.2, 1);
+  margin-top: 0.5rem;
+  margin-bottom: 0.5rem;
+}
+
+/* Dark mode adjustments */
+:root[data-theme="dark"] .mcp-card {
+  background: rgba(20, 20, 25, 0.4);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  box-shadow: 
+    0 4px 6px -1px rgba(0, 0, 0, 0.1),
+    0 2px 4px -1px rgba(0, 0, 0, 0.06),
+    inset 0 1px 0 rgba(255, 255, 255, 0.05);
+}
+
+/* Expansion Animation */
+.mcp-card {
+  /* ... existing styles ... */
+  display: grid;
+  grid-template-rows: auto 0fr;
+  transition: grid-template-rows 0.3s cubic-bezier(0.4, 0, 0.2, 1),
+              background 0.2s ease,
+              box-shadow 0.2s ease;
+}
+
+.mcp-card[open] {
+  grid-template-rows: auto 1fr;
+  /* ... existing open styles ... */
+  background: rgba(255, 255, 255, 0.65);
+  box-shadow: 
+    0 10px 15px -3px rgba(0, 0, 0, 0.05),
+    0 4px 6px -2px rgba(0, 0, 0, 0.02),
+    inset 0 1px 0 rgba(255, 255, 255, 0.8);
+  width: 100%;
+  max-width: 550px;
+}
+
+:root[data-theme="dark"] .mcp-card[open] {
+  background: rgba(30, 30, 35, 0.65);
+  box-shadow: 
+    0 10px 15px -3px rgba(0, 0, 0, 0.2),
+    0 4px 6px -2px rgba(0, 0, 0, 0.1),
+    inset 0 1px 0 rgba(255, 255, 255, 0.08);
+}
+
+/* Ensure summary sits in the first row */
+.mcp-card-summary {
+  grid-row: 1;
+}
+
+/* Ensure body sits in the second row and handles overflow */
+.mcp-body {
+  grid-row: 2;
+  overflow: hidden;
+  /* Remove old animation, rely on grid transition */
+  animation: none; 
+  padding: 0; /* Move padding to inner content or handle differently */
+}
+
+/* Inner wrapper for padding to avoid jank */
+.mcp-body-content {
+  padding: 0 0.875rem 0.875rem 0.875rem;
+  min-height: 0; /* Required for grid transition */
+}
+
+/* Summary / Header Area */
+.mcp-card-summary {
+  list-style: none; /* Remove default triangle */
+  cursor: pointer;
+  padding: 0.75rem 0.875rem;
+  user-select: none;
+  outline: none;
+}
+.mcp-card-summary::-webkit-details-marker {
+  display: none;
+}
+
+.mcp-card-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  width: 100%;
+}
+
+.mcp-card-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 2rem;
+  height: 2rem;
+  border-radius: 8px;
+  background: linear-gradient(135deg, rgba(255,255,255,0.8), rgba(240,240,240,0.5));
+  border: 1px solid rgba(0,0,0,0.05);
+  color: var(--primary); /* Uses theme variable */
+  flex-shrink: 0;
+}
+:root[data-theme="dark"] .mcp-card-icon {
+  background: linear-gradient(135deg, rgba(255,255,255,0.08), rgba(255,255,255,0.03));
+  border: 1px solid rgba(255,255,255,0.1);
+}
+
+.mcp-card-title-block {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  flex: 1;
+}
+
+.mcp-card-title-row {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.mcp-card-title {
+  font-size: 0.8125rem; /* 13px */
+  font-weight: 600;
+  color: var(--foreground);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.mcp-card-subtitle {
+  font-size: 0.75rem; /* 12px */
+  color: var(--muted-foreground);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  margin-top: 1px;
+}
+
+.mcp-card-meta {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-shrink: 0;
+}
+
+/* Type badge (e.g. MCP) */
+.mcp-badge {
+  font-size: 0.625rem; /* 10px */
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.025em;
+  padding: 1px 5px;
+  border-radius: 4px;
+  background: rgba(var(--primary), 0.1);
+  color: var(--primary);
+}
+
+/* Status Chips */
+.mcp-status {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0.125rem 0.625rem;
+  border-radius: 9999px;
+  font-size: 0.6875rem; /* 11px */
+  font-weight: 600;
+  text-transform: capitalize;
+  min-width: 4rem;
+  white-space: nowrap;
+  transition: all 0.2s;
+}
+
+/* Status Variants */
+.mcp-status.running {
+  background: rgba(59, 130, 246, 0.1);
+  color: #2563eb;
+  position: relative;
+  overflow: hidden;
+}
+:root[data-theme="dark"] .mcp-status.running {
+  background: rgba(59, 130, 246, 0.2);
+  color: #60a5fa;
+}
+/* Subtle pulse animation for running state */
+.mcp-status.running::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: linear-gradient(90deg, transparent, rgba(255,255,255,0.4), transparent);
+  transform: translateX(-100%);
+  animation: mcpShimmer 2s infinite;
+}
+
+@keyframes mcpShimmer {
+  100% { transform: translateX(100%); }
+}
+
+.mcp-status.success {
+  background: rgba(16, 185, 129, 0.1);
+  color: #059669;
+}
+:root[data-theme="dark"] .mcp-status.success {
+  background: rgba(16, 185, 129, 0.2);
+  color: #34d399;
+}
+
+.mcp-status.error {
+  background: rgba(239, 68, 68, 0.1);
+  color: #dc2626;
+}
+:root[data-theme="dark"] .mcp-status.error {
+  background: rgba(239, 68, 68, 0.2);
+  color: #f87171;
+}
+
+.mcp-status.pending {
+  background: rgba(245, 158, 11, 0.1);
+  color: #d97706;
+}
+:root[data-theme="dark"] .mcp-status.pending {
+  background: rgba(245, 158, 11, 0.2);
+  color: #fbbf24;
+}
+
+/* Chevron */
+.mcp-chevron {
+  color: var(--muted-foreground);
+  opacity: 0.6;
+  width: 1rem;
+  height: 1rem;
+  transition: transform 0.2s;
+}
+.mcp-card[open] .mcp-chevron {
+  transform: rotate(180deg);
+}
+
+/* Progress Bar */
+.mcp-progress {
+  height: 2px;
+  width: 100%;
+  background: rgba(0,0,0,0.05);
+  overflow: hidden;
+  margin-top: 0.5rem;
+  border-radius: 2px;
+}
+:root[data-theme="dark"] .mcp-progress {
+  background: rgba(255,255,255,0.05);
+}
+
+.mcp-progress-bar {
+  height: 100%;
+  background: var(--primary);
+  width: 30%;
+  border-radius: 2px;
+  animation: mcpIndeterminate 1.5s infinite linear;
+}
+
+@keyframes mcpIndeterminate {
+  0% { transform: translateX(-100%); width: 20%; }
+  50% { width: 50%; }
+  100% { transform: translateX(200%); width: 20%; }
+}
+
+/* Body Content */
+/* .mcp-body is now handling the grid row */
+/* We don't need the slide down animation as grid handles height */
+
+
+/* Approval Section */
+.mcp-approval {
+  background: rgba(255,255,255,0.5);
+  border: 1px solid rgba(0,0,0,0.06);
+  border-radius: 8px;
+  padding: 0.75rem;
+  margin-bottom: 0.75rem;
+}
+:root[data-theme="dark"] .mcp-approval {
+  background: rgba(0,0,0,0.2);
+  border: 1px solid rgba(255,255,255,0.08);
+}
+
+.mcp-approval-title {
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--foreground);
+}
+
+.mcp-approval-text {
+  font-size: 0.75rem;
+  color: var(--muted-foreground);
+  margin-top: 0.25rem;
+}
+
+.mcp-approval-actions {
+  display: flex;
+  gap: 0.5rem;
+  margin-top: 0.75rem;
+}
+
+/* Buttons */
+.mcp-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.75rem;
+  font-weight: 500;
+  padding: 0.35rem 0.75rem;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: all 0.2s;
+  border: 1px solid transparent;
+}
+
+.mcp-btn-approve {
+  background: rgba(16, 185, 129, 0.1);
+  color: #059669;
+  border-color: rgba(16, 185, 129, 0.2);
+}
+.mcp-btn-approve:hover {
+  background: rgba(16, 185, 129, 0.2);
+}
+
+.mcp-btn-deny {
+  background: rgba(239, 68, 68, 0.1);
+  color: #dc2626;
+  border-color: rgba(239, 68, 68, 0.2);
+}
+.mcp-btn-deny:hover {
+  background: rgba(239, 68, 68, 0.2);
+}
+
+/* Tabs */
+.mcp-tabs {
+  display: inline-flex;
+  background: rgba(0,0,0,0.04);
+  padding: 3px;
+  border-radius: 8px;
+  margin-bottom: 0.75rem;
+}
+:root[data-theme="dark"] .mcp-tabs {
+  background: rgba(255,255,255,0.06);
+}
+
+.mcp-tab {
+  padding: 0.25rem 0.75rem;
+  font-size: 0.75rem;
+  font-weight: 500;
+  color: var(--muted-foreground);
+  border-radius: 6px;
+  transition: all 0.2s;
+  background: transparent;
+  border: none;
+  cursor: pointer;
+}
+
+/* Content Panels */
+.mcp-panel {
+  display: none;
+}
+/* Show input panel when container says input */
+details[data-tool-tab="input"] .mcp-panel[data-tool-panel="input"] {
+  display: block;
+}
+/* Show output panel when container says output */
+details[data-tool-tab="output"] .mcp-panel[data-tool-panel="output"] {
+  display: block;
+}
+
+/* Tab Active States relying on container state */
+details[data-tool-tab="input"] .mcp-tab[data-tool-tab="input"],
+details[data-tool-tab="output"] .mcp-tab[data-tool-tab="output"] {
+  background: var(--background);
+  color: var(--foreground);
+  box-shadow: 0 1px 2px rgba(0,0,0,0.05);
+}
+:root[data-theme="dark"] details[data-tool-tab="input"] .mcp-tab[data-tool-tab="input"],
+:root[data-theme="dark"] details[data-tool-tab="output"] .mcp-tab[data-tool-tab="output"] {
+  background: rgba(255,255,255,0.1);
+}
+
+.mcp-code-block {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 0.75rem;
+  line-height: 1.5;
+  background: rgba(0,0,0,0.03);
+  border: 1px solid rgba(0,0,0,0.06);
+  border-radius: 8px;
+  padding: 0.75rem;
+  color: var(--foreground);
+  overflow-x: auto;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+:root[data-theme="dark"] .mcp-code-block {
+  background: rgba(0,0,0,0.2);
+  border: 1px solid rgba(255,255,255,0.08);
+}

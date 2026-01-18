@@ -1266,92 +1266,79 @@ class ChatPortalClient {
     const details = document.createElement("details");
     details.dataset.toolCard = "true";
     details.dataset.toolEventId = eventId;
-    details.className = "rounded-xl border border-border/50 bg-muted/20 px-3 py-2 w-fit max-w-full inline-flex flex-col overflow-hidden";
-    details.style.maxWidth = "min(520px, 100%)";
+    details.className = "mcp-card w-full"; // Use new class
 
     const summary = document.createElement("summary");
-    summary.className = "cursor-pointer select-none inline-flex flex-col items-stretch max-w-full min-w-0";
+    summary.className = "mcp-card-summary";
 
     const header = document.createElement("div");
-    header.className = "flex items-start justify-between gap-3 max-w-full min-w-0";
+    header.className = "mcp-card-header";
 
-    const left = document.createElement("div");
-    left.className = "flex items-start gap-2 min-w-0 max-w-full";
+    const titleBlock = document.createElement("div");
+    titleBlock.className = "mcp-card-title-block";
 
-    const iconWrap = document.createElement("div");
-    iconWrap.className =
-      "mt-0.5 h-7 w-7 rounded-lg bg-background/60 border border-border/40 flex items-center justify-center text-foreground/80 flex-shrink-0";
-    iconWrap.innerHTML = `
+    const titleRow = document.createElement("div");
+    titleRow.className = "mcp-card-title-row";
+
+    const icon = document.createElement("div");
+    icon.className = "mcp-card-icon";
+    icon.innerHTML = `
       <svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-        <path d="M12 22v-5" />
-        <path d="M9 7V2" />
-        <path d="M15 7V2" />
-        <path d="M8 22h8" />
-        <path d="M12 17a5 5 0 0 0 5-5V9H7v3a5 5 0 0 0 5 5Z" />
+        <path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/>
       </svg>
     `;
 
-    const textWrap = document.createElement("div");
-    textWrap.className = "min-w-0 max-w-full";
-
-    const titleRow = document.createElement("div");
-    titleRow.className = "flex items-center gap-2 min-w-0";
-
     const title = document.createElement("div");
     title.dataset.toolTitle = "true";
-    title.className = "text-xs font-medium text-foreground truncate";
+    title.className = "mcp-card-title";
 
     const kind = document.createElement("span");
     kind.dataset.toolKind = "true";
-    kind.className =
-      "hidden text-[10px] font-semibold uppercase tracking-wide rounded-md px-1.5 py-0.5 bg-primary/10 text-primary";
-
-    titleRow.appendChild(title);
-    titleRow.appendChild(kind);
+    kind.className = "mcp-badge hidden";
+    kind.textContent = "MCP";
 
     const subtitle = document.createElement("div");
     subtitle.dataset.toolSubtitle = "true";
-    subtitle.className = "mt-0.5 text-[11px] text-muted-foreground truncate";
+    subtitle.className = "mcp-card-subtitle";
 
-    textWrap.appendChild(titleRow);
-    textWrap.appendChild(subtitle);
+    titleRow.appendChild(title);
+    titleRow.appendChild(kind);
+    titleBlock.appendChild(titleRow);
+    titleBlock.appendChild(subtitle);
 
-    left.appendChild(iconWrap);
-    left.appendChild(textWrap);
-
-    const right = document.createElement("div");
-    right.className = "flex items-center gap-2 flex-shrink-0 pt-0.5";
+    const meta = document.createElement("div");
+    meta.className = "mcp-card-meta";
 
     const statusPill = document.createElement("span");
     statusPill.dataset.toolStatus = "true";
-    statusPill.className =
-      "inline-flex items-center justify-center text-[10px] font-semibold rounded-full px-2 py-0.5 w-[88px] text-center whitespace-nowrap";
+    statusPill.className = "mcp-status pending";
 
     const duration = document.createElement("span");
     duration.dataset.toolDuration = "true";
-    duration.className = "hidden text-[10px] text-muted-foreground";
+    duration.className = "mcp-badge hidden"; // Re-use badge style for duration or specialized class
 
     const chevron = document.createElement("div");
     chevron.dataset.toolChevron = "true";
-    chevron.className = "text-muted-foreground/70 transition-transform duration-200";
+    chevron.className = "mcp-chevron";
     chevron.innerHTML = `
       <svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
         <polyline points="6 9 12 15 18 9"></polyline>
       </svg>
     `;
 
-    right.appendChild(statusPill);
-    right.appendChild(duration);
-    right.appendChild(chevron);
+    meta.appendChild(statusPill);
+    meta.appendChild(duration);
+    meta.appendChild(chevron);
 
-    header.appendChild(left);
-    header.appendChild(right);
+    header.appendChild(icon);
+    header.appendChild(titleBlock);
+    header.appendChild(meta);
 
     const progress = document.createElement("div");
     progress.dataset.toolProgress = "true";
-    progress.className = "mt-2 h-1 w-full rounded-full bg-muted/40 overflow-hidden hidden";
+    progress.className = "mcp-progress hidden";
     const progressBar = document.createElement("div");
-    progressBar.className = "h-full w-full skeleton-loader";
+    progressBar.className = "mcp-progress-bar";
     progress.appendChild(progressBar);
 
     summary.appendChild(header);
@@ -1359,31 +1346,33 @@ class ChatPortalClient {
 
     const body = document.createElement("div");
     body.dataset.toolBody = "true";
-    body.className = "mt-3 space-y-3 max-w-full min-w-0";
+    body.className = "mcp-body";
 
+    const contentWrapper = document.createElement("div");
+    contentWrapper.className = "mcp-body-content";
+
+    // Approval Section
     const approval = document.createElement("div");
     approval.dataset.toolApproval = "true";
-    approval.className =
-      "hidden rounded-lg border border-border/40 bg-background/60 p-3 text-[11px] text-muted-foreground max-w-full min-w-0";
+    approval.className = "mcp-approval hidden";
 
     const approvalTitle = document.createElement("div");
     approvalTitle.dataset.toolApprovalTitle = "true";
-    approvalTitle.className = "text-[11px] font-semibold text-foreground";
+    approvalTitle.className = "mcp-approval-title";
     approvalTitle.textContent = "Approval required";
 
     const approvalMeta = document.createElement("div");
     approvalMeta.dataset.toolApprovalMeta = "true";
-    approvalMeta.className = "mt-1 text-[11px] text-muted-foreground";
+    approvalMeta.className = "mcp-approval-text";
 
     const approvalRemember = document.createElement("label");
     approvalRemember.dataset.toolApprovalRememberWrap = "true";
-    approvalRemember.className =
-      "mt-2 inline-flex items-center gap-2 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground";
+    approvalRemember.className = "flex items-center gap-2 mt-2 text-xs text-muted-foreground select-none cursor-pointer";
 
     const rememberCheckbox = document.createElement("input");
     rememberCheckbox.type = "checkbox";
     rememberCheckbox.dataset.toolApprovalRemember = "true";
-    rememberCheckbox.className = "h-3.5 w-3.5 rounded border border-border/60 bg-background/70";
+    rememberCheckbox.className = "h-3.5 w-3.5 rounded border-border bg-background text-primary focus:ring-1 focus:ring-primary";
 
     const rememberText = document.createElement("span");
     rememberText.textContent = "Always allow this tool";
@@ -1393,20 +1382,18 @@ class ChatPortalClient {
 
     const approvalActions = document.createElement("div");
     approvalActions.dataset.toolApprovalActions = "true";
-    approvalActions.className = "mt-2 flex items-center gap-2";
+    approvalActions.className = "mcp-approval-actions";
 
     const approveButton = document.createElement("button");
     approveButton.type = "button";
     approveButton.dataset.toolApprovalAction = "approve";
-    approveButton.className =
-      "inline-flex items-center justify-center rounded-full border border-emerald-500/30 bg-emerald-500/10 px-3 py-1 text-[10px] font-semibold uppercase tracking-wide text-emerald-600 transition-colors hover:bg-emerald-500/20";
+    approveButton.className = "mcp-btn mcp-btn-approve";
     approveButton.textContent = "Approve";
 
     const denyButton = document.createElement("button");
     denyButton.type = "button";
     denyButton.dataset.toolApprovalAction = "deny";
-    denyButton.className =
-      "inline-flex items-center justify-center rounded-full border border-rose-500/30 bg-rose-500/10 px-3 py-1 text-[10px] font-semibold uppercase tracking-wide text-rose-500 transition-colors hover:bg-rose-500/20";
+    denyButton.className = "mcp-btn mcp-btn-deny";
     denyButton.textContent = "Deny";
 
     approvalActions.appendChild(approveButton);
@@ -1416,16 +1403,17 @@ class ChatPortalClient {
     approval.appendChild(approvalRemember);
     approval.appendChild(approvalActions);
 
+    // Tabs
     const tabs = document.createElement("div");
     tabs.dataset.toolTabs = "true";
-    tabs.className = "inline-flex items-center gap-1 rounded-full border border-border/40 bg-muted/40 p-1 text-[11px]";
+    tabs.className = "mcp-tabs";
 
     const buildTab = (label, value) => {
       const tab = document.createElement("button");
       tab.type = "button";
       tab.dataset.toolTab = value;
       tab.dataset.toolTabButton = "true";
-      tab.className = "px-2.5 py-1 rounded-full text-[11px] font-semibold text-muted-foreground transition-colors";
+      tab.className = "mcp-tab";
       tab.textContent = label;
       return tab;
     };
@@ -1433,34 +1421,35 @@ class ChatPortalClient {
     tabs.appendChild(buildTab("Input", "input"));
     tabs.appendChild(buildTab("Output", "output"));
 
+    // Panels
     const panels = document.createElement("div");
     panels.dataset.toolPanels = "true";
-    panels.className = "max-w-full min-w-0";
+    panels.className = "w-full";
 
     const buildPanel = (panelType) => {
       const panel = document.createElement("div");
       panel.dataset.toolPanel = panelType;
-      panel.className = "space-y-2 max-w-full min-w-0";
+      panel.className = "mcp-panel space-y-2";
 
       const preview = document.createElement("div");
       preview.dataset.toolPreview = panelType;
-      preview.className = "space-y-1.5 max-w-full min-w-0";
+      preview.className = "text-sm text-foreground/80 space-y-1";
 
       const controls = document.createElement("div");
-      controls.className = "flex items-center gap-3 text-[10px] text-muted-foreground uppercase tracking-wide";
+      controls.className = "flex items-center gap-3 text-[10px] text-muted-foreground uppercase tracking-wide pt-1";
 
       const rawToggle = document.createElement("button");
       rawToggle.type = "button";
       rawToggle.dataset.toolRawToggle = "true";
       rawToggle.dataset.toolPanel = panelType;
-      rawToggle.className = "transition-colors hover:text-foreground";
+      rawToggle.className = "hover:text-foreground transition-colors";
       rawToggle.textContent = "View raw";
 
       const copyButton = document.createElement("button");
       copyButton.type = "button";
       copyButton.dataset.toolRawCopy = "true";
       copyButton.dataset.toolPanel = panelType;
-      copyButton.className = "transition-colors hover:text-foreground";
+      copyButton.className = "hover:text-foreground transition-colors";
       copyButton.textContent = "Copy";
 
       controls.appendChild(rawToggle);
@@ -1468,12 +1457,11 @@ class ChatPortalClient {
 
       const rawWrap = document.createElement("div");
       rawWrap.dataset.toolRawWrap = panelType;
-      rawWrap.className = "hidden max-w-full min-w-0";
+      rawWrap.className = "hidden mt-2";
 
       const pre = document.createElement("pre");
       pre.dataset.toolRaw = panelType;
-      pre.className =
-        "max-w-full overflow-x-auto whitespace-pre-wrap break-all text-[11px] leading-relaxed rounded-lg border border-border/40 bg-background/50 p-3";
+      pre.className = "mcp-code-block";
       rawWrap.appendChild(pre);
 
       panel.appendChild(preview);
@@ -1485,9 +1473,11 @@ class ChatPortalClient {
     panels.appendChild(buildPanel("input"));
     panels.appendChild(buildPanel("output"));
 
-    body.appendChild(approval);
-    body.appendChild(tabs);
-    body.appendChild(panels);
+    contentWrapper.appendChild(approval);
+    contentWrapper.appendChild(tabs);
+    contentWrapper.appendChild(panels);
+
+    body.appendChild(contentWrapper);
 
     details.dataset.toolTab = "input";
     details.appendChild(summary);
@@ -1564,7 +1554,7 @@ class ChatPortalClient {
     if (statusEl) {
       const mapped = this.mapToolStatus(effectiveStatus || (isRunning ? "running" : "ok"));
       statusEl.textContent = mapped.label;
-      statusEl.className = `${mapped.className} inline-flex items-center justify-center text-[10px] font-semibold rounded-full px-2 py-0.5 w-[88px] text-center whitespace-nowrap`;
+      statusEl.className = mapped.className; // Use class directly from mapToolStatus
     }
 
     const durationEl = card.querySelector("[data-tool-duration]");
@@ -2053,32 +2043,32 @@ class ChatPortalClient {
   mapToolStatus(status) {
     const normalized = (status || "").toString().trim().toLowerCase();
     if (normalized === "pending_approval" || normalized === "pending") {
-      return { label: "Pending", className: "bg-amber-500/10 text-amber-700 dark:text-amber-500" };
+      return { label: "Pending", className: "mcp-status pending" };
     }
     if (normalized === "approved") {
-      return { label: "Approved", className: "bg-emerald-500/10 text-emerald-600 dark:text-emerald-500" };
+      return { label: "Approved", className: "mcp-status success" }; // Use success color for approved
     }
     if (normalized === "denied") {
-      return { label: "Denied", className: "bg-rose-500/10 text-rose-500" };
+      return { label: "Denied", className: "mcp-status error" };
     }
     if (normalized === "expired") {
-      return { label: "Expired", className: "bg-amber-500/10 text-amber-700 dark:text-amber-500" };
+      return { label: "Expired", className: "mcp-status pending" };
     }
     if (normalized === "running" || normalized === "started") {
-      return { label: "Running", className: "bg-primary/10 text-primary" };
+      return { label: "Running", className: "mcp-status running" };
     }
     if (normalized === "ok" || normalized === "success" || normalized === "succeeded") {
-      return { label: "Succeeded", className: "bg-emerald-500/10 text-emerald-600 dark:text-emerald-500" };
+      return { label: "Succeeded", className: "mcp-status success" };
     }
     if (normalized === "blocked" || normalized === "disabled") {
-      return { label: "Blocked", className: "bg-amber-500/10 text-amber-700 dark:text-amber-500" };
+      return { label: "Blocked", className: "mcp-status pending" };
     }
     if (normalized === "error" || normalized === "failed" || normalized === "failure") {
-      return { label: "Failed", className: "bg-destructive/10 text-destructive" };
+      return { label: "Failed", className: "mcp-status error" };
     }
     return {
       label: normalized ? this.formatStatus(normalized) : "Done",
-      className: "bg-muted text-muted-foreground",
+      className: "mcp-status",
     };
   }
 

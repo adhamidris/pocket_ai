@@ -26,3 +26,13 @@ This repo is a multi-tenant B2B SaaS. Your job is to ship production-ready chang
 - Keep `docs/product/saas_brief.md` business-only and `docs/product/technical.md` technical-only.
 - Avoid duplicate “platform overview” docs that drift and confuse contributors.
 - If you add/rename docs, update `docs/README.md` and `README.md`.
+
+## Frontend & UI Strategy
+> **CRITICAL**: The project relies on a pre-compiled `main.css` file. Attempting to run a Tailwind build (`npx tailwindcss`) or modifying `package.json` to generate CSS will **BREAK** the application's global styling.
+
+1.  **Treat `main.css` as Read-Only**: Never overwrite, regenerate, or minimize this file.
+2.  **No New Tailwind Utilities**: Do not assume you can add new Tailwind classes (e.g., `backdrop-blur-xl`, `bg-white/5`) and have them work. If they aren't in `main.css` already, they won't exist.
+3.  **Use Scoped Pure CSS**: When building complex new UI components (especially glassmorphism or high-end designs):
+    *   Create a **namespaced Component** (e.g., `.mcp-card`) in a `<style>` block or dedicated pre-loaded CSS file.
+    *   Use `all: unset` or high-specificity selectors to isolate your component from global legacy styles.
+    *   Manually define all properties (padding, colors, borders) to ensure pixel-perfect rendering without external dependencies.
