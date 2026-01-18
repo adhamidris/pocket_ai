@@ -60,6 +60,7 @@ class ChatPortalClient {
     this.streamingMessageId = null;
     this.streamingTextEl = null;
     this.streamingBlocksEl = null;
+    this.streamingToolsEl = null;
     this.pendingMessageId = null;
     this.pendingMetadataVersion = 0;
     this.usingStateMachine = false;
@@ -82,6 +83,7 @@ class ChatPortalClient {
     this.sessionLoadInProgress = false;
     this.sessionSummaries = [];
     this.pendingSessionTitles = {};
+    this.toolEventCards = new Map();
   }
 
   async init() {
@@ -585,6 +587,11 @@ class ChatPortalClient {
       return;
     }
 
+    if (eventType === "toolEvent") {
+      this.handleToolEvent(data);
+      return;
+    }
+
     if (eventType === "turnUpdated") {
       this.handleTurnUpdatedEvent(data);
       return;
@@ -782,6 +789,329 @@ class ChatPortalClient {
     }
     const messageId = payload.message_id || this.pendingMessageId || this.streamingMessageId;
     this.updateMessageMetadata(messageId, payload);
+  }
+
+  handleToolEvent(data) {
+    let payload = null;
+    try {
+      payload = data ? JSON.parse(data) : null;
+    } catch (error) {
+      console.warn("Failed to parse toolEvent payload", error);
+      return;
+    }
+    if (!payload) return;
+
+    const eventId = (payload.event_id || payload.eventId || payload.tool_call_id || payload.toolCallId || "")
+      .toString()
+      .trim();
+    if (!eventId) return;
+    const phase = (payload.phase || "").toString().trim().toLowerCase();
+    if (!phase) return;
+
+    const rawMessageId = (payload.message_id || payload.messageId || "").toString().trim();
+    const messageId = rawMessageId || this.pendingMessageId || this.streamingMessageId || null;
+
+    let wrapper = this.getToolEventWrapper(messageId);
+    if (!wrapper) {
+      this.ensureStreamingMessageNode(messageId);
+      wrapper = this.getToolEventWrapper(messageId);
+    }
+    if (!wrapper) return;
+
+    const toolsContainer = this.ensureToolActivityContainer(wrapper);
+    if (!toolsContainer) return;
+
+    const messageKey = wrapper.dataset.messageId || "streaming";
+    const cardKey = `${messageKey}:${eventId}`;
+    let card = this.toolEventCards.get(cardKey);
+    if (!card) {
+      card = toolsContainer.querySelector(`[data-tool-event-id="${eventId}"]`);
+    }
+    if (!card) {
+      card = this.buildToolEventCard(payload);
+      if (!card) return;
+      toolsContainer.appendChild(card);
+      this.toolEventCards.set(cardKey, card);
+    }
+    this.updateToolEventCard(card, payload);
+
+    if (this.elements.messages) {
+      this.elements.messages.scrollTo({ top: this.elements.messages.scrollHeight, behavior: "smooth" });
+    }
+  }
+
+  getToolEventWrapper(messageId) {
+    if (messageId && this.elements.messages) {
+      const found = this.elements.messages.querySelector(`[data-message-id="${messageId}"]`);
+      if (found) return found;
+    }
+    return this.streamingMessageNode || null;
+  }
+
+  ensureToolActivityContainer(wrapper) {
+    if (!wrapper) return null;
+    const existing = wrapper.querySelector("[data-message-tools]");
+    if (existing) return existing;
+    const body = wrapper.querySelector("[data-message-body]");
+    if (!body) return null;
+
+    const container = document.createElement("div");
+    container.dataset.messageTools = "true";
+    container.className = "mt-2 mb-3 space-y-2";
+
+    const finalBody = body.querySelector("[data-message-final-body]");
+    if (finalBody) {
+      body.insertBefore(container, finalBody);
+    } else {
+      body.insertBefore(container, body.firstChild);
+    }
+    return container;
+  }
+
+  buildToolEventCard(payload) {
+    const eventId = (payload.event_id || payload.eventId || "").toString().trim();
+    if (!eventId) return null;
+
+    const details = document.createElement("details");
+    details.dataset.toolCard = "true";
+    details.dataset.toolEventId = eventId;
+    details.className = "rounded-xl border border-border/50 bg-muted/20 px-3 py-2";
+
+    const summary = document.createElement("summary");
+    summary.className = "cursor-pointer select-none";
+
+    const header = document.createElement("div");
+    header.className = "flex items-start justify-between gap-3";
+
+    const left = document.createElement("div");
+    left.className = "flex items-start gap-2 min-w-0";
+
+    const iconWrap = document.createElement("div");
+    iconWrap.className =
+      "mt-0.5 h-7 w-7 rounded-lg bg-background/60 border border-border/40 flex items-center justify-center text-foreground/80 flex-shrink-0";
+    iconWrap.innerHTML = `
+      <svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M12 22v-5" />
+        <path d="M9 7V2" />
+        <path d="M15 7V2" />
+        <path d="M8 22h8" />
+        <path d="M12 17a5 5 0 0 0 5-5V9H7v3a5 5 0 0 0 5 5Z" />
+      </svg>
+    `;
+
+    const textWrap = document.createElement("div");
+    textWrap.className = "min-w-0";
+
+    const titleRow = document.createElement("div");
+    titleRow.className = "flex items-center gap-2 min-w-0";
+
+    const title = document.createElement("div");
+    title.dataset.toolTitle = "true";
+    title.className = "text-xs font-medium text-foreground truncate";
+
+    const kind = document.createElement("span");
+    kind.dataset.toolKind = "true";
+    kind.className =
+      "hidden text-[10px] font-semibold uppercase tracking-wide rounded-md px-1.5 py-0.5 bg-primary/10 text-primary";
+
+    titleRow.appendChild(title);
+    titleRow.appendChild(kind);
+
+    const subtitle = document.createElement("div");
+    subtitle.dataset.toolSubtitle = "true";
+    subtitle.className = "mt-0.5 text-[11px] text-muted-foreground truncate";
+
+    textWrap.appendChild(titleRow);
+    textWrap.appendChild(subtitle);
+
+    left.appendChild(iconWrap);
+    left.appendChild(textWrap);
+
+    const right = document.createElement("div");
+    right.className = "flex items-center gap-2 flex-shrink-0 pt-0.5";
+
+    const statusPill = document.createElement("span");
+    statusPill.dataset.toolStatus = "true";
+    statusPill.className = "text-[10px] font-semibold rounded-full px-2 py-0.5";
+
+    const duration = document.createElement("span");
+    duration.dataset.toolDuration = "true";
+    duration.className = "hidden text-[10px] text-muted-foreground";
+
+    const chevron = document.createElement("div");
+    chevron.dataset.toolChevron = "true";
+    chevron.className = "text-muted-foreground/70 transition-transform duration-200";
+    chevron.innerHTML = `
+      <svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <polyline points="6 9 12 15 18 9"></polyline>
+      </svg>
+    `;
+
+    right.appendChild(statusPill);
+    right.appendChild(duration);
+    right.appendChild(chevron);
+
+    header.appendChild(left);
+    header.appendChild(right);
+
+    const progress = document.createElement("div");
+    progress.dataset.toolProgress = "true";
+    progress.className = "mt-2 h-1 w-full rounded-full bg-muted/40 overflow-hidden hidden";
+    const progressBar = document.createElement("div");
+    progressBar.className = "h-full w-full skeleton-loader";
+    progress.appendChild(progressBar);
+
+    summary.appendChild(header);
+    summary.appendChild(progress);
+
+    const body = document.createElement("div");
+    body.dataset.toolBody = "true";
+    body.className = "mt-3 space-y-3";
+
+    const section = (label, preDataAttr) => {
+      const wrap = document.createElement("div");
+      wrap.className = "space-y-1.5";
+      const titleEl = document.createElement("div");
+      titleEl.className = "text-[11px] font-semibold text-muted-foreground/80 uppercase tracking-wide";
+      titleEl.textContent = label;
+      const pre = document.createElement("pre");
+      pre.dataset[preDataAttr] = "true";
+      pre.className =
+        "overflow-auto whitespace-pre-wrap break-words text-[11px] leading-relaxed rounded-lg border border-border/40 bg-background/50 p-3";
+      wrap.appendChild(titleEl);
+      wrap.appendChild(pre);
+      return wrap;
+    };
+
+    body.appendChild(section("Input", "toolInput"));
+    body.appendChild(section("Output", "toolOutput"));
+
+    details.appendChild(summary);
+    details.appendChild(body);
+
+    return details;
+  }
+
+  updateToolEventCard(card, payload) {
+    if (!card || !payload) return;
+    const phase = (payload.phase || "").toString().trim().toLowerCase();
+    const statusRaw = (payload.status || "").toString().trim().toLowerCase();
+    const kindRaw = (payload.kind || "").toString().trim().toLowerCase();
+    const remote = payload.remote && typeof payload.remote === "object" ? payload.remote : null;
+
+    const connectionName = remote && remote.connection_name ? remote.connection_name.toString() : "";
+    const remoteTool = remote && remote.remote_tool ? remote.remote_tool.toString() : "";
+
+    const titleText = connectionName || "External tool";
+    const subtitleText = remoteTool ? `Calling ${remoteTool}` : "Calling tool…";
+
+    const titleEl = card.querySelector("[data-tool-title]");
+    if (titleEl) titleEl.textContent = titleText;
+
+    const subtitleEl = card.querySelector("[data-tool-subtitle]");
+    if (subtitleEl) {
+      const output = payload.output && typeof payload.output === "object" ? payload.output : null;
+      const err = output && (output.error || output.error_code || output.hint) ? (output.error || output.hint || output.error_code) : null;
+      const failed = statusRaw && statusRaw !== "running" && statusRaw !== "ok" && statusRaw !== "success";
+      subtitleEl.textContent = failed && err ? `Failed: ${this.clipText(err.toString(), 84)}` : subtitleText;
+    }
+
+    const kindEl = card.querySelector("[data-tool-kind]");
+    if (kindEl) {
+      const showKind = kindRaw.includes("mcp");
+      kindEl.classList.toggle("hidden", !showKind);
+      if (showKind) kindEl.textContent = "MCP";
+    }
+
+    const progressEl = card.querySelector("[data-tool-progress]");
+    const isRunning = statusRaw === "running" || phase === "started";
+    if (progressEl) progressEl.classList.toggle("hidden", !isRunning);
+
+    const statusEl = card.querySelector("[data-tool-status]");
+    if (statusEl) {
+      const mapped = this.mapToolStatus(statusRaw || (isRunning ? "running" : "ok"));
+      statusEl.textContent = mapped.label;
+      statusEl.className = `${mapped.className} text-[10px] font-semibold rounded-full px-2 py-0.5`;
+    }
+
+    const durationEl = card.querySelector("[data-tool-duration]");
+    if (durationEl) {
+      const dur = payload.duration_ms || payload.durationMs;
+      const durText = Number.isFinite(Number(dur)) && Number(dur) > 0 ? this.formatDurationMs(Number(dur)) : "";
+      durationEl.textContent = durText;
+      durationEl.classList.toggle("hidden", !durText);
+    }
+
+    const inputEl = card.querySelector("[data-tool-input]");
+    if (inputEl) {
+      if (Object.prototype.hasOwnProperty.call(payload, "input")) {
+        const inputPayload = payload.input;
+        inputEl.textContent = inputPayload ? this.safeJsonStringify(inputPayload) : "—";
+      } else if (!inputEl.textContent) {
+        inputEl.textContent = "—";
+      }
+    }
+
+    const outputEl = card.querySelector("[data-tool-output]");
+    if (outputEl) {
+      if (Object.prototype.hasOwnProperty.call(payload, "output")) {
+        const outputPayload = payload.output;
+        outputEl.textContent = outputPayload ? this.safeJsonStringify(outputPayload) : "—";
+      } else if (!outputEl.textContent) {
+        outputEl.textContent = isRunning ? "Waiting for response…" : "—";
+      }
+    }
+  }
+
+  mapToolStatus(status) {
+    const normalized = (status || "").toString().trim().toLowerCase();
+    if (normalized === "running" || normalized === "started") {
+      return { label: "Running", className: "bg-primary/10 text-primary" };
+    }
+    if (normalized === "ok" || normalized === "success" || normalized === "succeeded") {
+      return { label: "Succeeded", className: "bg-emerald-500/10 text-emerald-600 dark:text-emerald-500" };
+    }
+    if (normalized === "blocked" || normalized === "disabled") {
+      return { label: "Blocked", className: "bg-amber-500/10 text-amber-700 dark:text-amber-500" };
+    }
+    if (normalized === "error" || normalized === "failed" || normalized === "failure") {
+      return { label: "Failed", className: "bg-destructive/10 text-destructive" };
+    }
+    return {
+      label: normalized ? this.formatStatus(normalized) : "Done",
+      className: "bg-muted text-muted-foreground",
+    };
+  }
+
+  formatDurationMs(ms) {
+    const value = Number(ms);
+    if (!Number.isFinite(value) || value <= 0) return "";
+    if (value < 1000) return `${Math.round(value)}ms`;
+    if (value < 60000) return `${(value / 1000).toFixed(1)}s`;
+    const minutes = Math.floor(value / 60000);
+    const seconds = Math.round((value % 60000) / 1000);
+    return `${minutes}m ${seconds}s`;
+  }
+
+  safeJsonStringify(value) {
+    if (value == null) return "";
+    if (typeof value === "string") return value;
+    try {
+      return JSON.stringify(value, null, 2);
+    } catch (_err) {
+      try {
+        return String(value);
+      } catch (_err2) {
+        return "(unavailable)";
+      }
+    }
+  }
+
+  clipText(text, limit = 120) {
+    const raw = (text || "").toString();
+    if (!raw) return "";
+    if (raw.length <= limit) return raw;
+    return `${raw.slice(0, Math.max(0, limit - 1)).trim()}…`;
   }
 
   handleTurnPersistedEvent(data) {
@@ -1315,6 +1645,12 @@ class ChatPortalClient {
       this.streamingStatusEl = statusRow;
       this.streamingStatusTextEl = statusText;
       this.streamingStatusDotEl = statusDot;
+
+      const toolsEl = document.createElement("div");
+      toolsEl.dataset.messageTools = "true";
+      toolsEl.className = "mt-2 mb-3 space-y-2";
+      this.streamingMessageBodyEl.appendChild(toolsEl);
+      this.streamingToolsEl = toolsEl;
 
       const finalEl = document.createElement("div");
       finalEl.dataset.messageFinalBody = "true";
@@ -1876,6 +2212,7 @@ class ChatPortalClient {
     this.streamingMessageId = null;
     this.streamingTextEl = null;
     this.streamingBlocksEl = null;
+    this.streamingToolsEl = null;
     if (removeNode) {
       this.pendingMessageId = null;
     }
@@ -2039,6 +2376,15 @@ class ChatPortalClient {
         background-size: 200% 100%;
         animation: skeleton-shimmer 2s infinite linear;
         border-radius: 0.5rem;
+      }
+      details[data-tool-card] > summary {
+        list-style: none;
+      }
+      details[data-tool-card] > summary::-webkit-details-marker {
+        display: none;
+      }
+      details[data-tool-card][open] [data-tool-chevron] {
+        transform: rotate(180deg);
       }
       [data-chat-messages][data-session-loading="true"] {
         opacity: 0.75;

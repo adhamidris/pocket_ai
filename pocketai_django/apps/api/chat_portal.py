@@ -1594,6 +1594,75 @@ def stream_send(request: HttpRequest) -> StreamingHttpResponse:
             elif code in {"stream_complete", "complete"}:
                 _emit_spinner_status("", pending=False, fallback=None, allow_empty=True)
 
+    def on_tool_event(event: Mapping[str, object] | None) -> None:
+        """
+        Stream external tool lifecycle events to the portal UI.
+
+        Payloads must be JSON-safe and redacted; never emit secrets.
+        """
+        if not event or not isinstance(event, Mapping):
+            return
+        try:
+            phase = str(event.get("phase") or "").strip().lower()
+            if phase not in {"started", "finished"}:
+                return
+            tool_name = str(event.get("tool_name") or "").strip()
+            kind = str(event.get("kind") or "").strip() or "tool"
+            payload: dict[str, object] = {
+                "message_id": _current_message_id(),
+                "event_id": str(event.get("event_id") or ""),
+                "phase": phase,
+                "status": str(event.get("status") or "").strip() or ("running" if phase == "started" else ""),
+                "tool_call_id": str(event.get("tool_call_id") or ""),
+                "kind": kind,
+                "tool_name": tool_name,
+            }
+            remote = event.get("remote") if isinstance(event.get("remote"), Mapping) else None
+            if remote:
+                # Never leak internal connection IDs/URLs to public portal visitors.
+                safe_remote: dict[str, object] = {}
+                connection_name = remote.get("connection_name")
+                remote_tool = remote.get("remote_tool")
+                if connection_name:
+                    safe_remote["connection_name"] = _clip_debug_text(connection_name, limit=120)
+                if remote_tool:
+                    safe_remote["remote_tool"] = _clip_debug_text(remote_tool, limit=120)
+                if safe_remote:
+                    payload["remote"] = safe_remote
+            input_payload = event.get("input")
+            if input_payload is not None and phase == "started":
+                payload["input"] = _json_safe_debug(input_payload, depth=4, string_limit=1200, list_limit=48)
+            if phase == "finished":
+                duration = event.get("duration_ms")
+                try:
+                    payload["duration_ms"] = int(duration) if duration is not None else 0
+                except (TypeError, ValueError):
+                    payload["duration_ms"] = 0
+                output_payload = event.get("output")
+                if output_payload is not None:
+                    scrubbed_output: object = output_payload
+                    if isinstance(output_payload, Mapping):
+                        # Never leak internal connection IDs/URLs to public portal visitors.
+                        output_copy: dict[str, object] = dict(output_payload)
+                        remote_out = output_copy.get("remote")
+                        if isinstance(remote_out, Mapping):
+                            safe_out_remote: dict[str, object] = {}
+                            connection_name = remote_out.get("connection_name")
+                            remote_tool = remote_out.get("tool") or remote_out.get("remote_tool")
+                            if connection_name:
+                                safe_out_remote["connection_name"] = _clip_debug_text(connection_name, limit=120)
+                            if remote_tool:
+                                safe_out_remote["remote_tool"] = _clip_debug_text(remote_tool, limit=120)
+                            if safe_out_remote:
+                                output_copy["remote"] = safe_out_remote
+                            else:
+                                output_copy.pop("remote", None)
+                        scrubbed_output = output_copy
+                    payload["output"] = _json_safe_debug(scrubbed_output, depth=5, string_limit=2400, list_limit=64)
+            stream_queue.put({"type": "toolEvent", "payload": payload})
+        except Exception:  # pragma: no cover - defensive
+            logger.exception("portal tool event serialization failed")
+
     def signal_stream_complete() -> None:
         if stream_complete.is_set():
             return
@@ -1919,6 +1988,7 @@ def stream_send(request: HttpRequest) -> StreamingHttpResponse:
                     on_placeholder_response=on_placeholder_response,
                     on_stream_complete=signal_stream_complete,
                     on_spinner_update=on_spinner_update,
+                    on_tool_event=on_tool_event,
                 )
                 plan_holder["context"] = stream_context
                 threading.Thread(
@@ -1992,6 +2062,11 @@ def stream_send(request: HttpRequest) -> StreamingHttpResponse:
                     }
                     yield "event: spinnerStatus\n"
                     yield f"data: {json.dumps(data)}\n\n"
+                    continue
+                if chunk.get("type") == "toolEvent":
+                    payload = chunk.get("payload") or {}
+                    yield "event: toolEvent\n"
+                    yield f"data: {json.dumps(payload)}\n\n"
                     continue
             streamed_from_provider = True
             chunk_text = str(chunk)
@@ -2162,6 +2237,11 @@ def stream_send(request: HttpRequest) -> StreamingHttpResponse:
                         "pending": chunk.get("pending"),
                     }
                     yield "event: spinnerStatus\n"
+                    yield f"data: {json.dumps(payload)}\n\n"
+                    continue
+                if chunk.get("type") == "toolEvent":
+                    payload = chunk.get("payload") or {}
+                    yield "event: toolEvent\n"
                     yield f"data: {json.dumps(payload)}\n\n"
                     continue
             streamed_from_provider = True

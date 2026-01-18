@@ -137,6 +137,7 @@ class McpOrchestratorService:
         on_status_change: Callable[[str], None] | None = None,
         on_placeholder_response: Callable[[str], None] | None = None,
         on_spinner_update: Callable[[str], None] | None = None,
+        on_tool_event: Callable[[Mapping[str, object]], None] | None = None,
     ) -> dict[str, object]:
         """
         Build the orchestration plan for the latest customer message.
@@ -919,10 +920,33 @@ class McpOrchestratorService:
                                         logger_obj=logger,
                                     )
                                 call_start = time.perf_counter()
+                                remote_event_id: str | None = None
+                                remote_event_payload: dict[str, object] | None = None
                                 try:
                                     remote_entry = self._remote_tool_registry.get(tool_name)
                                     if remote_entry:
                                         connection, remote_tool_name = remote_entry
+                                        remote_event_id = str(tool_call.get("id") or uuid.uuid4())
+                                        remote_event_payload = {
+                                            "event_id": remote_event_id,
+                                            "phase": "started",
+                                            "status": "running",
+                                            "tool_call_id": str(tool_call.get("id") or ""),
+                                            "tool_name": tool_name,
+                                            "kind": "mcp_remote",
+                                            "remote": {
+                                                "connection_id": str(getattr(connection, "id", "") or ""),
+                                                "connection_name": str(getattr(connection, "name", "") or ""),
+                                                "endpoint_url": str(getattr(connection, "server_url", "") or ""),
+                                                "remote_tool": remote_tool_name,
+                                            },
+                                            "input": dict(arguments),
+                                        }
+                                        if on_tool_event:
+                                            try:
+                                                on_tool_event(remote_event_payload)
+                                            except Exception:  # pragma: no cover - UI callback must not break tools
+                                                logger.exception("mcp portal tool event start callback failed")
                                         tool_result = self._execute_remote_mcp_tool(
                                             tool_name=tool_name,
                                             remote_tool_name=remote_tool_name,
@@ -986,6 +1010,19 @@ class McpOrchestratorService:
                                     }
                                 finally:
                                     call_duration_ms = (time.perf_counter() - call_start) * 1000.0
+                                    if remote_event_id and remote_event_payload and on_tool_event:
+                                        try:
+                                            finish_payload = dict(remote_event_payload)
+                                            finish_payload["phase"] = "finished"
+                                            finish_payload["duration_ms"] = (
+                                                int(call_duration_ms) if call_duration_ms is not None else 0
+                                            )
+                                            if isinstance(tool_result, Mapping):
+                                                finish_payload["status"] = str(tool_result.get("status") or "") or "ok"
+                                                finish_payload["output"] = dict(tool_result)
+                                            on_tool_event(finish_payload)
+                                        except Exception:  # pragma: no cover - UI callback must not break tools
+                                            logger.exception("mcp portal tool event finish callback failed")
                         if tool_name == "search_knowledge" and isinstance(tool_result, Mapping):
                             snippets = tool_result.get("snippets")
                             if isinstance(snippets, list) and snippets:
@@ -1630,6 +1667,7 @@ class McpOrchestratorService:
         on_placeholder_response: Callable[[str], None] | None = None,
         on_stream_complete: Callable[[], None] | None = None,
         on_spinner_update: Callable[[str], None] | None = None,
+        on_tool_event: Callable[[Mapping[str, object]], None] | None = None,
     ) -> StreamingTurnContext:
         turn_start = time.perf_counter()
         result = self._execute_turn(
@@ -1639,6 +1677,7 @@ class McpOrchestratorService:
             on_status_change=on_status_change,
             on_placeholder_response=on_placeholder_response,
             on_spinner_update=on_spinner_update,
+            on_tool_event=on_tool_event,
         )
         turn_duration_ms = int((time.perf_counter() - turn_start) * 1000.0)
         streamed_chunks = tuple(result.get("streamed_chunks") or ())
