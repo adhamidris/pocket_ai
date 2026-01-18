@@ -7,6 +7,8 @@ class ChatPortalClient {
       streamSend: container.getAttribute("data-endpoint-stream-send"),
       events: container.getAttribute("data-endpoint-events"),
       csat: container.getAttribute("data-endpoint-csat"),
+      toolApproval: container.getAttribute("data-endpoint-tool-approval"),
+      toolHistory: container.getAttribute("data-endpoint-tool-history"),
     };
     this.businessSlug = container.getAttribute("data-business-slug") || "";
     this.agentSlug = container.getAttribute("data-agent-slug") || "";
@@ -84,6 +86,10 @@ class ChatPortalClient {
     this.sessionSummaries = [];
     this.pendingSessionTitles = {};
     this.toolEventCards = new Map();
+    this.toolsVisibilityKey = `chat_portal_tools_visible_${this.businessSlug}_${this.agentSlug}`;
+    this.globalToolsVisible = this.readGlobalToolsPreference();
+    this.toolHistoryModal = null;
+    this.toolHistoryModalBody = null;
   }
 
   async init() {
@@ -845,6 +851,7 @@ class ChatPortalClient {
       this.toolEventCards.set(cardKey, card);
     }
     this.updateToolEventCard(card, payload);
+    this.updateMessageToolsToggle(wrapper);
 
     if (this.elements.messages) {
       this.elements.messages.scrollTo({ top: this.elements.messages.scrollHeight, behavior: "smooth" });
@@ -859,26 +866,396 @@ class ChatPortalClient {
     return this.streamingMessageNode || null;
   }
 
+  readGlobalToolsPreference() {
+    if (!this.toolsVisibilityKey) return true;
+    try {
+      const stored = window.localStorage.getItem(this.toolsVisibilityKey);
+      if (stored === null) return true;
+      return stored === "true";
+    } catch (error) {
+      console.warn("Unable to read tool visibility preference", error);
+      return true;
+    }
+  }
+
+  setGlobalToolsVisibility(value) {
+    this.globalToolsVisible = Boolean(value);
+    if (this.toolsVisibilityKey) {
+      try {
+        window.localStorage.setItem(this.toolsVisibilityKey, String(this.globalToolsVisible));
+      } catch (error) {
+        console.warn("Unable to persist tool visibility preference", error);
+      }
+    }
+    this.updateGlobalToolsToggle();
+    this.updateAllToolsVisibility();
+  }
+
+  ensureGlobalToolsToggle() {
+    if (!this.elements.messagesInner) return;
+    let root = this.elements.messagesInner.querySelector("[data-tools-global]");
+    if (!root) {
+      root = document.createElement("div");
+      root.dataset.toolsGlobal = "true";
+      root.className = "flex justify-end gap-2";
+
+      const button = document.createElement("button");
+      button.type = "button";
+      button.dataset.toolsGlobalToggle = "true";
+      button.className =
+        "inline-flex items-center gap-2 rounded-full border border-border/40 bg-background/90 px-3 py-1 text-[11px] font-semibold text-muted-foreground shadow-sm transition-colors hover:text-foreground hover:border-primary/40";
+
+      const label = document.createElement("span");
+      label.dataset.toolsGlobalLabel = "true";
+      label.textContent = "Tool activity";
+
+      const state = document.createElement("span");
+      state.dataset.toolsGlobalState = "true";
+
+      button.appendChild(label);
+      button.appendChild(state);
+      root.appendChild(button);
+
+      const historyButton = document.createElement("button");
+      historyButton.type = "button";
+      historyButton.dataset.toolsHistoryToggle = "true";
+      historyButton.className =
+        "inline-flex items-center gap-2 rounded-full border border-border/40 bg-background/70 px-3 py-1 text-[11px] font-semibold text-muted-foreground shadow-sm transition-colors hover:text-foreground hover:border-primary/40";
+      historyButton.textContent = "Activity";
+      root.appendChild(historyButton);
+
+      this.elements.messagesInner.prepend(root);
+      button.addEventListener("click", () => {
+        this.setGlobalToolsVisibility(!this.globalToolsVisible);
+      });
+      historyButton.addEventListener("click", () => this.openToolHistoryModal());
+    }
+    this.updateGlobalToolsToggle(root);
+  }
+
+  updateGlobalToolsToggle(root = null) {
+    const container = root || (this.elements.messagesInner ? this.elements.messagesInner.querySelector("[data-tools-global]") : null);
+    if (!container) return;
+    const button = container.querySelector("[data-tools-global-toggle]");
+    const state = container.querySelector("[data-tools-global-state]");
+    if (state) {
+      state.textContent = this.globalToolsVisible ? "On" : "Off";
+    }
+    if (button) {
+      button.setAttribute("aria-pressed", this.globalToolsVisible ? "true" : "false");
+      button.classList.toggle("text-foreground", this.globalToolsVisible);
+    }
+  }
+
+  ensureToolHistoryModal() {
+    if (this.toolHistoryModal && this.toolHistoryModalBody) return;
+    const root = document.createElement("div");
+    root.dataset.toolHistoryModal = "true";
+    root.className = "fixed inset-0 z-50 hidden";
+    root.innerHTML = `
+      <div class="absolute inset-0 bg-black/60 backdrop-blur-sm" data-tool-history-overlay></div>
+      <div class="relative mx-auto mt-16 w-[min(44rem,calc(100%-2rem))] rounded-xl border border-border/60 bg-card p-5 shadow-lg">
+        <div class="flex items-start justify-between gap-3">
+          <div class="space-y-0.5">
+            <div class="text-sm font-semibold text-foreground">Activity log</div>
+            <div class="text-xs text-muted-foreground">Approvals and tool calls in this conversation.</div>
+          </div>
+          <button type="button" class="h-8 w-8 inline-flex items-center justify-center rounded-md border border-border/60 hover:bg-accent/50" data-tool-history-close aria-label="Close">
+            <svg class="h-4 w-4 text-muted-foreground" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M6 18 18 6M6 6l12 12" />
+            </svg>
+          </button>
+        </div>
+        <div class="mt-4 max-h-[65vh] overflow-auto pr-1 space-y-4" data-tool-history-body></div>
+      </div>
+    `;
+    document.body.appendChild(root);
+    const overlay = root.querySelector("[data-tool-history-overlay]");
+    const closeBtn = root.querySelector("[data-tool-history-close]");
+    const body = root.querySelector("[data-tool-history-body]");
+    this.toolHistoryModal = root;
+    this.toolHistoryModalBody = body;
+
+    const close = () => this.closeToolHistoryModal();
+    if (overlay) overlay.addEventListener("click", close);
+    if (closeBtn) closeBtn.addEventListener("click", close);
+    if (!root.dataset.escBound) {
+      root.dataset.escBound = "true";
+      document.addEventListener("keydown", (event) => {
+        if (event.key === "Escape") {
+          this.closeToolHistoryModal();
+        }
+      });
+    }
+  }
+
+  closeToolHistoryModal() {
+    if (!this.toolHistoryModal) return;
+    this.toolHistoryModal.classList.add("hidden");
+  }
+
+  async openToolHistoryModal() {
+    if (!this.endpoints.toolHistory) {
+      this.showToast("Unavailable", "Activity endpoint is not configured.", true);
+      return;
+    }
+    if (!this.sessionToken) {
+      this.showToast("Unavailable", "Session token missing.", true);
+      return;
+    }
+    this.ensureToolHistoryModal();
+    if (!this.toolHistoryModal || !this.toolHistoryModalBody) return;
+    this.toolHistoryModal.classList.remove("hidden");
+    this.toolHistoryModalBody.innerHTML =
+      '<div class="rounded-lg border border-border/60 bg-muted/30 p-4 text-sm text-muted-foreground">Loading activity…</div>';
+    try {
+      const response = await fetch(this.endpoints.toolHistory, {
+        method: "POST",
+        headers: this.jsonHeaders(),
+        body: JSON.stringify({ session_token: this.sessionToken, limit: 150 }),
+      });
+      const payload = await response.json().catch(() => null);
+      if (!response.ok) {
+        const message = payload && payload.error && payload.error.message ? payload.error.message : "Unable to load activity.";
+        throw new Error(message);
+      }
+      this.renderToolHistory(payload && payload.history ? payload.history : null);
+    } catch (error) {
+      console.warn("Failed to load tool history", error);
+      this.toolHistoryModalBody.innerHTML =
+        '<div class="rounded-lg border border-border/60 bg-muted/30 p-4 text-sm text-muted-foreground">Unable to load activity.</div>';
+    }
+  }
+
+  renderToolHistory(history) {
+    if (!this.toolHistoryModalBody) return;
+    const approvals = history && Array.isArray(history.approvals) ? history.approvals : [];
+    const toolEvents = history && Array.isArray(history.toolEvents) ? history.toolEvents : [];
+    const wrap = document.createElement("div");
+    wrap.className = "space-y-5";
+
+    const buildSection = (title) => {
+      const section = document.createElement("div");
+      const header = document.createElement("div");
+      header.className = "text-xs font-semibold uppercase tracking-wide text-muted-foreground";
+      header.textContent = title;
+      section.appendChild(header);
+      const list = document.createElement("div");
+      list.className = "mt-2 space-y-2";
+      section.appendChild(list);
+      return { section, list };
+    };
+
+    if (!approvals.length && !toolEvents.length) {
+      wrap.innerHTML =
+        '<div class="rounded-lg border border-border/60 bg-muted/30 p-4 text-sm text-muted-foreground">No activity yet.</div>';
+      this.toolHistoryModalBody.innerHTML = "";
+      this.toolHistoryModalBody.appendChild(wrap);
+      return;
+    }
+
+    if (approvals.length) {
+      const { section, list } = buildSection("Approvals");
+      approvals.slice(0, 80).forEach((item) => {
+        const row = document.createElement("div");
+        row.className = "flex items-center justify-between gap-3 rounded-lg border border-border/50 bg-background/60 p-3";
+        const left = document.createElement("div");
+        left.className = "min-w-0";
+        const name = document.createElement("div");
+        name.className = "text-sm font-medium text-foreground truncate";
+        const conn = (item.connection_name || "").toString().trim();
+        const tool = (item.remote_tool_name || item.tool_name || "").toString().trim();
+        name.textContent = conn ? `${conn} • ${tool}` : tool || "Tool approval";
+        const meta = document.createElement("div");
+        meta.className = "text-xs text-muted-foreground";
+        const requestedAt = item.requested_at || item.requestedAt || "";
+        const label = requestedAt ? this.formatRelativeTime(new Date(requestedAt)) : "";
+        meta.textContent = label ? `Requested ${label}` : "";
+        left.appendChild(name);
+        if (meta.textContent) left.appendChild(meta);
+
+        const right = document.createElement("div");
+        right.className = "flex items-center gap-2 flex-shrink-0";
+        const status = (item.status || "").toString().trim().toLowerCase();
+        const pill = document.createElement("span");
+        const mapped = this.mapToolStatus(status);
+        pill.className = `${mapped.className} inline-flex items-center justify-center text-[10px] font-semibold rounded-full px-2 py-0.5 w-[88px] text-center whitespace-nowrap`;
+        pill.textContent = mapped.label;
+        right.appendChild(pill);
+
+        row.appendChild(left);
+        row.appendChild(right);
+        list.appendChild(row);
+      });
+      wrap.appendChild(section);
+    }
+
+    if (toolEvents.length) {
+      const { section, list } = buildSection("Tool calls");
+      toolEvents.slice(-120).forEach((item) => {
+        const row = document.createElement("div");
+        row.className = "flex items-center justify-between gap-3 rounded-lg border border-border/50 bg-background/60 p-3";
+        const left = document.createElement("div");
+        left.className = "min-w-0";
+        const name = document.createElement("div");
+        name.className = "text-sm font-medium text-foreground truncate";
+        const conn = (item.connection_name || "").toString().trim();
+        const tool = (item.remote_tool_name || item.tool_name || "").toString().trim();
+        const phase = (item.phase || "").toString().trim().toLowerCase();
+        name.textContent = conn ? `${conn} • ${tool}` : tool || "Tool call";
+        const meta = document.createElement("div");
+        meta.className = "text-xs text-muted-foreground";
+        meta.textContent = phase ? phase.replace(/_/g, " ") : "";
+        left.appendChild(name);
+        if (meta.textContent) left.appendChild(meta);
+
+        const right = document.createElement("div");
+        right.className = "flex items-center gap-2 flex-shrink-0";
+        const status = (item.status || "").toString().trim().toLowerCase();
+        const pill = document.createElement("span");
+        const mapped = this.mapToolStatus(status);
+        pill.className = `${mapped.className} inline-flex items-center justify-center text-[10px] font-semibold rounded-full px-2 py-0.5 w-[88px] text-center whitespace-nowrap`;
+        pill.textContent = mapped.label;
+        right.appendChild(pill);
+        list.appendChild(row);
+        row.appendChild(left);
+        row.appendChild(right);
+      });
+      wrap.appendChild(section);
+    }
+
+    this.toolHistoryModalBody.innerHTML = "";
+    this.toolHistoryModalBody.appendChild(wrap);
+  }
+
+  updateAllToolsVisibility() {
+    if (!this.elements.messages) return;
+    const wrappers = this.elements.messages.querySelectorAll("[data-message-id]");
+    wrappers.forEach((wrapper) => {
+      if (wrapper.querySelector("[data-message-tools]")) {
+        this.updateMessageToolsToggle(wrapper);
+      }
+    });
+  }
+
+  getMessageToolsVisibility(wrapper) {
+    if (!this.globalToolsVisible) {
+      return this.wrapperHasPendingToolApprovals(wrapper);
+    }
+    if (!wrapper) return true;
+    const override = wrapper.dataset.toolsVisible;
+    if (override === "true") return true;
+    if (override === "false") return false;
+    return true;
+  }
+
+  wrapperHasPendingToolApprovals(wrapper) {
+    if (!wrapper) return false;
+    const toolsContainer = wrapper.querySelector("[data-message-tools]");
+    if (!toolsContainer) return false;
+    const cards = toolsContainer.querySelectorAll("[data-tool-card]");
+    for (const card of cards) {
+      const approvalStatus = (card.dataset.approvalStatus || "").toString().trim().toLowerCase();
+      if (approvalStatus === "pending" || approvalStatus === "pending_approval") {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  toggleMessageTools(wrapper) {
+    if (!wrapper) return;
+    const next = !this.getMessageToolsVisibility(wrapper);
+    wrapper.dataset.toolsVisible = next ? "true" : "false";
+    this.updateMessageToolsToggle(wrapper);
+  }
+
+  updateMessageToolsToggle(wrapper) {
+    if (!wrapper) return;
+    const toolsContainer = wrapper.querySelector("[data-message-tools]");
+    const toggleRow = wrapper.querySelector("[data-message-tools-toggle]");
+    if (!toolsContainer || !toggleRow) return;
+    const cards = toolsContainer.querySelectorAll("[data-tool-card]");
+    const count = cards.length;
+    if (!count) {
+      toggleRow.classList.add("hidden");
+      toolsContainer.classList.add("hidden");
+      return;
+    }
+    toggleRow.classList.remove("hidden");
+    const button = toggleRow.querySelector("[data-tools-toggle-button]");
+    const countEl = toggleRow.querySelector("[data-tools-toggle-count]");
+    const stateEl = toggleRow.querySelector("[data-tools-toggle-state]");
+    if (countEl) countEl.textContent = `(${count})`;
+
+    const visible = this.getMessageToolsVisibility(wrapper);
+    const globalOff = !this.globalToolsVisible;
+    if (stateEl) {
+      if (globalOff && visible) {
+        stateEl.textContent = "Approval required";
+      } else {
+        stateEl.textContent = globalOff ? "Hidden" : visible ? "Hide" : "Show";
+      }
+    }
+    if (button) {
+      button.disabled = globalOff;
+      button.setAttribute("aria-expanded", visible ? "true" : "false");
+      button.classList.toggle("opacity-60", globalOff);
+      button.classList.toggle("cursor-not-allowed", globalOff);
+    }
+    toolsContainer.classList.toggle("hidden", !visible);
+  }
+
   ensureToolActivityContainer(wrapper) {
     if (!wrapper) return null;
-    const existing = wrapper.querySelector("[data-message-tools]");
-    if (existing) {
-      existing.className = "mt-2 mb-3 space-y-2 w-full flex flex-col items-start";
-      return existing;
-    }
     const body = wrapper.querySelector("[data-message-body]");
     if (!body) return null;
 
-    const container = document.createElement("div");
-    container.dataset.messageTools = "true";
+    let container = wrapper.querySelector("[data-message-tools]");
+    if (!container) {
+      container = document.createElement("div");
+      container.dataset.messageTools = "true";
+      const finalBody = body.querySelector("[data-message-final-body]");
+      if (finalBody) {
+        body.insertBefore(container, finalBody);
+      } else {
+        body.insertBefore(container, body.firstChild);
+      }
+    }
     container.className = "mt-2 mb-3 space-y-2 w-full flex flex-col items-start";
 
-    const finalBody = body.querySelector("[data-message-final-body]");
-    if (finalBody) {
-      body.insertBefore(container, finalBody);
-    } else {
-      body.insertBefore(container, body.firstChild);
+    let toggleRow = wrapper.querySelector("[data-message-tools-toggle]");
+    if (!toggleRow) {
+      toggleRow = document.createElement("div");
+      toggleRow.dataset.messageToolsToggle = "true";
+      toggleRow.className = "text-[11px] text-muted-foreground hidden";
+
+      const button = document.createElement("button");
+      button.type = "button";
+      button.dataset.toolsToggleButton = "true";
+      button.className =
+        "inline-flex items-center gap-2 rounded-full border border-border/40 bg-background/70 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-wide transition-colors hover:text-foreground hover:border-primary/40";
+
+      const label = document.createElement("span");
+      label.textContent = "Tools";
+
+      const count = document.createElement("span");
+      count.dataset.toolsToggleCount = "true";
+
+      const state = document.createElement("span");
+      state.dataset.toolsToggleState = "true";
+
+      button.appendChild(label);
+      button.appendChild(count);
+      button.appendChild(state);
+      toggleRow.appendChild(button);
+
+      container.parentElement.insertBefore(toggleRow, container);
+      button.addEventListener("click", () => this.toggleMessageTools(wrapper));
     }
+
+    this.ensureGlobalToolsToggle();
+    this.updateMessageToolsToggle(wrapper);
     return container;
   }
 
@@ -890,12 +1267,13 @@ class ChatPortalClient {
     details.dataset.toolCard = "true";
     details.dataset.toolEventId = eventId;
     details.className = "rounded-xl border border-border/50 bg-muted/20 px-3 py-2 w-fit max-w-full inline-flex flex-col overflow-hidden";
+    details.style.maxWidth = "min(520px, 100%)";
 
     const summary = document.createElement("summary");
-    summary.className = "cursor-pointer select-none inline-flex flex-col items-stretch max-w-full";
+    summary.className = "cursor-pointer select-none inline-flex flex-col items-stretch max-w-full min-w-0";
 
     const header = document.createElement("div");
-    header.className = "flex items-start justify-between gap-3 max-w-full";
+    header.className = "flex items-start justify-between gap-3 max-w-full min-w-0";
 
     const left = document.createElement("div");
     left.className = "flex items-start gap-2 min-w-0 max-w-full";
@@ -946,7 +1324,8 @@ class ChatPortalClient {
 
     const statusPill = document.createElement("span");
     statusPill.dataset.toolStatus = "true";
-    statusPill.className = "text-[10px] font-semibold rounded-full px-2 py-0.5";
+    statusPill.className =
+      "inline-flex items-center justify-center text-[10px] font-semibold rounded-full px-2 py-0.5 w-[88px] text-center whitespace-nowrap";
 
     const duration = document.createElement("span");
     duration.dataset.toolDuration = "true";
@@ -982,27 +1361,139 @@ class ChatPortalClient {
     body.dataset.toolBody = "true";
     body.className = "mt-3 space-y-3 max-w-full min-w-0";
 
-    const section = (label, preDataAttr) => {
-      const wrap = document.createElement("div");
-      wrap.className = "space-y-1.5 max-w-full min-w-0";
-      const titleEl = document.createElement("div");
-      titleEl.className = "text-[11px] font-semibold text-muted-foreground/80 uppercase tracking-wide";
-      titleEl.textContent = label;
-      const pre = document.createElement("pre");
-      pre.dataset[preDataAttr] = "true";
-      pre.className =
-        "max-w-full overflow-x-auto whitespace-pre-wrap break-all text-[11px] leading-relaxed rounded-lg border border-border/40 bg-background/50 p-3";
-      wrap.appendChild(titleEl);
-      wrap.appendChild(pre);
-      return wrap;
+    const approval = document.createElement("div");
+    approval.dataset.toolApproval = "true";
+    approval.className =
+      "hidden rounded-lg border border-border/40 bg-background/60 p-3 text-[11px] text-muted-foreground max-w-full min-w-0";
+
+    const approvalTitle = document.createElement("div");
+    approvalTitle.dataset.toolApprovalTitle = "true";
+    approvalTitle.className = "text-[11px] font-semibold text-foreground";
+    approvalTitle.textContent = "Approval required";
+
+    const approvalMeta = document.createElement("div");
+    approvalMeta.dataset.toolApprovalMeta = "true";
+    approvalMeta.className = "mt-1 text-[11px] text-muted-foreground";
+
+    const approvalRemember = document.createElement("label");
+    approvalRemember.dataset.toolApprovalRememberWrap = "true";
+    approvalRemember.className =
+      "mt-2 inline-flex items-center gap-2 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground";
+
+    const rememberCheckbox = document.createElement("input");
+    rememberCheckbox.type = "checkbox";
+    rememberCheckbox.dataset.toolApprovalRemember = "true";
+    rememberCheckbox.className = "h-3.5 w-3.5 rounded border border-border/60 bg-background/70";
+
+    const rememberText = document.createElement("span");
+    rememberText.textContent = "Always allow this tool";
+
+    approvalRemember.appendChild(rememberCheckbox);
+    approvalRemember.appendChild(rememberText);
+
+    const approvalActions = document.createElement("div");
+    approvalActions.dataset.toolApprovalActions = "true";
+    approvalActions.className = "mt-2 flex items-center gap-2";
+
+    const approveButton = document.createElement("button");
+    approveButton.type = "button";
+    approveButton.dataset.toolApprovalAction = "approve";
+    approveButton.className =
+      "inline-flex items-center justify-center rounded-full border border-emerald-500/30 bg-emerald-500/10 px-3 py-1 text-[10px] font-semibold uppercase tracking-wide text-emerald-600 transition-colors hover:bg-emerald-500/20";
+    approveButton.textContent = "Approve";
+
+    const denyButton = document.createElement("button");
+    denyButton.type = "button";
+    denyButton.dataset.toolApprovalAction = "deny";
+    denyButton.className =
+      "inline-flex items-center justify-center rounded-full border border-rose-500/30 bg-rose-500/10 px-3 py-1 text-[10px] font-semibold uppercase tracking-wide text-rose-500 transition-colors hover:bg-rose-500/20";
+    denyButton.textContent = "Deny";
+
+    approvalActions.appendChild(approveButton);
+    approvalActions.appendChild(denyButton);
+    approval.appendChild(approvalTitle);
+    approval.appendChild(approvalMeta);
+    approval.appendChild(approvalRemember);
+    approval.appendChild(approvalActions);
+
+    const tabs = document.createElement("div");
+    tabs.dataset.toolTabs = "true";
+    tabs.className = "inline-flex items-center gap-1 rounded-full border border-border/40 bg-muted/40 p-1 text-[11px]";
+
+    const buildTab = (label, value) => {
+      const tab = document.createElement("button");
+      tab.type = "button";
+      tab.dataset.toolTab = value;
+      tab.dataset.toolTabButton = "true";
+      tab.className = "px-2.5 py-1 rounded-full text-[11px] font-semibold text-muted-foreground transition-colors";
+      tab.textContent = label;
+      return tab;
     };
 
-    body.appendChild(section("Input", "toolInput"));
-    body.appendChild(section("Output", "toolOutput"));
+    tabs.appendChild(buildTab("Input", "input"));
+    tabs.appendChild(buildTab("Output", "output"));
 
+    const panels = document.createElement("div");
+    panels.dataset.toolPanels = "true";
+    panels.className = "max-w-full min-w-0";
+
+    const buildPanel = (panelType) => {
+      const panel = document.createElement("div");
+      panel.dataset.toolPanel = panelType;
+      panel.className = "space-y-2 max-w-full min-w-0";
+
+      const preview = document.createElement("div");
+      preview.dataset.toolPreview = panelType;
+      preview.className = "space-y-1.5 max-w-full min-w-0";
+
+      const controls = document.createElement("div");
+      controls.className = "flex items-center gap-3 text-[10px] text-muted-foreground uppercase tracking-wide";
+
+      const rawToggle = document.createElement("button");
+      rawToggle.type = "button";
+      rawToggle.dataset.toolRawToggle = "true";
+      rawToggle.dataset.toolPanel = panelType;
+      rawToggle.className = "transition-colors hover:text-foreground";
+      rawToggle.textContent = "View raw";
+
+      const copyButton = document.createElement("button");
+      copyButton.type = "button";
+      copyButton.dataset.toolRawCopy = "true";
+      copyButton.dataset.toolPanel = panelType;
+      copyButton.className = "transition-colors hover:text-foreground";
+      copyButton.textContent = "Copy";
+
+      controls.appendChild(rawToggle);
+      controls.appendChild(copyButton);
+
+      const rawWrap = document.createElement("div");
+      rawWrap.dataset.toolRawWrap = panelType;
+      rawWrap.className = "hidden max-w-full min-w-0";
+
+      const pre = document.createElement("pre");
+      pre.dataset.toolRaw = panelType;
+      pre.className =
+        "max-w-full overflow-x-auto whitespace-pre-wrap break-all text-[11px] leading-relaxed rounded-lg border border-border/40 bg-background/50 p-3";
+      rawWrap.appendChild(pre);
+
+      panel.appendChild(preview);
+      panel.appendChild(controls);
+      panel.appendChild(rawWrap);
+      return panel;
+    };
+
+    panels.appendChild(buildPanel("input"));
+    panels.appendChild(buildPanel("output"));
+
+    body.appendChild(approval);
+    body.appendChild(tabs);
+    body.appendChild(panels);
+
+    details.dataset.toolTab = "input";
     details.appendChild(summary);
     details.appendChild(body);
-
+    this.attachToolCardEvents(details);
+    this.setToolCardTab(details, "input");
     return details;
   }
 
@@ -1016,35 +1507,64 @@ class ChatPortalClient {
     const connectionName = remote && remote.connection_name ? remote.connection_name.toString() : "";
     const remoteTool = remote && remote.remote_tool ? remote.remote_tool.toString() : "";
     const toolNameFallback = (payload.tool_name || payload.toolName || "").toString().trim();
-    const displayTool = remoteTool || toolNameFallback || "tool";
-
-    const titleText = connectionName || "External tool";
-    const subtitleText = `Calling ${displayTool}`;
-
     const titleEl = card.querySelector("[data-tool-title]");
-    if (titleEl) titleEl.textContent = titleText;
-
     const subtitleEl = card.querySelector("[data-tool-subtitle]");
-    if (subtitleEl) {
-      subtitleEl.textContent = subtitleText;
-    }
+    const existingTitle = titleEl ? titleEl.textContent : "";
+    const existingSubtitle = subtitleEl ? subtitleEl.textContent : "";
+    const displayTool = remoteTool || toolNameFallback || "";
+
+    const titleText = connectionName || existingTitle || "External tool";
+    const subtitleText = displayTool ? `Calling ${displayTool}` : existingSubtitle || "Calling tool";
+
+    if (titleEl) titleEl.textContent = titleText;
+    if (subtitleEl) subtitleEl.textContent = subtitleText;
 
     const kindEl = card.querySelector("[data-tool-kind]");
     if (kindEl) {
-      const showKind = kindRaw.includes("mcp");
-      kindEl.classList.toggle("hidden", !showKind);
-      if (showKind) kindEl.textContent = "MCP";
+      if (kindRaw) {
+        const showKind = kindRaw.includes("mcp");
+        kindEl.classList.toggle("hidden", !showKind);
+        if (showKind) kindEl.textContent = "MCP";
+      }
+    }
+
+    const approvalData = payload.approval && typeof payload.approval === "object" ? payload.approval : null;
+    let approvalStatus = "";
+    let approvalId =
+      (payload.approval_id || payload.approvalId || (approvalData && approvalData.id) || card.dataset.approvalId || "")
+        .toString()
+        .trim();
+    if (approvalId) {
+      card.dataset.approvalId = approvalId;
+    }
+    if (approvalData && approvalData.status) {
+      approvalStatus = approvalData.status.toString().trim().toLowerCase();
+    } else if (payload.approval_status || payload.approvalStatus) {
+      approvalStatus = (payload.approval_status || payload.approvalStatus || "").toString().trim().toLowerCase();
+    } else if (card.dataset.approvalStatus) {
+      approvalStatus = card.dataset.approvalStatus.toString().trim().toLowerCase();
+    }
+    if (approvalStatus) {
+      card.dataset.approvalStatus = approvalStatus;
     }
 
     const progressEl = card.querySelector("[data-tool-progress]");
-    const isRunning = statusRaw === "running" || phase === "started";
+    let effectiveStatus = statusRaw;
+    if (!effectiveStatus) {
+      if (approvalStatus === "pending") {
+        effectiveStatus = "pending_approval";
+      } else if (approvalStatus) {
+        effectiveStatus = approvalStatus;
+      }
+    }
+    const isRunning = effectiveStatus === "running" || phase === "started";
     if (progressEl) progressEl.classList.toggle("hidden", !isRunning);
 
     const statusEl = card.querySelector("[data-tool-status]");
     if (statusEl) {
-      const mapped = this.mapToolStatus(statusRaw || (isRunning ? "running" : "ok"));
+      const mapped = this.mapToolStatus(effectiveStatus || (isRunning ? "running" : "ok"));
       statusEl.textContent = mapped.label;
-      statusEl.className = `${mapped.className} text-[10px] font-semibold rounded-full px-2 py-0.5`;
+      statusEl.className = `${mapped.className} inline-flex items-center justify-center text-[10px] font-semibold rounded-full px-2 py-0.5 w-[88px] text-center whitespace-nowrap`;
     }
 
     const durationEl = card.querySelector("[data-tool-duration]");
@@ -1055,29 +1575,495 @@ class ChatPortalClient {
       durationEl.classList.toggle("hidden", !durText);
     }
 
-    const inputEl = card.querySelector("[data-tool-input]");
-    if (inputEl) {
-      if (Object.prototype.hasOwnProperty.call(payload, "input")) {
-        const inputPayload = payload.input;
-        inputEl.textContent = inputPayload ? this.safeJsonStringify(inputPayload) : "—";
-      } else if (!inputEl.textContent) {
-        inputEl.textContent = "—";
+    const inputProvided = Object.prototype.hasOwnProperty.call(payload, "input");
+    const outputProvided = Object.prototype.hasOwnProperty.call(payload, "output");
+
+    if (inputProvided) {
+      card._toolRawInput = payload.input;
+    }
+    if (outputProvided) {
+      card._toolRawOutput = payload.output;
+    }
+
+    const hasStoredInput = typeof card._toolRawInput !== "undefined";
+    const hasStoredOutput = typeof card._toolRawOutput !== "undefined";
+
+    const inputPayload = inputProvided ? payload.input : card._toolRawInput;
+    const outputPayload = outputProvided ? payload.output : card._toolRawOutput;
+
+    this.updateToolPanel(card, "input", inputPayload, { available: inputProvided || hasStoredInput });
+    this.updateToolPanel(card, "output", outputPayload, { available: outputProvided || hasStoredOutput, pending: isRunning });
+    this.updateToolApprovalPanel(card, payload);
+
+    if (!card.dataset.toolTabUser) {
+      const preferredTab = (outputProvided || hasStoredOutput) && !isRunning ? "output" : "input";
+      this.setToolCardTab(card, preferredTab);
+    }
+  }
+
+  updateToolApprovalPanel(card, payload) {
+    if (!card) return;
+    const approvalWrap = card.querySelector("[data-tool-approval]");
+    if (!approvalWrap) return;
+
+    const approval = payload && typeof payload.approval === "object" ? payload.approval : null;
+    const approvalId =
+      (payload && (payload.approval_id || payload.approvalId)) ||
+      (approval && approval.id) ||
+      card.dataset.approvalId ||
+      "";
+    const statusRaw =
+      (approval && approval.status) ||
+      (payload && (payload.approval_status || payload.approvalStatus)) ||
+      card.dataset.approvalStatus ||
+      "";
+    const status = statusRaw.toString().trim().toLowerCase();
+    if (approvalId) {
+      card.dataset.approvalId = approvalId.toString().trim();
+    }
+    if (status) {
+      card.dataset.approvalStatus = status;
+    }
+
+    const titleEl = approvalWrap.querySelector("[data-tool-approval-title]");
+    const metaEl = approvalWrap.querySelector("[data-tool-approval-meta]");
+    const rememberWrap = approvalWrap.querySelector("[data-tool-approval-remember-wrap]");
+    const rememberCheckbox = approvalWrap.querySelector('[data-tool-approval-remember="true"]');
+    const actionsEl = approvalWrap.querySelector("[data-tool-approval-actions]");
+    const approveBtn = approvalWrap.querySelector('[data-tool-approval-action="approve"]');
+    const denyBtn = approvalWrap.querySelector('[data-tool-approval-action="deny"]');
+
+    if (!approvalId) {
+      approvalWrap.classList.add("hidden");
+      return;
+    }
+
+    approvalWrap.classList.remove("hidden");
+
+    const isPending = status === "pending" || status === "pending_approval";
+    const isApproved = status === "approved";
+    const isDenied = status === "denied";
+    const isExpired = status === "expired";
+
+    if (titleEl) {
+      if (isPending) {
+        titleEl.textContent = "Approval required";
+      } else if (isApproved) {
+        titleEl.textContent = "Approval granted";
+      } else if (isDenied) {
+        titleEl.textContent = "Approval denied";
+      } else if (isExpired) {
+        titleEl.textContent = "Approval expired";
+      } else {
+        titleEl.textContent = "Approval update";
       }
     }
 
-    const outputEl = card.querySelector("[data-tool-output]");
-    if (outputEl) {
-      if (Object.prototype.hasOwnProperty.call(payload, "output")) {
-        const outputPayload = payload.output;
-        outputEl.textContent = outputPayload ? this.safeJsonStringify(outputPayload) : "—";
-      } else if (!outputEl.textContent) {
-        outputEl.textContent = isRunning ? "Waiting for response…" : "—";
+    if (metaEl) {
+      const metaParts = [];
+      const approvalMeta = approval && typeof approval.metadata === "object" ? approval.metadata : null;
+      const operationType =
+        (approval && (approval.operation_type || approval.operationType)) ||
+        (approvalMeta && (approvalMeta.operation_type || approvalMeta.operationType)) ||
+        "";
+      const reason = (approval && approval.reason) || (approvalMeta && approvalMeta.reason) || "";
+      if (operationType) {
+        metaParts.push(`${operationType.toString().toUpperCase()} operation`);
+      }
+      if (reason) {
+        metaParts.push(reason.toString());
+      }
+      if (!metaParts.length && isPending) {
+        metaParts.push("Awaiting approval before executing this tool.");
+      }
+      metaEl.textContent = metaParts.join(" • ");
+    }
+
+    if (actionsEl) {
+      actionsEl.classList.toggle("hidden", !isPending);
+    }
+    if (rememberWrap) {
+      rememberWrap.classList.toggle("hidden", !isPending);
+    }
+    if (rememberCheckbox && !isPending) {
+      rememberCheckbox.checked = false;
+    }
+    if (approveBtn) {
+      approveBtn.disabled = !isPending;
+      approveBtn.classList.toggle("opacity-50", !isPending);
+      approveBtn.classList.toggle("cursor-not-allowed", !isPending);
+    }
+    if (denyBtn) {
+      denyBtn.disabled = !isPending;
+      denyBtn.classList.toggle("opacity-50", !isPending);
+      denyBtn.classList.toggle("cursor-not-allowed", !isPending);
+    }
+  }
+
+  async submitToolApproval(approvalId, decision, card) {
+    if (!approvalId || !decision) return;
+    if (!this.endpoints.toolApproval) {
+      this.showToast("Approval unavailable", "Approval endpoint is not configured.", true);
+      return;
+    }
+    if (!this.sessionToken) {
+      this.showToast("Approval unavailable", "Session token missing.", true);
+      return;
+    }
+    if (card && card.dataset.toolApprovalBusy === "true") {
+      return;
+    }
+    if (card) {
+      card.dataset.toolApprovalBusy = "true";
+    }
+    const action = decision.toString().trim().toLowerCase();
+    let remember = false;
+    if (action === "approve" && card) {
+      const checkbox = card.querySelector('[data-tool-approval-remember="true"]');
+      remember = Boolean(checkbox && checkbox.checked);
+    }
+    const buttons = card ? card.querySelectorAll("[data-tool-approval-action]") : [];
+    buttons.forEach((btn) => {
+      btn.disabled = true;
+      btn.classList.add("opacity-60", "cursor-not-allowed");
+    });
+
+    try {
+      const response = await fetch(this.endpoints.toolApproval, {
+        method: "POST",
+        headers: this.jsonHeaders(),
+        body: JSON.stringify({
+          session_token: this.sessionToken,
+          approval_id: approvalId,
+          decision: action,
+          remember,
+        }),
+      });
+      const payload = await response.json().catch(() => null);
+      if (!response.ok) {
+        const message = payload && payload.error && payload.error.message ? payload.error.message : "Approval failed.";
+        throw new Error(message);
+      }
+      if (remember && payload && payload.preferenceSaved === false) {
+        this.showToast("Preference not saved", "Always allow requires an authenticated session.", true);
+      }
+      const approval = payload && payload.approval ? payload.approval : null;
+      const status = approval && approval.status ? approval.status : action === "approve" ? "approved" : "denied";
+      if (card) {
+        this.updateToolEventCard(card, {
+          event_id: card.dataset.toolEventId || "",
+          phase: "approval_resolved",
+          status,
+          approval: { id: approvalId, status, ...(approval || {}) },
+        });
+      }
+    } catch (error) {
+      console.warn("Tool approval failed", error);
+      this.showToast("Approval failed", error.message || "Please try again.", true);
+    } finally {
+      if (card) {
+        card.dataset.toolApprovalBusy = "false";
+      }
+      if (card) {
+        const pendingStatus = card.dataset.approvalStatus === "pending" || card.dataset.approvalStatus === "pending_approval";
+        const btns = card.querySelectorAll("[data-tool-approval-action]");
+        btns.forEach((btn) => {
+          btn.disabled = !pendingStatus;
+          btn.classList.toggle("opacity-60", !pendingStatus);
+          btn.classList.toggle("cursor-not-allowed", !pendingStatus);
+        });
       }
     }
   }
 
+  attachToolCardEvents(card) {
+    if (!card || card.dataset.toolEventsBound === "true") return;
+    card.dataset.toolEventsBound = "true";
+
+    const tabButtons = card.querySelectorAll("[data-tool-tab-button]");
+    tabButtons.forEach((button) => {
+      button.addEventListener("click", (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        const tab = button.dataset.toolTab;
+        this.setToolCardTab(card, tab, true);
+      });
+    });
+
+    const rawToggles = card.querySelectorAll("[data-tool-raw-toggle]");
+    rawToggles.forEach((button) => {
+      button.addEventListener("click", (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        const panelType = button.dataset.toolPanel;
+        this.toggleToolRawPanel(card, panelType);
+      });
+    });
+
+    const rawCopies = card.querySelectorAll("[data-tool-raw-copy]");
+    rawCopies.forEach((button) => {
+      button.addEventListener("click", async (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        const panelType = button.dataset.toolPanel;
+        await this.copyToolRawPanel(card, panelType);
+      });
+    });
+
+    const approvalButtons = card.querySelectorAll("[data-tool-approval-action]");
+    approvalButtons.forEach((button) => {
+      button.addEventListener("click", (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        const decision = button.dataset.toolApprovalAction;
+        const approvalId = card.dataset.approvalId;
+        if (!approvalId) {
+          this.showToast("Approval unavailable", "Approval request is missing an identifier.", true);
+          return;
+        }
+        this.submitToolApproval(approvalId, decision, card);
+      });
+    });
+  }
+
+  setToolCardTab(card, tab, userInitiated = false) {
+    if (!card) return;
+    const normalized = tab === "output" ? "output" : "input";
+    card.dataset.toolTab = normalized;
+    if (userInitiated) {
+      card.dataset.toolTabUser = "true";
+    }
+    const tabButtons = card.querySelectorAll("[data-tool-tab-button]");
+    tabButtons.forEach((button) => {
+      const active = button.dataset.toolTab === normalized;
+      button.setAttribute("aria-selected", active ? "true" : "false");
+    });
+  }
+
+  toggleToolRawPanel(card, panelType) {
+    if (!card || !panelType) return;
+    const panel = card.querySelector(`[data-tool-panel="${panelType}"]`);
+    if (!panel) return;
+    const rawWrap = panel.querySelector(`[data-tool-raw-wrap="${panelType}"]`);
+    const toggleBtn = panel.querySelector(`[data-tool-raw-toggle][data-tool-panel="${panelType}"]`);
+    if (!rawWrap) return;
+    const isOpen = !rawWrap.classList.contains("hidden");
+    if (!isOpen) {
+      this.fillToolRawPanel(card, panelType, rawWrap);
+    }
+    rawWrap.classList.toggle("hidden", isOpen);
+    if (toggleBtn) toggleBtn.textContent = isOpen ? "View raw" : "Hide raw";
+  }
+
+  fillToolRawPanel(card, panelType, rawWrap) {
+    if (!card || !panelType || !rawWrap) return;
+    const pre = rawWrap.querySelector(`[data-tool-raw="${panelType}"]`);
+    if (!pre) return;
+    const rawPayload = panelType === "input" ? card._toolRawInput : card._toolRawOutput;
+    const rawText = rawPayload != null ? this.safeJsonStringify(rawPayload) : "";
+    pre.textContent = rawText || "—";
+  }
+
+  async copyToolRawPanel(card, panelType) {
+    if (!card || !panelType) return;
+    const panel = card.querySelector(`[data-tool-panel="${panelType}"]`);
+    if (!panel) return;
+    const rawWrap = panel.querySelector(`[data-tool-raw-wrap="${panelType}"]`);
+    const pre = rawWrap ? rawWrap.querySelector(`[data-tool-raw="${panelType}"]`) : null;
+    let rawText = pre ? pre.textContent.trim() : "";
+    if (!rawText) {
+      const rawPayload = panelType === "input" ? card._toolRawInput : card._toolRawOutput;
+      rawText = rawPayload != null ? this.safeJsonStringify(rawPayload) : "";
+    }
+    if (!rawText) {
+      this.showToast("Nothing to copy", "No raw payload available.");
+      return;
+    }
+    try {
+      await navigator.clipboard.writeText(rawText);
+      this.showToast("Copied", "Raw payload copied to clipboard.");
+    } catch (error) {
+      console.warn("Clipboard write failed", error);
+      this.showToast("Copy failed", "Clipboard access was denied.", true);
+    }
+  }
+
+  updateToolPanel(card, panelType, payload, options = {}) {
+    if (!card || !panelType) return;
+    const panel = card.querySelector(`[data-tool-panel="${panelType}"]`);
+    if (!panel) return;
+    const preview = panel.querySelector(`[data-tool-preview="${panelType}"]`);
+    const rawWrap = panel.querySelector(`[data-tool-raw-wrap="${panelType}"]`);
+    const rawToggle = panel.querySelector(`[data-tool-raw-toggle][data-tool-panel="${panelType}"]`);
+    const rawCopy = panel.querySelector(`[data-tool-raw-copy][data-tool-panel="${panelType}"]`);
+    const available = Boolean(options.available);
+    const pending = Boolean(options.pending);
+
+    if (!available) {
+      if (preview) {
+        preview.innerHTML = "";
+        const empty = document.createElement("div");
+        empty.className = "text-[11px] text-muted-foreground";
+        empty.textContent = pending ? "Waiting for response..." : `No ${panelType} payload.`;
+        preview.appendChild(empty);
+      }
+      if (rawWrap) rawWrap.classList.add("hidden");
+      if (rawToggle) {
+        rawToggle.disabled = true;
+        rawToggle.classList.add("opacity-50", "cursor-not-allowed");
+        rawToggle.textContent = "View raw";
+      }
+      if (rawCopy) {
+        rawCopy.disabled = true;
+        rawCopy.classList.add("opacity-50", "cursor-not-allowed");
+      }
+      return;
+    }
+
+    if (rawToggle) {
+      rawToggle.disabled = false;
+      rawToggle.classList.remove("opacity-50", "cursor-not-allowed");
+    }
+    if (rawCopy) {
+      rawCopy.disabled = false;
+      rawCopy.classList.remove("opacity-50", "cursor-not-allowed");
+    }
+
+    if (preview) {
+      const normalized = this.normalizeToolPayload(payload);
+      this.renderToolPreview(preview, normalized);
+    }
+
+    if (rawWrap && !rawWrap.classList.contains("hidden")) {
+      this.fillToolRawPanel(card, panelType, rawWrap);
+      if (rawToggle) rawToggle.textContent = "Hide raw";
+    } else if (rawToggle) {
+      rawToggle.textContent = "View raw";
+    }
+  }
+
+  normalizeToolPayload(payload) {
+    if (typeof payload !== "string") return payload;
+    const trimmed = payload.trim();
+    if (!trimmed) return payload;
+    const looksJson = (trimmed.startsWith("{") && trimmed.endsWith("}")) || (trimmed.startsWith("[") && trimmed.endsWith("]"));
+    if (!looksJson) return payload;
+    try {
+      return JSON.parse(trimmed);
+    } catch (_err) {
+      return payload;
+    }
+  }
+
+  renderToolPreview(container, payload) {
+    if (!container) return;
+    container.innerHTML = "";
+    if (payload === undefined) {
+      const empty = document.createElement("div");
+      empty.className = "text-[11px] text-muted-foreground";
+      empty.textContent = "Empty payload.";
+      container.appendChild(empty);
+      return;
+    }
+
+    const { entries, remaining, emptyLabel } = this.getToolPreviewEntries(payload);
+    if (!entries.length) {
+      const empty = document.createElement("div");
+      empty.className = "text-[11px] text-muted-foreground";
+      empty.textContent = emptyLabel || "Empty payload.";
+      container.appendChild(empty);
+      return;
+    }
+
+    entries.forEach(({ key, value }) => {
+      const row = document.createElement("div");
+      row.dataset.toolPreviewRow = "true";
+      row.className = "flex items-start gap-2";
+
+      const keyEl = document.createElement("div");
+      keyEl.dataset.toolPreviewKey = "true";
+      keyEl.className = "w-24 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground";
+      keyEl.textContent = key;
+
+      const valueEl = document.createElement("div");
+      valueEl.dataset.toolPreviewValue = "true";
+      valueEl.className = "flex-1 min-w-0 text-[11px] text-foreground/80 break-words";
+      valueEl.textContent = this.formatToolPreviewValue(value);
+
+      row.appendChild(keyEl);
+      row.appendChild(valueEl);
+      container.appendChild(row);
+    });
+
+    if (remaining > 0) {
+      const more = document.createElement("div");
+      more.className = "text-[10px] text-muted-foreground italic";
+      more.textContent = `+${remaining} more`;
+      container.appendChild(more);
+    }
+  }
+
+  getToolPreviewEntries(payload, limit = 6) {
+    if (payload === null) {
+      return { entries: [{ key: "value", value: "null" }], remaining: 0 };
+    }
+    const type = typeof payload;
+    if (type === "string" || type === "number" || type === "boolean") {
+      return { entries: [{ key: "value", value: payload }], remaining: 0 };
+    }
+    if (Array.isArray(payload)) {
+      return { entries: [{ key: "items", value: payload }], remaining: 0 };
+    }
+    if (type !== "object") {
+      return { entries: [{ key: "value", value: String(payload) }], remaining: 0 };
+    }
+    const entries = Object.entries(payload || {});
+    if (!entries.length) {
+      return { entries: [], remaining: 0, emptyLabel: "Empty object." };
+    }
+    const sliced = entries.slice(0, limit).map(([key, value]) => ({ key, value }));
+    return { entries: sliced, remaining: Math.max(0, entries.length - sliced.length) };
+  }
+
+  formatToolPreviewValue(value) {
+    if (value === null) return "null";
+    if (value === undefined) return "undefined";
+    if (typeof value === "string") {
+      const trimmed = value.trim();
+      if (!trimmed) return "(empty)";
+      if (trimmed.length <= 120) return trimmed;
+      return `${trimmed.slice(0, 117).trim()}...`;
+    }
+    if (typeof value === "number" || typeof value === "boolean") {
+      return String(value);
+    }
+    if (Array.isArray(value)) {
+      return `Array(${value.length})`;
+    }
+    if (typeof value === "object") {
+      const keys = Object.keys(value || {});
+      if (!keys.length) return "Object{}";
+      const preview = keys.slice(0, 3).join(", ");
+      const suffix = keys.length > 3 ? ", ..." : "";
+      return `Object{${preview}${suffix}}`;
+    }
+    return String(value);
+  }
+
   mapToolStatus(status) {
     const normalized = (status || "").toString().trim().toLowerCase();
+    if (normalized === "pending_approval" || normalized === "pending") {
+      return { label: "Pending", className: "bg-amber-500/10 text-amber-700 dark:text-amber-500" };
+    }
+    if (normalized === "approved") {
+      return { label: "Approved", className: "bg-emerald-500/10 text-emerald-600 dark:text-emerald-500" };
+    }
+    if (normalized === "denied") {
+      return { label: "Denied", className: "bg-rose-500/10 text-rose-500" };
+    }
+    if (normalized === "expired") {
+      return { label: "Expired", className: "bg-amber-500/10 text-amber-700 dark:text-amber-500" };
+    }
     if (normalized === "running" || normalized === "started") {
       return { label: "Running", className: "bg-primary/10 text-primary" };
     }
@@ -1867,6 +2853,7 @@ class ChatPortalClient {
       }
       this.updateToolEventCard(card, payload);
     });
+    this.updateMessageToolsToggle(wrapper);
   }
 
   formatTokenCount(count) {
@@ -2441,6 +3428,7 @@ class ChatPortalClient {
         display: inline-flex;
         width: fit-content;
         max-width: 100%;
+        align-self: flex-start;
       }
       details[data-tool-card] > summary {
         display: inline-flex;
@@ -2450,6 +3438,49 @@ class ChatPortalClient {
       details[data-tool-card] [data-tool-body] {
         max-width: 100%;
         min-width: 0;
+        display: none;
+      }
+      details[data-tool-card][open] [data-tool-body] {
+        display: block;
+        animation: tool-body-fade-in 200ms ease-out;
+      }
+      @keyframes tool-body-fade-in {
+        from { opacity: 0; transform: translateY(-4px); }
+        to { opacity: 1; transform: translateY(0); }
+      }
+      details[data-tool-card] [data-tool-tabs] {
+        display: inline-flex;
+        align-items: center;
+        gap: 4px;
+        padding: 4px;
+        border-radius: 999px;
+        border: 1px solid hsl(var(--border) / 0.4);
+        background: hsl(var(--muted) / 0.4);
+      }
+      details[data-tool-card] [data-tool-tab-button] {
+        border-radius: 999px;
+        padding: 4px 10px;
+        font-size: 11px;
+        font-weight: 600;
+        color: hsl(var(--muted-foreground));
+        transition: color 150ms ease, background 150ms ease, box-shadow 150ms ease;
+      }
+      details[data-tool-card] [data-tool-tab-button]:hover {
+        color: hsl(var(--foreground));
+      }
+      details[data-tool-card][data-tool-tab="input"] [data-tool-tab-button][data-tool-tab="input"],
+      details[data-tool-card][data-tool-tab="output"] [data-tool-tab-button][data-tool-tab="output"] {
+        background: hsl(var(--background));
+        color: hsl(var(--foreground));
+        box-shadow: 0 1px 2px hsl(var(--border) / 0.4);
+      }
+      details[data-tool-card][data-tool-tab="input"] [data-tool-panel="output"],
+      details[data-tool-card][data-tool-tab="output"] [data-tool-panel="input"] {
+        display: none;
+      }
+      details[data-tool-card] [data-tool-raw-wrap] pre {
+        max-height: 240px;
+        overflow-y: auto;
       }
       details[data-tool-card] pre {
         max-width: 100%;
@@ -2459,7 +3490,7 @@ class ChatPortalClient {
         word-break: break-word;
       }
       details[data-tool-card] [data-tool-status] {
-        min-width: 76px;
+        min-width: 84px;
         justify-content: center;
         text-align: center;
         display: inline-flex;

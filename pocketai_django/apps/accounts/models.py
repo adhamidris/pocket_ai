@@ -30,6 +30,14 @@ from apps.accounts.credential_secrets import (
 
 logger = logging.getLogger(__name__)
 
+
+AGENT_MCP_APPROVAL_MODE_CHOICES = (
+    ("auto", "Auto-approve all"),
+    ("approve_writes", "Approve write operations"),
+    ("approve_all", "Approve all operations"),
+)
+
+
 def _normalize_identifier_token(value: str) -> str:
     """
     Lowercase + collapse non-alphanumerics for identifier keys/columns.
@@ -329,6 +337,13 @@ class AgentProfile(models.Model):
         default=False,
         help_text="Allow orchestrator to prioritize custom KPIs ahead of default ones.",
     )
+    mcp_default_approval_mode = models.CharField(
+        max_length=24,
+        choices=AGENT_MCP_APPROVAL_MODE_CHOICES,
+        null=True,
+        blank=True,
+        help_text="Optional default approval mode for external MCP tools (overrides connection defaults when set).",
+    )
     allowed_documents = models.ManyToManyField(
         "KnowledgeUpload",
         through="AgentKnowledgeAccess",
@@ -515,6 +530,28 @@ class McpConnectionAuditAction(models.TextChoices):
     DISABLED = "disabled", "Disabled"
     AGENT_OPTED_OUT = "agent_opted_out", "Agent Opted Out"
     AGENT_OPTED_IN = "agent_opted_in", "Agent Opted In"
+    TOOL_APPROVED = "tool_approved", "Tool Approved"
+    TOOL_DENIED = "tool_denied", "Tool Denied"
+
+
+class McpConnectionApprovalMode(models.TextChoices):
+    """
+    Approval modes for MCP connection tool execution.
+
+    - AUTO: All tools execute automatically without user confirmation
+    - APPROVE_WRITES: Read operations auto-approve, write operations require approval
+    - APPROVE_ALL: All tool calls require user approval before execution
+    """
+    AUTO = "auto", "Auto-approve all"
+    APPROVE_WRITES = "approve_writes", "Approve write operations"
+    APPROVE_ALL = "approve_all", "Approve all operations"
+
+
+class McpToolOperationType(models.TextChoices):
+    """Classification of tool operations for approval purposes."""
+    READ = "read", "Read (safe)"
+    WRITE = "write", "Write (requires approval)"
+    UNKNOWN = "unknown", "Unknown (treat as write)"
 
 
 def default_knowledge_integration_settings() -> dict[str, Any]:
@@ -1997,6 +2034,12 @@ class McpConnection(models.Model):
         choices=McpConnectionAuthType.choices,
         default=McpConnectionAuthType.NONE,
     )
+    default_approval_mode = models.CharField(
+        max_length=24,
+        choices=McpConnectionApprovalMode.choices,
+        default=McpConnectionApprovalMode.APPROVE_WRITES,
+        help_text="Default approval behavior for tools from this connection.",
+    )
     credentials_encrypted = models.TextField(blank=True, default="")
     credentials_key_version = models.PositiveSmallIntegerField(default=1)
     credentials_last_rotated_at = models.DateTimeField(null=True, blank=True)
@@ -2144,6 +2187,125 @@ class McpConnectionAgentOptOut(models.Model):
 
     def __str__(self) -> str:  # pragma: no cover - human readable only
         return f"{self.connection_id} -> {self.agent_profile_id} (opted out)"
+
+
+class McpConnectionToolSetting(models.Model):
+    """
+    Per-tool approval settings for an MCP connection.
+
+    Allows overriding the connection's default approval mode for specific tools.
+    For example, a GitHub connection might auto-approve read operations but require
+    approval for create_issue or delete_branch.
+    """
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    connection = models.ForeignKey(
+        McpConnection,
+        related_name="tool_settings",
+        on_delete=models.CASCADE,
+    )
+    tool_name = models.CharField(
+        max_length=255,
+        help_text="The remote tool name from the MCP server (e.g., 'create_issue').",
+    )
+    operation_type = models.CharField(
+        max_length=16,
+        choices=McpToolOperationType.choices,
+        default=McpToolOperationType.UNKNOWN,
+        help_text="Classification: read (safe) or write (needs approval).",
+    )
+    approval_mode = models.CharField(
+        max_length=24,
+        choices=McpConnectionApprovalMode.choices,
+        null=True,
+        blank=True,
+        help_text="Override the connection default. NULL = inherit from connection.",
+    )
+    description = models.TextField(
+        blank=True,
+        default="",
+        help_text="Human-readable description of what this tool does.",
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = "accounts_mcp_connection_tool_setting"
+        ordering = ("tool_name",)
+        constraints = [
+            models.UniqueConstraint(
+                fields=["connection", "tool_name"],
+                name="mcp_tool_setting_unique",
+            )
+        ]
+        indexes = [
+            models.Index(fields=["connection", "operation_type"], name="mcp_tool_op_type_idx"),
+        ]
+
+    def __str__(self) -> str:  # pragma: no cover
+        return f"{self.connection_id}:{self.tool_name} ({self.operation_type})"
+
+    def get_effective_approval_mode(self) -> str:
+        """Return the effective approval mode (own or inherited from connection)."""
+        if self.approval_mode:
+            return self.approval_mode
+        return self.connection.default_approval_mode
+
+
+class AgentMcpToolSetting(models.Model):
+    """
+    Per-tool approval settings for a specific agent + MCP connection.
+
+    Used for "Always allow this tool" shortcuts scoped to a single agent.
+    """
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    agent_profile = models.ForeignKey(
+        AgentProfile,
+        related_name="mcp_tool_settings",
+        on_delete=models.CASCADE,
+    )
+    connection = models.ForeignKey(
+        McpConnection,
+        related_name="agent_tool_settings",
+        on_delete=models.CASCADE,
+    )
+    tool_name = models.CharField(
+        max_length=255,
+        help_text="The remote tool name from the MCP server (e.g., 'create_issue').",
+    )
+    operation_type = models.CharField(
+        max_length=16,
+        choices=McpToolOperationType.choices,
+        default=McpToolOperationType.UNKNOWN,
+        help_text="Classification: read (safe) or write (needs approval).",
+    )
+    approval_mode = models.CharField(
+        max_length=24,
+        choices=McpConnectionApprovalMode.choices,
+        null=True,
+        blank=True,
+        help_text="Override the agent default for this tool. NULL = inherit.",
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = "accounts_agent_mcp_tool_setting"
+        ordering = ("tool_name",)
+        constraints = [
+            models.UniqueConstraint(
+                fields=["agent_profile", "connection", "tool_name"],
+                name="agent_mcp_tool_setting_unique",
+            )
+        ]
+        indexes = [
+            models.Index(fields=["agent_profile", "connection"], name="agt_mcp_tool_agent_conn_idx"),
+            models.Index(fields=["connection", "tool_name"], name="agt_mcp_tool_conn_tool_idx"),
+        ]
+
+    def __str__(self) -> str:  # pragma: no cover
+        return f"{self.agent_profile_id}:{self.connection_id}:{self.tool_name}"
 
 
 class McpConnectionAuditEvent(models.Model):

@@ -165,6 +165,59 @@ class ConversationMessage(models.Model):
         return f"{self.conversation_id}:{self.sender}"
 
 
+class ConversationToolApprovalStatus(models.TextChoices):
+    PENDING = "pending", "Pending"
+    APPROVED = "approved", "Approved"
+    DENIED = "denied", "Denied"
+    EXPIRED = "expired", "Expired"
+
+
+class ConversationToolApproval(models.Model):
+    """
+    Stores approval state for MCP tool calls that require explicit confirmation.
+    """
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    conversation = models.ForeignKey(
+        Conversation,
+        related_name="tool_approvals",
+        on_delete=models.CASCADE,
+    )
+    connection = models.ForeignKey(
+        "accounts.McpConnection",
+        related_name="tool_approvals",
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+    )
+    tool_name = models.CharField(max_length=128)
+    remote_tool_name = models.CharField(max_length=128, blank=True, default="")
+    tool_call_id = models.CharField(max_length=128, blank=True, default="")
+    event_id = models.CharField(max_length=128, blank=True, default="")
+    status = models.CharField(
+        max_length=16,
+        choices=ConversationToolApprovalStatus.choices,
+        default=ConversationToolApprovalStatus.PENDING,
+    )
+    requested_at = models.DateTimeField(default=timezone.now, db_index=True)
+    resolved_at = models.DateTimeField(null=True, blank=True)
+    expires_at = models.DateTimeField(null=True, blank=True)
+    input_payload = models.JSONField(default=dict, blank=True)
+    metadata = models.JSONField(default=dict, blank=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = "conversations_conversation_tool_approval"
+        ordering = ("-requested_at",)
+        indexes = [
+            models.Index(fields=["conversation", "status"], name="conv_tool_approval_status_idx"),
+            models.Index(fields=["connection", "status"], name="conv_tool_approval_conn_idx"),
+        ]
+
+    def __str__(self) -> str:  # pragma: no cover - human readable only
+        return f"{self.conversation_id}:{self.tool_name}:{self.status}"
+
+
 class ConversationExtraction(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     conversation = models.ForeignKey(

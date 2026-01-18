@@ -1196,6 +1196,9 @@ if not PORTAL_ASSET_VERSION:
 # assistant message). Enabled by default; disable via env if needed.
 PORTAL_DEBUG_TOOL_TRACE = os.getenv("PORTAL_DEBUG_TOOL_TRACE", "true").lower() in {"1", "true", "yes"}
 
+# PORTAL_ALLOW_MCP_TOOL_PREFERENCES: Allow the portal to persist per-agent "Always allow this tool" preferences.
+PORTAL_ALLOW_MCP_TOOL_PREFERENCES = os.getenv("PORTAL_ALLOW_MCP_TOOL_PREFERENCES", "false").lower() in {"1", "true", "yes"}
+
 # ==============================================================================
 # SECURITY MIDDLEWARE & HEADERS
 # ==============================================================================

@@ -48,6 +48,18 @@
         </div>
       </section>
 
+      <section class="rounded-xl border border-border/60 bg-card/60 backdrop-blur p-4" data-mcp-agent-defaults>
+        <div class="flex items-start justify-between gap-3">
+          <div class="space-y-1">
+            <div class="text-sm font-semibold text-foreground">Agent default approvals</div>
+            <div class="text-xs text-muted-foreground">Used when a connection does not have per-tool overrides.</div>
+          </div>
+        </div>
+        <div class="mt-3 space-y-2" data-mcp-agent-defaults-list>
+          <div class="rounded-lg border border-border/60 bg-muted/30 p-4 text-sm text-muted-foreground">Loading agent defaults…</div>
+        </div>
+      </section>
+
       <section class="space-y-4" data-mcp-tabs data-active-tab="connections">
         <div class="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
           <div class="inline-flex rounded-lg border border-border/40 bg-muted/70 p-1" data-tabs-list>
@@ -130,10 +142,18 @@
             <option value="header">Custom header</option>
           </select>
         </div>
-        <div class="flex items-center gap-2 pt-6">
-          <input type="checkbox" class="h-4 w-4 rounded border-border/60" data-mcp-field="enabled" checked />
-          <label class="text-sm text-muted-foreground">Enabled</label>
+        <div class="space-y-1.5">
+          <label class="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Tool Approval</label>
+          <select class="w-full h-10 rounded-md border border-border/60 bg-muted/60 px-3 text-sm focus-visible:ring-0 focus-visible:border-border" data-mcp-field="approvalMode">
+            <option value="auto">Auto-approve all</option>
+            <option value="approve_writes" selected>Approve writes only</option>
+            <option value="approve_all">Approve all operations</option>
+          </select>
         </div>
+      </div>
+      <div class="flex items-center gap-2">
+        <input type="checkbox" class="h-4 w-4 rounded border-border/60" data-mcp-field="enabled" checked />
+        <label class="text-sm text-muted-foreground">Enabled</label>
       </div>
 
       <div class="space-y-3 hidden" data-mcp-auth-panel="bearer">
@@ -187,6 +207,32 @@
       <div class="space-y-2 max-h-[52vh] overflow-auto pr-1" data-mcp-agents-list></div>
       <div class="flex items-center justify-end gap-2 pt-2">
         <button type="button" class="inline-flex items-center gap-2 rounded-md border border-input bg-background px-3 py-2 text-xs font-medium hover:bg-accent hover:text-accent-foreground" data-mcp-agents-done>Done</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="hidden" data-mcp-tools-modal data-state="closed" aria-hidden="true">
+  <div class="fixed inset-0 z-40 bg-black/60 backdrop-blur-sm transition-opacity" data-mcp-tools-overlay></div>
+  <div class="fixed inset-x-4 top-10 z-50 mx-auto max-w-2xl rounded-xl border border-border/60 bg-card p-5 shadow-lg opacity-0 transition-opacity duration-150" role="dialog" aria-modal="true" data-mcp-tools-content tabindex="-1">
+    <div class="flex items-start justify-between gap-3">
+      <div class="space-y-0.5">
+        <div class="text-sm font-semibold text-foreground">Tool approvals</div>
+        <div class="text-xs text-muted-foreground">Set per-tool approvals and operation type for this MCP connection.</div>
+      </div>
+      <button type="button" class="h-8 w-8 inline-flex items-center justify-center rounded-md border border-border/60 hover:bg-accent/50" data-mcp-tools-close aria-label="Close">
+        <svg class="h-4 w-4 text-muted-foreground" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor">
+          <path stroke-linecap="round" stroke-linejoin="round" d="M6 18 18 6M6 6l12 12" />
+        </svg>
+      </button>
+    </div>
+    <div class="mt-4 space-y-3">
+      <div class="text-xs text-muted-foreground" data-mcp-tools-subtitle>—</div>
+      <div class="rounded-lg border border-border/60 bg-muted/30 p-3 text-xs text-muted-foreground hidden" data-mcp-tools-error></div>
+      <div class="space-y-2 max-h-[60vh] overflow-auto pr-1" data-mcp-tools-list></div>
+      <div class="flex items-center justify-end gap-2 pt-2">
+        <button type="button" class="inline-flex items-center gap-2 rounded-md border border-input bg-background px-3 py-2 text-xs font-medium hover:bg-accent hover:text-accent-foreground" data-mcp-tools-cancel>Cancel</button>
+        <button type="button" class="inline-flex items-center gap-2 rounded-md bg-primary text-primary-foreground px-4 py-2 text-xs font-semibold hover:bg-primary/90 disabled:opacity-50 disabled:cursor-not-allowed disabled:pointer-events-none" data-mcp-tools-save>Save changes</button>
       </div>
     </div>
   </div>
@@ -246,6 +292,7 @@
 	    var flashEl = document.querySelector("[data-mcp-flash]");
 	    var marketplaceGrid = document.querySelector("[data-mcp-marketplace-grid]");
 	    var marketplaceCount = document.querySelector("[data-mcp-marketplace-count]");
+      var agentDefaultsList = document.querySelector("[data-mcp-agent-defaults-list]");
 
     var modalWrap = document.querySelector("[data-mcp-modal]");
     var modalOverlay = document.querySelector("[data-mcp-modal-overlay]");
@@ -265,10 +312,21 @@
     var agentsList = document.querySelector("[data-mcp-agents-list]");
     var agentsSubtitle = document.querySelector("[data-mcp-agents-subtitle]");
 
+    var toolsWrap = document.querySelector("[data-mcp-tools-modal]");
+    var toolsOverlay = document.querySelector("[data-mcp-tools-overlay]");
+    var toolsContent = document.querySelector("[data-mcp-tools-content]");
+    var toolsClose = document.querySelector("[data-mcp-tools-close]");
+    var toolsCancel = document.querySelector("[data-mcp-tools-cancel]");
+    var toolsSave = document.querySelector("[data-mcp-tools-save]");
+    var toolsList = document.querySelector("[data-mcp-tools-list]");
+    var toolsSubtitle = document.querySelector("[data-mcp-tools-subtitle]");
+    var toolsError = document.querySelector("[data-mcp-tools-error]");
+
     var modalFields = {
       name: document.querySelector('[data-mcp-field="name"]'),
       serverUrl: document.querySelector('[data-mcp-field="serverUrl"]'),
       authType: document.querySelector('[data-mcp-field="authType"]'),
+      approvalMode: document.querySelector('[data-mcp-field="approvalMode"]'),
       enabled: document.querySelector('[data-mcp-field="enabled"]'),
       bearerToken: document.querySelector('[data-mcp-field="bearerToken"]'),
       headerName: document.querySelector('[data-mcp-field="headerName"]'),
@@ -286,6 +344,8 @@
 	    var currentSourceType = "manual";
 	    var currentMarketplaceKey = "";
 	    var activeAgentsConnection = null;
+	    var activeToolsConnection = null;
+	    var activeToolsPayload = null;
 	    var activeTest = null;
 	    var testCooldowns = {};
 	    var testRateLimitCounts = {};
@@ -346,12 +406,36 @@
       }
     }
 
+    function showToolsModal(show) {
+      if (!toolsWrap || !toolsContent) return;
+      toolsWrap.classList.toggle("hidden", !show);
+      toolsWrap.setAttribute("data-state", show ? "open" : "closed");
+      toolsWrap.setAttribute("aria-hidden", show ? "false" : "true");
+      window.requestAnimationFrame(function () {
+        toolsContent.classList.toggle("opacity-0", !show);
+      });
+      if (show) {
+        toolsContent.focus();
+      } else {
+        activeToolsConnection = null;
+        activeToolsPayload = null;
+        setToolsError("");
+      }
+    }
+
 	    function setModalError(message) {
 	      if (!modalError) return;
 	      var text = (message || "").toString().trim();
 	      modalError.textContent = text;
 	      modalError.classList.toggle("hidden", !text);
 	    }
+
+    function setToolsError(message) {
+      if (!toolsError) return;
+      var text = (message || "").toString().trim();
+      toolsError.textContent = text;
+      toolsError.classList.toggle("hidden", !text);
+    }
 
 	    var flashTimer = null;
 
@@ -646,6 +730,7 @@
       modalFields.name.value = "";
       modalFields.serverUrl.value = "";
       modalFields.authType.value = "none";
+      modalFields.approvalMode.value = "approve_writes";
       modalFields.enabled.checked = true;
       modalFields.bearerToken.value = "";
       modalFields.headerName.value = "";
@@ -674,6 +759,7 @@
       modalFields.name.value = connection.name || "";
       modalFields.serverUrl.value = connection.serverUrl || "";
       modalFields.authType.value = connection.authType || "none";
+      modalFields.approvalMode.value = connection.defaultApprovalMode || "approve_writes";
       modalFields.enabled.checked = connection.status === "enabled";
       if (connection.authType === "header" && connection.headerName) {
         modalFields.headerName.value = connection.headerName;
@@ -703,6 +789,16 @@
         if (conn.cacheExpired) {
           cacheWarning = '<span class="inline-flex items-center rounded-full border border-amber-500/30 bg-amber-500/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-amber-400" title="Tool cache expired. Re-test to refresh.">Cache Expired</span>';
         }
+        // Show approval mode badge
+        var approvalBadge = "";
+        var approvalMode = conn.defaultApprovalMode || "approve_writes";
+        if (approvalMode === "auto") {
+          approvalBadge = '<span class="inline-flex items-center rounded-full border border-sky-500/30 bg-sky-500/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-sky-400" title="All tools execute automatically">Auto</span>';
+        } else if (approvalMode === "approve_all") {
+          approvalBadge = '<span class="inline-flex items-center rounded-full border border-violet-500/30 bg-violet-500/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-violet-400" title="All tools require approval">Approve All</span>';
+        } else {
+          approvalBadge = '<span class="inline-flex items-center rounded-full border border-teal-500/30 bg-teal-500/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-teal-400" title="Write operations require approval">Approve Writes</span>';
+        }
 	        var errorMeta = conn.lastError ? ('<div class="text-[11px] text-rose-400 truncate" title="' + escapeHtml(conn.lastError) + '">' + escapeHtml(conn.lastError) + "</div>") : "";
 
 	        var el = document.createElement("div");
@@ -714,6 +810,7 @@
 	              '<div class="flex flex-wrap items-center gap-2">' +
 	                '<div class="text-sm font-semibold text-foreground truncate">' + escapeHtml(conn.name || "MCP Connection") + "</div>" +
 	                statusBadge +
+	                approvalBadge +
 	                (conn.sourceType === "marketplace" ? '<span class="inline-flex items-center rounded-full border border-amber-500/30 bg-amber-500/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-amber-400">Marketplace</span>' : "") +
 	                cacheWarning +
 	              "</div>" +
@@ -731,6 +828,7 @@
 	              "</label>" +
 	              '<div class="flex items-center gap-2">' +
 	                '<button type="button" class="inline-flex items-center gap-2 rounded-md border border-input bg-background px-3 py-2 text-xs font-medium hover:bg-accent hover:text-accent-foreground disabled:opacity-50 disabled:cursor-not-allowed disabled:pointer-events-none" data-mcp-test="' + escapeHtml(conn.id) + '">Test</button>' +
+	                '<button type="button" class="inline-flex items-center gap-2 rounded-md border border-input bg-background px-3 py-2 text-xs font-medium hover:bg-accent hover:text-accent-foreground" data-mcp-tools="' + escapeHtml(conn.id) + '">Tools</button>' +
 	                '<button type="button" class="inline-flex items-center gap-2 rounded-md border border-input bg-background px-3 py-2 text-xs font-medium hover:bg-accent hover:text-accent-foreground" data-mcp-agents="' + escapeHtml(conn.id) + '">Agents</button>' +
 	                '<button type="button" class="inline-flex items-center gap-2 rounded-md bg-primary/10 text-primary px-3 py-2 text-xs font-semibold hover:bg-primary/15" data-mcp-edit="' + escapeHtml(conn.id) + '">Edit</button>' +
 	              "</div>" +
@@ -777,8 +875,59 @@
       });
     }
 
+    function renderAgentDefaults(data) {
+      if (!agentDefaultsList) return;
+      var agents = (data && data.agents) || [];
+      var options = (data && data.approvalModeOptions) || [];
+      agentDefaultsList.innerHTML = "";
+
+      if (!Array.isArray(agents) || !agents.length) {
+        agentDefaultsList.innerHTML = '<div class="rounded-lg border border-border/60 bg-muted/30 p-4 text-sm text-muted-foreground">No agents found.</div>';
+        return;
+      }
+
+      agents.forEach(function (agent) {
+        var el = document.createElement("div");
+        el.className = "flex items-center justify-between gap-3 rounded-xl border border-border/60 bg-background/60 p-4";
+        var name = escapeHtml(agent.name || "Agent");
+        var modeValue = (agent.mcpDefaultApprovalMode || "").toString();
+        var statusLabel = (agent.statusLabel || agent.status || "").toString();
+
+        var selectHtml = '<select class="h-9 rounded-md border border-border/60 bg-muted/40 px-2 text-xs" data-mcp-agent-approval-mode="' + escapeHtml(agent.id) + '">';
+        selectHtml += '<option value="">Inherit connection defaults</option>';
+        options.forEach(function (opt) {
+          var selected = opt.value === modeValue ? " selected" : "";
+          selectHtml += '<option value="' + escapeHtml(opt.value) + '"' + selected + ">" + escapeHtml(opt.label) + "</option>";
+        });
+        selectHtml += "</select>";
+
+        el.innerHTML =
+          '<div class="min-w-0">' +
+            '<div class="text-sm font-semibold text-foreground truncate">' + name + "</div>" +
+            (statusLabel ? '<div class="text-xs text-muted-foreground mt-1">' + escapeHtml(statusLabel) + "</div>" : "") +
+          "</div>" +
+          '<div class="flex items-center gap-2 flex-shrink-0">' +
+            selectHtml +
+          "</div>";
+
+        agentDefaultsList.appendChild(el);
+      });
+    }
+
+    function loadAgentDefaults() {
+      if (!agentDefaultsList) return Promise.resolve();
+      agentDefaultsList.innerHTML = '<div class="rounded-lg border border-border/60 bg-muted/30 p-4 text-sm text-muted-foreground">Loading agent defaults…</div>';
+      return apiFetch("/api/mcp/agents/approval-defaults/", { method: "GET" }).then(function (data) {
+        renderAgentDefaults(data);
+        return data;
+      }).catch(function (err) {
+        agentDefaultsList.innerHTML = '<div class="rounded-lg border border-rose-500/30 bg-rose-500/10 p-4 text-sm text-rose-300">Failed to load agent defaults: ' + escapeHtml(err.message || "Error") + "</div>";
+      });
+    }
+
 	    function loadAll() {
 	      if (!listEl) return;
+        loadAgentDefaults();
 	      listEl.innerHTML = '<div class="rounded-xl border border-border/60 bg-muted/30 p-6 text-sm text-muted-foreground">Loading MCP connections…</div>';
 	      return apiFetch("/api/mcp/connections/", { method: "GET" }).then(function (data) {
 	        renderConnections(data.connections || []);
@@ -792,11 +941,13 @@
 
     function collectFormPayload() {
       var authType = modalFields.authType.value;
+      var approvalMode = modalFields.approvalMode.value;
       var payload = {
         businessId: businessId || undefined,
         name: modalFields.name.value.trim(),
         serverUrl: modalFields.serverUrl.value.trim(),
-        enabled: Boolean(modalFields.enabled.checked)
+        enabled: Boolean(modalFields.enabled.checked),
+        defaultApprovalMode: approvalMode
       };
       if (!editingConnectionId) {
         payload.sourceType = currentSourceType || "manual";
@@ -956,6 +1107,186 @@
       });
     }
 
+    function optionLabel(options, value, fallback) {
+      if (!options || !options.length) return fallback || "";
+      for (var i = 0; i < options.length; i += 1) {
+        var opt = options[i];
+        if (opt && opt.value === value) {
+          return opt.label || fallback || "";
+        }
+      }
+      return fallback || "";
+    }
+
+    function updateToolsSaveState() {
+      if (!toolsSave) return;
+      if (!activeToolsConnection || !toolsList) {
+        toolsSave.disabled = true;
+        return;
+      }
+      var rows = toolsList.querySelectorAll("[data-mcp-tool-row]");
+      var dirty = false;
+      rows.forEach(function (row) {
+        var approvalSelect = row.querySelector("[data-mcp-tool-approval]");
+        var operationSelect = row.querySelector("[data-mcp-tool-operation]");
+        if (!approvalSelect || !operationSelect) return;
+        if (approvalSelect.value !== (row.getAttribute("data-original-approval") || "") ||
+            operationSelect.value !== (row.getAttribute("data-original-operation") || "")) {
+          dirty = true;
+        }
+      });
+      toolsSave.disabled = !dirty;
+    }
+
+    function renderToolSettings(data) {
+      if (!toolsList) return;
+      var tools = (data && data.tools) || [];
+      var approvalOptions = (data && data.approvalModeOptions) || [];
+      var operationOptions = (data && data.operationTypeOptions) || [];
+      var defaultApprovalLabel = data && data.defaultApprovalModeLabel ? data.defaultApprovalModeLabel : "Connection default";
+
+      if (!tools.length) {
+        toolsList.innerHTML = '<div class="rounded-lg border border-border/60 bg-muted/30 p-4 text-sm text-muted-foreground">No tools cached yet. Run a test to fetch tool schemas.</div>';
+        updateToolsSaveState();
+        return;
+      }
+
+      toolsList.innerHTML = "";
+      tools.forEach(function (tool) {
+        var row = document.createElement("div");
+        row.className = "rounded-lg border border-border/60 bg-background/60 p-3 space-y-2";
+        row.setAttribute("data-mcp-tool-row", "true");
+        row.setAttribute("data-tool-name", tool.toolName || "");
+        row.setAttribute("data-original-operation", tool.operationType || "unknown");
+        row.setAttribute("data-original-approval", tool.approvalMode || "");
+
+        var description = tool.description ? escapeHtml(tool.description) : "No description provided.";
+        var approvalLabel = optionLabel(approvalOptions, tool.effectiveApprovalMode, tool.effectiveApprovalMode || "");
+
+        // Show inferred badge if operation type was auto-detected
+        var inferredBadge = "";
+        if (tool.operationTypeInferred) {
+          inferredBadge = '<span class="inline-flex items-center rounded-full border border-amber-500/30 bg-amber-500/10 px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide text-amber-400 ml-1" title="Operation type was auto-detected from tool name">Inferred</span>';
+        }
+
+        var approvalSelect = '<select class="w-full h-9 rounded-md border border-border/60 bg-muted/50 px-2 text-xs" data-mcp-tool-approval>' +
+          '<option value="">Inherit (' + escapeHtml(defaultApprovalLabel) + ')</option>';
+        approvalOptions.forEach(function (opt) {
+          var selected = tool.approvalMode === opt.value ? " selected" : "";
+          approvalSelect += '<option value="' + escapeHtml(opt.value) + '"' + selected + ">" + escapeHtml(opt.label) + "</option>";
+        });
+        approvalSelect += "</select>";
+
+        var operationSelect = '<select class="w-full h-9 rounded-md border border-border/60 bg-muted/50 px-2 text-xs" data-mcp-tool-operation>';
+        operationOptions.forEach(function (opt) {
+          var selectedOp = (tool.operationType || "unknown") === opt.value ? " selected" : "";
+          operationSelect += '<option value="' + escapeHtml(opt.value) + '"' + selectedOp + ">" + escapeHtml(opt.label) + "</option>";
+        });
+        operationSelect += "</select>";
+
+        row.innerHTML =
+          '<div class="flex items-start justify-between gap-3">' +
+            '<div class="min-w-0">' +
+              '<div class="flex items-center gap-1">' +
+                '<span class="text-sm font-semibold text-foreground truncate">' + escapeHtml(tool.toolName || "Tool") + '</span>' +
+                inferredBadge +
+              '</div>' +
+              '<div class="text-[11px] text-muted-foreground">' + description + "</div>" +
+            "</div>" +
+            '<div class="text-[11px] text-muted-foreground whitespace-nowrap">Effective: ' + escapeHtml(approvalLabel) + "</div>" +
+          "</div>" +
+          '<div class="grid grid-cols-1 md:grid-cols-2 gap-3">' +
+            '<div class="space-y-1">' +
+              '<label class="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">Operation type</label>' +
+              operationSelect +
+            "</div>" +
+            '<div class="space-y-1">' +
+              '<label class="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">Approval mode</label>' +
+              approvalSelect +
+            "</div>" +
+          "</div>";
+
+        toolsList.appendChild(row);
+      });
+      updateToolsSaveState();
+    }
+
+    function openTools(connectionId, connectionName) {
+      activeToolsConnection = connectionId;
+      activeToolsPayload = null;
+      setToolsError("");
+      if (toolsSubtitle) {
+        toolsSubtitle.textContent = connectionName ? ("Connection: " + connectionName) : "—";
+      }
+      if (toolsList) {
+        toolsList.innerHTML = '<div class="rounded-lg border border-border/60 bg-muted/30 p-4 text-sm text-muted-foreground">Loading tools…</div>';
+      }
+      showToolsModal(true);
+      updateToolsSaveState();
+
+      apiFetch("/api/mcp/connections/" + encodeURIComponent(connectionId) + "/tools/", { method: "GET" }).then(function (data) {
+        activeToolsPayload = data;
+        renderToolSettings(data);
+      }).catch(function (err) {
+        var msg = (err && err.message) || "Failed to load tools.";
+        setToolsError(msg);
+        if (toolsList) {
+          toolsList.innerHTML = '<div class="rounded-lg border border-rose-500/30 bg-rose-500/10 p-4 text-sm text-rose-300">Failed to load tools: ' + escapeHtml(msg) + "</div>";
+        }
+        updateToolsSaveState();
+      });
+    }
+
+    function collectToolUpdates() {
+      if (!toolsList) return [];
+      var rows = toolsList.querySelectorAll("[data-mcp-tool-row]");
+      var updates = [];
+      rows.forEach(function (row) {
+        var toolName = row.getAttribute("data-tool-name") || "";
+        var approvalSelect = row.querySelector("[data-mcp-tool-approval]");
+        var operationSelect = row.querySelector("[data-mcp-tool-operation]");
+        if (!toolName || !approvalSelect || !operationSelect) return;
+        var originalApproval = row.getAttribute("data-original-approval") || "";
+        var originalOperation = row.getAttribute("data-original-operation") || "";
+        if (approvalSelect.value !== originalApproval || operationSelect.value !== originalOperation) {
+          updates.push({
+            toolName: toolName,
+            approvalMode: approvalSelect.value,
+            operationType: operationSelect.value
+          });
+        }
+      });
+      return updates;
+    }
+
+    function saveToolSettings() {
+      if (!activeToolsConnection) return;
+      var updates = collectToolUpdates();
+      if (!updates.length) {
+        showFlash("No tool changes to save.", "info");
+        updateToolsSaveState();
+        return;
+      }
+      if (toolsSave) toolsSave.disabled = true;
+      apiFetch("/api/mcp/connections/" + encodeURIComponent(activeToolsConnection) + "/tools/", {
+        method: "POST",
+        body: JSON.stringify({ businessId: businessId || undefined, updates: updates })
+      }).then(function () {
+        showFlash("Tool settings saved.", "success");
+        return apiFetch("/api/mcp/connections/" + encodeURIComponent(activeToolsConnection) + "/tools/", { method: "GET" });
+      }).then(function (data) {
+        activeToolsPayload = data;
+        renderToolSettings(data);
+        return loadAll();
+      }).catch(function (err) {
+        var msg = (err && err.message) || "Failed to save tool settings.";
+        setToolsError(msg);
+        showFlash(msg, "error");
+      }).finally(function () {
+        updateToolsSaveState();
+      });
+    }
+
     document.addEventListener("click", function (event) {
       var target = event.target;
       if (!target || typeof target.closest !== "function") return;
@@ -1015,6 +1346,15 @@
         return;
       }
 
+      var toolsBtn = target.closest("[data-mcp-tools]");
+      if (toolsBtn) {
+        var toolsId = toolsBtn.getAttribute("data-mcp-tools");
+        var card3 = toolsBtn.closest(".rounded-xl");
+        var conn3 = card3 && card3.__conn;
+        openTools(toolsId, conn3 ? conn3.name : "");
+        return;
+      }
+
       var openCreateBtn = target.closest("[data-mcp-open-create]");
       if (openCreateBtn) {
         openCreate({});
@@ -1036,6 +1376,13 @@
       if (closeAgents) {
         activeAgentsConnection = null;
         showAgentsModal(false);
+        return;
+      }
+
+      var closeTools = target.closest("[data-mcp-tools-close], [data-mcp-tools-cancel]");
+      if (closeTools) {
+        activeToolsConnection = null;
+        showToolsModal(false);
         return;
       }
     });
@@ -1070,6 +1417,33 @@
         var agentId = target.getAttribute("data-mcp-agent-toggle");
         toggleAgent(agentId, Boolean(target.checked));
       }
+
+      if (target.matches("[data-mcp-agent-approval-mode]")) {
+        var agentId = target.getAttribute("data-mcp-agent-approval-mode");
+        var mode = target.value;
+        target.disabled = true;
+        apiFetch("/api/mcp/agents/approval-defaults/", {
+          method: "POST",
+          body: JSON.stringify({
+            businessId: businessId || undefined,
+            agentId: agentId,
+            defaultApprovalMode: mode
+          })
+        }).then(function () {
+          showFlash("Agent default approvals updated.", "success");
+          return loadAgentDefaults();
+        }).catch(function (err) {
+          console.warn("Agent default approvals update failed", err);
+          showFlash(err.message || "Failed to update agent default approvals.", "error");
+          return loadAgentDefaults();
+        }).then(function () {
+          target.disabled = false;
+        });
+      }
+
+      if (target.matches("[data-mcp-tool-approval], [data-mcp-tool-operation]")) {
+        updateToolsSaveState();
+      }
     });
 
     if (modalOverlay) {
@@ -1078,16 +1452,23 @@
     if (agentsOverlay) {
       agentsOverlay.addEventListener("click", function () { showAgentsModal(false); });
     }
+    if (toolsOverlay) {
+      toolsOverlay.addEventListener("click", function () { showToolsModal(false); });
+    }
     if (modalSave) {
       modalSave.addEventListener("click", function () { saveConnection(); });
     }
     if (modalTest) {
       modalTest.addEventListener("click", function () { testCurrent(); });
     }
+    if (toolsSave) {
+      toolsSave.addEventListener("click", function () { saveToolSettings(); });
+    }
     document.addEventListener("keydown", function (event) {
       if (event.key === "Escape") {
         showModal(false);
         showAgentsModal(false);
+        showToolsModal(false);
       }
     });
 

@@ -14,8 +14,11 @@ from apps.accounts.models import (
     AgentProfile,
     BusinessProfile,
     McpConnection,
+    McpConnectionApprovalMode,
     McpConnectionAuthType,
     McpConnectionStatus,
+    McpConnectionToolSetting,
+    McpToolOperationType,
     RegistrationSession,
 )
 from apps.mcp.connectors import _is_cache_expired, build_remote_tool_definitions
@@ -80,6 +83,47 @@ class McpConnectionsApiTests(TestCase):
         self.assertEqual(len(list_payload.get("connections") or []), 1)
         self.assertIn("marketplace", list_payload)
 
+    def test_create_connection_with_approval_mode(self) -> None:
+        create_url = reverse("api:mcp-connections")
+        response = self.client.post(
+            create_url,
+            data=json.dumps(
+                {
+                    "businessId": str(self.business.id),
+                    "name": "GitHub MCP",
+                    "serverUrl": "https://example.com/mcp",
+                    "enabled": True,
+                    "defaultApprovalMode": McpConnectionApprovalMode.AUTO,
+                    "auth": {"type": "none"},
+                }
+            ),
+            content_type="application/json",
+        )
+        self.assertEqual(response.status_code, 201)
+        payload = response.json()
+        self.assertEqual(payload["connection"]["defaultApprovalMode"], McpConnectionApprovalMode.AUTO)
+        connection = McpConnection.objects.get(id=payload["connection"]["id"])
+        self.assertEqual(connection.default_approval_mode, McpConnectionApprovalMode.AUTO)
+
+    def test_update_connection_approval_mode(self) -> None:
+        connection = McpConnection.objects.create(
+            business_profile=self.business,
+            created_by=self.user,
+            name="Update MCP",
+            server_url="https://example.com/mcp",
+            status=McpConnectionStatus.ENABLED,
+            auth_type=McpConnectionAuthType.NONE,
+        )
+        update_url = reverse("api:mcp-connection-detail", kwargs={"connection_id": connection.id})
+        response = self.client.put(
+            update_url,
+            data=json.dumps({"businessId": str(self.business.id), "defaultApprovalMode": McpConnectionApprovalMode.APPROVE_ALL}),
+            content_type="application/json",
+        )
+        self.assertEqual(response.status_code, 200)
+        connection.refresh_from_db()
+        self.assertEqual(connection.default_approval_mode, McpConnectionApprovalMode.APPROVE_ALL)
+
     def test_marketplace_includes_github_official_entry(self) -> None:
         url = reverse("api:mcp-connections")
         resp = self.client.get(url, {"business_id": str(self.business.id)})
@@ -125,6 +169,86 @@ class McpConnectionsApiTests(TestCase):
         self.assertEqual(resp2.status_code, 200)
         agents2 = resp2.json().get("agents") or []
         self.assertFalse(agents2[0]["enabled"])
+
+    def test_tools_endpoint_returns_tool_settings(self) -> None:
+        connection = McpConnection.objects.create(
+            business_profile=self.business,
+            created_by=self.user,
+            name="Tool Settings MCP",
+            server_url="https://example.com/mcp",
+            status=McpConnectionStatus.ENABLED,
+            auth_type=McpConnectionAuthType.NONE,
+            default_approval_mode=McpConnectionApprovalMode.APPROVE_WRITES,
+            metadata={
+                "tool_cache": {
+                    "tool_count": 2,
+                    "tools": [
+                        {"name": "list_issues", "description": "List issues", "inputSchema": {"type": "object"}},
+                        {"name": "create_issue", "description": "Create issue", "inputSchema": {"type": "object"}},
+                    ],
+                }
+            },
+        )
+        McpConnectionToolSetting.objects.create(
+            connection=connection,
+            tool_name="create_issue",
+            operation_type=McpToolOperationType.WRITE,
+            approval_mode=McpConnectionApprovalMode.APPROVE_ALL,
+            description="Create a new issue",
+        )
+        tools_url = reverse("api:mcp-connection-tools", kwargs={"connection_id": connection.id})
+        resp = self.client.get(tools_url, {"business_id": str(self.business.id)})
+        self.assertEqual(resp.status_code, 200)
+        payload = resp.json()
+        tools = payload.get("tools") or []
+        self.assertEqual(len(tools), 2)
+        create_tool = next((item for item in tools if item.get("toolName") == "create_issue"), None)
+        self.assertIsNotNone(create_tool)
+        self.assertEqual(create_tool["approvalMode"], McpConnectionApprovalMode.APPROVE_ALL)
+        self.assertEqual(create_tool["operationType"], McpToolOperationType.WRITE)
+        list_tool = next((item for item in tools if item.get("toolName") == "list_issues"), None)
+        self.assertIsNotNone(list_tool)
+        self.assertIsNone(list_tool["approvalMode"])
+        self.assertEqual(list_tool["effectiveApprovalMode"], McpConnectionApprovalMode.APPROVE_WRITES)
+
+    def test_tools_endpoint_updates_tool_settings(self) -> None:
+        connection = McpConnection.objects.create(
+            business_profile=self.business,
+            created_by=self.user,
+            name="Update Tools MCP",
+            server_url="https://example.com/mcp",
+            status=McpConnectionStatus.ENABLED,
+            auth_type=McpConnectionAuthType.NONE,
+            metadata={
+                "tool_cache": {
+                    "tool_count": 1,
+                    "tools": [{"name": "create_issue", "description": "Create issue", "inputSchema": {"type": "object"}}],
+                }
+            },
+        )
+        tools_url = reverse("api:mcp-connection-tools", kwargs={"connection_id": connection.id})
+        resp = self.client.post(
+            tools_url,
+            data=json.dumps(
+                {
+                    "businessId": str(self.business.id),
+                    "updates": [
+                        {
+                            "toolName": "create_issue",
+                            "operationType": McpToolOperationType.WRITE,
+                            "approvalMode": McpConnectionApprovalMode.APPROVE_ALL,
+                        }
+                    ],
+                }
+            ),
+            content_type="application/json",
+        )
+        self.assertEqual(resp.status_code, 200)
+        applied = resp.json().get("applied") or []
+        self.assertEqual(len(applied), 1)
+        setting = McpConnectionToolSetting.objects.get(connection=connection, tool_name="create_issue")
+        self.assertEqual(setting.operation_type, McpToolOperationType.WRITE)
+        self.assertEqual(setting.approval_mode, McpConnectionApprovalMode.APPROVE_ALL)
 
     @mock.patch("apps.api.mcp_connections.test_mcp_server")
     def test_test_endpoint_caches_tools(self, mock_test_server) -> None:
@@ -292,6 +416,48 @@ class McpConnectionsApiTests(TestCase):
         # Verify expires_at is in the future
         expires_at = datetime.fromisoformat(cache["expires_at"].replace("Z", "+00:00"))
         self.assertGreater(expires_at, datetime.now(timezone.utc))
+
+    def test_agent_approval_defaults_get_lists_agents(self) -> None:
+        agent = AgentProfile.objects.create(
+            business_profile=self.business,
+            user=self.user,
+            name="Support Agent",
+            role="support",
+            tone="friendly",
+            status="active",
+        )
+        url = reverse("api:mcp-agent-approval-defaults")
+        resp = self.client.get(url, {"business_id": str(self.business.id)})
+        self.assertEqual(resp.status_code, 200)
+        payload = resp.json()
+        self.assertEqual(payload.get("businessId"), str(self.business.id))
+        agents = payload.get("agents") or []
+        self.assertTrue(any(item.get("id") == str(agent.id) for item in agents))
+
+    def test_agent_approval_defaults_post_updates_mode(self) -> None:
+        agent = AgentProfile.objects.create(
+            business_profile=self.business,
+            user=self.user,
+            name="Support Agent",
+            role="support",
+            tone="friendly",
+            status="active",
+        )
+        url = reverse("api:mcp-agent-approval-defaults")
+        resp = self.client.post(
+            url,
+            data=json.dumps(
+                {
+                    "businessId": str(self.business.id),
+                    "agentId": str(agent.id),
+                    "defaultApprovalMode": McpConnectionApprovalMode.APPROVE_ALL,
+                }
+            ),
+            content_type="application/json",
+        )
+        self.assertEqual(resp.status_code, 200)
+        agent.refresh_from_db()
+        self.assertEqual(agent.mcp_default_approval_mode, McpConnectionApprovalMode.APPROVE_ALL)
 
 
 class CacheTTLTests(TestCase):

@@ -536,10 +536,9 @@ def build_planner_messages(
 
     system_sections.append(
         (
-            "You must reply with JSON matching the schema provided via "
-            "`response_format` (response_text/actions/extractions). "
-            "Set response_text to an empty string or a brief summary; the "
-            "frontend will use the already-streamed assistant answer."
+            "You must reply with ONLY valid JSON (no markdown, no extra text) in this exact format:\n"
+            '{"response_text": "", "actions": [...], "extractions": [...]}\n'
+            "Set response_text to an empty string or brief summary; the frontend uses the already-streamed answer."
         )
     )
 
@@ -647,9 +646,9 @@ def build_preplan_messages(
         ),
         PREPLAN_OUTPUT_HINT,
         (
-            "You must reply with JSON matching the schema provided via response_format "
-            "(response_text/actions/extractions). Set actions/extractions to empty arrays. "
-            "Keep response_text as the JSON blob described above."
+            "You must reply with ONLY valid JSON (no markdown, no extra text) in this exact format:\n"
+            '{"response_text": "<your JSON blob as a string>", "actions": [], "extractions": []}\n'
+            "Put the preplan JSON inside response_text as a string value."
         ),
     ]
     system_message = "\n\n".join(section for section in system_sections if section).strip()
@@ -698,9 +697,9 @@ def build_verification_messages(
         ),
         VERIFICATION_OUTPUT_HINT,
         (
-            "You must reply with JSON matching the schema provided via response_format "
-            "(response_text/actions/extractions). Set actions/extractions to empty arrays. "
-            "Keep response_text as the JSON blob described above."
+            "You must reply with ONLY valid JSON (no markdown, no extra text) in this exact format:\n"
+            '{"response_text": "<your verdict JSON as a string>", "actions": [], "extractions": []}\n'
+            "Put the verdict/missing_points/final_response/notes JSON inside response_text as a string value."
         ),
     ]
     system_message = "\n\n".join(section for section in system_sections if section).strip()

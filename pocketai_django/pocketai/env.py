@@ -4,7 +4,10 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from dotenv import load_dotenv
+try:
+    from dotenv import load_dotenv
+except ModuleNotFoundError:  # pragma: no cover - optional local-dev dependency
+    load_dotenv = None  # type: ignore[assignment]
 
 
 def load_project_env() -> None:
@@ -17,5 +20,5 @@ def load_project_env() -> None:
 
     project_root = Path(__file__).resolve().parents[2]  # repo root
     dotenv_path = project_root / ".env"
-    if dotenv_path.exists():
+    if dotenv_path.exists() and load_dotenv:
         load_dotenv(dotenv_path=dotenv_path, override=False)

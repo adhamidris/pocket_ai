@@ -481,7 +481,21 @@ def _legacy_sse_initialize_and_list_tools(
     sse_url: str,
     headers: Mapping[str, str] | None,
     protocol_version: str,
+    max_pages: int = 50,
 ) -> tuple[McpRemoteSession, list[McpRemoteTool]]:
+    """
+    Initialize a legacy SSE MCP session and list tools with pagination support.
+
+    Args:
+        client: HTTP client instance
+        sse_url: SSE endpoint URL
+        headers: Optional auth/custom headers
+        protocol_version: MCP protocol version
+        max_pages: Safety limit to prevent infinite pagination (default 50)
+
+    Returns:
+        Tuple of (session, tools)
+    """
     sse_response, events, message_url = _legacy_sse_bootstrap(client=client, sse_url=sse_url, headers=headers)
     try:
         init_id = 1
@@ -532,38 +546,64 @@ def _legacy_sse_initialize_and_list_tools(
         except httpx.HTTPStatusError as exc:
             _raise_transport_for_http_status(exc, action="legacy_sse.initialized")
 
-        list_id = 2
-        list_payload = _jsonrpc_request("tools/list", request_id=list_id, params={})
-        list_resp = _request_with_transport_errors(
-            "legacy_sse.tools_list",
-            lambda: client.post(message_url, json=list_payload, headers=post_headers),
-        )
-        try:
-            list_resp.raise_for_status()
-        except httpx.HTTPStatusError as exc:
-            _raise_transport_for_http_status(exc, action="legacy_sse.tools_list")
-
-        list_parsed = _legacy_sse_wait_for_response(events, expect_id=list_id)
-        if "error" in list_parsed:
-            raise McpRemoteProtocolError(f"MCP tools/list error: {list_parsed.get('error')}")
-        list_result = list_parsed.get("result") if isinstance(list_parsed.get("result"), dict) else {}
-        tools_in = list_result.get("tools")
+        # Paginated tools/list with cursor support
         tools: list[McpRemoteTool] = []
-        if isinstance(tools_in, list):
-            for tool in tools_in:
-                if not isinstance(tool, dict):
-                    continue
-                name = str(tool.get("name") or "").strip()
-                if not name:
-                    continue
-                tools.append(
-                    McpRemoteTool(
-                        name=name,
-                        title=tool.get("title"),
-                        description=tool.get("description"),
-                        input_schema=tool.get("inputSchema") if isinstance(tool.get("inputSchema"), dict) else None,
+        cursor: str | None = None
+        request_id = 2
+        page_count = 0
+
+        while page_count < max_pages:
+            page_count += 1
+            params: dict[str, Any] = {}
+            if cursor:
+                params["cursor"] = cursor
+            list_payload = _jsonrpc_request("tools/list", request_id=request_id, params=params)
+            list_resp = _request_with_transport_errors(
+                "legacy_sse.tools_list",
+                lambda: client.post(message_url, json=list_payload, headers=post_headers),
+            )
+            try:
+                list_resp.raise_for_status()
+            except httpx.HTTPStatusError as exc:
+                _raise_transport_for_http_status(exc, action="legacy_sse.tools_list")
+
+            list_parsed = _legacy_sse_wait_for_response(events, expect_id=request_id)
+            if "error" in list_parsed:
+                raise McpRemoteProtocolError(f"MCP tools/list error: {list_parsed.get('error')}")
+            list_result = list_parsed.get("result") if isinstance(list_parsed.get("result"), dict) else {}
+            tools_in = list_result.get("tools")
+            if isinstance(tools_in, list):
+                for tool in tools_in:
+                    if not isinstance(tool, dict):
+                        continue
+                    name = str(tool.get("name") or "").strip()
+                    if not name:
+                        continue
+                    tools.append(
+                        McpRemoteTool(
+                            name=name,
+                            title=tool.get("title"),
+                            description=tool.get("description"),
+                            input_schema=tool.get("inputSchema") if isinstance(tool.get("inputSchema"), dict) else None,
+                        )
                     )
-                )
+
+            # Check for pagination cursor
+            next_cursor = list_result.get("nextCursor")
+            if isinstance(next_cursor, str) and next_cursor.strip():
+                cursor = next_cursor.strip()
+                request_id += 1
+                continue
+            # No more pages - exit the loop
+            break
+
+        if page_count >= max_pages:
+            logger.warning(
+                "mcp_legacy_sse_tools_list_pagination_limit url=%s pages=%s tools=%s",
+                sse_url,
+                page_count,
+                len(tools),
+            )
 
         session = McpRemoteSession(
             transport="legacy_sse",

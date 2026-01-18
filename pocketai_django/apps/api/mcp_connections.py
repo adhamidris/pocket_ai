@@ -27,12 +27,16 @@ from apps.accounts.models import (
     BusinessProfile,
     McpConnection,
     McpConnectionAgentOptOut,
+    McpConnectionApprovalMode,
     McpConnectionAuditAction,
     McpConnectionAuditEvent,
     McpConnectionAuthType,
     McpConnectionSourceType,
     McpConnectionStatus,
+    McpConnectionToolSetting,
+    McpToolOperationType,
 )
+from apps.mcp.connectors import _infer_operation_type_from_tool_name
 from apps.mcp.remote_client import McpRemoteError, test_mcp_server
 
 
@@ -196,7 +200,21 @@ def _is_tool_cache_expired(tool_cache: dict[str, Any]) -> bool:
         return False
 
 
-def _serialize_mcp_connection(connection: McpConnection, *, business: BusinessProfile) -> dict[str, Any]:
+def _serialize_tool_setting(setting: McpConnectionToolSetting) -> dict[str, Any]:
+    """Serialize a per-tool setting."""
+    return {
+        "id": str(setting.id),
+        "toolName": setting.tool_name,
+        "operationType": setting.operation_type,
+        "operationTypeLabel": setting.get_operation_type_display(),
+        "approvalMode": setting.approval_mode,
+        "approvalModeLabel": setting.get_approval_mode_display() if setting.approval_mode else None,
+        "effectiveApprovalMode": setting.get_effective_approval_mode(),
+        "description": setting.description,
+    }
+
+
+def _serialize_mcp_connection(connection: McpConnection, *, business: BusinessProfile, include_tool_settings: bool = False) -> dict[str, Any]:
     metadata = connection.metadata or {}
     tool_cache = metadata.get("tool_cache") if isinstance(metadata.get("tool_cache"), dict) else {}
     tool_count = tool_cache.get("tool_count") or tool_cache.get("count") or metadata.get("tool_count") or 0
@@ -214,7 +232,44 @@ def _serialize_mcp_connection(connection: McpConnection, *, business: BusinessPr
     if connection.auth_type == McpConnectionAuthType.HEADER:
         header_name = str((connection.credentials or {}).get("header_name") or "").strip() or None
 
-    return {
+    # Build tool settings list with cached tools info
+    tool_settings_list = []
+    if include_tool_settings:
+        # Get existing per-tool settings
+        existing_settings = {s.tool_name: s for s in McpConnectionToolSetting.objects.filter(connection=connection)}
+
+        # Get cached tools from last test
+        cached_tools = tool_cache.get("tools") or []
+        for tool in cached_tools:
+            if not isinstance(tool, dict):
+                continue
+            tool_name = str(tool.get("name") or "").strip()
+            if not tool_name:
+                continue
+
+            if tool_name in existing_settings:
+                tool_settings_list.append(_serialize_tool_setting(existing_settings[tool_name]))
+            else:
+                # Tool exists in cache but no explicit setting - show with inferred defaults
+                inferred_type = _infer_operation_type_from_tool_name(tool_name)
+                inferred_label = {
+                    McpToolOperationType.READ: "Read (inferred)",
+                    McpToolOperationType.WRITE: "Write (inferred)",
+                    McpToolOperationType.UNKNOWN: "Unknown (treat as write)",
+                }.get(inferred_type, "Unknown (treat as write)")
+                tool_settings_list.append({
+                    "id": None,
+                    "toolName": tool_name,
+                    "operationType": inferred_type,
+                    "operationTypeLabel": inferred_label,
+                    "operationTypeInferred": inferred_type != McpToolOperationType.UNKNOWN,
+                    "approvalMode": None,
+                    "approvalModeLabel": None,
+                    "effectiveApprovalMode": connection.default_approval_mode,
+                    "description": str(tool.get("description") or ""),
+                })
+
+    result = {
         "id": str(connection.id),
         "name": connection.name,
         "slug": connection.slug,
@@ -228,6 +283,8 @@ def _serialize_mcp_connection(connection: McpConnection, *, business: BusinessPr
         "authLabel": connection.get_auth_type_display(),
         "authConfigured": auth_configured,
         "headerName": header_name,
+        "defaultApprovalMode": connection.default_approval_mode,
+        "defaultApprovalModeLabel": connection.get_default_approval_mode_display(),
         "toolCount": int(tool_count) if str(tool_count).isdigit() else tool_count,
         "lastTestedAt": last_tested_at,
         "lastError": last_error,
@@ -241,6 +298,11 @@ def _serialize_mcp_connection(connection: McpConnection, *, business: BusinessPr
         "createdAt": connection.created_at.isoformat() if connection.created_at else None,
         "updatedAt": connection.updated_at.isoformat() if connection.updated_at else None,
     }
+
+    if include_tool_settings:
+        result["toolSettings"] = tool_settings_list
+
+    return result
 
 
 def _mcp_marketplace_catalog() -> list[dict[str, Any]]:
@@ -388,6 +450,11 @@ def mcp_connections_collection(request: HttpRequest) -> JsonResponse:
     status_value = (payload or {}).get("enabled")
     status = McpConnectionStatus.ENABLED if bool(status_value) else McpConnectionStatus.DISABLED
 
+    # Parse approval mode (default to APPROVE_WRITES for external tools)
+    approval_mode = str((payload or {}).get("defaultApprovalMode") or (payload or {}).get("approvalMode") or McpConnectionApprovalMode.APPROVE_WRITES).strip()
+    if approval_mode not in {choice for choice, _ in McpConnectionApprovalMode.choices}:
+        return JsonResponse({"error": "VALIDATION_ERROR", "message": "approvalMode is invalid.", "field": "defaultApprovalMode"}, status=HTTPStatus.BAD_REQUEST)
+
     if not name:
         name = "MCP Connection"
 
@@ -401,6 +468,7 @@ def mcp_connections_collection(request: HttpRequest) -> JsonResponse:
             source_type=source_type,
             marketplace_key=marketplace_key,
             auth_type=auth_type,
+            default_approval_mode=approval_mode,
         )
         connection.credentials = credentials_value
 
@@ -477,6 +545,14 @@ def mcp_connection_detail(request: HttpRequest, connection_id: uuid.UUID) -> Jso
     enabled_value = payload.get("enabled")
     if enabled_value is not None:
         updates["status"] = McpConnectionStatus.ENABLED if bool(enabled_value) else McpConnectionStatus.DISABLED
+
+    # Handle approval mode update
+    approval_mode_value = payload.get("defaultApprovalMode") or payload.get("approvalMode")
+    if approval_mode_value is not None:
+        approval_mode = str(approval_mode_value).strip()
+        if approval_mode not in {choice for choice, _ in McpConnectionApprovalMode.choices}:
+            return JsonResponse({"error": "VALIDATION_ERROR", "message": "approvalMode is invalid.", "field": "defaultApprovalMode"}, status=HTTPStatus.BAD_REQUEST)
+        updates["default_approval_mode"] = approval_mode
 
     auth_payload = payload.get("auth") if isinstance(payload.get("auth"), dict) else None
     auth_type_value = payload.get("authType")
@@ -763,3 +839,215 @@ def mcp_connection_agents(request: HttpRequest, connection_id: uuid.UUID) -> Jso
                 applied.append({"agentId": str(agent.id), "enabled": False, "optedOut": True})
 
     return JsonResponse({"applied": applied}, status=HTTPStatus.OK)
+
+
+@csrf_protect
+@require_http_methods(["GET", "POST"])
+def mcp_connection_tools(request: HttpRequest, connection_id: uuid.UUID) -> JsonResponse:
+    """
+    GET: List all tools for a connection with their approval settings.
+    POST: Update approval settings for one or more tools.
+    """
+    payload: dict[str, Any] | None = None
+    business_param = request.GET.get("business_id") or request.GET.get("businessId")
+    if request.method != "GET":
+        payload, error = _parse_json_body(request)
+        if error:
+            return error
+        business_param = (
+            (payload or {}).get("businessId")
+            or (payload or {}).get("business_id")
+            or request.GET.get("business_id")
+            or business_param
+        )
+
+    business, error = _resolve_business_for_request(request, business_param)
+    if error:
+        return error
+    assert business is not None
+
+    try:
+        connection = McpConnection.objects.get(id=connection_id, business_profile=business)
+    except McpConnection.DoesNotExist:
+        return JsonResponse({"error": "MCP_CONNECTION_NOT_FOUND", "message": "MCP connection not found."}, status=HTTPStatus.NOT_FOUND)
+
+    if request.method == "GET":
+        with tenant_context(business.id):
+            serialized = _serialize_mcp_connection(connection, business=business, include_tool_settings=True)
+        return JsonResponse(
+            {
+                "connectionId": str(connection.id),
+                "connectionName": connection.name,
+                "defaultApprovalMode": connection.default_approval_mode,
+                "defaultApprovalModeLabel": connection.get_default_approval_mode_display(),
+                "tools": serialized.get("toolSettings", []),
+                "approvalModeOptions": [
+                    {"value": choice, "label": label}
+                    for choice, label in McpConnectionApprovalMode.choices
+                ],
+                "operationTypeOptions": [
+                    {"value": choice, "label": label}
+                    for choice, label in McpToolOperationType.choices
+                ],
+            },
+            status=HTTPStatus.OK,
+        )
+
+    # POST: Update tool settings
+    assert payload is not None
+    updates = payload.get("updates")
+    if isinstance(updates, list) and updates:
+        items = updates
+    else:
+        # Single tool update
+        tool_name = payload.get("toolName") or payload.get("tool_name")
+        items = [payload] if tool_name else []
+
+    applied: list[dict[str, Any]] = []
+    with tenant_context(business.id):
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+            tool_name = str(item.get("toolName") or item.get("tool_name") or "").strip()
+            if not tool_name:
+                continue
+
+            if "operationType" in item:
+                operation_type = item.get("operationType")
+            elif "operation_type" in item:
+                operation_type = item.get("operation_type")
+            else:
+                operation_type = None
+
+            if "approvalMode" in item:
+                approval_mode = item.get("approvalMode")
+            elif "approval_mode" in item:
+                approval_mode = item.get("approval_mode")
+            else:
+                approval_mode = None
+
+            # Validate operation_type if provided
+            if operation_type is not None:
+                operation_type = str(operation_type).strip()
+                if operation_type not in {choice for choice, _ in McpToolOperationType.choices}:
+                    continue
+
+            # Validate approval_mode if provided (can be null to inherit)
+            if approval_mode is not None and approval_mode != "":
+                approval_mode = str(approval_mode).strip()
+                if approval_mode not in {choice for choice, _ in McpConnectionApprovalMode.choices}:
+                    continue
+            elif approval_mode == "":
+                approval_mode = None  # Explicitly set to inherit
+
+            # Use update_or_create to handle race conditions gracefully
+            # Build defaults dict for creation and updates dict for existing records
+            defaults = {
+                "operation_type": operation_type or McpToolOperationType.UNKNOWN,
+                "description": str(item.get("description") or "").strip(),
+            }
+            # Only include approval_mode if explicitly provided in the request
+            if "approvalMode" in item or "approval_mode" in item:
+                defaults["approval_mode"] = approval_mode
+
+            try:
+                setting, created = McpConnectionToolSetting.objects.update_or_create(
+                    connection=connection,
+                    tool_name=tool_name,
+                    defaults=defaults,
+                )
+            except Exception:
+                # Handle any remaining edge cases (e.g., concurrent deletes)
+                logger.warning(
+                    "mcp_tool_setting_update_failed connection=%s tool=%s",
+                    connection.id,
+                    tool_name,
+                )
+                continue
+
+            applied.append(_serialize_tool_setting(setting))
+
+    return JsonResponse({"applied": applied}, status=HTTPStatus.OK)
+
+
+@csrf_protect
+@require_http_methods(["GET", "POST"])
+def mcp_agent_approval_defaults(request: HttpRequest) -> JsonResponse:
+    payload: dict[str, Any] | None = None
+    business_param = request.GET.get("business_id") or request.GET.get("businessId")
+    if request.method != "GET":
+        payload, error = _parse_json_body(request)
+        if error:
+            return error
+        business_param = (
+            (payload or {}).get("businessId")
+            or (payload or {}).get("business_id")
+            or request.GET.get("business_id")
+            or business_param
+        )
+
+    business, error = _resolve_business_for_request(request, business_param)
+    if error:
+        return error
+    assert business is not None
+
+    if request.method == "GET":
+        with tenant_context(business.id):
+            agents = list(AgentProfile.objects.filter(business_profile=business).order_by("created_at"))
+        return JsonResponse(
+            {
+                "businessId": str(business.id),
+                "approvalModeOptions": [
+                    {"value": choice, "label": label}
+                    for choice, label in McpConnectionApprovalMode.choices
+                ],
+                "agents": [
+                    {
+                        "id": str(agent.id),
+                        "name": agent.name,
+                        "slug": agent.slug,
+                        "status": agent.status,
+                        "statusLabel": agent.get_status_display(),
+                        "mcpDefaultApprovalMode": getattr(agent, "mcp_default_approval_mode", None),
+                    }
+                    for agent in agents
+                ],
+            },
+            status=HTTPStatus.OK,
+        )
+
+    assert payload is not None
+    agent_id = payload.get("agentId") or payload.get("agent_id")
+    default_mode = payload.get("defaultApprovalMode") or payload.get("default_approval_mode")
+    if not agent_id:
+        return JsonResponse({"error": "VALIDATION_ERROR", "message": "agentId is required."}, status=HTTPStatus.BAD_REQUEST)
+
+    try:
+        agent_uuid = agent_id if isinstance(agent_id, uuid.UUID) else uuid.UUID(str(agent_id))
+    except (TypeError, ValueError):
+        return JsonResponse({"error": "VALIDATION_ERROR", "message": "agentId must be a valid UUID."}, status=HTTPStatus.BAD_REQUEST)
+
+    if default_mode is None or str(default_mode).strip() == "" or str(default_mode).strip().lower() == "inherit":
+        default_mode_value: str | None = None
+    else:
+        default_mode_value = str(default_mode).strip()
+        allowed = {choice for choice, _ in McpConnectionApprovalMode.choices}
+        if default_mode_value not in allowed:
+            return JsonResponse({"error": "VALIDATION_ERROR", "message": "defaultApprovalMode is invalid."}, status=HTTPStatus.BAD_REQUEST)
+
+    with tenant_context(business.id):
+        agent = AgentProfile.objects.filter(id=agent_uuid, business_profile=business).first()
+        if agent is None:
+            return JsonResponse({"error": "AGENT_NOT_FOUND", "message": "Agent profile not found."}, status=HTTPStatus.NOT_FOUND)
+        agent.mcp_default_approval_mode = default_mode_value
+        agent.save(update_fields=["mcp_default_approval_mode", "updated_at"])
+
+    return JsonResponse(
+        {
+            "agent": {
+                "id": str(agent.id),
+                "mcpDefaultApprovalMode": agent.mcp_default_approval_mode,
+            }
+        },
+        status=HTTPStatus.OK,
+    )

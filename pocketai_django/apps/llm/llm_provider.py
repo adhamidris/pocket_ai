@@ -1575,8 +1575,9 @@ class DeepSeekToolsProvider(BaseMcpProvider):
                 if tools:
                     payload["tools"] = list(tools)
                     payload["tool_choice"] = "auto"
-                if response_format:
-                    payload["response_format"] = response_format
+                # Note: DeepSeek has disabled response_format support ("This response_format type
+                # is unavailable now"). Skip response_format entirely and rely on prompt instructions
+                # for JSON output. The verification/planner prompts already request JSON format.
 
                 # Compact summary at INFO; heavy logs only when enabled.
                 if LOG_TOKEN_ESTIMATE and logger.isEnabledFor(logging.DEBUG):

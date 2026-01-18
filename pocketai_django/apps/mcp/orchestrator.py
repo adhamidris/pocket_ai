@@ -16,6 +16,7 @@ import re
 import threading
 import time
 import uuid
+from datetime import timedelta
 from typing import Any, Callable, Iterable, Mapping, MutableMapping, Sequence
 
 from django.conf import settings
@@ -26,7 +27,13 @@ from opentelemetry import trace as otel_trace
 
 from apps.accounts.models import AgentProfile, KnowledgeUpload
 from apps.accounts.feature_flags import FeatureFlagService
-from apps.conversations.models import Conversation, ConversationExtractionType, ConversationSender
+from apps.conversations.models import (
+    Conversation,
+    ConversationExtractionType,
+    ConversationSender,
+    ConversationToolApproval,
+    ConversationToolApprovalStatus,
+)
 from apps.llm.llm_provider import PromptGenerationError, _emit_stream_chunks
 from apps.rag.ai_orchestrator import (
     AiOrchestratorPlan,
@@ -41,7 +48,12 @@ from apps.rag.rag_logging import structured_log
 from apps.conversations.response_blocks import normalize_response_blocks
 
 from . import prompts, tools as mcp_tools
-from .connectors import build_remote_tool_definitions, list_enabled_mcp_connections_for_agent, mcp_connection_auth_headers
+from .connectors import (
+    build_remote_tool_definitions,
+    get_tool_approval_requirement,
+    list_enabled_mcp_connections_for_agent,
+    mcp_connection_auth_headers,
+)
 from .remote_client import McpRemoteError, call_mcp_tool_streamable_http
 from .sanitizer import (
     extract_sentences,
@@ -804,12 +816,19 @@ class McpOrchestratorService:
                     for tool_call in current_tool_calls:
                         tool_name = self._tool_name(tool_call)
                         arguments = self._tool_arguments(tool_call)
+                        tool_call_id = str(tool_call.get("id") or "").strip()
+                        tool_event_id = tool_call_id or str(uuid.uuid4())
 
                         # --- Pillar 2: Adaptive Routing (Auto-Repair) ---
                         # Intercept and fix mismatched tool calls (e.g. query_dataset on PDF)
                         # before they hit the handler and return an error.
                         tool_name, arguments = self._adaptive_routing_policy(tool_name, arguments, conversation, status_callback=_status_event)
                         # ------------------------------------------------
+
+                        policy_tool_result = None
+                        missing_fields = self._missing_required_fields(tool_name, arguments)
+                        if missing_fields:
+                            policy_tool_result = self._missing_required_payload(tool_name, missing_fields)
 
                         cached_table_result = None
                         table_cache_key = None
@@ -834,9 +853,8 @@ class McpOrchestratorService:
                                     },
                                     logger_obj=logger,
                                 )
-                        policy_tool_result = None
                         duplicate_result = None
-                        if tool_name == "search_knowledge":
+                        if tool_name == "search_knowledge" and not policy_tool_result:
                             remaining_searches = self._search_budget_remaining(tool_context)
                             if remaining_searches == 0:
                                 policy_tool_result = {
@@ -919,42 +937,67 @@ class McpOrchestratorService:
                                         },
                                         logger_obj=logger,
                                     )
-                                call_start = time.perf_counter()
+                                call_start: float | None = None
                                 remote_event_id: str | None = None
                                 remote_event_payload: dict[str, object] | None = None
                                 try:
                                     remote_entry = self._remote_tool_registry.get(tool_name)
+                                    skip_remote_execution = False
                                     if remote_entry:
                                         connection, remote_tool_name = remote_entry
-                                        remote_event_id = str(tool_call.get("id") or uuid.uuid4())
-                                        remote_event_payload = {
-                                            "event_id": remote_event_id,
-                                            "phase": "started",
-                                            "status": "running",
-                                            "tool_call_id": str(tool_call.get("id") or ""),
-                                            "tool_name": tool_name,
-                                            "kind": "mcp_remote",
-                                            "remote": {
-                                                "connection_id": str(getattr(connection, "id", "") or ""),
-                                                "connection_name": str(getattr(connection, "name", "") or ""),
-                                                "endpoint_url": str(getattr(connection, "server_url", "") or ""),
-                                                "remote_tool": remote_tool_name,
-                                            },
-                                            "input": dict(arguments),
-                                        }
-                                        if on_tool_event:
-                                            try:
-                                                on_tool_event(remote_event_payload)
-                                            except Exception:  # pragma: no cover - UI callback must not break tools
-                                                logger.exception("mcp portal tool event start callback failed")
-                                        tool_result = self._execute_remote_mcp_tool(
-                                            tool_name=tool_name,
-                                            remote_tool_name=remote_tool_name,
-                                            connection=connection,
-                                            arguments=arguments,
-                                            conversation=conversation,
+                                        approval_requirement = get_tool_approval_requirement(
+                                            connection,
+                                            remote_tool_name,
+                                            agent=getattr(conversation, "agent_profile", None),
                                         )
+                                        if approval_requirement.get("requires_approval"):
+                                            approved, _, approval_result = self._maybe_request_tool_approval(
+                                                conversation=conversation,
+                                                connection=connection,
+                                                tool_name=tool_name,
+                                                remote_tool_name=remote_tool_name,
+                                                tool_call_id=tool_call_id,
+                                                tool_event_id=tool_event_id,
+                                                arguments=arguments,
+                                                approval_requirement=approval_requirement,
+                                                on_tool_event=on_tool_event,
+                                            )
+                                            if not approved:
+                                                tool_result = approval_result
+                                                call_origin = "policy"
+                                                skip_remote_execution = True
+                                        if not skip_remote_execution:
+                                            call_start = time.perf_counter()
+                                            remote_event_id = tool_event_id
+                                            remote_event_payload = {
+                                                "event_id": remote_event_id,
+                                                "phase": "started",
+                                                "status": "running",
+                                                "tool_call_id": tool_call_id,
+                                                "tool_name": tool_name,
+                                                "kind": "mcp_remote",
+                                                "remote": {
+                                                    "connection_id": str(getattr(connection, "id", "") or ""),
+                                                    "connection_name": str(getattr(connection, "name", "") or ""),
+                                                    "endpoint_url": str(getattr(connection, "server_url", "") or ""),
+                                                    "remote_tool": remote_tool_name,
+                                                },
+                                                "input": dict(arguments),
+                                            }
+                                            if on_tool_event:
+                                                try:
+                                                    on_tool_event(remote_event_payload)
+                                                except Exception:  # pragma: no cover - UI callback must not break tools
+                                                    logger.exception("mcp portal tool event start callback failed")
+                                            tool_result = self._execute_remote_mcp_tool(
+                                                tool_name=tool_name,
+                                                remote_tool_name=remote_tool_name,
+                                                connection=connection,
+                                                arguments=arguments,
+                                                conversation=conversation,
+                                            )
                                     else:
+                                        call_start = time.perf_counter()
                                         tool_result = mcp_tools.execute_tool(
                                             tool_name,
                                             arguments,
@@ -1009,7 +1052,8 @@ class McpOrchestratorService:
                                         "error": str(exc),
                                     }
                                 finally:
-                                    call_duration_ms = (time.perf_counter() - call_start) * 1000.0
+                                    if call_start is not None:
+                                        call_duration_ms = (time.perf_counter() - call_start) * 1000.0
                                     if remote_event_id and remote_event_payload and on_tool_event:
                                         try:
                                             finish_payload = dict(remote_event_payload)
@@ -2390,6 +2434,67 @@ class McpOrchestratorService:
             if isinstance(name, str) and name.strip():
                 return name.strip()
         return None
+
+    def _tool_parameters(self, tool_name: str) -> Mapping[str, object] | None:
+        if not tool_name:
+            return None
+        for tool_def in self.tool_definitions:
+            name = self._tool_schema_name(tool_def)
+            if name != tool_name:
+                continue
+            func = tool_def.get("function")
+            if isinstance(func, Mapping):
+                params = func.get("parameters")
+                if isinstance(params, Mapping):
+                    return params
+            return None
+        return None
+
+    @staticmethod
+    def _is_missing_value(value: object) -> bool:
+        if value is None:
+            return True
+        if isinstance(value, str):
+            return not value.strip()
+        if isinstance(value, (list, tuple, set)):
+            return len(value) == 0
+        if isinstance(value, dict):
+            return len(value) == 0
+        return False
+
+    def _missing_required_fields(self, tool_name: str, arguments: Mapping[str, object]) -> list[str]:
+        params = self._tool_parameters(tool_name)
+        if not params:
+            return []
+        required = params.get("required")
+        if not isinstance(required, list) or not required:
+            return []
+        missing: list[str] = []
+        for field in required:
+            if not isinstance(field, str):
+                continue
+            if field not in arguments or self._is_missing_value(arguments.get(field)):
+                missing.append(field)
+        return missing
+
+    @staticmethod
+    def _missing_required_payload(tool_name: str, missing_fields: Sequence[str]) -> Mapping[str, object]:
+        field_list = [str(field) for field in missing_fields if str(field).strip()]
+        summary = ", ".join(field_list) if field_list else "required fields"
+        hint = (
+            "Ask the visitor to provide the missing required fields before retrying this tool call. "
+            f"Missing: {summary}."
+        )
+        return {
+            "tool": tool_name,
+            "status": "constraint_error",
+            "error": f"Missing required tool fields: {summary}",
+            "error_code": "missing_required_fields",
+            "missing_fields": field_list,
+            "hint": hint,
+            "llm_hint": hint,
+            "snippets": [],
+        }
 
     def _exclude_tool_schemas(self, excluded_names: set[str]) -> list[Mapping[str, object]]:
         if not excluded_names:
@@ -5724,6 +5829,219 @@ class McpOrchestratorService:
             "llm_hint": hint,
             "snippets": [],
         }
+
+    def _tool_approval_timeout_seconds(self) -> int:
+        raw_value = getattr(settings, "MCP_TOOL_APPROVAL_TIMEOUT_SECONDS", 120)
+        try:
+            value = int(raw_value)
+        except (TypeError, ValueError):
+            value = 120
+        return max(5, value)
+
+    def _tool_approval_poll_interval(self) -> float:
+        raw_value = getattr(settings, "MCP_TOOL_APPROVAL_POLL_INTERVAL_SECONDS", 0.5)
+        try:
+            value = float(raw_value)
+        except (TypeError, ValueError):
+            value = 0.5
+        return max(0.2, min(value, 5.0))
+
+    @staticmethod
+    def _approval_blocked_payload(tool_name: str, status: str) -> Mapping[str, object]:
+        normalized = str(status or "").strip().lower()
+        if normalized == ConversationToolApprovalStatus.DENIED:
+            return {
+                "tool": tool_name,
+                "status": "blocked",
+                "error_code": "approval_denied",
+                "error": "Tool call was denied.",
+                "hint": "Inform the user the action was not approved and ask how to proceed.",
+            }
+        if normalized == ConversationToolApprovalStatus.EXPIRED:
+            return {
+                "tool": tool_name,
+                "status": "blocked",
+                "error_code": "approval_timeout",
+                "error": "Tool approval timed out.",
+                "hint": "Ask the user to approve again if they still want this action.",
+            }
+        return {
+            "tool": tool_name,
+            "status": "blocked",
+            "error_code": "approval_unavailable",
+            "error": "Tool approval was not granted.",
+            "hint": "Ask the user to approve the tool call before retrying.",
+        }
+
+    def _get_or_create_tool_approval(
+        self,
+        *,
+        conversation: Conversation,
+        connection: object,
+        tool_name: str,
+        remote_tool_name: str,
+        tool_call_id: str,
+        tool_event_id: str,
+        arguments: Mapping[str, object],
+        approval_requirement: Mapping[str, object],
+    ) -> ConversationToolApproval:
+        business_id = getattr(conversation, "business_profile_id", None)
+        expires_at = timezone.now() + timedelta(seconds=self._tool_approval_timeout_seconds())
+        with tenant_context(business_id):
+            existing = None
+            if tool_call_id:
+                existing = ConversationToolApproval.objects.filter(
+                    conversation=conversation,
+                    tool_call_id=tool_call_id,
+                    status=ConversationToolApprovalStatus.PENDING,
+                ).first()
+            if existing:
+                return existing
+            metadata = {
+                "approval_mode": approval_requirement.get("approval_mode"),
+                "operation_type": approval_requirement.get("operation_type"),
+                "reason": approval_requirement.get("reason"),
+            }
+            return ConversationToolApproval.objects.create(
+                conversation=conversation,
+                connection=connection if hasattr(connection, "id") else None,
+                tool_name=tool_name,
+                remote_tool_name=remote_tool_name or "",
+                tool_call_id=tool_call_id or "",
+                event_id=tool_event_id or "",
+                status=ConversationToolApprovalStatus.PENDING,
+                expires_at=expires_at,
+                input_payload=dict(arguments) if isinstance(arguments, Mapping) else {},
+                metadata=metadata,
+            )
+
+    def _wait_for_tool_approval(
+        self,
+        *,
+        approval: ConversationToolApproval,
+        conversation: Conversation,
+    ) -> ConversationToolApproval | None:
+        timeout_seconds = self._tool_approval_timeout_seconds()
+        poll_interval = self._tool_approval_poll_interval()
+        deadline = time.monotonic() + timeout_seconds
+        business_id = getattr(conversation, "business_profile_id", None)
+
+        while True:
+            close_old_connections()
+            with tenant_context(business_id):
+                refreshed = ConversationToolApproval.objects.filter(
+                    id=approval.id,
+                    conversation=conversation,
+                ).first()
+            if not refreshed:
+                return None
+            approval = refreshed
+            if approval.status != ConversationToolApprovalStatus.PENDING:
+                return approval
+            now = timezone.now()
+            if approval.expires_at and now >= approval.expires_at:
+                approval.status = ConversationToolApprovalStatus.EXPIRED
+                approval.resolved_at = now
+                approval.save(update_fields=["status", "resolved_at", "updated_at"])
+                return approval
+            if time.monotonic() >= deadline:
+                approval.status = ConversationToolApprovalStatus.EXPIRED
+                approval.resolved_at = now
+                approval.save(update_fields=["status", "resolved_at", "updated_at"])
+                return approval
+            time.sleep(poll_interval)
+
+    def _maybe_request_tool_approval(
+        self,
+        *,
+        conversation: Conversation,
+        connection: object,
+        tool_name: str,
+        remote_tool_name: str,
+        tool_call_id: str,
+        tool_event_id: str,
+        arguments: Mapping[str, object],
+        approval_requirement: Mapping[str, object],
+        on_tool_event: Callable[[Mapping[str, object]], None] | None,
+    ) -> tuple[bool, ConversationToolApproval | None, Mapping[str, object] | None]:
+        if not approval_requirement.get("requires_approval"):
+            return True, None, None
+
+        approval = self._get_or_create_tool_approval(
+            conversation=conversation,
+            connection=connection,
+            tool_name=tool_name,
+            remote_tool_name=remote_tool_name,
+            tool_call_id=tool_call_id,
+            tool_event_id=tool_event_id,
+            arguments=arguments,
+            approval_requirement=approval_requirement,
+        )
+        approval_payload = {
+            "id": str(approval.id),
+            "status": approval.status,
+            "mode": approval_requirement.get("approval_mode"),
+            "operation_type": approval_requirement.get("operation_type"),
+            "reason": approval_requirement.get("reason"),
+            "expires_at": approval.expires_at.isoformat() if approval.expires_at else None,
+        }
+        request_event = {
+            "event_id": tool_event_id,
+            "phase": "approval_requested",
+            "status": "pending_approval",
+            "tool_call_id": tool_call_id,
+            "tool_name": tool_name,
+            "kind": "mcp_remote",
+            "remote": {
+                "connection_id": str(getattr(connection, "id", "") or ""),
+                "connection_name": str(getattr(connection, "name", "") or ""),
+                "endpoint_url": str(getattr(connection, "server_url", "") or ""),
+                "remote_tool": remote_tool_name,
+            },
+            "input": dict(arguments),
+            "approval": approval_payload,
+        }
+        if on_tool_event:
+            try:
+                on_tool_event(request_event)
+            except Exception:  # pragma: no cover - UI callback must not break tools
+                logger.exception("mcp portal tool approval request callback failed")
+
+        approval = self._wait_for_tool_approval(approval=approval, conversation=conversation)
+        status_value = approval.status if approval else ConversationToolApprovalStatus.DENIED
+        approval_payload["status"] = status_value
+        resolve_event = {
+            "event_id": tool_event_id,
+            "phase": "approval_resolved",
+            "status": status_value,
+            "tool_call_id": tool_call_id,
+            "tool_name": tool_name,
+            "kind": "mcp_remote",
+            "remote": {
+                "connection_id": str(getattr(connection, "id", "") or ""),
+                "connection_name": str(getattr(connection, "name", "") or ""),
+                "endpoint_url": str(getattr(connection, "server_url", "") or ""),
+                "remote_tool": remote_tool_name,
+            },
+            "approval": approval_payload,
+        }
+
+        if status_value != ConversationToolApprovalStatus.APPROVED:
+            tool_result = self._approval_blocked_payload(tool_name, status_value)
+            resolve_event["output"] = dict(tool_result)
+            if on_tool_event:
+                try:
+                    on_tool_event(resolve_event)
+                except Exception:  # pragma: no cover - UI callback must not break tools
+                    logger.exception("mcp portal tool approval resolve callback failed")
+            return False, approval, tool_result
+
+        if on_tool_event:
+            try:
+                on_tool_event(resolve_event)
+            except Exception:  # pragma: no cover - UI callback must not break tools
+                logger.exception("mcp portal tool approval resolve callback failed")
+        return True, approval, None
 
     def _execute_remote_mcp_tool(
         self,

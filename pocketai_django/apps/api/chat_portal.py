@@ -17,7 +17,7 @@ from zoneinfo import ZoneInfo
 
 from django.conf import settings
 from django.core.cache import cache
-from django.db import close_old_connections
+from django.db import close_old_connections, transaction
 from django.http import HttpRequest, HttpResponse, JsonResponse, StreamingHttpResponse
 from django.utils import timezone
 from django.views.decorators.csrf import csrf_exempt
@@ -25,8 +25,15 @@ from django.views.decorators.http import require_GET, require_http_methods, requ
 from opentelemetry import context as otel_context
 from opentelemetry import trace as otel_trace
 
-from apps.accounts.models import BusinessProfile
-from apps.conversations.models import ConversationSender
+from apps.accounts.models import (
+    AgentMcpToolSetting,
+    BusinessProfile,
+    McpConnectionApprovalMode,
+    McpConnectionAuditAction,
+    McpConnectionAuditEvent,
+    McpToolOperationType,
+)
+from apps.conversations.models import ConversationSender, ConversationToolApproval, ConversationToolApprovalStatus
 from apps.core.logging_utils import LogEmoji
 from apps.knowledge.privacy import redact_free_text
 from apps.rag.ai_orchestrator import (
@@ -46,6 +53,7 @@ from apps.conversations.portal import (
     PortalSessionState,
     PortalValidationError,
 )
+from core.tenancy import tenant_context
 
 logger = logging.getLogger(__name__)
 TRACER = otel_trace.get_tracer(__name__)
@@ -63,6 +71,8 @@ CONTEXT_STATUS_CODES = {
     "answer_finalized",
     "clarifying",
 }
+
+TOOL_EVENT_PHASES = {"started", "finished", "approval_requested", "approval_resolved"}
 
 
 def _queue_put(queue, item):
@@ -129,7 +139,7 @@ def _normalize_tool_event_history(
         if not event_id:
             continue
         phase = str(event.get("phase") or "").strip().lower()
-        if phase not in {"started", "finished"}:
+        if phase not in TOOL_EVENT_PHASES:
             continue
         key = (event_id, phase)
         if key in seen:
@@ -820,6 +830,21 @@ def _session_to_dict(session: PortalSessionState) -> dict:
     }
 
 
+def _serialize_tool_approval(approval: ConversationToolApproval) -> dict[str, object]:
+    return {
+        "id": str(approval.id),
+        "status": approval.status,
+        "tool_name": approval.tool_name,
+        "remote_tool_name": approval.remote_tool_name,
+        "tool_call_id": approval.tool_call_id,
+        "event_id": approval.event_id,
+        "requested_at": approval.requested_at.isoformat() if approval.requested_at else None,
+        "resolved_at": approval.resolved_at.isoformat() if approval.resolved_at else None,
+        "expires_at": approval.expires_at.isoformat() if approval.expires_at else None,
+        "metadata": approval.metadata or {},
+    }
+
+
 def _message_to_dict(message: PortalMessage) -> dict:
     return {
         "id": str(message.id),
@@ -1278,6 +1303,226 @@ def portal_verification_confirm(request: HttpRequest) -> JsonResponse:
 
 @csrf_exempt
 @require_POST
+def portal_tool_approval(request: HttpRequest) -> JsonResponse:
+    service = _service()
+    try:
+        payload = _parse_json_body(request)
+    except PortalValidationError as exc:
+        return _json_error("invalid_json", str(exc))
+
+    session_token = (payload.get("session_token") or payload.get("sessionToken") or "").strip()
+    approval_id = (payload.get("approval_id") or payload.get("approvalId") or "").strip()
+    decision_raw = payload.get("decision") or payload.get("action") or payload.get("status") or ""
+    decision = str(decision_raw).strip().lower()
+    remember_raw = payload.get("remember") or payload.get("always_allow") or payload.get("alwaysAllow") or False
+    remember = False
+    if isinstance(remember_raw, str):
+        remember = remember_raw.strip().lower() in {"1", "true", "yes", "on"}
+    else:
+        remember = bool(remember_raw)
+    if not session_token or not approval_id or not decision:
+        return _json_error("validation_error", "session_token, approval_id, and decision are required.")
+
+    if decision in {"approve", "approved", "allow"}:
+        next_status = ConversationToolApprovalStatus.APPROVED
+    elif decision in {"deny", "denied", "reject"}:
+        next_status = ConversationToolApprovalStatus.DENIED
+    else:
+        return _json_error("validation_error", "decision must be approve or deny.")
+
+    try:
+        approval_uuid = uuid.UUID(approval_id)
+    except (TypeError, ValueError):
+        return _json_error("validation_error", "approval_id is invalid.")
+
+    try:
+        conversation = service.get_conversation(session_token=session_token, include_messages=False)
+        session = service.get_session_state(session_token=session_token, conversation=conversation)
+    except PortalNotFoundError as exc:
+        return _json_error("not_found", str(exc), status=404)
+
+    approval: ConversationToolApproval | None = None
+    now = timezone.now()
+    business_id = getattr(conversation, "business_profile_id", None)
+    preference_saved = False
+    with transaction.atomic():
+        with tenant_context(business_id):
+            approval = ConversationToolApproval.objects.select_for_update().filter(
+                id=approval_uuid,
+                conversation=conversation,
+            ).first()
+            if not approval:
+                return _json_error("not_found", "Approval not found.", status=404)
+            if approval.status != ConversationToolApprovalStatus.PENDING:
+                return JsonResponse({"session": _session_to_dict(session), "approval": _serialize_tool_approval(approval)})
+            if approval.expires_at and approval.expires_at <= now:
+                approval.status = ConversationToolApprovalStatus.EXPIRED
+                approval.resolved_at = now
+                approval.save(update_fields=["status", "resolved_at", "updated_at"])
+                return JsonResponse({"session": _session_to_dict(session), "approval": _serialize_tool_approval(approval)})
+            approval.status = next_status
+            approval.resolved_at = now
+            approval.save(update_fields=["status", "resolved_at", "updated_at"])
+
+    if approval and approval.connection_id:
+        try:
+            with tenant_context(business_id):
+                McpConnectionAuditEvent.objects.create(
+                    business_profile=conversation.business_profile,
+                    connection=approval.connection,
+                    connection_id_snapshot=approval.connection_id,
+                    actor_user=request.user if getattr(request, "user", None) and request.user.is_authenticated else None,
+                    action=McpConnectionAuditAction.TOOL_APPROVED
+                    if approval.status == ConversationToolApprovalStatus.APPROVED
+                    else McpConnectionAuditAction.TOOL_DENIED,
+                    description=f"Tool {approval.tool_name} {approval.status} via portal.",
+                    metadata={
+                        "approval_id": str(approval.id),
+                        "conversation_id": str(conversation.id),
+                        "tool_name": approval.tool_name,
+                        "remote_tool_name": approval.remote_tool_name,
+                        "tool_call_id": approval.tool_call_id,
+                    },
+                )
+        except Exception:  # pragma: no cover - audit should never block
+            logger.exception("mcp_tool_approval_audit_failed approval=%s", approval.id)
+
+    if (
+        approval
+        and approval.status == ConversationToolApprovalStatus.APPROVED
+        and remember
+        and approval.connection_id
+        and approval.remote_tool_name
+    ):
+        allow_persist = False
+        if getattr(settings, "PORTAL_ALLOW_MCP_TOOL_PREFERENCES", False):
+            allow_persist = True
+        elif getattr(request, "user", None) and request.user.is_authenticated:
+            allow_persist = bool(
+                request.user.is_staff
+                or request.user.business_profiles.filter(id=conversation.business_profile_id).exists()
+            )
+        if allow_persist and conversation.agent_profile_id:
+            try:
+                operation_value = str((approval.metadata or {}).get("operation_type") or "").strip().lower()
+                operation_type = (
+                    operation_value
+                    if operation_value in {McpToolOperationType.READ, McpToolOperationType.WRITE, McpToolOperationType.UNKNOWN}
+                    else McpToolOperationType.UNKNOWN
+                )
+                with tenant_context(business_id):
+                    AgentMcpToolSetting.objects.update_or_create(
+                        agent_profile_id=conversation.agent_profile_id,
+                        connection_id=approval.connection_id,
+                        tool_name=approval.remote_tool_name,
+                        defaults={
+                            "approval_mode": McpConnectionApprovalMode.AUTO,
+                            "operation_type": operation_type,
+                        },
+                    )
+                preference_saved = True
+            except Exception:  # pragma: no cover - best effort only
+                logger.exception("portal_tool_preference_save_failed approval=%s", approval.id)
+
+    return JsonResponse(
+        {
+            "session": _session_to_dict(session),
+            "approval": _serialize_tool_approval(approval),
+            "preferenceSaved": preference_saved,
+        }
+    )
+
+
+@csrf_exempt
+@require_POST
+def portal_tool_history(request: HttpRequest) -> JsonResponse:
+    service = _service()
+    try:
+        payload = _parse_json_body(request)
+    except PortalValidationError as exc:
+        return _json_error("invalid_json", str(exc))
+
+    session_token = (payload.get("session_token") or payload.get("sessionToken") or "").strip()
+    if not session_token:
+        return _json_error("validation_error", "session_token is required.")
+
+    raw_limit = payload.get("limit")
+    try:
+        limit = int(raw_limit) if raw_limit is not None else 100
+    except (TypeError, ValueError):
+        limit = 100
+    limit = max(1, min(limit, 250))
+
+    try:
+        conversation = service.get_conversation(session_token=session_token, include_messages=True)
+        session = service.get_session_state(session_token=session_token, conversation=conversation)
+    except PortalNotFoundError as exc:
+        return _json_error("not_found", str(exc), status=404)
+
+    business_id = getattr(conversation, "business_profile_id", None)
+    approvals: list[dict[str, object]] = []
+    tool_events: list[dict[str, object]] = []
+
+    with tenant_context(business_id):
+        approvals_qs = (
+            ConversationToolApproval.objects.select_related("connection")
+            .filter(conversation=conversation)
+            .order_by("-requested_at")[:limit]
+        )
+        approvals = [
+            {
+                **_serialize_tool_approval(item),
+                "connection_name": getattr(getattr(item, "connection", None), "name", "") or "",
+            }
+            for item in approvals_qs
+        ]
+
+        seen: set[tuple[str, str]] = set()
+        for message in getattr(conversation, "messages", ()).all():
+            meta = message.metadata if isinstance(message.metadata, dict) else {}
+            raw_events = meta.get("tool_events") if isinstance(meta.get("tool_events"), list) else meta.get("toolEvents")
+            if not isinstance(raw_events, list):
+                continue
+            for entry in raw_events:
+                if not isinstance(entry, dict):
+                    continue
+                event_id = str(entry.get("event_id") or entry.get("eventId") or entry.get("tool_call_id") or "").strip()
+                phase = str(entry.get("phase") or "").strip().lower()
+                if not event_id or not phase:
+                    continue
+                key = (event_id, phase)
+                if key in seen:
+                    continue
+                seen.add(key)
+
+                remote = entry.get("remote") if isinstance(entry.get("remote"), dict) else {}
+                summary: dict[str, object] = {
+                    "event_id": event_id,
+                    "phase": phase,
+                    "status": str(entry.get("status") or "").strip(),
+                    "tool_name": str(entry.get("tool_name") or entry.get("toolName") or "").strip(),
+                    "connection_name": str(remote.get("connection_name") or "").strip(),
+                    "remote_tool_name": str(remote.get("remote_tool") or "").strip(),
+                    "duration_ms": entry.get("duration_ms") if entry.get("duration_ms") is not None else None,
+                    "message_id": str(message.id),
+                    "message_sent_at": message.sent_at.isoformat() if getattr(message, "sent_at", None) else None,
+                }
+                tool_events.append(summary)
+
+    tool_events.sort(key=lambda item: (item.get("message_sent_at") or "", item.get("event_id") or "", item.get("phase") or ""))
+    return JsonResponse(
+        {
+            "session": _session_to_dict(session),
+            "history": {
+                "approvals": approvals,
+                "toolEvents": tool_events[-limit:],
+            },
+        }
+    )
+
+
+@csrf_exempt
+@require_POST
 def stream_send(request: HttpRequest) -> StreamingHttpResponse:
     service = _service()
     try:
@@ -1648,7 +1893,7 @@ def stream_send(request: HttpRequest) -> StreamingHttpResponse:
         if not event_id:
             return
         phase = str(payload.get("phase") or "").strip().lower()
-        if phase not in {"started", "finished"}:
+        if phase not in TOOL_EVENT_PHASES:
             return
         key = (event_id, phase)
         if key in tool_event_keys:
@@ -1676,15 +1921,21 @@ def stream_send(request: HttpRequest) -> StreamingHttpResponse:
             return
         try:
             phase = str(event.get("phase") or "").strip().lower()
-            if phase not in {"started", "finished"}:
+            if phase not in TOOL_EVENT_PHASES:
                 return
             tool_name = str(event.get("tool_name") or "").strip()
             kind = str(event.get("kind") or "").strip() or "tool"
+            status_value = str(event.get("status") or "").strip()
+            if not status_value:
+                if phase == "started":
+                    status_value = "running"
+                elif phase == "approval_requested":
+                    status_value = "pending_approval"
             payload: dict[str, object] = {
                 "message_id": _current_message_id(),
                 "event_id": str(event.get("event_id") or ""),
                 "phase": phase,
-                "status": str(event.get("status") or "").strip() or ("running" if phase == "started" else ""),
+                "status": status_value,
                 "tool_call_id": str(event.get("tool_call_id") or ""),
                 "kind": kind,
                 "tool_name": tool_name,
@@ -1701,10 +1952,19 @@ def stream_send(request: HttpRequest) -> StreamingHttpResponse:
                     safe_remote["remote_tool"] = _clip_debug_text(remote_tool, limit=120)
                 if safe_remote:
                     payload["remote"] = safe_remote
+            approval_payload = event.get("approval") if isinstance(event.get("approval"), Mapping) else None
+            approval_id = event.get("approval_id") or event.get("approvalId")
+            if approval_payload:
+                payload["approval"] = _json_safe_debug(approval_payload, depth=4, string_limit=480, list_limit=24)
+                if not approval_id:
+                    approval_id = approval_payload.get("id")
+            if approval_id:
+                payload["approval_id"] = str(approval_id)
+
             input_payload = event.get("input")
-            if input_payload is not None and phase == "started":
+            if input_payload is not None and phase in {"started", "approval_requested", "finished", "approval_resolved"}:
                 payload["input"] = _json_safe_debug(input_payload, depth=4, string_limit=1200, list_limit=48)
-            if phase == "finished":
+            if phase in {"finished", "approval_resolved"}:
                 duration = event.get("duration_ms")
                 try:
                     payload["duration_ms"] = int(duration) if duration is not None else 0

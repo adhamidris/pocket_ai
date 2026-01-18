@@ -3070,6 +3070,8 @@ def chat_portal(request: HttpRequest, business_slug: str, agent_slug: str) -> Ht
             "stream_send": reverse("api:chat-stream-send"),
             "events": reverse("api:chat-events"),
             "csat": reverse("api:chat-csat"),
+            "tool_approval": reverse("api:chat-portal-tools-approve"),
+            "tool_history": reverse("api:chat-portal-tools-history"),
         },
     }
     response = render(request, "frontend/chat/portal.html", {"portal": portal_context})
