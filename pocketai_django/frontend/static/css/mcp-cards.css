@@ -416,3 +416,55 @@ details[data-tool-tab="output"] .mcp-tab[data-tool-tab="output"] {
   background: rgba(0,0,0,0.2);
   border: 1px solid rgba(255,255,255,0.08);
 }
+
+/* Segment-based interleaved structure */
+[data-message-segments] {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+[data-segment] {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  animation: segmentFadeIn 0.3s ease-out;
+}
+
+@keyframes segmentFadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+[data-segment-text] {
+  /* Text container inherits styling from parent */
+}
+
+[data-segment-tools] {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  width: 100%;
+}
+
+/* Smooth appearance of tool cards within segments */
+[data-segment-tools] .mcp-card {
+  animation: toolCardSlideIn 0.4s cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+
+@keyframes toolCardSlideIn {
+  from {
+    opacity: 0;
+    transform: translateY(12px) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}

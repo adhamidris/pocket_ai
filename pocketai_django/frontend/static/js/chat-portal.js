@@ -63,6 +63,14 @@ class ChatPortalClient {
     this.streamingTextEl = null;
     this.streamingBlocksEl = null;
     this.streamingToolsEl = null;
+    // Segment-based interleaved text and tool cards
+    this.streamingSegmentsContainer = null;
+    this.currentSegmentIndex = 0;
+    this.currentSegmentNode = null;
+    this.currentSegmentTextEl = null;
+    this.currentSegmentToolsEl = null;
+    this.segmentHasTools = false;
+    this.frozenBufferLength = 0; // Track how much of the buffer has been frozen into previous segments
     this.pendingMessageId = null;
     this.pendingMetadataVersion = 0;
     this.usingStateMachine = false;
@@ -835,7 +843,18 @@ class ChatPortalClient {
     }
     if (!wrapper) return;
 
-    const toolsContainer = this.ensureToolActivityContainer(wrapper);
+    // Use segment-based container for streaming messages
+    let toolsContainer;
+    const isStreamingMessage = wrapper === this.streamingMessageNode;
+
+    if (isStreamingMessage && this.streamingSegmentsContainer) {
+      // Get the appropriate segment's tools container
+      toolsContainer = this.getSegmentForToolEvent(eventId, messageId);
+    } else {
+      // For non-streaming messages, use the old approach
+      toolsContainer = this.ensureToolActivityContainer(wrapper);
+    }
+
     if (!toolsContainer) return;
 
     const messageKey = wrapper.dataset.messageId || "streaming";
@@ -849,9 +868,25 @@ class ChatPortalClient {
       if (!card) return;
       toolsContainer.appendChild(card);
       this.toolEventCards.set(cardKey, card);
+
+      // Mark that this segment now has tools and create new segment for future text
+      if (isStreamingMessage && this.currentSegmentToolsEl === toolsContainer) {
+        const currentSegmentHasText = this.currentSegmentTextEl && this.currentSegmentTextEl.innerHTML.trim();
+        if (currentSegmentHasText && !this.segmentHasTools) {
+          // Current segment has text and this is the first tool in it
+          // Create a new segment for future text
+          this.segmentHasTools = true;
+          this.advanceToNextSegment();
+        } else {
+          this.segmentHasTools = true;
+        }
+      }
     }
     this.updateToolEventCard(card, payload);
-    this.updateMessageToolsToggle(wrapper);
+
+    if (!isStreamingMessage) {
+      this.updateMessageToolsToggle(wrapper);
+    }
 
     if (this.elements.messages) {
       this.elements.messages.scrollTo({ top: this.elements.messages.scrollHeight, behavior: "smooth" });
@@ -2557,7 +2592,14 @@ class ChatPortalClient {
     if (this.streamingRewritePending) {
       this.streamingBuffer = "";
       this.streamingRawBuffer = "";
-      if (this.streamingFinalBodyEl) {
+      this.frozenBufferLength = 0;
+      // Clear all segments and restart with a fresh first segment
+      if (this.streamingSegmentsContainer) {
+        this.streamingSegmentsContainer.innerHTML = "";
+        this.currentSegmentIndex = 0;
+        this.segmentHasTools = false;
+        this.createNewSegment();
+      } else if (this.streamingFinalBodyEl) {
         this.streamingFinalBodyEl.innerHTML = "";
       }
       this.streamingRewritePending = false;
@@ -2635,27 +2677,23 @@ class ChatPortalClient {
       this.streamingStatusTextEl = statusText;
       this.streamingStatusDotEl = statusDot;
 
-      const toolsEl = document.createElement("div");
-      toolsEl.dataset.messageTools = "true";
-      toolsEl.className = "mt-2 mb-3 space-y-2";
-      this.streamingMessageBodyEl.appendChild(toolsEl);
-      this.streamingToolsEl = toolsEl;
+      // Create segments container for interleaved text and tool cards
+      const segmentsContainer = document.createElement("div");
+      segmentsContainer.dataset.messageSegments = "true";
+      segmentsContainer.className = "space-y-1";
+      this.streamingMessageBodyEl.appendChild(segmentsContainer);
+      this.streamingSegmentsContainer = segmentsContainer;
 
-      const finalEl = document.createElement("div");
-      finalEl.dataset.messageFinalBody = "true";
-      finalEl.className = "space-y-3";
-      const textEl = document.createElement("div");
-      textEl.dataset.streamingText = "true";
-      textEl.className = "space-y-2 leading-relaxed";
-      finalEl.appendChild(textEl);
-      const blocksEl = document.createElement("div");
-      blocksEl.dataset.streamingBlocks = "true";
-      finalEl.appendChild(blocksEl);
-      this.streamingMessageBodyEl.appendChild(finalEl);
-      this.streamingFinalBodyEl = finalEl;
-      this.streamingTextEl = textEl;
-      this.streamingBlocksEl = blocksEl;
-      this.streamingBlocksEl = blocksEl;
+      // Create the first segment
+      this.currentSegmentIndex = 0;
+      this.segmentHasTools = false;
+      this.createNewSegment();
+
+      // Backward compatibility: keep references for other code that might use them
+      this.streamingToolsEl = null; // Will be deprecated
+      this.streamingFinalBodyEl = null; // Will be deprecated
+      this.streamingTextEl = this.currentSegmentTextEl;
+      this.streamingBlocksEl = null;
       // Do not inject copy button yet - wait for stream to finish
     }
 
@@ -2679,6 +2717,80 @@ class ChatPortalClient {
     }
   }
 
+  createNewSegment() {
+    if (!this.streamingSegmentsContainer) return null;
+
+    const segment = document.createElement("div");
+    segment.dataset.segment = this.currentSegmentIndex.toString();
+    segment.dataset.segmentActive = "true";
+    segment.className = "space-y-2";
+
+    // Text container for this segment
+    const textEl = document.createElement("div");
+    textEl.dataset.segmentText = "true";
+    textEl.className = "space-y-2 leading-relaxed";
+    segment.appendChild(textEl);
+
+    // Tools container for this segment
+    const toolsEl = document.createElement("div");
+    toolsEl.dataset.segmentTools = "true";
+    toolsEl.className = "space-y-2 w-full flex flex-col items-start";
+    segment.appendChild(toolsEl);
+
+    this.streamingSegmentsContainer.appendChild(segment);
+    this.currentSegmentNode = segment;
+    this.currentSegmentTextEl = textEl;
+    this.currentSegmentToolsEl = toolsEl;
+    this.segmentHasTools = false;
+
+    // Update streamingTextEl for backward compatibility
+    this.streamingTextEl = textEl;
+
+    return segment;
+  }
+
+  advanceToNextSegment() {
+    // Freeze the current portion of the buffer into the current segment
+    if (this.currentSegmentTextEl && this.streamingBuffer) {
+      // Get the unfrozen portion of the buffer (for this segment)
+      const segmentBuffer = this.streamingBuffer.substring(this.frozenBufferLength);
+      const html = this.renderBufferToHtml(segmentBuffer);
+      this.currentSegmentTextEl.innerHTML = html;
+      // Mark this portion as frozen
+      this.frozenBufferLength = this.streamingBuffer.length;
+    }
+
+    // Mark current segment as no longer active
+    if (this.currentSegmentNode) {
+      delete this.currentSegmentNode.dataset.segmentActive;
+    }
+
+    // Create new segment (buffer stays intact)
+    this.currentSegmentIndex++;
+    this.createNewSegment();
+  }
+
+  getSegmentForToolEvent(eventId, messageId) {
+    // Strategy: Tool cards go into the segment that was active when the tool was called.
+    // After adding a tool to a segment with text, we create a new segment for future text.
+
+    const currentSegmentHasText = this.currentSegmentTextEl && this.currentSegmentTextEl.innerHTML.trim();
+
+    // Store the container we'll return (current segment's tools container)
+    const toolsContainer = this.currentSegmentToolsEl;
+
+    // If current segment has text and this is a new tool being added,
+    // create a new segment for future text (but return current segment's container)
+    if (currentSegmentHasText && !this.segmentHasTools) {
+      // After we return, the tool will be added to current segment
+      // But we want future text to go to a new segment
+      // We'll advance to next segment after the tool is added
+      // This is handled by setting segmentHasTools = true in handleToolEvent
+    }
+
+    return toolsContainer;
+  }
+
   finalizeStreamingMessage(finalText) {
     const incoming = (finalText || "").toString();
     if (incoming) {
@@ -2693,7 +2805,7 @@ class ChatPortalClient {
       return;
     }
 
-    if (!this.streamingFinalBodyEl) {
+    if (!this.streamingSegmentsContainer && !this.streamingFinalBodyEl) {
       this.appendMessage({ sender: "ai", body: text, sent_at: new Date().toISOString() });
     } else {
       // Stream finished using existing node - now we can show the copy button
@@ -3065,12 +3177,12 @@ class ChatPortalClient {
     this.updateTokenTotalDisplays(totalTokens);
   }
 
-  renderStreamingText() {
+  renderBufferToHtml(buffer) {
     let html = "";
-    if (this.streamingBuffer) {
+    if (buffer) {
       // Check for partial table at the end
-      const lines = this.streamingBuffer.split("\n");
-      
+      const lines = buffer.split("\n");
+
       let tableStartIndex = -1;
 
       // Scan backwards for contiguous table lines
@@ -3091,19 +3203,30 @@ class ChatPortalClient {
       if (tableStartIndex !== -1) {
         const safeLines = lines.slice(0, tableStartIndex);
         const tableLines = lines.slice(tableStartIndex);
-        
+
         // Only treat as table if we have at least one pipe-starting line
         if (tableLines.some(l => l.trim().startsWith('|'))) {
              const safeHtml = this.renderMarkdown(safeLines.join("\n"));
              const tableHtml = this.renderProvisionalTable(tableLines);
              html = safeHtml + tableHtml;
         } else {
-             html = this.renderMarkdown(this.streamingBuffer);
+             html = this.renderMarkdown(buffer);
         }
       } else {
-        html = this.renderMarkdown(this.streamingBuffer);
+        html = this.renderMarkdown(buffer);
       }
     }
+    return html;
+  }
+
+  renderStreamingTextToHtml() {
+    // Get the unfrozen portion of the buffer for the current segment
+    const currentSegmentBuffer = this.streamingBuffer.substring(this.frozenBufferLength);
+    return this.renderBufferToHtml(currentSegmentBuffer);
+  }
+
+  renderStreamingText() {
+    const html = this.renderStreamingTextToHtml();
 
     if (this.streamingTextEl) {
       this.streamingTextEl.innerHTML = html;
@@ -3244,6 +3367,14 @@ class ChatPortalClient {
     this.streamingTextEl = null;
     this.streamingBlocksEl = null;
     this.streamingToolsEl = null;
+    // Reset segment-based state
+    this.streamingSegmentsContainer = null;
+    this.currentSegmentIndex = 0;
+    this.currentSegmentNode = null;
+    this.currentSegmentTextEl = null;
+    this.currentSegmentToolsEl = null;
+    this.segmentHasTools = false;
+    this.frozenBufferLength = 0;
     if (removeNode) {
       this.pendingMessageId = null;
     }
