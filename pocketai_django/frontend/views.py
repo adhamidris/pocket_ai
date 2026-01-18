@@ -3014,7 +3014,8 @@ def chat_portal(request: HttpRequest, business_slug: str, agent_slug: str) -> Ht
     agent_name = agent.get("name") or "Pocket AI"
     agent_initials = initials_from_name(agent_name) or "AI"
     messages: list[dict[str, str]] = []
-    for message in raw_messages:
+    for idx, message in enumerate(raw_messages, start=1):
+        message_id = message.get("id") or f"msg_{idx}"
         sender = (message.get("sender") or "system").lower()
         if sender == "ai":
             author = agent_name
@@ -3027,6 +3028,7 @@ def chat_portal(request: HttpRequest, business_slug: str, agent_slug: str) -> Ht
             initials = "SYS"
         messages.append(
             {
+                "id": str(message_id),
                 "author": author,
                 "initials": initials,
                 "sender": sender,

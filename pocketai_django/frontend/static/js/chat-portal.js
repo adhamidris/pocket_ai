@@ -99,6 +99,7 @@ class ChatPortalClient {
       const bootstrapData = await this.bootstrapSession();
       if (!bootstrapData) return;
       this.renderExistingMessages();
+      this.hydrateMessageMetadata(this.bootstrapPayload ? this.bootstrapPayload.messages : []);
       this.setComposerAvailability(true);
       
       // Track this session in localStorage
@@ -176,6 +177,16 @@ class ChatPortalClient {
           console.warn('Failed to parse markdown for message', messageId, e);
         }
       }
+    });
+  }
+
+  hydrateMessageMetadata(messages) {
+    if (!Array.isArray(messages) || !messages.length) return;
+    messages.forEach((message) => {
+      if (!message || !message.id) return;
+      if (message.metadata && message.metadata.placeholder) return;
+      if (!message.metadata || typeof message.metadata !== "object") return;
+      this.updateMessageMetadata(message.id, message.metadata);
     });
   }
 
@@ -851,13 +862,16 @@ class ChatPortalClient {
   ensureToolActivityContainer(wrapper) {
     if (!wrapper) return null;
     const existing = wrapper.querySelector("[data-message-tools]");
-    if (existing) return existing;
+    if (existing) {
+      existing.className = "mt-2 mb-3 space-y-2 w-full flex flex-col items-start";
+      return existing;
+    }
     const body = wrapper.querySelector("[data-message-body]");
     if (!body) return null;
 
     const container = document.createElement("div");
     container.dataset.messageTools = "true";
-    container.className = "mt-2 mb-3 space-y-2";
+    container.className = "mt-2 mb-3 space-y-2 w-full flex flex-col items-start";
 
     const finalBody = body.querySelector("[data-message-final-body]");
     if (finalBody) {
@@ -875,16 +889,16 @@ class ChatPortalClient {
     const details = document.createElement("details");
     details.dataset.toolCard = "true";
     details.dataset.toolEventId = eventId;
-    details.className = "rounded-xl border border-border/50 bg-muted/20 px-3 py-2";
+    details.className = "rounded-xl border border-border/50 bg-muted/20 px-3 py-2 w-fit max-w-full inline-flex flex-col overflow-hidden";
 
     const summary = document.createElement("summary");
-    summary.className = "cursor-pointer select-none";
+    summary.className = "cursor-pointer select-none inline-flex flex-col items-stretch max-w-full";
 
     const header = document.createElement("div");
-    header.className = "flex items-start justify-between gap-3";
+    header.className = "flex items-start justify-between gap-3 max-w-full";
 
     const left = document.createElement("div");
-    left.className = "flex items-start gap-2 min-w-0";
+    left.className = "flex items-start gap-2 min-w-0 max-w-full";
 
     const iconWrap = document.createElement("div");
     iconWrap.className =
@@ -900,7 +914,7 @@ class ChatPortalClient {
     `;
 
     const textWrap = document.createElement("div");
-    textWrap.className = "min-w-0";
+    textWrap.className = "min-w-0 max-w-full";
 
     const titleRow = document.createElement("div");
     titleRow.className = "flex items-center gap-2 min-w-0";
@@ -966,18 +980,18 @@ class ChatPortalClient {
 
     const body = document.createElement("div");
     body.dataset.toolBody = "true";
-    body.className = "mt-3 space-y-3";
+    body.className = "mt-3 space-y-3 max-w-full min-w-0";
 
     const section = (label, preDataAttr) => {
       const wrap = document.createElement("div");
-      wrap.className = "space-y-1.5";
+      wrap.className = "space-y-1.5 max-w-full min-w-0";
       const titleEl = document.createElement("div");
       titleEl.className = "text-[11px] font-semibold text-muted-foreground/80 uppercase tracking-wide";
       titleEl.textContent = label;
       const pre = document.createElement("pre");
       pre.dataset[preDataAttr] = "true";
       pre.className =
-        "overflow-auto whitespace-pre-wrap break-words text-[11px] leading-relaxed rounded-lg border border-border/40 bg-background/50 p-3";
+        "max-w-full overflow-x-auto whitespace-pre-wrap break-all text-[11px] leading-relaxed rounded-lg border border-border/40 bg-background/50 p-3";
       wrap.appendChild(titleEl);
       wrap.appendChild(pre);
       return wrap;
@@ -1001,19 +1015,18 @@ class ChatPortalClient {
 
     const connectionName = remote && remote.connection_name ? remote.connection_name.toString() : "";
     const remoteTool = remote && remote.remote_tool ? remote.remote_tool.toString() : "";
+    const toolNameFallback = (payload.tool_name || payload.toolName || "").toString().trim();
+    const displayTool = remoteTool || toolNameFallback || "tool";
 
     const titleText = connectionName || "External tool";
-    const subtitleText = remoteTool ? `Calling ${remoteTool}` : "Calling tool…";
+    const subtitleText = `Calling ${displayTool}`;
 
     const titleEl = card.querySelector("[data-tool-title]");
     if (titleEl) titleEl.textContent = titleText;
 
     const subtitleEl = card.querySelector("[data-tool-subtitle]");
     if (subtitleEl) {
-      const output = payload.output && typeof payload.output === "object" ? payload.output : null;
-      const err = output && (output.error || output.error_code || output.hint) ? (output.error || output.hint || output.error_code) : null;
-      const failed = statusRaw && statusRaw !== "running" && statusRaw !== "ok" && statusRaw !== "success";
-      subtitleEl.textContent = failed && err ? `Failed: ${this.clipText(err.toString(), 84)}` : subtitleText;
+      subtitleEl.textContent = subtitleText;
     }
 
     const kindEl = card.querySelector("[data-tool-kind]");
@@ -1809,10 +1822,51 @@ class ChatPortalClient {
       this.renderResponseBlocks(body, metaPayload.response_blocks);
     }
 
+    const storedToolEvents = Array.isArray(metaPayload.tool_events)
+      ? metaPayload.tool_events
+      : Array.isArray(metaPayload.toolEvents)
+      ? metaPayload.toolEvents
+      : null;
+    if (storedToolEvents && storedToolEvents.length) {
+      this.renderStoredToolEvents(wrapper, storedToolEvents, messageId);
+    }
+
     if (Object.prototype.hasOwnProperty.call(metaPayload, "debug_tools") || Object.prototype.hasOwnProperty.call(metaPayload, "debugTools")) {
       const debugTools = metaPayload.debug_tools || metaPayload.debugTools || null;
       this.updateDebugToolsPanel(wrapper, debugTools);
     }
+  }
+
+  renderStoredToolEvents(wrapper, events, messageId) {
+    if (!wrapper || !Array.isArray(events) || !events.length) return;
+    const toolsContainer = this.ensureToolActivityContainer(wrapper);
+    if (!toolsContainer) return;
+    const messageKey = wrapper.dataset.messageId || messageId || "streaming";
+    events.forEach((rawEvent) => {
+      if (!rawEvent || typeof rawEvent !== "object") return;
+      const eventId = (rawEvent.event_id || rawEvent.eventId || rawEvent.tool_call_id || rawEvent.toolCallId || "")
+        .toString()
+        .trim();
+      if (!eventId) return;
+      const phase = (rawEvent.phase || "").toString().trim().toLowerCase();
+      if (!phase) return;
+      const payload = { ...rawEvent };
+      if (!payload.message_id && messageId) {
+        payload.message_id = messageId;
+      }
+      const cardKey = `${messageKey}:${eventId}`;
+      let card = this.toolEventCards.get(cardKey);
+      if (!card) {
+        card = toolsContainer.querySelector(`[data-tool-event-id="${eventId}"]`);
+      }
+      if (!card) {
+        card = this.buildToolEventCard(payload);
+        if (!card) return;
+        toolsContainer.appendChild(card);
+        this.toolEventCards.set(cardKey, card);
+      }
+      this.updateToolEventCard(card, payload);
+    });
   }
 
   formatTokenCount(count) {
@@ -2382,6 +2436,33 @@ class ChatPortalClient {
       }
       details[data-tool-card] > summary::-webkit-details-marker {
         display: none;
+      }
+      details[data-tool-card] {
+        display: inline-flex;
+        width: fit-content;
+        max-width: 100%;
+      }
+      details[data-tool-card] > summary {
+        display: inline-flex;
+        flex-direction: column;
+        max-width: 100%;
+      }
+      details[data-tool-card] [data-tool-body] {
+        max-width: 100%;
+        min-width: 0;
+      }
+      details[data-tool-card] pre {
+        max-width: 100%;
+        overflow-x: auto;
+        white-space: pre-wrap;
+        overflow-wrap: anywhere;
+        word-break: break-word;
+      }
+      details[data-tool-card] [data-tool-status] {
+        min-width: 76px;
+        justify-content: center;
+        text-align: center;
+        display: inline-flex;
       }
       details[data-tool-card][open] [data-tool-chevron] {
         transform: rotate(180deg);

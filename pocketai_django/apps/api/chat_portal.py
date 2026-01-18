@@ -102,6 +102,48 @@ def _portal_debug_tool_trace_enabled(request: HttpRequest, payload: Mapping[str,
     return True
 
 
+def _portal_tool_event_history_limit() -> int:
+    raw_limit = getattr(settings, "PORTAL_TOOL_EVENT_HISTORY_LIMIT", 40)
+    try:
+        limit = int(raw_limit)
+    except (TypeError, ValueError):
+        limit = 40
+    return max(0, limit)
+
+
+def _normalize_tool_event_history(
+    events: Iterable[Mapping[str, object]] | None,
+    *,
+    message_id: uuid.UUID | None = None,
+    limit: int | None = None,
+) -> list[dict[str, object]]:
+    if not events:
+        return []
+    normalized: list[dict[str, object]] = []
+    seen: set[tuple[str, str]] = set()
+    message_id_value = str(message_id) if message_id else ""
+    for event in events:
+        if not isinstance(event, Mapping):
+            continue
+        event_id = str(event.get("event_id") or event.get("eventId") or "").strip()
+        if not event_id:
+            continue
+        phase = str(event.get("phase") or "").strip().lower()
+        if phase not in {"started", "finished"}:
+            continue
+        key = (event_id, phase)
+        if key in seen:
+            continue
+        seen.add(key)
+        payload = dict(event)
+        if message_id_value and not str(payload.get("message_id") or "").strip():
+            payload["message_id"] = message_id_value
+        normalized.append(payload)
+    if limit and len(normalized) > limit:
+        normalized = normalized[-limit:]
+    return normalized
+
+
 def _clip_debug_text(value: object, *, limit: int = 480) -> str:
     text = str(value or "")
     text = redact_free_text(text).strip()
@@ -1355,6 +1397,9 @@ def stream_send(request: HttpRequest) -> StreamingHttpResponse:
     reserved_message_id = uuid.uuid4() if state_machine_enabled else None
     if reserved_message_id:
         plan_holder["pending_message_id"] = reserved_message_id
+    tool_event_limit = _portal_tool_event_history_limit()
+    tool_events: list[dict[str, object]] = []
+    tool_event_keys: set[tuple[str, str]] = set()
     spinner_state = {"text": None, "pending": True}
     spinner_phase_state = {
         "searching": {"active": False, "index": 0, "label": None, "meta": None, "timer": None},
@@ -1594,6 +1639,33 @@ def stream_send(request: HttpRequest) -> StreamingHttpResponse:
             elif code in {"stream_complete", "complete"}:
                 _emit_spinner_status("", pending=False, fallback=None, allow_empty=True)
 
+    def _record_tool_event(payload: Mapping[str, object]) -> None:
+        if tool_event_limit <= 0:
+            return
+        if not payload:
+            return
+        event_id = str(payload.get("event_id") or payload.get("eventId") or "").strip()
+        if not event_id:
+            return
+        phase = str(payload.get("phase") or "").strip().lower()
+        if phase not in {"started", "finished"}:
+            return
+        key = (event_id, phase)
+        if key in tool_event_keys:
+            return
+        tool_event_keys.add(key)
+        tool_events.append(dict(payload))
+        if tool_event_limit and len(tool_events) > tool_event_limit:
+            tool_events[:] = tool_events[-tool_event_limit:]
+            tool_event_keys.clear()
+            for entry in tool_events:
+                if not isinstance(entry, dict):
+                    continue
+                dedupe_id = str(entry.get("event_id") or entry.get("eventId") or "").strip()
+                dedupe_phase = str(entry.get("phase") or "").strip().lower()
+                if dedupe_id and dedupe_phase:
+                    tool_event_keys.add((dedupe_id, dedupe_phase))
+
     def on_tool_event(event: Mapping[str, object] | None) -> None:
         """
         Stream external tool lifecycle events to the portal UI.
@@ -1659,6 +1731,7 @@ def stream_send(request: HttpRequest) -> StreamingHttpResponse:
                                 output_copy.pop("remote", None)
                         scrubbed_output = output_copy
                     payload["output"] = _json_safe_debug(scrubbed_output, depth=5, string_limit=2400, list_limit=64)
+            _record_tool_event(payload)
             stream_queue.put({"type": "toolEvent", "payload": payload})
         except Exception:  # pragma: no cover - defensive
             logger.exception("portal tool event serialization failed")
@@ -1889,6 +1962,13 @@ def stream_send(request: HttpRequest) -> StreamingHttpResponse:
                     message_metadata["answer_confidence"] = base_plan.diagnostics.get("answer_confidence")
                 if base_plan.ingestion_warnings:
                     message_metadata["ingestion_warnings"] = [dict(item) for item in base_plan.ingestion_warnings]
+                tool_events_payload = _normalize_tool_event_history(
+                    tool_events,
+                    message_id=plan_holder.get("pending_message_id"),
+                    limit=tool_event_limit,
+                )
+                if tool_events_payload:
+                    message_metadata["tool_events"] = tool_events_payload
                 with TRACER.start_as_current_span("portal.finalize.persist") as persist_span:
                     ai_message = service.append_message(
                         session_token=session_token,
@@ -1919,6 +1999,12 @@ def stream_send(request: HttpRequest) -> StreamingHttpResponse:
                     "session_status": session_state.status,
                     "metadata_version": plan_holder.get("metadata_version", 1),
                 }
+                if tool_events_payload:
+                    final_payload["tool_events"] = _normalize_tool_event_history(
+                        tool_events,
+                        message_id=ai_message.id,
+                        limit=tool_event_limit,
+                    )
                 if base_plan.diagnostics:
                     answer_confidence = base_plan.diagnostics.get("answer_confidence")
                     if answer_confidence is not None:
