@@ -4,6 +4,8 @@ import json
 import logging
 import time
 from dataclasses import dataclass
+from datetime import datetime, timezone
+from email.utils import parsedate_to_datetime
 from typing import Any, Iterable, Iterator, Mapping
 from urllib.parse import urljoin
 
@@ -25,6 +27,108 @@ class McpRemoteTransportError(McpRemoteError):
 
 class McpRemoteProtocolError(McpRemoteError):
     pass
+
+
+class McpRemoteStreamableNotSupported(McpRemoteTransportError):
+    """Raised when a server rejects Streamable HTTP initialize (legacy transport expected)."""
+
+
+class McpRemoteHttpStatusError(McpRemoteTransportError):
+    def __init__(self, message: str, *, status_code: int | None = None, retry_after: str | None = None) -> None:
+        super().__init__(message)
+        self.status_code = status_code
+        self.retry_after = retry_after
+
+
+def _http_reason_phrase(response: httpx.Response) -> str:
+    try:
+        phrase = response.reason_phrase
+    except Exception:
+        phrase = ""
+    return (phrase or "").strip()
+
+
+def _raise_transport_for_http_status(exc: httpx.HTTPStatusError, *, action: str) -> None:
+    response = exc.response
+    status_code = response.status_code if response is not None else None
+    phrase = _http_reason_phrase(response) if response is not None else ""
+    retry_after = (response.headers.get("Retry-After") if response is not None else None) or None
+
+    details = f"HTTP {status_code}" if status_code is not None else "HTTP error"
+    if phrase:
+        details = f"{details} {phrase}"
+
+    message = f"MCP request failed during {action} ({details})."
+    if retry_after:
+        message = f"{message} Retry-After: {retry_after}."
+
+    raise McpRemoteHttpStatusError(message, status_code=status_code, retry_after=retry_after) from exc
+
+
+def _request_with_transport_errors(action: str, fn):
+    try:
+        return fn()
+    except httpx.HTTPStatusError as exc:
+        _raise_transport_for_http_status(exc, action=action)
+    except httpx.TimeoutException as exc:
+        raise McpRemoteTransportError(f"MCP request timed out during {action}.") from exc
+    except httpx.RequestError as exc:
+        raise McpRemoteTransportError(f"MCP network error during {action}: {exc.__class__.__name__}.") from exc
+
+
+def _parse_retry_after_seconds(value: str | None) -> float | None:
+    if not value:
+        return None
+    raw = value.strip()
+    if not raw:
+        return None
+    if raw.isdigit():
+        return float(raw)
+    try:
+        when = parsedate_to_datetime(raw)
+    except Exception:
+        return None
+    if when.tzinfo is None:
+        when = when.replace(tzinfo=timezone.utc)
+    now = datetime.now(timezone.utc)
+    return max(0.0, (when - now).total_seconds())
+
+
+def _post_jsonrpc_with_retry_after(
+    *,
+    client: httpx.Client,
+    url: str,
+    payload: dict[str, Any],
+    headers: Mapping[str, str] | None,
+    action: str,
+    max_retries: int = 2,
+    max_auto_wait_s: float = 2.0,
+) -> httpx.Response:
+    """
+    POST a JSON-RPC payload and optionally auto-retry small 429 Retry-After windows.
+
+    Some hosted MCP servers rate-limit rapid sequential requests (initialize → initialized → tools/list).
+    """
+
+    attempt = 0
+    while True:
+        resp = _request_with_transport_errors(action, lambda: client.post(url, json=payload, headers=dict(headers or {})))
+        if resp.status_code != 429:
+            return resp
+
+        retry_after_value = resp.headers.get("Retry-After")
+        wait_s = _parse_retry_after_seconds(retry_after_value)
+        if wait_s is None or wait_s <= 0:
+            return resp
+        if wait_s > max_auto_wait_s or attempt >= max_retries:
+            return resp
+
+        try:
+            resp.close()
+        except Exception:
+            pass
+        time.sleep(wait_s)
+        attempt += 1
 
 
 @dataclass(frozen=True)
@@ -174,10 +278,19 @@ def _streamable_http_initialize(
     post_headers["Accept"] = "application/json, text/event-stream"
     post_headers["Content-Type"] = "application/json"
 
-    response = client.post(endpoint_url, json=init_payload, headers=post_headers)
+    response = _post_jsonrpc_with_retry_after(
+        client=client,
+        url=endpoint_url,
+        payload=init_payload,
+        headers=post_headers,
+        action="streamable_http.initialize",
+    )
     if response.status_code in {400, 404, 405}:
-        raise McpRemoteTransportError(f"Streamable HTTP initialize rejected ({response.status_code}).")
-    response.raise_for_status()
+        raise McpRemoteStreamableNotSupported(f"Streamable HTTP initialize rejected ({response.status_code}).")
+    try:
+        response.raise_for_status()
+    except httpx.HTTPStatusError as exc:
+        _raise_transport_for_http_status(exc, action="streamable_http.initialize")
 
     session_id = response.headers.get("Mcp-Session-Id") or response.headers.get("MCP-Session-Id")
     parsed = _read_json_or_sse_response(response, expect_id=init_id)
@@ -202,9 +315,18 @@ def _streamable_http_initialize(
     init_notif_headers = _headers_with_protocol(headers, protocol_version=negotiated_version, session_id=session_id)
     init_notif_headers["Accept"] = "application/json, text/event-stream"
     init_notif_headers["Content-Type"] = "application/json"
-    notif_resp = client.post(endpoint_url, json=initialized_payload, headers=init_notif_headers)
+    notif_resp = _post_jsonrpc_with_retry_after(
+        client=client,
+        url=endpoint_url,
+        payload=initialized_payload,
+        headers=init_notif_headers,
+        action="streamable_http.initialized",
+    )
     if notif_resp.status_code not in {200, 202, 204}:
-        notif_resp.raise_for_status()
+        try:
+            notif_resp.raise_for_status()
+        except httpx.HTTPStatusError as exc:
+            _raise_transport_for_http_status(exc, action="streamable_http.initialized")
 
     return McpRemoteSession(
         transport="streamable_http",
@@ -221,11 +343,27 @@ def _streamable_http_list_tools(
     client: httpx.Client,
     session: McpRemoteSession,
     headers: Mapping[str, str] | None,
+    max_pages: int = 50,
 ) -> list[McpRemoteTool]:
+    """
+    Fetch tools from an MCP server using cursor-based pagination.
+
+    Args:
+        client: HTTP client instance
+        session: Active MCP session
+        headers: Optional auth/custom headers
+        max_pages: Safety limit to prevent infinite pagination (default 50)
+
+    Returns:
+        List of discovered tools
+    """
     tools: list[McpRemoteTool] = []
     cursor: str | None = None
     request_id = 2
-    while True:
+    page_count = 0
+
+    while page_count < max_pages:
+        page_count += 1
         params: dict[str, Any] = {}
         if cursor:
             params["cursor"] = cursor
@@ -233,8 +371,17 @@ def _streamable_http_list_tools(
         call_headers = _headers_with_protocol(headers, protocol_version=session.protocol_version, session_id=session.session_id)
         call_headers["Accept"] = "application/json, text/event-stream"
         call_headers["Content-Type"] = "application/json"
-        resp = client.post(session.endpoint_url, json=payload, headers=call_headers)
-        resp.raise_for_status()
+        resp = _post_jsonrpc_with_retry_after(
+            client=client,
+            url=session.endpoint_url,
+            payload=payload,
+            headers=call_headers,
+            action="streamable_http.tools_list",
+        )
+        try:
+            resp.raise_for_status()
+        except httpx.HTTPStatusError as exc:
+            _raise_transport_for_http_status(exc, action="streamable_http.tools_list")
         parsed = _read_json_or_sse_response(resp, expect_id=request_id)
         if "error" in parsed:
             raise McpRemoteProtocolError(f"MCP tools/list error: {parsed.get('error')}")
@@ -260,6 +407,17 @@ def _streamable_http_list_tools(
             cursor = next_cursor.strip()
             request_id += 1
             continue
+        # No more pages - exit the loop
+        break
+
+    if page_count >= max_pages:
+        logger.warning(
+            "mcp_tools_list_pagination_limit url=%s pages=%s tools=%s",
+            session.endpoint_url,
+            page_count,
+            len(tools),
+        )
+
     return tools
 
 
@@ -271,8 +429,20 @@ def _legacy_sse_bootstrap(
 ) -> tuple[httpx.Response, Iterator[dict[str, str]], str]:
     stream_headers = dict(headers or {})
     stream_headers["Accept"] = "text/event-stream"
-    sse_response = client.stream("GET", sse_url, headers=stream_headers).__enter__()
-    sse_response.raise_for_status()
+    try:
+        sse_response = client.stream("GET", sse_url, headers=stream_headers).__enter__()
+    except httpx.TimeoutException as exc:
+        raise McpRemoteTransportError("MCP request timed out during legacy_sse.bootstrap.") from exc
+    except httpx.RequestError as exc:
+        raise McpRemoteTransportError(f"MCP network error during legacy_sse.bootstrap: {exc.__class__.__name__}.") from exc
+    try:
+        sse_response.raise_for_status()
+    except httpx.HTTPStatusError as exc:
+        try:
+            sse_response.close()
+        except Exception:
+            pass
+        _raise_transport_for_http_status(exc, action="legacy_sse.bootstrap")
     events = _iter_sse_events(sse_response.iter_lines())
     for event in events:
         if (event.get("event") or "").strip() != "endpoint":
@@ -326,8 +496,14 @@ def _legacy_sse_initialize_and_list_tools(
         )
         post_headers = dict(headers or {})
         post_headers["Content-Type"] = "application/json"
-        init_resp = client.post(message_url, json=init_payload, headers=post_headers)
-        init_resp.raise_for_status()
+        init_resp = _request_with_transport_errors(
+            "legacy_sse.initialize",
+            lambda: client.post(message_url, json=init_payload, headers=post_headers),
+        )
+        try:
+            init_resp.raise_for_status()
+        except httpx.HTTPStatusError as exc:
+            _raise_transport_for_http_status(exc, action="legacy_sse.initialize")
 
         parsed = _legacy_sse_wait_for_response(events, expect_id=init_id)
         if "error" in parsed:
@@ -347,13 +523,25 @@ def _legacy_sse_initialize_and_list_tools(
             )
 
         initialized_payload = _jsonrpc_request("notifications/initialized", request_id=None)
-        notif_resp = client.post(message_url, json=initialized_payload, headers=post_headers)
-        notif_resp.raise_for_status()
+        notif_resp = _request_with_transport_errors(
+            "legacy_sse.initialized",
+            lambda: client.post(message_url, json=initialized_payload, headers=post_headers),
+        )
+        try:
+            notif_resp.raise_for_status()
+        except httpx.HTTPStatusError as exc:
+            _raise_transport_for_http_status(exc, action="legacy_sse.initialized")
 
         list_id = 2
         list_payload = _jsonrpc_request("tools/list", request_id=list_id, params={})
-        list_resp = client.post(message_url, json=list_payload, headers=post_headers)
-        list_resp.raise_for_status()
+        list_resp = _request_with_transport_errors(
+            "legacy_sse.tools_list",
+            lambda: client.post(message_url, json=list_payload, headers=post_headers),
+        )
+        try:
+            list_resp.raise_for_status()
+        except httpx.HTTPStatusError as exc:
+            _raise_transport_for_http_status(exc, action="legacy_sse.tools_list")
 
         list_parsed = _legacy_sse_wait_for_response(events, expect_id=list_id)
         if "error" in list_parsed:
@@ -417,7 +605,7 @@ def test_mcp_server(
                 protocol_version=protocol_version,
             )
             tools = _streamable_http_list_tools(client=client, session=session, headers=headers)
-        except McpRemoteTransportError:
+        except McpRemoteStreamableNotSupported:
             session, tools = _legacy_sse_initialize_and_list_tools(
                 client=client,
                 sse_url=server_url,
@@ -488,10 +676,19 @@ def call_mcp_tool_streamable_http(
             call_headers = _headers_with_protocol(headers, protocol_version=session.protocol_version, session_id=session.session_id)
             call_headers["Accept"] = "application/json, text/event-stream"
             call_headers["Content-Type"] = "application/json"
-            resp = client.post(session.endpoint_url, json=payload, headers=call_headers)
-            resp.raise_for_status()
+            resp = _post_jsonrpc_with_retry_after(
+                client=client,
+                url=session.endpoint_url,
+                payload=payload,
+                headers=call_headers,
+                action="streamable_http.tools_call",
+            )
+            try:
+                resp.raise_for_status()
+            except httpx.HTTPStatusError as exc:
+                _raise_transport_for_http_status(exc, action="streamable_http.tools_call")
             parsed = _read_json_or_sse_response(resp, expect_id=request_id)
-        except McpRemoteTransportError:
+        except McpRemoteStreamableNotSupported:
             # Legacy HTTP+SSE: open stream, POST messages to endpoint supplied by server.
             sse_response, events, message_url = _legacy_sse_bootstrap(client=client, sse_url=endpoint_url, headers=headers)
             try:
@@ -507,19 +704,41 @@ def call_mcp_tool_streamable_http(
                 )
                 post_headers = dict(headers or {})
                 post_headers["Content-Type"] = "application/json"
-                init_resp = client.post(message_url, json=init_payload, headers=post_headers)
-                init_resp.raise_for_status()
+                init_resp = _request_with_transport_errors(
+                    "legacy_sse.initialize",
+                    lambda: client.post(message_url, json=init_payload, headers=post_headers),
+                )
+                try:
+                    init_resp.raise_for_status()
+                except httpx.HTTPStatusError as exc:
+                    _raise_transport_for_http_status(exc, action="legacy_sse.initialize")
                 _legacy_sse_wait_for_response(events, expect_id=init_id)
-                notif_resp = client.post(message_url, json=_jsonrpc_request("notifications/initialized", request_id=None), headers=post_headers)
-                notif_resp.raise_for_status()
+                notif_resp = _request_with_transport_errors(
+                    "legacy_sse.initialized",
+                    lambda: client.post(
+                        message_url,
+                        json=_jsonrpc_request("notifications/initialized", request_id=None),
+                        headers=post_headers,
+                    ),
+                )
+                try:
+                    notif_resp.raise_for_status()
+                except httpx.HTTPStatusError as exc:
+                    _raise_transport_for_http_status(exc, action="legacy_sse.initialized")
                 request_id = 100
                 payload = _jsonrpc_request(
                     "tools/call",
                     request_id=request_id,
                     params={"name": tool_name, "arguments": arguments or {}},
                 )
-                call_resp = client.post(message_url, json=payload, headers=post_headers)
-                call_resp.raise_for_status()
+                call_resp = _request_with_transport_errors(
+                    "legacy_sse.tools_call",
+                    lambda: client.post(message_url, json=payload, headers=post_headers),
+                )
+                try:
+                    call_resp.raise_for_status()
+                except httpx.HTTPStatusError as exc:
+                    _raise_transport_for_http_status(exc, action="legacy_sse.tools_call")
                 parsed = _legacy_sse_wait_for_response(events, expect_id=request_id)
             finally:
                 try:

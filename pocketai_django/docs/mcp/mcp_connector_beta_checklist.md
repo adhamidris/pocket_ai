@@ -2,13 +2,15 @@
 
 ## Dashboard
 - Navigate to `Dashboard → MCP Connector (Beta)` and confirm the tab loads.
-- Create a connection (manual + marketplace template) and confirm it appears in the list.
+- Create a connection (manual + marketplace, e.g. GitHub) and confirm it appears in the list.
 - Toggle `Enabled` off/on and confirm state persists after refresh.
 
 ## Connection Test
 - Click **Test** on a connection and confirm:
+  - The UI shows a loading state and prevents double-click spam while the test runs.
   - Success: tool count is populated and the connection shows “Tested”.
   - Failure: error message is shown and stored (without leaking secrets).
+  - Rate limit (429): UI shows a cooldown/countdown before allowing another test.
 
 ## Agent Assignment
 - Open **Agents** for a connection and opt an agent out, then refresh and confirm:

@@ -61,29 +61,30 @@
           </div>
         </div>
 
-        <div class="space-y-4" data-tab-panel="connections">
-          <div class="rounded-xl border border-border/70 bg-background/60 p-4">
-            <div class="flex items-center justify-between gap-3">
-              <div>
-                <div class="text-sm font-semibold text-foreground">Your MCP connections</div>
-                <div class="text-xs text-muted-foreground">Enable/disable connections, test connectivity, and manage agent opt-outs.</div>
-              </div>
-              <div class="text-xs text-muted-foreground" data-mcp-count>—</div>
-            </div>
-          </div>
-
-          <div class="space-y-3" data-mcp-connection-list>
-            <div class="rounded-xl border border-border/60 bg-muted/30 p-6 text-sm text-muted-foreground">Loading MCP connections…</div>
-          </div>
-        </div>
+	        <div class="space-y-4" data-tab-panel="connections">
+	          <div class="rounded-xl border border-border/70 bg-background/60 p-4">
+	            <div class="flex items-center justify-between gap-3">
+	              <div>
+	                <div class="text-sm font-semibold text-foreground">Your MCP connections</div>
+	                <div class="text-xs text-muted-foreground">Enable/disable connections, test connectivity, and manage agent opt-outs.</div>
+	              </div>
+	              <div class="text-xs text-muted-foreground" data-mcp-count>—</div>
+	            </div>
+	          </div>
+	          <div class="rounded-xl border border-border/60 bg-muted/30 p-4 text-sm hidden" data-mcp-flash role="status" aria-live="polite"></div>
+	
+	          <div class="space-y-3" data-mcp-connection-list>
+	            <div class="rounded-xl border border-border/60 bg-muted/30 p-6 text-sm text-muted-foreground">Loading MCP connections…</div>
+	          </div>
+	        </div>
 
         <div class="space-y-4 hidden" data-tab-panel="marketplace">
           <div class="rounded-xl border border-border/70 bg-background/60 p-4">
             <div class="flex items-center justify-between gap-3">
-              <div>
-                <div class="text-sm font-semibold text-foreground">Marketplace</div>
-                <div class="text-xs text-muted-foreground">Curated MCP server templates. Provide your server URL to connect.</div>
-              </div>
+                <div>
+                  <div class="text-sm font-semibold text-foreground">Marketplace</div>
+                  <div class="text-xs text-muted-foreground">Curated MCP servers and templates. For templates, paste your deployment URL to connect.</div>
+                </div>
               <div class="text-xs text-muted-foreground" data-mcp-marketplace-count>—</div>
             </div>
           </div>
@@ -157,12 +158,12 @@
 
       <div class="rounded-lg border border-border/60 bg-muted/30 p-3 text-xs text-muted-foreground hidden" data-mcp-modal-error></div>
       <div class="flex items-center justify-between gap-3 pt-1">
-        <button type="button" class="inline-flex items-center gap-2 rounded-md border border-input bg-background px-3 py-2 text-xs font-medium hover:bg-accent hover:text-accent-foreground" data-mcp-modal-cancel>Cancel</button>
-        <div class="flex items-center gap-2">
-          <button type="button" class="inline-flex items-center gap-2 rounded-md border border-input bg-background px-3 py-2 text-xs font-medium hover:bg-accent hover:text-accent-foreground" data-mcp-modal-test>Test connection</button>
-          <button type="button" class="inline-flex items-center gap-2 rounded-md bg-primary text-primary-foreground px-4 py-2 text-xs font-semibold hover:bg-primary/90" data-mcp-modal-save>Save</button>
-        </div>
-      </div>
+	        <button type="button" class="inline-flex items-center gap-2 rounded-md border border-input bg-background px-3 py-2 text-xs font-medium hover:bg-accent hover:text-accent-foreground" data-mcp-modal-cancel>Cancel</button>
+	        <div class="flex items-center gap-2">
+	          <button type="button" class="inline-flex items-center gap-2 rounded-md border border-input bg-background px-3 py-2 text-xs font-medium hover:bg-accent hover:text-accent-foreground disabled:opacity-50 disabled:cursor-not-allowed disabled:pointer-events-none" data-mcp-modal-test>Test connection</button>
+	          <button type="button" class="inline-flex items-center gap-2 rounded-md bg-primary text-primary-foreground px-4 py-2 text-xs font-semibold hover:bg-primary/90 disabled:opacity-50 disabled:cursor-not-allowed disabled:pointer-events-none" data-mcp-modal-save>Save</button>
+	        </div>
+	      </div>
     </div>
   </div>
 </div>
@@ -240,10 +241,11 @@
     var tabRoot = document.querySelector("[data-mcp-tabs]");
     var connectionsPanel = document.querySelector('[data-tab-panel="connections"]');
     var marketplacePanel = document.querySelector('[data-tab-panel="marketplace"]');
-    var listEl = document.querySelector("[data-mcp-connection-list]");
-    var countEl = document.querySelector("[data-mcp-count]");
-    var marketplaceGrid = document.querySelector("[data-mcp-marketplace-grid]");
-    var marketplaceCount = document.querySelector("[data-mcp-marketplace-count]");
+	    var listEl = document.querySelector("[data-mcp-connection-list]");
+	    var countEl = document.querySelector("[data-mcp-count]");
+	    var flashEl = document.querySelector("[data-mcp-flash]");
+	    var marketplaceGrid = document.querySelector("[data-mcp-marketplace-grid]");
+	    var marketplaceCount = document.querySelector("[data-mcp-marketplace-count]");
 
     var modalWrap = document.querySelector("[data-mcp-modal]");
     var modalOverlay = document.querySelector("[data-mcp-modal-overlay]");
@@ -280,10 +282,16 @@
     var openMarketplaceButtons = document.querySelectorAll("[data-mcp-open-marketplace]");
     var refreshButton = document.querySelector("[data-mcp-refresh]");
 
-    var editingConnectionId = null;
-    var currentSourceType = "manual";
-    var currentMarketplaceKey = "";
-    var activeAgentsConnection = null;
+	    var editingConnectionId = null;
+	    var currentSourceType = "manual";
+	    var currentMarketplaceKey = "";
+	    var activeAgentsConnection = null;
+	    var activeTest = null;
+	    var testCooldowns = {};
+	    var testRateLimitCounts = {};
+	    var testRateLimitLastAt = {};
+	    var cooldownInterval = null;
+	    var pendingTestClicks = {};  // Track pending clicks to prevent race conditions
 
     function setTab(tab) {
       var connectionsBtn = document.querySelector('[data-tab-button="connections"]');
@@ -338,12 +346,290 @@
       }
     }
 
-    function setModalError(message) {
-      if (!modalError) return;
-      var text = (message || "").toString().trim();
-      modalError.textContent = text;
-      modalError.classList.toggle("hidden", !text);
-    }
+	    function setModalError(message) {
+	      if (!modalError) return;
+	      var text = (message || "").toString().trim();
+	      modalError.textContent = text;
+	      modalError.classList.toggle("hidden", !text);
+	    }
+
+	    var flashTimer = null;
+
+		    function showFlash(message, tone) {
+		      if (!flashEl) return;
+		      var text = (message || "").toString().trim();
+
+		      flashEl.classList.remove("border-border/60", "bg-muted/30", "text-muted-foreground");
+		      flashEl.classList.remove("border-rose-500/30", "bg-rose-500/10", "text-rose-300");
+		      flashEl.classList.remove("border-emerald-500/30", "bg-emerald-500/10", "text-emerald-300");
+
+	      if (!text) {
+	        flashEl.textContent = "";
+	        flashEl.classList.add("hidden");
+	        flashEl.classList.add("border-border/60", "bg-muted/30", "text-muted-foreground");
+	        return;
+	      }
+
+		      flashEl.textContent = text;
+		      flashEl.classList.remove("hidden");
+		      if (tone === "success") {
+		        flashEl.classList.add("border-emerald-500/30", "bg-emerald-500/10", "text-emerald-300");
+		      } else if (tone === "error") {
+		        flashEl.classList.add("border-rose-500/30", "bg-rose-500/10", "text-rose-300");
+		      } else {
+		        flashEl.classList.add("border-border/60", "bg-muted/30", "text-muted-foreground");
+		      }
+
+	      if (flashTimer) window.clearTimeout(flashTimer);
+		      flashTimer = window.setTimeout(function () {
+		        showFlash("", "");
+		      }, 6500);
+		    }
+
+	    function parseRetryAfterSeconds(value) {
+	      if (value == null) return null;
+	      if (typeof value === "number" && isFinite(value)) {
+	        return Math.max(0, Math.floor(value));
+	      }
+	      var raw = String(value || "").trim();
+	      if (!raw) return null;
+	      if (/^\\d+$/.test(raw)) {
+	        return Math.max(0, parseInt(raw, 10));
+	      }
+	      var dateMs = Date.parse(raw);
+	      if (!isNaN(dateMs)) {
+	        var diff = Math.ceil((dateMs - Date.now()) / 1000);
+	        return diff > 0 ? diff : 0;
+	      }
+	      return null;
+	    }
+
+	    function getCooldownRemainingSeconds(connectionId) {
+	      var key = String(connectionId || "");
+	      var untilMs = testCooldowns[key];
+	      if (!untilMs) return 0;
+	      var remaining = Math.ceil((untilMs - Date.now()) / 1000);
+	      if (remaining <= 0) {
+	        delete testCooldowns[key];
+	        return 0;
+	      }
+	      return remaining;
+	    }
+
+	    function ensureCooldownTicker() {
+	      if (cooldownInterval) return;
+	      cooldownInterval = window.setInterval(function () {
+	        var hasAny = false;
+	        Object.keys(testCooldowns || {}).forEach(function (id) {
+	          if (getCooldownRemainingSeconds(id) > 0) hasAny = true;
+	        });
+	        if (!hasAny) {
+	          clearCooldownTicker();
+	          return;
+	        }
+	        applyUiState();
+	      }, 1000);
+	    }
+
+	    function clearCooldownTicker() {
+	      if (cooldownInterval) {
+	        window.clearInterval(cooldownInterval);
+	        cooldownInterval = null;
+	      }
+	    }
+
+	    // Clean up interval on page unload to prevent memory leaks
+	    window.addEventListener("beforeunload", function () {
+	      clearCooldownTicker();
+	      if (activeTest && activeTest.abortController) {
+	        try { activeTest.abortController.abort(); } catch (_e) {}
+	      }
+	    });
+
+	    function setTestCooldown(connectionId, retryAfterValue) {
+	      var rawSeconds = parseRetryAfterSeconds(retryAfterValue);
+	      var seconds = rawSeconds == null ? 0 : rawSeconds;
+	      var id = String(connectionId || "");
+	      if (!id) return;
+
+	      var now = Date.now();
+	      var lastAt = testRateLimitLastAt[id] || 0;
+	      if (!lastAt || now - lastAt > 120000) {
+	        testRateLimitCounts[id] = 0;
+	      }
+	      testRateLimitLastAt[id] = now;
+	      testRateLimitCounts[id] = (testRateLimitCounts[id] || 0) + 1;
+
+	      var backoffBase = 5;
+	      var backoff = backoffBase * Math.pow(2, Math.min((testRateLimitCounts[id] || 1) - 1, 6));
+	      var finalSeconds = Math.max(seconds, backoffBase, Math.min(300, backoff));
+
+	      testCooldowns[id] = now + finalSeconds * 1000;
+	      ensureCooldownTicker();
+	    }
+
+	    function resetTestCooldownBackoff(connectionId) {
+	      var id = String(connectionId || "");
+	      if (!id) return;
+	      delete testRateLimitCounts[id];
+	      delete testRateLimitLastAt[id];
+	    }
+
+	    function setTestButtonNormal(button) {
+	      if (!button) return;
+	      button.innerHTML = "Test";
+	      button.classList.remove("opacity-80");
+	      button.removeAttribute("aria-busy");
+	    }
+
+	    function setTestButtonLoading(button, label) {
+	      if (!button) return;
+	      var text = (label || "Testing").toString();
+	      button.innerHTML =
+	        '<svg class="h-3 w-3 animate-spin" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" aria-hidden="true">' +
+	          '<circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="3"></circle>' +
+	          '<path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 0 1 8-8v3a5 5 0 0 0-5 5H4z"></path>' +
+	        "</svg>" +
+	        "<span>" + escapeHtml(text) + "</span>";
+	      button.classList.add("opacity-80");
+	      button.setAttribute("aria-busy", "true");
+	    }
+
+	    function applyUiState() {
+	      var hasActiveTest = Boolean(activeTest);
+	      var activeId = activeTest ? String(activeTest.connectionId || "") : "";
+	      var activeName = activeTest ? String(activeTest.connectionName || "") : "";
+
+	      document.querySelectorAll("[data-mcp-test]").forEach(function (button) {
+	        var id = String(button.getAttribute("data-mcp-test") || "");
+	        var cooldown = getCooldownRemainingSeconds(id);
+	        var isActive = hasActiveTest && activeId && id === activeId;
+	        var disabled = hasActiveTest || cooldown > 0;
+
+	        button.disabled = disabled;
+	        if (isActive) {
+	          setTestButtonLoading(button, "Testing");
+	        } else {
+	          setTestButtonNormal(button);
+	        }
+
+	        if (cooldown > 0) {
+	          button.title = "Rate limited. Retry in " + cooldown + "s.";
+	        } else if (hasActiveTest && !isActive) {
+	          button.title = activeName ? ("Testing " + activeName + "…") : "A test is running.";
+	        } else {
+	          button.title = "";
+	        }
+	      });
+
+	      document.querySelectorAll("[data-mcp-conn-meta]").forEach(function (meta) {
+	        var id = String(meta.getAttribute("data-mcp-conn-meta") || "");
+	        if (!id) return;
+	        var defaultText = meta.getAttribute("data-mcp-default-meta");
+	        var cooldown = getCooldownRemainingSeconds(id);
+	        var isActive = hasActiveTest && activeId && id === activeId;
+	        if (isActive) {
+	          meta.textContent = "Testing connectivity…";
+	        } else if (cooldown > 0) {
+	          meta.textContent = "Rate limited — retry in " + cooldown + "s";
+	        } else if (defaultText != null) {
+	          meta.textContent = defaultText;
+	        }
+	      });
+
+	      document.querySelectorAll("[data-mcp-connection-card]").forEach(function (card) {
+	        var id = String(card.getAttribute("data-mcp-connection-card") || "");
+	        var isActive = hasActiveTest && activeId && id === activeId;
+	        card.classList.toggle("border-primary/50", isActive);
+	      });
+
+	      if (modalTest) {
+	        modalTest.disabled = Boolean(activeTest);
+	      }
+	      if (modalSave && activeTest && activeTest.source === "modal") {
+	        modalSave.disabled = true;
+	      } else if (modalSave) {
+	        modalSave.disabled = false;
+	      }
+	    }
+
+	    function abortActiveTest(reason) {
+	      if (!activeTest || !activeTest.abortController) return;
+	      activeTest.abortReason = String(reason || "cancelled");
+	      try {
+	        activeTest.abortController.abort();
+	      } catch (_err) {
+	        // ignore
+	      }
+	    }
+
+	    function beginConnectionTest(connectionId, connectionName, opts) {
+	      var id = String(connectionId || "");
+	      if (!id) return Promise.resolve();
+
+	      // Prevent duplicate clicks with debounce
+	      var now = Date.now();
+	      var lastClick = pendingTestClicks[id] || 0;
+	      if (now - lastClick < 500) {
+	        return Promise.resolve();  // Ignore rapid duplicate clicks
+	      }
+	      pendingTestClicks[id] = now;
+
+	      if (activeTest) {
+	        showFlash("A connection test is already running. Please wait…", "info");
+	        return Promise.resolve();
+	      }
+
+	      var cooldown = getCooldownRemainingSeconds(id);
+	      if (cooldown > 0) {
+	        showFlash("Rate limited — retry in " + cooldown + "s.", "info");
+	        applyUiState();
+	        return Promise.resolve();
+	      }
+
+	      var controller = new AbortController();
+	      activeTest = {
+	        connectionId: id,
+	        connectionName: String(connectionName || ""),
+	        abortController: controller,
+	        abortReason: "",
+	        source: (opts && opts.source) || "list"
+	      };
+	      delete testCooldowns[id];
+	      applyUiState();
+	      showFlash("Testing " + (connectionName || "connection") + "…", "info");
+
+	      return apiFetch("/api/mcp/connections/" + encodeURIComponent(id) + "/test/", {
+	        method: "POST",
+	        body: JSON.stringify({ businessId: businessId || undefined }),
+	        signal: controller.signal
+	      }).then(function () {
+	        resetTestCooldownBackoff(id);
+	        showFlash("Connection tested successfully.", "success");
+	      }, function (err) {
+	        if (err && err.name === "AbortError") {
+	          showFlash(activeTest && activeTest.abortReason ? ("Test cancelled (" + activeTest.abortReason + ").") : "Test cancelled.", "info");
+	          return;
+	        }
+	        var message = (err && err.message) || "Test failed.";
+	        if (err && err.payload && err.payload.retryAfter) {
+	          setTestCooldown(id, err.payload.retryAfter);
+	          var remaining = getCooldownRemainingSeconds(id);
+	          if (remaining > 0 && message.indexOf("retry") === -1) {
+	            message = message + " Retry in " + remaining + "s.";
+	          }
+	        }
+	        showFlash(message, "error");
+	      }).then(function () {
+	        activeTest = null;
+	        applyUiState();
+	        return loadAll();
+	      }, function () {
+	        activeTest = null;
+	        applyUiState();
+	        return loadAll();
+	      });
+	    }
 
     function setAuthPanels() {
       var type = (modalFields.authType && modalFields.authType.value) || "none";
@@ -412,43 +698,54 @@
           ? '<span class="inline-flex items-center rounded-full border border-emerald-500/30 bg-emerald-500/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-emerald-400">Enabled</span>'
           : '<span class="inline-flex items-center rounded-full border border-border/60 bg-muted/40 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">Disabled</span>';
         var toolMeta = conn.toolCount ? (conn.toolCount + " tools") : "No tools cached";
-        var errorMeta = conn.lastError ? ('<div class="text-[11px] text-rose-400 truncate" title="' + escapeHtml(conn.lastError) + '">' + escapeHtml(conn.lastError) + "</div>") : "";
+        // Show cache expiration warning
+        var cacheWarning = "";
+        if (conn.cacheExpired) {
+          cacheWarning = '<span class="inline-flex items-center rounded-full border border-amber-500/30 bg-amber-500/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-amber-400" title="Tool cache expired. Re-test to refresh.">Cache Expired</span>';
+        }
+	        var errorMeta = conn.lastError ? ('<div class="text-[11px] text-rose-400 truncate" title="' + escapeHtml(conn.lastError) + '">' + escapeHtml(conn.lastError) + "</div>") : "";
 
-        var el = document.createElement("div");
-        el.className = "rounded-xl border border-border/70 bg-background/60 p-4 shadow-sm";
-        el.innerHTML =
-          '<div class="flex items-start justify-between gap-4">' +
-            '<div class="min-w-0 space-y-1">' +
-              '<div class="flex flex-wrap items-center gap-2">' +
-                '<div class="text-sm font-semibold text-foreground truncate">' + escapeHtml(conn.name || "MCP Connection") + "</div>" +
-                statusBadge +
-                (conn.sourceType === "marketplace" ? '<span class="inline-flex items-center rounded-full border border-amber-500/30 bg-amber-500/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-amber-400">Marketplace</span>' : "") +
-              "</div>" +
-              '<div class="text-xs text-muted-foreground truncate" title="' + escapeHtml(conn.serverUrl || "") + '">' + escapeHtml(conn.serverUrl || "") + "</div>" +
-              '<div class="text-[11px] text-muted-foreground">' +
-                escapeHtml(toolMeta) +
-                (conn.lastTestedAt ? " · Tested" : "") +
-              "</div>" +
-              errorMeta +
-            "</div>" +
-            '<div class="flex flex-col items-end gap-2 shrink-0">' +
-              '<label class="inline-flex items-center gap-2 text-xs text-muted-foreground">' +
-                '<input type="checkbox" class="h-4 w-4 rounded border-border/60" data-mcp-toggle="' + escapeHtml(conn.id) + '"' + (conn.status === "enabled" ? " checked" : "") + " />" +
-                "<span>Enabled</span>" +
-              "</label>" +
-              '<div class="flex items-center gap-2">' +
-                '<button type="button" class="inline-flex items-center gap-2 rounded-md border border-input bg-background px-3 py-2 text-xs font-medium hover:bg-accent hover:text-accent-foreground" data-mcp-test="' + escapeHtml(conn.id) + '">Test</button>' +
-                '<button type="button" class="inline-flex items-center gap-2 rounded-md border border-input bg-background px-3 py-2 text-xs font-medium hover:bg-accent hover:text-accent-foreground" data-mcp-agents="' + escapeHtml(conn.id) + '">Agents</button>' +
-                '<button type="button" class="inline-flex items-center gap-2 rounded-md bg-primary/10 text-primary px-3 py-2 text-xs font-semibold hover:bg-primary/15" data-mcp-edit="' + escapeHtml(conn.id) + '">Edit</button>' +
-              "</div>" +
-              '<div class="text-[11px] text-muted-foreground">Assigned ' + escapeHtml(String((conn.agents && conn.agents.assigned) || 0)) + "/" + escapeHtml(String((conn.agents && conn.agents.total) || 0)) + "</div>" +
-            "</div>" +
-          "</div>";
+	        var el = document.createElement("div");
+	        el.setAttribute("data-mcp-connection-card", conn.id || "");
+	        el.className = "rounded-xl border border-border/70 bg-background/60 p-4 shadow-sm";
+	        el.innerHTML =
+	          '<div class="flex items-start justify-between gap-4">' +
+	            '<div class="min-w-0 space-y-1">' +
+	              '<div class="flex flex-wrap items-center gap-2">' +
+	                '<div class="text-sm font-semibold text-foreground truncate">' + escapeHtml(conn.name || "MCP Connection") + "</div>" +
+	                statusBadge +
+	                (conn.sourceType === "marketplace" ? '<span class="inline-flex items-center rounded-full border border-amber-500/30 bg-amber-500/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-amber-400">Marketplace</span>' : "") +
+	                cacheWarning +
+	              "</div>" +
+	              '<div class="text-xs text-muted-foreground truncate" title="' + escapeHtml(conn.serverUrl || "") + '">' + escapeHtml(conn.serverUrl || "") + "</div>" +
+	              '<div class="text-[11px] text-muted-foreground" data-mcp-conn-meta="' + escapeHtml(conn.id) + '">' +
+	                escapeHtml(toolMeta) +
+	                (conn.lastTestedAt ? " · Tested" : "") +
+	              "</div>" +
+	              errorMeta +
+	            "</div>" +
+	            '<div class="flex flex-col items-end gap-2 shrink-0">' +
+	              '<label class="inline-flex items-center gap-2 text-xs text-muted-foreground">' +
+	                '<input type="checkbox" class="h-4 w-4 rounded border-border/60" data-mcp-toggle="' + escapeHtml(conn.id) + '"' + (conn.status === "enabled" ? " checked" : "") + " />" +
+	                "<span>Enabled</span>" +
+	              "</label>" +
+	              '<div class="flex items-center gap-2">' +
+	                '<button type="button" class="inline-flex items-center gap-2 rounded-md border border-input bg-background px-3 py-2 text-xs font-medium hover:bg-accent hover:text-accent-foreground disabled:opacity-50 disabled:cursor-not-allowed disabled:pointer-events-none" data-mcp-test="' + escapeHtml(conn.id) + '">Test</button>' +
+	                '<button type="button" class="inline-flex items-center gap-2 rounded-md border border-input bg-background px-3 py-2 text-xs font-medium hover:bg-accent hover:text-accent-foreground" data-mcp-agents="' + escapeHtml(conn.id) + '">Agents</button>' +
+	                '<button type="button" class="inline-flex items-center gap-2 rounded-md bg-primary/10 text-primary px-3 py-2 text-xs font-semibold hover:bg-primary/15" data-mcp-edit="' + escapeHtml(conn.id) + '">Edit</button>' +
+	              "</div>" +
+	              '<div class="text-[11px] text-muted-foreground">Assigned ' + escapeHtml(String((conn.agents && conn.agents.assigned) || 0)) + "/" + escapeHtml(String((conn.agents && conn.agents.total) || 0)) + "</div>" +
+	            "</div>" +
+	          "</div>";
 
-        el.__conn = conn;
-        listEl.appendChild(el);
-      });
-    }
+	        el.__conn = conn;
+	        var meta = el.querySelector("[data-mcp-conn-meta]");
+	        if (meta) {
+	          meta.setAttribute("data-mcp-default-meta", meta.textContent || "");
+	        }
+	        listEl.appendChild(el);
+	      });
+	    }
 
     function renderMarketplace(items) {
       if (!marketplaceGrid) return;
@@ -459,6 +756,7 @@
       marketplaceGrid.innerHTML = "";
       rows.forEach(function (item) {
         var el = document.createElement("div");
+        el.setAttribute("data-mcp-marketplace-card", (item && item.key) ? item.key : "1");
         el.className = "rounded-xl border border-border/70 bg-background/60 p-5 shadow-sm";
         el.innerHTML =
           '<div class="space-y-3">' +
@@ -479,17 +777,18 @@
       });
     }
 
-    function loadAll() {
-      if (!listEl) return;
-      listEl.innerHTML = '<div class="rounded-xl border border-border/60 bg-muted/30 p-6 text-sm text-muted-foreground">Loading MCP connections…</div>';
-      return apiFetch("/api/mcp/connections/", { method: "GET" }).then(function (data) {
-        renderConnections(data.connections || []);
-        renderMarketplace(data.marketplace || []);
-        return data;
-      }).catch(function (err) {
-        listEl.innerHTML = '<div class="rounded-xl border border-rose-500/30 bg-rose-500/10 p-6 text-sm text-rose-300">Failed to load MCP connections: ' + escapeHtml(err.message || "Error") + "</div>";
-      });
-    }
+	    function loadAll() {
+	      if (!listEl) return;
+	      listEl.innerHTML = '<div class="rounded-xl border border-border/60 bg-muted/30 p-6 text-sm text-muted-foreground">Loading MCP connections…</div>';
+	      return apiFetch("/api/mcp/connections/", { method: "GET" }).then(function (data) {
+	        renderConnections(data.connections || []);
+	        renderMarketplace(data.marketplace || []);
+	        applyUiState();
+	        return data;
+	      }).catch(function (err) {
+	        listEl.innerHTML = '<div class="rounded-xl border border-rose-500/30 bg-rose-500/10 p-6 text-sm text-rose-300">Failed to load MCP connections: ' + escapeHtml(err.message || "Error") + "</div>";
+	      });
+	    }
 
     function collectFormPayload() {
       var authType = modalFields.authType.value;
@@ -530,30 +829,89 @@
       });
     }
 
-    function testCurrent() {
-      setModalError("");
-      if (!editingConnectionId) {
-        var createPayload = collectFormPayload();
-        return apiFetch("/api/mcp/connections/", { method: "POST", body: JSON.stringify(createPayload) })
-          .then(function (data) {
-            var conn = data && data.connection;
-            if (conn && conn.id) {
-              editingConnectionId = conn.id;
-              if (modalTitle) modalTitle.textContent = "Edit MCP server";
-            }
-            return apiFetch("/api/mcp/connections/" + encodeURIComponent(editingConnectionId) + "/test/", { method: "POST", body: JSON.stringify({ businessId: businessId || undefined }) });
-          })
-          .then(function () { return loadAll(); })
-          .catch(function (err) {
-            setModalError(err.message || "Test failed.");
-          });
-      }
-      return apiFetch("/api/mcp/connections/" + encodeURIComponent(editingConnectionId) + "/test/", { method: "POST", body: JSON.stringify({ businessId: businessId || undefined }) }).then(function () {
-        return loadAll();
-      }).catch(function (err) {
-        setModalError(err.message || "Test failed.");
-      });
-    }
+	    function testCurrent() {
+	      setModalError("");
+	      if (activeTest) {
+	        setModalError("A connection test is already running. Please wait…");
+	        showFlash("A connection test is already running. Please wait…", "info");
+	        return;
+	      }
+
+	      var displayName = modalFields.name.value.trim() || "connection";
+	      var controller = new AbortController();
+	      activeTest = {
+	        connectionId: editingConnectionId || "",
+	        connectionName: displayName,
+	        abortController: controller,
+	        abortReason: "",
+	        source: "modal"
+	      };
+	      applyUiState();
+	      setTestButtonLoading(modalTest, "Testing");
+	      showFlash("Testing " + displayName + "…", "info");
+
+	      var ensureConnection = Promise.resolve(null);
+	      if (!editingConnectionId) {
+	        var createPayload = collectFormPayload();
+	        ensureConnection = apiFetch("/api/mcp/connections/", { method: "POST", body: JSON.stringify(createPayload), signal: controller.signal })
+	          .then(function (data) {
+	            var conn = data && data.connection;
+	            if (conn && conn.id) {
+	              editingConnectionId = conn.id;
+	              activeTest.connectionId = conn.id;
+	              if (modalTitle) modalTitle.textContent = "Edit MCP server";
+	              applyUiState();
+	            }
+	            return conn;
+	          });
+	      }
+
+		      return ensureConnection.then(function () {
+		        var id = editingConnectionId;
+		        if (!id) throw new Error("Unable to start connection test.");
+		        delete testCooldowns[String(id)];
+		        applyUiState();
+		        return apiFetch("/api/mcp/connections/" + encodeURIComponent(id) + "/test/", {
+		          method: "POST",
+		          body: JSON.stringify({ businessId: businessId || undefined }),
+		          signal: controller.signal
+		        });
+		      }).then(function () {
+		        if (editingConnectionId) {
+		          resetTestCooldownBackoff(editingConnectionId);
+		        }
+		        showFlash("Connection tested successfully.", "success");
+		        return loadAll();
+		      }, function (err) {
+		        if (err && err.name === "AbortError") {
+		          showFlash(activeTest && activeTest.abortReason ? ("Test cancelled (" + activeTest.abortReason + ").") : "Test cancelled.", "info");
+		          return loadAll();
+		        }
+		        var message = (err && err.message) || "Test failed.";
+		        if (err && err.payload && err.payload.retryAfter && editingConnectionId) {
+		          setTestCooldown(editingConnectionId, err.payload.retryAfter);
+		        }
+		        setModalError(message);
+		        showFlash(message, "error");
+		        return loadAll();
+		      }).then(function () {
+		        activeTest = null;
+		        if (modalTest) {
+		          modalTest.innerHTML = "Test connection";
+		          modalTest.classList.remove("opacity-80");
+		          modalTest.removeAttribute("aria-busy");
+		        }
+		        applyUiState();
+		      }, function () {
+		        activeTest = null;
+		        if (modalTest) {
+		          modalTest.innerHTML = "Test connection";
+		          modalTest.classList.remove("opacity-80");
+		          modalTest.removeAttribute("aria-busy");
+		        }
+		        applyUiState();
+		      });
+		    }
 
     function openAgents(connectionId, connectionName) {
       activeAgentsConnection = connectionId;
@@ -617,7 +975,7 @@
       var marketAdd = target.closest("[data-mcp-market-add]");
       if (marketAdd) {
         var key = marketAdd.getAttribute("data-mcp-market-add");
-        var card = marketAdd.closest("div");
+        var card = marketAdd.closest("[data-mcp-marketplace-card]");
         var item = card && card.__item;
         if (item && item.key === key) {
           openCreate({ name: item.name, serverUrl: item.serverUrl || "", recommendedAuth: item.recommendedAuth || "none", sourceType: "marketplace", marketplaceKey: item.key });
@@ -639,14 +997,14 @@
         return;
       }
 
-      var testBtn = target.closest("[data-mcp-test]");
-      if (testBtn) {
-        var testId = testBtn.getAttribute("data-mcp-test");
-        apiFetch("/api/mcp/connections/" + encodeURIComponent(testId) + "/test/", { method: "POST", body: JSON.stringify({ businessId: businessId || undefined }) })
-          .then(function () { return loadAll(); })
-          .catch(function (err) { console.warn("Test failed", err); });
-        return;
-      }
+	      var testBtn = target.closest("[data-mcp-test]");
+	      if (testBtn) {
+	        var testId = testBtn.getAttribute("data-mcp-test");
+	        var testCard = testBtn.closest("[data-mcp-connection-card]");
+	        var connForTest = testCard && testCard.__conn;
+	        beginConnectionTest(testId, connForTest ? connForTest.name : "", { source: "list" });
+	        return;
+	      }
 
       var agentsBtn = target.closest("[data-mcp-agents]");
       if (agentsBtn) {
@@ -685,20 +1043,29 @@
     document.addEventListener("change", function (event) {
       var target = event.target;
       if (!target) return;
-      if (target.matches('[data-mcp-field="authType"]')) {
-        setAuthPanels();
-        return;
-      }
-      if (target.matches("[data-mcp-toggle]")) {
-        var id = target.getAttribute("data-mcp-toggle");
-        apiFetch("/api/mcp/connections/" + encodeURIComponent(id) + "/", {
-          method: "PUT",
-          body: JSON.stringify({ businessId: businessId || undefined, enabled: Boolean(target.checked) })
-        }).then(function () { return loadAll(); }).catch(function (err) {
-          console.warn("Toggle failed", err);
-          loadAll();
-        });
-      }
+	      if (target.matches('[data-mcp-field="authType"]')) {
+	        setAuthPanels();
+	        return;
+	      }
+		      if (target.matches('[data-mcp-field="enabled"]')) {
+		        if (activeTest && activeTest.source === "modal") {
+		          abortActiveTest("enabled toggled");
+		        }
+		        return;
+		      }
+	      if (target.matches("[data-mcp-toggle]")) {
+	        var id = target.getAttribute("data-mcp-toggle");
+	        if (activeTest && String(activeTest.connectionId || "") === String(id || "")) {
+	          abortActiveTest("enabled toggled");
+	        }
+	        apiFetch("/api/mcp/connections/" + encodeURIComponent(id) + "/", {
+	          method: "PUT",
+	          body: JSON.stringify({ businessId: businessId || undefined, enabled: Boolean(target.checked) })
+	        }).then(function () { return loadAll(); }).catch(function (err) {
+	          console.warn("Toggle failed", err);
+	          loadAll();
+	        });
+	      }
       if (target.matches("[data-mcp-agent-toggle]")) {
         var agentId = target.getAttribute("data-mcp-agent-toggle");
         toggleAgent(agentId, Boolean(target.checked));

@@ -9,11 +9,16 @@ from http import HTTPStatus
 from typing import Any, Mapping
 from urllib.parse import urlsplit
 
+from datetime import timedelta
+
 from django.conf import settings
 from django.http import HttpRequest, JsonResponse
 from django.utils import timezone
 from django.views.decorators.csrf import csrf_protect
 from django.views.decorators.http import require_http_methods
+
+# Tool cache TTL in hours (default: 24 hours)
+MCP_TOOL_CACHE_TTL_HOURS = getattr(settings, "MCP_TOOL_CACHE_TTL_HOURS", 24)
 
 from core.tenancy import tenant_context
 
@@ -169,12 +174,36 @@ def _mcp_auth_headers(connection: McpConnection) -> dict[str, str]:
     return {}
 
 
+def _is_tool_cache_expired(tool_cache: dict[str, Any]) -> bool:
+    """Check if a tool cache has expired based on its expires_at timestamp."""
+    expires_at = tool_cache.get("expires_at")
+    if not expires_at:
+        return False
+    try:
+        from datetime import datetime
+        if isinstance(expires_at, str):
+            expiry = datetime.fromisoformat(expires_at.replace("Z", "+00:00"))
+        elif isinstance(expires_at, datetime):
+            expiry = expires_at
+        else:
+            return False
+        now = timezone.now()
+        if expiry.tzinfo is None:
+            from datetime import timezone as dt_tz
+            expiry = expiry.replace(tzinfo=dt_tz.utc)
+        return now > expiry
+    except (ValueError, TypeError):
+        return False
+
+
 def _serialize_mcp_connection(connection: McpConnection, *, business: BusinessProfile) -> dict[str, Any]:
     metadata = connection.metadata or {}
     tool_cache = metadata.get("tool_cache") if isinstance(metadata.get("tool_cache"), dict) else {}
     tool_count = tool_cache.get("tool_count") or tool_cache.get("count") or metadata.get("tool_count") or 0
     last_tested_at = tool_cache.get("tested_at") or metadata.get("last_tested_at")
     last_error = tool_cache.get("error") or metadata.get("last_error")
+    cache_expires_at = tool_cache.get("expires_at")
+    cache_expired = _is_tool_cache_expired(tool_cache) if tool_cache else False
 
     total_agents = AgentProfile.objects.filter(business_profile=business).count()
     opt_out_count = McpConnectionAgentOptOut.objects.filter(connection=connection).count()
@@ -202,6 +231,8 @@ def _serialize_mcp_connection(connection: McpConnection, *, business: BusinessPr
         "toolCount": int(tool_count) if str(tool_count).isdigit() else tool_count,
         "lastTestedAt": last_tested_at,
         "lastError": last_error,
+        "cacheExpiresAt": cache_expires_at,
+        "cacheExpired": cache_expired,
         "agents": {
             "total": total_agents,
             "assigned": assigned_agents,
@@ -233,11 +264,11 @@ def _mcp_marketplace_catalog() -> list[dict[str, Any]]:
         {
             "key": "github",
             "name": "GitHub (MCP)",
-            "description": "Issue/PR automation via a GitHub MCP server deployment.",
+            "description": "Official GitHub-hosted MCP server for repos, issues, pull requests, and more (Bearer token auth).",
             "recommendedAuth": "bearer",
-            "serverUrl": "",
-            "docsUrl": "https://modelcontextprotocol.io/examples",
-            "badge": "Template",
+            "serverUrl": "https://api.githubcopilot.com/mcp/",
+            "docsUrl": "https://docs.github.com/en/copilot/how-tos/provide-context/use-mcp/set-up-the-github-mcp-server",
+            "badge": "Official",
         },
         {
             "key": "slack",
@@ -540,13 +571,21 @@ def mcp_connection_test(request: HttpRequest, connection_id: uuid.UUID) -> JsonR
     try:
         session, tools = test_mcp_server(server_url=server_url or connection.server_url, headers=headers)
     except McpRemoteError as exc:
+        upstream_status = getattr(exc, "status_code", None)
+        retry_after = getattr(exc, "retry_after", None)
+        status = HTTPStatus.BAD_REQUEST
+        if isinstance(upstream_status, int) and upstream_status == HTTPStatus.TOO_MANY_REQUESTS:
+            status = HTTPStatus.TOO_MANY_REQUESTS
         tested_at = timezone.now().isoformat()
+        error_message = str(exc)
         with tenant_context(business.id):
             metadata = dict(connection.metadata or {})
             metadata["tool_cache"] = {
                 "tested_at": tested_at,
-                "error": str(exc)[:500],
+                "error": error_message[:500],
                 "tool_count": 0,
+                "status_code": upstream_status,
+                "retry_after": retry_after,
             }
             connection.metadata = metadata
             connection.save(update_fields=["metadata", "updated_at"])
@@ -556,9 +595,14 @@ def mcp_connection_test(request: HttpRequest, connection_id: uuid.UUID) -> JsonR
                 actor=request.user,
                 action=McpConnectionAuditAction.UPDATED,
                 description="MCP connection test failed.",
-                metadata={"error": str(exc)[:500]},
+                metadata={"error": error_message[:500], "status_code": upstream_status},
             )
-        return JsonResponse({"error": "MCP_TEST_FAILED", "message": str(exc)}, status=HTTPStatus.BAD_REQUEST)
+        payload = {"error": "MCP_TEST_FAILED", "message": error_message}
+        if upstream_status is not None:
+            payload["upstreamStatus"] = upstream_status
+        if retry_after:
+            payload["retryAfter"] = retry_after
+        return JsonResponse(payload, status=status)
 
     tested_at = timezone.now().isoformat()
     tools_payload = [
@@ -573,8 +617,10 @@ def mcp_connection_test(request: HttpRequest, connection_id: uuid.UUID) -> JsonR
 
     with tenant_context(business.id):
         metadata = dict(connection.metadata or {})
+        cache_expires_at = (timezone.now() + timedelta(hours=MCP_TOOL_CACHE_TTL_HOURS)).isoformat()
         metadata["tool_cache"] = {
             "tested_at": tested_at,
+            "expires_at": cache_expires_at,
             "transport": session.transport,
             "protocol_version": session.protocol_version,
             "server_info": session.server_info.__dict__ if session.server_info else None,

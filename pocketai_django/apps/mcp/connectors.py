@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import hashlib
+import logging
 import re
+from datetime import datetime, timezone
 from typing import Any, Mapping
 
 from core.tenancy import tenant_context
@@ -14,7 +16,33 @@ from apps.accounts.models import (
 )
 
 
+logger = logging.getLogger(__name__)
+
+
 _TOOL_SAFE_PATTERN = re.compile(r"[^a-zA-Z0-9_]+")
+
+
+def _is_cache_expired(tool_cache: Mapping[str, Any]) -> bool:
+    """Check if a tool cache has expired based on its expires_at timestamp."""
+    expires_at = tool_cache.get("expires_at")
+    if not expires_at:
+        # Legacy caches without expiration are considered valid (backwards compatibility)
+        return False
+    try:
+        if isinstance(expires_at, str):
+            # Parse ISO format timestamp
+            expiry = datetime.fromisoformat(expires_at.replace("Z", "+00:00"))
+        elif isinstance(expires_at, datetime):
+            expiry = expires_at
+        else:
+            return False
+        # Ensure timezone-aware comparison
+        now = datetime.now(timezone.utc)
+        if expiry.tzinfo is None:
+            expiry = expiry.replace(tzinfo=timezone.utc)
+        return now > expiry
+    except (ValueError, TypeError):
+        return False
 
 
 def list_enabled_mcp_connections_for_agent(agent: AgentProfile) -> list[McpConnection]:
@@ -67,6 +95,7 @@ def build_remote_tool_definitions(
     Build OpenAI tool schemas + a registry mapping tool name -> (connection, remote_tool_name).
 
     Tool schemas are sourced from connection.metadata.tool_cache.tools when present.
+    Expired caches (past their TTL) are skipped with a warning log.
     """
 
     tool_defs: list[dict[str, Any]] = []
@@ -77,6 +106,16 @@ def build_remote_tool_definitions(
         tool_cache = metadata.get("tool_cache") if isinstance(metadata.get("tool_cache"), Mapping) else {}
         tools = tool_cache.get("tools")
         if not isinstance(tools, list) or not tools:
+            continue
+
+        # Skip connections with expired tool caches
+        if _is_cache_expired(tool_cache):
+            logger.info(
+                "mcp_tool_cache_expired connection_id=%s connection_name=%s expires_at=%s",
+                connection.id,
+                connection.name,
+                tool_cache.get("expires_at"),
+            )
             continue
         for tool in tools:
             if not isinstance(tool, Mapping):
