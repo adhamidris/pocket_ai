@@ -479,7 +479,7 @@ class CacheTTLTests(TestCase):
         self.assertFalse(_is_cache_expired(cache))
 
     def test_build_remote_tool_definitions_skips_expired_cache(self) -> None:
-        """build_remote_tool_definitions should skip connections with expired caches."""
+        """Expired tool caches remain usable (stale schema fallback)."""
         user = User.objects.create_user(email="test@example.com", password="test123")
         registration = RegistrationSession.objects.create(user=user)
         business = BusinessProfile.objects.create(
@@ -500,14 +500,14 @@ class CacheTTLTests(TestCase):
             metadata={
                 "tool_cache": {
                     "expires_at": expired_time,
-                    "tools": [{"name": "expired_tool", "description": "Should be skipped"}],
+                    "tools": [{"name": "expired_tool", "description": "Should still be exposed"}],
                 }
             },
         )
 
         tool_defs, registry = build_remote_tool_definitions([connection])
-        self.assertEqual(len(tool_defs), 0)
-        self.assertEqual(len(registry), 0)
+        self.assertEqual(len(tool_defs), 1)
+        self.assertEqual(len(registry), 1)
 
     def test_build_remote_tool_definitions_includes_valid_cache(self) -> None:
         """build_remote_tool_definitions should include connections with valid caches."""

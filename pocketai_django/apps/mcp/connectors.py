@@ -3,8 +3,11 @@ from __future__ import annotations
 import hashlib
 import logging
 import re
+from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import Any, Mapping
+from typing import Any, Mapping, Sequence
+
+from django.conf import settings
 
 from core.tenancy import tenant_context
 
@@ -65,6 +68,160 @@ _TOOL_WRITE_HINTS = {
     "sync",
     "import",
 }
+
+
+_REMOTE_TOOL_DESCRIPTION_MAX_CHARS_DEFAULT = 240
+_REMOTE_TOOL_MAX_PROPERTIES_DEFAULT = 40
+_REMOTE_TOOL_SCHEMA_MAX_DEPTH_DEFAULT = 3
+
+
+def _safe_int_setting(value: object, default: int) -> int:
+    try:
+        return int(value) if value is not None else default
+    except (TypeError, ValueError):
+        return default
+
+
+def _clip_text(value: str, limit: int) -> str:
+    text = str(value or "")
+    if limit <= 0:
+        return ""
+    if len(text) <= limit:
+        return text
+    return text[: max(0, limit - 1)].rstrip() + "…"
+
+
+def _slim_json_schema_node(
+    value: object,
+    *,
+    depth: int,
+    max_depth: int,
+    max_properties: int,
+) -> object:
+    if depth >= max_depth:
+        if isinstance(value, Mapping):
+            schema_type = value.get("type")
+            if isinstance(schema_type, str) and schema_type.strip():
+                return {"type": schema_type.strip()}
+        return {"type": "object", "additionalProperties": True}
+
+    if isinstance(value, list):
+        return [
+            _slim_json_schema_node(item, depth=depth + 1, max_depth=max_depth, max_properties=max_properties)
+            for item in value[:4]
+        ]
+
+    if not isinstance(value, Mapping):
+        return value
+
+    schema_type = value.get("type")
+    base_type = schema_type.strip() if isinstance(schema_type, str) and schema_type.strip() else ""
+    properties = value.get("properties")
+    if not base_type and isinstance(properties, Mapping):
+        base_type = "object"
+
+    # If we see refs/defs, collapse to a permissive object to avoid shipping large definition graphs.
+    if any(key in value for key in ("$ref", "$defs", "definitions", "$schema")):
+        return {"type": base_type or "object", "additionalProperties": True}
+
+    out: dict[str, Any] = {}
+    if base_type:
+        out["type"] = base_type
+
+    required = value.get("required")
+    required_list: list[str] = []
+    if isinstance(required, list):
+        for item in required:
+            if isinstance(item, str) and item.strip():
+                required_list.append(item.strip())
+    if required_list:
+        out["required"] = required_list[:max_properties]
+
+    if isinstance(properties, Mapping):
+        selected_names: list[str] = []
+        seen: set[str] = set()
+        for name in required_list:
+            if name and name not in seen and name in properties:
+                selected_names.append(name)
+                seen.add(name)
+        for name in sorted(str(k) for k in properties.keys()):
+            if len(selected_names) >= max_properties:
+                break
+            if not name or name in seen:
+                continue
+            selected_names.append(name)
+            seen.add(name)
+        slim_props: dict[str, Any] = {}
+        for name in selected_names:
+            schema = properties.get(name)
+            slim_props[name] = _slim_json_schema_node(schema, depth=depth + 1, max_depth=max_depth, max_properties=max_properties)
+        if slim_props:
+            out["properties"] = slim_props
+
+    items = value.get("items")
+    if isinstance(items, (Mapping, list)):
+        out["items"] = _slim_json_schema_node(items, depth=depth + 1, max_depth=max_depth, max_properties=max_properties)
+
+    for key in ("enum", "oneOf", "anyOf", "allOf"):
+        if key not in value:
+            continue
+        payload = value.get(key)
+        if payload is None:
+            continue
+        out[key] = _slim_json_schema_node(payload, depth=depth + 1, max_depth=max_depth, max_properties=max_properties)
+
+    if value.get("additionalProperties") is not None:
+        out["additionalProperties"] = bool(value.get("additionalProperties"))
+
+    # Keep only structure-relevant keys (drop descriptions/examples/metadata).
+    allowed_keys = {
+        "type",
+        "properties",
+        "required",
+        "items",
+        "enum",
+        "oneOf",
+        "anyOf",
+        "allOf",
+        "additionalProperties",
+        "minimum",
+        "maximum",
+        "minItems",
+        "maxItems",
+        "pattern",
+    }
+    return {k: v for k, v in out.items() if k in allowed_keys and v is not None}
+
+
+def _slim_remote_input_schema(schema: Mapping[str, Any] | None) -> dict[str, Any]:
+    """
+    Remote MCP servers sometimes publish very large JSON Schemas (OpenAPI-derived).
+    Those count toward prompt tokens on every LLM call. We trim aggressively while
+    keeping required + basic types so the model can still call tools correctly.
+    """
+
+    if not isinstance(schema, Mapping):
+        return {"type": "object", "additionalProperties": True}
+
+    max_properties = max(
+        4,
+        _safe_int_setting(
+            getattr(settings, "MCP_REMOTE_TOOL_MAX_PROPERTIES", None),
+            _REMOTE_TOOL_MAX_PROPERTIES_DEFAULT,
+        ),
+    )
+    max_depth = max(
+        2,
+        _safe_int_setting(
+            getattr(settings, "MCP_REMOTE_TOOL_SCHEMA_MAX_DEPTH", None),
+            _REMOTE_TOOL_SCHEMA_MAX_DEPTH_DEFAULT,
+        ),
+    )
+
+    slimmed = _slim_json_schema_node(schema, depth=0, max_depth=max_depth, max_properties=max_properties)
+    if isinstance(slimmed, Mapping) and str(slimmed.get("type") or "").strip().lower() == "object":
+        return dict(slimmed)
+    return {"type": "object", "additionalProperties": True}
 
 
 def _infer_operation_type_from_tool_name(remote_tool_name: str) -> McpToolOperationType:
@@ -159,18 +316,34 @@ def build_remote_tool_name(connection_id: str, remote_tool_name: str) -> str:
     return f"mcp_{conn_token}__{fragment}__{digest}"
 
 
-def build_remote_tool_definitions(
-    connections: list[McpConnection],
-) -> tuple[list[dict[str, Any]], dict[str, tuple[McpConnection, str]]]:
-    """
-    Build OpenAI tool schemas + a registry mapping tool name -> (connection, remote_tool_name).
+@dataclass(frozen=True)
+class RemoteToolDescriptor:
+    safe_name: str
+    remote_name: str
+    description: str
+    input_schema: Mapping[str, Any] | None
+    connection: McpConnection
 
-    Tool schemas are sourced from connection.metadata.tool_cache.tools when present.
-    Expired caches (past their TTL) are skipped with a warning log.
+
+def list_remote_tool_descriptors(connections: Sequence[McpConnection]) -> list[RemoteToolDescriptor]:
+    """
+    Build normalized remote-tool metadata for selection and tool-schema generation.
+
+    This is intentionally lightweight so callers can select a small subset of
+    tools before paying the cost to serialize full JSON Schemas into the LLM
+    prompt.
     """
 
-    tool_defs: list[dict[str, Any]] = []
-    registry: dict[str, tuple[McpConnection, str]] = {}
+    descriptors: list[RemoteToolDescriptor] = []
+    seen: set[str] = set()
+
+    description_limit = max(
+        80,
+        _safe_int_setting(
+            getattr(settings, "MCP_REMOTE_TOOL_DESCRIPTION_MAX_CHARS", None),
+            _REMOTE_TOOL_DESCRIPTION_MAX_CHARS_DEFAULT,
+        ),
+    )
 
     for connection in connections:
         metadata = connection.metadata or {}
@@ -179,15 +352,14 @@ def build_remote_tool_definitions(
         if not isinstance(tools, list) or not tools:
             continue
 
-        # Skip connections with expired tool caches
         if _is_cache_expired(tool_cache):
             logger.info(
-                "mcp_tool_cache_expired connection_id=%s connection_name=%s expires_at=%s",
+                "mcp_tool_cache_expired_using_stale_schema connection_id=%s connection_name=%s expires_at=%s",
                 connection.id,
                 connection.name,
                 tool_cache.get("expires_at"),
             )
-            continue
+
         for tool in tools:
             if not isinstance(tool, Mapping):
                 continue
@@ -195,27 +367,85 @@ def build_remote_tool_definitions(
             if not remote_name:
                 continue
             safe_name = build_remote_tool_name(str(connection.id), remote_name)
-            if safe_name in registry:
+            if safe_name in seen:
                 continue
+            seen.add(safe_name)
+
             description = str(tool.get("description") or "").strip()
             if connection.name:
                 prefix = f"[MCP: {connection.name}]"
                 description = f"{prefix} {description}".strip() if description else prefix
+            if description:
+                description = _clip_text(description, description_limit)
+
             input_schema = tool.get("inputSchema") if isinstance(tool.get("inputSchema"), Mapping) else None
-            parameters = dict(input_schema) if isinstance(input_schema, dict) else {"type": "object", "additionalProperties": True}
-            tool_defs.append(
-                {
-                    "type": "function",
-                    "function": {
-                        "name": safe_name,
-                        "description": description,
-                        "parameters": parameters,
-                    },
-                }
+            descriptors.append(
+                RemoteToolDescriptor(
+                    safe_name=safe_name,
+                    remote_name=remote_name,
+                    description=description,
+                    input_schema=dict(input_schema) if isinstance(input_schema, dict) else None,
+                    connection=connection,
+                )
             )
-            registry[safe_name] = (connection, remote_name)
+
+    return descriptors
+
+
+def build_remote_tool_definitions_from_descriptors(
+    descriptors: Sequence[RemoteToolDescriptor],
+    *,
+    allowed_tools: set[str] | None = None,
+) -> tuple[list[dict[str, Any]], dict[str, tuple[McpConnection, str]]]:
+    """
+    Convert RemoteToolDescriptor entries to OpenAI tool schemas + registry.
+    """
+
+    tool_defs: list[dict[str, Any]] = []
+    registry: dict[str, tuple[McpConnection, str]] = {}
+
+    for desc in descriptors:
+        if allowed_tools is not None and desc.safe_name not in allowed_tools:
+            continue
+        if desc.safe_name in registry:
+            continue
+        registry[desc.safe_name] = (desc.connection, desc.remote_name)
+        parameters = (
+            _slim_remote_input_schema(desc.input_schema)
+            if isinstance(desc.input_schema, Mapping)
+            else {"type": "object", "additionalProperties": True}
+        )
+        tool_defs.append(
+            {
+                "type": "function",
+                "function": {
+                    "name": desc.safe_name,
+                    "description": desc.description,
+                    "parameters": parameters,
+                },
+            }
+        )
 
     return tool_defs, registry
+
+
+def build_remote_tool_definitions(
+    connections: list[McpConnection],
+    *,
+    allowed_tools: set[str] | None = None,
+) -> tuple[list[dict[str, Any]], dict[str, tuple[McpConnection, str]]]:
+    """
+    Build OpenAI tool schemas + a registry mapping tool name -> (connection, remote_tool_name).
+
+    Tool schemas are sourced from connection.metadata.tool_cache.tools when present.
+    Expired caches (past their TTL) are treated as stale but still usable. We keep
+    exposing the last known tool schema to avoid "tools disappear" behavior in
+    the chat experience. The admin UI can still surface the stale status and
+    prompt a refresh via "Test connection".
+    """
+
+    descriptors = list_remote_tool_descriptors(connections)
+    return build_remote_tool_definitions_from_descriptors(descriptors, allowed_tools=allowed_tools)
 
 
 def get_tool_approval_requirement(

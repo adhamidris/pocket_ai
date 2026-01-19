@@ -203,6 +203,7 @@ class ChatPortalClient {
       if (!message.metadata || typeof message.metadata !== "object") return;
       this.updateMessageMetadata(message.id, message.metadata);
     });
+    this.updateAllToolsVisibility();
   }
 
   injectCopyButton(container) {
@@ -895,6 +896,7 @@ class ChatPortalClient {
     if (!isStreamingMessage) {
       this.updateMessageToolsToggle(wrapper);
     }
+    this.updateInlineToolCardsVisibility(wrapper);
 
     if (this.elements.messages) {
       this.elements.messages.scrollTo({ top: this.elements.messages.scrollHeight, behavior: "smooth" });
@@ -1178,6 +1180,26 @@ class ChatPortalClient {
       if (wrapper.querySelector("[data-message-tools]")) {
         this.updateMessageToolsToggle(wrapper);
       }
+      this.updateInlineToolCardsVisibility(wrapper);
+    });
+  }
+
+  updateInlineToolCardsVisibility(wrapper) {
+    if (!wrapper) return;
+    const segmentsContainer = wrapper.querySelector("[data-message-segments]");
+    if (!segmentsContainer) return;
+    const cards = segmentsContainer.querySelectorAll("[data-tool-card]");
+    if (!cards.length) return;
+
+    if (this.globalToolsVisible) {
+      cards.forEach((card) => card.classList.remove("hidden"));
+      return;
+    }
+
+    cards.forEach((card) => {
+      const approvalStatus = (card.dataset.approvalStatus || "").toString().trim().toLowerCase();
+      const keep = approvalStatus === "pending" || approvalStatus === "pending_approval";
+      card.classList.toggle("hidden", !keep);
     });
   }
 
@@ -1194,9 +1216,8 @@ class ChatPortalClient {
 
   wrapperHasPendingToolApprovals(wrapper) {
     if (!wrapper) return false;
-    const toolsContainer = wrapper.querySelector("[data-message-tools]");
-    if (!toolsContainer) return false;
-    const cards = toolsContainer.querySelectorAll("[data-tool-card]");
+    const cards = wrapper.querySelectorAll("[data-tool-card]");
+    if (!cards.length) return false;
     for (const card of cards) {
       const approvalStatus = (card.dataset.approvalStatus || "").toString().trim().toLowerCase();
       if (approvalStatus === "pending" || approvalStatus === "pending_approval") {
@@ -1270,7 +1291,7 @@ class ChatPortalClient {
         body.appendChild(container);
       }
     }
-    container.className = "mt-2 mb-3 space-y-2 w-full flex flex-col items-start";
+    container.className = "mt-2 mb-3 space-y-1 w-full flex flex-col items-start";
 
     let toggleRow = wrapper.querySelector("[data-message-tools-toggle]");
     if (!toggleRow) {
@@ -1311,260 +1332,102 @@ class ChatPortalClient {
     const eventId = (payload.event_id || payload.eventId || "").toString().trim();
     if (!eventId) return null;
 
-    const details = document.createElement("details");
-    details.dataset.toolCard = "true";
-    details.dataset.toolEventId = eventId;
-    details.className = "mcp-card w-full"; // Use new class
+    const card = document.createElement("div");
+    card.dataset.toolCard = "true";
+    card.dataset.toolEventId = eventId;
+    card.className = "mcp-tool-row";
 
-    const summary = document.createElement("summary");
-    summary.className = "mcp-card-summary";
+    const row = document.createElement("div");
+    row.className = "mcp-tool-row-line";
 
-    const header = document.createElement("div");
-    header.className = "mcp-card-header";
+    const rowLeft = document.createElement("div");
+    rowLeft.className = "mcp-tool-row-left";
 
-    const titleBlock = document.createElement("div");
-    titleBlock.className = "mcp-card-title-block";
+    const status = document.createElement("span");
+    status.dataset.toolStatus = "true";
+    status.className = "mcp-status pending";
 
-    const titleRow = document.createElement("div");
-    titleRow.className = "mcp-card-title-row";
+    const statusIcon = document.createElement("span");
+    statusIcon.dataset.toolStatusIcon = "true";
+    statusIcon.className = "mcp-status-icon";
 
-    const icon = document.createElement("div");
-    icon.className = "mcp-card-icon";
-    icon.innerHTML = `
-      <svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-        <path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/>
-      </svg>
-    `;
+    const statusLabel = document.createElement("span");
+    statusLabel.dataset.toolStatusLabel = "true";
+    statusLabel.className = "mcp-status-label";
+
+    status.appendChild(statusIcon);
+    status.appendChild(statusLabel);
 
     const title = document.createElement("div");
     title.dataset.toolTitle = "true";
-    title.className = "mcp-card-title";
-
-    const kind = document.createElement("span");
-    kind.dataset.toolKind = "true";
-    kind.className = "mcp-badge hidden";
-    kind.textContent = "MCP";
-
-    const subtitle = document.createElement("div");
-    subtitle.dataset.toolSubtitle = "true";
-    subtitle.className = "mcp-card-subtitle";
-
-    titleRow.appendChild(title);
-    titleRow.appendChild(kind);
-    titleBlock.appendChild(titleRow);
-    titleBlock.appendChild(subtitle);
-
-    const meta = document.createElement("div");
-    meta.className = "mcp-card-meta";
-
-    const statusPill = document.createElement("span");
-    statusPill.dataset.toolStatus = "true";
-    statusPill.className = "mcp-status pending";
-
-    const duration = document.createElement("span");
-    duration.dataset.toolDuration = "true";
-    duration.className = "mcp-badge hidden"; // Re-use badge style for duration or specialized class
-
-    const chevron = document.createElement("div");
-    chevron.dataset.toolChevron = "true";
-    chevron.className = "mcp-chevron";
-    chevron.innerHTML = `
-      <svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-        <polyline points="6 9 12 15 18 9"></polyline>
-      </svg>
-    `;
-
-    meta.appendChild(statusPill);
-    meta.appendChild(duration);
-    meta.appendChild(chevron);
-
-    header.appendChild(icon);
-    header.appendChild(titleBlock);
-    header.appendChild(meta);
-
-    const progress = document.createElement("div");
-    progress.dataset.toolProgress = "true";
-    progress.className = "mcp-progress hidden";
-    const progressBar = document.createElement("div");
-    progressBar.className = "mcp-progress-bar";
-    progress.appendChild(progressBar);
-
-    summary.appendChild(header);
-    summary.appendChild(progress);
-
-    const body = document.createElement("div");
-    body.dataset.toolBody = "true";
-    body.className = "mcp-body";
-
-    const contentWrapper = document.createElement("div");
-    contentWrapper.className = "mcp-body-content";
-
-    // Approval Section
-    const approval = document.createElement("div");
-    approval.dataset.toolApproval = "true";
-    approval.className = "mcp-approval hidden";
-
-    const approvalTitle = document.createElement("div");
-    approvalTitle.dataset.toolApprovalTitle = "true";
-    approvalTitle.className = "mcp-approval-title";
-    approvalTitle.textContent = "Approval required";
-
-    const approvalMeta = document.createElement("div");
-    approvalMeta.dataset.toolApprovalMeta = "true";
-    approvalMeta.className = "mcp-approval-text";
-
-    const approvalRemember = document.createElement("label");
-    approvalRemember.dataset.toolApprovalRememberWrap = "true";
-    approvalRemember.className = "flex items-center gap-2 mt-2 text-xs text-muted-foreground select-none cursor-pointer";
-
-    const rememberCheckbox = document.createElement("input");
-    rememberCheckbox.type = "checkbox";
-    rememberCheckbox.dataset.toolApprovalRemember = "true";
-    rememberCheckbox.className = "h-3.5 w-3.5 rounded border-border bg-background text-primary focus:ring-1 focus:ring-primary";
-
-    const rememberText = document.createElement("span");
-    rememberText.textContent = "Always allow this tool";
-
-    approvalRemember.appendChild(rememberCheckbox);
-    approvalRemember.appendChild(rememberText);
+    title.className = "mcp-tool-title";
 
     const approvalActions = document.createElement("div");
     approvalActions.dataset.toolApprovalActions = "true";
-    approvalActions.className = "mcp-approval-actions";
+    approvalActions.className = "mcp-tool-approval-actions mcp-approval-inline-actions";
 
     const approveButton = document.createElement("button");
     approveButton.type = "button";
     approveButton.dataset.toolApprovalAction = "approve";
-    approveButton.className = "mcp-btn mcp-btn-approve";
+    approveButton.className = "mcp-approval-inline-btn mcp-approval-inline-approve";
     approveButton.textContent = "Approve";
 
     const denyButton = document.createElement("button");
     denyButton.type = "button";
     denyButton.dataset.toolApprovalAction = "deny";
-    denyButton.className = "mcp-btn mcp-btn-deny";
-    denyButton.textContent = "Deny";
+    denyButton.className = "mcp-approval-inline-btn mcp-approval-inline-deny";
+    denyButton.textContent = "Reject";
 
     approvalActions.appendChild(approveButton);
     approvalActions.appendChild(denyButton);
+
+    rowLeft.appendChild(status);
+    rowLeft.appendChild(title);
+    rowLeft.appendChild(approvalActions);
+
+    row.appendChild(rowLeft);
+
+    // Inline approval (no details panels)
+    const approval = document.createElement("div");
+    approval.dataset.toolApproval = "true";
+    approval.className = "mcp-approval-inline hidden";
+
+    const approvalTitle = document.createElement("div");
+    approvalTitle.dataset.toolApprovalTitle = "true";
+    approvalTitle.className = "mcp-approval-inline-title";
+
+    const approvalMeta = document.createElement("div");
+    approvalMeta.dataset.toolApprovalMeta = "true";
+    approvalMeta.className = "mcp-approval-inline-meta";
+
     approval.appendChild(approvalTitle);
     approval.appendChild(approvalMeta);
-    approval.appendChild(approvalRemember);
-    approval.appendChild(approvalActions);
 
-    // Tabs
-    const tabs = document.createElement("div");
-    tabs.dataset.toolTabs = "true";
-    tabs.className = "mcp-tabs";
-
-    const buildTab = (label, value) => {
-      const tab = document.createElement("button");
-      tab.type = "button";
-      tab.dataset.toolTab = value;
-      tab.dataset.toolTabButton = "true";
-      tab.className = "mcp-tab";
-      tab.textContent = label;
-      return tab;
-    };
-
-    tabs.appendChild(buildTab("Input", "input"));
-    tabs.appendChild(buildTab("Output", "output"));
-
-    // Panels
-    const panels = document.createElement("div");
-    panels.dataset.toolPanels = "true";
-    panels.className = "w-full";
-
-    const buildPanel = (panelType) => {
-      const panel = document.createElement("div");
-      panel.dataset.toolPanel = panelType;
-      panel.className = "mcp-panel space-y-2";
-
-      const preview = document.createElement("div");
-      preview.dataset.toolPreview = panelType;
-      preview.className = "text-sm text-foreground/80 space-y-1";
-
-      const controls = document.createElement("div");
-      controls.className = "flex items-center gap-3 text-[10px] text-muted-foreground uppercase tracking-wide pt-1";
-
-      const rawToggle = document.createElement("button");
-      rawToggle.type = "button";
-      rawToggle.dataset.toolRawToggle = "true";
-      rawToggle.dataset.toolPanel = panelType;
-      rawToggle.className = "hover:text-foreground transition-colors";
-      rawToggle.textContent = "View raw";
-
-      const copyButton = document.createElement("button");
-      copyButton.type = "button";
-      copyButton.dataset.toolRawCopy = "true";
-      copyButton.dataset.toolPanel = panelType;
-      copyButton.className = "hover:text-foreground transition-colors";
-      copyButton.textContent = "Copy";
-
-      controls.appendChild(rawToggle);
-      controls.appendChild(copyButton);
-
-      const rawWrap = document.createElement("div");
-      rawWrap.dataset.toolRawWrap = panelType;
-      rawWrap.className = "hidden mt-2";
-
-      const pre = document.createElement("pre");
-      pre.dataset.toolRaw = panelType;
-      pre.className = "mcp-code-block";
-      rawWrap.appendChild(pre);
-
-      panel.appendChild(preview);
-      panel.appendChild(controls);
-      panel.appendChild(rawWrap);
-      return panel;
-    };
-
-    panels.appendChild(buildPanel("input"));
-    panels.appendChild(buildPanel("output"));
-
-    contentWrapper.appendChild(approval);
-    contentWrapper.appendChild(tabs);
-    contentWrapper.appendChild(panels);
-
-    body.appendChild(contentWrapper);
-
-    details.dataset.toolTab = "input";
-    details.appendChild(summary);
-    details.appendChild(body);
-    this.attachToolCardEvents(details);
-    this.setToolCardTab(details, "input");
-    return details;
+    card.appendChild(row);
+    card.appendChild(approval);
+    this.attachToolCardEvents(card);
+    return card;
   }
 
   updateToolEventCard(card, payload) {
     if (!card || !payload) return;
     const phase = (payload.phase || "").toString().trim().toLowerCase();
     const statusRaw = (payload.status || "").toString().trim().toLowerCase();
-    const kindRaw = (payload.kind || "").toString().trim().toLowerCase();
     const remote = payload.remote && typeof payload.remote === "object" ? payload.remote : null;
 
     const connectionName = remote && remote.connection_name ? remote.connection_name.toString() : "";
     const remoteTool = remote && remote.remote_tool ? remote.remote_tool.toString() : "";
     const toolNameFallback = (payload.tool_name || payload.toolName || "").toString().trim();
     const titleEl = card.querySelector("[data-tool-title]");
-    const subtitleEl = card.querySelector("[data-tool-subtitle]");
     const existingTitle = titleEl ? titleEl.textContent : "";
-    const existingSubtitle = subtitleEl ? subtitleEl.textContent : "";
     const displayTool = remoteTool || toolNameFallback || "";
 
-    const titleText = connectionName || existingTitle || "External tool";
-    const subtitleText = displayTool ? `Calling ${displayTool}` : existingSubtitle || "Calling tool";
+    const titleText =
+      connectionName && displayTool
+        ? `${connectionName} - ${displayTool}`
+        : displayTool || connectionName || existingTitle || "External tool";
 
     if (titleEl) titleEl.textContent = titleText;
-    if (subtitleEl) subtitleEl.textContent = subtitleText;
-
-    const kindEl = card.querySelector("[data-tool-kind]");
-    if (kindEl) {
-      if (kindRaw) {
-        const showKind = kindRaw.includes("mcp");
-        kindEl.classList.toggle("hidden", !showKind);
-        if (showKind) kindEl.textContent = "MCP";
-      }
-    }
 
     const approvalData = payload.approval && typeof payload.approval === "object" ? payload.approval : null;
     let approvalStatus = "";
@@ -1598,19 +1461,66 @@ class ChatPortalClient {
     const isRunning = effectiveStatus === "running" || phase === "started";
     if (progressEl) progressEl.classList.toggle("hidden", !isRunning);
 
+    // Expose a stable, minimal state for CSS styling (timeline notch mode)
+    const previousToolState = (card.dataset.toolState || "").toString().trim().toLowerCase();
+    let toolState = "success";
+    if (isRunning) {
+      toolState = "running";
+    } else if (effectiveStatus === "pending_approval" || effectiveStatus === "pending" || effectiveStatus === "expired") {
+      toolState = "pending";
+    } else if (effectiveStatus === "denied" || effectiveStatus === "error" || effectiveStatus === "failed" || effectiveStatus === "failure") {
+      toolState = "error";
+    } else if (effectiveStatus === "blocked" || effectiveStatus === "disabled") {
+      toolState = "pending";
+    } else {
+      toolState = "success";
+    }
+    card.dataset.toolState = toolState;
+
+    const shouldCelebrateFinish =
+      previousToolState === "running" && (toolState === "success" || toolState === "error") && card.dataset.toolJustFinished !== "true";
+    if (shouldCelebrateFinish) {
+      card.dataset.toolJustFinished = "true";
+      if (card._toolFinishTimer) {
+        clearTimeout(card._toolFinishTimer);
+      }
+      card._toolFinishTimer = setTimeout(() => {
+        delete card.dataset.toolJustFinished;
+        card._toolFinishTimer = null;
+      }, 950);
+    }
+
     const statusEl = card.querySelector("[data-tool-status]");
     if (statusEl) {
       const mapped = this.mapToolStatus(effectiveStatus || (isRunning ? "running" : "ok"));
-      statusEl.textContent = mapped.label;
       statusEl.className = mapped.className; // Use class directly from mapToolStatus
+      statusEl.title = mapped.label || "";
+      statusEl.setAttribute("aria-label", mapped.label || "");
+
+      const iconEl = statusEl.querySelector("[data-tool-status-icon]");
+      const labelEl = statusEl.querySelector("[data-tool-status-label]");
+
+      if (labelEl) labelEl.textContent = "";
+
+      if (iconEl) {
+        const wantsOrbit = toolState === "running";
+        iconEl.classList.toggle("mcp-status-icon--orbit", wantsOrbit);
+        if (wantsOrbit) {
+          iconEl.innerHTML = this.getOrbitLoaderMarkup();
+        } else if (toolState === "success") {
+          iconEl.innerHTML = this.getToolSuccessIconMarkup();
+        } else if (toolState === "error") {
+          iconEl.innerHTML = this.getToolFailureIconMarkup();
+        } else {
+          iconEl.innerHTML = `<span class="mcp-status-dot" aria-hidden="true"></span>`;
+        }
+      }
     }
 
-    const durationEl = card.querySelector("[data-tool-duration]");
-    if (durationEl) {
-      const dur = payload.duration_ms || payload.durationMs;
-      const durText = Number.isFinite(Number(dur)) && Number(dur) > 0 ? this.formatDurationMs(Number(dur)) : "";
-      durationEl.textContent = durText;
-      durationEl.classList.toggle("hidden", !durText);
+    const approvalActionsEl = card.querySelector("[data-tool-approval-actions]");
+    const showActions = approvalStatus === "pending" || effectiveStatus === "pending_approval";
+    if (approvalActionsEl) {
+      approvalActionsEl.classList.toggle("is-visible", showActions);
     }
 
     const inputProvided = Object.prototype.hasOwnProperty.call(payload, "input");
@@ -1665,11 +1575,8 @@ class ChatPortalClient {
 
     const titleEl = approvalWrap.querySelector("[data-tool-approval-title]");
     const metaEl = approvalWrap.querySelector("[data-tool-approval-meta]");
-    const rememberWrap = approvalWrap.querySelector("[data-tool-approval-remember-wrap]");
-    const rememberCheckbox = approvalWrap.querySelector('[data-tool-approval-remember="true"]');
-    const actionsEl = approvalWrap.querySelector("[data-tool-approval-actions]");
-    const approveBtn = approvalWrap.querySelector('[data-tool-approval-action="approve"]');
-    const denyBtn = approvalWrap.querySelector('[data-tool-approval-action="deny"]');
+    const approveBtn = card.querySelector('[data-tool-approval-action="approve"]');
+    const denyBtn = card.querySelector('[data-tool-approval-action="deny"]');
 
     if (!approvalId) {
       approvalWrap.classList.add("hidden");
@@ -1717,15 +1624,6 @@ class ChatPortalClient {
       metaEl.textContent = metaParts.join(" • ");
     }
 
-    if (actionsEl) {
-      actionsEl.classList.toggle("hidden", !isPending);
-    }
-    if (rememberWrap) {
-      rememberWrap.classList.toggle("hidden", !isPending);
-    }
-    if (rememberCheckbox && !isPending) {
-      rememberCheckbox.checked = false;
-    }
     if (approveBtn) {
       approveBtn.disabled = !isPending;
       approveBtn.classList.toggle("opacity-50", !isPending);
@@ -1755,11 +1653,6 @@ class ChatPortalClient {
       card.dataset.toolApprovalBusy = "true";
     }
     const action = decision.toString().trim().toLowerCase();
-    let remember = false;
-    if (action === "approve" && card) {
-      const checkbox = card.querySelector('[data-tool-approval-remember="true"]');
-      remember = Boolean(checkbox && checkbox.checked);
-    }
     const buttons = card ? card.querySelectorAll("[data-tool-approval-action]") : [];
     buttons.forEach((btn) => {
       btn.disabled = true;
@@ -1774,16 +1667,12 @@ class ChatPortalClient {
           session_token: this.sessionToken,
           approval_id: approvalId,
           decision: action,
-          remember,
         }),
       });
       const payload = await response.json().catch(() => null);
       if (!response.ok) {
         const message = payload && payload.error && payload.error.message ? payload.error.message : "Approval failed.";
         throw new Error(message);
-      }
-      if (remember && payload && payload.preferenceSaved === false) {
-        this.showToast("Preference not saved", "Always allow requires an authenticated session.", true);
       }
       const approval = payload && payload.approval ? payload.approval : null;
       const status = approval && approval.status ? approval.status : action === "approve" ? "approved" : "denied";
@@ -2118,6 +2007,32 @@ class ChatPortalClient {
       label: normalized ? this.formatStatus(normalized) : "Done",
       className: "mcp-status",
     };
+  }
+
+  getToolSuccessIconMarkup() {
+    return `
+      <svg viewBox="0 0 16 16" fill="none" aria-hidden="true">
+        <path d="M3.5 8.5l3 3 6-7" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
+      </svg>
+    `;
+  }
+
+  getToolFailureIconMarkup() {
+    return `
+      <svg viewBox="0 0 16 16" fill="none" aria-hidden="true">
+        <path d="M4 4l8 8M12 4L4 12" stroke="currentColor" stroke-width="2" stroke-linecap="round" />
+      </svg>
+    `;
+  }
+
+  getOrbitLoaderMarkup() {
+    return `
+      <span class="mcp-orbit-loader" aria-hidden="true">
+        <span class="mcp-orbit-ring mcp-orbit-ring--1" aria-hidden="true"></span>
+        <span class="mcp-orbit-ring mcp-orbit-ring--2" aria-hidden="true"></span>
+        <span class="mcp-orbit-ring mcp-orbit-ring--3" aria-hidden="true"></span>
+      </span>
+    `;
   }
 
   formatDurationMs(ms) {
@@ -2691,11 +2606,8 @@ class ChatPortalClient {
       statusRow.dataset.streamingStatus = "true";
       statusRow.className = "flex items-center gap-2 text-xs text-muted-foreground mb-2 hidden";
       const statusDot = document.createElement("div");
-      statusDot.className = "flex items-center justify-center h-3.5 w-3.5 text-primary";
-      statusDot.innerHTML = `<svg class="animate-spin h-full w-full" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
-        <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
-        <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-      </svg>`;
+      statusDot.className = "chat-portal-status-orbit text-primary";
+      statusDot.innerHTML = this.getOrbitLoaderMarkup();
       const statusText = document.createElement("span");
       statusText.classList.add("chat-portal-status-shimmer");
       statusText.textContent = "";
@@ -2764,7 +2676,7 @@ class ChatPortalClient {
     // Tools container for this segment
     const toolsEl = document.createElement("div");
     toolsEl.dataset.segmentTools = "true";
-    toolsEl.className = "space-y-2 w-full flex flex-col items-start";
+    toolsEl.className = "space-y-1 w-full flex flex-col items-start";
     segment.appendChild(toolsEl);
 
     this.streamingSegmentsContainer.appendChild(segment);
@@ -3108,7 +3020,7 @@ class ChatPortalClient {
 
         const toolsEl = document.createElement("div");
         toolsEl.dataset.segmentTools = "true";
-        toolsEl.className = "space-y-2 w-full flex flex-col items-start";
+        toolsEl.className = "space-y-1 w-full flex flex-col items-start";
         segmentEl.appendChild(toolsEl);
 
         segmentsContainer.appendChild(segmentEl);
@@ -3283,7 +3195,7 @@ class ChatPortalClient {
     totalSpan.dataset.tokenTotal = "true";
     totalSpan.className = "font-semibold text-foreground/80";
     totalSpan.textContent = this.formatTokenCount(totalTokens);
-    wrap.append("Tokens (exact) ", roundSpan, " round / ", totalSpan, " chat");
+    wrap.append("Tokens (sum) ", roundSpan, " turn / ", totalSpan, " chat");
     return wrap;
   }
 
@@ -3337,6 +3249,56 @@ class ChatPortalClient {
     const container = document.createElement("div");
     container.className = "mt-2 space-y-2";
 
+    const usageCalls = usage && typeof usage === "object" && Array.isArray(usage.calls) ? usage.calls : [];
+    if (usage && typeof usage === "object") {
+      const usageSection = document.createElement("div");
+      const usageHeader = document.createElement("div");
+      usageHeader.className = "text-[11px] font-semibold text-muted-foreground/80 uppercase tracking-wide";
+      usageHeader.textContent = "LLM Usage";
+      usageSection.appendChild(usageHeader);
+
+      const usageBody = document.createElement("div");
+      usageBody.className = "mt-1 rounded-md border border-border/40 bg-background/40 px-2 py-1 text-[11px] leading-relaxed text-foreground/80";
+
+      const promptTokens = Number(usage.prompt_tokens);
+      const completionTokens = Number(usage.completion_tokens);
+      const totalTokensExact = Number(usage.total_tokens);
+      const segments = [];
+      if (Number.isFinite(totalTokensExact)) segments.push(`total=${this.formatTokenCount(totalTokensExact)}`);
+      if (Number.isFinite(promptTokens)) segments.push(`prompt=${this.formatTokenCount(promptTokens)}`);
+      if (Number.isFinite(completionTokens)) segments.push(`completion=${this.formatTokenCount(completionTokens)}`);
+      if (typeof usage.model === "string" && usage.model.trim()) segments.push(`model=${usage.model.trim()}`);
+      if (typeof usage.provider === "string" && usage.provider.trim()) segments.push(`provider=${usage.provider.trim()}`);
+      usageBody.textContent = segments.join(" • ") || "Unavailable";
+      usageSection.appendChild(usageBody);
+
+      if (Array.isArray(usageCalls) && usageCalls.length) {
+        const callsWrap = document.createElement("div");
+        callsWrap.className = "mt-2 space-y-1";
+        usageCalls.slice(0, 12).forEach((call, idx) => {
+          if (!call || typeof call !== "object") return;
+          const row = document.createElement("div");
+          row.className = "rounded-md border border-border/30 bg-background/30 px-2 py-1 text-[11px] leading-relaxed text-muted-foreground";
+
+          const stage = typeof call.stage === "string" && call.stage.trim() ? call.stage.trim() : `call_${idx + 1}`;
+          const callPrompt = Number(call.prompt_tokens);
+          const callCompletion = Number(call.completion_tokens);
+          const callTotal = Number(call.total_tokens);
+          const bits = [`${idx + 1}. ${stage}`];
+          if (Number.isFinite(callTotal)) bits.push(`total=${this.formatTokenCount(callTotal)}`);
+          if (Number.isFinite(callPrompt)) bits.push(`prompt=${this.formatTokenCount(callPrompt)}`);
+          if (Number.isFinite(callCompletion)) bits.push(`completion=${this.formatTokenCount(callCompletion)}`);
+          if (typeof call.model === "string" && call.model.trim()) bits.push(`model=${call.model.trim()}`);
+          if (typeof call.provider === "string" && call.provider.trim()) bits.push(`provider=${call.provider.trim()}`);
+          row.textContent = bits.join(" • ");
+          callsWrap.appendChild(row);
+        });
+        usageSection.appendChild(callsWrap);
+      }
+
+      container.appendChild(usageSection);
+    }
+
     const buildSection = (title, items, labelBuilder) => {
       const section = document.createElement("div");
       const header = document.createElement("div");
@@ -3380,8 +3342,7 @@ class ChatPortalClient {
         buildSection("Tools", toolTrace, (item) => {
           const tool = item && item.tool ? String(item.tool) : "tool";
           const status = item && item.status ? String(item.status) : "";
-          const duration = item && typeof item.duration_ms === "number" ? `${Math.round(item.duration_ms)}ms` : "";
-          return [tool, status, duration].filter(Boolean).join(" • ");
+          return [tool, status].filter(Boolean).join(" • ");
         }),
       );
     }
@@ -3815,6 +3776,18 @@ class ChatPortalClient {
         -webkit-background-clip: text;
         background-clip: text;
         color: transparent;
+      }
+      .chat-portal-status-orbit {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        width: var(--portal-status-orbit-size, 16px);
+        height: var(--portal-status-orbit-size, 16px);
+        flex-shrink: 0;
+      }
+      .chat-portal-status-orbit .mcp-orbit-loader {
+        --mcp-orbit-size: var(--portal-status-orbit-size, 16px);
+        --mcp-orbit-stroke: var(--portal-status-orbit-stroke, 2px);
       }
       .skeleton-loader {
         background: linear-gradient(90deg, 

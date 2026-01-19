@@ -1,126 +1,164 @@
-/* MCP Tool Card Component */
-/* Scoped styles for the tool execution cards in the chat portal */
+/* MCP Tool Card Component (Chat Portal)
+   Design mode: "Timeline Notch" */
 
 .mcp-card {
-  display: inline-flex;
-  flex-direction: column;
-  width: fit-content;
-  max-width: 100%;
-  /* Max width constraint usually handled by JS/Containers, but good safety */
+  --mcp-accent: hsl(var(--primary));
+  --mcp-accent-soft: hsl(var(--primary) / 0.18);
+  --mcp-line: hsl(var(--border) / 0.75);
+  --mcp-surface: linear-gradient(180deg, hsl(var(--glass) / 0.42), hsl(var(--glass) / 0.30));
+  --mcp-surface-open: linear-gradient(180deg, hsl(var(--glass) / 0.55), hsl(var(--glass) / 0.40));
+
+  position: relative;
+  width: 100%;
+  max-width: 560px;
   min-width: 0;
-  
-  /* Glassmorphism Configuration */
-  background: rgba(255, 255, 255, 0.4);
-  backdrop-filter: blur(12px);
-  -webkit-backdrop-filter: blur(12px);
-  border: 1px solid rgba(0, 0, 0, 0.08);
-  box-shadow: 
-    0 4px 6px -1px rgba(0, 0, 0, 0.02),
-    0 2px 4px -1px rgba(0, 0, 0, 0.02),
-    inset 0 1px 0 rgba(255, 255, 255, 0.6);
-    
+
   border-radius: 14px;
   overflow: hidden;
-  transition: all 0.3s cubic-bezier(0.2, 0.8, 0.2, 1);
-  margin-top: 0.5rem;
-  margin-bottom: 0.5rem;
-}
 
-/* Dark mode adjustments */
-:root[data-theme="dark"] .mcp-card {
-  background: rgba(20, 20, 25, 0.4);
-  border: 1px solid rgba(255, 255, 255, 0.08);
-  box-shadow: 
-    0 4px 6px -1px rgba(0, 0, 0, 0.1),
-    0 2px 4px -1px rgba(0, 0, 0, 0.06),
-    inset 0 1px 0 rgba(255, 255, 255, 0.05);
-}
+  background: var(--mcp-surface);
+  border: none;
+  box-shadow: 0 1px 0 hsl(var(--background) / 0.25), 0 10px 26px rgba(0, 0, 0, 0.10);
 
-/* Expansion Animation */
-.mcp-card {
-  /* ... existing styles ... */
+  backdrop-filter: blur(10px) saturate(150%);
+  -webkit-backdrop-filter: blur(10px) saturate(150%);
+
   display: grid;
   grid-template-rows: auto 0fr;
-  transition: grid-template-rows 0.3s cubic-bezier(0.4, 0, 0.2, 1),
-              background 0.2s ease,
-              box-shadow 0.2s ease;
+  transition:
+    grid-template-rows 280ms cubic-bezier(0.4, 0, 0.2, 1),
+    box-shadow 160ms ease,
+    background 160ms ease;
+  margin: 0.5rem 0;
+}
+
+.mcp-card:hover {
+  background: var(--mcp-surface-open);
+  box-shadow: 0 1px 0 hsl(var(--background) / 0.25), 0 14px 32px rgba(0, 0, 0, 0.12);
 }
 
 .mcp-card[open] {
   grid-template-rows: auto 1fr;
-  /* ... existing open styles ... */
-  background: rgba(255, 255, 255, 0.65);
-  box-shadow: 
-    0 10px 15px -3px rgba(0, 0, 0, 0.05),
-    0 4px 6px -2px rgba(0, 0, 0, 0.02),
-    inset 0 1px 0 rgba(255, 255, 255, 0.8);
-  width: 100%;
-  max-width: 550px;
+  background: var(--mcp-surface-open);
 }
 
-:root[data-theme="dark"] .mcp-card[open] {
-  background: rgba(30, 30, 35, 0.65);
-  box-shadow: 
-    0 10px 15px -3px rgba(0, 0, 0, 0.2),
-    0 4px 6px -2px rgba(0, 0, 0, 0.1),
-    inset 0 1px 0 rgba(255, 255, 255, 0.08);
+/* Timeline notch: line + node */
+.mcp-card::before {
+  content: "";
+  position: absolute;
+  left: 16px;
+  top: 10px;
+  bottom: 10px;
+  width: 1px;
+  background: linear-gradient(180deg, transparent, var(--mcp-line) 14%, var(--mcp-line) 86%, transparent);
+  opacity: 0.9;
 }
 
-/* Ensure summary sits in the first row */
-.mcp-card-summary {
-  grid-row: 1;
+/* Completion sweep overlay (triggered via data-tool-just-finished="true") */
+.mcp-card::after {
+  content: "";
+  position: absolute;
+  inset: -1px;
+  pointer-events: none;
+  opacity: 0;
+  transform: translateX(-120%);
+  background: linear-gradient(90deg, transparent, var(--mcp-accent-soft), transparent);
 }
 
-/* Ensure body sits in the second row and handles overflow */
-.mcp-body {
-  grid-row: 2;
-  overflow: hidden;
-  /* Remove old animation, rely on grid transition */
-  animation: none; 
-  padding: 0; /* Move padding to inner content or handle differently */
+.mcp-card[data-tool-just-finished="true"]::after {
+  opacity: 1;
+  animation: mcpCompleteSweep 900ms cubic-bezier(0.2, 0.8, 0.2, 1) 1;
 }
 
-/* Inner wrapper for padding to avoid jank */
-.mcp-body-content {
-  padding: 0 0.875rem 0.875rem 0.875rem;
-  min-height: 0; /* Required for grid transition */
+@keyframes mcpCompleteSweep {
+  0% {
+    transform: translateX(-120%);
+    opacity: 0;
+  }
+  18% {
+    opacity: 0.9;
+  }
+  100% {
+    transform: translateX(120%);
+    opacity: 0;
+  }
 }
 
 /* Summary / Header Area */
 .mcp-card-summary {
-  list-style: none; /* Remove default triangle */
+  grid-row: 1;
+  list-style: none;
   cursor: pointer;
-  padding: 0.75rem 0.875rem;
   user-select: none;
   outline: none;
+  padding: 0.65rem 0.75rem 0.55rem 2.25rem; /* space for timeline notch */
+  position: relative;
 }
 .mcp-card-summary::-webkit-details-marker {
   display: none;
+}
+
+.mcp-card-summary:focus-visible {
+  box-shadow: 0 0 0 2px hsl(var(--ring) / 0.35);
+}
+
+/* Notch node */
+.mcp-card-summary::before {
+  content: "";
+  position: absolute;
+  left: 16px;
+  top: 1.02rem;
+  width: 10px;
+  height: 10px;
+  border-radius: 9999px;
+  background: var(--mcp-accent);
+  box-shadow: 0 0 0 4px var(--mcp-accent-soft);
+  transform: translateX(-50%);
+}
+
+.mcp-card[data-tool-state="running"] .mcp-card-summary::before {
+  animation: mcpNodePulse 1.6s ease-in-out infinite;
+}
+
+.mcp-card[data-tool-just-finished="true"] .mcp-card-summary::before {
+  animation: mcpNodePop 720ms cubic-bezier(0.2, 0.8, 0.2, 1) 1;
+}
+
+@keyframes mcpNodePulse {
+  0%,
+  100% {
+    box-shadow: 0 0 0 4px var(--mcp-accent-soft);
+    opacity: 1;
+  }
+  55% {
+    box-shadow: 0 0 0 7px hsl(var(--primary) / 0.10);
+    opacity: 0.96;
+  }
+}
+
+@keyframes mcpNodePop {
+  0% {
+    transform: translateX(-50%) scale(1);
+  }
+  38% {
+    transform: translateX(-50%) scale(1.18);
+  }
+  100% {
+    transform: translateX(-50%) scale(1);
+  }
 }
 
 .mcp-card-header {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 0.75rem;
+  gap: 0.65rem;
   width: 100%;
 }
 
+/* Timeline mode is minimal; hide the bulky icon block */
 .mcp-card-icon {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 2rem;
-  height: 2rem;
-  border-radius: 8px;
-  background: linear-gradient(135deg, rgba(255,255,255,0.8), rgba(240,240,240,0.5));
-  border: 1px solid rgba(0,0,0,0.05);
-  color: var(--primary); /* Uses theme variable */
-  flex-shrink: 0;
-}
-:root[data-theme="dark"] .mcp-card-icon {
-  background: linear-gradient(135deg, rgba(255,255,255,0.08), rgba(255,255,255,0.03));
-  border: 1px solid rgba(255,255,255,0.1);
+  display: none;
 }
 
 .mcp-card-title-block {
@@ -139,7 +177,7 @@
 .mcp-card-title {
   font-size: 0.8125rem; /* 13px */
   font-weight: 600;
-  color: var(--foreground);
+  color: hsl(var(--foreground));
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -147,7 +185,7 @@
 
 .mcp-card-subtitle {
   font-size: 0.75rem; /* 12px */
-  color: var(--muted-foreground);
+  color: hsl(var(--muted-foreground));
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -161,95 +199,192 @@
   flex-shrink: 0;
 }
 
-/* Type badge (e.g. MCP) */
-.mcp-badge {
-  font-size: 0.625rem; /* 10px */
-  font-weight: 700;
-  text-transform: uppercase;
-  letter-spacing: 0.025em;
-  padding: 1px 5px;
-  border-radius: 4px;
-  background: rgba(var(--primary), 0.1);
-  color: var(--primary);
-}
-
 /* Status Chips */
 .mcp-status {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  padding: 0.125rem 0.625rem;
+  gap: 0.4rem;
+  padding: 0;
   border-radius: 9999px;
   font-size: 0.6875rem; /* 11px */
   font-weight: 600;
-  text-transform: capitalize;
-  min-width: 4rem;
+  min-width: unset;
   white-space: nowrap;
-  transition: all 0.2s;
+  background: transparent;
+  border: none;
+  color: hsl(var(--muted-foreground));
+  transition: color 160ms ease, opacity 160ms ease;
+}
+
+.mcp-status-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  flex-shrink: 0;
+  color: currentColor;
+}
+
+.mcp-status-icon.mcp-status-icon--orbit {
+  width: 24px;
+  height: 24px;
+}
+
+.mcp-status-icon svg {
+  width: 14px;
+  height: 14px;
+}
+
+.mcp-status-label {
+  color: hsl(var(--muted-foreground));
+}
+
+.mcp-status-label:empty {
+  display: none;
+}
+
+.mcp-status-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 9999px;
+  background: hsl(var(--primary));
+  box-shadow: 0 0 0 3px hsl(var(--primary) / 0.18);
 }
 
 /* Status Variants */
 .mcp-status.running {
-  background: rgba(59, 130, 246, 0.1);
-  color: #2563eb;
-  position: relative;
-  overflow: hidden;
-}
-:root[data-theme="dark"] .mcp-status.running {
-  background: rgba(59, 130, 246, 0.2);
-  color: #60a5fa;
-}
-/* Subtle pulse animation for running state */
-.mcp-status.running::after {
-  content: '';
-  position: absolute;
-  top: 0;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  background: linear-gradient(90deg, transparent, rgba(255,255,255,0.4), transparent);
-  transform: translateX(-100%);
-  animation: mcpShimmer 2s infinite;
-}
-
-@keyframes mcpShimmer {
-  100% { transform: translateX(100%); }
+  color: hsl(var(--primary));
 }
 
 .mcp-status.success {
-  background: rgba(16, 185, 129, 0.1);
-  color: #059669;
-}
-:root[data-theme="dark"] .mcp-status.success {
-  background: rgba(16, 185, 129, 0.2);
-  color: #34d399;
+  color: hsl(var(--success));
 }
 
 .mcp-status.error {
-  background: rgba(239, 68, 68, 0.1);
-  color: #dc2626;
-}
-:root[data-theme="dark"] .mcp-status.error {
-  background: rgba(239, 68, 68, 0.2);
-  color: #f87171;
+  color: hsl(var(--error));
 }
 
 .mcp-status.pending {
-  background: rgba(245, 158, 11, 0.1);
-  color: #d97706;
-}
-:root[data-theme="dark"] .mcp-status.pending {
-  background: rgba(245, 158, 11, 0.2);
-  color: #fbbf24;
+  color: hsl(var(--muted-foreground));
 }
 
-/* Chevron */
+/* Spinner motion (running state) */
+.mcp-status.running .mcp-status-icon svg {
+  transform-origin: 50% 50%;
+  animation: mcpSpin 900ms linear infinite;
+}
+
+@keyframes mcpSpin {
+  to { transform: rotate(360deg); }
+}
+
+.mcp-orbit-loader {
+  --mcp-orbit-size: 24px;
+  --mcp-orbit-stroke: 2px;
+  position: relative;
+  width: var(--mcp-orbit-size);
+  height: var(--mcp-orbit-size);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  perspective: 780px;
+}
+
+.mcp-orbit-ring {
+  position: absolute;
+  width: var(--mcp-orbit-size);
+  height: var(--mcp-orbit-size);
+  box-sizing: border-box;
+  border-radius: 50%;
+  left: 50%;
+  top: 50%;
+  margin-left: calc(var(--mcp-orbit-size) / -2);
+  margin-top: calc(var(--mcp-orbit-size) / -2);
+  opacity: 0.95;
+  will-change: transform;
+}
+
+.mcp-orbit-ring--1 {
+  border-bottom: var(--mcp-orbit-stroke) solid rgb(92, 94, 220);
+  animation: mcpOrbitRotate1 1.15s linear infinite;
+}
+
+.mcp-orbit-ring--2 {
+  border-right: var(--mcp-orbit-stroke) solid rgb(145, 71, 255);
+  animation: mcpOrbitRotate2 1.15s 0.1s linear infinite;
+}
+
+.mcp-orbit-ring--3 {
+  border-top: var(--mcp-orbit-stroke) solid rgb(59, 130, 246);
+  animation: mcpOrbitRotate3 1.15s 0.15s linear infinite;
+}
+
+@keyframes mcpOrbitRotate1 {
+  0% { transform: rotateX(45deg) rotateY(-45deg) rotateZ(0deg); }
+  100% { transform: rotateX(45deg) rotateY(-45deg) rotateZ(360deg); }
+}
+
+@keyframes mcpOrbitRotate2 {
+  0% { transform: rotateX(45deg) rotateY(45deg) rotateZ(0deg); }
+  100% { transform: rotateX(45deg) rotateY(45deg) rotateZ(360deg); }
+}
+
+@keyframes mcpOrbitRotate3 {
+  0% { transform: rotateX(-60deg) rotateY(0deg) rotateZ(0deg); }
+  100% { transform: rotateX(-60deg) rotateY(0deg) rotateZ(360deg); }
+}
+
+.mcp-tool-row[data-tool-state="success"] .mcp-orbit-ring {
+  animation: none !important;
+}
+
+/* Deterministic frozen pose on success (avoid frame-dependent pause). */
+.mcp-tool-row[data-tool-state="success"] .mcp-orbit-ring--1 {
+  transform: rotateX(45deg) rotateY(-45deg) rotateZ(240deg);
+}
+
+.mcp-tool-row[data-tool-state="success"] .mcp-orbit-ring--2 {
+  transform: rotateX(45deg) rotateY(45deg) rotateZ(140deg);
+}
+
+.mcp-tool-row[data-tool-state="success"] .mcp-orbit-ring--3 {
+  transform: rotateX(-60deg) rotateY(0deg) rotateZ(30deg);
+}
+
+.mcp-tool-row[data-tool-state="error"] .mcp-orbit-ring {
+  animation: none !important;
+}
+
+.mcp-tool-row[data-tool-state="error"] .mcp-orbit-ring--1 {
+  transform: rotateX(45deg) rotateY(-45deg) rotateZ(240deg);
+}
+
+.mcp-tool-row[data-tool-state="error"] .mcp-orbit-ring--2 {
+  transform: rotateX(45deg) rotateY(45deg) rotateZ(140deg);
+}
+
+.mcp-tool-row[data-tool-state="error"] .mcp-orbit-ring--3 {
+  transform: rotateX(-60deg) rotateY(0deg) rotateZ(30deg);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .mcp-orbit-ring {
+    animation: none !important;
+  }
+}
+
+/* Chevron (kept, but subtle) */
 .mcp-chevron {
-  color: var(--muted-foreground);
-  opacity: 0.6;
+  color: hsl(var(--muted-foreground));
+  opacity: 0.5;
   width: 1rem;
   height: 1rem;
   transition: transform 0.2s;
+}
+.mcp-card:hover .mcp-chevron {
+  opacity: 0.8;
 }
 .mcp-card[open] .mcp-chevron {
   transform: rotate(180deg);
@@ -259,18 +394,15 @@
 .mcp-progress {
   height: 2px;
   width: 100%;
-  background: rgba(0,0,0,0.05);
+  background: hsl(var(--border) / 0.35);
   overflow: hidden;
   margin-top: 0.5rem;
   border-radius: 2px;
 }
-:root[data-theme="dark"] .mcp-progress {
-  background: rgba(255,255,255,0.05);
-}
 
 .mcp-progress-bar {
   height: 100%;
-  background: var(--primary);
+  background: linear-gradient(90deg, transparent, var(--mcp-accent), transparent);
   width: 30%;
   border-radius: 2px;
   animation: mcpIndeterminate 1.5s infinite linear;
@@ -286,29 +418,37 @@
 /* .mcp-body is now handling the grid row */
 /* We don't need the slide down animation as grid handles height */
 
+/* Ensure body sits in the second row and handles overflow */
+.mcp-body {
+  grid-row: 2;
+  overflow: hidden;
+  padding: 0;
+}
+
+/* Inner wrapper for padding to avoid jank */
+.mcp-body-content {
+  padding: 0 0.75rem 0.85rem 2.25rem; /* align with summary notch */
+  min-height: 0;
+}
 
 /* Approval Section */
 .mcp-approval {
-  background: rgba(255,255,255,0.5);
-  border: 1px solid rgba(0,0,0,0.06);
+  background: hsl(var(--surface-elevated) / 0.65);
+  border: 1px solid hsl(var(--border) / 0.55);
   border-radius: 8px;
   padding: 0.75rem;
   margin-bottom: 0.75rem;
-}
-:root[data-theme="dark"] .mcp-approval {
-  background: rgba(0,0,0,0.2);
-  border: 1px solid rgba(255,255,255,0.08);
 }
 
 .mcp-approval-title {
   font-size: 0.75rem;
   font-weight: 600;
-  color: var(--foreground);
+  color: hsl(var(--foreground));
 }
 
 .mcp-approval-text {
   font-size: 0.75rem;
-  color: var(--muted-foreground);
+  color: hsl(var(--muted-foreground));
   margin-top: 0.25rem;
 }
 
@@ -333,40 +473,37 @@
 }
 
 .mcp-btn-approve {
-  background: rgba(16, 185, 129, 0.1);
-  color: #059669;
-  border-color: rgba(16, 185, 129, 0.2);
+  background: hsl(var(--success) / 0.12);
+  color: hsl(var(--success));
+  border-color: hsl(var(--success) / 0.22);
 }
 .mcp-btn-approve:hover {
-  background: rgba(16, 185, 129, 0.2);
+  background: hsl(var(--success) / 0.18);
 }
 
 .mcp-btn-deny {
-  background: rgba(239, 68, 68, 0.1);
-  color: #dc2626;
-  border-color: rgba(239, 68, 68, 0.2);
+  background: hsl(var(--error) / 0.12);
+  color: hsl(var(--error));
+  border-color: hsl(var(--error) / 0.22);
 }
 .mcp-btn-deny:hover {
-  background: rgba(239, 68, 68, 0.2);
+  background: hsl(var(--error) / 0.18);
 }
 
 /* Tabs */
 .mcp-tabs {
   display: inline-flex;
-  background: rgba(0,0,0,0.04);
+  background: hsl(var(--muted) / 0.45);
   padding: 3px;
   border-radius: 8px;
   margin-bottom: 0.75rem;
-}
-:root[data-theme="dark"] .mcp-tabs {
-  background: rgba(255,255,255,0.06);
 }
 
 .mcp-tab {
   padding: 0.25rem 0.75rem;
   font-size: 0.75rem;
   font-weight: 500;
-  color: var(--muted-foreground);
+  color: hsl(var(--muted-foreground));
   border-radius: 6px;
   transition: all 0.2s;
   background: transparent;
@@ -390,44 +527,209 @@ details[data-tool-tab="output"] .mcp-panel[data-tool-panel="output"] {
 /* Tab Active States relying on container state */
 details[data-tool-tab="input"] .mcp-tab[data-tool-tab="input"],
 details[data-tool-tab="output"] .mcp-tab[data-tool-tab="output"] {
-  background: var(--background);
-  color: var(--foreground);
+  background: hsl(var(--surface-elevated) / 0.9);
+  color: hsl(var(--foreground));
   box-shadow: 0 1px 2px rgba(0,0,0,0.05);
-}
-:root[data-theme="dark"] details[data-tool-tab="input"] .mcp-tab[data-tool-tab="input"],
-:root[data-theme="dark"] details[data-tool-tab="output"] .mcp-tab[data-tool-tab="output"] {
-  background: rgba(255,255,255,0.1);
 }
 
 .mcp-code-block {
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
   font-size: 0.75rem;
   line-height: 1.5;
-  background: rgba(0,0,0,0.03);
-  border: 1px solid rgba(0,0,0,0.06);
+  background: hsl(var(--muted) / 0.35);
+  border: 1px solid hsl(var(--border) / 0.55);
   border-radius: 8px;
   padding: 0.75rem;
-  color: var(--foreground);
+  color: hsl(var(--foreground));
   overflow-x: auto;
   white-space: pre-wrap;
   word-break: break-all;
 }
-:root[data-theme="dark"] .mcp-code-block {
-  background: rgba(0,0,0,0.2);
-  border: 1px solid rgba(255,255,255,0.08);
+
+/* Inline tool activity row (no card/details) */
+.mcp-tool-row {
+  --mcp-accent-raw: var(--primary);
+  position: relative;
+  width: 100%;
+  max-width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  padding: 0.15rem 0;
 }
+
+.mcp-tool-row[data-tool-state="running"] {
+  --mcp-accent-raw: var(--primary);
+}
+.mcp-tool-row[data-tool-state="pending"] {
+  --mcp-accent-raw: var(--primary);
+}
+.mcp-tool-row[data-tool-state="success"] {
+  --mcp-accent-raw: var(--success);
+}
+.mcp-tool-row[data-tool-state="error"] {
+  --mcp-accent-raw: var(--error);
+}
+
+.mcp-tool-row-line {
+  position: relative;
+  z-index: 1;
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 0;
+  flex-wrap: nowrap;
+  min-width: 0;
+}
+
+.mcp-tool-row-left {
+  display: flex;
+  align-items: center;
+  gap: 0;
+  flex-wrap: nowrap;
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
+.mcp-tool-row-left .mcp-status {
+  margin-right: 0.45rem;
+}
+
+.mcp-tool-title {
+  font-size: 0.8125rem;
+  font-weight: 600;
+  line-height: 1.15;
+  color: hsl(var(--foreground));
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+  flex: 0 1 auto;
+}
+
+.mcp-tool-outcome-inline {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 0;
+  height: 16px;
+  max-width: 0;
+  overflow: hidden;
+  flex-shrink: 0;
+  opacity: 0;
+  transform: translateY(1px) scale(0.95);
+  transition: opacity 160ms ease, transform 160ms ease, max-width 160ms ease, margin-left 160ms ease;
+  margin-left: 0;
+}
+
+.mcp-tool-outcome-inline.is-visible {
+  opacity: 1;
+  transform: translateY(0) scale(1);
+  width: 16px;
+  max-width: 16px;
+  margin-left: 0.4rem;
+}
+
+.mcp-tool-outcome-inline img {
+  width: 16px;
+  height: 16px;
+  display: block;
+}
+
+.mcp-tool-approval-actions {
+  display: inline-flex;
+  gap: 0.4rem;
+  align-items: center;
+  opacity: 0;
+  transform: translateY(2px) scale(0.98);
+  max-width: 0;
+  overflow: hidden;
+  pointer-events: none;
+  transition: opacity 180ms ease, transform 180ms ease, max-width 180ms ease, margin-left 180ms ease;
+  margin-left: 0;
+  flex-shrink: 0;
+}
+
+.mcp-tool-approval-actions.is-visible {
+  opacity: 1;
+  transform: translateY(0) scale(1);
+  max-width: 220px;
+  margin-left: 0.4rem;
+  pointer-events: auto;
+}
+
+.mcp-approval-inline {
+  position: relative;
+  z-index: 1;
+  margin-left: 2rem;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.mcp-approval-inline-title {
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: hsl(var(--foreground));
+}
+
+.mcp-approval-inline-meta {
+  font-size: 0.75rem;
+  color: hsl(var(--muted-foreground));
+}
+
+.mcp-approval-inline-actions {
+  display: inline-flex;
+  gap: 0.4rem;
+}
+
+.mcp-approval-inline-btn {
+  appearance: none;
+  border: none;
+  background: hsl(var(--muted) / 0.45);
+  color: hsl(var(--foreground) / 0.92);
+  font-size: 0.75rem;
+  font-weight: 600;
+  padding: 0.25rem 0.5rem;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: background 160ms ease, color 160ms ease, opacity 160ms ease;
+}
+
+.mcp-approval-inline-btn:hover {
+  background: hsl(var(--muted) / 0.65);
+}
+
+.mcp-approval-inline-btn:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.mcp-approval-inline-approve {
+  background: hsl(var(--success) / 0.14);
+  color: hsl(var(--success));
+}
+.mcp-approval-inline-approve:hover {
+  background: hsl(var(--success) / 0.20);
+}
+
+.mcp-approval-inline-deny {
+  background: hsl(var(--error) / 0.12);
+  color: hsl(var(--error));
+}
+.mcp-approval-inline-deny:hover {
+  background: hsl(var(--error) / 0.18);
+}
+
 
 /* Segment-based interleaved structure */
 [data-message-segments] {
-  display: flex;
-  flex-direction: column;
-  gap: 0.5rem;
+  /* Let the existing chat styles (e.g., space-y utilities) control spacing. */
 }
 
 [data-segment] {
-  display: flex;
-  flex-direction: column;
-  gap: 0.5rem;
   animation: segmentFadeIn 0.3s ease-out;
 }
 
@@ -447,24 +749,30 @@ details[data-tool-tab="output"] .mcp-tab[data-tool-tab="output"] {
 }
 
 [data-segment-tools] {
-  display: flex;
-  flex-direction: column;
-  gap: 0.5rem;
   width: 100%;
 }
 
-/* Smooth appearance of tool cards within segments */
-[data-segment-tools] .mcp-card {
-  animation: toolCardSlideIn 0.4s cubic-bezier(0.2, 0.8, 0.2, 1);
+/* Smooth appearance of tool rows within segments */
+[data-segment-tools] .mcp-tool-row {
+  animation: toolRowSlideIn 0.32s cubic-bezier(0.2, 0.8, 0.2, 1);
 }
 
-@keyframes toolCardSlideIn {
+@keyframes toolRowSlideIn {
   from {
     opacity: 0;
-    transform: translateY(12px) scale(0.98);
+    transform: translateY(10px);
   }
   to {
     opacity: 1;
-    transform: translateY(0) scale(1);
+    transform: translateY(0);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .mcp-tool-row,
+  .mcp-tool-row *,
+  .mcp-status.running .mcp-status-icon svg {
+    transition: none !important;
+    animation: none !important;
   }
 }

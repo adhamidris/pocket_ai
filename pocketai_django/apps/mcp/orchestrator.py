@@ -49,9 +49,10 @@ from apps.conversations.response_blocks import normalize_response_blocks
 
 from . import prompts, tools as mcp_tools
 from .connectors import (
-    build_remote_tool_definitions,
+    build_remote_tool_definitions_from_descriptors,
     get_tool_approval_requirement,
     list_enabled_mcp_connections_for_agent,
+    list_remote_tool_descriptors,
     mcp_connection_auth_headers,
 )
 from .remote_client import McpRemoteError, call_mcp_tool_streamable_http
@@ -140,6 +141,45 @@ class McpOrchestratorService:
         )
         self.char_budget_window_seconds = max(30, int(getattr(settings, "RAG_CHAR_BUDGET_WINDOW_SECONDS", 60)))
 
+    _LOW_INTENT_PATTERNS = (
+        re.compile(r"^(hi|hello|hey|hola|hallo|مرحبا|السلام عليكم|as-salamu alaykum)\\b", re.IGNORECASE),
+        re.compile(r"^(good\\s+(morning|evening|afternoon|day|night))\\b", re.IGNORECASE),
+        re.compile(r"^(thanks|thank you|gracias|shukran|شكرا)\\b", re.IGNORECASE),
+        re.compile(r"^(test|testing)\\b", re.IGNORECASE),
+    )
+    _LOW_INTENT_SIMPLE = {
+        "hi",
+        "hello",
+        "hey",
+        "hola",
+        "مرحبا",
+        "salam",
+        "salaam",
+        "as-salamu alaykum",
+        "thanks",
+        "thank you",
+        "gracias",
+        "شكرا",
+        "test",
+        "testing",
+    }
+
+    @classmethod
+    def _is_low_intent_message(cls, text: str) -> bool:
+        normalized = (text or "").strip()
+        if not normalized:
+            return False
+        if len(normalized) > 80:
+            return False
+        lowered = normalized.lower()
+        if any(ch.isdigit() for ch in lowered):
+            return False
+        if "@" in lowered:
+            return False
+        if lowered in cls._LOW_INTENT_SIMPLE:
+            return True
+        return any(pattern.match(lowered) for pattern in cls._LOW_INTENT_PATTERNS)
+
     def _execute_turn(
         self,
         *,
@@ -186,17 +226,33 @@ class McpOrchestratorService:
             # Load seen items from previous turns (for "are there more?" follow-ups)
             self._hydrate_seen_items(conversation, tool_context)
 
-        # External MCP connections (per-agent) extend the tool catalog.
-        remote_connections = list_enabled_mcp_connections_for_agent(self.agent)
-        remote_tool_defs, remote_registry = build_remote_tool_definitions(remote_connections)
-        self._remote_tool_registry = remote_registry
-        if remote_tool_defs:
-            self.tool_definitions = tuple(list(mcp_tools.TOOL_DEFINITIONS) + remote_tool_defs)
-        else:
-            self.tool_definitions = mcp_tools.TOOL_DEFINITIONS
-
-        query_classification = self._classify_query_intent(user_message)
         feature_state = FeatureFlagService.snapshot(conversation.business_profile)
+        query_classification = self._classify_query_intent(user_message)
+
+        disable_tools_for_turn = self._is_low_intent_message(user_message)
+
+        internal_tool_defs: list[Mapping[str, object]] = list(mcp_tools.TOOL_DEFINITIONS)
+        if feature_state.rag_agentic_mode:
+            allowed = {"search_knowledge", "read_document"}
+            internal_tool_defs = [
+                tool_def for tool_def in internal_tool_defs if self._tool_schema_name(tool_def) in allowed
+            ]
+
+        # External MCP connections (per-agent) extend the tool catalog.
+        remote_tool_defs: list[dict[str, Any]] = []
+        self._remote_tool_registry = {}
+        if not disable_tools_for_turn:
+            all_remote_connections = list_enabled_mcp_connections_for_agent(self.agent)
+            remote_descriptors = list_remote_tool_descriptors(all_remote_connections)
+            remote_tool_defs, remote_registry = build_remote_tool_definitions_from_descriptors(
+                remote_descriptors,
+            )
+            self._remote_tool_registry = remote_registry
+
+        if remote_tool_defs:
+            self.tool_definitions = tuple([*internal_tool_defs, *remote_tool_defs])
+        else:
+            self.tool_definitions = tuple(internal_tool_defs)
         auto_structure_enabled = self._auto_structure_enabled_for_business(conversation.business_profile)
         if feature_state.rag_agentic_mode:
             auto_structure_enabled = False
@@ -213,7 +269,7 @@ class McpOrchestratorService:
         if not self.provider:
             raise RuntimeError("MCP provider is not configured.")
 
-        preplan_enabled = self._preplan_enabled_for_business(conversation.business_profile)
+        preplan_enabled = (not disable_tools_for_turn) and self._preplan_enabled_for_business(conversation.business_profile)
         verification_enabled = self._verification_enabled_for_business(conversation.business_profile)
         verification_blocks_streaming = verification_enabled and self._verification_blocks_streaming_for_business(
             conversation.business_profile
@@ -241,7 +297,7 @@ class McpOrchestratorService:
         inline_response_blocks_detected = False
         preplan_note: str | None = None
         preplan_payload: dict[str, object] | None = None
-        initial_tools: Iterable[Mapping[str, object]] = self.tool_definitions
+        initial_tools: Iterable[Mapping[str, object]] | None = None if disable_tools_for_turn else self.tool_definitions
 
         if preplan_enabled:
             recent_history = [
@@ -744,7 +800,7 @@ class McpOrchestratorService:
         with TRACER.start_as_current_span("portal.mcp.initial_pass") as initial_span:
             if initial_span.is_recording():
                 initial_span.set_attribute("mcp.message_count", len(primary_messages))
-                initial_span.set_attribute("mcp.tools_enabled", True)
+                initial_span.set_attribute("mcp.tools_enabled", bool(initial_tools))
             first_payload = self._chat_with_context_governor(
                 conversation=conversation,
                 stage="initial_pass",
@@ -5392,6 +5448,25 @@ class McpOrchestratorService:
                 response_format=response_format,
                 on_stream_delta=on_stream_delta,
             )
+
+        try:
+            from apps.llm.request_dump import maybe_dump_mcp_llm_request
+
+            bundle_path = getattr(tool_context, "llm_request_dump_path", None) if tool_context else None
+            dump_path = maybe_dump_mcp_llm_request(
+                stage=stage,
+                conversation_id=conversation.id,
+                business_id=getattr(conversation, "business_profile_id", None),
+                provider=self.provider,
+                messages=governed_messages,
+                tools=tools,
+                streaming=bool(on_stream_delta),
+                bundle_path=bundle_path,
+            )
+            if dump_path and tool_context and bundle_path is None:
+                setattr(tool_context, "llm_request_dump_path", dump_path)
+        except Exception:
+            pass
 
         try:
             payload = self.provider.chat(

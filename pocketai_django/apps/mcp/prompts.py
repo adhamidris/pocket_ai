@@ -224,8 +224,9 @@ def build_system_message(
         ### `get_document_structure`
         - Use when a complete list is expected and you need to confirm the full set.
 
-        ### `table_aggregate`
-        - Use for dataset totals/rollups; fall back to reads if aggregates are empty.
+        ### `query_dataset`
+        - Use for dataset totals/rollups, filtering, and grouping.
+        - If you do not have a dataset_id yet, start with `list_tables`.
 
         ### CRM tools
         - Log business inquiries as cases; create leads for product interest; do this silently.

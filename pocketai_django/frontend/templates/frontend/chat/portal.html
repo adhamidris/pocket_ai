@@ -35,20 +35,46 @@
     scrollbar-color: hsl(var(--primary) / 0.2) transparent;
   }
 
+  [data-chat-portal] {
+    --portal-font-lg: 1.0625rem;
+    --portal-font-md: 1rem;
+    --portal-font-sm: 0.9375rem;
+    --portal-font-xs: 0.8125rem;
+    --portal-line-body: 1.65;
+    --portal-line-tight: 1.35;
+    --portal-gap-1: 0.5rem;
+    --portal-gap-2: 0.75rem;
+    --portal-gap-3: 1rem;
+    --portal-gap-4: 1.25rem;
+    --portal-pad-1: 0.75rem;
+    --portal-pad-2: 1rem;
+    --portal-pad-3: 1.25rem;
+    --portal-control-h: 2.5rem;
+    --portal-control-radius: 0.75rem;
+    --portal-tool-orbit-size: 26px;
+    --portal-tool-orbit-stroke: 2px;
+    --portal-status-orbit-size: 18px;
+    --portal-status-orbit-stroke: 2px;
+  }
+
   /* Markdown content styling */
+  [data-chat-portal] [data-message-body] {
+    font-size: var(--portal-font-lg);
+    line-height: var(--portal-line-body);
+  }
   [data-message-body] h1,
   [data-message-body] h2,
   [data-message-body] h3 {
     font-weight: 600;
-    margin-top: 1em;
-    margin-bottom: 0.5em;
+    margin-top: 0.9em;
+    margin-bottom: 0.45em;
   }
-  [data-message-body] h1 { font-size: 1.25em; }
-  [data-message-body] h2 { font-size: 1.125em; }
-  [data-message-body] h3 { font-size: 1em; }
+  [data-message-body] h1 { font-size: 1.35em; }
+  [data-message-body] h2 { font-size: 1.2em; }
+  [data-message-body] h3 { font-size: 1.05em; }
 
   [data-message-body] p {
-    margin-bottom: 0.75em;
+    margin-bottom: 0.85em;
   }
   [data-message-body] p:last-child {
     margin-bottom: 0;
@@ -57,7 +83,7 @@
   [data-message-body] ul,
   [data-message-body] ol {
     padding-left: 1.5em;
-    margin-bottom: 0.75em;
+    margin-bottom: 0.85em;
   }
   [data-message-body] ul { list-style-type: disc; }
   [data-message-body] ol { list-style-type: decimal; }
@@ -65,17 +91,17 @@
 
   [data-message-body] code {
     background: hsl(var(--muted));
-    padding: 0.125em 0.25em;
+    padding: 0.15em 0.3em;
     border-radius: 0.25em;
-    font-size: 0.875em;
+    font-size: 0.9em;
     font-family: ui-monospace, monospace;
   }
   [data-message-body] pre {
     background: hsl(var(--muted));
-    padding: 0.75em 1em;
+    padding: 0.85em 1.1em;
     border-radius: 0.5em;
     overflow-x: auto;
-    margin-bottom: 0.75em;
+    margin-bottom: 0.85em;
   }
   [data-message-body] pre code {
     background: none;
@@ -86,8 +112,8 @@
     width: 100%;
     border-collapse: separate;
     border-spacing: 0;
-    margin-bottom: 0.75em;
-    font-size: 0.875em;
+    margin-bottom: 0.85em;
+    font-size: 0.9em;
     border: 1px solid hsl(var(--border));
     border-radius: 0.5em;
     overflow: hidden;
@@ -96,7 +122,7 @@
   [data-message-body] td {
     border-bottom: 1px solid hsl(var(--border));
     border-right: 1px solid hsl(var(--border));
-    padding: 0.5em;
+    padding: 0.55em 0.65em;
     text-align: left;
   }
   [data-message-body] th:last-child,
@@ -113,9 +139,9 @@
 
   [data-message-body] blockquote {
     border-left: 3px solid hsl(var(--border));
-    padding-left: 1em;
+    padding-left: 1.1em;
     margin-left: 0;
-    margin-bottom: 0.75em;
+    margin-bottom: 0.85em;
     color: hsl(var(--muted-foreground));
   }
 
@@ -130,7 +156,214 @@
   [data-message-body] hr {
     border: none;
     border-top: 1px solid hsl(var(--border));
-    margin: 1em 0;
+    margin: 1.1em 0;
+  }
+
+  [data-chat-portal] [data-chat-inner-container] {
+    padding-left: var(--portal-pad-3);
+    padding-right: var(--portal-pad-3);
+  }
+
+  [data-chat-portal] .message-row {
+    gap: var(--portal-gap-4);
+    padding-top: var(--portal-pad-1);
+    padding-bottom: var(--portal-pad-1);
+  }
+
+  [data-chat-portal] .message-row [dir="auto"] {
+    font-size: var(--portal-font-lg);
+    line-height: var(--portal-line-body);
+  }
+
+  [data-chat-portal] .message-row [dir="auto"].bg-muted {
+    padding: var(--portal-pad-2) var(--portal-pad-3);
+  }
+
+  [data-chat-portal] [data-message-meta],
+  [data-chat-portal] [data-message-debug] {
+    font-size: var(--portal-font-xs);
+    line-height: 1.4;
+    margin-top: var(--portal-gap-1);
+  }
+
+  [data-chat-portal] [data-streaming-status="true"] {
+    font-size: var(--portal-font-sm);
+    gap: var(--portal-gap-1);
+    margin-bottom: var(--portal-gap-1);
+  }
+
+  [data-chat-portal] [data-chat-input-area] {
+    padding-left: var(--portal-pad-3);
+    padding-right: var(--portal-pad-3);
+    padding-bottom: calc(var(--portal-pad-3) + 0.25rem);
+  }
+
+  [data-chat-portal] [data-chat-input-area] p {
+    font-size: var(--portal-font-xs);
+  }
+
+  [data-chat-portal] [data-chat-send-form] > div {
+    padding: var(--portal-pad-2);
+    gap: var(--portal-gap-2);
+    border-radius: 1.25rem;
+  }
+
+  [data-chat-portal] textarea[name="message"] {
+    font-size: var(--portal-font-md);
+    line-height: 1.6;
+    padding: 0.5rem 0.75rem;
+    min-height: var(--portal-control-h);
+  }
+
+  [data-chat-portal] .chat-input-action-btn {
+    width: var(--portal-control-h);
+    height: var(--portal-control-h);
+    border-radius: var(--portal-control-radius);
+    border: 0;
+    padding: 0;
+    margin: 0;
+    box-sizing: border-box;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+    transition: background 160ms ease, box-shadow 160ms ease, transform 120ms ease, color 160ms ease;
+    background: transparent;
+    color: inherit;
+  }
+
+  [data-chat-portal] .chat-input-action-btn:active {
+    transform: scale(0.96);
+  }
+
+  [data-chat-portal] .chat-input-action-btn:focus-visible {
+    outline: none;
+    box-shadow: 0 0 0 2px hsl(var(--primary) / 0.4);
+  }
+
+  [data-chat-portal] .chat-input-action-btn svg {
+    width: 18px;
+    height: 18px;
+  }
+
+  [data-chat-portal] .chat-input-action-btn--send,
+  [data-chat-portal] .chat-input-action-btn--voice {
+    background: hsl(var(--primary));
+    color: #fff;
+    box-shadow: 0 6px 16px hsl(var(--primary) / 0.25);
+  }
+
+  [data-chat-portal] .chat-input-action-btn--send:hover,
+  [data-chat-portal] .chat-input-action-btn--voice:hover {
+    background: hsl(var(--primary) / 0.9);
+    box-shadow: 0 6px 16px hsl(var(--primary) / 0.25), 0 0 0 2px hsl(var(--primary) / 0.12);
+  }
+
+  [data-chat-portal] .chat-input-action-btn--send:active,
+  [data-chat-portal] .chat-input-action-btn--voice:active {
+    background: hsl(var(--primary) / 0.85);
+  }
+
+  [data-chat-portal] .chat-input-action-btn--send:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+    box-shadow: none;
+  }
+
+  [data-chat-portal] .chat-voice-inner {
+    width: 100%;
+    height: 100%;
+    border-radius: inherit;
+    background: transparent;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    box-shadow: none;
+  }
+
+  [data-chat-portal] .chat-voice-icon {
+    color: #fff;
+  }
+
+  [data-chat-portal] [data-scroll-bottom] {
+    width: var(--portal-control-h);
+    height: var(--portal-control-h);
+  }
+
+  [data-chat-portal] [data-chat-csat] p,
+  [data-chat-portal] [data-chat-csat] span,
+  [data-chat-portal] [data-chat-csat] button {
+    font-size: var(--portal-font-sm);
+  }
+
+  [data-chat-portal] [data-chat-csat] span {
+    width: var(--portal-control-h);
+    height: var(--portal-control-h);
+  }
+
+  [data-chat-portal] [data-chat-csat] button {
+    min-height: var(--portal-control-h);
+    padding: 0 0.9rem;
+  }
+
+  [data-chat-portal] .mcp-card-summary {
+    padding: 0.85rem 0.95rem 0.7rem 2.5rem;
+  }
+
+  [data-chat-portal] .mcp-card-title {
+    font-size: var(--portal-font-md);
+  }
+
+  [data-chat-portal] .mcp-card-subtitle {
+    font-size: var(--portal-font-sm);
+  }
+
+  [data-chat-portal] .mcp-tool-row {
+    padding: 0.25rem 0;
+    gap: 0.5rem;
+  }
+
+  [data-chat-portal] .mcp-tool-title {
+    font-size: var(--portal-font-sm);
+  }
+
+  [data-chat-portal] .mcp-status {
+    font-size: var(--portal-font-xs);
+  }
+
+  [data-chat-portal] .mcp-status-icon {
+    width: 28px;
+    height: 28px;
+  }
+
+  [data-chat-portal] .mcp-orbit-loader {
+    --mcp-orbit-size: var(--portal-tool-orbit-size);
+    --mcp-orbit-stroke: var(--portal-tool-orbit-stroke);
+  }
+
+  [data-chat-portal] .mcp-tool-outcome-inline {
+    height: 18px;
+  }
+
+  [data-chat-portal] .mcp-tool-outcome-inline.is-visible {
+    width: 18px;
+    max-width: 18px;
+  }
+
+  [data-chat-portal] .mcp-tool-outcome-inline img {
+    width: 18px;
+    height: 18px;
+  }
+
+  [data-chat-portal] .mcp-approval-inline-btn {
+    min-height: var(--portal-control-h);
+    padding: 0 0.85rem;
+    font-size: var(--portal-font-sm);
+  }
+
+  [data-chat-portal] .mcp-approval-inline-title,
+  [data-chat-portal] .mcp-approval-inline-meta {
+    font-size: var(--portal-font-sm);
   }
 
   /* Timestamp Hover Effect */
@@ -430,8 +663,18 @@
             <textarea name="message" rows="1"
               class="flex-1 bg-transparent px-2 py-1.5 text-base md:text-sm text-foreground placeholder:text-muted-foreground focus:outline-none resize-none max-h-48 no-scrollbar"
               placeholder="Message {{ portal.agent.name }}..." style="field-sizing: content;" autofocus></textarea>
-            <button type="submit" data-chat-send-button
-              class="flex-shrink-0 h-8 w-8 rounded-lg bg-primary text-white flex items-center justify-center hover:bg-primary/90 disabled:opacity-50 disabled:cursor-not-allowed transition-all duration-200 active:scale-90 mb-0.5 shadow-sm">
+            <button type="button" class="chat-input-action-btn chat-input-action-btn--voice" aria-label="Voice">
+              <span class="chat-voice-inner" aria-hidden="true">
+                <svg class="chat-voice-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                  stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                  <path d="M12 3a3 3 0 0 0-3 3v6a3 3 0 0 0 6 0V6a3 3 0 0 0-3-3z"></path>
+                  <path d="M19 11v1a7 7 0 0 1-14 0v-1"></path>
+                  <line x1="12" y1="19" x2="12" y2="22"></line>
+                  <line x1="9" y1="22" x2="15" y2="22"></line>
+                </svg>
+              </span>
+            </button>
+            <button type="submit" data-chat-send-button class="chat-input-action-btn chat-input-action-btn--send">
               <span data-chat-send-icon>
                 <svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
                   stroke-linecap="round" stroke-linejoin="round">

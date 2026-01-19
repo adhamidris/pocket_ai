@@ -656,13 +656,39 @@ def mcp_connection_test(request: HttpRequest, connection_id: uuid.UUID) -> JsonR
         error_message = str(exc)
         with tenant_context(business.id):
             metadata = dict(connection.metadata or {})
-            metadata["tool_cache"] = {
-                "tested_at": tested_at,
-                "error": error_message[:500],
-                "tool_count": 0,
-                "status_code": upstream_status,
-                "retry_after": retry_after,
-            }
+            existing_cache = metadata.get("tool_cache") if isinstance(metadata.get("tool_cache"), dict) else {}
+            existing_tools = existing_cache.get("tools") if isinstance(existing_cache.get("tools"), list) else None
+            existing_expires_at = existing_cache.get("expires_at") if existing_cache else None
+            existing_tool_count = (
+                len(existing_tools)
+                if isinstance(existing_tools, list)
+                else int(existing_cache.get("tool_count") or 0)
+                if str(existing_cache.get("tool_count") or "").isdigit()
+                else 0
+            )
+
+            next_cache = dict(existing_cache) if isinstance(existing_cache, dict) else {}
+            next_cache.update(
+                {
+                    "tested_at": tested_at,
+                    "error": error_message[:500],
+                    "status_code": upstream_status,
+                    "retry_after": retry_after,
+                }
+            )
+
+            # Preserve the last known good tool schema if available so tools don't
+            # "disappear" from the orchestrator due to a transient test failure.
+            if isinstance(existing_tools, list) and existing_tools:
+                next_cache["tools"] = existing_tools
+                next_cache["tool_count"] = existing_tool_count
+                if existing_expires_at:
+                    next_cache["expires_at"] = existing_expires_at
+            else:
+                next_cache.pop("tools", None)
+                next_cache["tool_count"] = 0
+
+            metadata["tool_cache"] = next_cache
             connection.metadata = metadata
             connection.save(update_fields=["metadata", "updated_at"])
             _log_mcp_audit(
