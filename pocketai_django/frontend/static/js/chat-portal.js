@@ -71,6 +71,7 @@ class ChatPortalClient {
     this.currentSegmentToolsEl = null;
     this.segmentHasTools = false;
     this.frozenBufferLength = 0; // Track how much of the buffer has been frozen into previous segments
+    this.pendingSegmentBoundaryLength = null; // UTF-16 offset where current segment's text ends (before tools)
     this.pendingMessageId = null;
     this.pendingMetadataVersion = 0;
     this.usingStateMachine = false;
@@ -866,6 +867,10 @@ class ChatPortalClient {
     if (!card) {
       card = this.buildToolEventCard(payload);
       if (!card) return;
+      // Store segment index on card for persistence
+      if (isStreamingMessage && typeof this.currentSegmentIndex === "number") {
+        card.dataset.segmentIndex = String(this.currentSegmentIndex);
+      }
       toolsContainer.appendChild(card);
       this.toolEventCards.set(cardKey, card);
 
@@ -873,6 +878,16 @@ class ChatPortalClient {
       // DON'T advance to new segment yet - wait for new text to arrive
       if (isStreamingMessage && this.currentSegmentToolsEl === toolsContainer) {
         this.segmentHasTools = true;
+        if (typeof this.pendingSegmentBoundaryLength !== "number" || !Number.isFinite(this.pendingSegmentBoundaryLength)) {
+          const rawOffset = payload.text_offset ?? payload.textOffset ?? null;
+          if (typeof rawOffset === "number" && Number.isFinite(rawOffset) && rawOffset >= 0) {
+            this.pendingSegmentBoundaryLength = rawOffset;
+          } else if (this.streamingBuffer) {
+            this.pendingSegmentBoundaryLength = this.streamingBuffer.length;
+          } else {
+            this.pendingSegmentBoundaryLength = 0;
+          }
+        }
       }
     }
     this.updateToolEventCard(card, payload);
@@ -2591,6 +2606,7 @@ class ChatPortalClient {
       this.streamingBuffer = "";
       this.streamingRawBuffer = "";
       this.frozenBufferLength = 0;
+      this.pendingSegmentBoundaryLength = null;
       // Clear ONLY text content in segments, preserve tool cards
       if (this.streamingSegmentsContainer) {
         // Preserve tool cards by only clearing text elements within segments
@@ -2611,6 +2627,7 @@ class ChatPortalClient {
         }
         this.currentSegmentIndex = 0;
         this.segmentHasTools = this.currentSegmentToolsEl && this.currentSegmentToolsEl.children.length > 0;
+        this.pendingSegmentBoundaryLength = this.segmentHasTools ? 0 : null;
       } else if (this.streamingFinalBodyEl) {
         this.streamingFinalBodyEl.innerHTML = "";
       }
@@ -2699,6 +2716,7 @@ class ChatPortalClient {
       // Create the first segment
       this.currentSegmentIndex = 0;
       this.segmentHasTools = false;
+      this.pendingSegmentBoundaryLength = null;
       this.createNewSegment();
 
       // Backward compatibility: keep references for other code that might use them
@@ -2764,12 +2782,15 @@ class ChatPortalClient {
   advanceToNextSegment() {
     // Freeze the current portion of the buffer into the current segment
     if (this.currentSegmentTextEl && this.streamingBuffer) {
-      // Get the unfrozen portion of the buffer (for this segment)
-      const segmentBuffer = this.streamingBuffer.substring(this.frozenBufferLength);
+      // Freeze ONLY the portion of the buffer that belonged to this segment
+      const rawBoundary =
+        typeof this.pendingSegmentBoundaryLength === "number" ? this.pendingSegmentBoundaryLength : this.streamingBuffer.length;
+      const boundary = Math.max(this.frozenBufferLength, Math.min(rawBoundary, this.streamingBuffer.length));
+      const segmentBuffer = this.streamingBuffer.substring(this.frozenBufferLength, boundary);
       const html = this.renderBufferToHtml(segmentBuffer);
       this.currentSegmentTextEl.innerHTML = html;
       // Mark this portion as frozen
-      this.frozenBufferLength = this.streamingBuffer.length;
+      this.frozenBufferLength = boundary;
     }
 
     // Mark current segment as no longer active
@@ -2935,63 +2956,275 @@ class ChatPortalClient {
   renderStoredToolEvents(wrapper, events, messageId) {
     if (!wrapper || !Array.isArray(events) || !events.length) return;
     
-    // Check if this message has a segments container (from streaming with tools)
     const messageBody = wrapper.querySelector('[data-message-body]');
-    const segmentsContainer = messageBody ? messageBody.querySelector('[data-message-segments]') : null;
+    if (!messageBody) return;
     
-    let toolsContainer;
+    let segmentsContainer = messageBody.querySelector('[data-message-segments]');
     
+    // If segments exist with tools already, skip (streaming already placed them)
     if (segmentsContainer) {
-      // Message was streamed with segments - restore tools to their segment
-      // For now, put all tools in the first segment's tools container
-      // TODO: In the future, we could store segment index with each tool event to restore exact positions
-      const firstSegment = segmentsContainer.querySelector('[data-segment="0"]');
-      if (firstSegment) {
-        toolsContainer = firstSegment.querySelector('[data-segment-tools]');
+      const existingToolCards = segmentsContainer.querySelectorAll('[data-tool-card]');
+      if (existingToolCards.length > 0) {
+        return;
       }
-      
-      if (!toolsContainer) {
-        // Fallback to creating a legacy container if segments are malformed
-        toolsContainer = this.ensureToolActivityContainer(wrapper);
-      }
-    } else {
-      // Old-style message without segments - use legacy container
-      toolsContainer = this.ensureToolActivityContainer(wrapper);
     }
-    
-    if (!toolsContainer) return;
-    
-    const messageKey = wrapper.dataset.messageId || messageId || "streaming";
-    events.forEach((rawEvent) => {
+
+    const messageIdValue =
+      (messageBody.dataset && messageBody.dataset.messageId ? messageBody.dataset.messageId : "") ||
+      (wrapper.dataset && wrapper.dataset.messageId ? wrapper.dataset.messageId : "") ||
+      (messageId || "");
+    const messageKey = wrapper.dataset.messageId || messageIdValue || "streaming";
+
+    // Group events into tool-calls (one card per event_id/tool_call_id), keeping insertion metadata.
+    const toolCalls = new Map();
+    events.forEach((rawEvent, idx) => {
       if (!rawEvent || typeof rawEvent !== "object") return;
       const eventId = (rawEvent.event_id || rawEvent.eventId || rawEvent.tool_call_id || rawEvent.toolCallId || "")
         .toString()
         .trim();
       if (!eventId) return;
-      const phase = (rawEvent.phase || "").toString().trim().toLowerCase();
-      if (!phase) return;
-      const payload = { ...rawEvent };
-      if (!payload.message_id && messageId) {
-        payload.message_id = messageId;
+
+      const rawOffset = rawEvent.text_offset ?? rawEvent.textOffset ?? null;
+      let textOffset = null;
+      if (typeof rawOffset === "number" && Number.isFinite(rawOffset) && rawOffset >= 0) {
+        textOffset = rawOffset;
+      } else if (typeof rawOffset === "string" && rawOffset.trim() !== "") {
+        const parsed = Number(rawOffset);
+        if (Number.isFinite(parsed) && parsed >= 0) {
+          textOffset = parsed;
+        }
       }
-      const cardKey = `${messageKey}:${eventId}`;
-      let card = this.toolEventCards.get(cardKey);
-      if (!card) {
-        card = toolsContainer.querySelector(`[data-tool-event-id="${eventId}"]`);
+
+      const rawSequence = rawEvent.sequence_index ?? rawEvent.sequenceIndex ?? null;
+      let sequenceIndex = null;
+      if (typeof rawSequence === "number" && Number.isFinite(rawSequence) && rawSequence >= 0) {
+        sequenceIndex = rawSequence;
+      } else if (typeof rawSequence === "string" && rawSequence.trim() !== "") {
+        const parsed = Number(rawSequence);
+        if (Number.isFinite(parsed) && parsed >= 0) {
+          sequenceIndex = parsed;
+        }
       }
-      if (!card) {
-        card = this.buildToolEventCard(payload);
-        if (!card) return;
-        toolsContainer.appendChild(card);
-        this.toolEventCards.set(cardKey, card);
+
+      const rawSegment = rawEvent.segment_index ?? rawEvent.segmentIndex ?? null;
+      let segmentIndex = null;
+      if (typeof rawSegment === "number" && Number.isFinite(rawSegment) && rawSegment >= 0) {
+        segmentIndex = rawSegment;
+      } else if (typeof rawSegment === "string" && rawSegment.trim() !== "") {
+        const parsed = Number(rawSegment);
+        if (Number.isFinite(parsed) && parsed >= 0) {
+          segmentIndex = parsed;
+        }
       }
-      this.updateToolEventCard(card, payload);
+
+      const existing =
+        toolCalls.get(eventId) || {
+          eventId,
+          events: [],
+          textOffset,
+          sequenceIndex,
+          segmentIndex,
+          firstSeenIndex: idx,
+        };
+      existing.events.push({ rawEvent, idx });
+      if (existing.textOffset === null && textOffset !== null) existing.textOffset = textOffset;
+      if (existing.sequenceIndex === null && sequenceIndex !== null) existing.sequenceIndex = sequenceIndex;
+      if (existing.segmentIndex === null && segmentIndex !== null) existing.segmentIndex = segmentIndex;
+      toolCalls.set(eventId, existing);
     });
-    
-    // Only update toggle for non-segment messages (segments don't use the toggle)
-    if (!segmentsContainer) {
-      this.updateMessageToolsToggle(wrapper);
+
+    const toolCallList = Array.from(toolCalls.values());
+    if (!toolCallList.length) {
+      return;
     }
+
+    const hasOffsets = toolCallList.some((call) => typeof call.textOffset === "number" && Number.isFinite(call.textOffset));
+
+    // Fetch the raw markdown from the json_script tag so we can split it deterministically.
+    let hasRawMarkdown = false;
+    let rawMarkdown = "";
+    if (messageIdValue) {
+      const scriptTag = document.getElementById(messageIdValue);
+      if (scriptTag) {
+        try {
+          rawMarkdown = JSON.parse(scriptTag.textContent) || "";
+          hasRawMarkdown = true;
+        } catch (_err) {
+          rawMarkdown = "";
+          hasRawMarkdown = false;
+        }
+      }
+    }
+    const cleanMarkdown = hasRawMarkdown ? this.stripInlineResponseBlocks(rawMarkdown || "") : "";
+
+    if (hasOffsets && hasRawMarkdown && typeof cleanMarkdown === "string") {
+      // Preserve non-markdown nodes before rebuild (copy button + structured blocks).
+      const preserved = [];
+      const copyBtn = messageBody.querySelector('button[data-copy-btn]');
+      if (copyBtn) {
+        copyBtn.remove();
+        preserved.push(copyBtn);
+      }
+      const responseBlocks = messageBody.querySelector('[data-response-blocks]');
+      if (responseBlocks) {
+        responseBlocks.remove();
+        preserved.push(responseBlocks);
+      }
+
+      const maxLen = cleanMarkdown.length;
+      const callsByOffset = new Map();
+      toolCallList.forEach((call) => {
+        const offset =
+          typeof call.textOffset === "number" && Number.isFinite(call.textOffset)
+            ? Math.max(0, Math.min(call.textOffset, maxLen))
+            : maxLen;
+        if (!callsByOffset.has(offset)) {
+          callsByOffset.set(offset, []);
+        }
+        callsByOffset.get(offset).push(call);
+      });
+
+      const offsets = Array.from(callsByOffset.keys()).sort((a, b) => a - b);
+
+      segmentsContainer = document.createElement("div");
+      segmentsContainer.dataset.messageSegments = "true";
+      segmentsContainer.className = "space-y-1";
+
+      let cursor = 0;
+      let segmentNumber = 0;
+
+      const appendSegment = (segmentText, toolCallsForSegment, toolsOffset) => {
+        const segmentEl = document.createElement("div");
+        segmentEl.dataset.segment = String(segmentNumber);
+        segmentEl.className = "space-y-2";
+
+        const textEl = document.createElement("div");
+        textEl.dataset.segmentText = "true";
+        textEl.className = "space-y-2 leading-relaxed";
+        if (segmentText) {
+          textEl.innerHTML = this.renderMarkdown(segmentText);
+        }
+        segmentEl.appendChild(textEl);
+
+        const toolsEl = document.createElement("div");
+        toolsEl.dataset.segmentTools = "true";
+        toolsEl.className = "space-y-2 w-full flex flex-col items-start";
+        segmentEl.appendChild(toolsEl);
+
+        segmentsContainer.appendChild(segmentEl);
+
+        if (Array.isArray(toolCallsForSegment) && toolCallsForSegment.length) {
+          toolCallsForSegment
+            .slice()
+            .sort((a, b) => {
+              const aSeq = typeof a.sequenceIndex === "number" ? a.sequenceIndex : Number.POSITIVE_INFINITY;
+              const bSeq = typeof b.sequenceIndex === "number" ? b.sequenceIndex : Number.POSITIVE_INFINITY;
+              if (aSeq !== bSeq) return aSeq - bSeq;
+              return (a.firstSeenIndex || 0) - (b.firstSeenIndex || 0);
+            })
+            .forEach((call) => {
+              const cardKey = `${messageKey}:${call.eventId}`;
+              let card = this.toolEventCards.get(cardKey);
+              if (!card) {
+                card = toolsEl.querySelector(`[data-tool-event-id="${call.eventId}"]`);
+              }
+
+              const ordered = call.events.slice().sort((a, b) => a.idx - b.idx);
+              const firstPayload = ordered.length ? { ...ordered[0].rawEvent } : null;
+              if (firstPayload && !firstPayload.message_id && messageIdValue) {
+                firstPayload.message_id = messageIdValue;
+              }
+              if (firstPayload && !firstPayload.event_id && !firstPayload.eventId) {
+                firstPayload.event_id = call.eventId;
+              }
+
+              if (!card) {
+                card = this.buildToolEventCard(firstPayload || { event_id: call.eventId });
+                if (!card) return;
+                card.dataset.segmentIndex =
+                  typeof call.segmentIndex === "number" && Number.isFinite(call.segmentIndex)
+                    ? String(call.segmentIndex)
+                    : String(segmentNumber);
+                card.dataset.textOffset = String(toolsOffset);
+                toolsEl.appendChild(card);
+                this.toolEventCards.set(cardKey, card);
+              }
+
+              ordered.forEach((entry) => {
+                const payload = { ...entry.rawEvent };
+                if (!payload.message_id && messageIdValue) {
+                  payload.message_id = messageIdValue;
+                }
+                this.updateToolEventCard(card, payload);
+              });
+            });
+        }
+
+        segmentNumber += 1;
+      };
+
+      offsets.forEach((offset) => {
+        const segmentText = cleanMarkdown.slice(cursor, offset);
+        const calls = callsByOffset.get(offset) || [];
+        appendSegment(segmentText, calls, offset);
+        cursor = offset;
+      });
+
+      if (cursor < maxLen) {
+        appendSegment(cleanMarkdown.slice(cursor), [], maxLen);
+      }
+
+      messageBody.innerHTML = "";
+      messageBody.appendChild(segmentsContainer);
+      preserved.forEach((node) => messageBody.appendChild(node));
+      return;
+    }
+
+    // Fallback for older messages: render tool cards after the message body.
+    const toolsContainer = this.ensureToolActivityContainer(wrapper);
+    if (!toolsContainer) return;
+
+    toolCallList
+      .slice()
+      .sort((a, b) => {
+        const aSeq = typeof a.sequenceIndex === "number" ? a.sequenceIndex : Number.POSITIVE_INFINITY;
+        const bSeq = typeof b.sequenceIndex === "number" ? b.sequenceIndex : Number.POSITIVE_INFINITY;
+        if (aSeq !== bSeq) return aSeq - bSeq;
+        return (a.firstSeenIndex || 0) - (b.firstSeenIndex || 0);
+      })
+      .forEach((call) => {
+        const cardKey = `${messageKey}:${call.eventId}`;
+        let card = this.toolEventCards.get(cardKey);
+        if (!card) {
+          card = toolsContainer.querySelector(`[data-tool-event-id="${call.eventId}"]`);
+        }
+
+        const ordered = call.events.slice().sort((a, b) => a.idx - b.idx);
+        const firstPayload = ordered.length ? { ...ordered[0].rawEvent } : null;
+        if (firstPayload && !firstPayload.message_id && messageIdValue) {
+          firstPayload.message_id = messageIdValue;
+        }
+        if (firstPayload && !firstPayload.event_id && !firstPayload.eventId) {
+          firstPayload.event_id = call.eventId;
+        }
+
+        if (!card) {
+          card = this.buildToolEventCard(firstPayload || { event_id: call.eventId });
+          if (!card) return;
+          toolsContainer.appendChild(card);
+          this.toolEventCards.set(cardKey, card);
+        }
+
+        ordered.forEach((entry) => {
+          const payload = { ...entry.rawEvent };
+          if (!payload.message_id && messageIdValue) {
+            payload.message_id = messageIdValue;
+          }
+          this.updateToolEventCard(card, payload);
+        });
+      });
+
+    this.updateMessageToolsToggle(wrapper);
   }
 
   formatTokenCount(count) {
@@ -3337,10 +3570,17 @@ class ChatPortalClient {
 
     // If using segments and current segment has tools and new text has arrived,
     // advance to a new segment before rendering the new text
-    if (this.streamingSegmentsContainer && this.segmentHasTools) {
-      const hasNewText = this.streamingBuffer.length > this.frozenBufferLength;
-      if (hasNewText) {
+    if (
+      this.streamingSegmentsContainer &&
+      this.segmentHasTools &&
+      typeof this.pendingSegmentBoundaryLength === "number" &&
+      Number.isFinite(this.pendingSegmentBoundaryLength)
+    ) {
+      const boundary = Math.max(this.frozenBufferLength, Math.min(this.pendingSegmentBoundaryLength, this.streamingBuffer.length));
+      const hasNewTextAfterTools = this.streamingBuffer.length > boundary;
+      if (hasNewTextAfterTools) {
         this.advanceToNextSegment();
+        this.pendingSegmentBoundaryLength = null;
       }
     }
 
@@ -3421,6 +3661,7 @@ class ChatPortalClient {
     this.currentSegmentToolsEl = null;
     this.segmentHasTools = false;
     this.frozenBufferLength = 0;
+    this.pendingSegmentBoundaryLength = null;
     if (removeNode) {
       this.pendingMessageId = null;
     }

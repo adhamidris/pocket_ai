@@ -1645,6 +1645,15 @@ def stream_send(request: HttpRequest) -> StreamingHttpResponse:
     tool_event_limit = _portal_tool_event_history_limit()
     tool_events: list[dict[str, object]] = []
     tool_event_keys: set[tuple[str, str]] = set()
+    # Segment + offset tracking for stable tool positioning (stream + page refresh).
+    # Note: offsets are tracked as UTF-16 code units to match JS string indexing.
+    segment_state: dict[str, Any] = {
+        "current_index": 0,
+        "has_tools": False,
+        "utf16_length": 0,
+        "tool_sequence": 0,
+        "tool_sequence_by_event_id": {},
+    }
     spinner_state = {"text": None, "pending": True}
     spinner_phase_state = {
         "searching": {"active": False, "index": 0, "label": None, "meta": None, "timer": None},
@@ -1847,8 +1856,17 @@ def stream_send(request: HttpRequest) -> StreamingHttpResponse:
         return payload
 
     def on_response_text_delta(chunk: str) -> None:
-        if chunk:
-            stream_queue.put(chunk)
+        if not chunk:
+            return
+        # Track segment progression: advance segment when text follows tools.
+        if segment_state["has_tools"]:
+            segment_state["current_index"] += 1
+            segment_state["has_tools"] = False
+        try:
+            segment_state["utf16_length"] += len(chunk.encode("utf-16-le")) // 2
+        except Exception:  # pragma: no cover - defensive
+            segment_state["utf16_length"] += len(chunk)
+        stream_queue.put(chunk)
 
     def on_status_change(state) -> None:
         if not state:
@@ -1931,6 +1949,17 @@ def stream_send(request: HttpRequest) -> StreamingHttpResponse:
                     status_value = "running"
                 elif phase == "approval_requested":
                     status_value = "pending_approval"
+            event_id_value = str(event.get("event_id") or event.get("tool_call_id") or "").strip()
+            sequence_by_event_id = segment_state.get("tool_sequence_by_event_id")
+            if not isinstance(sequence_by_event_id, dict):
+                sequence_by_event_id = {}
+                segment_state["tool_sequence_by_event_id"] = sequence_by_event_id
+            sequence_index = sequence_by_event_id.get(event_id_value)
+            if sequence_index is None:
+                segment_state["tool_sequence"] = int(segment_state.get("tool_sequence") or 0) + 1
+                sequence_index = segment_state["tool_sequence"]
+                if event_id_value:
+                    sequence_by_event_id[event_id_value] = sequence_index
             payload: dict[str, object] = {
                 "message_id": _current_message_id(),
                 "event_id": str(event.get("event_id") or ""),
@@ -1939,7 +1968,13 @@ def stream_send(request: HttpRequest) -> StreamingHttpResponse:
                 "tool_call_id": str(event.get("tool_call_id") or ""),
                 "kind": kind,
                 "tool_name": tool_name,
+                # Stable ordering + placement for UI reconstruction.
+                "sequence_index": sequence_index,
+                "segment_index": segment_state["current_index"],
+                "text_offset": int(segment_state.get("utf16_length") or 0),
             }
+            # Mark that tools have been emitted in this segment
+            segment_state["has_tools"] = True
             remote = event.get("remote") if isinstance(event.get("remote"), Mapping) else None
             if remote:
                 # Never leak internal connection IDs/URLs to public portal visitors.
