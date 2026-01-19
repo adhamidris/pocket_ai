@@ -869,17 +869,10 @@ class ChatPortalClient {
       toolsContainer.appendChild(card);
       this.toolEventCards.set(cardKey, card);
 
-      // Mark that this segment now has tools and create new segment for future text
+      // Mark that this segment now has tools
+      // DON'T advance to new segment yet - wait for new text to arrive
       if (isStreamingMessage && this.currentSegmentToolsEl === toolsContainer) {
-        const currentSegmentHasText = this.currentSegmentTextEl && this.currentSegmentTextEl.innerHTML.trim();
-        if (currentSegmentHasText && !this.segmentHasTools) {
-          // Current segment has text and this is the first tool in it
-          // Create a new segment for future text
-          this.segmentHasTools = true;
-          this.advanceToNextSegment();
-        } else {
-          this.segmentHasTools = true;
-        }
+        this.segmentHasTools = true;
       }
     }
     this.updateToolEventCard(card, payload);
@@ -1250,11 +1243,16 @@ class ChatPortalClient {
     if (!container) {
       container = document.createElement("div");
       container.dataset.messageTools = "true";
-      const finalBody = body.querySelector("[data-message-final-body]");
-      if (finalBody) {
-        body.insertBefore(container, finalBody);
+      
+      // Insert tools container AFTER text content, not before
+      // Check for segments container first (from streaming)
+      const segmentsContainer = body.querySelector("[data-message-segments]");
+      if (segmentsContainer) {
+        // If there's a segments container, insert after it
+        body.insertBefore(container, segmentsContainer.nextSibling);
       } else {
-        body.insertBefore(container, body.firstChild);
+        // For legacy messages, append at the end so tools appear after text
+        body.appendChild(container);
       }
     }
     container.className = "mt-2 mb-3 space-y-2 w-full flex flex-col items-start";
@@ -2593,12 +2591,26 @@ class ChatPortalClient {
       this.streamingBuffer = "";
       this.streamingRawBuffer = "";
       this.frozenBufferLength = 0;
-      // Clear all segments and restart with a fresh first segment
+      // Clear ONLY text content in segments, preserve tool cards
       if (this.streamingSegmentsContainer) {
-        this.streamingSegmentsContainer.innerHTML = "";
+        // Preserve tool cards by only clearing text elements within segments
+        const segments = this.streamingSegmentsContainer.querySelectorAll('[data-segment]');
+        segments.forEach((segment) => {
+          const textEl = segment.querySelector('[data-segment-text]');
+          if (textEl) {
+            textEl.innerHTML = "";
+          }
+        });
+        // Reset to first segment for new text (but keep existing segments with tools)
+        const firstSegment = this.streamingSegmentsContainer.querySelector('[data-segment="0"]');
+        if (firstSegment) {
+          this.currentSegmentNode = firstSegment;
+          this.currentSegmentTextEl = firstSegment.querySelector('[data-segment-text]');
+          this.currentSegmentToolsEl = firstSegment.querySelector('[data-segment-tools]');
+          this.streamingTextEl = this.currentSegmentTextEl;
+        }
         this.currentSegmentIndex = 0;
-        this.segmentHasTools = false;
-        this.createNewSegment();
+        this.segmentHasTools = this.currentSegmentToolsEl && this.currentSegmentToolsEl.children.length > 0;
       } else if (this.streamingFinalBodyEl) {
         this.streamingFinalBodyEl.innerHTML = "";
       }
@@ -2771,24 +2783,9 @@ class ChatPortalClient {
   }
 
   getSegmentForToolEvent(eventId, messageId) {
-    // Strategy: Tool cards go into the segment that was active when the tool was called.
-    // After adding a tool to a segment with text, we create a new segment for future text.
-
-    const currentSegmentHasText = this.currentSegmentTextEl && this.currentSegmentTextEl.innerHTML.trim();
-
-    // Store the container we'll return (current segment's tools container)
-    const toolsContainer = this.currentSegmentToolsEl;
-
-    // If current segment has text and this is a new tool being added,
-    // create a new segment for future text (but return current segment's container)
-    if (currentSegmentHasText && !this.segmentHasTools) {
-      // After we return, the tool will be added to current segment
-      // But we want future text to go to a new segment
-      // We'll advance to next segment after the tool is added
-      // This is handled by setting segmentHasTools = true in handleToolEvent
-    }
-
-    return toolsContainer;
+    // Tool cards go into the current segment.
+    // Segment advancement happens in refreshStreamingView when new text arrives after tools.
+    return this.currentSegmentToolsEl;
   }
 
   finalizeStreamingMessage(finalText) {
@@ -2834,6 +2831,16 @@ class ChatPortalClient {
       }
     }
     if (!body) return;
+    
+    // Check for segments container (from streaming with interleaved tools)
+    const segmentsContainer = body.querySelector("[data-message-segments]");
+    if (segmentsContainer) {
+      // Segments already have text in correct positions from streaming
+      // DO NOT update text - just ensure copy button exists
+      this.injectCopyButton(body);
+      return;
+    }
+    
     const finalBody = body.querySelector("[data-message-final-body]");
     if (finalBody) {
       const textTarget = finalBody.querySelector("[data-streaming-text]");
@@ -2927,8 +2934,33 @@ class ChatPortalClient {
 
   renderStoredToolEvents(wrapper, events, messageId) {
     if (!wrapper || !Array.isArray(events) || !events.length) return;
-    const toolsContainer = this.ensureToolActivityContainer(wrapper);
+    
+    // Check if this message has a segments container (from streaming with tools)
+    const messageBody = wrapper.querySelector('[data-message-body]');
+    const segmentsContainer = messageBody ? messageBody.querySelector('[data-message-segments]') : null;
+    
+    let toolsContainer;
+    
+    if (segmentsContainer) {
+      // Message was streamed with segments - restore tools to their segment
+      // For now, put all tools in the first segment's tools container
+      // TODO: In the future, we could store segment index with each tool event to restore exact positions
+      const firstSegment = segmentsContainer.querySelector('[data-segment="0"]');
+      if (firstSegment) {
+        toolsContainer = firstSegment.querySelector('[data-segment-tools]');
+      }
+      
+      if (!toolsContainer) {
+        // Fallback to creating a legacy container if segments are malformed
+        toolsContainer = this.ensureToolActivityContainer(wrapper);
+      }
+    } else {
+      // Old-style message without segments - use legacy container
+      toolsContainer = this.ensureToolActivityContainer(wrapper);
+    }
+    
     if (!toolsContainer) return;
+    
     const messageKey = wrapper.dataset.messageId || messageId || "streaming";
     events.forEach((rawEvent) => {
       if (!rawEvent || typeof rawEvent !== "object") return;
@@ -2955,7 +2987,11 @@ class ChatPortalClient {
       }
       this.updateToolEventCard(card, payload);
     });
-    this.updateMessageToolsToggle(wrapper);
+    
+    // Only update toggle for non-segment messages (segments don't use the toggle)
+    if (!segmentsContainer) {
+      this.updateMessageToolsToggle(wrapper);
+    }
   }
 
   formatTokenCount(count) {
@@ -3298,6 +3334,16 @@ class ChatPortalClient {
     const stripped = this.stripInlineResponseBlocks(this.streamingRawBuffer || "");
     this.updateTableIntent(stripped);
     this.streamingBuffer = this.formatAssistantText(stripped);
+
+    // If using segments and current segment has tools and new text has arrived,
+    // advance to a new segment before rendering the new text
+    if (this.streamingSegmentsContainer && this.segmentHasTools) {
+      const hasNewText = this.streamingBuffer.length > this.frozenBufferLength;
+      if (hasNewText) {
+        this.advanceToNextSegment();
+      }
+    }
+
     this.renderStreamingText();
   }
 
