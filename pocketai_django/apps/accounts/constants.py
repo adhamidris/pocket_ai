@@ -15,6 +15,9 @@ FEATURE_FLAG_DEFAULTS: dict[str, bool] = {
     "rag_shadow_retrieval": False,
     "rag_eval_logging": False,
     "rag_agentic_mode": True,  # 2-tool retrieval: search (metadata) → read (content)
+    # When enabled, expose a small "gateway" tool surface for external MCP tools
+    # instead of inlining every remote tool schema into the LLM prompt.
+    "mcp_gateway_mode": True,
 }
 
 _TRUE_VALUES = {"1", "true", "yes", "on", "enabled"}

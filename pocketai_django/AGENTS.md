@@ -12,6 +12,7 @@ This repo is a multi-tenant B2B SaaS. Your job is to ship production-ready chang
 - Avoid “guardrails spaghetti” (try → fail → fallback loops). If you add a guardrail for safety, pair it with (or clearly propose) the **root-cause fix**.
 - Don’t rush implementations. If requirements are unclear, **interview/clarify first**, then propose a solid plan that covers edge cases.
 - Think “production-first”: avoid designs that only work because of dev quirks (e.g., `LocMemCache`, single-process assumptions).
+- **Multi-agent work**: Other agents may be working in this repo concurrently. If you notice unrelated diffs, do **not** revert/restore them as “cleanup” — keep your changes tightly scoped to your task and leave unrelated edits alone.
 - When initiating a plan, also write a **business POV** for that plan:
   - Include 2–5 realistic scenarios and the expected user experience (what improves, what might regress, how success is measured).
   - Save it under `plans-business-pov/` and include the **plan** followed by the **business POV**.

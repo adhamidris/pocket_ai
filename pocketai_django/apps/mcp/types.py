@@ -84,6 +84,9 @@ class ToolExecutionContext:
     knowledge_results: list[dict[str, object]] = dataclasses.field(default_factory=list)
     knowledge_reads: list[dict[str, object]] = dataclasses.field(default_factory=list)
     tool_trace: list[dict[str, object]] = dataclasses.field(default_factory=list)
+    # Gateway-mode external MCP tool catalog (per turn).
+    # tool_id -> {connection_id, connection_name, remote_tool, description, input_schema}
+    mcp_gateway_catalog: dict[str, dict[str, object]] = dataclasses.field(default_factory=dict)
     coverage_ledger: list[dict[str, object]] = dataclasses.field(default_factory=list)
     identifier_gate: object | None = None
     identifier_checks: list[dict[str, object]] = dataclasses.field(default_factory=list)

@@ -119,6 +119,29 @@ OPENAI_PROACTIVE_TOOL_INSTRUCTIONS = textwrap.dedent(
     """
 ).strip()
 
+# When gateway mode is enabled, remote MCP tool schemas are NOT injected into the LLM.
+# The model must discover tools via `mcp_search_tools` and execute them via `mcp_call_tool`.
+MCP_GATEWAY_TOOL_INSTRUCTIONS = textwrap.dedent(
+    """
+    ---
+
+    ## External MCP Tools (Gateway Mode)
+
+    Never invent tool names.
+    - Use `mcp_search_tools(query=...)` to get a `tool_id`.
+    - Then call `mcp_call_tool(tool_id=..., arguments={...})` to execute it.
+    - If you cannot find the right tool, refine the query and search again.
+    """
+).strip()
+
+MCP_GATEWAY_AGENTIC_RULES = textwrap.dedent(
+    """
+    External MCP tools:
+    - Never invent tool names.
+    - Use `mcp_search_tools(query=...)` to get a `tool_id`, then `mcp_call_tool(tool_id=..., arguments={...})`.
+    """
+).strip()
+
 
 # DeepSeek-specific instructions: keep guidance short and procedural without hard enforcement.
 DEEPSEEK_COMPREHENSIVE_QUERY_INSTRUCTIONS = textwrap.dedent(
@@ -171,18 +194,26 @@ def build_system_message(
     """
     
     resolved_business_name = business_name or "your business"
+    rag_agentic_enabled = False
     
     # Check if agentic mode is enabled
     if business_profile is not None:
         feature_state = FeatureFlagService.snapshot(business_profile)
-        if feature_state.rag_agentic_mode:
-            # Use minimal agentic prompt
-            tone = get_tone_instruction(agent.tone) if hasattr(agent, 'tone') and agent.tone else ""
-            return build_agentic_system_prompt(
-                agent,
-                business_name=resolved_business_name,
-                additional_rules=tone,
-            )
+        rag_agentic_enabled = bool(getattr(feature_state, "rag_agentic_mode", False))
+
+    if rag_agentic_enabled:
+        # Use minimal agentic prompt
+        rules: list[str] = []
+        tone = get_tone_instruction(agent.tone) if hasattr(agent, "tone") and agent.tone else ""
+        if tone:
+            rules.append(tone.strip())
+        # Gateway mode is permanently enabled.
+        rules.append(MCP_GATEWAY_AGENTIC_RULES)
+        return build_agentic_system_prompt(
+            agent,
+            business_name=resolved_business_name,
+            additional_rules="\n\n".join(rule for rule in rules if rule),
+        )
 
     tone_label = display_tone_label(agent.tone) or "friendly"
     tone_instruction = _tone_instruction(agent)
@@ -255,6 +286,9 @@ def build_system_message(
         **Prompt Version**: 2.5-agentic-hints
         """
     ).strip()
+
+    # Gateway mode is permanently enabled.
+    base_prompt = base_prompt + "\n\n" + MCP_GATEWAY_TOOL_INSTRUCTIONS
 
     # Append provider-specific instructions
     if effective_provider == "openai":

@@ -49,7 +49,6 @@ from apps.conversations.response_blocks import normalize_response_blocks
 
 from . import prompts, tools as mcp_tools
 from .connectors import (
-    build_remote_tool_definitions_from_descriptors,
     get_tool_approval_requirement,
     list_enabled_mcp_connections_for_agent,
     list_remote_tool_descriptors,
@@ -232,8 +231,11 @@ class McpOrchestratorService:
         disable_tools_for_turn = self._is_low_intent_message(user_message)
 
         internal_tool_defs: list[Mapping[str, object]] = list(mcp_tools.TOOL_DEFINITIONS)
+        # Gateway mode is permanently enabled.
+        gateway_enabled = True
+        internal_tool_defs.extend(mcp_tools.GATEWAY_TOOL_DEFINITIONS)
         if feature_state.rag_agentic_mode:
-            allowed = {"search_knowledge", "read_document"}
+            allowed = {"search_knowledge", "read_document", "mcp_search_tools", "mcp_call_tool"}
             internal_tool_defs = [
                 tool_def for tool_def in internal_tool_defs if self._tool_schema_name(tool_def) in allowed
             ]
@@ -244,9 +246,19 @@ class McpOrchestratorService:
         if not disable_tools_for_turn:
             all_remote_connections = list_enabled_mcp_connections_for_agent(self.agent)
             remote_descriptors = list_remote_tool_descriptors(all_remote_connections)
-            remote_tool_defs, remote_registry = build_remote_tool_definitions_from_descriptors(
-                remote_descriptors,
-            )
+            gateway_catalog: dict[str, dict[str, object]] = {}
+            remote_registry: dict[str, tuple[object, str]] = {}
+            for desc in remote_descriptors:
+                tool_id = desc.safe_name
+                remote_registry[tool_id] = (desc.connection, desc.remote_name)
+                gateway_catalog[tool_id] = {
+                    "connection_id": str(getattr(desc.connection, "id", "") or ""),
+                    "connection_name": str(getattr(desc.connection, "name", "") or ""),
+                    "remote_tool": desc.remote_name,
+                    "description": desc.description,
+                    "input_schema": dict(desc.input_schema) if isinstance(desc.input_schema, Mapping) else None,
+                }
+            tool_context.mcp_gateway_catalog = gateway_catalog
             self._remote_tool_registry = remote_registry
 
         if remote_tool_defs:
@@ -997,69 +1009,186 @@ class McpOrchestratorService:
                                 remote_event_id: str | None = None
                                 remote_event_payload: dict[str, object] | None = None
                                 try:
-                                    remote_entry = self._remote_tool_registry.get(tool_name)
-                                    skip_remote_execution = False
-                                    if remote_entry:
-                                        connection, remote_tool_name = remote_entry
-                                        approval_requirement = get_tool_approval_requirement(
-                                            connection,
-                                            remote_tool_name,
-                                            agent=getattr(conversation, "agent_profile", None),
-                                        )
-                                        if approval_requirement.get("requires_approval"):
-                                            approved, _, approval_result = self._maybe_request_tool_approval(
-                                                conversation=conversation,
-                                                connection=connection,
-                                                tool_name=tool_name,
-                                                remote_tool_name=remote_tool_name,
-                                                tool_call_id=tool_call_id,
-                                                tool_event_id=tool_event_id,
-                                                arguments=arguments,
-                                                approval_requirement=approval_requirement,
-                                                on_tool_event=on_tool_event,
-                                            )
-                                            if not approved:
-                                                tool_result = approval_result
-                                                call_origin = "policy"
-                                                skip_remote_execution = True
-                                        if not skip_remote_execution:
-                                            call_start = time.perf_counter()
-                                            remote_event_id = tool_event_id
-                                            remote_event_payload = {
-                                                "event_id": remote_event_id,
-                                                "phase": "started",
-                                                "status": "running",
-                                                "tool_call_id": tool_call_id,
-                                                "tool_name": tool_name,
-                                                "kind": "mcp_remote",
-                                                "remote": {
-                                                    "connection_id": str(getattr(connection, "id", "") or ""),
-                                                    "connection_name": str(getattr(connection, "name", "") or ""),
-                                                    "endpoint_url": str(getattr(connection, "server_url", "") or ""),
-                                                    "remote_tool": remote_tool_name,
-                                                },
-                                                "input": dict(arguments),
+                                    if gateway_enabled and tool_name == "mcp_call_tool":
+                                        requested_tool_id = str(arguments.get("tool_id") or "").strip()
+                                        raw_inner_args = arguments.get("arguments")
+                                        inner_args = raw_inner_args if isinstance(raw_inner_args, Mapping) else None
+                                        if not requested_tool_id or inner_args is None:
+                                            call_origin = "validation"
+                                            tool_result = {
+                                                "tool": "mcp_call_tool",
+                                                "status": "error",
+                                                "error": "invalid_arguments",
+                                                "error_code": "invalid_arguments",
+                                                "output": None,
+                                                "hint": "Provide tool_id and arguments (object) from mcp_search_tools results.",
                                             }
-                                            if on_tool_event:
-                                                try:
-                                                    on_tool_event(remote_event_payload)
-                                                except Exception:  # pragma: no cover - UI callback must not break tools
-                                                    logger.exception("mcp portal tool event start callback failed")
-                                            tool_result = self._execute_remote_mcp_tool(
-                                                tool_name=tool_name,
-                                                remote_tool_name=remote_tool_name,
-                                                connection=connection,
-                                                arguments=arguments,
-                                                conversation=conversation,
+                                        else:
+                                            remote_entry = self._remote_tool_registry.get(requested_tool_id)
+                                            catalog_entry = (
+                                                tool_context.mcp_gateway_catalog.get(requested_tool_id)
+                                                if isinstance(getattr(tool_context, "mcp_gateway_catalog", None), Mapping)
+                                                else None
                                             )
+                                            input_schema = (
+                                                catalog_entry.get("input_schema")
+                                                if isinstance(catalog_entry, Mapping) and isinstance(catalog_entry.get("input_schema"), Mapping)
+                                                else None
+                                            )
+                                            missing_fields, type_errors = self._validate_gateway_tool_arguments(
+                                                inner_args, input_schema
+                                            )
+                                            if not remote_entry:
+                                                call_origin = "validation"
+                                                tool_result = {
+                                                    "tool": "mcp_call_tool",
+                                                    "status": "error",
+                                                    "error": "unknown_tool_id",
+                                                    "error_code": "unknown_tool_id",
+                                                    "tool_id": requested_tool_id,
+                                                    "output": None,
+                                                    "hint": "Call mcp_search_tools to get a valid tool_id for this agent.",
+                                                }
+                                            elif missing_fields or type_errors:
+                                                call_origin = "validation"
+                                                remote_meta = None
+                                                if isinstance(catalog_entry, Mapping):
+                                                    remote_meta = {
+                                                        "connection_id": str(catalog_entry.get("connection_id") or "").strip() or None,
+                                                        "connection_name": str(catalog_entry.get("connection_name") or "").strip() or None,
+                                                        "tool": str(catalog_entry.get("remote_tool") or "").strip() or None,
+                                                    }
+                                                tool_result = {
+                                                    "tool": "mcp_call_tool",
+                                                    "status": "error",
+                                                    "error": "validation_failed",
+                                                    "error_code": "validation_failed",
+                                                    "tool_id": requested_tool_id,
+                                                    "missing_fields": missing_fields,
+                                                    "type_errors": type_errors,
+                                                    "output": None,
+                                                    **({"remote": remote_meta} if remote_meta else {}),
+                                                    "hint": "Fix the tool arguments and retry mcp_call_tool. Use mcp_search_tools results[].required_args as a guide.",
+                                                }
+                                            else:
+                                                connection, remote_tool_name = remote_entry
+                                                tool_name_for_remote = requested_tool_id
+                                                approval_requirement = get_tool_approval_requirement(
+                                                    connection,
+                                                    remote_tool_name,
+                                                    agent=getattr(conversation, "agent_profile", None),
+                                                )
+                                                skip_remote_execution = False
+                                                if approval_requirement.get("requires_approval"):
+                                                    approved, _, approval_result = self._maybe_request_tool_approval(
+                                                        conversation=conversation,
+                                                        connection=connection,
+                                                        tool_name=tool_name_for_remote,
+                                                        remote_tool_name=remote_tool_name,
+                                                        tool_call_id=tool_call_id,
+                                                        tool_event_id=tool_event_id,
+                                                        arguments=inner_args,
+                                                        approval_requirement=approval_requirement,
+                                                        on_tool_event=on_tool_event,
+                                                    )
+                                                    if not approved:
+                                                        tool_result = approval_result
+                                                        call_origin = "policy"
+                                                        skip_remote_execution = True
+                                                if not skip_remote_execution:
+                                                    call_start = time.perf_counter()
+                                                    remote_event_id = tool_event_id
+                                                    remote_event_payload = {
+                                                        "event_id": remote_event_id,
+                                                        "phase": "started",
+                                                        "status": "running",
+                                                        "tool_call_id": tool_call_id,
+                                                        "tool_name": tool_name_for_remote,
+                                                        "kind": "mcp_remote",
+                                                        "remote": {
+                                                            "connection_id": str(getattr(connection, "id", "") or ""),
+                                                            "connection_name": str(getattr(connection, "name", "") or ""),
+                                                            "endpoint_url": str(getattr(connection, "server_url", "") or ""),
+                                                            "remote_tool": remote_tool_name,
+                                                        },
+                                                        "input": dict(inner_args),
+                                                    }
+                                                    if on_tool_event:
+                                                        try:
+                                                            on_tool_event(remote_event_payload)
+                                                        except Exception:  # pragma: no cover - UI callback must not break tools
+                                                            logger.exception("mcp portal tool event start callback failed")
+                                                    tool_result = self._execute_remote_mcp_tool(
+                                                        tool_name=tool_name_for_remote,
+                                                        remote_tool_name=remote_tool_name,
+                                                        connection=connection,
+                                                        arguments=inner_args,
+                                                        conversation=conversation,
+                                                    )
                                     else:
-                                        call_start = time.perf_counter()
-                                        tool_result = mcp_tools.execute_tool(
-                                            tool_name,
-                                            arguments,
-                                            conversation=conversation,
-                                            context=tool_context,
-                                        )
+                                        remote_entry = self._remote_tool_registry.get(tool_name)
+                                        skip_remote_execution = False
+                                        if remote_entry:
+                                            connection, remote_tool_name = remote_entry
+                                            approval_requirement = get_tool_approval_requirement(
+                                                connection,
+                                                remote_tool_name,
+                                                agent=getattr(conversation, "agent_profile", None),
+                                            )
+                                            if approval_requirement.get("requires_approval"):
+                                                approved, _, approval_result = self._maybe_request_tool_approval(
+                                                    conversation=conversation,
+                                                    connection=connection,
+                                                    tool_name=tool_name,
+                                                    remote_tool_name=remote_tool_name,
+                                                    tool_call_id=tool_call_id,
+                                                    tool_event_id=tool_event_id,
+                                                    arguments=arguments,
+                                                    approval_requirement=approval_requirement,
+                                                    on_tool_event=on_tool_event,
+                                                )
+                                                if not approved:
+                                                    tool_result = approval_result
+                                                    call_origin = "policy"
+                                                    skip_remote_execution = True
+                                            if not skip_remote_execution:
+                                                call_start = time.perf_counter()
+                                                remote_event_id = tool_event_id
+                                                remote_event_payload = {
+                                                    "event_id": remote_event_id,
+                                                    "phase": "started",
+                                                    "status": "running",
+                                                    "tool_call_id": tool_call_id,
+                                                    "tool_name": tool_name,
+                                                    "kind": "mcp_remote",
+                                                    "remote": {
+                                                        "connection_id": str(getattr(connection, "id", "") or ""),
+                                                        "connection_name": str(getattr(connection, "name", "") or ""),
+                                                        "endpoint_url": str(getattr(connection, "server_url", "") or ""),
+                                                        "remote_tool": remote_tool_name,
+                                                    },
+                                                    "input": dict(arguments),
+                                                }
+                                                if on_tool_event:
+                                                    try:
+                                                        on_tool_event(remote_event_payload)
+                                                    except Exception:  # pragma: no cover - UI callback must not break tools
+                                                        logger.exception("mcp portal tool event start callback failed")
+                                                tool_result = self._execute_remote_mcp_tool(
+                                                    tool_name=tool_name,
+                                                    remote_tool_name=remote_tool_name,
+                                                    connection=connection,
+                                                    arguments=arguments,
+                                                    conversation=conversation,
+                                                )
+                                        else:
+                                            call_start = time.perf_counter()
+                                            tool_result = mcp_tools.execute_tool(
+                                                tool_name,
+                                                arguments,
+                                                conversation=conversation,
+                                                context=tool_context,
+                                            )
                                 except ToolConstraintError as exc:
                                     structured_log(
                                         "mcp",
@@ -2529,9 +2658,86 @@ class McpOrchestratorService:
         for field in required:
             if not isinstance(field, str):
                 continue
+            if tool_name == "mcp_call_tool" and field == "arguments":
+                # Gateway tool always requires an arguments object, but it may be empty
+                # for remote tools with no required args.
+                if field in arguments and isinstance(arguments.get(field), Mapping):
+                    continue
             if field not in arguments or self._is_missing_value(arguments.get(field)):
                 missing.append(field)
         return missing
+
+    def _validate_gateway_tool_arguments(
+        self,
+        arguments: Mapping[str, object],
+        input_schema: Mapping[str, object] | None,
+    ) -> tuple[list[str], list[dict[str, str]]]:
+        if not input_schema:
+            return [], []
+
+        required = input_schema.get("required")
+        required_fields = [str(field).strip() for field in required if isinstance(field, str) and field.strip()] if isinstance(required, list) else []
+        missing_fields = [
+            field
+            for field in required_fields
+            if field not in arguments or self._is_missing_value(arguments.get(field))
+        ]
+
+        properties = input_schema.get("properties")
+        props = properties if isinstance(properties, Mapping) else {}
+        type_errors: list[dict[str, str]] = []
+        for key, value in arguments.items():
+            schema_node = props.get(key)
+            if not isinstance(schema_node, Mapping):
+                continue
+            expected = schema_node.get("type")
+            expected_types: list[str] = []
+            if isinstance(expected, str) and expected.strip():
+                expected_types = [expected.strip()]
+            elif isinstance(expected, list):
+                expected_types = [str(entry).strip() for entry in expected if str(entry).strip()]
+
+            if not expected_types:
+                continue
+
+            allows_null = "null" in expected_types
+            if value is None and allows_null:
+                continue
+
+            expected_non_null = [t for t in expected_types if t != "null"] or expected_types
+            matches_any = any(self._gateway_value_matches_json_type(value, t) for t in expected_non_null)
+            if matches_any:
+                continue
+            type_errors.append(
+                {
+                    "field": str(key),
+                    "expected": "|".join(expected_non_null[:4]),
+                    "received": type(value).__name__,
+                }
+            )
+            if len(type_errors) >= 12:
+                break
+
+        return missing_fields[:12], type_errors
+
+    @staticmethod
+    def _gateway_value_matches_json_type(value: object, expected_type: str) -> bool:
+        normalized = str(expected_type or "").strip().lower()
+        if not normalized or normalized == "any":
+            return True
+        if normalized == "string":
+            return isinstance(value, str)
+        if normalized == "integer":
+            return isinstance(value, int) and not isinstance(value, bool)
+        if normalized == "number":
+            return isinstance(value, (int, float)) and not isinstance(value, bool)
+        if normalized == "boolean":
+            return isinstance(value, bool)
+        if normalized == "object":
+            return isinstance(value, Mapping)
+        if normalized == "array":
+            return isinstance(value, (list, tuple))
+        return True
 
     @staticmethod
     def _missing_required_payload(tool_name: str, missing_fields: Sequence[str]) -> Mapping[str, object]:
@@ -4567,6 +4773,123 @@ class McpOrchestratorService:
             if isinstance(value, (list, tuple, set, dict)) and not value:
                 continue
             compact[key] = value
+
+        if normalized_name == "mcp_search_tools":
+            raw_results = payload.get("results")
+            results_out: list[dict[str, object]] = []
+            if isinstance(raw_results, list):
+                for result in raw_results[: max(1, max_snippets)]:
+                    if not isinstance(result, Mapping):
+                        continue
+                    tool_id = result.get("tool_id")
+                    if not isinstance(tool_id, str) or not tool_id.strip():
+                        continue
+                    entry: dict[str, object] = {"tool_id": tool_id.strip()}
+                    for key, limit in (
+                        ("connection_name", 120),
+                        ("remote_tool", 160),
+                        ("description", 420),
+                    ):
+                        value = result.get(key)
+                        if not isinstance(value, str) or not value.strip():
+                            continue
+                        entry[key] = self._clip_text(value.strip(), limit)
+                    required_args = result.get("required_args")
+                    required_out: list[dict[str, str]] = []
+                    if isinstance(required_args, list):
+                        for arg in required_args[:12]:
+                            if not isinstance(arg, Mapping):
+                                continue
+                            name = arg.get("name")
+                            if not isinstance(name, str) or not name.strip():
+                                continue
+                            arg_entry: dict[str, str] = {"name": name.strip()}
+                            type_hint = arg.get("type")
+                            if isinstance(type_hint, str) and type_hint.strip():
+                                arg_entry["type"] = self._clip_text(type_hint.strip(), 48)
+                            required_out.append(arg_entry)
+                    if required_out:
+                        entry["required_args"] = required_out
+                    results_out.append(entry)
+
+            compact["results"] = results_out
+            compact["prompt_compact"] = True
+            return compact
+
+        if normalized_name == "mcp_call_tool":
+            tool_id = payload.get("tool_id")
+            if isinstance(tool_id, str) and tool_id.strip():
+                compact["tool_id"] = tool_id.strip()
+            missing_fields = payload.get("missing_fields")
+            if isinstance(missing_fields, list):
+                compact["missing_fields"] = [str(field) for field in missing_fields if str(field).strip()][:24]
+            type_errors = payload.get("type_errors")
+            if isinstance(type_errors, list):
+                errors_out: list[dict[str, str]] = []
+                for err in type_errors[:24]:
+                    if not isinstance(err, Mapping):
+                        continue
+                    field = err.get("field")
+                    expected = err.get("expected")
+                    received = err.get("received")
+                    if not isinstance(field, str) or not field.strip():
+                        continue
+                    out: dict[str, str] = {"field": field.strip()}
+                    if isinstance(expected, str) and expected.strip():
+                        out["expected"] = self._clip_text(expected.strip(), 80)
+                    if isinstance(received, str) and received.strip():
+                        out["received"] = self._clip_text(received.strip(), 80)
+                    errors_out.append(out)
+                if errors_out:
+                    compact["type_errors"] = errors_out
+
+            is_error = payload.get("is_error")
+            if isinstance(is_error, bool):
+                compact["is_error"] = is_error
+            remote = payload.get("remote")
+            if isinstance(remote, Mapping):
+                remote_out: dict[str, object] = {}
+                for key in ("connection_id", "connection_name", "tool"):
+                    value = remote.get(key)
+                    if isinstance(value, str) and value.strip():
+                        remote_out[key] = value.strip()
+                if remote_out:
+                    compact["remote"] = remote_out
+
+            text = payload.get("text")
+            if isinstance(text, str) and text.strip():
+                compact["text"] = self._clip_text(text.strip(), int(snippet_content_chars))
+
+            content_in = payload.get("content")
+            content_out: list[dict[str, object]] = []
+            if isinstance(content_in, list):
+                for item in content_in[:6]:
+                    if not isinstance(item, Mapping):
+                        continue
+                    item_type = item.get("type")
+                    if not isinstance(item_type, str) or not item_type.strip():
+                        continue
+                    entry: dict[str, object] = {"type": item_type.strip()}
+                    if item_type == "text" and isinstance(item.get("text"), str) and item.get("text").strip():
+                        entry["text"] = self._clip_text(item.get("text").strip(), int(snippet_content_chars))
+                    elif item_type == "resource_link":
+                        uri = item.get("uri")
+                        if isinstance(uri, str) and uri.strip():
+                            entry["uri"] = uri.strip()
+                        name = item.get("name")
+                        if isinstance(name, str) and name.strip():
+                            entry["name"] = self._clip_text(name.strip(), 200)
+                    elif item_type == "structured" and item.get("data") is not None:
+                        try:
+                            blob = json.dumps(item.get("data"), ensure_ascii=False, default=str)
+                        except Exception:
+                            blob = str(item.get("data"))
+                        entry["data"] = self._clip_text(blob, 2000)
+                    content_out.append(entry)
+            if content_out:
+                compact["content"] = content_out
+            compact["prompt_compact"] = True
+            return compact
 
         if normalized_name.startswith("mcp_"):
             is_error = payload.get("is_error")

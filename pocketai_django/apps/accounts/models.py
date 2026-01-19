@@ -344,6 +344,15 @@ class AgentProfile(models.Model):
         blank=True,
         help_text="Optional default approval mode for external MCP tools (overrides connection defaults when set).",
     )
+    mcp_gateway_mode = models.BooleanField(
+        null=True,
+        blank=True,
+        help_text=(
+            "Optional override for MCP gateway mode. "
+            "When enabled, the agent uses a small gateway tool surface for external MCP tools "
+            "instead of inlining every remote tool schema into the LLM prompt."
+        ),
+    )
     allowed_documents = models.ManyToManyField(
         "KnowledgeUpload",
         through="AgentKnowledgeAccess",

@@ -31,6 +31,7 @@ class FeatureState:
     rag_shadow_retrieval: bool
     rag_eval_logging: bool
     rag_agentic_mode: bool  # 2-tool retrieval: search (metadata) → read (content)
+    mcp_gateway_mode: bool  # Small gateway tool surface for external MCP
 
     def as_dict(self) -> dict[str, bool]:
         return {
@@ -45,6 +46,7 @@ class FeatureState:
             "rag_shadow_retrieval": self.rag_shadow_retrieval,
             "rag_eval_logging": self.rag_eval_logging,
             "rag_agentic_mode": self.rag_agentic_mode,
+            "mcp_gateway_mode": self.mcp_gateway_mode,
         }
 
 
@@ -91,6 +93,7 @@ class FeatureFlagService:
             ),
             rag_eval_logging=bool(payload.get("rag_eval_logging", FEATURE_FLAG_DEFAULTS["rag_eval_logging"])),
             rag_agentic_mode=bool(payload.get("rag_agentic_mode", FEATURE_FLAG_DEFAULTS["rag_agentic_mode"])),
+            mcp_gateway_mode=bool(payload.get("mcp_gateway_mode", FEATURE_FLAG_DEFAULTS["mcp_gateway_mode"])),
         )
 
     @classmethod

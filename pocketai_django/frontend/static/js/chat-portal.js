@@ -1362,6 +1362,10 @@ class ChatPortalClient {
     title.dataset.toolTitle = "true";
     title.className = "mcp-tool-title";
 
+    const inlineOutcome = document.createElement("span");
+    inlineOutcome.dataset.toolOutcomeInline = "true";
+    inlineOutcome.className = "mcp-tool-outcome-inline";
+
     const approvalActions = document.createElement("div");
     approvalActions.dataset.toolApprovalActions = "true";
     approvalActions.className = "mcp-tool-approval-actions mcp-approval-inline-actions";
@@ -1383,6 +1387,7 @@ class ChatPortalClient {
 
     rowLeft.appendChild(status);
     rowLeft.appendChild(title);
+    rowLeft.appendChild(inlineOutcome);
     rowLeft.appendChild(approvalActions);
 
     row.appendChild(rowLeft);
@@ -1503,14 +1508,10 @@ class ChatPortalClient {
       if (labelEl) labelEl.textContent = "";
 
       if (iconEl) {
-        const wantsOrbit = toolState === "running";
+        const wantsOrbit = isRunning || phase === "running" || toolState === "success" || toolState === "error";
         iconEl.classList.toggle("mcp-status-icon--orbit", wantsOrbit);
         if (wantsOrbit) {
           iconEl.innerHTML = this.getOrbitLoaderMarkup();
-        } else if (toolState === "success") {
-          iconEl.innerHTML = this.getToolSuccessIconMarkup();
-        } else if (toolState === "error") {
-          iconEl.innerHTML = this.getToolFailureIconMarkup();
         } else {
           iconEl.innerHTML = `<span class="mcp-status-dot" aria-hidden="true"></span>`;
         }
@@ -1521,6 +1522,18 @@ class ChatPortalClient {
     const showActions = approvalStatus === "pending" || effectiveStatus === "pending_approval";
     if (approvalActionsEl) {
       approvalActionsEl.classList.toggle("is-visible", showActions);
+    }
+
+    const inlineOutcomeEl = card.querySelector("[data-tool-outcome-inline]");
+    if (inlineOutcomeEl) {
+      const showOutcome = !showActions && (toolState === "success" || toolState === "error");
+      inlineOutcomeEl.classList.toggle("is-visible", showOutcome);
+      if (showOutcome) {
+        const iconUrl = toolState === "error" ? this.getToolFailureIconUrl() : this.getToolSuccessIconUrl();
+        inlineOutcomeEl.innerHTML = `<img src="${iconUrl}" alt="" aria-hidden="true" />`;
+      } else {
+        inlineOutcomeEl.innerHTML = "";
+      }
     }
 
     const inputProvided = Object.prototype.hasOwnProperty.call(payload, "input");
@@ -2023,6 +2036,14 @@ class ChatPortalClient {
         <path d="M4 4l8 8M12 4L4 12" stroke="currentColor" stroke-width="2" stroke-linecap="round" />
       </svg>
     `;
+  }
+
+  getToolSuccessIconUrl() {
+    return "/static/check.png";
+  }
+
+  getToolFailureIconUrl() {
+    return "/static/cross.png";
   }
 
   getOrbitLoaderMarkup() {
