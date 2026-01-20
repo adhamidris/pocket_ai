@@ -102,6 +102,10 @@ class ChatPortalClient {
     // Agentic spinner state (derive from real tool/status events)
     this.agenticSpinnerActiveToolEventId = null;
     this.agenticSpinnerLastLabel = "";
+    // Streaming UX helpers
+    this.scrollToBottomRaf = null;
+    this.scrollToBottomBehavior = "auto";
+    this.streamingRenderRaf = null;
   }
 
   async init() {
@@ -2213,7 +2217,21 @@ class ChatPortalClient {
         this.pendingMetadataVersion = payload.metadata_version;
       }
       if (payload.text) {
-        this.updateLatestAssistantMessage(payload.text.toString(), messageId);
+        const finalText = payload.text.toString();
+        // In state-machine mode, the assistant text is streamed via `turnPending` updates,
+        // so we need an explicit final markdown render pass at `turnPersisted`.
+        if (this.streamingMessageNode) {
+          this.ensureStreamingMessageNode(messageId);
+          if (messageId) {
+            const scriptTag = document.getElementById(messageId);
+            if (scriptTag && scriptTag.tagName === "SCRIPT") {
+              scriptTag.textContent = JSON.stringify(finalText);
+            }
+          }
+          this.finalizeStreamingMessage(finalText);
+        } else {
+          this.updateLatestAssistantMessage(finalText, messageId);
+        }
       }
       this.updateMessageMetadata(messageId, payload);
       if (payload.session_status) {
@@ -2561,7 +2579,7 @@ class ChatPortalClient {
       this.updateMessageMetadata(message.id, message.metadata);
     }
     if (scroller) {
-      scroller.scrollTo({ top: scroller.scrollHeight, behavior: "smooth" });
+      this.scheduleScrollToBottom({ behavior: "smooth", force: true });
     }
   }
 
@@ -2702,8 +2720,8 @@ class ChatPortalClient {
       this.streamingRewritePending = false;
     }
     this.streamingRawBuffer += normalized;
-    this.refreshStreamingView();
-    this.elements.messages.scrollTo({ top: this.elements.messages.scrollHeight, behavior: "smooth" });
+    this.scheduleStreamingRender();
+    this.scheduleScrollToBottom({ behavior: "auto" });
   }
 
   updateStreamingText(text, messageId = null) {
@@ -2713,12 +2731,49 @@ class ChatPortalClient {
       return;
     }
     this.streamingRawBuffer = text;
-    this.refreshStreamingView();
-    this.elements.messages.scrollTo({ top: this.elements.messages.scrollHeight, behavior: "smooth" });
+    this.scheduleStreamingRender();
+    this.scheduleScrollToBottom({ behavior: "auto" });
   }
 
   normalizeStreamingChunk(chunk) {
     return chunk || "";
+  }
+
+  isNearBottom(scroller, thresholdPx = 120) {
+    if (!scroller) return true;
+    const distance = scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight;
+    return distance <= thresholdPx;
+  }
+
+  scheduleScrollToBottom({ behavior = "auto", force = false } = {}) {
+    const scroller = this.elements.messages;
+    if (!scroller) return;
+    if (!force && !this.isNearBottom(scroller)) return;
+    this.scrollToBottomBehavior = behavior || "auto";
+    if (this.scrollToBottomRaf) return;
+    this.scrollToBottomRaf = requestAnimationFrame(() => {
+      this.scrollToBottomRaf = null;
+      const scrollBehavior = this.scrollToBottomBehavior || "auto";
+      try {
+        scroller.scrollTo({ top: scroller.scrollHeight, behavior: scrollBehavior });
+      } catch (_err) {
+        scroller.scrollTop = scroller.scrollHeight;
+      }
+    });
+  }
+
+  scheduleStreamingRender() {
+    if (this.streamingRenderRaf) return;
+    this.streamingRenderRaf = requestAnimationFrame(() => {
+      this.streamingRenderRaf = null;
+      this.refreshStreamingView();
+    });
+  }
+
+  renderPlainText(text) {
+    if (!text) return "";
+    const escaped = this.escapeHtml((text || "").toString());
+    return escaped.replace(/\n/g, "<br>");
   }
 
   formatAssistantText(text) {
@@ -2882,7 +2937,7 @@ class ChatPortalClient {
         typeof this.pendingSegmentBoundaryLength === "number" ? this.pendingSegmentBoundaryLength : this.streamingBuffer.length;
       const boundary = Math.max(this.frozenBufferLength, Math.min(rawBoundary, this.streamingBuffer.length));
       const segmentBuffer = this.streamingBuffer.substring(this.frozenBufferLength, boundary);
-      const html = this.renderBufferToHtml(segmentBuffer);
+      const html = this.renderBufferToHtmlWithMode(segmentBuffer, { mode: "markdown" });
       this.currentSegmentTextEl.innerHTML = html;
       // Mark this portion as frozen
       this.frozenBufferLength = boundary;
@@ -3695,6 +3750,16 @@ class ChatPortalClient {
   }
 
   renderBufferToHtml(buffer) {
+    return this.renderBufferToHtmlWithMode(buffer, { mode: "markdown" });
+  }
+
+  renderBufferToHtmlWithMode(buffer, { mode = "markdown" } = {}) {
+    const renderText = (value) => {
+      if (mode === "plain") {
+        return this.renderPlainText(value);
+      }
+      return this.renderMarkdown(value);
+    };
     let html = "";
     if (buffer) {
       // Check for partial table at the end
@@ -3723,14 +3788,14 @@ class ChatPortalClient {
 
         // Only treat as table if we have at least one pipe-starting line
         if (tableLines.some(l => l.trim().startsWith('|'))) {
-             const safeHtml = this.renderMarkdown(safeLines.join("\n"));
-             const tableHtml = this.renderProvisionalTable(tableLines);
+             const safeHtml = renderText(safeLines.join("\n"));
+             const tableHtml = this.renderProvisionalTable(tableLines, { mode });
              html = safeHtml + tableHtml;
         } else {
-             html = this.renderMarkdown(buffer);
+             html = renderText(buffer);
         }
       } else {
-        html = this.renderMarkdown(buffer);
+        html = renderText(buffer);
       }
     }
     return html;
@@ -3739,7 +3804,7 @@ class ChatPortalClient {
   renderStreamingTextToHtml() {
     // Get the unfrozen portion of the buffer for the current segment
     const currentSegmentBuffer = this.streamingBuffer.substring(this.frozenBufferLength);
-    return this.renderBufferToHtml(currentSegmentBuffer);
+    return this.renderBufferToHtmlWithMode(currentSegmentBuffer, { mode: "markdown" });
   }
 
   renderStreamingText() {
@@ -3758,8 +3823,14 @@ class ChatPortalClient {
     }
   }
 
-  renderProvisionalTable(lines) {
+  renderProvisionalTable(lines, { mode = "markdown" } = {}) {
     if (!lines || !lines.length) return "";
+    const renderCell = (value) => {
+      if (mode === "plain") {
+        return this.renderPlainText((value || "").toString().trim());
+      }
+      return this.renderMarkdown((value || "").toString().trim());
+    };
     let html = '<div class="overflow-x-auto mb-3"><table class="w-full text-sm">';
     
     const rows = lines.filter(l => l.trim().startsWith('|'));
@@ -3798,7 +3869,7 @@ class ChatPortalClient {
         
         const isHeader = index === 0; 
         const tag = isHeader ? "th" : "td";
-        html += `<${tag}>${this.renderMarkdown(cell.trim())}</${tag}>`;
+        html += `<${tag}>${renderCell(cell)}</${tag}>`;
       });
       html += "</tr>";
     });
