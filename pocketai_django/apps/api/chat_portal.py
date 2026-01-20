@@ -836,6 +836,29 @@ class PortalTraceLogger:
         
         self.log(f"status.{code}", detail, indent=indent)
 
+    def log_spinner(
+        self,
+        text: str,
+        *,
+        pending: bool,
+        prev_text: str | None = None,
+        reason: str | None = None,
+        indent: int = 1,
+    ) -> None:
+        """Log spinner status updates (portal state-machine only)."""
+        from apps.core.console_logger import Verbosity
+
+        if self._console_verbosity == Verbosity.MINIMAL:
+            return
+
+        detail: dict[str, object] = {"text": text, "pending": pending}
+        if prev_text is not None:
+            detail["prev_text"] = prev_text
+        if reason:
+            detail["reason"] = reason
+
+        self.log("spinner.update", detail, indent=indent)
+
     def log_error(self, title: str, error: Exception | str, *, indent: int = 1) -> None:
         """Log an error."""
         self._log_header()
@@ -1813,6 +1836,7 @@ def stream_send(request: HttpRequest) -> StreamingHttpResponse:
         pending: bool = True,
         fallback: str | None = "Working...",
         allow_empty: bool = False,
+        reason: str | None = None,
     ) -> None:
         if not state_machine_enabled:
             return
@@ -1828,9 +1852,19 @@ def stream_send(request: HttpRequest) -> StreamingHttpResponse:
             return
         if spinner_state["text"] == text_value and spinner_state["pending"] == pending:
             return
+        prev_text = spinner_state.get("text")
         spinner_state["text"] = text_value
         spinner_state["pending"] = pending
         plan_holder["spinner_text"] = text_value or None
+        try:
+            trace_logger.log_spinner(
+                text_value,
+                pending=pending,
+                prev_text=str(prev_text) if prev_text is not None else None,
+                reason=reason,
+            )
+        except Exception:  # pragma: no cover - logging must never break streaming
+            logger.exception("portal spinner trace log failed")
         payload = {
             "type": "spinnerStatus",
             "message_id": _current_message_id(),
@@ -2004,13 +2038,13 @@ def stream_send(request: HttpRequest) -> StreamingHttpResponse:
                 current = str(spinner_state.get("text") or "").strip()
                 if current and current.lower() != "thinking…".strip().lower():
                     return
-                _emit_spinner_status(label or "Thinking…", pending=True, fallback="Thinking…")
+                _emit_spinner_status(label or "Thinking…", pending=True, fallback="Thinking…", reason="status:thinking")
                 return
             if code in {"searching_complete", "reading_complete"}:
                 # Keep the last spinner label until the next concrete step replaces it.
                 return
             if code in {"stream_complete", "complete"}:
-                _emit_spinner_status("", pending=False, fallback=None, allow_empty=True)
+                _emit_spinner_status("", pending=False, fallback=None, allow_empty=True, reason=f"status:{code}")
 
     def _record_tool_event(payload: Mapping[str, object]) -> None:
         if tool_event_limit <= 0:
@@ -2118,11 +2152,13 @@ def stream_send(request: HttpRequest) -> StreamingHttpResponse:
                 elif phase_lower == "finished":
                     if status_lower in {"error", "failed", "tool_failed", "mcp_remote_error", "constraint_error"}:
                         spinner_label = "Trying another approach…"
-                    elif int(spinner_state.get("tool_inflight") or 0) <= 0:
-                        # Tool finished successfully; keep the UX responsive while the model composes.
-                        spinner_label = "Thinking…"
                 if spinner_label:
-                    _emit_spinner_status(spinner_label, pending=True, fallback="Working...")
+                    _emit_spinner_status(
+                        spinner_label,
+                        pending=True,
+                        fallback="Working...",
+                        reason=f"tool:{tool_name}:{phase_lower}:{status_lower}",
+                    )
             sequence_by_event_id = segment_state.get("tool_sequence_by_event_id")
             if not isinstance(sequence_by_event_id, dict):
                 sequence_by_event_id = {}

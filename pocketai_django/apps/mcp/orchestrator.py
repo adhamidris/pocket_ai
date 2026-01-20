@@ -887,26 +887,10 @@ class McpOrchestratorService:
                         tool_name = self._tool_name(tool_call)
                         raw_arguments = self._tool_arguments(tool_call)
                         arguments = dict(raw_arguments) if isinstance(raw_arguments, Mapping) else {}
-                        spinner_text: str | None = None
-                        ui_meta = arguments.pop("__ui", None)
-                        if isinstance(ui_meta, Mapping):
-                            raw_spinner = ui_meta.get("spinner_text") or ui_meta.get("spinner")
-                            if isinstance(raw_spinner, str):
-                                spinner_text = raw_spinner.strip() or None
-                            elif raw_spinner is not None:
-                                spinner_text = str(raw_spinner).strip() or None
-                        # Back-compat: allow direct spinner_text (still treated as UI-only).
-                        raw_direct_spinner = arguments.pop("spinner_text", None)
-                        if spinner_text is None:
-                            if isinstance(raw_direct_spinner, str):
-                                spinner_text = raw_direct_spinner.strip() or None
-                            elif raw_direct_spinner is not None:
-                                spinner_text = str(raw_direct_spinner).strip() or None
-                        if on_spinner_update and spinner_text:
-                            try:
-                                on_spinner_update(spinner_text)
-                            except Exception:  # pragma: no cover - UI callback must not break tools
-                                logger.exception("mcp portal spinner callback failed")
+                        # Strip UI-only hints from tool arguments so they never leak into tool execution.
+                        # Spinner UX is driven by backend status/tool events (single source of truth).
+                        arguments.pop("__ui", None)
+                        arguments.pop("spinner_text", None)
                         tool_call_id = str(tool_call.get("id") or "").strip()
                         tool_event_id = tool_call_id or str(uuid.uuid4())
 
