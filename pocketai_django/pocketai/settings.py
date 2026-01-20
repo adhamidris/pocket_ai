@@ -476,6 +476,28 @@ MCP_PROMPT_TABLE_MAX_CONTRIBUTIONS = int(os.getenv("MCP_PROMPT_TABLE_MAX_CONTRIB
 MCP_PROMPT_TABLE_MAX_CELLS = int(os.getenv("MCP_PROMPT_TABLE_MAX_CELLS", "12"))
 # MCP_PROMPT_TABLE_MAX_CELLS_EXACT: Higher cap for exact-match table responses (still bounded).
 MCP_PROMPT_TABLE_MAX_CELLS_EXACT = int(os.getenv("MCP_PROMPT_TABLE_MAX_CELLS_EXACT", "60"))
+# MCP_PROMPT_TOOL_OUTPUT_MAX_CHARS: Hard cap on any single tool output message injected into the LLM prompt.
+# This is a safety backstop; Phase 1 will replace this with out-of-band tool artifacts + prompt_view.
+MCP_PROMPT_TOOL_OUTPUT_MAX_CHARS = int(os.getenv("MCP_PROMPT_TOOL_OUTPUT_MAX_CHARS", "12000"))
+
+# Stage transcript windowing (raw messages kept verbatim in each provider call).
+# These are *message* limits (not tokens) and apply after tool-call anchoring.
+try:
+    MCP_STAGE_HISTORY_INITIAL_PASS = int(os.getenv("MCP_STAGE_HISTORY_INITIAL_PASS", "6"))
+except (TypeError, ValueError):
+    MCP_STAGE_HISTORY_INITIAL_PASS = 6
+try:
+    MCP_STAGE_HISTORY_TOOL_ITERATION = int(os.getenv("MCP_STAGE_HISTORY_TOOL_ITERATION", "6"))
+except (TypeError, ValueError):
+    MCP_STAGE_HISTORY_TOOL_ITERATION = 6
+try:
+    MCP_STAGE_HISTORY_PLANNER = int(os.getenv("MCP_STAGE_HISTORY_PLANNER", "6"))
+except (TypeError, ValueError):
+    MCP_STAGE_HISTORY_PLANNER = 6
+try:
+    MCP_STAGE_HISTORY_POSTFLIGHT = int(os.getenv("MCP_STAGE_HISTORY_POSTFLIGHT", "6"))
+except (TypeError, ValueError):
+    MCP_STAGE_HISTORY_POSTFLIGHT = 6
 # Logging privacy toggles (default: safe/no PII in logs).
 # MCP_LOG_PII: If true, logs may include raw text/PII (dangerous; keep false in prod).
 MCP_LOG_PII = os.getenv("MCP_LOG_PII", "false").lower() in {"1", "true", "yes"}
@@ -559,6 +581,26 @@ try:
 except (TypeError, ValueError):
     MCP_MAX_INPUT_TOKENS = max(1000, MCP_MAX_CONTEXT_TOKENS - MCP_RESPONSE_TOKEN_RESERVE)
 
+# Proactive prompt compaction (before context limit is reached).
+try:
+    MCP_PROACTIVE_COMPACTION_TRIGGER_RATIO = float(os.getenv("MCP_PROACTIVE_COMPACTION_TRIGGER_RATIO", "0.9"))
+except (TypeError, ValueError):
+    MCP_PROACTIVE_COMPACTION_TRIGGER_RATIO = 0.9
+MCP_PROACTIVE_COMPACTION_TRIGGER_RATIO = max(0.1, min(1.0, MCP_PROACTIVE_COMPACTION_TRIGGER_RATIO))
+try:
+    MCP_PROACTIVE_COMPACTION_TARGET_RATIO = float(os.getenv("MCP_PROACTIVE_COMPACTION_TARGET_RATIO", "0.85"))
+except (TypeError, ValueError):
+    MCP_PROACTIVE_COMPACTION_TARGET_RATIO = 0.85
+MCP_PROACTIVE_COMPACTION_TARGET_RATIO = max(
+    0.05,
+    min(MCP_PROACTIVE_COMPACTION_TARGET_RATIO, MCP_PROACTIVE_COMPACTION_TRIGGER_RATIO),
+)
+try:
+    MCP_PROACTIVE_COMPACTION_KEEP_LAST_TURNS = int(os.getenv("MCP_PROACTIVE_COMPACTION_KEEP_LAST_TURNS", "3"))
+except (TypeError, ValueError):
+    MCP_PROACTIVE_COMPACTION_KEEP_LAST_TURNS = 3
+MCP_PROACTIVE_COMPACTION_KEEP_LAST_TURNS = max(1, min(25, MCP_PROACTIVE_COMPACTION_KEEP_LAST_TURNS))
+
 # MCP long-chat memory (rolling summary + pinned identifiers).
 # MCP_LONG_CHAT_MEMORY_ENABLED: Enable rolling memory (summary + pinned identifiers) for long portal chats.
 MCP_LONG_CHAT_MEMORY_ENABLED = os.getenv("MCP_LONG_CHAT_MEMORY_ENABLED", "true").lower() in {"1", "true", "yes"}
@@ -592,6 +634,50 @@ try:
     MCP_MEMORY_PIN_VALUE_CHARS = int(os.getenv("MCP_MEMORY_PIN_VALUE_CHARS", "80"))
 except (TypeError, ValueError):
     MCP_MEMORY_PIN_VALUE_CHARS = 80
+
+# Structured memory v2 (replaces single "summary blob" with bounded sections).
+try:
+    # MCP_MEMORY_V2_ITEM_MAX_CHARS: Max characters per memory item string.
+    MCP_MEMORY_V2_ITEM_MAX_CHARS = int(os.getenv("MCP_MEMORY_V2_ITEM_MAX_CHARS", "140"))
+except (TypeError, ValueError):
+    MCP_MEMORY_V2_ITEM_MAX_CHARS = 140
+try:
+    # MCP_MEMORY_V2_FACTS_MAX_ITEMS: Max "facts" items stored in memory_v2.
+    MCP_MEMORY_V2_FACTS_MAX_ITEMS = int(os.getenv("MCP_MEMORY_V2_FACTS_MAX_ITEMS", "8"))
+except (TypeError, ValueError):
+    MCP_MEMORY_V2_FACTS_MAX_ITEMS = 8
+try:
+    # MCP_MEMORY_V2_PREFERENCES_MAX_ITEMS: Max "preferences" items stored in memory_v2.
+    MCP_MEMORY_V2_PREFERENCES_MAX_ITEMS = int(os.getenv("MCP_MEMORY_V2_PREFERENCES_MAX_ITEMS", "6"))
+except (TypeError, ValueError):
+    MCP_MEMORY_V2_PREFERENCES_MAX_ITEMS = 6
+try:
+    # MCP_MEMORY_V2_OPEN_TASKS_MAX_ITEMS: Max "open_tasks" items stored in memory_v2.
+    MCP_MEMORY_V2_OPEN_TASKS_MAX_ITEMS = int(os.getenv("MCP_MEMORY_V2_OPEN_TASKS_MAX_ITEMS", "8"))
+except (TypeError, ValueError):
+    MCP_MEMORY_V2_OPEN_TASKS_MAX_ITEMS = 8
+try:
+    # MCP_MEMORY_V2_DECISIONS_MAX_ITEMS: Max "decisions" items stored in memory_v2.
+    MCP_MEMORY_V2_DECISIONS_MAX_ITEMS = int(os.getenv("MCP_MEMORY_V2_DECISIONS_MAX_ITEMS", "6"))
+except (TypeError, ValueError):
+    MCP_MEMORY_V2_DECISIONS_MAX_ITEMS = 6
+try:
+    # MCP_MEMORY_V2_ARTIFACT_REFS_MAX_ITEMS: Max tool artifact pointers stored in memory_v2.
+    MCP_MEMORY_V2_ARTIFACT_REFS_MAX_ITEMS = int(os.getenv("MCP_MEMORY_V2_ARTIFACT_REFS_MAX_ITEMS", "6"))
+except (TypeError, ValueError):
+    MCP_MEMORY_V2_ARTIFACT_REFS_MAX_ITEMS = 6
+try:
+    # MCP_MEMORY_V2_ARTIFACT_LABEL_MAX_CHARS: Max characters for stored artifact labels.
+    MCP_MEMORY_V2_ARTIFACT_LABEL_MAX_CHARS = int(os.getenv("MCP_MEMORY_V2_ARTIFACT_LABEL_MAX_CHARS", "120"))
+except (TypeError, ValueError):
+    MCP_MEMORY_V2_ARTIFACT_LABEL_MAX_CHARS = 120
+try:
+    # MCP_MEMORY_V2_ARTIFACT_PROMPT_VIEW_TEXT_MAX_CHARS: Max characters of prompt_view_text included in memory-update prompts.
+    MCP_MEMORY_V2_ARTIFACT_PROMPT_VIEW_TEXT_MAX_CHARS = int(
+        os.getenv("MCP_MEMORY_V2_ARTIFACT_PROMPT_VIEW_TEXT_MAX_CHARS", "600")
+    )
+except (TypeError, ValueError):
+    MCP_MEMORY_V2_ARTIFACT_PROMPT_VIEW_TEXT_MAX_CHARS = 600
 # RAG_TABLE_SIMILARITY_THRESHOLD: Minimum similarity to consider two tables "similar" for dedupe/routing.
 RAG_TABLE_SIMILARITY_THRESHOLD = float(os.getenv("RAG_TABLE_SIMILARITY_THRESHOLD", "0.3"))
 # RAG_TABLE_COLUMN_CACHE_SIZE: Cache size for inferred column mappings.
@@ -1190,6 +1276,11 @@ if PORTAL_SPINNER_PHASE_INTERVAL < 0:
 PORTAL_ASSET_VERSION = os.getenv("PORTAL_ASSET_VERSION")
 if not PORTAL_ASSET_VERSION:
     PORTAL_ASSET_VERSION = str(int(time.time()))
+
+# PORTAL_DISABLE_PLANNER: Disable the portal postflight (planner) pass entirely.
+PORTAL_DISABLE_PLANNER = os.getenv("PORTAL_DISABLE_PLANNER", "false").lower() in {"1", "true", "yes"}
+# PORTAL_FORCE_PLANNER: Force-enable the portal postflight pass (overrides auto-skips).
+PORTAL_FORCE_PLANNER = os.getenv("PORTAL_FORCE_PLANNER", "false").lower() in {"1", "true", "yes"}
 
 # PORTAL_DEBUG_TOOL_TRACE: When enabled, include a bounded, sanitized tool trace +
 # search/read payload in portal streaming responses (rendered in the UI under each

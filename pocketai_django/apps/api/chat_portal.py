@@ -163,6 +163,22 @@ def _clip_debug_text(value: object, *, limit: int = 480) -> str:
 
 
 def _json_safe_debug(value: object, *, depth: int = 3, string_limit: int = 240, list_limit: int = 12) -> object:
+    def _is_numeric_metric(v: object) -> bool:
+        if isinstance(v, bool):
+            return False
+        if isinstance(v, (int, float)):
+            return True
+        if isinstance(v, str):
+            candidate = v.strip()
+            if not candidate:
+                return False
+            try:
+                float(candidate)
+            except ValueError:
+                return False
+            return True
+        return False
+
     if value is None:
         return None
     if depth <= 0:
@@ -179,9 +195,26 @@ def _json_safe_debug(value: object, *, depth: int = 3, string_limit: int = 240, 
                 break
             key_str = str(key or "").strip() or f"key_{idx}"
             lowered = key_str.lower()
-            if any(token in lowered for token in ("password", "secret", "token", "api_key", "apikey")):
+            if any(token in lowered for token in ("password", "secret", "api_key", "apikey")):
                 out[key_str] = "[REDACTED]"
                 continue
+            if "token" in lowered:
+                safe_token_metrics = {
+                    "prompt_tokens",
+                    "completion_tokens",
+                    "total_tokens",
+                    "max_tokens",
+                    "max_context_tokens",
+                    "max_input_tokens",
+                    "response_token_reserve",
+                    "tokens_est",
+                    "tokens_est_before",
+                    "tokens_est_after",
+                    "token_budget",
+                }
+                if lowered not in safe_token_metrics or not _is_numeric_metric(item):
+                    out[key_str] = "[REDACTED]"
+                    continue
             out[key_str] = _json_safe_debug(item, depth=depth - 1, string_limit=string_limit, list_limit=list_limit)
         return out
     if isinstance(value, (list, tuple, set)):
@@ -317,6 +350,35 @@ def _serialize_llm_usage(usage: Mapping[str, object] | None) -> dict[str, object
     return out
 
 
+def _serialize_context_budget() -> dict[str, object] | None:
+    max_context = getattr(settings, "MCP_MAX_CONTEXT_TOKENS", None)
+    max_input = getattr(settings, "MCP_MAX_INPUT_TOKENS", None)
+    reserve = getattr(settings, "MCP_RESPONSE_TOKEN_RESERVE", None)
+    try:
+        max_context_val = int(max_context) if max_context is not None else 0
+    except (TypeError, ValueError):
+        max_context_val = 0
+    try:
+        max_input_val = int(max_input) if max_input is not None else 0
+    except (TypeError, ValueError):
+        max_input_val = 0
+    try:
+        reserve_val = int(reserve) if reserve is not None else 0
+    except (TypeError, ValueError):
+        reserve_val = 0
+
+    max_context_val = max(0, max_context_val)
+    max_input_val = max(0, max_input_val)
+    reserve_val = max(0, reserve_val)
+    if not max_context_val and not max_input_val and not reserve_val:
+        return None
+    return {
+        "max_context_tokens": max_context_val,
+        "max_input_tokens": max_input_val,
+        "response_token_reserve": reserve_val,
+    }
+
+
 def _serialize_knowledge_result(entry: Mapping[str, object]) -> dict[str, object]:
     title = entry.get("title") or entry.get("public_label") or entry.get("label") or "Knowledge"
     preview_source = (
@@ -353,6 +415,7 @@ def _serialize_debug_tools_payload(stream_context: StreamingTurnContext) -> dict
     coverage_ledger_raw = None
     table_rows_raw = None
     llm_usage_raw = getattr(stream_context, "llm_usage", None)
+    prompt_budget_raw = None
     if tool_context is not None:
         tool_trace_raw = getattr(tool_context, "tool_trace", None)
         knowledge_results_raw = getattr(tool_context, "knowledge_results", None)
@@ -360,6 +423,7 @@ def _serialize_debug_tools_payload(stream_context: StreamingTurnContext) -> dict
         search_history_raw = getattr(tool_context, "search_history", None)
         coverage_ledger_raw = getattr(tool_context, "coverage_ledger", None)
         table_rows_raw = getattr(tool_context, "table_aggregate_rows", None)
+        prompt_budget_raw = getattr(tool_context, "prompt_budget_entries", None)
     if tool_trace_raw is None:
         tool_trace_raw = getattr(stream_context, "tool_trace", None)
     if knowledge_results_raw is None:
@@ -404,6 +468,13 @@ def _serialize_debug_tools_payload(stream_context: StreamingTurnContext) -> dict
                 table_aggregate_rows.append(_json_safe_debug(entry, depth=3, string_limit=200, list_limit=12))
 
     llm_usage = _serialize_llm_usage(llm_usage_raw if isinstance(llm_usage_raw, Mapping) else None)
+    context_budget = _serialize_context_budget()
+
+    prompt_budget: list[object] = []
+    if isinstance(prompt_budget_raw, (list, tuple)):
+        for entry in prompt_budget_raw[-12:]:
+            if isinstance(entry, Mapping):
+                prompt_budget.append(_json_safe_debug(entry, depth=4, string_limit=180, list_limit=20))
 
     if (
         not tool_trace
@@ -412,7 +483,9 @@ def _serialize_debug_tools_payload(stream_context: StreamingTurnContext) -> dict
         and not search_history
         and not coverage_ledger
         and not table_aggregate_rows
+        and not prompt_budget
         and not llm_usage
+        and not context_budget
     ):
         return None
     return {
@@ -422,6 +495,8 @@ def _serialize_debug_tools_payload(stream_context: StreamingTurnContext) -> dict
         "knowledge_reads": knowledge_reads,
         "coverage_ledger": coverage_ledger,
         "table_aggregate_rows": table_aggregate_rows,
+        "prompt_budget": prompt_budget,
+        "context_budget": context_budget,
         "usage": llm_usage,
     }
 
@@ -625,6 +700,8 @@ def _planner_decision(
 ) -> tuple[bool, str | None]:
     if getattr(settings, "PORTAL_FORCE_PLANNER", False):
         return True, None
+    if getattr(settings, "PORTAL_DISABLE_PLANNER", False):
+        return False, "env_disabled"
     override = _business_planner_override(getattr(conversation, "business_profile", None))
     if override is not None:
         return override, "business_override" if not override else None
@@ -912,7 +989,16 @@ def bootstrap_session(request: HttpRequest) -> JsonResponse:
     except PortalNotFoundError as exc:
         return _json_error("not_found", str(exc), status=404)
 
-    return JsonResponse(_bootstrap_to_dict(result), status=200)
+    response = JsonResponse(_bootstrap_to_dict(result), status=200)
+    response.set_cookie(
+        f"chat_session_{result.business.slug}_{result.agent.slug}",
+        result.session.session_token,
+        max_age=3600 * 6,
+        httponly=False,
+        secure=False,
+        samesite="Lax",
+    )
+    return response
 
 
 @csrf_exempt
@@ -1654,7 +1740,12 @@ def stream_send(request: HttpRequest) -> StreamingHttpResponse:
         "tool_sequence": 0,
         "tool_sequence_by_event_id": {},
     }
-    spinner_state = {"text": None, "pending": True}
+    spinner_state = {
+        "text": None,
+        "pending": True,
+        "tool_inflight": 0,
+        "hide_on_next_delta": False,
+    }
     spinner_phase_state = {
         "searching": {"active": False, "index": 0, "label": None, "meta": None, "timer": None},
         "reading": {"active": False, "index": 0, "label": None, "meta": None, "timer": None},
@@ -1681,7 +1772,7 @@ def stream_send(request: HttpRequest) -> StreamingHttpResponse:
         return "Exploring deeper insights…"
 
     def _reading_base_text(label: str | None, meta: dict | None) -> str:
-        return label or "Reading document…"
+        return label or "Reading knowledge…"
 
     def _reading_variant_text(label: str | None, meta: dict | None) -> str:
         doc_hint = ""
@@ -1725,7 +1816,12 @@ def stream_send(request: HttpRequest) -> StreamingHttpResponse:
     ) -> None:
         if not state_machine_enabled:
             return
-        text_value = sanitize_placeholder_thinking(raw_text, fallback=fallback)
+        # Do not trim spinner labels (keep full text and let the UI wrap naturally).
+        text_value = sanitize_placeholder_thinking(raw_text, fallback=fallback, limit=0)
+        if text_value:
+            lowered = text_value.strip().lower()
+            if lowered.startswith("drafting") or lowered.startswith("responding"):
+                text_value = "Thinking…"
         if text_value is None and allow_empty:
             text_value = ""
         if text_value is None:
@@ -1858,6 +1954,10 @@ def stream_send(request: HttpRequest) -> StreamingHttpResponse:
     def on_response_text_delta(chunk: str) -> None:
         if not chunk:
             return
+        # Hide the spinner exactly when the final answer begins streaming (to avoid "silent gaps").
+        if state_machine_enabled and spinner_state.get("hide_on_next_delta"):
+            spinner_state["hide_on_next_delta"] = False
+            _emit_spinner_status("", pending=False, fallback=None, allow_empty=True)
         # Track segment progression: advance segment when text follows tools.
         if segment_state["has_tools"]:
             segment_state["current_index"] += 1
@@ -1891,15 +1991,25 @@ def stream_send(request: HttpRequest) -> StreamingHttpResponse:
         trace_logger.log_status(code, label=label, meta=meta)
         _enqueue_status_events(stream_queue, code=code, label=label, meta=meta)
         if state_machine_enabled:
+            if int(spinner_state.get("tool_inflight") or 0) > 0 and code not in {"answer_started", "stream_complete", "complete"}:
+                return
             if _progressive_spinner_update(code, label, meta):
                 return
-            if code in {"responding", "answer_started"}:
-                _emit_spinner_status(label or "Drafting answer...")
-            elif code == "clarifying":
-                _emit_spinner_status(label or "Clarifying request…")
-            elif code == "answer_finalized":
-                _emit_spinner_status(label or "Finalizing answer…")
-            elif code in {"stream_complete", "complete"}:
+            if code == "answer_started":
+                # The orchestrator is about to stream the final visitor-facing answer. Keep the
+                # spinner visible until the first text delta arrives, then hide it.
+                spinner_state["hide_on_next_delta"] = True
+                return
+            if code == "thinking":
+                current = str(spinner_state.get("text") or "").strip()
+                if current and current.lower() != "thinking…".strip().lower():
+                    return
+                _emit_spinner_status(label or "Thinking…", pending=True, fallback="Thinking…")
+                return
+            if code in {"searching_complete", "reading_complete"}:
+                # Keep the last spinner label until the next concrete step replaces it.
+                return
+            if code in {"stream_complete", "complete"}:
                 _emit_spinner_status("", pending=False, fallback=None, allow_empty=True)
 
     def _record_tool_event(payload: Mapping[str, object]) -> None:
@@ -1950,6 +2060,69 @@ def stream_send(request: HttpRequest) -> StreamingHttpResponse:
                 elif phase == "approval_requested":
                     status_value = "pending_approval"
             event_id_value = str(event.get("event_id") or event.get("tool_call_id") or "").strip()
+            if not event_id_value:
+                return
+            if state_machine_enabled:
+                if phase in {"started", "approval_requested"}:
+                    spinner_state["tool_inflight"] = int(spinner_state.get("tool_inflight") or 0) + 1
+                elif phase in {"finished", "approval_resolved"}:
+                    spinner_state["tool_inflight"] = max(0, int(spinner_state.get("tool_inflight") or 0) - 1)
+
+                spinner_label: str | None = None
+                phase_lower = phase
+                status_lower = status_value.lower()
+                if phase_lower == "approval_requested" or status_lower in {"pending_approval", "pending"}:
+                    spinner_label = "Waiting for approval…"
+                elif phase_lower == "started":
+                    remote_meta = event.get("remote") if isinstance(event.get("remote"), Mapping) else None
+                    if remote_meta:
+                        raw_connection_name = str(remote_meta.get("connection_name") or "").strip()
+                        connection_name = re.sub(r"\s*\(mcp\)\s*$", "", raw_connection_name, flags=re.IGNORECASE).strip()
+                        raw_remote_tool = str(remote_meta.get("remote_tool") or "").strip()
+                        remote_tool_key = raw_remote_tool.lower().strip()
+
+                        # Keep the spinner high-level and non-redundant with the tool chip.
+                        # Tool chip shows the exact tool name; spinner should explain the general action.
+                        if connection_name:
+                            if remote_tool_key in {"get_me", "whoami"}:
+                                spinner_label = f"Checking {connection_name}…"
+                            elif remote_tool_key.startswith(("search_", "find_", "query_")) or "search" in remote_tool_key:
+                                spinner_label = f"Searching {connection_name}…"
+                            elif remote_tool_key.startswith(("list_", "get_", "read_", "fetch_", "retrieve_")):
+                                spinner_label = f"Fetching from {connection_name}…"
+                            elif remote_tool_key.startswith(
+                                (
+                                    "create_",
+                                    "update_",
+                                    "delete_",
+                                    "add_",
+                                    "remove_",
+                                    "set_",
+                                    "fork_",
+                                    "merge_",
+                                    "close_",
+                                    "open_",
+                                )
+                            ):
+                                spinner_label = f"Updating {connection_name}…"
+                            else:
+                                spinner_label = f"Working with {connection_name}…"
+                    elif tool_name == "search_knowledge":
+                        spinner_label = "Searching knowledge…"
+                    elif tool_name == "read_document":
+                        spinner_label = "Reading knowledge…"
+                    elif tool_name == "mcp_search_tools":
+                        spinner_label = "Searching tools…"
+                    else:
+                        spinner_label = "Working…"
+                elif phase_lower == "finished":
+                    if status_lower in {"error", "failed", "tool_failed", "mcp_remote_error", "constraint_error"}:
+                        spinner_label = "Trying another approach…"
+                    elif int(spinner_state.get("tool_inflight") or 0) <= 0:
+                        # Tool finished successfully; keep the UX responsive while the model composes.
+                        spinner_label = "Thinking…"
+                if spinner_label:
+                    _emit_spinner_status(spinner_label, pending=True, fallback="Working...")
             sequence_by_event_id = segment_state.get("tool_sequence_by_event_id")
             if not isinstance(sequence_by_event_id, dict):
                 sequence_by_event_id = {}
@@ -1962,7 +2135,7 @@ def stream_send(request: HttpRequest) -> StreamingHttpResponse:
                     sequence_by_event_id[event_id_value] = sequence_index
             payload: dict[str, object] = {
                 "message_id": _current_message_id(),
-                "event_id": str(event.get("event_id") or ""),
+                "event_id": event_id_value,
                 "phase": phase,
                 "status": status_value,
                 "tool_call_id": str(event.get("tool_call_id") or ""),
@@ -2045,8 +2218,10 @@ def stream_send(request: HttpRequest) -> StreamingHttpResponse:
         return
 
     def on_spinner_update(text: str) -> None:
-        # Spinner updates now rely solely on explicit status codes.
-        return
+        # Portal spinner text is provided by the LLM via tool-call UI hints.
+        if int(spinner_state.get("tool_inflight") or 0) > 0:
+            return
+        _emit_spinner_status(text, pending=True, fallback=None)
 
     def run_planner_async(
         stream_context: StreamingTurnContext,
@@ -2104,6 +2279,24 @@ def stream_send(request: HttpRequest) -> StreamingHttpResponse:
                     "diagnostics": plan.diagnostics,
                 }
             )
+            verification_snapshot = None
+            if tool_context is not None:
+                verification = getattr(tool_context, "verification", None)
+                if isinstance(verification, Mapping) and verification:
+                    verification_snapshot = dict(verification)
+            if verification_snapshot:
+                missing_points = verification_snapshot.get("missing_points")
+                missing_list: list[str] = []
+                if isinstance(missing_points, list):
+                    for entry in missing_points[:8]:
+                        if isinstance(entry, str) and entry.strip():
+                            missing_list.append(entry.strip())
+                message_metadata["verification"] = {
+                    "verdict": _clip_debug_text(str(verification_snapshot.get("verdict") or ""), limit=48),
+                    "missing_points": missing_list,
+                    "final_response": _clip_debug_text(str(verification_snapshot.get("final_response") or ""), limit=480),
+                    "notes": _clip_debug_text(str(verification_snapshot.get("notes") or ""), limit=480),
+                }
             answer_confidence = None
             if plan.diagnostics:
                 answer_confidence = plan.diagnostics.get("answer_confidence")
@@ -2861,4 +3054,13 @@ def create_portal_session(request: HttpRequest) -> JsonResponse:
     except PortalNotFoundError as exc:
         return _json_error("not_found", str(exc), status=404)
 
-    return JsonResponse(_bootstrap_to_dict(result), status=201)
+    response = JsonResponse(_bootstrap_to_dict(result), status=201)
+    response.set_cookie(
+        f"chat_session_{result.business.slug}_{result.agent.slug}",
+        result.session.session_token,
+        max_age=3600 * 6,
+        httponly=False,
+        secure=False,
+        samesite="Lax",
+    )
+    return response

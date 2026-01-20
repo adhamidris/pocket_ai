@@ -290,6 +290,16 @@ GATEWAY_TOOL_DEFINITIONS: tuple[Mapping[str, object], ...] = (
                 "type": "string",
                 "description": "Natural-language description of what you want to do (e.g. 'list GitHub repos').",
             },
+            "__ui": {
+                "type": "object",
+                "description": "UI-only metadata (ignored by the tool).",
+                "properties": {
+                    "spinner_text": {
+                        "type": "string",
+                        "description": "Short portal spinner label for this tool call.",
+                    }
+                },
+            },
             "limit": {
                 "type": "integer",
                 "description": "Maximum number of tools to return (1-10).",
@@ -315,6 +325,16 @@ GATEWAY_TOOL_DEFINITIONS: tuple[Mapping[str, object], ...] = (
                 "type": "string",
                 "description": "Tool identifier from mcp_search_tools results[].tool_id.",
             },
+            "__ui": {
+                "type": "object",
+                "description": "UI-only metadata (ignored by the tool).",
+                "properties": {
+                    "spinner_text": {
+                        "type": "string",
+                        "description": "Short portal spinner label for this tool call.",
+                    }
+                },
+            },
             "arguments": {
                 "type": "object",
                 "description": "Arguments for the selected tool.",
@@ -334,6 +354,16 @@ TOOL_DEFINITIONS: tuple[Mapping[str, object], ...] = (
             "query": {
                 "type": "string",
                 "description": "Visitor question or keywords to search for.",
+            },
+            "__ui": {
+                "type": "object",
+                "description": "UI-only metadata (ignored by the tool).",
+                "properties": {
+                    "spinner_text": {
+                        "type": "string",
+                        "description": "Short portal spinner label for this tool call.",
+                    }
+                },
             },
             "queries": {
                 "type": "array",
@@ -362,6 +392,16 @@ TOOL_DEFINITIONS: tuple[Mapping[str, object], ...] = (
                 "items": {"type": "string"},
                 "description": "List of chunk IDs from search_knowledge results (agentic mode).",
                 "minItems": 1,
+            },
+            "__ui": {
+                "type": "object",
+                "description": "UI-only metadata (ignored by the tool).",
+                "properties": {
+                    "spinner_text": {
+                        "type": "string",
+                        "description": "Short portal spinner label for this tool call.",
+                    }
+                },
             },
             "max_chars": {
                 "type": "integer",

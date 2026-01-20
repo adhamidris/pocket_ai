@@ -61,6 +61,12 @@
   [data-chat-portal] [data-message-body] {
     font-size: var(--portal-font-lg);
     line-height: var(--portal-line-body);
+    min-width: 0;
+    max-width: 100%;
+  }
+  [data-message-body] :is(p, li, h1, h2, h3, blockquote) {
+    overflow-wrap: anywhere;
+    word-break: break-word;
   }
   [data-message-body] h1,
   [data-message-body] h2,
@@ -101,6 +107,7 @@
     padding: 0.85em 1.1em;
     border-radius: 0.5em;
     overflow-x: auto;
+    max-width: 100%;
     margin-bottom: 0.85em;
   }
   [data-message-body] pre code {
@@ -110,6 +117,8 @@
 
   [data-message-body] table {
     width: 100%;
+    max-width: 100%;
+    table-layout: fixed;
     border-collapse: separate;
     border-spacing: 0;
     margin-bottom: 0.85em;
@@ -124,6 +133,8 @@
     border-right: 1px solid hsl(var(--border));
     padding: 0.55em 0.65em;
     text-align: left;
+    word-break: break-word;
+    overflow-wrap: anywhere;
   }
   [data-message-body] th:last-child,
   [data-message-body] td:last-child {

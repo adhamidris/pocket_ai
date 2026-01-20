@@ -107,6 +107,8 @@ class ToolExecutionContext:
         default_factory=lambda: {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
     )
     llm_usage_entries: list[dict[str, object]] = dataclasses.field(default_factory=list)
+    # Prompt size telemetry per provider call (safe: counts/estimates only, no raw prompt text).
+    prompt_budget_entries: list[dict[str, object]] = dataclasses.field(default_factory=list)
     preplan: dict[str, object] | None = None
     verification: dict[str, object] | None = None
 
@@ -229,6 +231,25 @@ class ToolExecutionContext:
         if provider:
             entry["provider"] = provider
         self.llm_usage_entries.append(entry)
+
+    def add_prompt_budget_entry(self, entry: Mapping[str, object]) -> int:
+        """Record prompt-size telemetry for a single provider call (no raw text)."""
+
+        self.prompt_budget_entries.append(dict(entry))
+        if len(self.prompt_budget_entries) > 25:
+            self.prompt_budget_entries = self.prompt_budget_entries[-25:]
+        return len(self.prompt_budget_entries) - 1
+
+    def update_prompt_budget_entry(self, index: int, patch: Mapping[str, object]) -> None:
+        """Patch an existing prompt telemetry entry (best-effort)."""
+
+        if index < 0 or index >= len(self.prompt_budget_entries):
+            return
+        current = self.prompt_budget_entries[index]
+        if not isinstance(current, dict):
+            current = {}
+            self.prompt_budget_entries[index] = current
+        current.update(dict(patch))
 
     def add_ingestion_warning(self, warning: Mapping[str, object]) -> None:
         """Record an ingestion warning so the orchestrator can surface it later."""

@@ -99,6 +99,9 @@ class ChatPortalClient {
     this.globalToolsVisible = this.readGlobalToolsPreference();
     this.toolHistoryModal = null;
     this.toolHistoryModalBody = null;
+    // Agentic spinner state (derive from real tool/status events)
+    this.agenticSpinnerActiveToolEventId = null;
+    this.agenticSpinnerLastLabel = "";
   }
 
   async init() {
@@ -158,21 +161,34 @@ class ChatPortalClient {
     }
   }
 
-  renderExistingMessages() {
-    const container = this.elements.messagesInner || this.elements.messages;
-    if (!container) return;
-    const messageBodies = container.querySelectorAll('[data-message-body]');
-    messageBodies.forEach((el) => {
-      // data-message-body only appears on AI messages (not customer) per template
-      const messageId = el.dataset.messageId;
-      
-      // Add relative and group classes for AI messages
-      el.classList.add("relative", "group", "pr-8");
+	  renderExistingMessages() {
+	    const container = this.elements.messagesInner || this.elements.messages;
+	    if (!container) return;
+	    const messageBodies = container.querySelectorAll('[data-message-body]');
+	    messageBodies.forEach((el) => {
+	      // data-message-body only appears on AI messages (not customer) per template
+	      const messageId = el.dataset.messageId;
+	      
+	      // Add relative and group classes for AI messages
+	      el.classList.add("relative", "group", "pr-8");
+	
+	      // If the message already contains reconstructed segments/tool cards, do not
+	      // overwrite the DOM (prevents tool cards disappearing on refresh).
+	      if (
+	        el.querySelector("[data-message-segments]") ||
+	        el.querySelector("[data-tool-card]") ||
+	        el.querySelector("[data-response-blocks]")
+	      ) {
+	        if (!el.querySelector('button[data-copy-btn]')) {
+	          this.injectCopyButton(el);
+	        }
+	        return;
+	      }
 
-      if (!messageId) {
-        // No message ID means no markdown to render, just add copy button
-        if (!el.querySelector('button[data-copy-btn]')) {
-          this.injectCopyButton(el);
+	      if (!messageId) {
+	        // No message ID means no markdown to render, just add copy button
+	        if (!el.querySelector('button[data-copy-btn]')) {
+	          this.injectCopyButton(el);
         }
         return;
       }
@@ -452,22 +468,38 @@ class ChatPortalClient {
     });
   }
 
-  async bootstrapSession(forceRender = false) {
-    const options = typeof forceRender === "object" && forceRender !== null ? forceRender : { forceRender };
-    const preloadedToken = this.readBootstrapScriptToken();
-    const requestId = typeof options.loadId === "number" ? options.loadId : ++this.sessionLoadId;
-    const resolvedToken =
-      options.sessionToken || this.getStoredToken() || this.sessionToken || preloadedToken;
-    const payload = {
-      business_slug: this.businessSlug,
-      agent_slug: this.agentSlug,
-      session_token: resolvedToken,
-      metadata: this.buildVisitorMetadata(),
-    };
-    const response = await fetch(this.endpoints.bootstrap, {
-      method: "POST",
-      headers: this.jsonHeaders(),
-      body: JSON.stringify(payload),
+		  async bootstrapSession(forceRender = false) {
+		    const options = typeof forceRender === "object" && forceRender !== null ? forceRender : { forceRender };
+		    const preloadedToken = this.readBootstrapScriptToken();
+		    const requestId = typeof options.loadId === "number" ? options.loadId : ++this.sessionLoadId;
+		    const storedToken = this.getStoredToken();
+		    const serverToken = this.sessionToken || preloadedToken || null;
+		    const resolvedToken = options.sessionToken || storedToken || serverToken;
+		    const tokenMismatch = Boolean(resolvedToken && serverToken && resolvedToken !== serverToken);
+		    const shouldForceRender =
+		      Boolean(options.forceRender) ||
+		      tokenMismatch;
+		    const payload = {
+		      business_slug: this.businessSlug,
+		      agent_slug: this.agentSlug,
+		      session_token: resolvedToken,
+		      metadata: this.buildVisitorMetadata(),
+		    };
+
+		    // If the server rendered a different session than what we plan to load, clear
+		    // the transcript immediately to avoid UI "merging" between sessions while the
+		    // client bootstrap fetch is in flight.
+		    if (tokenMismatch) {
+		      const container = this.elements.messagesInner || this.elements.messages;
+		      if (container && container.children.length > 0) {
+		        this.setConversationLayout(true);
+		        this.renderSkeleton();
+		      }
+		    }
+	    const response = await fetch(this.endpoints.bootstrap, {
+	      method: "POST",
+	      headers: this.jsonHeaders(),
+	      body: JSON.stringify(payload),
     });
     if (!response.ok) {
       throw new Error("Bootstrap request failed");
@@ -494,12 +526,12 @@ class ChatPortalClient {
     this.setSessionMessageCount(token, effectiveMessages.length);
     this.setConversationLayout(effectiveMessages.length > 0);
 
-    // Fix FOUC: Only render transcript if container is empty (client-side only),
-    // otherwise assume server-side rendering is correct.
-    const container = this.elements.messagesInner || this.elements.messages;
-    if (container && (container.children.length === 0 || options.forceRender)) {
-      this.renderTranscript(messages);
-    }
+	    // Fix FOUC: Only render transcript if container is empty (client-side only),
+	    // otherwise assume server-side rendering is correct.
+	    const container = this.elements.messagesInner || this.elements.messages;
+	    if (container && (container.children.length === 0 || shouldForceRender)) {
+	      this.renderTranscript(messages);
+	    }
 
     const sessionStatus = data && data.session ? data.session.status : null;
     this.updateStatus(sessionStatus);
@@ -507,27 +539,29 @@ class ChatPortalClient {
     return data;
   }
 
-  async sendMessage(message) {
-    if (!this.sessionToken) return;
-    this.clearStreamingStatus();
-    this.resetStreamingState(true, false);
-    this.pendingMessageId = null;
-    this.pendingMetadataVersion = 0;
-    this.usingStateMachine = false;
-    this.workflowLocked = false;
-    this.streamFinished = false;
-    this.awaitingReply = true;
-    this.isSending = true;
-    this.isStreaming = true;
-    this.updateSendButtonState(true);
-    this.updateComposerNotice(true);
-    this.appendMessage({
-      sender: "customer",
-      body: message,
-      sent_at: new Date().toISOString(),
-    });
-    const controller = new AbortController();
-    this.streamController = controller;
+	  async sendMessage(message) {
+	    if (!this.sessionToken) return;
+	    this.clearStreamingStatus();
+	    this.resetStreamingState(true, false);
+	    this.pendingMessageId = null;
+	    this.pendingMetadataVersion = 0;
+	    this.usingStateMachine = false;
+	    this.workflowLocked = false;
+	    this.streamFinished = false;
+	    this.awaitingReply = true;
+	    this.isSending = true;
+	    this.isStreaming = true;
+	    this.updateSendButtonState(true);
+	    this.updateComposerNotice(true);
+	    this.appendMessage({
+	      sender: "customer",
+	      body: message,
+	      sent_at: new Date().toISOString(),
+	    });
+	    // Instant feedback before the first SSE event arrives.
+	    this.setSpinnerText("Thinking…", { pending: true });
+	    const controller = new AbortController();
+	    this.streamController = controller;
 
     try {
       const requestBody = {
@@ -644,19 +678,15 @@ class ChatPortalClient {
           if (state === "reading_document" && !this.usingStateMachine) {
             // Knowledge read: we expect content to be revised after doc load.
             this.streamingRewritePending = true;
-            this.setStreamingStatus("reading", label || "Reading…");
           } else if (state === "searching_knowledge" && !this.usingStateMachine) {
-            // Surface search-specific label (e.g. "Searching: billing policy").
-            this.setStreamingStatus("searching", label || "Searching…");
+            // Knowledge search in legacy mode: keep silent and rely on spinnerStatus when available.
           } else if (state === "planning_actions") {
             // Keep this internal; do not surface to the visitor.
             return;
           } else if (state === "responding" && !this.usingStateMachine) {
-            this.setStreamingStatus("refining", "Refining answer…");
+            // Legacy mode: keep silent and rely on spinnerStatus when available.
           } else if (state && state !== "responding" && !this.usingStateMachine) {
-            // Generic fallback for other states; skip explicit "responding"/"writing".
-            const fallbackLabel = label || this.formatStatus(state);
-            this.setStreamingStatus("working", fallbackLabel);
+            // Legacy mode: keep silent and rely on spinnerStatus when available.
           }
         }
       } catch (_err) {
@@ -676,7 +706,6 @@ class ChatPortalClient {
 
           if (!this.workflowLocked) {
             this.streamingActive = true;
-            this.setStreamingStatus("refining", "Refining answer…");
           }
           this.appendStreamingChunk(chunk);
         }
@@ -818,20 +847,26 @@ class ChatPortalClient {
     this.updateMessageMetadata(messageId, payload);
   }
 
-  handleToolEvent(data) {
-    let payload = null;
-    try {
-      payload = data ? JSON.parse(data) : null;
-    } catch (error) {
-      console.warn("Failed to parse toolEvent payload", error);
-      return;
-    }
-    if (!payload) return;
+	  handleToolEvent(data) {
+	    let payload = null;
+	    try {
+	      payload = data ? JSON.parse(data) : null;
+	    } catch (error) {
+	      console.warn("Failed to parse toolEvent payload", error);
+	      return;
+	    }
+	    if (!payload) return;
+	
+	    // Tool discovery is an internal gateway step; render it as spinner only (no tool card).
+	    const rawToolName = (payload.tool_name || payload.toolName || "").toString().trim().toLowerCase();
+	    if (rawToolName === "mcp_search_tools") {
+	      return;
+	    }
 
-    const eventId = (payload.event_id || payload.eventId || payload.tool_call_id || payload.toolCallId || "")
-      .toString()
-      .trim();
-    if (!eventId) return;
+	    const eventId = (payload.event_id || payload.eventId || payload.tool_call_id || payload.toolCallId || "")
+	      .toString()
+	      .trim();
+	    if (!eventId) return;
     const phase = (payload.phase || "").toString().trim().toLowerCase();
     if (!phase) return;
 
@@ -901,6 +936,81 @@ class ChatPortalClient {
     if (this.elements.messages) {
       this.elements.messages.scrollTo({ top: this.elements.messages.scrollHeight, behavior: "smooth" });
     }
+  }
+
+  updateAgenticSpinnerFromToolEvent(payload) {
+    if (!payload || this.workflowLocked) return;
+    if (!this.streamingMessageNode) return;
+
+    const phase = (payload.phase || "").toString().trim().toLowerCase();
+    const statusRaw = (payload.status || "").toString().trim().toLowerCase();
+    const approval = payload.approval && typeof payload.approval === "object" ? payload.approval : null;
+    const approvalStatus =
+      (approval && approval.status ? approval.status : payload.approval_status || payload.approvalStatus || "")
+        .toString()
+        .trim()
+        .toLowerCase();
+
+    const eventId = (payload.event_id || payload.eventId || payload.tool_call_id || payload.toolCallId || "").toString().trim();
+
+    const remote = payload.remote && typeof payload.remote === "object" ? payload.remote : null;
+    const connectionName = this.cleanMcpConnectionName(
+      remote && remote.connection_name ? remote.connection_name.toString() : ""
+    );
+    const remoteTool = remote && remote.remote_tool ? remote.remote_tool.toString() : "";
+    const toolName = (payload.tool_name || payload.toolName || "").toString().trim();
+
+    const isRunning = statusRaw === "running" || phase === "started";
+    const needsApproval = approvalStatus === "pending" || statusRaw === "pending_approval" || phase === "approval_requested";
+    const isFinished = phase === "finished" || statusRaw === "ok" || statusRaw === "success" || statusRaw === "succeeded";
+
+    if (needsApproval) {
+      this.agenticSpinnerActiveToolEventId = eventId || this.agenticSpinnerActiveToolEventId;
+      this.setAgenticSpinnerLabel("Approval required", { pending: true });
+      return;
+    }
+
+    if (isRunning) {
+      this.agenticSpinnerActiveToolEventId = eventId || this.agenticSpinnerActiveToolEventId;
+      const label = this.buildAgenticSpinnerLabel({
+        connectionName,
+        remoteTool,
+        toolName,
+      });
+      this.setAgenticSpinnerLabel(label, { pending: true });
+      return;
+    }
+
+    if (isFinished && (!eventId || eventId === this.agenticSpinnerActiveToolEventId)) {
+      this.agenticSpinnerActiveToolEventId = null;
+      this.setAgenticSpinnerLabel("Refining answer…", { pending: true });
+    }
+  }
+
+  setAgenticSpinnerLabel(label, { pending = true, isError = false } = {}) {
+    const normalized = (label || "").toString().trim();
+    if (!normalized) return;
+    if (normalized === this.agenticSpinnerLastLabel) return;
+    this.agenticSpinnerLastLabel = normalized;
+    this.setSpinnerText(normalized, { pending, isError });
+  }
+
+  cleanMcpConnectionName(name) {
+    return (name || "").toString().replace(/\s*\(mcp\)\s*$/i, "").trim();
+  }
+
+  buildAgenticSpinnerLabel({ connectionName, remoteTool, toolName }) {
+    const internal = (toolName || "").toString().trim();
+    if (internal === "search_knowledge") return "Searching…";
+    if (internal === "read_document") return "Reading…";
+    if (internal === "mcp_search_tools") return "Finding the right tool…";
+
+    const toolLabel = remoteTool ? this.formatStatus(remoteTool) : "";
+    if (connectionName && toolLabel) return `${connectionName}: ${toolLabel}…`;
+    if (connectionName) return `${connectionName}: Working…`;
+    if (toolLabel) return `${toolLabel}…`;
+    if (internal) return "Working…";
+    return "Assistant is working…";
   }
 
   getToolEventWrapper(messageId) {
@@ -1328,14 +1438,18 @@ class ChatPortalClient {
     return container;
   }
 
-  buildToolEventCard(payload) {
-    const eventId = (payload.event_id || payload.eventId || "").toString().trim();
-    if (!eventId) return null;
+		  buildToolEventCard(payload) {
+		    const toolName = (payload?.tool_name || payload?.toolName || "").toString().trim().toLowerCase();
+		    if (toolName === "mcp_search_tools") {
+		      return null;
+		    }
+		    const eventId = (payload.event_id || payload.eventId || "").toString().trim();
+		    if (!eventId) return null;
 
-    const card = document.createElement("div");
-    card.dataset.toolCard = "true";
-    card.dataset.toolEventId = eventId;
-    card.className = "mcp-tool-row";
+	    const card = document.createElement("div");
+	    card.dataset.toolCard = "true";
+	    card.dataset.toolEventId = eventId;
+	    card.className = "mcp-tool-row";
 
     const row = document.createElement("div");
     row.className = "mcp-tool-row-line";
@@ -1343,28 +1457,26 @@ class ChatPortalClient {
     const rowLeft = document.createElement("div");
     rowLeft.className = "mcp-tool-row-left";
 
-    const status = document.createElement("span");
-    status.dataset.toolStatus = "true";
-    status.className = "mcp-status pending";
+	    const status = document.createElement("span");
+	    status.dataset.toolStatus = "true";
+	    status.className = "mcp-status pending";
 
-    const statusIcon = document.createElement("span");
-    statusIcon.dataset.toolStatusIcon = "true";
-    statusIcon.className = "mcp-status-icon";
+	    const statusIcon = document.createElement("span");
+	    statusIcon.dataset.toolStatusIcon = "true";
+	    statusIcon.className = "mcp-status-icon";
+	    // Always reserve the left-side loader slot to prevent layout shift.
+	    statusIcon.innerHTML = this.getOrbitLoaderMarkup();
 
-    const statusLabel = document.createElement("span");
-    statusLabel.dataset.toolStatusLabel = "true";
-    statusLabel.className = "mcp-status-label";
+	    const statusLabel = document.createElement("span");
+	    statusLabel.dataset.toolStatusLabel = "true";
+	    statusLabel.className = "mcp-status-label";
 
-    status.appendChild(statusIcon);
-    status.appendChild(statusLabel);
+	    status.appendChild(statusIcon);
+	    status.appendChild(statusLabel);
 
     const title = document.createElement("div");
     title.dataset.toolTitle = "true";
     title.className = "mcp-tool-title";
-
-    const inlineOutcome = document.createElement("span");
-    inlineOutcome.dataset.toolOutcomeInline = "true";
-    inlineOutcome.className = "mcp-tool-outcome-inline";
 
     const approvalActions = document.createElement("div");
     approvalActions.dataset.toolApprovalActions = "true";
@@ -1380,17 +1492,21 @@ class ChatPortalClient {
     denyButton.type = "button";
     denyButton.dataset.toolApprovalAction = "deny";
     denyButton.className = "mcp-approval-inline-btn mcp-approval-inline-deny";
-    denyButton.textContent = "Reject";
+	    denyButton.textContent = "Reject";
 
-    approvalActions.appendChild(approveButton);
-    approvalActions.appendChild(denyButton);
+	    approvalActions.appendChild(approveButton);
+	    approvalActions.appendChild(denyButton);
 
-    rowLeft.appendChild(status);
-    rowLeft.appendChild(title);
-    rowLeft.appendChild(inlineOutcome);
-    rowLeft.appendChild(approvalActions);
+	    const outcome = document.createElement("span");
+	    outcome.dataset.toolOutcomeInline = "true";
+	    outcome.className = "mcp-tool-outcome-inline";
 
-    row.appendChild(rowLeft);
+	    rowLeft.appendChild(status);
+	    rowLeft.appendChild(title);
+	    rowLeft.appendChild(approvalActions);
+	    rowLeft.appendChild(outcome);
+
+	    row.appendChild(rowLeft);
 
     // Inline approval (no details panels)
     const approval = document.createElement("div");
@@ -1414,23 +1530,27 @@ class ChatPortalClient {
     return card;
   }
 
-  updateToolEventCard(card, payload) {
-    if (!card || !payload) return;
-    const phase = (payload.phase || "").toString().trim().toLowerCase();
-    const statusRaw = (payload.status || "").toString().trim().toLowerCase();
-    const remote = payload.remote && typeof payload.remote === "object" ? payload.remote : null;
+	  updateToolEventCard(card, payload) {
+	    if (!card || !payload) return;
+	    const phase = (payload.phase || "").toString().trim().toLowerCase();
+	    const statusRaw = (payload.status || "").toString().trim().toLowerCase();
+	    const remote = payload.remote && typeof payload.remote === "object" ? payload.remote : null;
 
-    const connectionName = remote && remote.connection_name ? remote.connection_name.toString() : "";
+    const connectionNameRaw = remote && remote.connection_name ? remote.connection_name.toString() : "";
     const remoteTool = remote && remote.remote_tool ? remote.remote_tool.toString() : "";
     const toolNameFallback = (payload.tool_name || payload.toolName || "").toString().trim();
+    const normalizedInternalTool = toolNameFallback.toLowerCase();
+    const internalToolLabel = normalizedInternalTool === "mcp_search_tools" ? "Tool discovery" : "";
     const titleEl = card.querySelector("[data-tool-title]");
     const existingTitle = titleEl ? titleEl.textContent : "";
-    const displayTool = remoteTool || toolNameFallback || "";
+    const displayTool = remoteTool || internalToolLabel || toolNameFallback || "";
 
+    const connectionName = connectionNameRaw.replace(/\s*\(mcp\)\s*$/i, "").trim();
+    const displayToolLabel = displayTool ? this.formatStatus(displayTool) : "";
     const titleText =
-      connectionName && displayTool
-        ? `${connectionName} - ${displayTool}`
-        : displayTool || connectionName || existingTitle || "External tool";
+      connectionName && displayToolLabel
+        ? `${connectionName} · ${displayToolLabel}`
+        : displayToolLabel || connectionName || existingTitle || "External tool";
 
     if (titleEl) titleEl.textContent = titleText;
 
@@ -1495,45 +1615,42 @@ class ChatPortalClient {
       }, 950);
     }
 
-    const statusEl = card.querySelector("[data-tool-status]");
-    if (statusEl) {
-      const mapped = this.mapToolStatus(effectiveStatus || (isRunning ? "running" : "ok"));
-      statusEl.className = mapped.className; // Use class directly from mapToolStatus
-      statusEl.title = mapped.label || "";
-      statusEl.setAttribute("aria-label", mapped.label || "");
+	    const statusEl = card.querySelector("[data-tool-status]");
+	    if (statusEl) {
+	      const mapped = this.mapToolStatus(effectiveStatus || (isRunning ? "running" : "ok"));
+	      statusEl.className = mapped.className; // Use class directly from mapToolStatus
+	      statusEl.title = mapped.label || "";
+	      statusEl.setAttribute("aria-label", mapped.label || "");
 
-      const iconEl = statusEl.querySelector("[data-tool-status-icon]");
-      const labelEl = statusEl.querySelector("[data-tool-status-label]");
+	      const iconEl = statusEl.querySelector("[data-tool-status-icon]");
+	      const labelEl = statusEl.querySelector("[data-tool-status-label]");
 
-      if (labelEl) labelEl.textContent = "";
+	      if (labelEl) labelEl.textContent = "";
 
-      if (iconEl) {
-        const wantsOrbit = isRunning || phase === "running" || toolState === "success" || toolState === "error";
-        iconEl.classList.toggle("mcp-status-icon--orbit", wantsOrbit);
-        if (wantsOrbit) {
-          iconEl.innerHTML = this.getOrbitLoaderMarkup();
-        } else {
-          iconEl.innerHTML = `<span class="mcp-status-dot" aria-hidden="true"></span>`;
-        }
-      }
-    }
+	      if (iconEl) {
+	        // Left slot stays an orbit loader (running animates; finished freezes via CSS).
+	        iconEl.classList.add("mcp-status-icon--orbit");
+	        if (!iconEl.querySelector(".mcp-orbit-loader")) {
+	          iconEl.innerHTML = this.getOrbitLoaderMarkup();
+	        }
+	      }
+	    }
+
+	    const outcomeEl = card.querySelector("[data-tool-outcome-inline]");
+	    if (outcomeEl) {
+	      const showOutcome = toolState === "success" || toolState === "error";
+	      outcomeEl.classList.toggle("is-visible", showOutcome);
+	      if (showOutcome) {
+	        outcomeEl.innerHTML = toolState === "success" ? this.getToolSuccessIconMarkup() : this.getToolFailureIconMarkup();
+	      } else if (outcomeEl.innerHTML) {
+	        outcomeEl.innerHTML = "";
+	      }
+	    }
 
     const approvalActionsEl = card.querySelector("[data-tool-approval-actions]");
     const showActions = approvalStatus === "pending" || effectiveStatus === "pending_approval";
     if (approvalActionsEl) {
       approvalActionsEl.classList.toggle("is-visible", showActions);
-    }
-
-    const inlineOutcomeEl = card.querySelector("[data-tool-outcome-inline]");
-    if (inlineOutcomeEl) {
-      const showOutcome = !showActions && (toolState === "success" || toolState === "error");
-      inlineOutcomeEl.classList.toggle("is-visible", showOutcome);
-      if (showOutcome) {
-        const iconUrl = toolState === "error" ? this.getToolFailureIconUrl() : this.getToolSuccessIconUrl();
-        inlineOutcomeEl.innerHTML = `<img src="${iconUrl}" alt="" aria-hidden="true" />`;
-      } else {
-        inlineOutcomeEl.innerHTML = "";
-      }
     }
 
     const inputProvided = Object.prototype.hasOwnProperty.call(payload, "input");
@@ -2507,6 +2624,9 @@ class ChatPortalClient {
       body.className = "text-base leading-relaxed bg-muted text-foreground px-5 py-3 rounded-2xl rounded-tr-sm text-start inline-block shadow-sm";
     } else {
       body.dataset.messageBody = "true";
+      if (message.id) {
+        body.dataset.messageId = message.id;
+      }
       body.className = "relative group text-base leading-relaxed text-foreground text-start max-w-none break-words pr-8";
       // Copy button will be added by injectCopyButton after message is appended
     }
@@ -2515,6 +2635,18 @@ class ChatPortalClient {
       this.renderResponseBlocks(body, initialBlocks);
     }
     content.appendChild(body);
+
+    // Match server-side template: keep the raw markdown available in a json_script tag (id=message.id).
+    // This powers deterministic tool-card interleaving + copy-to-clipboard on client-rendered transcripts.
+    if (!isCustomer && message.id) {
+      const rawBody =
+        typeof message.body === "string" ? message.body : message.body === null || typeof message.body === "undefined" ? "" : String(message.body);
+      const scriptTag = document.createElement("script");
+      scriptTag.type = "application/json";
+      scriptTag.id = message.id;
+      scriptTag.textContent = JSON.stringify(rawBody);
+      content.appendChild(scriptTag);
+    }
 
     const metadataRow = document.createElement("div");
     metadataRow.dataset.messageMeta = "true";
@@ -2568,7 +2700,6 @@ class ChatPortalClient {
         this.streamingFinalBodyEl.innerHTML = "";
       }
       this.streamingRewritePending = false;
-      this.setStreamingStatus("refining", "Refining answer…");
     }
     this.streamingRawBuffer += normalized;
     this.refreshStreamingView();
@@ -2600,6 +2731,24 @@ class ChatPortalClient {
       if (messageId) {
         this.streamingMessageNode.dataset.messageId = messageId;
         this.streamingMessageId = messageId;
+        this.streamingMessageBodyEl.dataset.messageId = messageId;
+
+        const existing = document.getElementById(messageId);
+        const metaRow = this.streamingMessageNode.querySelector("[data-message-meta]");
+        const contentRoot = this.streamingMessageBodyEl.parentElement;
+        if (contentRoot && metaRow && !existing) {
+          const rawText =
+            typeof this.streamingRawBuffer === "string" ? this.streamingRawBuffer : this.streamingRawBuffer ? String(this.streamingRawBuffer) : "";
+          const scriptTag = document.createElement("script");
+          scriptTag.type = "application/json";
+          scriptTag.id = messageId;
+          scriptTag.textContent = JSON.stringify(rawText);
+          contentRoot.insertBefore(scriptTag, metaRow);
+        } else if (existing && existing.tagName === "SCRIPT") {
+          const rawText =
+            typeof this.streamingRawBuffer === "string" ? this.streamingRawBuffer : this.streamingRawBuffer ? String(this.streamingRawBuffer) : "";
+          existing.textContent = JSON.stringify(rawText);
+        }
       }
       return;
     }
@@ -2622,6 +2771,19 @@ class ChatPortalClient {
     this.streamingMessageBubbleEl = node.querySelector("[data-message-bubble]");
 
     if (this.streamingMessageBodyEl) {
+      if (messageId) {
+        this.streamingMessageBodyEl.dataset.messageId = messageId;
+        const existing = document.getElementById(messageId);
+        const metaRow = node.querySelector("[data-message-meta]");
+        const contentRoot = this.streamingMessageBodyEl.parentElement;
+        if (contentRoot && metaRow && !existing) {
+          const scriptTag = document.createElement("script");
+          scriptTag.type = "application/json";
+          scriptTag.id = messageId;
+          scriptTag.textContent = JSON.stringify("");
+          contentRoot.insertBefore(scriptTag, metaRow);
+        }
+      }
       this.streamingMessageBodyEl.innerHTML = "";
       const statusRow = document.createElement("div");
       statusRow.dataset.streamingStatus = "true";
@@ -2886,8 +3048,8 @@ class ChatPortalClient {
     }
   }
 
-  renderStoredToolEvents(wrapper, events, messageId) {
-    if (!wrapper || !Array.isArray(events) || !events.length) return;
+	  renderStoredToolEvents(wrapper, events, messageId) {
+	    if (!wrapper || !Array.isArray(events) || !events.length) return;
     
     const messageBody = wrapper.querySelector('[data-message-body]');
     if (!messageBody) return;
@@ -2908,14 +3070,18 @@ class ChatPortalClient {
       (messageId || "");
     const messageKey = wrapper.dataset.messageId || messageIdValue || "streaming";
 
-    // Group events into tool-calls (one card per event_id/tool_call_id), keeping insertion metadata.
-    const toolCalls = new Map();
-    events.forEach((rawEvent, idx) => {
-      if (!rawEvent || typeof rawEvent !== "object") return;
-      const eventId = (rawEvent.event_id || rawEvent.eventId || rawEvent.tool_call_id || rawEvent.toolCallId || "")
-        .toString()
-        .trim();
-      if (!eventId) return;
+	    // Group events into tool-calls (one card per event_id/tool_call_id), keeping insertion metadata.
+	    const toolCalls = new Map();
+	    events.forEach((rawEvent, idx) => {
+	      if (!rawEvent || typeof rawEvent !== "object") return;
+	      const rawToolName = (rawEvent.tool_name || rawEvent.toolName || "").toString().trim().toLowerCase();
+	      if (rawToolName === "mcp_search_tools") {
+	        return;
+	      }
+	      const eventId = (rawEvent.event_id || rawEvent.eventId || rawEvent.tool_call_id || rawEvent.toolCallId || "")
+	        .toString()
+	        .trim();
+	      if (!eventId) return;
 
       const rawOffset = rawEvent.text_offset ?? rawEvent.textOffset ?? null;
       let textOffset = null;
@@ -3172,6 +3338,13 @@ class ChatPortalClient {
     return usage;
   }
 
+  getContextBudgetPayload(payload) {
+    if (!payload || typeof payload !== "object") return null;
+    const budget = payload.context_budget || payload.contextBudget || null;
+    if (!budget || typeof budget !== "object") return null;
+    return budget;
+  }
+
   getRoundTokenCountFromUsage(usage) {
     if (!usage || typeof usage !== "object") return null;
     const total = Number(usage.total_tokens);
@@ -3220,6 +3393,63 @@ class ChatPortalClient {
     return wrap;
   }
 
+  formatPercentRatio(ratio) {
+    if (!Number.isFinite(ratio)) return "—";
+    const clamped = Math.max(0, Math.min(1, ratio));
+    return `${Math.round(clamped * 100)}%`;
+  }
+
+  computePeakUsage(usage) {
+    if (!usage || typeof usage !== "object") return null;
+    const calls = Array.isArray(usage.calls) ? usage.calls : [];
+    const pool = calls.length ? calls : [usage];
+    let peakPrompt = null;
+    let peakTotal = null;
+    pool.forEach((entry) => {
+      if (!entry || typeof entry !== "object") return;
+      const prompt = Number(entry.prompt_tokens);
+      const completion = Number(entry.completion_tokens);
+      const totalRaw = Number(entry.total_tokens);
+      const total = Number.isFinite(totalRaw) && totalRaw > 0 ? totalRaw : (Number.isFinite(prompt) ? prompt : 0) + (Number.isFinite(completion) ? completion : 0);
+      if (Number.isFinite(prompt)) {
+        peakPrompt = peakPrompt === null ? prompt : Math.max(peakPrompt, prompt);
+      }
+      if (Number.isFinite(total)) {
+        peakTotal = peakTotal === null ? total : Math.max(peakTotal, total);
+      }
+    });
+    return { peakPrompt, peakTotal };
+  }
+
+  buildContextSummarySegment(contextBudget, usage) {
+    if (!contextBudget || typeof contextBudget !== "object") return null;
+    const maxContext = Number(contextBudget.max_context_tokens);
+    const maxInput = Number(contextBudget.max_input_tokens);
+    if (!Number.isFinite(maxContext) || maxContext <= 0) return null;
+
+    const peaks = this.computePeakUsage(usage);
+    if (!peaks) return null;
+
+    const peakTotal = Number(peaks.peakTotal);
+    const peakPrompt = Number(peaks.peakPrompt);
+
+    const wrap = document.createElement("span");
+    wrap.className = "inline-flex flex-wrap items-center gap-1";
+
+    const bits = [];
+    if (Number.isFinite(peakTotal)) {
+      const ctxLeft = Math.max(0, maxContext - peakTotal);
+      bits.push(`Ctx left ${this.formatTokenCount(ctxLeft)} (${this.formatPercentRatio(ctxLeft / maxContext)})`);
+    }
+    if (Number.isFinite(maxInput) && maxInput > 0 && Number.isFinite(peakPrompt)) {
+      const inputLeft = Math.max(0, maxInput - peakPrompt);
+      bits.push(`Input left ${this.formatTokenCount(inputLeft)} (${this.formatPercentRatio(inputLeft / maxInput)})`);
+    }
+
+    wrap.textContent = bits.join(" • ") || "";
+    return wrap.textContent ? wrap : null;
+  }
+
   updateDebugToolsPanel(wrapper, debugTools) {
     if (!wrapper) return;
     const debugEl = wrapper.querySelector("[data-message-debug]");
@@ -3232,11 +3462,13 @@ class ChatPortalClient {
     const payload = debugTools && typeof debugTools === "object" ? debugTools : {};
     const toolTrace = Array.isArray(payload.tool_trace) ? payload.tool_trace : [];
     const searchHistory = Array.isArray(payload.search_history) ? payload.search_history : [];
-    const results = Array.isArray(payload.knowledge_results) ? payload.knowledge_results : [];
-    const reads = Array.isArray(payload.knowledge_reads) ? payload.knowledge_reads : [];
-    const coverage = Array.isArray(payload.coverage_ledger) ? payload.coverage_ledger : [];
-    const tableRows = Array.isArray(payload.table_aggregate_rows) ? payload.table_aggregate_rows : [];
-    const usage = this.getUsagePayload(payload);
+	    const results = Array.isArray(payload.knowledge_results) ? payload.knowledge_results : [];
+	    const reads = Array.isArray(payload.knowledge_reads) ? payload.knowledge_reads : [];
+	    const coverage = Array.isArray(payload.coverage_ledger) ? payload.coverage_ledger : [];
+	    const tableRows = Array.isArray(payload.table_aggregate_rows) ? payload.table_aggregate_rows : [];
+	    const promptBudget = Array.isArray(payload.prompt_budget) ? payload.prompt_budget : [];
+	    const usage = this.getUsagePayload(payload);
+	    const contextBudget = this.getContextBudgetPayload(payload);
     const roundTokens = this.getRoundTokenCountFromUsage(usage);
     if (Number.isFinite(roundTokens)) {
       wrapper.dataset.roundTokens = String(roundTokens);
@@ -3253,13 +3485,16 @@ class ChatPortalClient {
 
     const summary = document.createElement("summary");
     summary.className = "cursor-pointer select-none text-xs font-medium text-muted-foreground";
-    const summaryBits = [];
-    summaryBits.push(`Tools (${toolTrace.length})`);
-    if (searchHistory.length) summaryBits.push(`Searches (${searchHistory.length})`);
-    if (results.length) summaryBits.push(`Evidence (${results.length})`);
-    if (reads.length) summaryBits.push(`Reads (${reads.length})`);
+	    const summaryBits = [];
+	    summaryBits.push(`Tools (${toolTrace.length})`);
+	    if (promptBudget.length) summaryBits.push(`Prompt (${promptBudget.length})`);
+	    if (searchHistory.length) summaryBits.push(`Searches (${searchHistory.length})`);
+	    if (results.length) summaryBits.push(`Evidence (${results.length})`);
+	    if (reads.length) summaryBits.push(`Reads (${reads.length})`);
     const tokenSummary = this.buildTokenSummarySegment(roundTokens, totalTokens);
     if (tokenSummary) summaryBits.push(tokenSummary);
+    const contextSummary = this.buildContextSummarySegment(contextBudget, usage);
+    if (contextSummary) summaryBits.push(contextSummary);
     summary.innerHTML = "";
     summaryBits.forEach((segment, idx) => {
       if (idx > 0) summary.append(" • ");
@@ -3290,6 +3525,14 @@ class ChatPortalClient {
       if (Number.isFinite(completionTokens)) segments.push(`completion=${this.formatTokenCount(completionTokens)}`);
       if (typeof usage.model === "string" && usage.model.trim()) segments.push(`model=${usage.model.trim()}`);
       if (typeof usage.provider === "string" && usage.provider.trim()) segments.push(`provider=${usage.provider.trim()}`);
+      if (contextBudget && typeof contextBudget === "object") {
+        const maxContext = Number(contextBudget.max_context_tokens);
+        const maxInput = Number(contextBudget.max_input_tokens);
+        const reserve = Number(contextBudget.response_token_reserve);
+        if (Number.isFinite(maxContext) && maxContext > 0) segments.push(`ctx=${this.formatTokenCount(maxContext)}`);
+        if (Number.isFinite(maxInput) && maxInput > 0) segments.push(`max_input=${this.formatTokenCount(maxInput)}`);
+        if (Number.isFinite(reserve) && reserve > 0) segments.push(`reserve=${this.formatTokenCount(reserve)}`);
+      }
       usageBody.textContent = segments.join(" • ") || "Unavailable";
       usageSection.appendChild(usageBody);
 
@@ -3311,6 +3554,18 @@ class ChatPortalClient {
           if (Number.isFinite(callCompletion)) bits.push(`completion=${this.formatTokenCount(callCompletion)}`);
           if (typeof call.model === "string" && call.model.trim()) bits.push(`model=${call.model.trim()}`);
           if (typeof call.provider === "string" && call.provider.trim()) bits.push(`provider=${call.provider.trim()}`);
+          if (contextBudget && typeof contextBudget === "object") {
+            const maxContext = Number(contextBudget.max_context_tokens);
+            const maxInput = Number(contextBudget.max_input_tokens);
+            if (Number.isFinite(maxInput) && maxInput > 0 && Number.isFinite(callPrompt)) {
+              const inputLeft = Math.max(0, maxInput - callPrompt);
+              bits.push(`input_left=${this.formatTokenCount(inputLeft)} (${this.formatPercentRatio(inputLeft / maxInput)})`);
+            }
+            if (Number.isFinite(maxContext) && maxContext > 0 && Number.isFinite(callTotal)) {
+              const ctxLeft = Math.max(0, maxContext - callTotal);
+              bits.push(`ctx_left=${this.formatTokenCount(ctxLeft)} (${this.formatPercentRatio(ctxLeft / maxContext)})`);
+            }
+          }
           row.textContent = bits.join(" • ");
           callsWrap.appendChild(row);
         });
@@ -3351,17 +3606,28 @@ class ChatPortalClient {
       return section;
     };
 
-    if (!toolTrace.length && !searchHistory.length && !results.length && !reads.length && !coverage.length && !tableRows.length) {
-      const empty = document.createElement("div");
-      empty.className = "text-[11px] text-muted-foreground";
-      empty.textContent = "No tool activity recorded for this response.";
-      container.appendChild(empty);
-    }
+	    if (!toolTrace.length && !promptBudget.length && !searchHistory.length && !results.length && !reads.length && !coverage.length && !tableRows.length) {
+	      const empty = document.createElement("div");
+	      empty.className = "text-[11px] text-muted-foreground";
+	      empty.textContent = "No tool activity recorded for this response.";
+	      container.appendChild(empty);
+	    }
 
-    if (toolTrace.length) {
-      container.appendChild(
-        buildSection("Tools", toolTrace, (item) => {
-          const tool = item && item.tool ? String(item.tool) : "tool";
+	    if (promptBudget.length) {
+	      container.appendChild(
+	        buildSection("Prompt Budget", promptBudget, (item, idx) => {
+	          const stage = item && item.stage ? String(item.stage) : `call_${idx + 1}`;
+	          const total = item && item.total && typeof item.total.tokens_est !== "undefined" ? `est=${this.formatTokenCount(Number(item.total.tokens_est))}` : "";
+	          const actual = item && item.usage && typeof item.usage.prompt_tokens !== "undefined" ? `prompt=${this.formatTokenCount(Number(item.usage.prompt_tokens))}` : "";
+	          return [stage, total, actual].filter(Boolean).join(" • ");
+	        }),
+	      );
+	    }
+
+	    if (toolTrace.length) {
+	      container.appendChild(
+	        buildSection("Tools", toolTrace, (item) => {
+	          const tool = item && item.tool ? String(item.tool) : "tool";
           const status = item && item.status ? String(item.status) : "";
           return [tool, status].filter(Boolean).join(" • ");
         }),
