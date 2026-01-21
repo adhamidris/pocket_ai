@@ -7573,6 +7573,7 @@ class AiOrchestratorService:
         on_stream_complete: Callable[[], None] | None = None,
         on_spinner_update: Callable[[str], None] | None = None,
         on_tool_event: Callable[[Mapping[str, object]], None] | None = None,
+        on_block_event: Callable[[Mapping[str, object]], None] | None = None,
     ) -> StreamingTurnContext:
         """
         Execute the streaming phase of an orchestration turn.

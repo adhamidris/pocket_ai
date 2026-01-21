@@ -195,7 +195,8 @@ class ChatPortalClient {
           if (Array.isArray(contentBlocks) && contentBlocks.length) {
             this.renderMessageContentBlocks(el, contentBlocks);
           } else if (bodyText) {
-            el.innerHTML = this.renderMarkdown(bodyText);
+            const blocks = this.coerceContentBlocks([], bodyText);
+            this.renderMessageContentBlocks(el, blocks);
           }
 
           // Inject copy button ONLY after content is set
@@ -565,7 +566,7 @@ class ChatPortalClient {
 	      sent_at: new Date().toISOString(),
 	    });
 	    // Instant feedback before the first SSE event arrives.
-	    this.setSpinnerText("", { pending: true });
+	    this.setSpinnerText("Thinking…", { pending: true });
 	    const controller = new AbortController();
 	    this.streamController = controller;
 
@@ -772,24 +773,11 @@ class ChatPortalClient {
     this.upsertStreamingContentBlock(block);
     const blockType = (block.type || "").toString().trim().toLowerCase();
     const blockId = (block.block_id || block.blockId || "").toString().trim();
-    if (blockType === "text" && blockId) {
+    if (blockId && this.isStreamingTextBlock(blockType)) {
       this.streamingTextBlockActiveIds.add(blockId);
       if (this.streamingStatusEl) {
         this.streamingStatusEl.classList.add("hidden");
       }
-      const payload = block.payload && typeof block.payload === "object" ? block.payload : null;
-      const initialText = payload && typeof payload.text === "string" ? payload.text : "";
-      if (!this.streamingTextBlockBuffers.has(blockId)) {
-        this.streamingTextBlockBuffers.set(blockId, initialText);
-      } else if (initialText) {
-        const existing = this.streamingTextBlockBuffers.get(blockId) || "";
-        if (initialText.length > existing.length) {
-          this.streamingTextBlockBuffers.set(blockId, initialText);
-        }
-      }
-      this.ensureStreamingTextBlockElement(blockId);
-      this.streamingDirtyTextBlocks.add(blockId);
-      this.scheduleStreamingBlockRender();
     }
   }
 
@@ -803,8 +791,8 @@ class ChatPortalClient {
     }
     if (!payload || typeof payload !== "object") return;
     const blockId = (payload.block_id || payload.blockId || "").toString().trim();
-    const delta = typeof payload.delta === "string" ? payload.delta : "";
-    if (!blockId || !delta) return;
+    const ops = Array.isArray(payload.ops) ? payload.ops : [];
+    if (!blockId || !ops.length) return;
 
     const messageId = (payload.message_id || payload.messageId || "").toString().trim() || null;
     this.ensureStreamingMessageNode(messageId || this.pendingMessageId);
@@ -814,11 +802,7 @@ class ChatPortalClient {
       this.streamingStatusEl.classList.add("hidden");
     }
 
-    const existing = this.streamingTextBlockBuffers.get(blockId) || "";
-    this.streamingTextBlockBuffers.set(blockId, `${existing}${delta}`);
-    this.ensureStreamingTextBlockElement(blockId);
-    this.streamingDirtyTextBlocks.add(blockId);
-    this.scheduleStreamingBlockRender();
+    this.applyBlockOps(blockId, ops);
     this.scheduleScrollToBottom({ behavior: "auto" });
   }
 
@@ -833,16 +817,24 @@ class ChatPortalClient {
     if (!payload || typeof payload !== "object") return;
     const blockId = (payload.block_id || payload.blockId || "").toString().trim();
     if (!blockId) return;
-    this.streamingFinalTextBlocks.add(blockId);
-    this.streamingDirtyTextBlocks.add(blockId);
-    this.scheduleStreamingBlockRender();
     this.streamingTextBlockActiveIds.delete(blockId);
+
+    // Fail-safe: if the set is somehow not empty but we assume sequential blocks,
+    // clear it to ensure the spinner isn't blocked by ghost IDs.
+    if (this.streamingTextBlockActiveIds.size > 0) {
+      this.streamingTextBlockActiveIds.clear();
+    }
+
     if (this.streamingTextBlockActiveIds.size === 0) {
-      // If we are still mid-turn but haven't received the next spinner label yet,
-      // show the spinner icon immediately (no text) to avoid any perceived "silence".
-      const hasSpinnerText = Boolean((this.spinnerDesiredText || "").toString().trim());
-      if (!hasSpinnerText && this.isStreaming && !this.streamFinished && this.spinnerDesiredPending !== false) {
-        this.setSpinnerText("", { pending: true });
+      // If we are still mid-turn, force the spinner visible immediately.
+      // This bridges the gap between text finishing and the next tool/status event.
+      if (this.isStreaming && !this.streamFinished) {
+        const text = this.spinnerDesiredText || "";
+        this.setSpinnerText(text, {
+          pending: true,
+          isError: this.spinnerDesiredIsError,
+          force: true,
+        });
       } else {
         this.setSpinnerText(this.spinnerDesiredText, {
           pending: this.spinnerDesiredPending,
@@ -906,6 +898,38 @@ class ChatPortalClient {
     this.upsertStreamingContentBlock(block);
     this.repositionStreamingStatusRow();
     this.scheduleScrollToBottom({ behavior: "auto" });
+  }
+
+  isStreamingTextBlock(type) {
+    return ["paragraph", "heading", "list_item", "code_block", "text"].includes(type);
+  }
+
+  applyBlockOps(blockId, ops) {
+    const wrapper = this.streamingContentBlockEls.get(blockId);
+    if (!wrapper || !Array.isArray(ops)) return;
+    ops.forEach((op) => {
+      if (!op || typeof op !== "object") return;
+      const kind = (op.op || "").toString().trim();
+      if (kind === "append_inline") {
+        const nodes = Array.isArray(op.nodes) ? op.nodes : op.node ? [op.node] : [];
+        if (!nodes.length) return;
+        const target =
+          wrapper.querySelector("[data-content-block-text]") ||
+          (wrapper.dataset && wrapper.dataset.contentBlockText ? wrapper : null);
+        if (target) {
+          this.appendInlineNodes(target, nodes);
+        }
+        return;
+      }
+      if (kind === "append_code") {
+        const text = typeof op.text === "string" ? op.text : "";
+        if (!text) return;
+        const codeEl = wrapper.querySelector("[data-content-block-code]");
+        if (codeEl) {
+          codeEl.textContent = `${codeEl.textContent || ""}${text}`;
+        }
+      }
+    });
   }
 
   scheduleStreamingBlockRender() {
@@ -1036,16 +1060,6 @@ class ChatPortalClient {
     const blockId = (block.block_id || block.blockId || "").toString().trim();
     if (!blockId) return;
 
-    if (blockType === "text") {
-      const payload = block.payload && typeof block.payload === "object" ? block.payload : {};
-      const text = typeof payload.text === "string" ? payload.text : "";
-      this.streamingTextBlockBuffers.set(blockId, text);
-      this.ensureStreamingTextBlockElement(blockId);
-      this.streamingDirtyTextBlocks.add(blockId);
-      this.scheduleStreamingBlockRender();
-      return;
-    }
-
     const existing = this.streamingContentBlockEls.get(blockId);
     if (existing) {
       const payload = block.payload && typeof block.payload === "object" ? block.payload : {};
@@ -1063,7 +1077,18 @@ class ChatPortalClient {
     const el = this.buildContentBlockElement(block);
     if (!el) return;
     this.streamingContentBlockEls.set(blockId, el);
-    this.streamingBlocksEl.appendChild(el);
+    const parentId = (block.parent_block_id || block.parentBlockId || "").toString().trim();
+    if (parentId && this.streamingContentBlockEls.has(parentId)) {
+      const parentEl = this.streamingContentBlockEls.get(parentId);
+      const container = parentEl ? parentEl.querySelector("[data-block-container]") || parentEl : null;
+      if (container) {
+        container.appendChild(el);
+      } else {
+        this.streamingBlocksEl.appendChild(el);
+      }
+    } else {
+      this.streamingBlocksEl.appendChild(el);
+    }
     if (blockType === "tool_use" || blockType === "tool_result") {
       this.updateInlineToolCardsVisibility(this.streamingMessageNode);
     }
@@ -2155,54 +2180,13 @@ class ChatPortalClient {
         Array.isArray(payload.content_blocks) ? payload.content_blocks : Array.isArray(payload.contentBlocks) ? payload.contentBlocks : [];
       const persistedText = payload.text ? payload.text.toString() : "";
 
-	      if (contentBlocks.length) {
-	        this.ensureStreamingMessageNode(messageId);
-	        const bodyEl = this.getMessageBodyElement(messageId) || this.streamingMessageBodyEl;
-	        if (bodyEl) {
-          const blocksRoot = bodyEl.querySelector("[data-message-blocks]");
-          const isStreamingRoot = blocksRoot && this.streamingBlocksEl && blocksRoot === this.streamingBlocksEl;
-	            if (isStreamingRoot) {
-	            const desiredIds = [];
-	            contentBlocks.forEach((block) => {
-	              if (!block || typeof block !== "object") return;
-	              const blockId = (block.block_id || block.blockId || "").toString().trim();
-	              if (!blockId) return;
-	              desiredIds.push(blockId);
-	              this.upsertStreamingContentBlock(block);
-	              const blockType = (block.type || "").toString().trim().toLowerCase();
-	              if (blockType === "text") {
-	                this.streamingFinalTextBlocks.add(blockId);
-	                this.streamingDirtyTextBlocks.add(blockId);
-	              }
-	            });
-	            const desiredSet = new Set(desiredIds);
-	            Array.from(this.streamingContentBlockEls.entries()).forEach(([blockId, el]) => {
-	              if (!desiredSet.has(blockId)) {
-	                if (el && el.parentNode) {
-                  el.remove();
-                }
-	                this.streamingContentBlockEls.delete(blockId);
-	                this.streamingTextBlockBuffers.delete(blockId);
-	                this.streamingTextBlockCommitState.delete(blockId);
-	                this.streamingFinalTextBlocks.delete(blockId);
-	                this.streamingDirtyTextBlocks.delete(blockId);
-	              }
-	            });
-            desiredIds.forEach((blockId) => {
-              const el = this.streamingContentBlockEls.get(blockId);
-              if (el && this.streamingBlocksEl) {
-                this.streamingBlocksEl.appendChild(el);
-              }
-            });
-            if (this.streamingStatusEl && this.streamingBlocksEl) {
-              this.streamingBlocksEl.appendChild(this.streamingStatusEl);
-            }
-            this.flushStreamingBlockRenders();
-          } else {
-            this.renderMessageContentBlocks(bodyEl, contentBlocks);
-          }
-	          this.injectCopyButton(bodyEl);
-	        }
+      if (contentBlocks.length) {
+        this.ensureStreamingMessageNode(messageId);
+        const bodyEl = this.getMessageBodyElement(messageId) || this.streamingMessageBodyEl;
+        if (bodyEl) {
+          this.renderMessageContentBlocks(bodyEl, contentBlocks);
+          this.injectCopyButton(bodyEl);
+        }
         if (messageId) {
           const scriptTag = document.getElementById(messageId);
           if (scriptTag && scriptTag.tagName === "SCRIPT") {
@@ -2354,10 +2338,27 @@ class ChatPortalClient {
       const type = (block.type || "").toString().trim().toLowerCase();
       const payload = block.payload && typeof block.payload === "object" ? block.payload : null;
       if (!payload) return;
+      if (type === "paragraph" || type === "heading" || type === "list_item") {
+        const content = Array.isArray(payload.content) ? payload.content : [];
+        const text = this.inlineNodesToText(content).trim();
+        if (text) {
+          const prefix = type === "list_item" ? "- " : "";
+          parts.push(`${prefix}${text}`);
+        }
+        return;
+      }
+      if (type === "code_block") {
+        const code = typeof payload.code === "string" ? payload.code : "";
+        if (code.trim()) parts.push(code.trim());
+        return;
+      }
       if (type === "text") {
         const text = typeof payload.text === "string" ? payload.text : "";
         const cleaned = this.stripInlineResponseBlocks(text).trim();
         if (cleaned) parts.push(cleaned);
+        return;
+      }
+      if (type === "list" || type === "quote") {
         return;
       }
       if (type === "kv") {
@@ -2417,9 +2418,9 @@ class ChatPortalClient {
     return [
       {
         block_id: `blk_local_${Math.random().toString(16).slice(2)}`,
-        type: "text",
+        type: "paragraph",
         created_at: new Date().toISOString(),
-        payload: { text: cleaned },
+        payload: { content: [{ text: cleaned }] },
       },
     ];
   }
@@ -2443,9 +2444,24 @@ class ChatPortalClient {
     if (!containerEl) return;
     containerEl.innerHTML = "";
     if (!Array.isArray(blocks) || !blocks.length) return;
+    const blockEls = new Map();
     blocks.forEach((block) => {
       const el = this.buildContentBlockElement(block);
-      if (el) containerEl.appendChild(el);
+      if (!el) return;
+      const blockId = (block.block_id || block.blockId || "").toString().trim();
+      const parentId = (block.parent_block_id || block.parentBlockId || "").toString().trim();
+      if (parentId && blockEls.has(parentId)) {
+        const parentEl = blockEls.get(parentId);
+        const container = parentEl ? parentEl.querySelector("[data-block-container]") || parentEl : null;
+        if (container) {
+          container.appendChild(el);
+        } else {
+          containerEl.appendChild(el);
+        }
+      } else {
+        containerEl.appendChild(el);
+      }
+      if (blockId) blockEls.set(blockId, el);
     });
   }
 
@@ -2455,19 +2471,73 @@ class ChatPortalClient {
     const blockId = (block.block_id || block.blockId || "").toString().trim();
     const payload = block.payload && typeof block.payload === "object" ? block.payload : {};
 
+    if (type === "paragraph" || type === "heading" || type === "list_item") {
+      let wrapper = null;
+      if (type === "heading") {
+        const level = Number(payload.level) || 3;
+        const tag = level <= 1 ? "h1" : level === 2 ? "h2" : "h3";
+        wrapper = document.createElement(tag);
+      } else if (type === "list_item") {
+        wrapper = document.createElement("li");
+      } else {
+        wrapper = document.createElement("p");
+      }
+      wrapper.dataset.contentBlock = "true";
+      wrapper.dataset.blockType = type;
+      wrapper.dataset.contentBlockText = "true";
+      if (blockId) wrapper.dataset.blockId = blockId;
+      const content = Array.isArray(payload.content) ? payload.content : [];
+      this.appendInlineNodes(wrapper, content);
+      return wrapper;
+    }
+
+    if (type === "list") {
+      const ordered = payload.ordered === true;
+      const wrapper = document.createElement(ordered ? "ol" : "ul");
+      wrapper.dataset.contentBlock = "true";
+      wrapper.dataset.blockType = "list";
+      wrapper.dataset.blockContainer = "true";
+      if (blockId) wrapper.dataset.blockId = blockId;
+      const startValue = Number(payload.start);
+      if (ordered && Number.isFinite(startValue) && startValue > 0) {
+        wrapper.start = startValue;
+      }
+      return wrapper;
+    }
+
+    if (type === "quote") {
+      const wrapper = document.createElement("blockquote");
+      wrapper.dataset.contentBlock = "true";
+      wrapper.dataset.blockType = "quote";
+      wrapper.dataset.blockContainer = "true";
+      if (blockId) wrapper.dataset.blockId = blockId;
+      return wrapper;
+    }
+
+    if (type === "code_block") {
+      const wrapper = document.createElement("pre");
+      wrapper.dataset.contentBlock = "true";
+      wrapper.dataset.blockType = "code_block";
+      if (blockId) wrapper.dataset.blockId = blockId;
+      const code = document.createElement("code");
+      code.dataset.contentBlockCode = "true";
+      const codeText = typeof payload.code === "string" ? payload.code : "";
+      code.textContent = codeText;
+      wrapper.appendChild(code);
+      return wrapper;
+    }
+
     if (type === "text") {
-      const wrapper = document.createElement("div");
+      const wrapper = document.createElement("p");
       wrapper.dataset.contentBlock = "true";
       wrapper.dataset.blockType = "text";
+      wrapper.dataset.contentBlockText = "true";
       if (blockId) wrapper.dataset.blockId = blockId;
-
-      const textEl = document.createElement("div");
-      textEl.dataset.contentBlockText = "true";
-      textEl.className = "space-y-2 leading-relaxed";
       const text = typeof payload.text === "string" ? payload.text : "";
       const cleaned = this.stripInlineResponseBlocks(text);
-      textEl.innerHTML = this.renderBufferToHtmlWithMode(cleaned, { mode: "markdown" });
-      wrapper.appendChild(textEl);
+      if (cleaned) {
+        this.appendInlineNodes(wrapper, [{ text: cleaned }]);
+      }
       return wrapper;
     }
 
@@ -2835,15 +2905,84 @@ class ChatPortalClient {
     return escaped.replace(/\n/g, "<br>");
   }
 
+  appendInlineNodes(target, nodes) {
+    if (!target || !Array.isArray(nodes) || !nodes.length) return;
+    const fragment = document.createDocumentFragment();
+    nodes.forEach((node) => {
+      if (!node || typeof node !== "object") return;
+      const rawText = typeof node.text === "string" ? node.text : "";
+      if (!rawText) return;
+      const marks = Array.isArray(node.marks) ? node.marks : [];
+      const parts = rawText.split("\n");
+      parts.forEach((part, idx) => {
+        if (part) {
+          let current = document.createTextNode(part);
+          marks.forEach((mark) => {
+            let wrapper = null;
+            if (typeof mark === "string") {
+              if (mark === "bold") wrapper = document.createElement("strong");
+              if (mark === "italic") wrapper = document.createElement("em");
+              if (mark === "code") wrapper = document.createElement("code");
+            } else if (mark && typeof mark === "object" && mark.type === "link") {
+              wrapper = document.createElement("a");
+              if (mark.href) wrapper.setAttribute("href", mark.href);
+              wrapper.setAttribute("target", "_blank");
+              wrapper.setAttribute("rel", "noopener noreferrer");
+            }
+            if (wrapper) {
+              wrapper.appendChild(current);
+              current = wrapper;
+            }
+          });
+          fragment.appendChild(current);
+        }
+        if (idx < parts.length - 1) {
+          fragment.appendChild(document.createElement("br"));
+        }
+      });
+    });
+    target.appendChild(fragment);
+  }
+
+  inlineNodesToText(nodes) {
+    if (!Array.isArray(nodes) || !nodes.length) return "";
+    return nodes
+      .map((node) => (node && typeof node.text === "string" ? node.text : ""))
+      .join("");
+  }
+
   renderStreamingTailHtml(text) {
     if (!text) return "";
-    const escaped = this.escapeHtml((text || "").toString());
-    const paragraphs = escaped.split(/\n\n+/);
+    const raw = (text || "").toString();
+    const paragraphs = raw.split(/\n\n+/);
+    const canInline = typeof marked !== "undefined" && typeof marked.parseInline === "function";
+    const canSanitize = typeof DOMPurify !== "undefined";
     const html = paragraphs
       .map((para) => {
         const trimmed = para.trim();
         if (!trimmed) return "";
-        return `<p>${trimmed.replace(/\n/g, "<br>")}</p>`;
+        if (canInline) {
+          let normalized = this.normalizeMarkdownForDisplay(trimmed);
+          let inlineHtml = "";
+          try {
+            inlineHtml = marked.parseInline(normalized);
+          } catch (_err) {
+            inlineHtml = "";
+          }
+          if (!inlineHtml) {
+            const escaped = this.escapeHtml(normalized).replace(/\n/g, "<br>");
+            return `<p>${escaped}</p>`;
+          }
+          if (canSanitize) {
+            inlineHtml = DOMPurify.sanitize(inlineHtml, {
+              ADD_ATTR: ["target"],
+              FORBID_ATTR: ["style"],
+            });
+          }
+          return `<p>${inlineHtml}</p>`;
+        }
+        const escaped = this.escapeHtml(trimmed).replace(/\n/g, "<br>");
+        return `<p>${escaped}</p>`;
       })
       .filter(Boolean)
       .join("");
@@ -2952,7 +3091,7 @@ class ChatPortalClient {
     node.classList.remove("opacity-0", "translate-y-4");
     // Remove transition after animation to allow instant height changes during streaming
     setTimeout(() => {
-      node.classList.remove("transition-all", "duration-500", "ease-out");
+      node.classList.remove("transition-all", "duration-500", "ease-out"); 
     }, 500);
 
     // Force scroll to show this new bubble
@@ -2985,9 +3124,10 @@ class ChatPortalClient {
     
     const blocksRoot = body.querySelector("[data-message-blocks]");
     if (blocksRoot) {
-      blocksRoot.innerHTML = this.renderMarkdown(clean);
+      const blocks = this.coerceContentBlocks([], clean);
+      this.renderContentBlocksInto(blocksRoot, blocks);
     } else {
-      body.innerHTML = this.renderMarkdown(clean);
+      body.textContent = clean;
     }
     // Ensure copy button is present after update
     this.injectCopyButton(body);
@@ -3526,7 +3666,7 @@ class ChatPortalClient {
     }
   }
 
-  setSpinnerText(rawText, { pending = true, isError = false } = {}) {
+  setSpinnerText(rawText, { pending = true, isError = false, force = false } = {}) {
     if (this.workflowLocked && pending) return;
     this.ensureStreamingMessageNode(this.pendingMessageId);
     if (!this.streamingStatusEl || !this.streamingStatusTextEl) return;
@@ -3542,7 +3682,7 @@ class ChatPortalClient {
       if (pending) {
         this.streamingStatusTextEl.textContent = "";
         this.repositionStreamingStatusRow();
-        if (this.streamingTextBlockActiveIds.size > 0) {
+        if (!force && this.streamingTextBlockActiveIds.size > 0) {
           this.streamingStatusEl.classList.add("hidden");
         } else {
           this.streamingStatusEl.classList.remove("hidden");
@@ -3553,7 +3693,7 @@ class ChatPortalClient {
     }
     this.streamingStatusTextEl.innerHTML = this.formatStatusLabel(label);
     this.repositionStreamingStatusRow();
-    if (this.streamingTextBlockActiveIds.size > 0) {
+    if (!force && this.streamingTextBlockActiveIds.size > 0) {
       this.streamingStatusEl.classList.add("hidden");
     } else {
       this.streamingStatusEl.classList.remove("hidden");
@@ -3699,7 +3839,7 @@ class ChatPortalClient {
         background-size: 200% 100%;
         animation: skeleton-shimmer 2s infinite linear;
         border-radius: 0.5rem;
-      }
+      }  
       details[data-tool-card] > summary {
         list-style: none;
       }

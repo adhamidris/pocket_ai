@@ -698,6 +698,8 @@ class ChatPortalService:
 
     def _serialize_message(self, message: ConversationMessage) -> PortalMessage:
         content_blocks = message.content_blocks if isinstance(getattr(message, "content_blocks", None), list) else []
+        if message.sender == ConversationSender.AI:
+            content_blocks = ensure_assistant_text_blocks(message.body or "", existing_blocks=content_blocks)
         return PortalMessage(
             id=message.id,
             sender=message.sender,

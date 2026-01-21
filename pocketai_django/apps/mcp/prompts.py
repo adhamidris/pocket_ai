@@ -286,6 +286,7 @@ def build_system_message(
         - Lead with the answer; add a short clarifying question only if needed.
         - Avoid placeholder narration during tool use.
         - Use tables for multi-item comparisons when it helps.
+        - Prefer clean markdown for prose (avoid flicker-prone partial formatting).
 
         ---
 

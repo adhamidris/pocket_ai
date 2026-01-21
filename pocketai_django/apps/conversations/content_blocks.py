@@ -5,7 +5,21 @@ from typing import Any, Literal, Mapping, TypedDict
 
 from django.utils import timezone
 
-ContentBlockType = Literal["text", "tool_use", "tool_result", "table", "kv"]
+from .rich_blocks import rich_blocks_from_text
+
+ContentBlockType = Literal[
+    "text",
+    "paragraph",
+    "heading",
+    "list",
+    "list_item",
+    "quote",
+    "code_block",
+    "tool_use",
+    "tool_result",
+    "table",
+    "kv",
+]
 
 
 class ContentBlock(TypedDict):
@@ -83,7 +97,7 @@ def content_blocks_from_response_blocks(response_blocks: object | None) -> list[
             text = "\n".join(lines).strip()
             if heading:
                 text = f"### {heading}\n\n{text}" if text else f"### {heading}"
-            out.append(dict(make_text_block(text)))
+            out.extend(rich_blocks_from_text(text))
             continue
         if block_type == "table":
             payload = dict(raw)
@@ -113,26 +127,56 @@ def ensure_assistant_text_blocks(body: str, *, existing_blocks: object | None = 
     if not body_value:
         return blocks
 
-    text_block_indices = [idx for idx, block in enumerate(blocks) if _is_text_block(block)]
-    if len(text_block_indices) == 1:
-        idx = text_block_indices[0]
-        block = dict(blocks[idx])
-        block.setdefault("block_id", new_block_id())
-        block.setdefault("created_at", timezone.now().isoformat())
+    rich_blocks = rich_blocks_from_text(body_value)
+    if not rich_blocks:
+        return blocks
+
+    legacy_text_indices = [idx for idx, block in enumerate(blocks) if _is_text_block(block)]
+    has_rich = any(_is_rich_text_block(block) for block in blocks)
+    if not blocks:
+        return rich_blocks
+    if has_rich:
+        return blocks
+    if legacy_text_indices and len(legacy_text_indices) == len(blocks):
+        return rich_blocks
+    return blocks + rich_blocks
+
+
+def extract_text_from_content_blocks(value: object | None) -> str:
+    blocks = _coerce_block_list(value)
+    if not blocks:
+        return ""
+    lines: list[str] = []
+    for block in blocks:
+        if not isinstance(block, Mapping):
+            continue
+        block_type = str(block.get("type") or "").strip().lower()
         payload = block.get("payload")
-        payload_out: dict[str, Any] = dict(payload) if isinstance(payload, Mapping) else {}
-        payload_out["text"] = body_value
-        block["payload"] = payload_out
-        block["type"] = "text"
-        blocks[idx] = block
-        return blocks
-
-    if not text_block_indices:
-        blocks.append(dict(make_text_block(body_value)))
-        return blocks
-
-    # Multiple text blocks: keep as-is (avoid duplicating/reshaping segmented transcripts).
-    return blocks
+        payload_map = payload if isinstance(payload, Mapping) else {}
+        text = _inline_nodes_text(payload_map.get("content"))
+        if block_type == "heading":
+            level = payload_map.get("level")
+            prefix = "#" * level + " " if isinstance(level, int) and 1 <= level <= 6 else ""
+            heading_text = f"{prefix}{text}".strip()
+            if heading_text:
+                lines.append(heading_text)
+            continue
+        if block_type == "paragraph" and text:
+            lines.append(text)
+            continue
+        if block_type == "list_item" and text:
+            lines.append(f"- {text}")
+            continue
+        if block_type == "quote" and text:
+            lines.append(f"> {text}")
+            continue
+        if block_type == "code_block":
+            code_value = payload_map.get("code")
+            if isinstance(code_value, str) and code_value.strip():
+                lines.append(code_value.strip())
+            continue
+        # Ignore list container/table/kv/tool blocks for plain text fallback.
+    return "\n".join(line for line in lines if line).strip()
 
 
 def _coerce_block_list(value: object | None) -> list[dict[str, object]]:
@@ -145,6 +189,19 @@ def _coerce_block_list(value: object | None) -> list[dict[str, object]]:
     return blocks
 
 
+def _inline_nodes_text(nodes: object | None) -> str:
+    if not isinstance(nodes, list):
+        return ""
+    parts: list[str] = []
+    for node in nodes:
+        if not isinstance(node, Mapping):
+            continue
+        text_value = node.get("text")
+        if isinstance(text_value, str) and text_value:
+            parts.append(text_value)
+    return "".join(parts)
+
+
 def _is_text_block(block: Mapping[str, object]) -> bool:
     if str(block.get("type") or "").strip().lower() != "text":
         return False
@@ -152,3 +209,8 @@ def _is_text_block(block: Mapping[str, object]) -> bool:
     if not isinstance(payload, Mapping):
         return False
     return isinstance(payload.get("text"), str)
+
+
+def _is_rich_text_block(block: Mapping[str, object]) -> bool:
+    block_type = str(block.get("type") or "").strip().lower()
+    return block_type in {"paragraph", "heading", "list", "list_item", "quote", "code_block"}

@@ -33,7 +33,12 @@ from apps.accounts.models import (
     McpConnectionAuditEvent,
     McpToolOperationType,
 )
-from apps.conversations.content_blocks import content_blocks_from_response_blocks, make_text_block, new_block_id
+from apps.conversations.content_blocks import (
+    content_blocks_from_response_blocks,
+    extract_text_from_content_blocks,
+    new_block_id,
+)
+from apps.conversations.rich_blocks import RichBlockStreamBuilder, apply_block_ops, coerce_block_event, rich_blocks_from_text
 from apps.conversations.models import ConversationSender, ConversationToolApproval, ConversationToolApprovalStatus
 from apps.core.logging_utils import LogEmoji
 from apps.knowledge.privacy import redact_free_text
@@ -1756,7 +1761,10 @@ def stream_send(request: HttpRequest) -> StreamingHttpResponse:
     blocks_lock = threading.Lock()
     content_blocks: list[dict[str, object]] = []
     content_blocks_by_id: dict[str, dict[str, object]] = {}
-    active_text_block_id: str | None = None
+    rich_builder = RichBlockStreamBuilder()
+    rich_builder.blocks = content_blocks
+    rich_builder.blocks_by_id = content_blocks_by_id
+    block_ops_active = False
     tool_use_block_id_by_event_id: dict[str, str] = {}
     spinner_state = {
         "text": None,
@@ -1984,64 +1992,73 @@ def stream_send(request: HttpRequest) -> StreamingHttpResponse:
         with blocks_lock:
             return content_blocks_by_id.get(key)
 
-    def _ensure_active_text_block() -> dict[str, object]:
-        nonlocal active_text_block_id
-        if active_text_block_id:
-            existing = _get_content_block(active_text_block_id)
-            if existing:
-                return existing
-            active_text_block_id = None
-
-        block = dict(make_text_block("", block_id=new_block_id()))
-        _append_content_block(block)
-        active_text_block_id = str(block.get("block_id") or "").strip()
-        stream_queue.put(
-            {
-                "type": "block_start",
-                "payload": {
-                    "message_id": _current_message_id(),
-                    "block": copy.deepcopy(block),
-                },
-            }
-        )
-        return block
-
-    def _close_active_text_block() -> None:
-        nonlocal active_text_block_id
-        if not active_text_block_id:
+    def _emit_block_events(events: list[dict[str, object]]) -> None:
+        if not events:
             return
-        stream_queue.put(
-            {
-                "type": "block_end",
-                "payload": {
-                    "message_id": _current_message_id(),
-                    "block_id": active_text_block_id,
-                },
-            }
-        )
-        active_text_block_id = None
+        message_id = _current_message_id()
+        for event in events:
+            event_type = event.get("type")
+            payload = dict(event.get("payload") or {})
+            payload["message_id"] = message_id
+            stream_queue.put({"type": event_type, "payload": payload})
+
+    def _apply_block_event(event: Mapping[str, object]) -> bool:
+        event_type = str(event.get("type") or "").strip()
+        payload = event.get("payload") or {}
+        if event_type == "block_start":
+            block = payload.get("block")
+            if not isinstance(block, Mapping):
+                return False
+            block_id = str(block.get("block_id") or "").strip()
+            if not block_id:
+                return False
+            with blocks_lock:
+                existing = content_blocks_by_id.get(block_id)
+                if existing is not None:
+                    existing.clear()
+                    existing.update(block)
+                else:
+                    content_blocks.append(dict(block))
+                    content_blocks_by_id[block_id] = content_blocks[-1]
+            return True
+        if event_type == "block_delta":
+            block_id = str(payload.get("block_id") or "").strip()
+            if not block_id:
+                return False
+            ops = payload.get("ops")
+            if not isinstance(ops, list):
+                return False
+            with blocks_lock:
+                block = content_blocks_by_id.get(block_id)
+                if not block:
+                    return False
+                apply_block_ops(block, ops)
+            return True
+        if event_type == "block_end":
+            block_id = str(payload.get("block_id") or "").strip()
+            return bool(block_id)
+        return False
+
+    def on_block_event(event: Mapping[str, object] | None) -> None:
+        nonlocal block_ops_active
+        if not event:
+            return
+        normalized = coerce_block_event(event)
+        if not normalized:
+            return
+        applied = _apply_block_event(normalized)
+        if applied:
+            if not block_ops_active:
+                block_ops_active = True
+            _emit_block_events([normalized])
 
     def on_response_text_delta(chunk: str) -> None:
         if not chunk:
             return
-        block = _ensure_active_text_block()
-        payload_raw = block.get("payload")
-        payload_out: dict[str, object] = dict(payload_raw) if isinstance(payload_raw, Mapping) else {}
-        existing_text = payload_out.get("text")
-        existing_text_str = existing_text if isinstance(existing_text, str) else str(existing_text or "")
-        payload_out["text"] = f"{existing_text_str}{chunk}"
-        block["payload"] = payload_out
-
-        stream_queue.put(
-            {
-                "type": "block_delta",
-                "payload": {
-                    "message_id": _current_message_id(),
-                    "block_id": str(block.get("block_id") or ""),
-                    "delta": chunk,
-                },
-            }
-        )
+        if block_ops_active:
+            return
+        events = rich_builder.feed_text(chunk)
+        _emit_block_events(events)
 
     def on_status_change(state) -> None:
         if not state:
@@ -2211,7 +2228,8 @@ def stream_send(request: HttpRequest) -> StreamingHttpResponse:
                 # If the assistant was streaming a text block, close it so the "Searching tools…"
                 # spinner can render immediately (Claude-style: no hidden spinner during a paused stream).
                 if phase in {"started", "approval_requested"}:
-                    _close_active_text_block()
+                    if not block_ops_active:
+                        _emit_block_events(rich_builder.break_flow())
                 return
 
             payload: dict[str, object] = {
@@ -2267,7 +2285,8 @@ def stream_send(request: HttpRequest) -> StreamingHttpResponse:
             if not tool_use_block:
                 # If the assistant already started streaming text, close the active text block so the
                 # new tool block is inserted in-order without offset-based reconstruction hacks.
-                _close_active_text_block()
+                if not block_ops_active:
+                    _emit_block_events(rich_builder.break_flow())
                 tool_use_block = {
                     "block_id": new_block_id(),
                     "type": "tool_use",
@@ -2386,7 +2405,8 @@ def stream_send(request: HttpRequest) -> StreamingHttpResponse:
     def signal_stream_complete() -> None:
         if stream_complete.is_set():
             return
-        _close_active_text_block()
+        if not block_ops_active:
+            _emit_block_events(rich_builder.finalize())
         stream_complete.set()
         trace_logger.log("stream.completed", indent=1)
         stream_queue.put({"type": "status", "state": "complete", "label": ""})
@@ -2615,6 +2635,12 @@ def stream_send(request: HttpRequest) -> StreamingHttpResponse:
                     streamed_text = "".join(stream_context.streamed_chunks).strip() if stream_context.streamed_chunks else ""
                     if streamed_text:
                         persist_text = streamed_text
+                with blocks_lock:
+                    blocks_snapshot = copy.deepcopy(content_blocks)
+                if not persist_text:
+                    derived_text = extract_text_from_content_blocks(blocks_snapshot)
+                    if derived_text:
+                        persist_text = derived_text
                 if not persist_text:
                     persist_text = "(no content)"
                 with TRACER.start_as_current_span("portal.finalize.sanitize") as sanitize_span:
@@ -2636,58 +2662,18 @@ def stream_send(request: HttpRequest) -> StreamingHttpResponse:
                 if base_plan.ingestion_warnings:
                     message_metadata["ingestion_warnings"] = [dict(item) for item in base_plan.ingestion_warnings]
 
-                with blocks_lock:
-                    blocks_snapshot = copy.deepcopy(content_blocks)
-                # Ensure the final persisted answer text remains visible after refresh.
-                #
-                # - If the provider never streamed, we create a single text block.
-                # - If we only have one streamed text block, update it to the final sanitized response.
-                # - If we have multiple streamed text blocks (tool interleaving), avoid overwriting the
-                #   last block with the full answer (it duplicates earlier blocks). Instead, only apply
-                #   simple prefix/suffix reconciliation when the final response text wraps the streamed
-                #   text exactly.
-                text_blocks: list[dict[str, object]] = []
-                text_fragments: list[str] = []
-                for entry in blocks_snapshot:
-                    if str(entry.get("type") or "").strip().lower() != "text":
-                        continue
-                    payload_raw = entry.get("payload")
-                    payload_map = payload_raw if isinstance(payload_raw, Mapping) else {}
-                    text_value = payload_map.get("text")
-                    if not isinstance(text_value, str):
-                        continue
-                    text_blocks.append(entry)
-                    text_fragments.append(text_value)
-
-                if not text_blocks:
-                    blocks_snapshot.append(dict(make_text_block(response_text, block_id=new_block_id())))
-                elif len(text_blocks) == 1:
-                    text_block = text_blocks[0]
-                    payload_raw = text_block.get("payload")
-                    payload_out: dict[str, object] = dict(payload_raw) if isinstance(payload_raw, Mapping) else {}
-                    payload_out["text"] = response_text
-                    text_block["payload"] = payload_out
-                else:
-                    streamed_text = "".join(text_fragments)
-                    if response_text and streamed_text and response_text != streamed_text:
-                        if response_text.startswith(streamed_text):
-                            suffix = response_text[len(streamed_text) :]
-                            if suffix:
-                                last_block = text_blocks[-1]
-                                last_payload_raw = last_block.get("payload")
-                                last_payload: dict[str, object] = dict(last_payload_raw) if isinstance(last_payload_raw, Mapping) else {}
-                                last_text = last_payload.get("text")
-                                last_payload["text"] = f"{last_text}{suffix}" if isinstance(last_text, str) else suffix
-                                last_block["payload"] = last_payload
-                        elif response_text.endswith(streamed_text):
-                            prefix = response_text[: len(response_text) - len(streamed_text)]
-                            if prefix:
-                                first_block = text_blocks[0]
-                                first_payload_raw = first_block.get("payload")
-                                first_payload: dict[str, object] = dict(first_payload_raw) if isinstance(first_payload_raw, Mapping) else {}
-                                first_text = first_payload.get("text")
-                                first_payload["text"] = f"{prefix}{first_text}" if isinstance(first_text, str) else prefix
-                                first_block["payload"] = first_payload
+                # Ensure we persist a rich block representation of the answer.
+                has_rich_text = any(
+                    str(entry.get("type") or "").strip().lower()
+                    in {"paragraph", "heading", "list", "list_item", "quote", "code_block"}
+                    for entry in blocks_snapshot
+                    if isinstance(entry, Mapping)
+                )
+                has_legacy_text = any(
+                    str(entry.get("type") or "").strip().lower() == "text" for entry in blocks_snapshot if isinstance(entry, Mapping)
+                )
+                if not has_rich_text and not has_legacy_text and response_text:
+                    blocks_snapshot.extend(rich_blocks_from_text(response_text))
 
                 # Structured outputs (tables/kv) should render as content blocks, not markdown.
                 structured_blocks = content_blocks_from_response_blocks(list(base_plan.response_blocks))
@@ -2808,6 +2794,7 @@ def stream_send(request: HttpRequest) -> StreamingHttpResponse:
                     on_stream_complete=signal_stream_complete,
                     on_spinner_update=on_spinner_update,
                     on_tool_event=on_tool_event,
+                    on_block_event=on_block_event,
                 )
                 plan_holder["context"] = stream_context
                 threading.Thread(

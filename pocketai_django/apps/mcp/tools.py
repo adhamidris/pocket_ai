@@ -348,6 +348,40 @@ GATEWAY_TOOL_DEFINITIONS: tuple[Mapping[str, object], ...] = (
 
 TOOL_DEFINITIONS: tuple[Mapping[str, object], ...] = (
     _function_schema(
+        name="portal_emit_blocks",
+        description=(
+            "Emit structured block events for the portal UI. Use this to stream the final visitor-facing answer "
+            "instead of plain text. Send incremental block_start/block_delta/block_end events."
+        ),
+        properties={
+            "events": {
+                "type": "array",
+                "description": "Ordered list of block events to apply.",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "type": {
+                            "type": "string",
+                            "description": "Event type: block_start, block_delta, or block_end.",
+                        },
+                        "block": {
+                            "type": "object",
+                            "description": "Block payload for block_start (block_id, type, payload, parent_block_id).",
+                        },
+                        "block_id": {"type": "string", "description": "Target block id for block_delta/block_end."},
+                        "ops": {
+                            "type": "array",
+                            "description": "Operations for block_delta (append_inline or append_code).",
+                            "items": {"type": "object"},
+                        },
+                    },
+                    "required": ["type"],
+                },
+            }
+        },
+        required=("events",),
+    ),
+    _function_schema(
         name="search_knowledge",
         description="Search the knowledge base using a natural-language query.",
         properties={

@@ -12,6 +12,7 @@ from __future__ import annotations
 import copy
 import json
 import logging
+import os
 import re
 import threading
 import time
@@ -46,6 +47,7 @@ from apps.rag.ai_orchestrator import (
 from apps.rag.query_classifier import QueryClassifier, QueryClassification, QueryIntent
 from apps.rag.rag_logging import structured_log
 from apps.conversations.response_blocks import normalize_response_blocks
+from apps.conversations.rich_blocks import coerce_block_event
 from apps.knowledge.privacy import redact_free_text
 
 from . import prompts, tools as mcp_tools
@@ -99,6 +101,104 @@ INLINE_RESPONSE_BLOCK_PATTERN = re.compile(
     r"(?:^|\n)\s*(?:[-*+]\s*)?[\"'`]?response(?:_|\s)?blocks[\"'`]?\s*:?",
     re.IGNORECASE,
 )
+
+PORTAL_BLOCK_TOOL_NAME = "portal_emit_blocks"
+
+
+class _PortalBlockStream:
+    def __init__(self, emit: Callable[[Mapping[str, object]], None] | None) -> None:
+        self._emit = emit
+        self._processed: set[str] = set()
+
+    def ingest_stream_state(self, tool_call: Mapping[str, object]) -> None:
+        if not self._emit or not isinstance(tool_call, Mapping):
+            return
+        if not self._is_portal_block_call(tool_call):
+            return
+        args = self._tool_arguments(tool_call)
+        call_key = self._call_key(tool_call)
+        self._ingest_args(call_key, args)
+
+    def ingest_tool_calls(self, tool_calls: Sequence[Mapping[str, object]]) -> None:
+        if not self._emit:
+            return
+        for tool_call in tool_calls:
+            if not isinstance(tool_call, Mapping):
+                continue
+            if not self._is_portal_block_call(tool_call):
+                continue
+            args = self._tool_arguments(tool_call)
+            call_key = self._call_key(tool_call)
+            self._ingest_args(call_key, args)
+
+    def _is_portal_block_call(self, tool_call: Mapping[str, object]) -> bool:
+        func = tool_call.get("function")
+        if isinstance(func, Mapping):
+            name = func.get("name")
+            if isinstance(name, str):
+                return name == PORTAL_BLOCK_TOOL_NAME
+        name = tool_call.get("name")
+        return isinstance(name, str) and name == PORTAL_BLOCK_TOOL_NAME
+
+    def _call_key(self, tool_call: Mapping[str, object]) -> str:
+        raw = tool_call.get("id") or tool_call.get("index") or ""
+        key = str(raw).strip()
+        return key or str(id(tool_call))
+
+    def _tool_arguments(self, tool_call: Mapping[str, object]) -> object:
+        func = tool_call.get("function")
+        raw_args = None
+        if isinstance(func, Mapping):
+            raw_args = func.get("arguments")
+        if raw_args is None:
+            raw_args = tool_call.get("arguments")
+        return raw_args
+
+    def _ingest_args(self, key: str, args: object) -> None:
+        if not self._emit:
+            return
+        if key in self._processed:
+            return
+        parsed = None
+        if isinstance(args, str):
+            raw = args.strip()
+            if not raw:
+                return
+            try:
+                parsed = json.loads(raw)
+            except json.JSONDecodeError:
+                return
+        elif isinstance(args, (list, tuple, dict)):
+            parsed = args
+        if parsed is None:
+            return
+        self._processed.add(key)
+        events = self._extract_events(parsed)
+        if not events:
+            return
+        for raw_event in events:
+            event = coerce_block_event(raw_event)
+            if event and self._emit:
+                self._emit(event)
+
+    @staticmethod
+    def _extract_events(payload: object) -> list[object]:
+        if isinstance(payload, list):
+            return payload
+        if isinstance(payload, Mapping):
+            events = payload.get("events")
+            if isinstance(events, list):
+                return list(events)
+            if isinstance(events, Mapping):
+                return [events]
+            event = payload.get("event")
+            if isinstance(event, list):
+                return list(event)
+            if isinstance(event, Mapping):
+                return [event]
+            if "type" in payload:
+                return [payload]
+        return []
 
 
 class McpOrchestratorService:
@@ -207,6 +307,7 @@ class McpOrchestratorService:
         on_placeholder_response: Callable[[str], None] | None = None,
         on_spinner_update: Callable[[str], None] | None = None,
         on_tool_event: Callable[[Mapping[str, object]], None] | None = None,
+        on_block_event: Callable[[Mapping[str, object]], None] | None = None,
     ) -> dict[str, object]:
         """
         Build the orchestration plan for the latest customer message.
@@ -253,7 +354,7 @@ class McpOrchestratorService:
         gateway_enabled = True
         internal_tool_defs.extend(mcp_tools.GATEWAY_TOOL_DEFINITIONS)
         if feature_state.rag_agentic_mode:
-            allowed = {"search_knowledge", "read_document", "mcp_search_tools", "mcp_call_tool"}
+            allowed = {"search_knowledge", "read_document", "mcp_search_tools", "mcp_call_tool", PORTAL_BLOCK_TOOL_NAME}
             internal_tool_defs = [
                 tool_def for tool_def in internal_tool_defs if self._tool_schema_name(tool_def) in allowed
             ]
@@ -327,7 +428,29 @@ class McpOrchestratorService:
         inline_response_blocks_detected = False
         preplan_note: str | None = None
         preplan_payload: dict[str, object] | None = None
-        initial_tools: Iterable[Mapping[str, object]] | None = None if disable_tools_for_turn else self.tool_definitions
+        provider_name = (os.getenv("MCP_PROVIDER") or "").strip().lower()
+        tool_definitions_for_model = self.tool_definitions
+        if provider_name == "deepseek":
+            # DeepSeek reliably streams plain text + tool calls, but tool-call-based JSON
+            # deltas (like portal_emit_blocks) are more fragile. Prefer server-parsed
+            # rich blocks for the portal UI to avoid content loss.
+            tool_definitions_for_model = tuple(
+                tool_def
+                for tool_def in tool_definitions_for_model
+                if self._tool_schema_name(tool_def) != PORTAL_BLOCK_TOOL_NAME
+            )
+            # Ensure subsequent helper methods (like _exclude_tool_schemas) operate on
+            # the same filtered tool list for the rest of this turn.
+            self.tool_definitions = tool_definitions_for_model
+
+        portal_only_tools = [
+            tool_def for tool_def in tool_definitions_for_model if self._tool_schema_name(tool_def) == PORTAL_BLOCK_TOOL_NAME
+        ]
+        if not portal_only_tools:
+            portal_only_tools = []
+        initial_tools: Iterable[Mapping[str, object]] | None = None if disable_tools_for_turn else tool_definitions_for_model
+        if disable_tools_for_turn and portal_only_tools and on_block_event:
+            initial_tools = portal_only_tools
 
         if preplan_enabled:
             recent_history = [
@@ -593,6 +716,26 @@ class McpOrchestratorService:
             _status_event("answer_started", label)
             _status_event("responding", label)
 
+        portal_block_stream = _PortalBlockStream(on_block_event)
+
+        def _split_portal_tool_calls(
+            tool_calls: Sequence[Mapping[str, object]],
+        ) -> tuple[list[Mapping[str, object]], list[Mapping[str, object]]]:
+            normal_calls: list[Mapping[str, object]] = []
+            portal_calls: list[Mapping[str, object]] = []
+            for tool_call in tool_calls:
+                if not isinstance(tool_call, Mapping):
+                    continue
+                try:
+                    tool_name = self._tool_name(tool_call)
+                except Exception:
+                    continue
+                if tool_name == PORTAL_BLOCK_TOOL_NAME:
+                    portal_calls.append(tool_call)
+                else:
+                    normal_calls.append(tool_call)
+            return normal_calls, portal_calls
+
         def _prime_phase_starts(tool_calls: Sequence[Mapping[str, object]]) -> None:
             for tool_call in tool_calls:
                 tool_name = self._tool_name(tool_call)
@@ -627,6 +770,11 @@ class McpOrchestratorService:
                     if lowered.startswith("reading document:") or lowered.startswith("scanning document:"):
                         return
             _emit_phase_start(phase)
+
+        def _on_stream_tool_call_delta(tool_call: Mapping[str, object] | None) -> None:
+            if not tool_call:
+                return
+            portal_block_stream.ingest_stream_state(tool_call)
 
         _status_event("thinking", "Thinking…")
 
@@ -838,11 +986,15 @@ class McpOrchestratorService:
                 tools=initial_tools,
                 on_stream_delta=_first_stream_chunk if streaming_allowed else None,
                 on_tool_call_start=_on_stream_tool_call_start,
+                on_tool_call_delta=_on_stream_tool_call_delta,
                 tool_context=tool_context,
             )
         first_message = self._coerce_assistant_message(first_payload)
         first_stream_message = dict(first_message or {})
-        first_stream_tool_calls = list(first_stream_message.get("tool_calls") or [])
+        first_stream_tool_calls_raw = list(first_stream_message.get("tool_calls") or [])
+        first_stream_tool_calls, portal_tool_calls = _split_portal_tool_calls(first_stream_tool_calls_raw)
+        if portal_tool_calls:
+            portal_block_stream.ingest_tool_calls(portal_tool_calls)
         if first_stream_tool_calls:
             _prime_phase_starts(first_stream_tool_calls)
         first_content_raw = ""
@@ -888,7 +1040,10 @@ class McpOrchestratorService:
             read_document_guardrail_signature: str | None = None
 
             for iteration_index in range(self.max_tool_iterations):
-                current_tool_calls = list(assistant_message.get("tool_calls") or [])
+                current_tool_calls_raw = list(assistant_message.get("tool_calls") or [])
+                current_tool_calls, portal_tool_calls = _split_portal_tool_calls(current_tool_calls_raw)
+                if portal_tool_calls:
+                    portal_block_stream.ingest_tool_calls(portal_tool_calls)
                 if not current_tool_calls:
                     break
                 # Collect document IDs for deferred structure injection to avoid
@@ -1593,11 +1748,16 @@ class McpOrchestratorService:
                             conversation=conversation,
                             stage="force_final",
                             messages=forced_messages,
-                            tools=None,
+                            tools=portal_only_tools if portal_only_tools and on_block_event else None,
                             on_stream_delta=_answer_stream_chunk if streaming_allowed else None,
+                            on_tool_call_delta=_on_stream_tool_call_delta,
                             tool_context=tool_context,
                         )
                         assistant_message = self._coerce_assistant_message(forced_payload)
+                        forced_tool_calls_raw = list(assistant_message.get("tool_calls") or [])
+                        _, portal_tool_calls = _split_portal_tool_calls(forced_tool_calls_raw)
+                        if portal_tool_calls:
+                            portal_block_stream.ingest_tool_calls(portal_tool_calls)
                         next_tool_calls = []
                         _mark_answer_started()
                         transcript.append(
@@ -1626,10 +1786,14 @@ class McpOrchestratorService:
                         tools=tools_for_iteration,
                         on_stream_delta=_answer_stream_chunk if streaming_allowed else None,
                         on_tool_call_start=_on_stream_tool_call_start,
+                        on_tool_call_delta=_on_stream_tool_call_delta,
                         tool_context=tool_context,
                     )
                     assistant_message = self._coerce_assistant_message(payload)
-                    next_tool_calls = list(assistant_message.get("tool_calls") or [])
+                    next_tool_calls_raw = list(assistant_message.get("tool_calls") or [])
+                    next_tool_calls, portal_tool_calls = _split_portal_tool_calls(next_tool_calls_raw)
+                    if portal_tool_calls:
+                        portal_block_stream.ingest_tool_calls(portal_tool_calls)
 
                     next_signatures: list[str] = []
                     if next_tool_calls:
@@ -1682,11 +1846,16 @@ class McpOrchestratorService:
                                 conversation=conversation,
                                 stage="force_final",
                                 messages=forced_messages,
-                                tools=None,
+                                tools=portal_only_tools if portal_only_tools and on_block_event else None,
                                 on_stream_delta=_answer_stream_chunk if streaming_allowed else None,
+                                on_tool_call_delta=_on_stream_tool_call_delta,
                                 tool_context=tool_context,
                             )
                             assistant_message = self._coerce_assistant_message(forced_payload)
+                            forced_tool_calls_raw = list(assistant_message.get("tool_calls") or [])
+                            _, portal_tool_calls = _split_portal_tool_calls(forced_tool_calls_raw)
+                            if portal_tool_calls:
+                                portal_block_stream.ingest_tool_calls(portal_tool_calls)
                             next_tool_calls = []
                             _mark_answer_started()
                             transcript.append(
@@ -2030,6 +2199,7 @@ class McpOrchestratorService:
         on_stream_complete: Callable[[], None] | None = None,
         on_spinner_update: Callable[[str], None] | None = None,
         on_tool_event: Callable[[Mapping[str, object]], None] | None = None,
+        on_block_event: Callable[[Mapping[str, object]], None] | None = None,
     ) -> StreamingTurnContext:
         turn_start = time.perf_counter()
         result = self._execute_turn(
@@ -2040,6 +2210,7 @@ class McpOrchestratorService:
             on_placeholder_response=on_placeholder_response,
             on_spinner_update=on_spinner_update,
             on_tool_event=on_tool_event,
+            on_block_event=on_block_event,
         )
         turn_duration_ms = int((time.perf_counter() - turn_start) * 1000.0)
         streamed_chunks = tuple(result.get("streamed_chunks") or ())
@@ -6271,6 +6442,7 @@ class McpOrchestratorService:
         tools: Iterable[Mapping[str, object]] | None,
         on_stream_delta: Callable[[str], None] | None,
         on_tool_call_start: Callable[[Mapping[str, object]], None] | None = None,
+        on_tool_call_delta: Callable[[Mapping[str, object]], None] | None = None,
         response_format: Mapping[str, object] | None = None,
         tool_context: ToolExecutionContext | None = None,
     ) -> Mapping[str, Any]:
@@ -6362,6 +6534,7 @@ class McpOrchestratorService:
                 tools=tools,
                 on_stream_delta=on_stream_delta,
                 on_tool_call_start=on_tool_call_start,
+                on_tool_call_delta=on_tool_call_delta,
                 response_format=response_format,
             )
             self._record_llm_usage(tool_context, stage, payload)
@@ -6422,6 +6595,7 @@ class McpOrchestratorService:
                 tools=None,
                 on_stream_delta=on_stream_delta,
                 on_tool_call_start=None,
+                on_tool_call_delta=None,
                 response_format=None,
             )
             self._record_llm_usage(tool_context, stage, payload)
