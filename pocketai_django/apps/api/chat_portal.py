@@ -1831,8 +1831,9 @@ def stream_send(request: HttpRequest) -> StreamingHttpResponse:
         fallback: str | None = "Working...",
         allow_empty: bool = False,
         reason: str | None = None,
+        force: bool = False,
     ) -> None:
-        if not state_machine_enabled:
+        if not state_machine_enabled and not force:
             return
         # Do not trim spinner labels (keep full text and let the UI wrap naturally).
         text_value = sanitize_placeholder_thinking(raw_text, fallback=fallback, limit=0)
@@ -2070,9 +2071,6 @@ def stream_send(request: HttpRequest) -> StreamingHttpResponse:
             if _progressive_spinner_update(code, label, meta):
                 return
             if code == "thinking":
-                current = str(spinner_state.get("text") or "").strip()
-                if current and current.lower() != "thinking…".strip().lower():
-                    return
                 _emit_spinner_status(label or "Thinking…", pending=True, fallback="Thinking…", reason="status:thinking")
                 return
             if code in {"searching_complete", "reading_complete"}:
@@ -2114,7 +2112,9 @@ def stream_send(request: HttpRequest) -> StreamingHttpResponse:
             deferred_spinner_label: str | None = None
             deferred_spinner_reason: str | None = None
             deferred_bridge_thinking = False
-            if state_machine_enabled:
+            
+            is_tool_discovery = tool_name.strip().lower() == "mcp_search_tools"
+            if state_machine_enabled or is_tool_discovery:
                 phase_lower = phase
                 status_lower = status_value.lower()
                 defer_spinner_update = phase_lower in {"finished", "approval_resolved"}
@@ -2194,20 +2194,13 @@ def stream_send(request: HttpRequest) -> StreamingHttpResponse:
 
                 # Tool discovery is an internal gateway step; render it as spinner only (no tool block).
                 # Emit spinner updates immediately because there is no follow-on block event.
-                is_tool_discovery = tool_name.strip().lower() == "mcp_search_tools"
                 if spinner_label and (not defer_spinner_update or is_tool_discovery):
                     _emit_spinner_status(
                         spinner_label,
                         pending=True,
                         fallback="Working...",
                         reason=f"tool:{tool_name}:{phase_lower}:{status_lower}",
-                    )
-                elif deferred_bridge_thinking and is_tool_discovery:
-                    _emit_spinner_status(
-                        "Thinking…",
-                        pending=True,
-                        fallback="Thinking…",
-                        reason=f"tool:{tool_name}:{phase_lower}:bridge_thinking",
+                        force=is_tool_discovery,
                     )
                 elif defer_spinner_update:
                     deferred_spinner_label = spinner_label

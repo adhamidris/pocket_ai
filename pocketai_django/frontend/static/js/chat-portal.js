@@ -565,7 +565,7 @@ class ChatPortalClient {
 	      sent_at: new Date().toISOString(),
 	    });
 	    // Instant feedback before the first SSE event arrives.
-	    this.setSpinnerText("Thinking…", { pending: true });
+	    this.setSpinnerText("", { pending: true });
 	    const controller = new AbortController();
 	    this.streamController = controller;
 
