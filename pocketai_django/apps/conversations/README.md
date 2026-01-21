@@ -13,6 +13,8 @@ Directory Map
   identifier event models.
 - portal.py
   ChatPortalService: session bootstrap, message storage, identifier capture.
+- content_blocks.py
+  Canonical ordered `content_blocks[]` schema (Phase 0: text blocks only).
 - response_blocks.py
   Sanitizes model output into UI-friendly text/table blocks.
 - tests/

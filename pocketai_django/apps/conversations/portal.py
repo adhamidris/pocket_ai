@@ -12,6 +12,7 @@ from django.utils import timezone
 from django.utils.text import slugify
 
 from apps.accounts.models import AgentProfile, BusinessProfile, KnowledgeFeedbackCase, _normalize_identifier_token
+from apps.conversations.content_blocks import ensure_assistant_text_blocks
 from apps.conversations.models import (
     Conversation,
     ConversationChannel,
@@ -55,6 +56,7 @@ class PortalMessage:
     body: str
     sent_at: datetime
     metadata: dict
+    content_blocks: list[dict[str, object]]
 
 
 @dataclasses.dataclass(frozen=True, slots=True)
@@ -148,6 +150,7 @@ class ChatPortalService:
         sender: ConversationSender,
         body: str,
         metadata: dict | None = None,
+        content_blocks: list[dict[str, object]] | None = None,
         conversation: Conversation | None = None,
         message_id: uuid.UUID | None = None,
     ) -> PortalMessage:
@@ -166,6 +169,10 @@ class ChatPortalService:
                 "body": body.strip(),
                 "metadata": metadata,
             }
+            if content_blocks is not None:
+                create_kwargs["content_blocks"] = [dict(item) for item in content_blocks if isinstance(item, dict)]
+            elif sender == ConversationSender.AI:
+                create_kwargs["content_blocks"] = ensure_assistant_text_blocks(body.strip())
             if message_id:
                 create_kwargs["id"] = message_id
             message = ConversationMessage.objects.create(**create_kwargs)
@@ -186,6 +193,7 @@ class ChatPortalService:
         message_id: uuid.UUID,
         body: str | None = None,
         metadata: dict | None = None,
+        content_blocks: list[dict[str, object]] | None = None,
         conversation: Conversation | None = None,
     ) -> PortalMessage:
         if not message_id:
@@ -206,9 +214,17 @@ class ChatPortalService:
                 raise PortalValidationError("Message body cannot be empty")
             message.body = clean_body
             updated_fields.append("body")
+            if content_blocks is None and message.sender == ConversationSender.AI:
+                next_blocks = ensure_assistant_text_blocks(clean_body, existing_blocks=getattr(message, "content_blocks", None))
+                if next_blocks != (message.content_blocks or []):
+                    message.content_blocks = next_blocks
+                    updated_fields.append("content_blocks")
         if metadata is not None:
             message.metadata = metadata
             updated_fields.append("metadata")
+        if content_blocks is not None:
+            message.content_blocks = [dict(item) for item in content_blocks if isinstance(item, dict)]
+            updated_fields.append("content_blocks")
         if updated_fields:
             message.save(update_fields=updated_fields)
         return self._serialize_message(message)
@@ -681,12 +697,14 @@ class ChatPortalService:
         )
 
     def _serialize_message(self, message: ConversationMessage) -> PortalMessage:
+        content_blocks = message.content_blocks if isinstance(getattr(message, "content_blocks", None), list) else []
         return PortalMessage(
             id=message.id,
             sender=message.sender,
             body=message.body,
             sent_at=message.sent_at,
             metadata=message.metadata or {},
+            content_blocks=content_blocks,
         )
 
     def _serialize_messages(self, messages: Iterable[ConversationMessage]) -> Iterable[PortalMessage]:

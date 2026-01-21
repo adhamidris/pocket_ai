@@ -810,55 +810,6 @@ details[data-tool-tab="output"] .mcp-tab[data-tool-tab="output"] {
   background: hsl(var(--error) / 0.18);
 }
 
-
-/* Segment-based interleaved structure */
-[data-message-segments] {
-  /* Let the existing chat styles (e.g., space-y utilities) control spacing. */
-}
-
-[data-segment] {
-  animation: segmentFadeIn 0.3s ease-out;
-}
-
-@keyframes segmentFadeIn {
-  from {
-    opacity: 0;
-    transform: translateY(8px);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0);
-  }
-}
-
-[data-segment-text] {
-  /* Text container inherits styling from parent */
-}
-
-[data-segment-tools] {
-  width: 100%;
-  position: relative;
-  --mcp-rail-x: 14px;
-}
-
-[data-segment-tools]::before {
-  content: "";
-  position: absolute;
-  left: var(--mcp-rail-x);
-  top: 8px;
-  bottom: 8px;
-  width: 1px;
-  border-radius: 999px;
-  background: hsl(var(--border) / 0.55);
-  pointer-events: none;
-  z-index: 0;
-}
-
-/* Smooth appearance of tool rows within segments */
-[data-segment-tools] .mcp-tool-row {
-  animation: toolRowSlideIn 0.32s cubic-bezier(0.2, 0.8, 0.2, 1);
-}
-
 .mcp-tool-row::after {
   content: "";
   position: absolute;
@@ -930,38 +881,7 @@ details[data-tool-tab="output"] .mcp-tab[data-tool-tab="output"] {
   animation: mcpIconPop 420ms cubic-bezier(0.2, 0.8, 0.2, 1) 1;
 }
 
-@keyframes toolRowSlideIn {
-  from {
-    opacity: 0;
-    transform: translateY(10px);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0);
-  }
-}
-
-[data-segment-tools] .mcp-status-icon--orbit {
-  position: relative;
-  border-radius: 999px;
-}
-
-[data-segment-tools] .mcp-status-icon--orbit::before {
-  content: "";
-  position: absolute;
-  inset: -2px;
-  border-radius: 999px;
-  background: hsl(var(--background));
-  z-index: 0;
-}
-
-[data-segment-tools] .mcp-status-icon--orbit > .mcp-orbit-loader {
-  position: relative;
-  z-index: 1;
-}
-
 @media (prefers-reduced-motion: reduce) {
-  [data-segment-tools]::before,
   .mcp-tool-row::after,
   .mcp-tool-row:last-child[data-tool-state="running"]::before,
   .mcp-tool-row:last-child[data-tool-state="running"]::after {

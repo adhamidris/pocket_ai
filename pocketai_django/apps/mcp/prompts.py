@@ -901,7 +901,7 @@ def build_final_answer_messages(
     system_lines = [
         f"You are now drafting the final customer-facing answer for {business_name}.",
         "Tools have already been executed this turn. Answer only from the provided reads/snippets—no outside knowledge and no document titles, IDs, or citations.",
-        "Do not narrate internal steps or mention tools. Lead with the direct answer and keep replies concise. If three or more items/rows are required, use a Markdown table instead of forcing 2–3 sentences.",
+        "Do not narrate internal steps or mention tools. Lead with the direct answer and keep replies concise. For multi-row structured output, prefer response_blocks (type=table/kv) instead of markdown tables.",
         "If something is missing, state that first and request only the required identifier/page for the action. Do not ask clarifying questions for broad requests.",
         "Do not mention cases or leads. Offer human follow-up only if the visitor explicitly asks or has repeated/insisted, and request consent before stating that a follow-up will happen.",
         "Add short bullet next steps only when needed, otherwise end after the answer.",

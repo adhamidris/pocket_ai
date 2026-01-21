@@ -9,6 +9,7 @@
 - `architecture/investigation-mcp-flow-latency.md` — MCP flow + latency notes
 - `architecture/llm_conversation_backend_flow.md` — end-to-end request flow
 - `architecture/portal_stream_state.md` — portal streaming state machine
+- `architecture/chat_portal_content_blocks.md` — content blocks contract + migration plan
 
 ## Ops
 - `ops/` — operational docs (load testing, QA playbooks)

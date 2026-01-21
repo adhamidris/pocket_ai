@@ -142,6 +142,22 @@ class McpOrchestratorService:
         )
         self.char_budget_window_seconds = max(30, int(getattr(settings, "RAG_CHAR_BUDGET_WINDOW_SECONDS", 60)))
 
+    def _deepseek_reasoner_tool_loop_enabled(self) -> bool:
+        """
+        DeepSeek thinking-mode tool loops require assistant messages to include
+        `reasoning_content` when continuing a tool call chain.
+        """
+
+        provider = self.provider
+        if not provider:
+            return False
+        if "deepseek" not in provider.__class__.__name__.lower():
+            return False
+        model = getattr(provider, "model", None)
+        if not isinstance(model, str):
+            return False
+        return "deepseek-reasoner" in model.lower()
+
     _LOW_INTENT_PATTERNS = (
         re.compile(r"^(hi|hello|hey|hola|hallo|مرحبا|السلام عليكم|as-salamu alaykum)\\b", re.IGNORECASE),
         re.compile(r"^(good\\s+(morning|evening|afternoon|day|night))\\b", re.IGNORECASE),
@@ -851,13 +867,15 @@ class McpOrchestratorService:
         if first_stream_tool_calls:
             assistant_message = pending_assistant or {}
             # Seed transcript with the assistant message containing tool_calls.
-            transcript.append(
-                {
-                    "role": "assistant",
-                    "content": "",
-                    "tool_calls": first_stream_tool_calls,
-                }
-            )
+            seed_turn: dict[str, object] = {
+                "role": "assistant",
+                "content": "",
+                "tool_calls": first_stream_tool_calls,
+            }
+            if self._deepseek_reasoner_tool_loop_enabled():
+                reasoning = assistant_message.get("reasoning_content")
+                seed_turn["reasoning_content"] = reasoning if isinstance(reasoning, str) else ""
+            transcript.append(seed_turn)
             pending_assistant = None
 
             seen_tool_signatures: set[str] = set()
@@ -1688,13 +1706,15 @@ class McpOrchestratorService:
                     else:
                         _mark_answer_started()
                     # Append the assistant turn (empty content if tools present).
-                    transcript.append(
-                        {
-                            "role": "assistant",
-                            "content": "" if next_tool_calls else assistant_message.get("content"),
-                            **({"tool_calls": next_tool_calls} if next_tool_calls else {}),
-                        }
-                    )
+                    assistant_turn: dict[str, object] = {
+                        "role": "assistant",
+                        "content": "" if next_tool_calls else assistant_message.get("content"),
+                        **({"tool_calls": next_tool_calls} if next_tool_calls else {}),
+                    }
+                    if self._deepseek_reasoner_tool_loop_enabled():
+                        reasoning = assistant_message.get("reasoning_content")
+                        assistant_turn["reasoning_content"] = reasoning if isinstance(reasoning, str) else ""
+                    transcript.append(assistant_turn)
                     if iter_span.is_recording():
                         iter_span.set_attribute("mcp.next_tool_calls", len(next_tool_calls))
                         iter_span.set_attribute("mcp.cache_hits", len(getattr(tool_context, "knowledge_results", ())))
@@ -2581,6 +2601,8 @@ class McpOrchestratorService:
                     "type": "object",
                     "properties": {
                         "response_text": {"type": "string"},
+                        # Optional structured UI blocks (preferred over markdown tables).
+                        "response_blocks": {"type": "array", "items": {"type": "object"}},
                         "actions": {"type": "array", "items": {"type": "object"}},
                         "extractions": {"type": "array", "items": {"type": "object"}},
                         "placeholder_response": {"type": "string"},
@@ -3853,10 +3875,16 @@ class McpOrchestratorService:
                     auto_fetch_messages.extend(fetch_messages)
 
         if tool_calls:
-            transcript.append({"role": "assistant", "content": "", "tool_calls": tool_calls})
+            assistant_turn: dict[str, object] = {"role": "assistant", "content": "", "tool_calls": tool_calls}
+            if self._deepseek_reasoner_tool_loop_enabled():
+                assistant_turn["reasoning_content"] = ""
+            transcript.append(assistant_turn)
             transcript.extend(tool_messages)
         if auto_fetch_calls:
-            transcript.append({"role": "assistant", "content": "", "tool_calls": auto_fetch_calls})
+            assistant_turn: dict[str, object] = {"role": "assistant", "content": "", "tool_calls": auto_fetch_calls}
+            if self._deepseek_reasoner_tool_loop_enabled():
+                assistant_turn["reasoning_content"] = ""
+            transcript.append(assistant_turn)
             transcript.extend(auto_fetch_messages)
         return len(tool_calls)
 
@@ -4643,6 +4671,9 @@ class McpOrchestratorService:
                             message_chars += len(text)
             elif isinstance(content, str):
                 message_chars += len(content)
+            reasoning_content = msg.get("reasoning_content")
+            if isinstance(reasoning_content, str):
+                message_chars += len(reasoning_content)
             tool_calls = msg.get("tool_calls")
             if isinstance(tool_calls, Sequence) and not isinstance(tool_calls, (str, bytes, bytearray)):
                 message_chars += _dump_len(tool_calls)

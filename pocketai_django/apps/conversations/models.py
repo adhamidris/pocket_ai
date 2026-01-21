@@ -151,6 +151,7 @@ class ConversationMessage(models.Model):
     sender = models.CharField(max_length=16, choices=ConversationSender.choices)
     body = models.TextField()
     metadata = models.JSONField(default=dict, blank=True)
+    content_blocks = models.JSONField(default=list, blank=True)
     sent_at = models.DateTimeField(default=timezone.now, db_index=True)
     created_at = models.DateTimeField(auto_now_add=True)
 

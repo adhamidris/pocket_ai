@@ -33,6 +33,7 @@ from apps.accounts.models import (
     McpConnectionAuditEvent,
     McpToolOperationType,
 )
+from apps.conversations.content_blocks import content_blocks_from_response_blocks, make_text_block, new_block_id
 from apps.conversations.models import ConversationSender, ConversationToolApproval, ConversationToolApprovalStatus
 from apps.core.logging_utils import LogEmoji
 from apps.knowledge.privacy import redact_free_text
@@ -42,7 +43,8 @@ from apps.rag.ai_orchestrator import (
     StreamingTurnContext,
 )
 from apps.mcp.sanitizer import sanitize_placeholder_thinking, sanitize_text, sanitize_with_diagnostics
-from apps.llm.llm_provider import _emit_stream_chunks, load_default_provider
+from apps.mcp.tool_artifacts import store_remote_tool_output_artifact
+from apps.llm.llm_provider import load_default_provider
 from apps.conversations.portal import (
     ChatPortalService,
     PortalAgentSummary,
@@ -110,48 +112,6 @@ def _portal_debug_tool_trace_enabled(request: HttpRequest, payload: Mapping[str,
     if not enabled:
         return False
     return True
-
-
-def _portal_tool_event_history_limit() -> int:
-    raw_limit = getattr(settings, "PORTAL_TOOL_EVENT_HISTORY_LIMIT", 40)
-    try:
-        limit = int(raw_limit)
-    except (TypeError, ValueError):
-        limit = 40
-    return max(0, limit)
-
-
-def _normalize_tool_event_history(
-    events: Iterable[Mapping[str, object]] | None,
-    *,
-    message_id: uuid.UUID | None = None,
-    limit: int | None = None,
-) -> list[dict[str, object]]:
-    if not events:
-        return []
-    normalized: list[dict[str, object]] = []
-    seen: set[tuple[str, str]] = set()
-    message_id_value = str(message_id) if message_id else ""
-    for event in events:
-        if not isinstance(event, Mapping):
-            continue
-        event_id = str(event.get("event_id") or event.get("eventId") or "").strip()
-        if not event_id:
-            continue
-        phase = str(event.get("phase") or "").strip().lower()
-        if phase not in TOOL_EVENT_PHASES:
-            continue
-        key = (event_id, phase)
-        if key in seen:
-            continue
-        seen.add(key)
-        payload = dict(event)
-        if message_id_value and not str(payload.get("message_id") or "").strip():
-            payload["message_id"] = message_id_value
-        normalized.append(payload)
-    if limit and len(normalized) > limit:
-        normalized = normalized[-limit:]
-    return normalized
 
 
 def _clip_debug_text(value: object, *, limit: int = 480) -> str:
@@ -952,6 +912,7 @@ def _message_to_dict(message: PortalMessage) -> dict:
         "body": message.body,
         "sent_at": message.sent_at.isoformat(),
         "metadata": message.metadata,
+        "content_blocks": message.content_blocks,
     }
 
 
@@ -1587,36 +1548,77 @@ def portal_tool_history(request: HttpRequest) -> JsonResponse:
         ]
 
         seen: set[tuple[str, str]] = set()
-        for message in getattr(conversation, "messages", ()).all():
-            meta = message.metadata if isinstance(message.metadata, dict) else {}
-            raw_events = meta.get("tool_events") if isinstance(meta.get("tool_events"), list) else meta.get("toolEvents")
-            if not isinstance(raw_events, list):
-                continue
-            for entry in raw_events:
-                if not isinstance(entry, dict):
-                    continue
-                event_id = str(entry.get("event_id") or entry.get("eventId") or entry.get("tool_call_id") or "").strip()
-                phase = str(entry.get("phase") or "").strip().lower()
-                if not event_id or not phase:
-                    continue
-                key = (event_id, phase)
-                if key in seen:
-                    continue
-                seen.add(key)
+        remote_by_event_id: dict[str, dict[str, str]] = {}
 
-                remote = entry.get("remote") if isinstance(entry.get("remote"), dict) else {}
-                summary: dict[str, object] = {
-                    "event_id": event_id,
-                    "phase": phase,
-                    "status": str(entry.get("status") or "").strip(),
-                    "tool_name": str(entry.get("tool_name") or entry.get("toolName") or "").strip(),
-                    "connection_name": str(remote.get("connection_name") or "").strip(),
-                    "remote_tool_name": str(remote.get("remote_tool") or "").strip(),
-                    "duration_ms": entry.get("duration_ms") if entry.get("duration_ms") is not None else None,
-                    "message_id": str(message.id),
-                    "message_sent_at": message.sent_at.isoformat() if getattr(message, "sent_at", None) else None,
-                }
-                tool_events.append(summary)
+        for message in getattr(conversation, "messages", ()).all():
+            blocks = message.content_blocks if isinstance(getattr(message, "content_blocks", None), list) else []
+            if not blocks:
+                continue
+            message_id_value = str(message.id)
+            message_sent_at = message.sent_at.isoformat() if getattr(message, "sent_at", None) else None
+
+            for block in blocks:
+                if not isinstance(block, dict):
+                    continue
+                block_type = str(block.get("type") or "").strip().lower()
+                payload = block.get("payload") if isinstance(block.get("payload"), dict) else {}
+
+                if block_type == "tool_use":
+                    event_id = str(payload.get("event_id") or payload.get("eventId") or "").strip()
+                    phase = str(payload.get("phase") or "").strip().lower() or "started"
+                    if not event_id:
+                        continue
+                    key = (event_id, phase)
+                    if key in seen:
+                        continue
+                    seen.add(key)
+
+                    remote = payload.get("remote") if isinstance(payload.get("remote"), dict) else {}
+                    connection_name = str(remote.get("connection_name") or "").strip()
+                    remote_tool_name = str(remote.get("remote_tool") or "").strip()
+                    if connection_name or remote_tool_name:
+                        remote_by_event_id[event_id] = {
+                            "connection_name": connection_name,
+                            "remote_tool_name": remote_tool_name,
+                        }
+
+                    summary: dict[str, object] = {
+                        "event_id": event_id,
+                        "phase": phase,
+                        "status": str(payload.get("status") or "").strip(),
+                        "tool_name": str(payload.get("tool_name") or payload.get("toolName") or "").strip(),
+                        "connection_name": connection_name,
+                        "remote_tool_name": remote_tool_name,
+                        "duration_ms": payload.get("duration_ms") if payload.get("duration_ms") is not None else None,
+                        "message_id": message_id_value,
+                        "message_sent_at": message_sent_at,
+                    }
+                    tool_events.append(summary)
+                    continue
+
+                if block_type == "tool_result":
+                    event_id = str(payload.get("event_id") or payload.get("eventId") or "").strip()
+                    if not event_id:
+                        continue
+                    phase = "finished"
+                    key = (event_id, phase)
+                    if key in seen:
+                        continue
+                    seen.add(key)
+
+                    remote_hint = remote_by_event_id.get(event_id) or {}
+                    summary = {
+                        "event_id": event_id,
+                        "phase": phase,
+                        "status": str(payload.get("status") or "").strip(),
+                        "tool_name": str(payload.get("tool_name") or payload.get("toolName") or "").strip(),
+                        "connection_name": remote_hint.get("connection_name", ""),
+                        "remote_tool_name": remote_hint.get("remote_tool_name", ""),
+                        "duration_ms": payload.get("duration_ms") if payload.get("duration_ms") is not None else None,
+                        "message_id": message_id_value,
+                        "message_sent_at": message_sent_at,
+                    }
+                    tool_events.append(summary)
 
     tool_events.sort(key=lambda item: (item.get("message_sent_at") or "", item.get("event_id") or "", item.get("phase") or ""))
     return JsonResponse(
@@ -1742,32 +1744,24 @@ def stream_send(request: HttpRequest) -> StreamingHttpResponse:
     actions_queue: Queue = Queue()
     actions_sentinel = object()
     stream_complete = threading.Event()
+    stream_stopped = threading.Event()
     plan_holder: dict[str, Any] = {}
-    streamed_text_chunks: list[str] = []
     state_machine_enabled = getattr(settings, "PORTAL_STREAM_STATE_MACHINE", False)
     plan_holder["metadata_version"] = 1
     plan_holder["session_status"] = conversation.status
     plan_holder["spinner_text"] = None
-    reserved_message_id = uuid.uuid4() if state_machine_enabled else None
-    if reserved_message_id:
-        plan_holder["pending_message_id"] = reserved_message_id
-    tool_event_limit = _portal_tool_event_history_limit()
-    tool_events: list[dict[str, object]] = []
-    tool_event_keys: set[tuple[str, str]] = set()
-    # Segment + offset tracking for stable tool positioning (stream + page refresh).
-    # Note: offsets are tracked as UTF-16 code units to match JS string indexing.
-    segment_state: dict[str, Any] = {
-        "current_index": 0,
-        "has_tools": False,
-        "utf16_length": 0,
-        "tool_sequence": 0,
-        "tool_sequence_by_event_id": {},
-    }
+    reserved_message_id = uuid.uuid4()
+    plan_holder["pending_message_id"] = reserved_message_id
+
+    blocks_lock = threading.Lock()
+    content_blocks: list[dict[str, object]] = []
+    content_blocks_by_id: dict[str, dict[str, object]] = {}
+    active_text_block_id: str | None = None
+    tool_use_block_id_by_event_id: dict[str, str] = {}
     spinner_state = {
         "text": None,
         "pending": True,
         "tool_inflight": 0,
-        "hide_on_next_delta": False,
     }
     spinner_phase_state = {
         "searching": {"active": False, "index": 0, "label": None, "meta": None, "timer": None},
@@ -1972,35 +1966,81 @@ def stream_send(request: HttpRequest) -> StreamingHttpResponse:
             _reset_phase_spinner(reset_phase)
         return False
 
-    def _turn_pending_payload(text: str, *, pending: bool = True) -> dict[str, object]:
-        payload = {
-            "message_id": _current_message_id(),
-            "text": text,
-            "pending": pending,
-            "session_status": _current_session_status(),
-            "metadata_version": plan_holder.get("metadata_version", 1),
-        }
-        spinner_text = plan_holder.get("spinner_text")
-        if spinner_text:
-            payload["spinner_text"] = spinner_text
-        return payload
+    def _append_content_block(block: dict[str, object]) -> dict[str, object]:
+        block_id = str(block.get("block_id") or "").strip()
+        if not block_id:
+            block_id = new_block_id()
+            block["block_id"] = block_id
+        with blocks_lock:
+            content_blocks.append(block)
+            content_blocks_by_id[block_id] = block
+        return block
+
+    def _get_content_block(block_id: str) -> dict[str, object] | None:
+        key = (block_id or "").strip()
+        if not key:
+            return None
+        with blocks_lock:
+            return content_blocks_by_id.get(key)
+
+    def _ensure_active_text_block() -> dict[str, object]:
+        nonlocal active_text_block_id
+        if active_text_block_id:
+            existing = _get_content_block(active_text_block_id)
+            if existing:
+                return existing
+            active_text_block_id = None
+
+        block = dict(make_text_block("", block_id=new_block_id()))
+        _append_content_block(block)
+        active_text_block_id = str(block.get("block_id") or "").strip()
+        stream_queue.put(
+            {
+                "type": "block_start",
+                "payload": {
+                    "message_id": _current_message_id(),
+                    "block": copy.deepcopy(block),
+                },
+            }
+        )
+        return block
+
+    def _close_active_text_block() -> None:
+        nonlocal active_text_block_id
+        if not active_text_block_id:
+            return
+        stream_queue.put(
+            {
+                "type": "block_end",
+                "payload": {
+                    "message_id": _current_message_id(),
+                    "block_id": active_text_block_id,
+                },
+            }
+        )
+        active_text_block_id = None
 
     def on_response_text_delta(chunk: str) -> None:
         if not chunk:
             return
-        # Hide the spinner exactly when the final answer begins streaming (to avoid "silent gaps").
-        if state_machine_enabled and spinner_state.get("hide_on_next_delta"):
-            spinner_state["hide_on_next_delta"] = False
-            _emit_spinner_status("", pending=False, fallback=None, allow_empty=True)
-        # Track segment progression: advance segment when text follows tools.
-        if segment_state["has_tools"]:
-            segment_state["current_index"] += 1
-            segment_state["has_tools"] = False
-        try:
-            segment_state["utf16_length"] += len(chunk.encode("utf-16-le")) // 2
-        except Exception:  # pragma: no cover - defensive
-            segment_state["utf16_length"] += len(chunk)
-        stream_queue.put(chunk)
+        block = _ensure_active_text_block()
+        payload_raw = block.get("payload")
+        payload_out: dict[str, object] = dict(payload_raw) if isinstance(payload_raw, Mapping) else {}
+        existing_text = payload_out.get("text")
+        existing_text_str = existing_text if isinstance(existing_text, str) else str(existing_text or "")
+        payload_out["text"] = f"{existing_text_str}{chunk}"
+        block["payload"] = payload_out
+
+        stream_queue.put(
+            {
+                "type": "block_delta",
+                "payload": {
+                    "message_id": _current_message_id(),
+                    "block_id": str(block.get("block_id") or ""),
+                    "delta": chunk,
+                },
+            }
+        )
 
     def on_status_change(state) -> None:
         if not state:
@@ -2029,11 +2069,6 @@ def stream_send(request: HttpRequest) -> StreamingHttpResponse:
                 return
             if _progressive_spinner_update(code, label, meta):
                 return
-            if code == "answer_started":
-                # The orchestrator is about to stream the final visitor-facing answer. Keep the
-                # spinner visible until the first text delta arrives, then hide it.
-                spinner_state["hide_on_next_delta"] = True
-                return
             if code == "thinking":
                 current = str(spinner_state.get("text") or "").strip()
                 if current and current.lower() != "thinking…".strip().lower():
@@ -2045,33 +2080,6 @@ def stream_send(request: HttpRequest) -> StreamingHttpResponse:
                 return
             if code in {"stream_complete", "complete"}:
                 _emit_spinner_status("", pending=False, fallback=None, allow_empty=True, reason=f"status:{code}")
-
-    def _record_tool_event(payload: Mapping[str, object]) -> None:
-        if tool_event_limit <= 0:
-            return
-        if not payload:
-            return
-        event_id = str(payload.get("event_id") or payload.get("eventId") or "").strip()
-        if not event_id:
-            return
-        phase = str(payload.get("phase") or "").strip().lower()
-        if phase not in TOOL_EVENT_PHASES:
-            return
-        key = (event_id, phase)
-        if key in tool_event_keys:
-            return
-        tool_event_keys.add(key)
-        tool_events.append(dict(payload))
-        if tool_event_limit and len(tool_events) > tool_event_limit:
-            tool_events[:] = tool_events[-tool_event_limit:]
-            tool_event_keys.clear()
-            for entry in tool_events:
-                if not isinstance(entry, dict):
-                    continue
-                dedupe_id = str(entry.get("event_id") or entry.get("eventId") or "").strip()
-                dedupe_phase = str(entry.get("phase") or "").strip().lower()
-                if dedupe_id and dedupe_phase:
-                    tool_event_keys.add((dedupe_id, dedupe_phase))
 
     def on_tool_event(event: Mapping[str, object] | None) -> None:
         """
@@ -2093,26 +2101,45 @@ def stream_send(request: HttpRequest) -> StreamingHttpResponse:
                     status_value = "running"
                 elif phase == "approval_requested":
                     status_value = "pending_approval"
-            event_id_value = str(event.get("event_id") or event.get("tool_call_id") or "").strip()
-            if not event_id_value:
+            event_id_value = str(event.get("event_id") or "").strip()
+            tool_call_id_value = str(event.get("tool_call_id") or "").strip()
+            candidate_keys: list[str] = []
+            if tool_call_id_value:
+                candidate_keys.append(tool_call_id_value)
+            if event_id_value and event_id_value not in candidate_keys:
+                candidate_keys.append(event_id_value)
+            if not candidate_keys:
                 return
+            block_key = candidate_keys[0]
+            deferred_spinner_label: str | None = None
+            deferred_spinner_reason: str | None = None
+            deferred_bridge_thinking = False
             if state_machine_enabled:
+                phase_lower = phase
+                status_lower = status_value.lower()
+                defer_spinner_update = phase_lower in {"finished", "approval_resolved"}
                 if phase in {"started", "approval_requested"}:
                     spinner_state["tool_inflight"] = int(spinner_state.get("tool_inflight") or 0) + 1
                 elif phase in {"finished", "approval_resolved"}:
-                    spinner_state["tool_inflight"] = max(0, int(spinner_state.get("tool_inflight") or 0) - 1)
+                    previous_inflight = int(spinner_state.get("tool_inflight") or 0)
+                    spinner_state["tool_inflight"] = max(0, previous_inflight - 1)
 
                 spinner_label: str | None = None
-                phase_lower = phase
-                status_lower = status_value.lower()
                 if phase_lower == "approval_requested" or status_lower in {"pending_approval", "pending"}:
                     spinner_label = "Waiting for approval…"
                 elif phase_lower == "started":
                     remote_meta = event.get("remote") if isinstance(event.get("remote"), Mapping) else None
                     if remote_meta:
-                        raw_connection_name = str(remote_meta.get("connection_name") or "").strip()
+                        raw_connection_name = str(remote_meta.get("connection_name") or remote_meta.get("connectionName") or "").strip()
                         connection_name = re.sub(r"\s*\(mcp\)\s*$", "", raw_connection_name, flags=re.IGNORECASE).strip()
-                        raw_remote_tool = str(remote_meta.get("remote_tool") or "").strip()
+                        raw_remote_tool = str(
+                            remote_meta.get("remote_tool")
+                            or remote_meta.get("remoteTool")
+                            or remote_meta.get("tool")
+                            or remote_meta.get("tool_name")
+                            or remote_meta.get("toolName")
+                            or ""
+                        ).strip()
                         remote_tool_key = raw_remote_tool.lower().strip()
 
                         # Keep the spinner high-level and non-redundant with the tool chip.
@@ -2152,44 +2179,73 @@ def stream_send(request: HttpRequest) -> StreamingHttpResponse:
                 elif phase_lower == "finished":
                     if status_lower in {"error", "failed", "tool_failed", "mcp_remote_error", "constraint_error"}:
                         spinner_label = "Trying another approach…"
-                if spinner_label:
+
+                inflight_now = int(spinner_state.get("tool_inflight") or 0)
+                terminal_error_statuses = {"error", "failed", "tool_failed", "mcp_remote_error", "constraint_error"}
+                deferred_bridge_thinking = (
+                    not stream_complete.is_set()
+                    and inflight_now == 0
+                    and not spinner_label
+                    and (
+                        (phase_lower == "finished" and status_lower not in terminal_error_statuses)
+                        or (phase_lower == "approval_resolved" and status_lower not in {"approved"})
+                    )
+                )
+
+                # Tool discovery is an internal gateway step; render it as spinner only (no tool block).
+                # Emit spinner updates immediately because there is no follow-on block event.
+                is_tool_discovery = tool_name.strip().lower() == "mcp_search_tools"
+                if spinner_label and (not defer_spinner_update or is_tool_discovery):
                     _emit_spinner_status(
                         spinner_label,
                         pending=True,
                         fallback="Working...",
                         reason=f"tool:{tool_name}:{phase_lower}:{status_lower}",
                     )
-            sequence_by_event_id = segment_state.get("tool_sequence_by_event_id")
-            if not isinstance(sequence_by_event_id, dict):
-                sequence_by_event_id = {}
-                segment_state["tool_sequence_by_event_id"] = sequence_by_event_id
-            sequence_index = sequence_by_event_id.get(event_id_value)
-            if sequence_index is None:
-                segment_state["tool_sequence"] = int(segment_state.get("tool_sequence") or 0) + 1
-                sequence_index = segment_state["tool_sequence"]
-                if event_id_value:
-                    sequence_by_event_id[event_id_value] = sequence_index
+                elif deferred_bridge_thinking and is_tool_discovery:
+                    _emit_spinner_status(
+                        "Thinking…",
+                        pending=True,
+                        fallback="Thinking…",
+                        reason=f"tool:{tool_name}:{phase_lower}:bridge_thinking",
+                    )
+                elif defer_spinner_update:
+                    deferred_spinner_label = spinner_label
+                    deferred_spinner_reason = f"tool:{tool_name}:{phase_lower}:{status_lower}"
+
+            # Tool discovery is an internal gateway step; render it as spinner only (no tool block).
+            if tool_name.strip().lower() == "mcp_search_tools":
+                # If the assistant was streaming a text block, close it so the "Searching tools…"
+                # spinner can render immediately (Claude-style: no hidden spinner during a paused stream).
+                if phase in {"started", "approval_requested"}:
+                    _close_active_text_block()
+                return
+
             payload: dict[str, object] = {
-                "message_id": _current_message_id(),
-                "event_id": event_id_value,
+                "event_id": event_id_value or block_key,
                 "phase": phase,
                 "status": status_value,
-                "tool_call_id": str(event.get("tool_call_id") or ""),
+                "tool_call_id": tool_call_id_value,
                 "kind": kind,
                 "tool_name": tool_name,
-                # Stable ordering + placement for UI reconstruction.
-                "sequence_index": sequence_index,
-                "segment_index": segment_state["current_index"],
-                "text_offset": int(segment_state.get("utf16_length") or 0),
             }
-            # Mark that tools have been emitted in this segment
-            segment_state["has_tools"] = True
             remote = event.get("remote") if isinstance(event.get("remote"), Mapping) else None
+            if not remote:
+                output_hint = event.get("output") if isinstance(event.get("output"), Mapping) else None
+                remote_hint = output_hint.get("remote") if isinstance(output_hint, Mapping) else None
+                if isinstance(remote_hint, Mapping):
+                    remote = remote_hint
             if remote:
                 # Never leak internal connection IDs/URLs to public portal visitors.
                 safe_remote: dict[str, object] = {}
-                connection_name = remote.get("connection_name")
-                remote_tool = remote.get("remote_tool")
+                connection_name = remote.get("connection_name") or remote.get("connectionName")
+                remote_tool = (
+                    remote.get("remote_tool")
+                    or remote.get("remoteTool")
+                    or remote.get("tool")
+                    or remote.get("tool_name")
+                    or remote.get("toolName")
+                )
                 if connection_name:
                     safe_remote["connection_name"] = _clip_debug_text(connection_name, limit=120)
                 if remote_tool:
@@ -2207,7 +2263,33 @@ def stream_send(request: HttpRequest) -> StreamingHttpResponse:
 
             input_payload = event.get("input")
             if input_payload is not None and phase in {"started", "approval_requested", "finished", "approval_resolved"}:
-                payload["input"] = _json_safe_debug(input_payload, depth=4, string_limit=1200, list_limit=48)
+                payload["input"] = _json_safe_debug(input_payload, depth=3, string_limit=720, list_limit=32)
+
+            tool_use_block_id: str | None = None
+            for key in candidate_keys:
+                tool_use_block_id = tool_use_block_id_by_event_id.get(key)
+                if tool_use_block_id:
+                    break
+            tool_use_block = _get_content_block(tool_use_block_id) if tool_use_block_id else None
+            if not tool_use_block:
+                # If the assistant already started streaming text, close the active text block so the
+                # new tool block is inserted in-order without offset-based reconstruction hacks.
+                _close_active_text_block()
+                tool_use_block = {
+                    "block_id": new_block_id(),
+                    "type": "tool_use",
+                    "created_at": timezone.now().isoformat(),
+                    "payload": {},
+                }
+                _append_content_block(tool_use_block)
+                tool_use_block_id = str(tool_use_block.get("block_id") or "").strip()
+                if tool_use_block_id:
+                    for key in candidate_keys:
+                        tool_use_block_id_by_event_id[key] = tool_use_block_id
+            if tool_use_block_id:
+                for key in candidate_keys:
+                    tool_use_block_id_by_event_id[key] = tool_use_block_id
+            tool_use_block["payload"] = dict(payload)
             if phase in {"finished", "approval_resolved"}:
                 duration = event.get("duration_ms")
                 try:
@@ -2215,6 +2297,8 @@ def stream_send(request: HttpRequest) -> StreamingHttpResponse:
                 except (TypeError, ValueError):
                     payload["duration_ms"] = 0
                 output_payload = event.get("output")
+                artifact_id: str | None = None
+                output_preview: object | None = None
                 if output_payload is not None:
                     scrubbed_output: object = output_payload
                     if isinstance(output_payload, Mapping):
@@ -2234,19 +2318,91 @@ def stream_send(request: HttpRequest) -> StreamingHttpResponse:
                             else:
                                 output_copy.pop("remote", None)
                         scrubbed_output = output_copy
-                    payload["output"] = _json_safe_debug(scrubbed_output, depth=5, string_limit=2400, list_limit=64)
-            _record_tool_event(payload)
-            stream_queue.put({"type": "toolEvent", "payload": payload})
+
+                    output_preview = _json_safe_debug(scrubbed_output, depth=3, string_limit=720, list_limit=24)
+                    kind_lower = kind.lower().strip()
+                    if isinstance(output_payload, Mapping):
+                        artifact_raw = output_payload.get("artifact_id") or output_payload.get("artifactId")
+                        if isinstance(artifact_raw, str) and artifact_raw.strip():
+                            artifact_id = artifact_raw.strip()
+                        prompt_view = output_payload.get("prompt_view") or output_payload.get("promptView")
+                        if prompt_view is not None:
+                            output_preview = _json_safe_debug(prompt_view, depth=3, string_limit=720, list_limit=24)
+
+                    if artifact_id is None and kind_lower.startswith("mcp"):
+                        try:
+                            output_artifact = _json_safe_debug(scrubbed_output, depth=6, string_limit=4800, list_limit=96)
+                            with tenant_context(getattr(conversation, "business_profile_id", None)):
+                                artifact_id = store_remote_tool_output_artifact(
+                                    conversation=conversation,
+                                    tool_call_id=tool_call_id_value,
+                                    tool_event_id=event_id_value or block_key,
+                                    invoked_tool=tool_name,
+                                    remote_event_payload=payload,
+                                    tool_result=output_artifact
+                                    if isinstance(output_artifact, Mapping)
+                                    else {"output": output_artifact},
+                                )
+                        except Exception:  # pragma: no cover - best effort only
+                            artifact_id = None
+
+                if artifact_id:
+                    payload["artifact_id"] = artifact_id
+                if output_preview is not None:
+                    payload["output_preview"] = output_preview
+
+                tool_use_block["payload"] = dict(payload)
+
+                stream_queue.put(
+                    {
+                        "type": "block_tool_result",
+                        "payload": {
+                            "message_id": _current_message_id(),
+                            "block": copy.deepcopy(tool_use_block),
+                        },
+                    }
+                )
+                if state_machine_enabled and not stream_complete.is_set():
+                    if deferred_spinner_label:
+                        _emit_spinner_status(
+                            deferred_spinner_label,
+                            pending=True,
+                            fallback="Working...",
+                            reason=deferred_spinner_reason,
+                        )
+                    elif deferred_bridge_thinking and inflight_now == 0:
+                        _emit_spinner_status(
+                            "Thinking…",
+                            pending=True,
+                            fallback="Thinking…",
+                            reason=f"tool:{tool_name}:{phase}:bridge_thinking",
+                        )
+            else:
+                stream_queue.put(
+                    {
+                        "type": "block_tool_use",
+                        "payload": {
+                            "message_id": _current_message_id(),
+                            "block": copy.deepcopy(tool_use_block),
+                        },
+                    }
+                )
         except Exception:  # pragma: no cover - defensive
             logger.exception("portal tool event serialization failed")
 
     def signal_stream_complete() -> None:
         if stream_complete.is_set():
             return
+        _close_active_text_block()
         stream_complete.set()
         trace_logger.log("stream.completed", indent=1)
         stream_queue.put({"type": "status", "state": "complete", "label": ""})
         logger.debug("Stream completion signaled for conversation %s", conversation.id)
+
+    def signal_stream_stop() -> None:
+        if stream_stopped.is_set():
+            return
+        stream_stopped.set()
         stream_queue.put(stream_sentinel)
 
     def on_placeholder_response(text: str) -> None:
@@ -2486,19 +2642,82 @@ def stream_send(request: HttpRequest) -> StreamingHttpResponse:
                     message_metadata["answer_confidence"] = base_plan.diagnostics.get("answer_confidence")
                 if base_plan.ingestion_warnings:
                     message_metadata["ingestion_warnings"] = [dict(item) for item in base_plan.ingestion_warnings]
-                tool_events_payload = _normalize_tool_event_history(
-                    tool_events,
-                    message_id=plan_holder.get("pending_message_id"),
-                    limit=tool_event_limit,
-                )
-                if tool_events_payload:
-                    message_metadata["tool_events"] = tool_events_payload
+
+                with blocks_lock:
+                    blocks_snapshot = copy.deepcopy(content_blocks)
+                # Ensure the final persisted answer text remains visible after refresh.
+                #
+                # - If the provider never streamed, we create a single text block.
+                # - If we only have one streamed text block, update it to the final sanitized response.
+                # - If we have multiple streamed text blocks (tool interleaving), avoid overwriting the
+                #   last block with the full answer (it duplicates earlier blocks). Instead, only apply
+                #   simple prefix/suffix reconciliation when the final response text wraps the streamed
+                #   text exactly.
+                text_blocks: list[dict[str, object]] = []
+                text_fragments: list[str] = []
+                for entry in blocks_snapshot:
+                    if str(entry.get("type") or "").strip().lower() != "text":
+                        continue
+                    payload_raw = entry.get("payload")
+                    payload_map = payload_raw if isinstance(payload_raw, Mapping) else {}
+                    text_value = payload_map.get("text")
+                    if not isinstance(text_value, str):
+                        continue
+                    text_blocks.append(entry)
+                    text_fragments.append(text_value)
+
+                if not text_blocks:
+                    blocks_snapshot.append(dict(make_text_block(response_text, block_id=new_block_id())))
+                elif len(text_blocks) == 1:
+                    text_block = text_blocks[0]
+                    payload_raw = text_block.get("payload")
+                    payload_out: dict[str, object] = dict(payload_raw) if isinstance(payload_raw, Mapping) else {}
+                    payload_out["text"] = response_text
+                    text_block["payload"] = payload_out
+                else:
+                    streamed_text = "".join(text_fragments)
+                    if response_text and streamed_text and response_text != streamed_text:
+                        if response_text.startswith(streamed_text):
+                            suffix = response_text[len(streamed_text) :]
+                            if suffix:
+                                last_block = text_blocks[-1]
+                                last_payload_raw = last_block.get("payload")
+                                last_payload: dict[str, object] = dict(last_payload_raw) if isinstance(last_payload_raw, Mapping) else {}
+                                last_text = last_payload.get("text")
+                                last_payload["text"] = f"{last_text}{suffix}" if isinstance(last_text, str) else suffix
+                                last_block["payload"] = last_payload
+                        elif response_text.endswith(streamed_text):
+                            prefix = response_text[: len(response_text) - len(streamed_text)]
+                            if prefix:
+                                first_block = text_blocks[0]
+                                first_payload_raw = first_block.get("payload")
+                                first_payload: dict[str, object] = dict(first_payload_raw) if isinstance(first_payload_raw, Mapping) else {}
+                                first_text = first_payload.get("text")
+                                first_payload["text"] = f"{prefix}{first_text}" if isinstance(first_text, str) else prefix
+                                first_block["payload"] = first_payload
+
+                # Structured outputs (tables/kv) should render as content blocks, not markdown.
+                structured_blocks = content_blocks_from_response_blocks(list(base_plan.response_blocks))
+                if structured_blocks:
+                    blocks_snapshot.extend(structured_blocks)
+                    for block in structured_blocks:
+                        stream_queue.put(
+                            {
+                                "type": "block_start",
+                                "payload": {
+                                    "message_id": _current_message_id(),
+                                    "block": copy.deepcopy(block),
+                                },
+                            }
+                        )
+
                 with TRACER.start_as_current_span("portal.finalize.persist") as persist_span:
                     ai_message = service.append_message(
                         session_token=session_token,
                         sender=ConversationSender.AI,
                         body=response_text,
                         metadata=message_metadata,
+                        content_blocks=blocks_snapshot,
                         conversation=conversation,
                         message_id=plan_holder.get("pending_message_id"),
                     )
@@ -2522,13 +2741,8 @@ def stream_send(request: HttpRequest) -> StreamingHttpResponse:
                     "message_id": str(ai_message.id),
                     "session_status": session_state.status,
                     "metadata_version": plan_holder.get("metadata_version", 1),
+                    "content_blocks": ai_message.content_blocks,
                 }
-                if tool_events_payload:
-                    final_payload["tool_events"] = _normalize_tool_event_history(
-                        tool_events,
-                        message_id=ai_message.id,
-                        limit=tool_event_limit,
-                    )
                 if base_plan.diagnostics:
                     answer_confidence = base_plan.diagnostics.get("answer_confidence")
                     if answer_confidence is not None:
@@ -2580,6 +2794,8 @@ def stream_send(request: HttpRequest) -> StreamingHttpResponse:
             if token is not None:
                 otel_context.detach(token)
             close_old_connections()
+            signal_stream_complete()
+            signal_stream_stop()
             finalize_queue.put(finalize_sentinel)
 
     def orchestrate(parent_ctx) -> None:
@@ -2613,6 +2829,7 @@ def stream_send(request: HttpRequest) -> StreamingHttpResponse:
             plan_holder["error"] = str(exc)
             trace_logger.log_error("orchestrator.turn", exc, indent=1)
             signal_stream_complete()
+            signal_stream_stop()
             finalize_queue.put(finalize_sentinel)
             actions_queue.put(actions_sentinel)
         finally:
@@ -2624,292 +2841,76 @@ def stream_send(request: HttpRequest) -> StreamingHttpResponse:
     worker = threading.Thread(target=orchestrate, args=(request_context,), daemon=True)
     worker.start()
 
-    def _legacy_event_stream() -> Iterable[str]:
-        streamed_from_provider = False
+    def _block_event_stream() -> Iterable[str]:
         while True:
             try:
                 chunk = stream_queue.get(timeout=0.25)
             except Empty:
-                if worker.is_alive() or not stream_complete.is_set():
-                    continue
-                break
+                continue
             if chunk is stream_sentinel:
                 break
-            if isinstance(chunk, dict):
-                if chunk.get("type") == "context_progress":
-                    state_value = chunk.get("state")
-                    label_value = chunk.get("label")
-                    data: dict[str, object] = {}
-                    if isinstance(state_value, str):
-                        data["state"] = state_value
-                    if isinstance(label_value, str):
-                        data["label"] = label_value
-                    meta_value = chunk.get("meta")
-                    if isinstance(meta_value, dict):
-                        data["meta"] = meta_value
-                    yield "event: context_progress\n"
-                    yield f"data: {json.dumps(data)}\n\n"
-                    continue
-                if chunk.get("type") == "status":
-                    state_value = chunk.get("state")
-                    label_value = chunk.get("label")
-                    data: dict[str, object] = {}
-                    if isinstance(state_value, str):
-                        data["state"] = state_value
-                    if isinstance(label_value, str):
-                        data["label"] = label_value
-                    meta_value = chunk.get("meta")
-                    if isinstance(meta_value, dict):
-                        data["meta"] = meta_value
-                    yield "event: status\n"
-                    yield f"data: {json.dumps(data)}\n\n"
-                    continue
-                if chunk.get("type") == "spinnerStatus":
-                    data = {
-                        "message_id": chunk.get("message_id"),
-                        "text": chunk.get("spinner_text"),
-                        "pending": chunk.get("pending"),
-                    }
-                    yield "event: spinnerStatus\n"
-                    yield f"data: {json.dumps(data)}\n\n"
-                    continue
-                if chunk.get("type") == "toolEvent":
-                    payload = chunk.get("payload") or {}
-                    yield "event: toolEvent\n"
-                    yield f"data: {json.dumps(payload)}\n\n"
-                    continue
-            streamed_from_provider = True
-            chunk_text = str(chunk)
-            streamed_text_chunks.append(chunk_text)
-            yield "event: delta\n"
-            yield f"data: {json.dumps({'text': chunk_text})}\n\n"
-        streamed_text = "".join(streamed_text_chunks)
-        normalized_streamed = streamed_text.strip()
+            if not isinstance(chunk, dict):
+                continue
 
-        session_status: str | None = None
-        try:
-            session_state = service.get_session_state(session_token=session_token, conversation=conversation)
-            session_status = session_state.status
-        except PortalNotFoundError:
-            session_status = None
-
-        context: StreamingTurnContext | None = None
-        need_context_for_final = (not streamed_from_provider) or not normalized_streamed
-        if need_context_for_final:
-            worker.join()
-            context = plan_holder.get("context")
-            if not context:
-                error_message = plan_holder.get("error", "AI orchestration failed")
-                yield "event: error\n"
-                yield f"data: {json.dumps(error_message)}\n\n"
-                return
-            if not streamed_from_provider:
-                stream_text = "".join(context.streamed_chunks).strip() or context.response_text or ""
-                reconstructed: list[str] = []
-                _emit_stream_chunks(reconstructed.append, stream_text)
-                for chunk in reconstructed:
-                    streamed_text_chunks.append(chunk)
-                    yield "event: delta\n"
-                    yield f"data: {json.dumps({'text': chunk})}\n\n"
-                normalized_streamed = "".join(streamed_text_chunks).strip()
-        provisional_text = normalized_streamed
-        if need_context_for_final and context:
-            fallback_text = context.response_text or ""
-            if not provisional_text:
-                provisional_text = fallback_text
-        provisional_payload = {
-            "text": provisional_text,
-            "message_id": None,
-            "session_status": session_status,
-            "pending": True,
-        }
-        yield "event: final\n"
-        yield f"data: {json.dumps(provisional_payload)}\n\n"
-
-        if not need_context_for_final:
-            worker.join()
-            context = plan_holder.get("context")
-
-        finalize_queue.get()
-        final_payload = plan_holder.get("final_payload")
-        if not final_payload:
-            error_message = plan_holder.get("final_error", "AI finalization failed")
-            yield "event: error\n"
-            yield f"data: {json.dumps(error_message)}\n\n"
-            return
-
-        final_payload = dict(final_payload)
-        persisted_text = final_payload.get("text", "")
-        effective_text = normalized_streamed or persisted_text
-        message_id_value = final_payload.get("message_id")
-        if effective_text and effective_text != persisted_text and message_id_value:
-            try:
-                message_uuid = uuid.UUID(str(message_id_value))
-            except (TypeError, ValueError):
-                message_uuid = None
-            if message_uuid:
-                service.update_message(
-                    session_token=session_token,
-                    message_id=message_uuid,
-                    body=effective_text,
-                    conversation=conversation,
-                )
-                final_payload["text"] = effective_text
-
-        final_payload["pending"] = False
-        trace_logger.log(
-            "response.dispatched",
-            detail=f"message_id={final_payload.get('message_id')}",
-            indent=1,
-        )
-        yield "event: turnPersisted\n"
-        yield f"data: {json.dumps(final_payload)}\n\n"
-
-        while True:
-            post_event = actions_queue.get()
-            if post_event is actions_sentinel:
-                break
-            if post_event.get("type") == "turnUpdated":
-                payload = post_event.get("payload") or {}
-                yield "event: turnUpdated\n"
+            chunk_type = str(chunk.get("type") or "").strip()
+            if chunk_type in {"block_start", "block_delta", "block_end", "block_tool_use", "block_tool_result"}:
+                payload = chunk.get("payload") or {}
+                yield f"event: {chunk_type}\n"
                 yield f"data: {json.dumps(payload)}\n\n"
-            elif post_event.get("type") == "actionsComplete":
+                continue
+
+            if chunk_type == "context_progress":
+                state_value = chunk.get("state")
+                label_value = chunk.get("label")
+                data: dict[str, object] = {}
+                if isinstance(state_value, str):
+                    data["state"] = state_value
+                if isinstance(label_value, str):
+                    data["label"] = label_value
+                meta_value = chunk.get("meta")
+                if isinstance(meta_value, dict):
+                    data["meta"] = meta_value
+                yield "event: context_progress\n"
+                yield f"data: {json.dumps(data)}\n\n"
+                continue
+
+            if chunk_type == "status":
+                state_value = chunk.get("state")
+                label_value = chunk.get("label")
+                data: dict[str, object] = {}
+                if isinstance(state_value, str):
+                    data["state"] = state_value
+                if isinstance(label_value, str):
+                    data["label"] = label_value
+                meta_value = chunk.get("meta")
+                if isinstance(meta_value, dict):
+                    data["meta"] = meta_value
+                yield "event: status\n"
+                yield f"data: {json.dumps(data)}\n\n"
+                continue
+
+            if chunk_type == "spinnerStatus":
                 payload = {
-                    "message_id": post_event.get("message_id"),
-                    "actions": post_event.get("actions", []),
-                    "label": "Follow-up tasks completed.",
+                    "message_id": chunk.get("message_id"),
+                    "text": chunk.get("spinner_text"),
+                    "pending": chunk.get("pending"),
                 }
-                trace_logger.log(
-                    "actions.completed",
-                    detail=f"message_id={payload['message_id']} count={len(payload['actions'])}",
-                    indent=2,
-                )
-                yield "event: actionsComplete\n"
+                yield "event: spinnerStatus\n"
                 yield f"data: {json.dumps(payload)}\n\n"
-            elif post_event.get("type") == "actionsError":
-                payload = {
-                    "message_id": post_event.get("message_id"),
-                    "error": post_event.get("error", "Background workflow failed."),
-                }
-                trace_logger.log_error(
-                    "actions",
-                    payload.get("error") or "actions failed",
-                    indent=2,
-                )
-                yield "event: actionsError\n"
-                yield f"data: {json.dumps(payload)}\n\n"
+                continue
 
-    def _state_machine_event_stream() -> Iterable[str]:
-        streamed_from_provider = False
-        pending_emitted = False
-        while True:
-            try:
-                chunk = stream_queue.get(timeout=0.25)
-            except Empty:
-                if worker.is_alive() or not stream_complete.is_set():
-                    continue
-                break
-            if chunk is stream_sentinel:
-                break
-            if isinstance(chunk, dict):
-                if chunk.get("type") == "context_progress":
-                    state_value = chunk.get("state")
-                    label_value = chunk.get("label")
-                    data: dict[str, object] = {}
-                    if isinstance(state_value, str):
-                        data["state"] = state_value
-                    if isinstance(label_value, str):
-                        data["label"] = label_value
-                    meta_value = chunk.get("meta")
-                    if isinstance(meta_value, dict):
-                        data["meta"] = meta_value
-                    yield "event: context_progress\n"
-                    yield f"data: {json.dumps(data)}\n\n"
-                    continue
-                if chunk.get("type") == "status":
-                    state_value = chunk.get("state")
-                    label_value = chunk.get("label")
-                    data: dict[str, object] = {}
-                    if isinstance(state_value, str):
-                        data["state"] = state_value
-                    if isinstance(label_value, str):
-                        data["label"] = label_value
-                    meta_value = chunk.get("meta")
-                    if isinstance(meta_value, dict):
-                        data["meta"] = meta_value
-                    yield "event: status\n"
-                    yield f"data: {json.dumps(data)}\n\n"
-                    continue
-                if chunk.get("type") == "spinnerStatus":
-                    payload = {
-                        "message_id": chunk.get("message_id"),
-                        "text": chunk.get("spinner_text"),
-                        "pending": chunk.get("pending"),
-                    }
-                    yield "event: spinnerStatus\n"
-                    yield f"data: {json.dumps(payload)}\n\n"
-                    continue
-                if chunk.get("type") == "toolEvent":
-                    payload = chunk.get("payload") or {}
-                    yield "event: toolEvent\n"
-                    yield f"data: {json.dumps(payload)}\n\n"
-                    continue
-            streamed_from_provider = True
-            chunk_text = str(chunk)
-            streamed_text_chunks.append(chunk_text)
-            pending_payload = _turn_pending_payload("".join(streamed_text_chunks))
-            pending_emitted = True
-            yield "event: turnPending\n"
-            yield f"data: {json.dumps(pending_payload)}\n\n"
-
-        streamed_text = "".join(streamed_text_chunks)
-        normalized_streamed = streamed_text.strip()
-        context: StreamingTurnContext | None = None
-        need_context_for_text = (not streamed_from_provider) or not normalized_streamed
-        if need_context_for_text:
-            worker.join()
-            context = plan_holder.get("context")
-            if not context:
-                error_message = plan_holder.get("error", "AI orchestration failed")
-                yield "event: error\n"
-                yield f"data: {json.dumps(error_message)}\n\n"
-                return
-            stream_text = "".join(context.streamed_chunks).strip() or context.response_text or ""
-            if stream_text:
-                streamed_text_chunks.append(stream_text)
-                normalized_streamed = "".join(streamed_text_chunks).strip()
-        if not pending_emitted:
-            pending_payload = _turn_pending_payload(normalized_streamed)
-            yield "event: turnPending\n"
-            yield f"data: {json.dumps(pending_payload)}\n\n"
+            # Unknown structured event: ignore rather than corrupting the transcript.
 
         worker.join()
         finalize_queue.get()
         final_payload = plan_holder.get("final_payload")
         if not final_payload:
-            error_message = plan_holder.get("final_error", "AI finalization failed")
+            error_message = plan_holder.get("final_error") or plan_holder.get("error") or "AI finalization failed"
             yield "event: error\n"
-            yield f"data: {json.dumps(error_message)}\n\n"
+            yield f"data: {json.dumps(str(error_message))}\n\n"
             return
 
         final_payload = dict(final_payload)
-        persisted_text = final_payload.get("text", "")
-        effective_text = normalized_streamed or persisted_text
-        message_id_value = final_payload.get("message_id")
-        if effective_text and effective_text != persisted_text and message_id_value:
-            try:
-                message_uuid = uuid.UUID(str(message_id_value))
-            except (TypeError, ValueError):
-                message_uuid = None
-            if message_uuid:
-                service.update_message(
-                    session_token=session_token,
-                    message_id=message_uuid,
-                    body=effective_text,
-                    conversation=conversation,
-                )
-                final_payload["text"] = effective_text
-
         final_payload["pending"] = False
         if "metadata_version" not in final_payload:
             final_payload["metadata_version"] = plan_holder.get("metadata_version", 1)
@@ -2957,10 +2958,7 @@ def stream_send(request: HttpRequest) -> StreamingHttpResponse:
                 yield f"data: {json.dumps(payload)}\n\n"
 
     def event_stream() -> Iterable[str]:
-        if state_machine_enabled:
-            yield from _state_machine_event_stream()
-        else:
-            yield from _legacy_event_stream()
+        yield from _block_event_stream()
 
     return StreamingHttpResponse(event_stream(), content_type="text/event-stream")
 

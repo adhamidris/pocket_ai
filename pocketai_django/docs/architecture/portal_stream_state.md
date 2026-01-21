@@ -6,28 +6,50 @@ throughout the turn without leaking internal planner/tool behavior.
 
 ## Events
 
-### `turnPending`
+### `block_start`
 
-- Fired whenever the assistant bubble text changes during streaming.
+- Fired when a new **text** block begins streaming.
 - Payload:
   ```json
   {
     "message_id": "uuid",
-    "text": "partial answer text",
-    "pending": true,
-    "session_status": "live",
-    "spinner_text": "Reading sales workbook…",
-    "metadata_version": 3
+    "block": {
+      "block_id": "blk_...",
+      "type": "text",
+      "created_at": "iso8601",
+      "payload": { "text": "" }
+    }
   }
   ```
-- `metadata_version` increments whenever planner metadata or spinner text
-  changes so the widget can coalesce out-of-order events.
+
+### `block_delta`
+
+- Fired whenever the active text block grows.
+- Payload:
+  ```json
+  {
+    "message_id": "uuid",
+    "block_id": "blk_...",
+    "delta": "text chunk"
+  }
+  ```
+
+### `block_end`
+
+- Fired when the active text block is closed (e.g., stream completion or tool interleaving).
+- Payload:
+  ```json
+  {
+    "message_id": "uuid",
+    "block_id": "blk_..."
+  }
+  ```
 
 ### `turnPersisted`
 
 - Fired exactly once after sanitization + persistence succeed.
-- Same payload shape as `turnPending`, but `pending` is `false` and `text`
-  contains the persisted answer.
+- `pending` is `false` and `text` contains the persisted answer. `content_blocks`
+  is the source-of-truth transcript for deterministic refresh.
 - Arrival of this event means the visitor can dismiss spinners; planner/action
   metadata may continue to stream via `turnUpdated`.
 
@@ -63,12 +85,52 @@ throughout the turn without leaking internal planner/tool behavior.
   orchestrator detects a tool-specific status change. Sending an empty `text`
   clears the spinner row.
 
+### `block_tool_use`
+
+- Fired when a tool lifecycle event arrives (started / approval_requested / finished / approval_resolved).
+- Payload:
+  ```json
+  {
+    "message_id": "uuid",
+    "block": {
+      "block_id": "blk_...",
+      "type": "tool_use",
+      "created_at": "iso8601",
+      "payload": {
+        "event_id": "evt_...",
+        "phase": "started",
+        "status": "running",
+        "tool_name": "mcp_demo__tool",
+        "remote": { "connection_name": "GitHub MCP", "remote_tool": "search" },
+        "approval_id": null
+      }
+    }
+  }
+  ```
+
+### `block_tool_result`
+
+- Fired when a tool completes (finished / approval_resolved).
+- Payload:
+  ```json
+  {
+    "message_id": "uuid",
+    "block": {
+      "block_id": "blk_...",
+      "type": "tool_result",
+      "created_at": "iso8601",
+      "payload": {
+        "event_id": "evt_...",
+        "status": "ok",
+        "duration_ms": 240,
+        "artifact_id": "uuid-or-null",
+        "output_preview": { "text": "..." }
+      }
+    }
+  }
+  ```
+
 ## Rollout Guidelines
 
-- Behind `PORTAL_STREAM_STATE_MACHINE` until the frontend + backend ship
-  together.
-- Legacy clients (which only know about `delta`/`final/turnPersisted`) continue
-  to work when the flag is off.
-- Once the flag is enabled, only `turnPending`/`turnPersisted`/`turnUpdated`
-  and `spinnerStatus` are emitted; the widget must not rely on `delta` events.
-
+- Treat `content_blocks[]` as the transcript source-of-truth.
+- `spinnerStatus` remains gated behind `PORTAL_STREAM_STATE_MACHINE`.

@@ -205,7 +205,6 @@
   [data-chat-portal] [data-streaming-status="true"] {
     font-size: var(--portal-font-sm);
     gap: var(--portal-gap-1);
-    margin-bottom: var(--portal-gap-1);
   }
 
   [data-chat-portal] [data-chat-input-area] {
@@ -636,7 +635,7 @@
               {% if message.sender|lower == 'customer' %}{{ message.body }}{% endif %}
             </div>
             {% if message.sender|lower != 'customer' %}
-            {{ message.body|json_script:message.id }}
+            {{ message.render_payload|json_script:message.id }}
             {% endif %}
             <div data-message-meta class="mt-2 text-xs text-muted-foreground space-y-1 hidden"></div>
             {% if message.sender|lower != 'customer' %}

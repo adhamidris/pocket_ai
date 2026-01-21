@@ -44,34 +44,32 @@ class ChatPortalClient {
       sessionsList: container.querySelector("[data-sessions-list]"),
       newSessionBtn: container.querySelector("[data-new-session-btn]"),
     };
-    // Session management state
-    this.sessionTokens = [];
-    this.currentSessionToken = null;
-    this.sessionStorageKey = `chat_sessions_${this.businessSlug}_${this.agentSlug}`;
-    this.streamingDedupDone = false;
-    this.streamingFinalBodyEl = null;
-    this.streamingMessageNode = null;
-    this.streamingMessageBodyEl = null;
-    this.streamingMessageBubbleEl = null;
-    this.streamingStatusEl = null;
+	    // Session management state
+	    this.sessionTokens = [];
+	    this.currentSessionToken = null;
+	    this.sessionStorageKey = `chat_sessions_${this.businessSlug}_${this.agentSlug}`;
+	    this.toolsVisibilityKey = `chat_tools_visible_${this.businessSlug}_${this.agentSlug}`;
+	    this.globalToolsVisible = this.readGlobalToolsPreference();
+	    this.streamingMessageNode = null;
+	    this.streamingMessageBodyEl = null;
+	    this.streamingStatusEl = null;
     this.streamingStatusTextEl = null;
     this.streamingStatusDotEl = null;
-    this.streamingBuffer = "";
-    this.streamingRawBuffer = "";
-    this.streamingRewritePending = false;
     this.streamingMessageId = null;
-    this.streamingTextEl = null;
     this.streamingBlocksEl = null;
-    this.streamingToolsEl = null;
-    // Segment-based interleaved text and tool cards
-    this.streamingSegmentsContainer = null;
-    this.currentSegmentIndex = 0;
-    this.currentSegmentNode = null;
-    this.currentSegmentTextEl = null;
-    this.currentSegmentToolsEl = null;
-    this.segmentHasTools = false;
-    this.frozenBufferLength = 0; // Track how much of the buffer has been frozen into previous segments
-    this.pendingSegmentBoundaryLength = null; // UTF-16 offset where current segment's text ends (before tools)
+    // Canonical block streaming state (block_id -> DOM + buffers)
+    this.usingBlockStream = false;
+    this.streamingContentBlockEls = new Map();
+    this.streamingTextBlockBuffers = new Map();
+    this.streamingTextBlockCommitState = new Map();
+    this.streamingFinalTextBlocks = new Set();
+    this.streamingTextBlockActiveIds = new Set();
+    this.streamingToolBlockActiveIds = new Set();
+    this.streamingDirtyTextBlocks = new Set();
+    this.streamingBlockRenderRaf = null;
+    this.spinnerDesiredText = "";
+    this.spinnerDesiredPending = false;
+    this.spinnerDesiredIsError = false;
     this.pendingMessageId = null;
     this.pendingMetadataVersion = 0;
     this.usingStateMachine = false;
@@ -84,9 +82,6 @@ class ChatPortalClient {
     this.pendingMessages = [];
     this.statusStyleInjected = false;
     this.ensureStatusStyle();
-    this.tableIntentActive = false;
-    this.tableIntentTimestamp = 0;
-    this.tableIntentWindowMs = 2500;
     // Session empty state tracking
     this.currentSessionHasMessages = false;
     this.sessionCreationInProgress = false;
@@ -94,18 +89,9 @@ class ChatPortalClient {
     this.sessionLoadInProgress = false;
     this.sessionSummaries = [];
     this.pendingSessionTitles = {};
-    this.toolEventCards = new Map();
-    this.toolsVisibilityKey = `chat_portal_tools_visible_${this.businessSlug}_${this.agentSlug}`;
-    this.globalToolsVisible = this.readGlobalToolsPreference();
-    this.toolHistoryModal = null;
-    this.toolHistoryModalBody = null;
-    // Agentic spinner state (derive from real tool/status events)
-    this.agenticSpinnerActiveToolEventId = null;
-    this.agenticSpinnerLastLabel = "";
     // Streaming UX helpers
     this.scrollToBottomRaf = null;
     this.scrollToBottomBehavior = "auto";
-    this.streamingRenderRaf = null;
   }
 
   async init() {
@@ -119,10 +105,12 @@ class ChatPortalClient {
     this.setComposerAvailability(false);
     try {
       const bootstrapData = await this.bootstrapSession();
-      if (!bootstrapData) return;
-      this.renderExistingMessages();
-      this.hydrateMessageMetadata(this.bootstrapPayload ? this.bootstrapPayload.messages : []);
-      this.setComposerAvailability(true);
+	      if (!bootstrapData) return;
+	      this.renderExistingMessages();
+	      this.hydrateMessageMetadata(this.bootstrapPayload ? this.bootstrapPayload.messages : []);
+	      this.ensureGlobalToolsToggle();
+	      this.updateAllToolsVisibility();
+	      this.setComposerAvailability(true);
       
       // Track this session in localStorage
       this.trackCurrentSession();
@@ -176,19 +164,6 @@ class ChatPortalClient {
 	      // Add relative and group classes for AI messages
 	      el.classList.add("relative", "group", "pr-8");
 	
-	      // If the message already contains reconstructed segments/tool cards, do not
-	      // overwrite the DOM (prevents tool cards disappearing on refresh).
-	      if (
-	        el.querySelector("[data-message-segments]") ||
-	        el.querySelector("[data-tool-card]") ||
-	        el.querySelector("[data-response-blocks]")
-	      ) {
-	        if (!el.querySelector('button[data-copy-btn]')) {
-	          this.injectCopyButton(el);
-	        }
-	        return;
-	      }
-
 	      if (!messageId) {
 	        // No message ID means no markdown to render, just add copy button
 	        if (!el.querySelector('button[data-copy-btn]')) {
@@ -201,13 +176,30 @@ class ChatPortalClient {
       const scriptTag = document.getElementById(messageId);
       if (scriptTag) {
         try {
-          const rawMarkdown = JSON.parse(scriptTag.textContent);
-          if (rawMarkdown) {
-            const rendered = this.renderMarkdown(rawMarkdown);
-            el.innerHTML = rendered;
-            // Inject copy button ONLY after innerHTML is set
-            this.injectCopyButton(el);
+          const rawPayload = JSON.parse(scriptTag.textContent);
+          const payloadObj = rawPayload && typeof rawPayload === "object" ? rawPayload : null;
+          const contentBlocks =
+            payloadObj && Array.isArray(payloadObj.content_blocks)
+              ? payloadObj.content_blocks
+              : payloadObj && Array.isArray(payloadObj.contentBlocks)
+              ? payloadObj.contentBlocks
+              : [];
+          const bodyText =
+            typeof rawPayload === "string"
+              ? rawPayload
+              : payloadObj && typeof payloadObj.body === "string"
+              ? payloadObj.body
+              : "";
+
+          // Prefer canonical block rendering when available.
+          if (Array.isArray(contentBlocks) && contentBlocks.length) {
+            this.renderMessageContentBlocks(el, contentBlocks);
+          } else if (bodyText) {
+            el.innerHTML = this.renderMarkdown(bodyText);
           }
+
+          // Inject copy button ONLY after content is set
+          this.injectCopyButton(el);
         } catch (e) {
           console.warn('Failed to parse markdown for message', messageId, e);
         }
@@ -223,7 +215,6 @@ class ChatPortalClient {
       if (!message.metadata || typeof message.metadata !== "object") return;
       this.updateMessageMetadata(message.id, message.metadata);
     });
-    this.updateAllToolsVisibility();
   }
 
   injectCopyButton(container) {
@@ -263,7 +254,18 @@ class ChatPortalClient {
         
         if (scriptTag) {
              try {
-                 textToCopy = JSON.parse(scriptTag.textContent);
+                 const parsed = JSON.parse(scriptTag.textContent);
+                 if (typeof parsed === "string") {
+                   textToCopy = parsed;
+                 } else if (parsed && typeof parsed === "object") {
+                   const blocks =
+                     Array.isArray(parsed.content_blocks)
+                       ? parsed.content_blocks
+                       : Array.isArray(parsed.contentBlocks)
+                       ? parsed.contentBlocks
+                       : [];
+                   textToCopy = this.extractPlainTextFromContentBlocks(blocks) || (parsed.body || "");
+                 }
              } catch(e) {}
         }
         if (!textToCopy) {
@@ -642,18 +644,35 @@ class ChatPortalClient {
     if (this.sessionLoadInProgress) {
       return;
     }
-    if (eventType === "turnPending") {
-      this.handleTurnPendingEvent(data);
+
+    if (eventType === "block_start") {
+      this.usingBlockStream = true;
+      this.handleBlockStartEvent(data);
+      return;
+    }
+    if (eventType === "block_delta") {
+      this.usingBlockStream = true;
+      this.handleBlockDeltaEvent(data);
+      return;
+    }
+    if (eventType === "block_end") {
+      this.usingBlockStream = true;
+      this.handleBlockEndEvent(data);
+      return;
+    }
+    if (eventType === "block_tool_use") {
+      this.usingBlockStream = true;
+      this.handleBlockToolUseEvent(data);
+      return;
+    }
+    if (eventType === "block_tool_result") {
+      this.usingBlockStream = true;
+      this.handleBlockToolResultEvent(data);
       return;
     }
 
     if (eventType === "spinnerStatus") {
       this.handleSpinnerStatusEvent(data);
-      return;
-    }
-
-    if (eventType === "toolEvent") {
-      this.handleToolEvent(data);
       return;
     }
 
@@ -679,42 +698,14 @@ class ChatPortalClient {
             return;
           }
 
-          if (state === "reading_document" && !this.usingStateMachine) {
-            // Knowledge read: we expect content to be revised after doc load.
-            this.streamingRewritePending = true;
-          } else if (state === "searching_knowledge" && !this.usingStateMachine) {
-            // Knowledge search in legacy mode: keep silent and rely on spinnerStatus when available.
-          } else if (state === "planning_actions") {
+          if (state === "planning_actions") {
             // Keep this internal; do not surface to the visitor.
             return;
-          } else if (state === "responding" && !this.usingStateMachine) {
-            // Legacy mode: keep silent and rely on spinnerStatus when available.
-          } else if (state && state !== "responding" && !this.usingStateMachine) {
-            // Legacy mode: keep silent and rely on spinnerStatus when available.
           }
+          void label;
         }
       } catch (_err) {
         // ignore malformed status payloads
-      }
-      return;
-    }
-
-    if (eventType === "delta") {
-      if (this.usingStateMachine) {
-        return;
-      }
-      try {
-        const payload = data ? JSON.parse(data) : null;
-        if (payload && payload.text) {
-          let chunk = payload.text;
-
-          if (!this.workflowLocked) {
-            this.streamingActive = true;
-          }
-          this.appendStreamingChunk(chunk);
-        }
-      } catch (error) {
-        console.warn("Failed to parse stream delta", error);
       }
       return;
     }
@@ -745,75 +736,9 @@ class ChatPortalClient {
       this.handleTurnPersistedEvent(data);
       return;
     }
-
-    if (!data && eventType !== "final") return;
-    if (eventType !== "final") {
-      if (eventType === "error") {
-        this.showToast("Stream error", data, true);
-      }
-      return;
+    if (eventType === "error" && data) {
+      this.showToast("Stream error", data, true);
     }
-    try {
-      const payload = JSON.parse(data);
-      if (payload) {
-        const finalText = payload.text || "";
-        if (this.streamingMessageNode) {
-          this.finalizeStreamingMessage(finalText);
-        } else if (finalText) {
-          this.appendMessage({
-            sender: "ai",
-            body: finalText,
-            sent_at: new Date().toISOString(),
-          });
-        }
-      }
-      if (payload && payload.session_status) {
-        this.updateStatus(payload.session_status);
-        this.updateCsatVisibility(payload.session_status);
-      }
-      this.awaitingReply = false;
-      this.streamFinished = true;
-      this.isStreaming = false;
-      this.updateSendButtonState(false);
-      this.setComposerAvailability(true);
-      this.updateComposerNotice(false);
-    } catch (error) {
-      console.warn("Failed to parse stream payload", error);
-    } finally {
-      this.workflowLocked = true;
-      this.streamingActive = false;
-      this.flushQueueAfterTurn = true;
-      this.clearStreamingStatus();
-      this.markStreamFinished();
-    }
-  }
-
-  handleTurnPendingEvent(data) {
-    let payload = null;
-    try {
-      payload = data ? JSON.parse(data) : null;
-    } catch (error) {
-      console.warn("Failed to parse turnPending event", error);
-      return;
-    }
-    if (!payload) return;
-    const messageId = payload.message_id || this.pendingMessageId || null;
-    this.pendingMessageId = messageId;
-    this.usingStateMachine = true;
-    if (typeof payload.metadata_version === "number") {
-      this.pendingMetadataVersion = payload.metadata_version;
-    }
-    if (payload.session_status) {
-      this.updateStatus(payload.session_status);
-      this.updateCsatVisibility(payload.session_status);
-    }
-    this.updateStreamingText(payload.text || "", messageId);
-    if (payload.spinner_text) {
-      this.setSpinnerText(payload.spinner_text, { pending: payload.pending !== false });
-    }
-    this.awaitingReply = false;
-    this.isStreaming = true;
-    this.updateSendButtonState(true);
   }
 
   handleSpinnerStatusEvent(data) {
@@ -829,6 +754,312 @@ class ChatPortalClient {
     const text = payload.text || "";
     const pending = payload.pending !== false;
     this.setSpinnerText(text, { pending });
+  }
+
+  handleBlockStartEvent(data) {
+    let payload = null;
+    try {
+      payload = data ? JSON.parse(data) : null;
+    } catch (error) {
+      console.warn("Failed to parse block_start payload", error);
+      return;
+    }
+    if (!payload || typeof payload !== "object") return;
+    const block = payload.block && typeof payload.block === "object" ? payload.block : null;
+    if (!block) return;
+    const messageId = (payload.message_id || payload.messageId || "").toString().trim() || null;
+    this.ensureStreamingMessageNode(messageId || this.pendingMessageId);
+    this.upsertStreamingContentBlock(block);
+    const blockType = (block.type || "").toString().trim().toLowerCase();
+    const blockId = (block.block_id || block.blockId || "").toString().trim();
+    if (blockType === "text" && blockId) {
+      this.streamingTextBlockActiveIds.add(blockId);
+      if (this.streamingStatusEl) {
+        this.streamingStatusEl.classList.add("hidden");
+      }
+      const payload = block.payload && typeof block.payload === "object" ? block.payload : null;
+      const initialText = payload && typeof payload.text === "string" ? payload.text : "";
+      if (!this.streamingTextBlockBuffers.has(blockId)) {
+        this.streamingTextBlockBuffers.set(blockId, initialText);
+      } else if (initialText) {
+        const existing = this.streamingTextBlockBuffers.get(blockId) || "";
+        if (initialText.length > existing.length) {
+          this.streamingTextBlockBuffers.set(blockId, initialText);
+        }
+      }
+      this.ensureStreamingTextBlockElement(blockId);
+      this.streamingDirtyTextBlocks.add(blockId);
+      this.scheduleStreamingBlockRender();
+    }
+  }
+
+  handleBlockDeltaEvent(data) {
+    let payload = null;
+    try {
+      payload = data ? JSON.parse(data) : null;
+    } catch (error) {
+      console.warn("Failed to parse block_delta payload", error);
+      return;
+    }
+    if (!payload || typeof payload !== "object") return;
+    const blockId = (payload.block_id || payload.blockId || "").toString().trim();
+    const delta = typeof payload.delta === "string" ? payload.delta : "";
+    if (!blockId || !delta) return;
+
+    const messageId = (payload.message_id || payload.messageId || "").toString().trim() || null;
+    this.ensureStreamingMessageNode(messageId || this.pendingMessageId);
+
+    this.streamingTextBlockActiveIds.add(blockId);
+    if (this.streamingStatusEl) {
+      this.streamingStatusEl.classList.add("hidden");
+    }
+
+    const existing = this.streamingTextBlockBuffers.get(blockId) || "";
+    this.streamingTextBlockBuffers.set(blockId, `${existing}${delta}`);
+    this.ensureStreamingTextBlockElement(blockId);
+    this.streamingDirtyTextBlocks.add(blockId);
+    this.scheduleStreamingBlockRender();
+    this.scheduleScrollToBottom({ behavior: "auto" });
+  }
+
+  handleBlockEndEvent(data) {
+    let payload = null;
+    try {
+      payload = data ? JSON.parse(data) : null;
+    } catch (error) {
+      console.warn("Failed to parse block_end payload", error);
+      return;
+    }
+    if (!payload || typeof payload !== "object") return;
+    const blockId = (payload.block_id || payload.blockId || "").toString().trim();
+    if (!blockId) return;
+    this.streamingFinalTextBlocks.add(blockId);
+    this.streamingDirtyTextBlocks.add(blockId);
+    this.scheduleStreamingBlockRender();
+    this.streamingTextBlockActiveIds.delete(blockId);
+    if (this.streamingTextBlockActiveIds.size === 0) {
+      this.setSpinnerText(this.spinnerDesiredText, {
+        pending: this.spinnerDesiredPending,
+        isError: this.spinnerDesiredIsError,
+      });
+    }
+  }
+
+  handleBlockToolUseEvent(data) {
+    let payload = null;
+    try {
+      payload = data ? JSON.parse(data) : null;
+    } catch (error) {
+      console.warn("Failed to parse block_tool_use payload", error);
+      return;
+    }
+    if (!payload || typeof payload !== "object") return;
+    const block = payload.block && typeof payload.block === "object" ? payload.block : null;
+    if (!block) return;
+    const messageId = (payload.message_id || payload.messageId || "").toString().trim() || null;
+    this.ensureStreamingMessageNode(messageId || this.pendingMessageId);
+    const blockId = (block.block_id || block.blockId || "").toString().trim();
+    const blockPayload = block.payload && typeof block.payload === "object" ? block.payload : {};
+    const phase = (blockPayload.phase || "").toString().trim().toLowerCase();
+    const status = (blockPayload.status || "").toString().trim().toLowerCase();
+    if (blockId && (phase === "started" || phase === "approval_requested" || status === "running" || status === "pending_approval" || status === "pending")) {
+      this.streamingToolBlockActiveIds.add(blockId);
+    }
+    this.upsertStreamingContentBlock(block);
+    this.repositionStreamingStatusRow();
+    this.scheduleScrollToBottom({ behavior: "auto" });
+  }
+
+  handleBlockToolResultEvent(data) {
+    let payload = null;
+    try {
+      payload = data ? JSON.parse(data) : null;
+    } catch (error) {
+      console.warn("Failed to parse block_tool_result payload", error);
+      return;
+    }
+    if (!payload || typeof payload !== "object") return;
+    const block = payload.block && typeof payload.block === "object" ? payload.block : null;
+    if (!block) return;
+    const messageId = (payload.message_id || payload.messageId || "").toString().trim() || null;
+    this.ensureStreamingMessageNode(messageId || this.pendingMessageId);
+    const blockId = (block.block_id || block.blockId || "").toString().trim();
+    const blockPayload = block.payload && typeof block.payload === "object" ? block.payload : {};
+    const phase = (blockPayload.phase || "").toString().trim().toLowerCase();
+    const status = (blockPayload.status || "").toString().trim().toLowerCase();
+    if (blockId) {
+      if (phase === "finished") {
+        this.streamingToolBlockActiveIds.delete(blockId);
+      } else if (phase === "approval_resolved") {
+        if (status && status !== "approved") {
+          this.streamingToolBlockActiveIds.delete(blockId);
+        }
+      }
+    }
+    this.upsertStreamingContentBlock(block);
+    this.repositionStreamingStatusRow();
+    this.scheduleScrollToBottom({ behavior: "auto" });
+  }
+
+  scheduleStreamingBlockRender() {
+    if (this.streamingBlockRenderRaf) return;
+    this.streamingBlockRenderRaf = requestAnimationFrame(() => {
+      this.streamingBlockRenderRaf = null;
+      this.flushStreamingBlockRenders();
+    });
+  }
+
+  flushStreamingBlockRenders() {
+    if (!this.streamingDirtyTextBlocks.size) return;
+    const blockIds = Array.from(this.streamingDirtyTextBlocks);
+    this.streamingDirtyTextBlocks.clear();
+
+    blockIds.forEach((blockId) => {
+      const wrapper = this.streamingContentBlockEls.get(blockId);
+      if (!wrapper) return;
+      const textEl = wrapper.querySelector("[data-content-block-text]");
+      if (!textEl) return;
+      const raw = this.streamingTextBlockBuffers.get(blockId) || "";
+      const cleaned = this.stripInlineResponseBlocks(raw);
+
+      const committedEl = textEl.querySelector("[data-streaming-md-committed]");
+      const tailEl = textEl.querySelector("[data-streaming-md-tail]");
+      if (!committedEl || !tailEl) {
+        textEl.innerHTML = "";
+        const committed = document.createElement("div");
+        committed.dataset.streamingMdCommitted = "true";
+        committed.classList.add("hidden");
+        const tail = document.createElement("div");
+        tail.dataset.streamingMdTail = "true";
+        tail.classList.add("hidden");
+        textEl.appendChild(committed);
+        textEl.appendChild(tail);
+      }
+      const committed = textEl.querySelector("[data-streaming-md-committed]");
+      const tail = textEl.querySelector("[data-streaming-md-tail]");
+      if (!committed || !tail) return;
+
+      if (this.streamingFinalTextBlocks.has(blockId)) {
+        committed.innerHTML = this.renderBufferToHtmlWithMode(cleaned, { mode: "markdown" });
+        tail.innerHTML = "";
+        committed.classList.toggle("hidden", !committed.innerHTML);
+        tail.classList.add("hidden");
+        this.streamingTextBlockCommitState.delete(blockId);
+        return;
+      }
+
+      const previousCommittedIndex = this.streamingTextBlockCommitState.get(blockId) || 0;
+      const boundaryIndex = this.findStableMarkdownCommitBoundary(cleaned);
+      const nextCommittedIndex = Math.max(previousCommittedIndex, boundaryIndex);
+      if (nextCommittedIndex > previousCommittedIndex) {
+        let chunk = cleaned.slice(previousCommittedIndex, nextCommittedIndex);
+        if (chunk.startsWith("\n\n")) {
+          chunk = chunk.slice(2);
+        }
+        // Avoid re-rendering the entire committed tree every time; append stable blocks
+        // to reduce visible "restyling" mid-stream.
+        if (previousCommittedIndex === 0) {
+          committed.innerHTML = this.renderBufferToHtmlWithMode(chunk, { mode: "markdown" });
+        } else if (!committed.innerHTML) {
+          committed.innerHTML = this.renderBufferToHtmlWithMode(cleaned.slice(0, nextCommittedIndex), { mode: "markdown" });
+        } else if (chunk.trim()) {
+          committed.insertAdjacentHTML("beforeend", this.renderBufferToHtmlWithMode(chunk, { mode: "markdown" }));
+        }
+        this.streamingTextBlockCommitState.set(blockId, nextCommittedIndex);
+      }
+      committed.classList.toggle("hidden", nextCommittedIndex === 0 || !committed.innerHTML);
+
+      let tailText = cleaned.slice(nextCommittedIndex);
+      if (tailText.startsWith("\n\n")) {
+        tailText = tailText.slice(2);
+      }
+      tail.innerHTML = tailText ? this.renderStreamingTailHtml(tailText) : "";
+      tail.classList.toggle("hidden", !tailText);
+    });
+  }
+
+  findStableMarkdownCommitBoundary(text) {
+    if (!text) return 0;
+    let idx = text.lastIndexOf("\n\n");
+    while (idx > 0) {
+      const head = text.slice(0, idx);
+      const backtickFences = (head.match(/(?:^|\n)```/g) || []).length;
+      const tildeFences = (head.match(/(?:^|\n)~~~/g) || []).length;
+      if (backtickFences % 2 === 0 && tildeFences % 2 === 0) {
+        return idx;
+      }
+      idx = text.lastIndexOf("\n\n", idx - 1);
+    }
+    return 0;
+  }
+
+  ensureStreamingTextBlockElement(blockId) {
+    if (!blockId) return;
+    if (this.streamingContentBlockEls.has(blockId)) return;
+    if (!this.streamingBlocksEl) return;
+    const initialText = this.streamingTextBlockBuffers.get(blockId) || "";
+    const placeholder = {
+      block_id: blockId,
+      type: "text",
+      created_at: new Date().toISOString(),
+      payload: { text: initialText },
+    };
+    const el = this.buildContentBlockElement(placeholder);
+    if (!el) return;
+    const textEl = el.querySelector("[data-content-block-text]");
+    if (textEl) {
+      textEl.innerHTML = "";
+      const committed = document.createElement("div");
+      committed.dataset.streamingMdCommitted = "true";
+      committed.classList.add("hidden");
+      const tail = document.createElement("div");
+      tail.dataset.streamingMdTail = "true";
+      tail.classList.add("hidden");
+      textEl.appendChild(committed);
+      textEl.appendChild(tail);
+    }
+    this.streamingContentBlockEls.set(blockId, el);
+    this.streamingBlocksEl.appendChild(el);
+  }
+
+  upsertStreamingContentBlock(block) {
+    if (!block || typeof block !== "object") return;
+    if (!this.streamingBlocksEl) return;
+    const blockType = (block.type || "").toString().trim().toLowerCase();
+    const blockId = (block.block_id || block.blockId || "").toString().trim();
+    if (!blockId) return;
+
+    if (blockType === "text") {
+      const payload = block.payload && typeof block.payload === "object" ? block.payload : {};
+      const text = typeof payload.text === "string" ? payload.text : "";
+      this.streamingTextBlockBuffers.set(blockId, text);
+      this.ensureStreamingTextBlockElement(blockId);
+      this.streamingDirtyTextBlocks.add(blockId);
+      this.scheduleStreamingBlockRender();
+      return;
+    }
+
+    const existing = this.streamingContentBlockEls.get(blockId);
+    if (existing) {
+      const payload = block.payload && typeof block.payload === "object" ? block.payload : {};
+      if (blockType === "tool_use") {
+        this.updateToolEventCard(existing, payload);
+      } else if (blockType === "tool_result") {
+        this.updateToolEventCard(existing, { ...payload, phase: "finished" });
+      }
+      if (blockType === "tool_use" || blockType === "tool_result") {
+        this.updateInlineToolCardsVisibility(this.streamingMessageNode);
+      }
+      return;
+    }
+
+    const el = this.buildContentBlockElement(block);
+    if (!el) return;
+    this.streamingContentBlockEls.set(blockId, el);
+    this.streamingBlocksEl.appendChild(el);
+    if (blockType === "tool_use" || blockType === "tool_result") {
+      this.updateInlineToolCardsVisibility(this.streamingMessageNode);
+    }
   }
 
   handleTurnUpdatedEvent(data) {
@@ -849,180 +1080,6 @@ class ChatPortalClient {
     }
     const messageId = payload.message_id || this.pendingMessageId || this.streamingMessageId;
     this.updateMessageMetadata(messageId, payload);
-  }
-
-	  handleToolEvent(data) {
-	    let payload = null;
-	    try {
-	      payload = data ? JSON.parse(data) : null;
-	    } catch (error) {
-	      console.warn("Failed to parse toolEvent payload", error);
-	      return;
-	    }
-	    if (!payload) return;
-	
-	    // Tool discovery is an internal gateway step; render it as spinner only (no tool card).
-	    const rawToolName = (payload.tool_name || payload.toolName || "").toString().trim().toLowerCase();
-	    if (rawToolName === "mcp_search_tools") {
-	      return;
-	    }
-
-	    const eventId = (payload.event_id || payload.eventId || payload.tool_call_id || payload.toolCallId || "")
-	      .toString()
-	      .trim();
-	    if (!eventId) return;
-    const phase = (payload.phase || "").toString().trim().toLowerCase();
-    if (!phase) return;
-
-    const rawMessageId = (payload.message_id || payload.messageId || "").toString().trim();
-    const messageId = rawMessageId || this.pendingMessageId || this.streamingMessageId || null;
-
-    let wrapper = this.getToolEventWrapper(messageId);
-    if (!wrapper) {
-      this.ensureStreamingMessageNode(messageId);
-      wrapper = this.getToolEventWrapper(messageId);
-    }
-    if (!wrapper) return;
-
-    // Use segment-based container for streaming messages
-    let toolsContainer;
-    const isStreamingMessage = wrapper === this.streamingMessageNode;
-
-    if (isStreamingMessage && this.streamingSegmentsContainer) {
-      // Get the appropriate segment's tools container
-      toolsContainer = this.getSegmentForToolEvent(eventId, messageId);
-    } else {
-      // For non-streaming messages, use the old approach
-      toolsContainer = this.ensureToolActivityContainer(wrapper);
-    }
-
-    if (!toolsContainer) return;
-
-    const messageKey = wrapper.dataset.messageId || "streaming";
-    const cardKey = `${messageKey}:${eventId}`;
-    let card = this.toolEventCards.get(cardKey);
-    if (!card) {
-      card = toolsContainer.querySelector(`[data-tool-event-id="${eventId}"]`);
-    }
-    if (!card) {
-      card = this.buildToolEventCard(payload);
-      if (!card) return;
-      // Store segment index on card for persistence
-      if (isStreamingMessage && typeof this.currentSegmentIndex === "number") {
-        card.dataset.segmentIndex = String(this.currentSegmentIndex);
-      }
-      toolsContainer.appendChild(card);
-      this.toolEventCards.set(cardKey, card);
-
-      // Mark that this segment now has tools
-      // DON'T advance to new segment yet - wait for new text to arrive
-      if (isStreamingMessage && this.currentSegmentToolsEl === toolsContainer) {
-        this.segmentHasTools = true;
-        if (typeof this.pendingSegmentBoundaryLength !== "number" || !Number.isFinite(this.pendingSegmentBoundaryLength)) {
-          const rawOffset = payload.text_offset ?? payload.textOffset ?? null;
-          if (typeof rawOffset === "number" && Number.isFinite(rawOffset) && rawOffset >= 0) {
-            this.pendingSegmentBoundaryLength = rawOffset;
-          } else if (this.streamingBuffer) {
-            this.pendingSegmentBoundaryLength = this.streamingBuffer.length;
-          } else {
-            this.pendingSegmentBoundaryLength = 0;
-          }
-        }
-      }
-    }
-    this.updateToolEventCard(card, payload);
-
-    if (!isStreamingMessage) {
-      this.updateMessageToolsToggle(wrapper);
-    }
-    this.updateInlineToolCardsVisibility(wrapper);
-
-    if (this.elements.messages) {
-      this.elements.messages.scrollTo({ top: this.elements.messages.scrollHeight, behavior: "smooth" });
-    }
-  }
-
-  updateAgenticSpinnerFromToolEvent(payload) {
-    if (!payload || this.workflowLocked) return;
-    if (!this.streamingMessageNode) return;
-
-    const phase = (payload.phase || "").toString().trim().toLowerCase();
-    const statusRaw = (payload.status || "").toString().trim().toLowerCase();
-    const approval = payload.approval && typeof payload.approval === "object" ? payload.approval : null;
-    const approvalStatus =
-      (approval && approval.status ? approval.status : payload.approval_status || payload.approvalStatus || "")
-        .toString()
-        .trim()
-        .toLowerCase();
-
-    const eventId = (payload.event_id || payload.eventId || payload.tool_call_id || payload.toolCallId || "").toString().trim();
-
-    const remote = payload.remote && typeof payload.remote === "object" ? payload.remote : null;
-    const connectionName = this.cleanMcpConnectionName(
-      remote && remote.connection_name ? remote.connection_name.toString() : ""
-    );
-    const remoteTool = remote && remote.remote_tool ? remote.remote_tool.toString() : "";
-    const toolName = (payload.tool_name || payload.toolName || "").toString().trim();
-
-    const isRunning = statusRaw === "running" || phase === "started";
-    const needsApproval = approvalStatus === "pending" || statusRaw === "pending_approval" || phase === "approval_requested";
-    const isFinished = phase === "finished" || statusRaw === "ok" || statusRaw === "success" || statusRaw === "succeeded";
-
-    if (needsApproval) {
-      this.agenticSpinnerActiveToolEventId = eventId || this.agenticSpinnerActiveToolEventId;
-      this.setAgenticSpinnerLabel("Approval required", { pending: true });
-      return;
-    }
-
-    if (isRunning) {
-      this.agenticSpinnerActiveToolEventId = eventId || this.agenticSpinnerActiveToolEventId;
-      const label = this.buildAgenticSpinnerLabel({
-        connectionName,
-        remoteTool,
-        toolName,
-      });
-      this.setAgenticSpinnerLabel(label, { pending: true });
-      return;
-    }
-
-    if (isFinished && (!eventId || eventId === this.agenticSpinnerActiveToolEventId)) {
-      this.agenticSpinnerActiveToolEventId = null;
-      this.setAgenticSpinnerLabel("Refining answer…", { pending: true });
-    }
-  }
-
-  setAgenticSpinnerLabel(label, { pending = true, isError = false } = {}) {
-    const normalized = (label || "").toString().trim();
-    if (!normalized) return;
-    if (normalized === this.agenticSpinnerLastLabel) return;
-    this.agenticSpinnerLastLabel = normalized;
-    this.setSpinnerText(normalized, { pending, isError });
-  }
-
-  cleanMcpConnectionName(name) {
-    return (name || "").toString().replace(/\s*\(mcp\)\s*$/i, "").trim();
-  }
-
-  buildAgenticSpinnerLabel({ connectionName, remoteTool, toolName }) {
-    const internal = (toolName || "").toString().trim();
-    if (internal === "search_knowledge") return "Searching…";
-    if (internal === "read_document") return "Reading…";
-    if (internal === "mcp_search_tools") return "Finding the right tool…";
-
-    const toolLabel = remoteTool ? this.formatStatus(remoteTool) : "";
-    if (connectionName && toolLabel) return `${connectionName}: ${toolLabel}…`;
-    if (connectionName) return `${connectionName}: Working…`;
-    if (toolLabel) return `${toolLabel}…`;
-    if (internal) return "Working…";
-    return "Assistant is working…";
-  }
-
-  getToolEventWrapper(messageId) {
-    if (messageId && this.elements.messages) {
-      const found = this.elements.messages.querySelector(`[data-message-id="${messageId}"]`);
-      if (found) return found;
-    }
-    return this.streamingMessageNode || null;
   }
 
   readGlobalToolsPreference() {
@@ -1291,21 +1348,17 @@ class ChatPortalClient {
     if (!this.elements.messages) return;
     const wrappers = this.elements.messages.querySelectorAll("[data-message-id]");
     wrappers.forEach((wrapper) => {
-      if (wrapper.querySelector("[data-message-tools]")) {
-        this.updateMessageToolsToggle(wrapper);
-      }
       this.updateInlineToolCardsVisibility(wrapper);
     });
   }
 
   updateInlineToolCardsVisibility(wrapper) {
     if (!wrapper) return;
-    const segmentsContainer = wrapper.querySelector("[data-message-segments]");
-    if (!segmentsContainer) return;
-    const cards = segmentsContainer.querySelectorAll("[data-tool-card]");
+    const cards = wrapper.querySelectorAll("[data-tool-card]");
     if (!cards.length) return;
 
-    if (this.globalToolsVisible) {
+    const visible = this.globalToolsVisible !== false;
+    if (visible) {
       cards.forEach((card) => card.classList.remove("hidden"));
       return;
     }
@@ -1315,131 +1368,6 @@ class ChatPortalClient {
       const keep = approvalStatus === "pending" || approvalStatus === "pending_approval";
       card.classList.toggle("hidden", !keep);
     });
-  }
-
-  getMessageToolsVisibility(wrapper) {
-    if (!this.globalToolsVisible) {
-      return this.wrapperHasPendingToolApprovals(wrapper);
-    }
-    if (!wrapper) return true;
-    const override = wrapper.dataset.toolsVisible;
-    if (override === "true") return true;
-    if (override === "false") return false;
-    return true;
-  }
-
-  wrapperHasPendingToolApprovals(wrapper) {
-    if (!wrapper) return false;
-    const cards = wrapper.querySelectorAll("[data-tool-card]");
-    if (!cards.length) return false;
-    for (const card of cards) {
-      const approvalStatus = (card.dataset.approvalStatus || "").toString().trim().toLowerCase();
-      if (approvalStatus === "pending" || approvalStatus === "pending_approval") {
-        return true;
-      }
-    }
-    return false;
-  }
-
-  toggleMessageTools(wrapper) {
-    if (!wrapper) return;
-    const next = !this.getMessageToolsVisibility(wrapper);
-    wrapper.dataset.toolsVisible = next ? "true" : "false";
-    this.updateMessageToolsToggle(wrapper);
-  }
-
-  updateMessageToolsToggle(wrapper) {
-    if (!wrapper) return;
-    const toolsContainer = wrapper.querySelector("[data-message-tools]");
-    const toggleRow = wrapper.querySelector("[data-message-tools-toggle]");
-    if (!toolsContainer || !toggleRow) return;
-    const cards = toolsContainer.querySelectorAll("[data-tool-card]");
-    const count = cards.length;
-    if (!count) {
-      toggleRow.classList.add("hidden");
-      toolsContainer.classList.add("hidden");
-      return;
-    }
-    toggleRow.classList.remove("hidden");
-    const button = toggleRow.querySelector("[data-tools-toggle-button]");
-    const countEl = toggleRow.querySelector("[data-tools-toggle-count]");
-    const stateEl = toggleRow.querySelector("[data-tools-toggle-state]");
-    if (countEl) countEl.textContent = `(${count})`;
-
-    const visible = this.getMessageToolsVisibility(wrapper);
-    const globalOff = !this.globalToolsVisible;
-    if (stateEl) {
-      if (globalOff && visible) {
-        stateEl.textContent = "Approval required";
-      } else {
-        stateEl.textContent = globalOff ? "Hidden" : visible ? "Hide" : "Show";
-      }
-    }
-    if (button) {
-      button.disabled = globalOff;
-      button.setAttribute("aria-expanded", visible ? "true" : "false");
-      button.classList.toggle("opacity-60", globalOff);
-      button.classList.toggle("cursor-not-allowed", globalOff);
-    }
-    toolsContainer.classList.toggle("hidden", !visible);
-  }
-
-  ensureToolActivityContainer(wrapper) {
-    if (!wrapper) return null;
-    const body = wrapper.querySelector("[data-message-body]");
-    if (!body) return null;
-
-    let container = wrapper.querySelector("[data-message-tools]");
-    if (!container) {
-      container = document.createElement("div");
-      container.dataset.messageTools = "true";
-      
-      // Insert tools container AFTER text content, not before
-      // Check for segments container first (from streaming)
-      const segmentsContainer = body.querySelector("[data-message-segments]");
-      if (segmentsContainer) {
-        // If there's a segments container, insert after it
-        body.insertBefore(container, segmentsContainer.nextSibling);
-      } else {
-        // For legacy messages, append at the end so tools appear after text
-        body.appendChild(container);
-      }
-    }
-    container.className = "mt-2 mb-3 space-y-1 w-full flex flex-col items-start";
-
-    let toggleRow = wrapper.querySelector("[data-message-tools-toggle]");
-    if (!toggleRow) {
-      toggleRow = document.createElement("div");
-      toggleRow.dataset.messageToolsToggle = "true";
-      toggleRow.className = "text-[11px] text-muted-foreground hidden";
-
-      const button = document.createElement("button");
-      button.type = "button";
-      button.dataset.toolsToggleButton = "true";
-      button.className =
-        "inline-flex items-center gap-2 rounded-full border border-border/40 bg-background/70 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-wide transition-colors hover:text-foreground hover:border-primary/40";
-
-      const label = document.createElement("span");
-      label.textContent = "Tools";
-
-      const count = document.createElement("span");
-      count.dataset.toolsToggleCount = "true";
-
-      const state = document.createElement("span");
-      state.dataset.toolsToggleState = "true";
-
-      button.appendChild(label);
-      button.appendChild(count);
-      button.appendChild(state);
-      toggleRow.appendChild(button);
-
-      container.parentElement.insertBefore(toggleRow, container);
-      button.addEventListener("click", () => this.toggleMessageTools(wrapper));
-    }
-
-    this.ensureGlobalToolsToggle();
-    this.updateMessageToolsToggle(wrapper);
-    return container;
   }
 
 		  buildToolEventCard(payload) {
@@ -2216,32 +2144,84 @@ class ChatPortalClient {
       if (typeof payload.metadata_version === "number") {
         this.pendingMetadataVersion = payload.metadata_version;
       }
-      if (payload.text) {
-        const finalText = payload.text.toString();
-        // In state-machine mode, the assistant text is streamed via `turnPending` updates,
-        // so we need an explicit final markdown render pass at `turnPersisted`.
+      const contentBlocks =
+        Array.isArray(payload.content_blocks) ? payload.content_blocks : Array.isArray(payload.contentBlocks) ? payload.contentBlocks : [];
+      const persistedText = payload.text ? payload.text.toString() : "";
+
+	      if (contentBlocks.length) {
+	        this.ensureStreamingMessageNode(messageId);
+	        const bodyEl = this.getMessageBodyElement(messageId) || this.streamingMessageBodyEl;
+	        if (bodyEl) {
+          const blocksRoot = bodyEl.querySelector("[data-message-blocks]");
+          const isStreamingRoot = blocksRoot && this.streamingBlocksEl && blocksRoot === this.streamingBlocksEl;
+	            if (isStreamingRoot) {
+	            const desiredIds = [];
+	            contentBlocks.forEach((block) => {
+	              if (!block || typeof block !== "object") return;
+	              const blockId = (block.block_id || block.blockId || "").toString().trim();
+	              if (!blockId) return;
+	              desiredIds.push(blockId);
+	              this.upsertStreamingContentBlock(block);
+	              const blockType = (block.type || "").toString().trim().toLowerCase();
+	              if (blockType === "text") {
+	                this.streamingFinalTextBlocks.add(blockId);
+	                this.streamingDirtyTextBlocks.add(blockId);
+	              }
+	            });
+	            const desiredSet = new Set(desiredIds);
+	            Array.from(this.streamingContentBlockEls.entries()).forEach(([blockId, el]) => {
+	              if (!desiredSet.has(blockId)) {
+	                if (el && el.parentNode) {
+                  el.remove();
+                }
+	                this.streamingContentBlockEls.delete(blockId);
+	                this.streamingTextBlockBuffers.delete(blockId);
+	                this.streamingTextBlockCommitState.delete(blockId);
+	                this.streamingFinalTextBlocks.delete(blockId);
+	                this.streamingDirtyTextBlocks.delete(blockId);
+	              }
+	            });
+            desiredIds.forEach((blockId) => {
+              const el = this.streamingContentBlockEls.get(blockId);
+              if (el && this.streamingBlocksEl) {
+                this.streamingBlocksEl.appendChild(el);
+              }
+            });
+            if (this.streamingStatusEl && this.streamingBlocksEl) {
+              this.streamingBlocksEl.appendChild(this.streamingStatusEl);
+            }
+            this.flushStreamingBlockRenders();
+          } else {
+            this.renderMessageContentBlocks(bodyEl, contentBlocks);
+          }
+	          this.injectCopyButton(bodyEl);
+	        }
+        if (messageId) {
+          const scriptTag = document.getElementById(messageId);
+          if (scriptTag && scriptTag.tagName === "SCRIPT") {
+            const bodyText = this.extractPlainTextFromContentBlocks(contentBlocks) || persistedText || "";
+            scriptTag.textContent = JSON.stringify({ body: bodyText, content_blocks: contentBlocks });
+          }
+        }
+      } else if (persistedText) {
         if (this.streamingMessageNode) {
           this.ensureStreamingMessageNode(messageId);
-          if (messageId) {
-            const scriptTag = document.getElementById(messageId);
-            if (scriptTag && scriptTag.tagName === "SCRIPT") {
-              scriptTag.textContent = JSON.stringify(finalText);
-            }
-          }
-          this.finalizeStreamingMessage(finalText);
+          this.updateLatestAssistantMessage(persistedText, messageId);
         } else {
-          this.updateLatestAssistantMessage(finalText, messageId);
+          this.updateLatestAssistantMessage(persistedText, messageId);
         }
       }
-      this.updateMessageMetadata(messageId, payload);
+
+	      this.updateMessageMetadata(messageId, payload);
       if (payload.session_status) {
         this.updateStatus(payload.session_status);
         this.updateCsatVisibility(payload.session_status);
       }
-      this.setSpinnerText("", { pending: false });
-      this.resetStreamingState(false, false);
+	      this.setSpinnerText("", { pending: false });
+	      this.resetStreamingState(false, false);
       this.pendingMessageId = null;
       this.usingStateMachine = false;
+      this.usingBlockStream = false;
       this.streamFinished = true;
       this.isStreaming = false;
       this.workflowLocked = false;
@@ -2308,12 +2288,14 @@ class ChatPortalClient {
   }
 
   renderMarkdown(text) {
-    if (!text) return "";
+    const raw = (text || "").toString();
+    if (!raw) return "";
+    const normalized = this.normalizeMarkdownForDisplay(raw);
     if (typeof marked === 'undefined') {
       // Fallback if marked not loaded
-      return text.replace(/</g, '&lt;').replace(/>/g, '&gt;');
+      return normalized.replace(/</g, '&lt;').replace(/>/g, '&gt;');
     }
-    const html = marked.parse(text);
+    const html = marked.parse(normalized);
     if (typeof DOMPurify !== 'undefined') {
       return DOMPurify.sanitize(html, {
         ADD_ATTR: ['target'],
@@ -2323,200 +2305,259 @@ class ChatPortalClient {
     return html;
   }
 
-  renderResponseBlocks(bodyEl, blocks) {
-    if (!bodyEl || !Array.isArray(blocks) || !blocks.length) {
-      return;
+  normalizeMarkdownForDisplay(text) {
+    if (!text) return "";
+
+    const markerIndices = [];
+    let inFence = false;
+    let inInline = false;
+
+    for (let i = 0; i < text.length; i += 1) {
+      if (!inInline && text.startsWith("```", i)) {
+        inFence = !inFence;
+        i += 2;
+        continue;
+      }
+
+      const ch = text[i];
+      if (!inFence && ch === "`") {
+        inInline = !inInline;
+        continue;
+      }
+
+      if (!inFence && !inInline && text.startsWith("**", i)) {
+        markerIndices.push(i);
+        i += 1;
+      }
     }
-    try {
-      const target = bodyEl.querySelector("[data-streaming-blocks]") || bodyEl;
-      const existing = target.querySelector("[data-response-blocks]");
-      if (existing) {
-        existing.remove();
-      }
-      if (target === bodyEl) {
-        const hasTables = blocks.some(
-          (block) => block && typeof block === "object" && (block.type || "").toString().toLowerCase() === "table",
-        );
-        if (hasTables) {
-          bodyEl.querySelectorAll("table").forEach((tableEl) => {
-            tableEl.remove();
-          });
-        }
-      }
-      const blockEl = this.buildResponseBlocks(blocks);
-      if (blockEl) {
-        target.appendChild(blockEl);
-      }
-    } catch (error) {
-      console.warn("Failed to render structured blocks", error);
+
+    if (markerIndices.length % 2 === 1) {
+      const idx = markerIndices[markerIndices.length - 1];
+      return text.slice(0, idx) + text.slice(idx + 2);
     }
+
+    return text;
   }
 
-  buildResponseBlocks(blocks) {
-    if (!Array.isArray(blocks) || !blocks.length) {
-      return null;
-    }
-    const wrapper = document.createElement("div");
-    wrapper.dataset.responseBlocks = "true";
-    wrapper.className = "mt-3 space-y-4";
+  extractPlainTextFromContentBlocks(blocks) {
+    if (!Array.isArray(blocks) || !blocks.length) return "";
+    const parts = [];
     blocks.forEach((block) => {
-      const section = this.buildResponseBlock(block);
-      if (section) {
-        wrapper.appendChild(section);
+      if (!block || typeof block !== "object") return;
+      const type = (block.type || "").toString().trim().toLowerCase();
+      const payload = block.payload && typeof block.payload === "object" ? block.payload : null;
+      if (!payload) return;
+      if (type === "text") {
+        const text = typeof payload.text === "string" ? payload.text : "";
+        const cleaned = this.stripInlineResponseBlocks(text).trim();
+        if (cleaned) parts.push(cleaned);
+        return;
+      }
+      if (type === "kv") {
+        const title = typeof payload.title === "string" ? payload.title.trim() : "";
+        const note = typeof payload.note === "string" ? payload.note.trim() : "";
+        const entries = Array.isArray(payload.entries) ? payload.entries : [];
+        const lines = [];
+        if (title) lines.push(title);
+        entries.forEach((entry) => {
+          if (!entry || typeof entry !== "object") return;
+          const key = typeof entry.key === "string" ? entry.key.trim() : "";
+          const value = typeof entry.value === "string" ? entry.value.trim() : "";
+          if (!key) return;
+          lines.push(value ? `${key}: ${value}` : `${key}:`);
+        });
+        if (note) lines.push(note);
+        const joined = lines.join("\n").trim();
+        if (joined) parts.push(joined);
+        return;
+      }
+      if (type === "table") {
+        const title = typeof payload.title === "string" ? payload.title.trim() : "";
+        const note = typeof payload.note === "string" ? payload.note.trim() : "";
+        const columns = Array.isArray(payload.columns) ? payload.columns : [];
+        const rows = Array.isArray(payload.rows) ? payload.rows : [];
+        const headers = columns
+          .map((col, idx) => {
+            if (typeof col === "string") return col;
+            if (!col || typeof col !== "object") return `col_${idx + 1}`;
+            const label = col.label || col.title || col.text || col.value;
+            return typeof label === "string" && label.trim() ? label.trim() : `col_${idx + 1}`;
+          })
+          .filter(Boolean);
+        const lines = [];
+        if (title) lines.push(title);
+        if (headers.length) lines.push(headers.join("\t"));
+        rows.forEach((row) => {
+          const cells = row && typeof row === "object" && Array.isArray(row.cells) ? row.cells : [];
+          if (!cells.length) return;
+          lines.push(cells.map((cell) => (typeof cell === "string" ? cell : cell == null ? "" : String(cell))).join("\t"));
+        });
+        if (note) lines.push(note);
+        const joined = lines.join("\n").trim();
+        if (joined) parts.push(joined);
       }
     });
-    if (!wrapper.children.length) {
-      return null;
-    }
-    return wrapper;
+    return parts.join("\n\n").trim();
   }
 
-  buildResponseBlock(block) {
-    if (!block || typeof block !== "object") {
-      return null;
+  coerceContentBlocks(blocks, fallbackBody) {
+    if (Array.isArray(blocks) && blocks.length) {
+      return blocks.filter((entry) => entry && typeof entry === "object");
     }
-    const type = (block.type || "").toString().toLowerCase();
+    const body = typeof fallbackBody === "string" ? fallbackBody : fallbackBody == null ? "" : String(fallbackBody);
+    const cleaned = this.stripInlineResponseBlocks(body).trim();
+    if (!cleaned) return [];
+    return [
+      {
+        block_id: `blk_local_${Math.random().toString(16).slice(2)}`,
+        type: "text",
+        created_at: new Date().toISOString(),
+        payload: { text: cleaned },
+      },
+    ];
+  }
+
+  renderMessageContentBlocks(messageBodyEl, blocks) {
+    if (!messageBodyEl) return;
+    const blocksRoot =
+      messageBodyEl.querySelector("[data-message-blocks]") ||
+      (() => {
+        messageBodyEl.innerHTML = "";
+        const root = document.createElement("div");
+        root.dataset.messageBlocks = "true";
+        root.className = "space-y-2";
+        messageBodyEl.appendChild(root);
+        return root;
+      })();
+    this.renderContentBlocksInto(blocksRoot, blocks);
+  }
+
+  renderContentBlocksInto(containerEl, blocks) {
+    if (!containerEl) return;
+    containerEl.innerHTML = "";
+    if (!Array.isArray(blocks) || !blocks.length) return;
+    blocks.forEach((block) => {
+      const el = this.buildContentBlockElement(block);
+      if (el) containerEl.appendChild(el);
+    });
+  }
+
+  buildContentBlockElement(block) {
+    if (!block || typeof block !== "object") return null;
+    const type = (block.type || "").toString().trim().toLowerCase();
+    const blockId = (block.block_id || block.blockId || "").toString().trim();
+    const payload = block.payload && typeof block.payload === "object" ? block.payload : {};
+
     if (type === "text") {
-      return this.buildTextBlock(block);
-    }
-    if (type === "table") {
-      return this.buildTableBlock(block);
-    }
-    return null;
-  }
+      const wrapper = document.createElement("div");
+      wrapper.dataset.contentBlock = "true";
+      wrapper.dataset.blockType = "text";
+      if (blockId) wrapper.dataset.blockId = blockId;
 
-  buildTextBlock(block) {
-    const lines = Array.isArray(block.body_md)
-      ? block.body_md
-      : Array.isArray(block.body)
-        ? block.body
-        : Array.isArray(block.lines)
-          ? block.lines
-          : block.text
-            ? [block.text]
-            : [];
-    if (!lines.length) {
-      return null;
+      const textEl = document.createElement("div");
+      textEl.dataset.contentBlockText = "true";
+      textEl.className = "space-y-2 leading-relaxed";
+      const text = typeof payload.text === "string" ? payload.text : "";
+      const cleaned = this.stripInlineResponseBlocks(text);
+      textEl.innerHTML = this.renderBufferToHtmlWithMode(cleaned, { mode: "markdown" });
+      wrapper.appendChild(textEl);
+      return wrapper;
     }
-    const container = document.createElement("div");
-    container.className = "relative group space-y-1 rounded-xl bg-background/60 px-3 py-2 border border-border/60";
-    if (block.heading) {
-      const heading = document.createElement("p");
-      heading.className = "text-sm font-semibold text-foreground";
-      heading.textContent = block.heading;
-      container.appendChild(heading);
-    }
-    const content = document.createElement("div");
-    content.className = "text-base leading-relaxed";
-    content.innerHTML = this.renderMarkdown(lines.join("\n"));
-    container.appendChild(content);
 
-    // Copy Button
-    const copyBtn = document.createElement("button");
-    // Positioned absolute bottom-right, hidden by default until group hover
-    copyBtn.className = "absolute bottom-1 right-1 p-1.5 rounded-lg text-muted-foreground/50 hover:text-foreground hover:bg-muted/50 transition-all";
-    copyBtn.type = "button";
-    copyBtn.innerHTML = `<svg class="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>`;
-    
-    copyBtn.addEventListener("click", async (e) => {
-      e.stopPropagation();
-      const textToCopy = lines.join("\n");
-      try {
-        await navigator.clipboard.writeText(textToCopy);
-        const originalHtml = copyBtn.innerHTML;
-        copyBtn.innerHTML = `<svg class="h-3.5 w-3.5 text-emerald-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"></polyline></svg>`;
-        setTimeout(() => {
-          copyBtn.innerHTML = originalHtml;
-        }, 2000);
-      } catch (err) {
-        console.warn("Clipboard write failed", err);
-      }
-    });
-    
-    container.appendChild(copyBtn);
+    if (type === "tool_use") {
+      const card = this.buildToolEventCard(payload);
+      if (!card) return null;
+      card.dataset.contentBlock = "true";
+      card.dataset.blockType = "tool_use";
+      if (blockId) card.dataset.blockId = blockId;
+      this.updateToolEventCard(card, payload);
+      return card;
+    }
 
-    if (block.rtl) {
-      container.dir = "rtl";
-      container.classList.add("text-right");
-      // Adjust button position for RTL if needed, or rely on absolute positioning which might need a flip
-      copyBtn.className = copyBtn.className.replace("right-1", "left-1");
-    }
-    return container;
-  }
-
-  buildTableBlock(block) {
-    const columns = Array.isArray(block.columns) ? block.columns : [];
-    const rows = Array.isArray(block.rows) ? block.rows : [];
-    if (!columns.length) {
-      return null;
-    }
-    const wrapper = document.createElement("div");
-    wrapper.className = "rounded-xl border border-border/60 overflow-hidden bg-background/80 shadow-sm";
-    if (block.title) {
-      const title = document.createElement("div");
-      title.className = "px-4 py-2 border-b border-border/60 text-sm font-semibold text-foreground";
-      title.textContent = block.title;
-      wrapper.appendChild(title);
-    }
-    const table = document.createElement("table");
-    table.className = "w-full border-collapse text-sm";
-    const thead = document.createElement("thead");
-    thead.className = "bg-muted/40 text-muted-foreground";
-    const headerRow = document.createElement("tr");
-    const columnMeta = columns.map((col, idx) => {
-      if (typeof col === "string") {
-        return { key: `col_${idx}`, label: col, align: "left" };
-      }
-      const label = col && (col.label || col.title || col.text || col.value) ? col.label || col.title || col.text || col.value : `Col ${idx + 1}`;
-      const align = col && typeof col.align === "string" ? col.align.toLowerCase() : "";
-      return {
-        key: col && col.key ? col.key : `col_${idx}`,
-        label,
-        align: ["center", "right"].includes(align) ? align : "left",
+    if (type === "tool_result") {
+      const basePayload = {
+        ...payload,
+        phase: "finished",
       };
-    });
+      const card = this.buildToolEventCard(basePayload);
+      if (!card) return null;
+      card.dataset.contentBlock = "true";
+      card.dataset.blockType = "tool_result";
+      if (blockId) card.dataset.blockId = blockId;
+      this.updateToolEventCard(card, basePayload);
+      return card;
+    }
 
-    columnMeta.forEach((col) => {
-      const th = document.createElement("th");
-      th.className = "px-3 py-2 text-left font-medium";
-      th.textContent = col.label || "";
-      if (col.align === "center") {
-        th.classList.add("text-center");
-      } else if (col.align === "right") {
-        th.classList.add("text-right");
+    if (type === "table") {
+      const columns = Array.isArray(payload.columns) ? payload.columns : [];
+      const rows = Array.isArray(payload.rows) ? payload.rows : [];
+      if (!columns.length) return null;
+
+      const wrapper = document.createElement("div");
+      wrapper.dataset.contentBlock = "true";
+      wrapper.dataset.blockType = "table";
+      if (blockId) wrapper.dataset.blockId = blockId;
+      wrapper.className = "rounded-xl border border-border/60 overflow-hidden bg-background/80 shadow-sm";
+
+      const titleText = typeof payload.title === "string" ? payload.title.trim() : "";
+      if (titleText) {
+        const title = document.createElement("div");
+        title.className = "px-4 py-2 border-b border-border/60 text-sm font-semibold text-foreground";
+        title.textContent = titleText;
+        wrapper.appendChild(title);
       }
-      headerRow.appendChild(th);
-    });
-    thead.appendChild(headerRow);
-    table.appendChild(thead);
 
-    const tbody = document.createElement("tbody");
-    if (!rows.length) {
-      const placeholderRow = document.createElement("tr");
-      placeholderRow.className = "border-t border-border/40";
-      const placeholderCell = document.createElement("td");
-      placeholderCell.colSpan = columnMeta.length;
-      placeholderCell.className = "px-3 py-4 text-center text-xs uppercase tracking-wide text-muted-foreground";
-      placeholderCell.textContent = "Formatting table…";
-      placeholderRow.appendChild(placeholderCell);
-      tbody.appendChild(placeholderRow);
-    } else {
-      rows.forEach((row) => {
+      const table = document.createElement("table");
+      table.className = "w-full border-collapse text-sm";
+      const thead = document.createElement("thead");
+      thead.className = "bg-muted/40 text-muted-foreground";
+      const headerRow = document.createElement("tr");
+
+      const columnMeta = columns.map((col, idx) => {
+        if (typeof col === "string") {
+          return { key: `col_${idx}`, label: col, align: "left" };
+        }
+        const label = col && (col.label || col.title || col.text || col.value) ? col.label || col.title || col.text || col.value : `Col ${idx + 1}`;
+        const align = col && typeof col.align === "string" ? col.align.toLowerCase() : "";
+        return {
+          key: col && col.key ? col.key : `col_${idx}`,
+          label,
+          align: ["center", "right"].includes(align) ? align : "left",
+        };
+      });
+
+      columnMeta.forEach((col) => {
+        const th = document.createElement("th");
+        th.className = "px-3 py-2 text-left font-medium";
+        th.textContent = (col.label || "").toString();
+        if (col.align === "center") {
+          th.classList.add("text-center");
+        } else if (col.align === "right") {
+          th.classList.add("text-right");
+        }
+        headerRow.appendChild(th);
+      });
+
+      thead.appendChild(headerRow);
+      table.appendChild(thead);
+
+      const tbody = document.createElement("tbody");
+      rows.forEach((row, rowIndex) => {
+        if (!row || typeof row !== "object") return;
+        const cells = Array.isArray(row.cells) ? row.cells : [];
+        if (!cells.length) return;
         const tr = document.createElement("tr");
-        tr.className = "border-t border-border/40";
-        const cells = Array.isArray(row && row.cells) ? row.cells : Array.isArray(row) ? row : [];
-        columnMeta.forEach((col, idx) => {
+        tr.className = rowIndex % 2 === 0 ? "bg-background" : "bg-muted/20";
+        columnMeta.forEach((col, colIndex) => {
           const td = document.createElement("td");
-          td.className = "px-3 py-2 text-foreground";
-          const cellValue = cells[idx];
-          const text =
-            cellValue && typeof cellValue === "object" ? cellValue.value || cellValue.text || cellValue.label || "" : cellValue ?? "";
-          td.textContent = text === null || text === undefined ? "" : text.toString();
+          td.className = "px-3 py-2 align-top text-foreground/90";
           if (col.align === "center") {
             td.classList.add("text-center");
           } else if (col.align === "right") {
             td.classList.add("text-right");
           }
+          const cellValue = colIndex < cells.length ? cells[colIndex] : "";
+          td.innerHTML = this.renderPlainText(typeof cellValue === "string" ? cellValue : cellValue == null ? "" : String(cellValue));
           tr.appendChild(td);
         });
         if (row.rtl) {
@@ -2525,22 +2566,85 @@ class ChatPortalClient {
         }
         tbody.appendChild(tr);
       });
-    }
-    table.appendChild(tbody);
-    wrapper.appendChild(table);
+      table.appendChild(tbody);
+      wrapper.appendChild(table);
 
-    if (block.note) {
-      const note = document.createElement("p");
-      note.className = "px-4 py-2 text-xs text-muted-foreground border-t border-border/40";
-      note.textContent = block.note;
-      wrapper.appendChild(note);
+      const noteText = typeof payload.note === "string" ? payload.note.trim() : "";
+      if (noteText) {
+        const note = document.createElement("p");
+        note.className = "px-4 py-2 text-xs text-muted-foreground border-t border-border/40";
+        note.textContent = noteText;
+        wrapper.appendChild(note);
+      }
+
+      if (payload.rtl) {
+        wrapper.dir = "rtl";
+        wrapper.classList.add("text-right");
+      }
+      return wrapper;
     }
 
-    if (block.rtl) {
-      wrapper.dir = "rtl";
-      wrapper.classList.add("text-right");
+    if (type === "kv") {
+      const entries = Array.isArray(payload.entries) ? payload.entries : [];
+      if (!entries.length) return null;
+
+      const wrapper = document.createElement("div");
+      wrapper.dataset.contentBlock = "true";
+      wrapper.dataset.blockType = "kv";
+      if (blockId) wrapper.dataset.blockId = blockId;
+      wrapper.className = "rounded-xl border border-border/60 overflow-hidden bg-background/80 shadow-sm";
+
+      const titleText = typeof payload.title === "string" ? payload.title.trim() : "";
+      if (titleText) {
+        const title = document.createElement("div");
+        title.className = "px-4 py-2 border-b border-border/60 text-sm font-semibold text-foreground";
+        title.textContent = titleText;
+        wrapper.appendChild(title);
+      }
+
+      const table = document.createElement("table");
+      table.className = "w-full border-collapse text-sm";
+      const tbody = document.createElement("tbody");
+      entries.forEach((entry, idx) => {
+        if (!entry || typeof entry !== "object") return;
+        const key = typeof entry.key === "string" ? entry.key.trim() : "";
+        if (!key) return;
+        const value = typeof entry.value === "string" ? entry.value : entry.value == null ? "" : String(entry.value);
+
+        const tr = document.createElement("tr");
+        tr.className = idx % 2 === 0 ? "bg-background" : "bg-muted/20";
+
+        const th = document.createElement("th");
+        th.className = "px-3 py-2 align-top text-left text-[10px] font-semibold uppercase tracking-wide text-muted-foreground w-24";
+        th.textContent = key;
+
+        const td = document.createElement("td");
+        td.className = "px-3 py-2 align-top text-foreground/90";
+        td.innerHTML = this.renderPlainText(value);
+
+        tr.appendChild(th);
+        tr.appendChild(td);
+        tbody.appendChild(tr);
+      });
+      table.appendChild(tbody);
+      wrapper.appendChild(table);
+
+      const noteText = typeof payload.note === "string" ? payload.note.trim() : "";
+      if (noteText) {
+        const note = document.createElement("p");
+        note.className = "px-4 py-2 text-xs text-muted-foreground border-t border-border/40";
+        note.textContent = noteText;
+        wrapper.appendChild(note);
+      }
+
+      if (payload.rtl) {
+        wrapper.dir = "rtl";
+        wrapper.classList.add("text-right");
+      }
+      return wrapper;
     }
-    return wrapper;
+
+    return null;
   }
 
   appendMessage(raw) {
@@ -2571,14 +2675,16 @@ class ChatPortalClient {
       setTimeout(() => {
         node.classList.remove("transition-all", "duration-500", "ease-out");
       }, 500);
-    } else {
-      container.appendChild(node);
-    }
+	    } else {
+	      container.appendChild(node);
+	    }
 
-    if (message.metadata) {
-      this.updateMessageMetadata(message.id, message.metadata);
-    }
-    if (scroller) {
+	    this.updateInlineToolCardsVisibility(node);
+
+	    if (message.metadata) {
+	      this.updateMessageMetadata(message.id, message.metadata);
+	    }
+	    if (scroller) {
       this.scheduleScrollToBottom({ behavior: "smooth", force: true });
     }
   }
@@ -2592,10 +2698,13 @@ class ChatPortalClient {
     const authorInitials =
       raw.author && raw.author.initials ? raw.author.initials : (isAi ? this.agentInitials : isCustomer ? "YOU" : "SYS");
     const metadata = raw.metadata && typeof raw.metadata === "object" ? raw.metadata : {};
+    const contentBlocks =
+      Array.isArray(raw.content_blocks) ? raw.content_blocks : Array.isArray(raw.contentBlocks) ? raw.contentBlocks : [];
     return {
       id: raw.id || null,
       sender,
       body: raw.body || "",
+      contentBlocks,
       sentAt: raw.sent_at || raw.sentAt || new Date().toISOString(),
       author: {
         name: authorName,
@@ -2634,11 +2743,11 @@ class ChatPortalClient {
     // Message body
     const body = document.createElement("div");
     body.dir = "auto";
-    const cleanBody = this.stripInlineResponseBlocks(message.body || "");
-    body.innerHTML = this.renderMarkdown(cleanBody);
     body.dataset.messageBubble = "true";
 
     if (isCustomer) {
+      const cleanBody = this.stripInlineResponseBlocks(message.body || "");
+      body.innerHTML = this.renderMarkdown(cleanBody);
       body.className = "text-base leading-relaxed bg-muted text-foreground px-5 py-3 rounded-2xl rounded-tr-sm text-start inline-block shadow-sm";
     } else {
       body.dataset.messageBody = "true";
@@ -2646,23 +2755,30 @@ class ChatPortalClient {
         body.dataset.messageId = message.id;
       }
       body.className = "relative group text-base leading-relaxed text-foreground text-start max-w-none break-words pr-8";
-      // Copy button will be added by injectCopyButton after message is appended
-    }
-    const initialBlocks = Array.isArray(message.metadata?.response_blocks) ? message.metadata.response_blocks : [];
-    if (initialBlocks.length) {
-      this.renderResponseBlocks(body, initialBlocks);
+      const blocksRoot = document.createElement("div");
+      blocksRoot.dataset.messageBlocks = "true";
+      blocksRoot.className = "space-y-2";
+      body.appendChild(blocksRoot);
+
+      const blocks = this.coerceContentBlocks(message.contentBlocks, message.body);
+      if (blocks.length) {
+        this.renderContentBlocksInto(blocksRoot, blocks);
+      }
     }
     content.appendChild(body);
 
     // Match server-side template: keep the raw markdown available in a json_script tag (id=message.id).
     // This powers deterministic tool-card interleaving + copy-to-clipboard on client-rendered transcripts.
     if (!isCustomer && message.id) {
-      const rawBody =
-        typeof message.body === "string" ? message.body : message.body === null || typeof message.body === "undefined" ? "" : String(message.body);
+      const rawBody = typeof message.body === "string" ? message.body : message.body == null ? "" : String(message.body);
+      const renderPayload = {
+        body: rawBody,
+        content_blocks: Array.isArray(message.contentBlocks) ? message.contentBlocks : [],
+      };
       const scriptTag = document.createElement("script");
       scriptTag.type = "application/json";
       scriptTag.id = message.id;
-      scriptTag.textContent = JSON.stringify(rawBody);
+      scriptTag.textContent = JSON.stringify(renderPayload);
       content.appendChild(scriptTag);
     }
 
@@ -2681,62 +2797,6 @@ class ChatPortalClient {
     wrapper.appendChild(content);
 
     return wrapper;
-  }
-
-  appendStreamingChunk(chunk) {
-    if (!chunk || !this.elements.messages) return;
-    this.ensureStreamingMessageNode();
-    const normalized = this.normalizeStreamingChunk(chunk);
-
-    if (this.streamingRewritePending) {
-      this.streamingBuffer = "";
-      this.streamingRawBuffer = "";
-      this.frozenBufferLength = 0;
-      this.pendingSegmentBoundaryLength = null;
-      // Clear ONLY text content in segments, preserve tool cards
-      if (this.streamingSegmentsContainer) {
-        // Preserve tool cards by only clearing text elements within segments
-        const segments = this.streamingSegmentsContainer.querySelectorAll('[data-segment]');
-        segments.forEach((segment) => {
-          const textEl = segment.querySelector('[data-segment-text]');
-          if (textEl) {
-            textEl.innerHTML = "";
-          }
-        });
-        // Reset to first segment for new text (but keep existing segments with tools)
-        const firstSegment = this.streamingSegmentsContainer.querySelector('[data-segment="0"]');
-        if (firstSegment) {
-          this.currentSegmentNode = firstSegment;
-          this.currentSegmentTextEl = firstSegment.querySelector('[data-segment-text]');
-          this.currentSegmentToolsEl = firstSegment.querySelector('[data-segment-tools]');
-          this.streamingTextEl = this.currentSegmentTextEl;
-        }
-        this.currentSegmentIndex = 0;
-        this.segmentHasTools = this.currentSegmentToolsEl && this.currentSegmentToolsEl.children.length > 0;
-        this.pendingSegmentBoundaryLength = this.segmentHasTools ? 0 : null;
-      } else if (this.streamingFinalBodyEl) {
-        this.streamingFinalBodyEl.innerHTML = "";
-      }
-      this.streamingRewritePending = false;
-    }
-    this.streamingRawBuffer += normalized;
-    this.scheduleStreamingRender();
-    this.scheduleScrollToBottom({ behavior: "auto" });
-  }
-
-  updateStreamingText(text, messageId = null) {
-    if (!this.elements.messages) return;
-    this.ensureStreamingMessageNode(messageId || this.pendingMessageId);
-    if (typeof text !== "string") {
-      return;
-    }
-    this.streamingRawBuffer = text;
-    this.scheduleStreamingRender();
-    this.scheduleScrollToBottom({ behavior: "auto" });
-  }
-
-  normalizeStreamingChunk(chunk) {
-    return chunk || "";
   }
 
   isNearBottom(scroller, thresholdPx = 120) {
@@ -2762,18 +2822,25 @@ class ChatPortalClient {
     });
   }
 
-  scheduleStreamingRender() {
-    if (this.streamingRenderRaf) return;
-    this.streamingRenderRaf = requestAnimationFrame(() => {
-      this.streamingRenderRaf = null;
-      this.refreshStreamingView();
-    });
-  }
-
   renderPlainText(text) {
     if (!text) return "";
     const escaped = this.escapeHtml((text || "").toString());
     return escaped.replace(/\n/g, "<br>");
+  }
+
+  renderStreamingTailHtml(text) {
+    if (!text) return "";
+    const escaped = this.escapeHtml((text || "").toString());
+    const paragraphs = escaped.split(/\n\n+/);
+    const html = paragraphs
+      .map((para) => {
+        const trimmed = para.trim();
+        if (!trimmed) return "";
+        return `<p>${trimmed.replace(/\n/g, "<br>")}</p>`;
+      })
+      .filter(Boolean)
+      .join("");
+    return html || "";
   }
 
   formatAssistantText(text) {
@@ -2792,17 +2859,13 @@ class ChatPortalClient {
         const metaRow = this.streamingMessageNode.querySelector("[data-message-meta]");
         const contentRoot = this.streamingMessageBodyEl.parentElement;
         if (contentRoot && metaRow && !existing) {
-          const rawText =
-            typeof this.streamingRawBuffer === "string" ? this.streamingRawBuffer : this.streamingRawBuffer ? String(this.streamingRawBuffer) : "";
           const scriptTag = document.createElement("script");
           scriptTag.type = "application/json";
           scriptTag.id = messageId;
-          scriptTag.textContent = JSON.stringify(rawText);
+          scriptTag.textContent = JSON.stringify({ body: "", content_blocks: [] });
           contentRoot.insertBefore(scriptTag, metaRow);
         } else if (existing && existing.tagName === "SCRIPT") {
-          const rawText =
-            typeof this.streamingRawBuffer === "string" ? this.streamingRawBuffer : this.streamingRawBuffer ? String(this.streamingRawBuffer) : "";
-          existing.textContent = JSON.stringify(rawText);
+          // Keep existing render payload; it will be updated on `turnPersisted`.
         }
       }
       return;
@@ -2823,26 +2886,34 @@ class ChatPortalClient {
     }
     this.streamingMessageNode = node;
     this.streamingMessageBodyEl = node.querySelector("[data-message-body]");
-    this.streamingMessageBubbleEl = node.querySelector("[data-message-bubble]");
 
-    if (this.streamingMessageBodyEl) {
-      if (messageId) {
-        this.streamingMessageBodyEl.dataset.messageId = messageId;
-        const existing = document.getElementById(messageId);
-        const metaRow = node.querySelector("[data-message-meta]");
-        const contentRoot = this.streamingMessageBodyEl.parentElement;
-        if (contentRoot && metaRow && !existing) {
-          const scriptTag = document.createElement("script");
-          scriptTag.type = "application/json";
-          scriptTag.id = messageId;
-          scriptTag.textContent = JSON.stringify("");
-          contentRoot.insertBefore(scriptTag, metaRow);
-        }
-      }
-      this.streamingMessageBodyEl.innerHTML = "";
+	    if (this.streamingMessageBodyEl) {
+	      if (messageId) {
+	        this.streamingMessageBodyEl.dataset.messageId = messageId;
+	        const existing = document.getElementById(messageId);
+	        const metaRow = node.querySelector("[data-message-meta]");
+	        const contentRoot = this.streamingMessageBodyEl.parentElement;
+	        if (contentRoot && metaRow && !existing) {
+	          const scriptTag = document.createElement("script");
+	          scriptTag.type = "application/json";
+	          scriptTag.id = messageId;
+	          scriptTag.textContent = JSON.stringify({ body: "", content_blocks: [] });
+	          contentRoot.insertBefore(scriptTag, metaRow);
+	        }
+	      }
+	      this.streamingMessageBodyEl.innerHTML = "";
+
+	      // Canonical content-block container (replaces segment-based interleaving).
+      const blocksContainer = document.createElement("div");
+      blocksContainer.dataset.messageBlocks = "true";
+      blocksContainer.className = "space-y-2";
+      this.streamingMessageBodyEl.appendChild(blocksContainer);
+      this.streamingBlocksEl = blocksContainer;
+
+      // Streaming status row is part of the content-flow so tools can render beneath it.
       const statusRow = document.createElement("div");
       statusRow.dataset.streamingStatus = "true";
-      statusRow.className = "flex items-center gap-2 text-xs text-muted-foreground mb-2 hidden";
+      statusRow.className = "flex items-center gap-2 text-xs text-muted-foreground hidden";
       const statusDot = document.createElement("div");
       statusDot.className = "chat-portal-status-orbit text-primary";
       statusDot.innerHTML = this.getOrbitLoaderMarkup();
@@ -2851,29 +2922,18 @@ class ChatPortalClient {
       statusText.textContent = "";
       statusRow.appendChild(statusDot);
       statusRow.appendChild(statusText);
-      this.streamingMessageBodyEl.appendChild(statusRow);
+      blocksContainer.appendChild(statusRow);
       this.streamingStatusEl = statusRow;
       this.streamingStatusTextEl = statusText;
       this.streamingStatusDotEl = statusDot;
-
-      // Create segments container for interleaved text and tool cards
-      const segmentsContainer = document.createElement("div");
-      segmentsContainer.dataset.messageSegments = "true";
-      segmentsContainer.className = "space-y-1";
-      this.streamingMessageBodyEl.appendChild(segmentsContainer);
-      this.streamingSegmentsContainer = segmentsContainer;
-
-      // Create the first segment
-      this.currentSegmentIndex = 0;
-      this.segmentHasTools = false;
-      this.pendingSegmentBoundaryLength = null;
-      this.createNewSegment();
-
-      // Backward compatibility: keep references for other code that might use them
-      this.streamingToolsEl = null; // Will be deprecated
-      this.streamingFinalBodyEl = null; // Will be deprecated
-      this.streamingTextEl = this.currentSegmentTextEl;
-      this.streamingBlocksEl = null;
+      this.streamingContentBlockEls.clear();
+      this.streamingTextBlockBuffers.clear();
+      this.streamingTextBlockCommitState.clear();
+      this.streamingFinalTextBlocks.clear();
+      this.streamingTextBlockActiveIds.clear();
+      this.streamingToolBlockActiveIds.clear();
+      this.streamingDirtyTextBlocks.clear();
+      this.usingBlockStream = false;
       // Do not inject copy button yet - wait for stream to finish
     }
 
@@ -2897,93 +2957,6 @@ class ChatPortalClient {
     }
   }
 
-  createNewSegment() {
-    if (!this.streamingSegmentsContainer) return null;
-
-    const segment = document.createElement("div");
-    segment.dataset.segment = this.currentSegmentIndex.toString();
-    segment.dataset.segmentActive = "true";
-    segment.className = "space-y-2";
-
-    // Text container for this segment
-    const textEl = document.createElement("div");
-    textEl.dataset.segmentText = "true";
-    textEl.className = "space-y-2 leading-relaxed";
-    segment.appendChild(textEl);
-
-    // Tools container for this segment
-    const toolsEl = document.createElement("div");
-    toolsEl.dataset.segmentTools = "true";
-    toolsEl.className = "space-y-1 w-full flex flex-col items-start";
-    segment.appendChild(toolsEl);
-
-    this.streamingSegmentsContainer.appendChild(segment);
-    this.currentSegmentNode = segment;
-    this.currentSegmentTextEl = textEl;
-    this.currentSegmentToolsEl = toolsEl;
-    this.segmentHasTools = false;
-
-    // Update streamingTextEl for backward compatibility
-    this.streamingTextEl = textEl;
-
-    return segment;
-  }
-
-  advanceToNextSegment() {
-    // Freeze the current portion of the buffer into the current segment
-    if (this.currentSegmentTextEl && this.streamingBuffer) {
-      // Freeze ONLY the portion of the buffer that belonged to this segment
-      const rawBoundary =
-        typeof this.pendingSegmentBoundaryLength === "number" ? this.pendingSegmentBoundaryLength : this.streamingBuffer.length;
-      const boundary = Math.max(this.frozenBufferLength, Math.min(rawBoundary, this.streamingBuffer.length));
-      const segmentBuffer = this.streamingBuffer.substring(this.frozenBufferLength, boundary);
-      const html = this.renderBufferToHtmlWithMode(segmentBuffer, { mode: "markdown" });
-      this.currentSegmentTextEl.innerHTML = html;
-      // Mark this portion as frozen
-      this.frozenBufferLength = boundary;
-    }
-
-    // Mark current segment as no longer active
-    if (this.currentSegmentNode) {
-      delete this.currentSegmentNode.dataset.segmentActive;
-    }
-
-    // Create new segment (buffer stays intact)
-    this.currentSegmentIndex++;
-    this.createNewSegment();
-  }
-
-  getSegmentForToolEvent(eventId, messageId) {
-    // Tool cards go into the current segment.
-    // Segment advancement happens in refreshStreamingView when new text arrives after tools.
-    return this.currentSegmentToolsEl;
-  }
-
-  finalizeStreamingMessage(finalText) {
-    const incoming = (finalText || "").toString();
-    if (incoming) {
-      this.streamingRawBuffer = incoming;
-    }
-    this.refreshStreamingView();
-    const text = this.streamingBuffer || "";
-    if (!text) {
-      if (this.streamingMessageNode) {
-        this.resetStreamingState(true);
-      }
-      return;
-    }
-
-    if (!this.streamingSegmentsContainer && !this.streamingFinalBodyEl) {
-      this.appendMessage({ sender: "ai", body: text, sent_at: new Date().toISOString() });
-    } else {
-      // Stream finished using existing node - now we can show the copy button
-      if (this.streamingMessageBodyEl) {
-        this.injectCopyButton(this.streamingMessageBodyEl);
-      }
-    }
-    this.resetStreamingState(false);
-  }
-
   updateLatestAssistantMessage(text, messageId = null) {
     if (!text || !this.elements.messages) return;
     const normalized = this.formatAssistantText(text);
@@ -3003,23 +2976,9 @@ class ChatPortalClient {
     }
     if (!body) return;
     
-    // Check for segments container (from streaming with interleaved tools)
-    const segmentsContainer = body.querySelector("[data-message-segments]");
-    if (segmentsContainer) {
-      // Segments already have text in correct positions from streaming
-      // DO NOT update text - just ensure copy button exists
-      this.injectCopyButton(body);
-      return;
-    }
-    
-    const finalBody = body.querySelector("[data-message-final-body]");
-    if (finalBody) {
-      const textTarget = finalBody.querySelector("[data-streaming-text]");
-      if (textTarget) {
-        textTarget.innerHTML = this.renderMarkdown(clean);
-      } else {
-        finalBody.innerHTML = this.renderMarkdown(clean);
-      }
+    const blocksRoot = body.querySelector("[data-message-blocks]");
+    if (blocksRoot) {
+      blocksRoot.innerHTML = this.renderMarkdown(clean);
     } else {
       body.innerHTML = this.renderMarkdown(clean);
     }
@@ -3083,302 +3042,11 @@ class ChatPortalClient {
       });
       metaEl.classList.remove("hidden");
     }
-    if (Array.isArray(metaPayload.response_blocks) && metaPayload.response_blocks.length) {
-      const body = wrapper.querySelector("[data-message-body]");
-      this.renderResponseBlocks(body, metaPayload.response_blocks);
-    }
-
-    const storedToolEvents = Array.isArray(metaPayload.tool_events)
-      ? metaPayload.tool_events
-      : Array.isArray(metaPayload.toolEvents)
-      ? metaPayload.toolEvents
-      : null;
-    if (storedToolEvents && storedToolEvents.length) {
-      this.renderStoredToolEvents(wrapper, storedToolEvents, messageId);
-    }
 
     if (Object.prototype.hasOwnProperty.call(metaPayload, "debug_tools") || Object.prototype.hasOwnProperty.call(metaPayload, "debugTools")) {
       const debugTools = metaPayload.debug_tools || metaPayload.debugTools || null;
       this.updateDebugToolsPanel(wrapper, debugTools);
     }
-  }
-
-	  renderStoredToolEvents(wrapper, events, messageId) {
-	    if (!wrapper || !Array.isArray(events) || !events.length) return;
-    
-    const messageBody = wrapper.querySelector('[data-message-body]');
-    if (!messageBody) return;
-    
-    let segmentsContainer = messageBody.querySelector('[data-message-segments]');
-    
-    // If segments exist with tools already, skip (streaming already placed them)
-    if (segmentsContainer) {
-      const existingToolCards = segmentsContainer.querySelectorAll('[data-tool-card]');
-      if (existingToolCards.length > 0) {
-        return;
-      }
-    }
-
-    const messageIdValue =
-      (messageBody.dataset && messageBody.dataset.messageId ? messageBody.dataset.messageId : "") ||
-      (wrapper.dataset && wrapper.dataset.messageId ? wrapper.dataset.messageId : "") ||
-      (messageId || "");
-    const messageKey = wrapper.dataset.messageId || messageIdValue || "streaming";
-
-	    // Group events into tool-calls (one card per event_id/tool_call_id), keeping insertion metadata.
-	    const toolCalls = new Map();
-	    events.forEach((rawEvent, idx) => {
-	      if (!rawEvent || typeof rawEvent !== "object") return;
-	      const rawToolName = (rawEvent.tool_name || rawEvent.toolName || "").toString().trim().toLowerCase();
-	      if (rawToolName === "mcp_search_tools") {
-	        return;
-	      }
-	      const eventId = (rawEvent.event_id || rawEvent.eventId || rawEvent.tool_call_id || rawEvent.toolCallId || "")
-	        .toString()
-	        .trim();
-	      if (!eventId) return;
-
-      const rawOffset = rawEvent.text_offset ?? rawEvent.textOffset ?? null;
-      let textOffset = null;
-      if (typeof rawOffset === "number" && Number.isFinite(rawOffset) && rawOffset >= 0) {
-        textOffset = rawOffset;
-      } else if (typeof rawOffset === "string" && rawOffset.trim() !== "") {
-        const parsed = Number(rawOffset);
-        if (Number.isFinite(parsed) && parsed >= 0) {
-          textOffset = parsed;
-        }
-      }
-
-      const rawSequence = rawEvent.sequence_index ?? rawEvent.sequenceIndex ?? null;
-      let sequenceIndex = null;
-      if (typeof rawSequence === "number" && Number.isFinite(rawSequence) && rawSequence >= 0) {
-        sequenceIndex = rawSequence;
-      } else if (typeof rawSequence === "string" && rawSequence.trim() !== "") {
-        const parsed = Number(rawSequence);
-        if (Number.isFinite(parsed) && parsed >= 0) {
-          sequenceIndex = parsed;
-        }
-      }
-
-      const rawSegment = rawEvent.segment_index ?? rawEvent.segmentIndex ?? null;
-      let segmentIndex = null;
-      if (typeof rawSegment === "number" && Number.isFinite(rawSegment) && rawSegment >= 0) {
-        segmentIndex = rawSegment;
-      } else if (typeof rawSegment === "string" && rawSegment.trim() !== "") {
-        const parsed = Number(rawSegment);
-        if (Number.isFinite(parsed) && parsed >= 0) {
-          segmentIndex = parsed;
-        }
-      }
-
-      const existing =
-        toolCalls.get(eventId) || {
-          eventId,
-          events: [],
-          textOffset,
-          sequenceIndex,
-          segmentIndex,
-          firstSeenIndex: idx,
-        };
-      existing.events.push({ rawEvent, idx });
-      if (existing.textOffset === null && textOffset !== null) existing.textOffset = textOffset;
-      if (existing.sequenceIndex === null && sequenceIndex !== null) existing.sequenceIndex = sequenceIndex;
-      if (existing.segmentIndex === null && segmentIndex !== null) existing.segmentIndex = segmentIndex;
-      toolCalls.set(eventId, existing);
-    });
-
-    const toolCallList = Array.from(toolCalls.values());
-    if (!toolCallList.length) {
-      return;
-    }
-
-    const hasOffsets = toolCallList.some((call) => typeof call.textOffset === "number" && Number.isFinite(call.textOffset));
-
-    // Fetch the raw markdown from the json_script tag so we can split it deterministically.
-    let hasRawMarkdown = false;
-    let rawMarkdown = "";
-    if (messageIdValue) {
-      const scriptTag = document.getElementById(messageIdValue);
-      if (scriptTag) {
-        try {
-          rawMarkdown = JSON.parse(scriptTag.textContent) || "";
-          hasRawMarkdown = true;
-        } catch (_err) {
-          rawMarkdown = "";
-          hasRawMarkdown = false;
-        }
-      }
-    }
-    const cleanMarkdown = hasRawMarkdown ? this.stripInlineResponseBlocks(rawMarkdown || "") : "";
-
-    if (hasOffsets && hasRawMarkdown && typeof cleanMarkdown === "string") {
-      // Preserve non-markdown nodes before rebuild (copy button + structured blocks).
-      const preserved = [];
-      const copyBtn = messageBody.querySelector('button[data-copy-btn]');
-      if (copyBtn) {
-        copyBtn.remove();
-        preserved.push(copyBtn);
-      }
-      const responseBlocks = messageBody.querySelector('[data-response-blocks]');
-      if (responseBlocks) {
-        responseBlocks.remove();
-        preserved.push(responseBlocks);
-      }
-
-      const maxLen = cleanMarkdown.length;
-      const callsByOffset = new Map();
-      toolCallList.forEach((call) => {
-        const offset =
-          typeof call.textOffset === "number" && Number.isFinite(call.textOffset)
-            ? Math.max(0, Math.min(call.textOffset, maxLen))
-            : maxLen;
-        if (!callsByOffset.has(offset)) {
-          callsByOffset.set(offset, []);
-        }
-        callsByOffset.get(offset).push(call);
-      });
-
-      const offsets = Array.from(callsByOffset.keys()).sort((a, b) => a - b);
-
-      segmentsContainer = document.createElement("div");
-      segmentsContainer.dataset.messageSegments = "true";
-      segmentsContainer.className = "space-y-1";
-
-      let cursor = 0;
-      let segmentNumber = 0;
-
-      const appendSegment = (segmentText, toolCallsForSegment, toolsOffset) => {
-        const segmentEl = document.createElement("div");
-        segmentEl.dataset.segment = String(segmentNumber);
-        segmentEl.className = "space-y-2";
-
-        const textEl = document.createElement("div");
-        textEl.dataset.segmentText = "true";
-        textEl.className = "space-y-2 leading-relaxed";
-        if (segmentText) {
-          textEl.innerHTML = this.renderMarkdown(segmentText);
-        }
-        segmentEl.appendChild(textEl);
-
-        const toolsEl = document.createElement("div");
-        toolsEl.dataset.segmentTools = "true";
-        toolsEl.className = "space-y-1 w-full flex flex-col items-start";
-        segmentEl.appendChild(toolsEl);
-
-        segmentsContainer.appendChild(segmentEl);
-
-        if (Array.isArray(toolCallsForSegment) && toolCallsForSegment.length) {
-          toolCallsForSegment
-            .slice()
-            .sort((a, b) => {
-              const aSeq = typeof a.sequenceIndex === "number" ? a.sequenceIndex : Number.POSITIVE_INFINITY;
-              const bSeq = typeof b.sequenceIndex === "number" ? b.sequenceIndex : Number.POSITIVE_INFINITY;
-              if (aSeq !== bSeq) return aSeq - bSeq;
-              return (a.firstSeenIndex || 0) - (b.firstSeenIndex || 0);
-            })
-            .forEach((call) => {
-              const cardKey = `${messageKey}:${call.eventId}`;
-              let card = this.toolEventCards.get(cardKey);
-              if (!card) {
-                card = toolsEl.querySelector(`[data-tool-event-id="${call.eventId}"]`);
-              }
-
-              const ordered = call.events.slice().sort((a, b) => a.idx - b.idx);
-              const firstPayload = ordered.length ? { ...ordered[0].rawEvent } : null;
-              if (firstPayload && !firstPayload.message_id && messageIdValue) {
-                firstPayload.message_id = messageIdValue;
-              }
-              if (firstPayload && !firstPayload.event_id && !firstPayload.eventId) {
-                firstPayload.event_id = call.eventId;
-              }
-
-              if (!card) {
-                card = this.buildToolEventCard(firstPayload || { event_id: call.eventId });
-                if (!card) return;
-                card.dataset.segmentIndex =
-                  typeof call.segmentIndex === "number" && Number.isFinite(call.segmentIndex)
-                    ? String(call.segmentIndex)
-                    : String(segmentNumber);
-                card.dataset.textOffset = String(toolsOffset);
-                toolsEl.appendChild(card);
-                this.toolEventCards.set(cardKey, card);
-              }
-
-              ordered.forEach((entry) => {
-                const payload = { ...entry.rawEvent };
-                if (!payload.message_id && messageIdValue) {
-                  payload.message_id = messageIdValue;
-                }
-                this.updateToolEventCard(card, payload);
-              });
-            });
-        }
-
-        segmentNumber += 1;
-      };
-
-      offsets.forEach((offset) => {
-        const segmentText = cleanMarkdown.slice(cursor, offset);
-        const calls = callsByOffset.get(offset) || [];
-        appendSegment(segmentText, calls, offset);
-        cursor = offset;
-      });
-
-      if (cursor < maxLen) {
-        appendSegment(cleanMarkdown.slice(cursor), [], maxLen);
-      }
-
-      messageBody.innerHTML = "";
-      messageBody.appendChild(segmentsContainer);
-      preserved.forEach((node) => messageBody.appendChild(node));
-      return;
-    }
-
-    // Fallback for older messages: render tool cards after the message body.
-    const toolsContainer = this.ensureToolActivityContainer(wrapper);
-    if (!toolsContainer) return;
-
-    toolCallList
-      .slice()
-      .sort((a, b) => {
-        const aSeq = typeof a.sequenceIndex === "number" ? a.sequenceIndex : Number.POSITIVE_INFINITY;
-        const bSeq = typeof b.sequenceIndex === "number" ? b.sequenceIndex : Number.POSITIVE_INFINITY;
-        if (aSeq !== bSeq) return aSeq - bSeq;
-        return (a.firstSeenIndex || 0) - (b.firstSeenIndex || 0);
-      })
-      .forEach((call) => {
-        const cardKey = `${messageKey}:${call.eventId}`;
-        let card = this.toolEventCards.get(cardKey);
-        if (!card) {
-          card = toolsContainer.querySelector(`[data-tool-event-id="${call.eventId}"]`);
-        }
-
-        const ordered = call.events.slice().sort((a, b) => a.idx - b.idx);
-        const firstPayload = ordered.length ? { ...ordered[0].rawEvent } : null;
-        if (firstPayload && !firstPayload.message_id && messageIdValue) {
-          firstPayload.message_id = messageIdValue;
-        }
-        if (firstPayload && !firstPayload.event_id && !firstPayload.eventId) {
-          firstPayload.event_id = call.eventId;
-        }
-
-        if (!card) {
-          card = this.buildToolEventCard(firstPayload || { event_id: call.eventId });
-          if (!card) return;
-          toolsContainer.appendChild(card);
-          this.toolEventCards.set(cardKey, card);
-        }
-
-        ordered.forEach((entry) => {
-          const payload = { ...entry.rawEvent };
-          if (!payload.message_id && messageIdValue) {
-            payload.message_id = messageIdValue;
-          }
-          this.updateToolEventCard(card, payload);
-        });
-      });
-
-    this.updateMessageToolsToggle(wrapper);
   }
 
   formatTokenCount(count) {
@@ -3754,156 +3422,11 @@ class ChatPortalClient {
   }
 
   renderBufferToHtmlWithMode(buffer, { mode = "markdown" } = {}) {
-    const renderText = (value) => {
-      if (mode === "plain") {
-        return this.renderPlainText(value);
-      }
-      return this.renderMarkdown(value);
-    };
-    let html = "";
-    if (buffer) {
-      // Check for partial table at the end
-      const lines = buffer.split("\n");
-
-      let tableStartIndex = -1;
-
-      // Scan backwards for contiguous table lines
-      for (let i = lines.length - 1; i >= 0; i--) {
-        const line = lines[i].trim();
-        if (line.startsWith("|")) {
-          tableStartIndex = i;
-        } else if (line === "") {
-            // Gap might mean end of table block walking backwards
-            continue;
-        } else {
-          // Found non-table text
-          break;
-        }
-      }
-
-      // If we found a table block at the end
-      if (tableStartIndex !== -1) {
-        const safeLines = lines.slice(0, tableStartIndex);
-        const tableLines = lines.slice(tableStartIndex);
-
-        // Only treat as table if we have at least one pipe-starting line
-        if (tableLines.some(l => l.trim().startsWith('|'))) {
-             const safeHtml = renderText(safeLines.join("\n"));
-             const tableHtml = this.renderProvisionalTable(tableLines, { mode });
-             html = safeHtml + tableHtml;
-        } else {
-             html = renderText(buffer);
-        }
-      } else {
-        html = renderText(buffer);
-      }
+    if (!buffer) return "";
+    if (mode === "plain") {
+      return this.renderPlainText(buffer);
     }
-    return html;
-  }
-
-  renderStreamingTextToHtml() {
-    // Get the unfrozen portion of the buffer for the current segment
-    const currentSegmentBuffer = this.streamingBuffer.substring(this.frozenBufferLength);
-    return this.renderBufferToHtmlWithMode(currentSegmentBuffer, { mode: "markdown" });
-  }
-
-  renderStreamingText() {
-    const html = this.renderStreamingTextToHtml();
-
-    if (this.streamingTextEl) {
-      this.streamingTextEl.innerHTML = html;
-      return;
-    }
-    if (this.streamingFinalBodyEl) {
-      this.streamingFinalBodyEl.innerHTML = html;
-      return;
-    }
-    if (this.streamingMessageBodyEl) {
-      this.streamingMessageBodyEl.innerHTML = html;
-    }
-  }
-
-  renderProvisionalTable(lines, { mode = "markdown" } = {}) {
-    if (!lines || !lines.length) return "";
-    const renderCell = (value) => {
-      if (mode === "plain") {
-        return this.renderPlainText((value || "").toString().trim());
-      }
-      return this.renderMarkdown((value || "").toString().trim());
-    };
-    let html = '<div class="overflow-x-auto mb-3"><table class="w-full text-sm">';
-    
-    const rows = lines.filter(l => l.trim().startsWith('|'));
-    
-    // Heuristic: Determine column count from the header (first row)
-    // | A | B | -> ["", " A ", " B ", ""] -> length 4, data columns = length - 2 (ignoring edges)?
-    // Let's count actual separators? Or just filtered split length?
-    let expectedColumns = 0;
-    if (rows.length > 0) {
-        const headerCells = rows[0].split("|");
-        // Filter out empty start/end cells caused by standard |...| syntax
-        // Or assume consistent syntax.
-        // Let's just track the max columns seen if header is weird
-        expectedColumns = headerCells.length; 
-    }
-
-    rows.forEach((line, index) => {
-      // Check for separator line (only - : | space)
-      if (/^[\s|:-]+$/.test(line)) return;
-
-      html += "<tr>";
-      let cells = line.split("|");
-      
-      // PAD ROW: If this row has fewer cells than expected (incomplete streaming), add empty ones.
-      // Note: we're operating on the raw split array which includes empty start/end strings for |..|
-      if (expectedColumns > 0 && cells.length < expectedColumns) {
-           const missing = expectedColumns - cells.length;
-           for(let k=0; k<missing; k++) {
-               cells.push("");
-           }
-      }
-
-      cells.forEach((cell, cIdx) => {
-        // Skip purely empty edge cells typical of MD syntax
-        if ((cIdx === 0 || cIdx === cells.length - 1) && cell.trim() === "") return;
-        
-        const isHeader = index === 0; 
-        const tag = isHeader ? "th" : "td";
-        html += `<${tag}>${renderCell(cell)}</${tag}>`;
-      });
-      html += "</tr>";
-    });
-
-    html += "</table></div>";
-    return html;
-  }
-
-
-
-
-
-  refreshStreamingView() {
-    const stripped = this.stripInlineResponseBlocks(this.streamingRawBuffer || "");
-    this.updateTableIntent(stripped);
-    this.streamingBuffer = this.formatAssistantText(stripped);
-
-    // If using segments and current segment has tools and new text has arrived,
-    // advance to a new segment before rendering the new text
-    if (
-      this.streamingSegmentsContainer &&
-      this.segmentHasTools &&
-      typeof this.pendingSegmentBoundaryLength === "number" &&
-      Number.isFinite(this.pendingSegmentBoundaryLength)
-    ) {
-      const boundary = Math.max(this.frozenBufferLength, Math.min(this.pendingSegmentBoundaryLength, this.streamingBuffer.length));
-      const hasNewTextAfterTools = this.streamingBuffer.length > boundary;
-      if (hasNewTextAfterTools) {
-        this.advanceToNextSegment();
-        this.pendingSegmentBoundaryLength = null;
-      }
-    }
-
-    this.renderStreamingText();
+    return this.renderMarkdown(buffer);
   }
 
   stripInlineResponseBlocks(text) {
@@ -3922,32 +3445,7 @@ class ChatPortalClient {
     return text.slice(0, lastIndex).replace(/\s+$/, "");
   }
 
-  updateTableIntent(bufferText) {
-    const now = Date.now();
-    if (this.tableIntentActive && now - this.tableIntentTimestamp > this.tableIntentWindowMs) {
-      this.tableIntentActive = false;
-    }
-    const cues = [
-      "following table",
-      "table below",
-      "table above",
-      "table shows",
-      "table presents",
-      "table summarizes",
-      "see table",
-    ];
-    const haystack = (bufferText || "").toLowerCase().slice(-400);
-    if (!haystack) {
-      return;
-    }
-    const cueFound = cues.some((phrase) => haystack.includes(phrase));
-    if (cueFound) {
-      this.tableIntentActive = true;
-      this.tableIntentTimestamp = now;
-    }
-  }
-
-  resetStreamingState(removeNode = false, lockWorkflow = true) {
+		  resetStreamingState(removeNode = false, lockWorkflow = true) {
     if (lockWorkflow) {
       this.workflowLocked = true;
     }
@@ -3957,34 +3455,32 @@ class ChatPortalClient {
     if (removeNode && this.streamingMessageNode && this.streamingMessageNode.parentNode) {
       this.streamingMessageNode.parentNode.removeChild(this.streamingMessageNode);
     }
-    this.streamingDedupDone = false;
-    this.streamingFinalBodyEl = null;
     this.streamingMessageNode = null;
     this.streamingMessageBodyEl = null;
-    this.streamingMessageBubbleEl = null;
     this.streamingStatusEl = null;
     this.streamingStatusTextEl = null;
     this.streamingStatusDotEl = null;
-    this.streamingBuffer = "";
-    this.streamingRawBuffer = "";
-    this.streamingRewritePending = false;
-    this.streamingMessageId = null;
-    this.streamingTextEl = null;
-    this.streamingBlocksEl = null;
-    this.streamingToolsEl = null;
-    // Reset segment-based state
-    this.streamingSegmentsContainer = null;
-    this.currentSegmentIndex = 0;
-    this.currentSegmentNode = null;
-    this.currentSegmentTextEl = null;
-    this.currentSegmentToolsEl = null;
-    this.segmentHasTools = false;
-    this.frozenBufferLength = 0;
-    this.pendingSegmentBoundaryLength = null;
-    if (removeNode) {
-      this.pendingMessageId = null;
-    }
-  }
+	    this.streamingMessageId = null;
+	    this.streamingBlocksEl = null;
+	    this.usingBlockStream = false;
+	    this.streamingContentBlockEls.clear();
+	    this.streamingTextBlockBuffers.clear();
+		    this.streamingTextBlockCommitState.clear();
+		    this.streamingFinalTextBlocks.clear();
+		    this.streamingTextBlockActiveIds.clear();
+		    this.streamingToolBlockActiveIds.clear();
+		    this.streamingDirtyTextBlocks.clear();
+		    if (this.streamingBlockRenderRaf) {
+		      cancelAnimationFrame(this.streamingBlockRenderRaf);
+		    }
+		    this.streamingBlockRenderRaf = null;
+	    this.spinnerDesiredText = "";
+	    this.spinnerDesiredPending = false;
+	    this.spinnerDesiredIsError = false;
+	    if (removeNode) {
+	      this.pendingMessageId = null;
+	    }
+	  }
 
   setStreamingStatus(mode = "working", labelOverride) {
     if (this.workflowLocked) return;
@@ -4002,11 +3498,35 @@ class ChatPortalClient {
     this.setSpinnerText(baseLabel, { pending: mode !== "done", isError });
   }
 
+  repositionStreamingStatusRow() {
+    if (!this.streamingStatusEl || !this.streamingBlocksEl) return;
+    const inflightIds = this.streamingToolBlockActiveIds;
+    try {
+      if (inflightIds && inflightIds.size) {
+        const firstInflight = Array.from(this.streamingBlocksEl.children).find((child) => {
+          if (!child || child === this.streamingStatusEl) return false;
+          const blockId = child.dataset ? (child.dataset.blockId || "").toString().trim() : "";
+          return Boolean(blockId) && inflightIds.has(blockId);
+        });
+        if (firstInflight) {
+          this.streamingBlocksEl.insertBefore(this.streamingStatusEl, firstInflight);
+          return;
+        }
+      }
+      this.streamingBlocksEl.appendChild(this.streamingStatusEl);
+    } catch (_err) {
+      // ignore reposition failures; keep streaming resilient
+    }
+  }
+
   setSpinnerText(rawText, { pending = true, isError = false } = {}) {
     if (this.workflowLocked && pending) return;
     this.ensureStreamingMessageNode(this.pendingMessageId);
     if (!this.streamingStatusEl || !this.streamingStatusTextEl) return;
     const label = (rawText || "").toString().trim();
+    this.spinnerDesiredText = label;
+    this.spinnerDesiredPending = pending;
+    this.spinnerDesiredIsError = isError;
     if (!label) {
       if (!pending) {
         this.clearStreamingStatus();
@@ -4014,7 +3534,12 @@ class ChatPortalClient {
       return;
     }
     this.streamingStatusTextEl.innerHTML = this.formatStatusLabel(label);
-    this.streamingStatusEl.classList.remove("hidden");
+    this.repositionStreamingStatusRow();
+    if (this.streamingTextBlockActiveIds.size > 0) {
+      this.streamingStatusEl.classList.add("hidden");
+    } else {
+      this.streamingStatusEl.classList.remove("hidden");
+    }
     if (this.streamingStatusDotEl) {
       if (isError) {
         this.streamingStatusDotEl.classList.remove("text-primary");

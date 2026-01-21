@@ -7,6 +7,9 @@ MAX_TEXT_LINES = 32
 MAX_TEXT_LENGTH = 800
 MAX_TABLE_COLUMNS = 12
 MAX_TABLE_ROWS = 60
+MAX_KV_ENTRIES = 60
+MAX_KV_KEY_LENGTH = 80
+MAX_KV_VALUE_LENGTH = 480
 
 
 def normalize_response_blocks(value: object) -> tuple[dict[str, object], ...]:
@@ -63,6 +66,8 @@ def _normalize_block(block: object) -> dict[str, object] | None:
         return _normalize_text_block(block)
     if block_type in {"table", "table_section"}:
         return _normalize_table_block(block)
+    if block_type in {"kv", "key_value", "key_values", "kv_section"}:
+        return _normalize_kv_block(block)
     return None
 
 
@@ -213,6 +218,64 @@ def _normalize_row_cells(entry: object, column_count: int) -> list[str]:
     if not any(cell for cell in cells):
         return []
     return cells
+
+
+def _normalize_kv_block(block: Mapping[str, object]) -> dict[str, object] | None:
+    entries = _normalize_kv_entries(
+        block.get("entries") or block.get("items") or block.get("pairs") or block.get("data") or block.get("values")
+    )
+    if not entries:
+        return None
+    normalized: dict[str, object] = {"type": "kv", "entries": entries}
+    title = _clean_text(block.get("title") or block.get("heading"))
+    if title:
+        normalized["title"] = title
+    note = _clean_text(block.get("note") or block.get("summary"))
+    if note:
+        normalized["note"] = note
+    rtl = _coerce_bool(block.get("rtl"))
+    if rtl is not None:
+        normalized["rtl"] = rtl
+    return normalized
+
+
+def _normalize_kv_entries(value: object) -> list[dict[str, str]]:
+    items: list[dict[str, str]] = []
+    if value is None:
+        return items
+    if isinstance(value, Mapping):
+        iterable: list[object] = []
+        for key, raw_val in list(value.items())[:MAX_KV_ENTRIES]:
+            iterable.append({"key": key, "value": raw_val})
+        value = iterable
+    if not isinstance(value, Sequence) or isinstance(value, (str, bytes, bytearray)):
+        return items
+    for entry in value:
+        key: str | None = None
+        val: str | None = None
+        if isinstance(entry, Mapping):
+            key = _clean_text(entry.get("key") or entry.get("name") or entry.get("label"), limit=MAX_KV_KEY_LENGTH)
+            val = _clean_text(
+                entry.get("value") or entry.get("text") or entry.get("display") or entry.get("content"),
+                limit=MAX_KV_VALUE_LENGTH,
+            )
+        elif isinstance(entry, Sequence) and not isinstance(entry, (str, bytes, bytearray)) and len(entry) >= 2:
+            key = _clean_text(entry[0], limit=MAX_KV_KEY_LENGTH)
+            val = _clean_text(entry[1], limit=MAX_KV_VALUE_LENGTH)
+        elif isinstance(entry, str):
+            line = entry.strip()
+            if not line:
+                continue
+            if ":" in line:
+                left, right = line.split(":", 1)
+                key = _clean_text(left, limit=MAX_KV_KEY_LENGTH)
+                val = _clean_text(right, limit=MAX_KV_VALUE_LENGTH)
+        if not key:
+            continue
+        items.append({"key": key, "value": val or ""})
+        if len(items) >= MAX_KV_ENTRIES:
+            break
+    return items
 
 
 def _coerce_bool(value: object) -> bool | None:

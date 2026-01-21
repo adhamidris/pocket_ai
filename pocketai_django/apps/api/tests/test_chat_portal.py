@@ -28,8 +28,24 @@ class StubPortalService:
         )
         self.messages: list[SimpleNamespace] = []
 
-    def append_message(self, *, session_token: str, sender: ConversationSender, body: str, metadata: dict | None = None, conversation=None, message_id=None):
-        message = SimpleNamespace(id=message_id or uuid.uuid4(), sender=sender, body=body, metadata=metadata)
+    def append_message(
+        self,
+        *,
+        session_token: str,
+        sender: ConversationSender,
+        body: str,
+        metadata: dict | None = None,
+        content_blocks=None,
+        conversation=None,
+        message_id=None,
+    ):
+        message = SimpleNamespace(
+            id=message_id or uuid.uuid4(),
+            sender=sender,
+            body=body,
+            metadata=metadata,
+            content_blocks=content_blocks or [],
+        )
         self.messages.append(message)
         return message
 
@@ -41,6 +57,18 @@ class StubPortalService:
 
     def store_extractions(self, session_token: str, items):
         self.extractions = list(items)
+
+    def update_message(self, *, session_token: str, message_id: uuid.UUID, body=None, metadata=None, content_blocks=None, conversation=None):
+        for message in self.messages:
+            if message.id == message_id:
+                if body is not None:
+                    message.body = body
+                if metadata is not None:
+                    message.metadata = metadata
+                if content_blocks is not None:
+                    message.content_blocks = content_blocks
+                return message
+        raise AssertionError("Message not found")
 
 
 class ImmediateThread:
@@ -192,20 +220,155 @@ class ChatPortalStreamingTests(TestCase):
                 payload = chunk.split("data:", 1)[1].strip()
                 events.append((current_event, payload))
 
-        pending_event = next((data for evt, data in events if evt in {"turnPending", "final"}), None)
+        first_text_delta = next((data for evt, data in events if evt == "block_delta"), None)
         persisted_event = next((data for evt, data in events if evt == "turnPersisted"), None)
-        self.assertIsNotNone(pending_event)
+        self.assertIsNotNone(first_text_delta)
         self.assertIsNotNone(persisted_event)
 
-        pending_payload = json.loads(pending_event)
-        self.assertTrue(pending_payload.get("pending"))
-        self.assertEqual(pending_payload.get("text"), self.plan.response_text)
+        delta_payload = json.loads(first_text_delta)
+        self.assertEqual(delta_payload.get("delta"), self.plan.response_text)
 
         persisted_payload = json.loads(persisted_event)
         self.assertFalse(persisted_payload.get("pending"))
         self.assertIn("answer_confidence", persisted_payload)
         self.assertIn("ingestion_warnings", persisted_payload)
         self.assertAlmostEqual(persisted_payload["answer_confidence"], 0.62)
+        self.assertIn("content_blocks", persisted_payload)
+
+    def test_stream_send_persists_structured_response_blocks_as_content_blocks(self) -> None:
+        payload = {"session_token": "abc", "body": "hello"}
+        request = self.factory.post(
+            "/stream",
+            data=json.dumps(payload),
+            content_type="application/json",
+        )
+
+        table_block = {
+            "type": "table",
+            "title": "Users",
+            "columns": [
+                {"key": "name", "label": "Name"},
+                {"key": "role", "label": "Role"},
+            ],
+            "rows": [
+                {"cells": ["Alice", "Admin"]},
+                {"cells": ["Bob", "User"]},
+            ],
+            "note": "Example table",
+        }
+        kv_block = {
+            "type": "kv",
+            "title": "Summary",
+            "entries": [
+                {"key": "Total", "value": "2"},
+                {"key": "Active", "value": "2"},
+            ],
+            "note": "Example kv",
+        }
+
+        plan = AiOrchestratorPlan(
+            response_text=self.plan.response_text,
+            citations=self.plan.citations,
+            planned_actions=self.plan.planned_actions,
+            extractions=self.plan.extractions,
+            diagnostics=self.plan.diagnostics,
+            ingestion_warnings=self.plan.ingestion_warnings,
+            response_blocks=(table_block, kv_block),
+        )
+
+        class StubOrchestrator:
+            def __init__(self, plan, conversation):
+                self.plan = plan
+                self.conversation = conversation
+
+            def stream_turn(
+                self,
+                *,
+                conversation,
+                user_message,
+                on_response_text_delta=None,
+                on_stream_complete=None,
+                **_,
+            ):
+                if on_response_text_delta:
+                    on_response_text_delta(self.plan.response_text)
+                if on_stream_complete:
+                    on_stream_complete()
+                return StreamingTurnContext(
+                    conversation=conversation,
+                    response_text=self.plan.response_text,
+                    planned_actions=self.plan.planned_actions,
+                    extractions=self.plan.extractions,
+                    resolved_citations=self.plan.citations,
+                    knowledge_payload=tuple(),
+                    knowledge_reads=tuple(),
+                    knowledge_status="ok",
+                    knowledge_diagnostics={},
+                    knowledge_loading=False,
+                    placeholder_response=None,
+                    prompt_bundle=None,
+                    tool_trace=tuple(),
+                    cached_snippet_count=0,
+                    llm_source="provider",
+                    streamed_chunks=(self.plan.response_text,),
+                )
+
+            def finalize_turn(self, *_):
+                return self.plan
+
+            def run_planner_only(self, **_):
+                return self.plan
+
+        stub_orchestrator = StubOrchestrator(plan, self.stub_service.conversation)
+
+        class StubDispatcher:
+            def __init__(self, *_, **__):
+                pass
+
+            def execute(self, **_):
+                return []
+
+        with mock.patch.object(chat_portal, "_service", return_value=self.stub_service), \
+            mock.patch.object(chat_portal, "AiOrchestratorService", return_value=stub_orchestrator), \
+            mock.patch.object(chat_portal, "ActionDispatcher", StubDispatcher), \
+            mock.patch.object(chat_portal, "load_default_provider", return_value=None), \
+            mock.patch.object(chat_portal.threading, "Thread", ImmediateThread):
+            response = chat_portal.stream_send(request)
+
+        chunks = list(response.streaming_content)
+        events: list[tuple[str | None, str]] = []
+        current_event: str | None = None
+        for chunk in chunks:
+            if isinstance(chunk, bytes):
+                chunk = chunk.decode("utf-8")
+            if chunk.startswith("event:"):
+                current_event = chunk.split("event:", 1)[1].strip()
+            elif chunk.startswith("data:"):
+                payload_raw = chunk.split("data:", 1)[1].strip()
+                events.append((current_event, payload_raw))
+
+        persisted_event = next((data for evt, data in events if evt == "turnPersisted"), None)
+        self.assertIsNotNone(persisted_event)
+        persisted_payload = json.loads(persisted_event)
+        content_blocks = persisted_payload.get("content_blocks")
+        self.assertIsInstance(content_blocks, list)
+
+        persisted_table = next((block for block in content_blocks if isinstance(block, dict) and block.get("type") == "table"), None)
+        self.assertIsNotNone(persisted_table)
+        self.assertEqual(persisted_table["payload"]["title"], "Users")
+        self.assertEqual(persisted_table["payload"]["columns"][0]["label"], "Name")
+        self.assertEqual(persisted_table["payload"]["rows"][0]["cells"][0], "Alice")
+
+        persisted_kv = next((block for block in content_blocks if isinstance(block, dict) and block.get("type") == "kv"), None)
+        self.assertIsNotNone(persisted_kv)
+        self.assertEqual(persisted_kv["payload"]["title"], "Summary")
+        self.assertEqual(persisted_kv["payload"]["entries"][0]["key"], "Total")
+        self.assertEqual(persisted_kv["payload"]["entries"][0]["value"], "2")
+
+        started_blocks = [json.loads(data).get("block") for evt, data in events if evt == "block_start"]
+        started_types = [b.get("type") for b in started_blocks if isinstance(b, dict)]
+        self.assertIn("table", started_types)
+        self.assertIn("kv", started_types)
 
     @override_settings(PORTAL_STREAM_STATE_MACHINE=True)
     def test_stream_send_emits_tool_events_redacted(self) -> None:
@@ -333,24 +496,44 @@ class ChatPortalStreamingTests(TestCase):
                 payload_raw = chunk.split("data:", 1)[1].strip()
                 events.append((current_event, payload_raw))
 
-        tool_events = [json.loads(data) for evt, data in events if evt == "toolEvent"]
-        self.assertGreaterEqual(len(tool_events), 2)
+        tool_use_events = [json.loads(data) for evt, data in events if evt == "block_tool_use"]
+        tool_result_events = [json.loads(data) for evt, data in events if evt == "block_tool_result"]
+        self.assertGreaterEqual(len(tool_use_events), 1)
+        self.assertGreaterEqual(len(tool_result_events), 1)
 
-        started = next((e for e in tool_events if e.get("phase") == "started"), None)
+        started = next(
+            (
+                e.get("block", {}).get("payload")
+                for e in tool_use_events
+                if isinstance(e.get("block"), dict) and isinstance(e.get("block", {}).get("payload"), dict)
+                and e.get("block", {}).get("payload", {}).get("phase") == "started"
+            ),
+            None,
+        )
         self.assertIsNotNone(started)
         self.assertEqual(started["remote"]["connection_name"], "GitHub MCP")
         self.assertEqual(started["remote"]["remote_tool"], "search")
         self.assertNotIn("endpoint_url", started["remote"])
         self.assertEqual(started["input"]["token"], "[REDACTED]")
 
-        finished = next((e for e in tool_events if e.get("phase") == "finished"), None)
+        finished = next(
+            (
+                e.get("block", {}).get("payload")
+                for e in tool_result_events
+                if isinstance(e.get("block"), dict) and isinstance(e.get("block", {}).get("payload"), dict)
+                and e.get("block", {}).get("payload", {}).get("event_id") == "evt_1"
+            ),
+            None,
+        )
         self.assertIsNotNone(finished)
-        self.assertEqual(finished["output"]["token"], "[REDACTED]")
-        self.assertIn("remote", finished["output"])
-        self.assertNotIn("endpoint_url", finished["output"]["remote"])
-        self.assertNotIn("connection_id", finished["output"]["remote"])
-        self.assertEqual(finished["output"]["remote"]["connection_name"], "GitHub MCP")
-        self.assertEqual(finished["output"]["remote"]["remote_tool"], "search")
+        output_preview = finished.get("output_preview") if isinstance(finished, dict) else None
+        self.assertIsInstance(output_preview, dict)
+        self.assertEqual(output_preview["token"], "[REDACTED]")
+        self.assertIn("remote", output_preview)
+        self.assertNotIn("endpoint_url", output_preview["remote"])
+        self.assertNotIn("connection_id", output_preview["remote"])
+        self.assertEqual(output_preview["remote"]["connection_name"], "GitHub MCP")
+        self.assertEqual(output_preview["remote"]["remote_tool"], "search")
 
     @override_settings(PORTAL_STREAM_STATE_MACHINE=True)
     def test_stream_send_emits_turn_pending_with_state_machine_enabled(self) -> None:
@@ -435,7 +618,7 @@ class ChatPortalStreamingTests(TestCase):
                 payload = chunk.split("data:", 1)[1].strip()
                 events.append((current_event, payload))
 
-        turn_pending = next((data for evt, data in events if evt == "turnPending"), None)
-        self.assertIsNotNone(turn_pending)
+        spinner_event = next((data for evt, data in events if evt == "spinnerStatus"), None)
+        self.assertIsNotNone(spinner_event)
         persisted_event = next((data for evt, data in events if evt == "turnPersisted"), None)
         self.assertIsNotNone(persisted_event)

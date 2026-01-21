@@ -64,18 +64,21 @@ class ChatPortalToolHistoryTests(TestCase):
             sender=ConversationSender.AI,
             body="Tool call complete.",
             sent_at=timezone.now(),
-            metadata={
-                "tool_events": [
-                    {
+            content_blocks=[
+                {
+                    "block_id": "blk_tool_123",
+                    "type": "tool_use",
+                    "created_at": timezone.now().isoformat(),
+                    "payload": {
                         "event_id": "event_123",
                         "phase": "finished",
                         "status": "ok",
                         "tool_name": "mcp_tool",
                         "duration_ms": 250,
                         "remote": {"connection_name": "GitHub MCP", "remote_tool": "search_repositories"},
-                    }
-                ]
-            },
+                    },
+                }
+            ],
         )
 
         url = reverse("api:chat-portal-tools-history")
@@ -91,4 +94,3 @@ class ChatPortalToolHistoryTests(TestCase):
         tool_events = history.get("toolEvents") or []
         self.assertTrue(any(item.get("id") == str(approval.id) for item in approvals))
         self.assertTrue(any(item.get("event_id") == "event_123" for item in tool_events))
-

@@ -1049,10 +1049,12 @@ def _consume_chat_completion_stream(
     """
 
     text_parts: list[str] = []
+    reasoning_parts: list[str] = []
     tool_calls: dict[int, dict[str, object]] = {}
     role: str | None = None
     finish_reason: str | None = None
     last_message_content: str | None = None
+    last_message_reasoning_content: str | None = None
     last_message_tool_calls: list[dict[str, object]] | None = None
     last_message_payload: dict[str, object] | None = None
     usage_payload: Mapping[str, object] | None = None
@@ -1116,6 +1118,17 @@ def _consume_chat_completion_stream(
                 except Exception:  # pragma: no cover - safeguard user callbacks
                     logger.exception("Streaming callback failed while emitting delta chunk.")
 
+        reasoning_block = delta.get("reasoning_content")
+        if isinstance(reasoning_block, list):
+            for chunk in reasoning_block:
+                if not isinstance(chunk, Mapping):
+                    continue
+                text = _normalize_delta(chunk.get("text") or "")
+                if text:
+                    reasoning_parts.append(text)
+        elif isinstance(reasoning_block, str) and reasoning_block:
+            reasoning_parts.append(_normalize_delta(reasoning_block))
+
         for tool_delta in delta.get("tool_calls") or []:
             if isinstance(tool_delta, Mapping):
                 state, fired = _merge_stream_tool_call(tool_calls, tool_delta)
@@ -1145,6 +1158,17 @@ def _consume_chat_completion_stream(
                 stripped = msg_content.strip()
                 if stripped:
                     last_message_content = stripped
+            msg_reasoning = message_block.get("reasoning_content")
+            if isinstance(msg_reasoning, list):
+                joined_reasoning = "".join(
+                    part.get("text", "") for part in msg_reasoning if isinstance(part, Mapping)
+                ).strip()
+                if joined_reasoning:
+                    last_message_reasoning_content = joined_reasoning
+            elif isinstance(msg_reasoning, str):
+                stripped_reasoning = msg_reasoning.strip()
+                if stripped_reasoning:
+                    last_message_reasoning_content = stripped_reasoning
             msg_tools = message_block.get("tool_calls")
             if isinstance(msg_tools, list) and msg_tools:
                 last_message_tool_calls = msg_tools
@@ -1152,6 +1176,11 @@ def _consume_chat_completion_stream(
     assembled_text = "".join(text_parts).strip()
     if not assembled_text and last_message_content:
         assembled_text = last_message_content
+
+    assembled_reasoning = "".join(reasoning_parts).strip()
+    if not assembled_reasoning and last_message_reasoning_content:
+        assembled_reasoning = last_message_reasoning_content
+    force_reasoning_field = bool(model_name and "deepseek-reasoner" in model_name.lower())
 
     if (finish_reason == "tool_calls" or (tool_calls and not assembled_text)) and tool_calls:
         message = {
@@ -1172,6 +1201,11 @@ def _consume_chat_completion_stream(
                 message.setdefault("content", "")
         else:
             message = {"role": role or "assistant", "content": assembled_text}
+
+    if assembled_reasoning:
+        message["reasoning_content"] = assembled_reasoning
+    elif force_reasoning_field and message.get("role") == "assistant":
+        message.setdefault("reasoning_content", "")
 
     elapsed_ms = int((time.monotonic() - start_first) * 1000)
     first_ms = int((first_delta_at - start_first) * 1000) if first_delta_at else None
@@ -1563,9 +1597,14 @@ class DeepSeekToolsProvider(BaseMcpProvider):
                     "Authorization": f"Bearer {self.api_key}",
                     "Content-Type": "application/json",
                 }
+                materialized_messages = [dict(msg) for msg in messages]
+                if "deepseek-reasoner" in (self.model or "").lower():
+                    for msg in materialized_messages:
+                        if msg.get("role") == "assistant" and "reasoning_content" not in msg:
+                            msg["reasoning_content"] = ""
                 payload: dict[str, Any] = {
                     "model": self.model,
-                    "messages": [dict(msg) for msg in messages],
+                    "messages": materialized_messages,
                     "temperature": self.temperature,
                     "top_p": self.top_p,
                     "stream": streaming,

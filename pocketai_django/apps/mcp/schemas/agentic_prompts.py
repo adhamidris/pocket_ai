@@ -54,7 +54,7 @@ Get full content for specific IDs. Use this after search to get data needed to a
 - Use the customer's language; Arabic responses for Arabic questions
 - Be concise but complete
 - Avoid mentioning tool names or internal processes to the customer
-- For list/compare/fees responses, prefer a Markdown table with clear column headers
+- For list/compare/fees responses, prefer structured output via response_blocks (type=table/kv) instead of markdown tables
 - When presenting numeric lists/tables (prices, fees, limits, percentages, counts), consider sorting by the relevant numeric column; place non-numeric amounts (e.g., "Free", "N/A", "-") last, and keep displayed values unchanged
 {additional_rules}
 '''
