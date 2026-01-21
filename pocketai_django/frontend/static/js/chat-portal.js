@@ -838,10 +838,17 @@ class ChatPortalClient {
     this.scheduleStreamingBlockRender();
     this.streamingTextBlockActiveIds.delete(blockId);
     if (this.streamingTextBlockActiveIds.size === 0) {
-      this.setSpinnerText(this.spinnerDesiredText, {
-        pending: this.spinnerDesiredPending,
-        isError: this.spinnerDesiredIsError,
-      });
+      // If we are still mid-turn but haven't received the next spinner label yet,
+      // show the spinner icon immediately (no text) to avoid any perceived "silence".
+      const hasSpinnerText = Boolean((this.spinnerDesiredText || "").toString().trim());
+      if (!hasSpinnerText && this.isStreaming && !this.streamFinished && this.spinnerDesiredPending !== false) {
+        this.setSpinnerText("", { pending: true });
+      } else {
+        this.setSpinnerText(this.spinnerDesiredText, {
+          pending: this.spinnerDesiredPending,
+          isError: this.spinnerDesiredIsError,
+        });
+      }
     }
   }
 
@@ -3530,6 +3537,17 @@ class ChatPortalClient {
     if (!label) {
       if (!pending) {
         this.clearStreamingStatus();
+      }
+      // Pending without text: show icon-only row immediately.
+      if (pending) {
+        this.streamingStatusTextEl.textContent = "";
+        this.repositionStreamingStatusRow();
+        if (this.streamingTextBlockActiveIds.size > 0) {
+          this.streamingStatusEl.classList.add("hidden");
+        } else {
+          this.streamingStatusEl.classList.remove("hidden");
+        }
+        this.streamingStatusTextEl.classList.remove("chat-portal-status-shimmer");
       }
       return;
     }
