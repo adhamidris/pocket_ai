@@ -100,6 +100,7 @@ class ChatPortalClient {
     this.streamingSilenceStatusDelayMs = 450;
     this.lastStreamEventAt = 0;
     this.lastTextDeltaAt = 0;
+    this.textDeltaIntervalEma = 0;
   }
 
   async init() {
@@ -911,7 +912,8 @@ class ChatPortalClient {
       if (text) {
         this.clearStreamingIdleStatusTimer();
       }
-	    this.setSpinnerText(text, { pending, force: true });
+      const force = Boolean(text) || this.streamingTextBlockActiveIds.size === 0;
+	    this.setSpinnerText(text, { pending, force });
 	  }
 
 	  handleBlockStartEvent(data) {
@@ -951,7 +953,16 @@ class ChatPortalClient {
     const ops = Array.isArray(payload.ops) ? payload.ops : [];
     if (!blockId || !ops.length) return;
 
-      this.lastTextDeltaAt = Date.now();
+      const now = Date.now();
+      if (this.lastTextDeltaAt) {
+        const interval = now - this.lastTextDeltaAt;
+        if (interval > 0) {
+          this.textDeltaIntervalEma = this.textDeltaIntervalEma
+            ? this.textDeltaIntervalEma * 0.85 + interval * 0.15
+            : interval;
+        }
+      }
+      this.lastTextDeltaAt = now;
 	    const messageId = (payload.message_id || payload.messageId || "").toString().trim() || null;
 	    this.ensureStreamingMessageNode(messageId || this.pendingMessageId);
 
@@ -988,12 +999,6 @@ class ChatPortalClient {
 	      this.applyBlockOps(blockId, pendingOps);
 	    }
 	    this.streamingTextBlockActiveIds.delete(blockId);
-
-    // Fail-safe: if the set is somehow not empty but we assume sequential blocks,
-    // clear it to ensure the spinner isn't blocked by ghost IDs.
-    if (this.streamingTextBlockActiveIds.size > 0) {
-      this.streamingTextBlockActiveIds.clear();
-    }
 
 	    if (this.streamingTextBlockActiveIds.size === 0) {
 	      this.scheduleStreamingIdleStatusReveal();
@@ -3916,6 +3921,7 @@ class ChatPortalClient {
 		    }
 		    this.streamingActive = false;
 		    this.isStreaming = false;
+		    this.textDeltaIntervalEma = 0;
 		    this.clearStreamingIdleStatusTimer();
 		    this.clearStreamingStatus();
     if (removeNode && this.streamingMessageNode && this.streamingMessageNode.parentNode) {
@@ -3974,17 +3980,22 @@ class ChatPortalClient {
     if (!this.spinnerDesiredPending) return;
 
     this.clearStreamingIdleStatusTimer();
-    const delay =
-      this.streamingTextBlockActiveIds.size > 0
-        ? this.streamingSilenceStatusDelayMs
-        : this.streamingIdleStatusDelayMs;
+    const hasActiveText = this.streamingTextBlockActiveIds.size > 0;
+    const adaptiveSilenceThreshold = (() => {
+      if (!hasActiveText) return this.streamingSilenceStatusDelayMs;
+      const ema = this.textDeltaIntervalEma || 0;
+      if (!ema) return this.streamingSilenceStatusDelayMs;
+      const scaled = ema * 2.5;
+      return Math.min(2000, Math.max(this.streamingSilenceStatusDelayMs, scaled));
+    })();
+    const delay = hasActiveText ? adaptiveSilenceThreshold : this.streamingIdleStatusDelayMs;
     this.streamingIdleStatusTimer = setTimeout(() => {
       this.streamingIdleStatusTimer = null;
       if (!this.isStreaming || this.streamFinished) return;
       if (!this.spinnerDesiredPending) return;
       if (this.streamingTextBlockActiveIds.size > 0) {
         const lastDelta = this.lastTextDeltaAt || 0;
-        if (lastDelta && Date.now() - lastDelta < this.streamingSilenceStatusDelayMs) {
+        if (lastDelta && Date.now() - lastDelta < adaptiveSilenceThreshold) {
           return;
         }
       }
