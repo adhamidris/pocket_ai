@@ -96,7 +96,10 @@ class ChatPortalClient {
     this.scrollToBottomRaf = null;
     this.scrollToBottomBehavior = "auto";
     this.streamingIdleStatusTimer = null;
-    this.streamingIdleStatusDelayMs = 200;
+    this.streamingIdleStatusDelayMs = 120;
+    this.streamingSilenceStatusDelayMs = 450;
+    this.lastStreamEventAt = 0;
+    this.lastTextDeltaAt = 0;
   }
 
   async init() {
@@ -788,6 +791,7 @@ class ChatPortalClient {
   }
 
   handleStreamEvent(eventType, data) {
+    this.lastStreamEventAt = Date.now();
     if (this.sessionLoadInProgress) {
       return;
     }
@@ -904,6 +908,9 @@ class ChatPortalClient {
         text = "";
       }
 	    const pending = payload.pending !== false;
+      if (text) {
+        this.clearStreamingIdleStatusTimer();
+      }
 	    this.setSpinnerText(text, { pending, force: true });
 	  }
 
@@ -918,7 +925,6 @@ class ChatPortalClient {
     if (!payload || typeof payload !== "object") return;
     const block = payload.block && typeof payload.block === "object" ? payload.block : null;
     if (!block) return;
-    this.clearStreamingIdleStatusTimer();
     const messageId = (payload.message_id || payload.messageId || "").toString().trim() || null;
 	    this.ensureStreamingMessageNode(messageId || this.pendingMessageId);
 	    this.upsertStreamingContentBlock(block);
@@ -926,9 +932,9 @@ class ChatPortalClient {
 	    const blockId = (block.block_id || block.blockId || "").toString().trim();
 	    if (blockId && this.isStreamingTextBlock(blockType)) {
 	      this.streamingTextBlockActiveIds.add(blockId);
-	      if (this.streamingStatusEl) {
-	        this.streamingStatusEl.classList.add("hidden");
-	      }
+        // Keep the loader visible until we actually receive text deltas; otherwise
+        // the UI can go silent between block_start and the first block_delta.
+        this.repositionStreamingStatusRow();
 	    }
 	  }
 
@@ -945,7 +951,7 @@ class ChatPortalClient {
     const ops = Array.isArray(payload.ops) ? payload.ops : [];
     if (!blockId || !ops.length) return;
 
-	    this.clearStreamingIdleStatusTimer();
+      this.lastTextDeltaAt = Date.now();
 	    const messageId = (payload.message_id || payload.messageId || "").toString().trim() || null;
 	    this.ensureStreamingMessageNode(messageId || this.pendingMessageId);
 
@@ -959,6 +965,7 @@ class ChatPortalClient {
 	    this.streamingPendingBlockOps.set(blockId, pending);
 	    this.streamingDirtyTextBlocks.add(blockId);
 	    this.scheduleStreamingBlockRender();
+	    this.scheduleStreamingIdleStatusReveal();
 	    this.scheduleScrollToBottom({ behavior: "auto" });
 	  }
 
@@ -1004,6 +1011,7 @@ class ChatPortalClient {
     if (!payload || typeof payload !== "object") return;
     const block = payload.block && typeof payload.block === "object" ? payload.block : null;
     if (!block) return;
+    this.clearStreamingIdleStatusTimer();
     const messageId = (payload.message_id || payload.messageId || "").toString().trim() || null;
     this.ensureStreamingMessageNode(messageId || this.pendingMessageId);
     const blockId = (block.block_id || block.blockId || "").toString().trim();
@@ -1029,6 +1037,7 @@ class ChatPortalClient {
     if (!payload || typeof payload !== "object") return;
     const block = payload.block && typeof payload.block === "object" ? payload.block : null;
     if (!block) return;
+    this.clearStreamingIdleStatusTimer();
     const messageId = (payload.message_id || payload.messageId || "").toString().trim() || null;
     this.ensureStreamingMessageNode(messageId || this.pendingMessageId);
     const blockId = (block.block_id || block.blockId || "").toString().trim();
@@ -3962,20 +3971,29 @@ class ChatPortalClient {
   scheduleStreamingIdleStatusReveal() {
     if (!this.isStreaming || this.streamFinished) return;
     if (!this.streamingStatusEl || !this.streamingStatusTextEl) return;
-    if (this.streamingTextBlockActiveIds.size > 0) return;
     if (!this.spinnerDesiredPending) return;
 
     this.clearStreamingIdleStatusTimer();
+    const delay =
+      this.streamingTextBlockActiveIds.size > 0
+        ? this.streamingSilenceStatusDelayMs
+        : this.streamingIdleStatusDelayMs;
     this.streamingIdleStatusTimer = setTimeout(() => {
       this.streamingIdleStatusTimer = null;
       if (!this.isStreaming || this.streamFinished) return;
-      if (this.streamingTextBlockActiveIds.size > 0) return;
       if (!this.spinnerDesiredPending) return;
+      if (this.streamingTextBlockActiveIds.size > 0) {
+        const lastDelta = this.lastTextDeltaAt || 0;
+        if (lastDelta && Date.now() - lastDelta < this.streamingSilenceStatusDelayMs) {
+          return;
+        }
+      }
       this.setSpinnerText(this.spinnerDesiredText, {
         pending: this.spinnerDesiredPending,
         isError: this.spinnerDesiredIsError,
+        force: true,
       });
-    }, this.streamingIdleStatusDelayMs);
+    }, delay);
   }
 
   repositionStreamingStatusRow() {
