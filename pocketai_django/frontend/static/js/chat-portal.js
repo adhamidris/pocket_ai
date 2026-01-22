@@ -9,6 +9,8 @@ class ChatPortalClient {
       csat: container.getAttribute("data-endpoint-csat"),
       toolApproval: container.getAttribute("data-endpoint-tool-approval"),
       toolHistory: container.getAttribute("data-endpoint-tool-history"),
+      fileUpload: container.getAttribute("data-endpoint-file-upload"),
+      fileDownloadUrlTemplate: container.getAttribute("data-endpoint-file-download-url-template"),
     };
     this.businessSlug = container.getAttribute("data-business-slug") || "";
     this.agentSlug = container.getAttribute("data-agent-slug") || "";
@@ -43,6 +45,8 @@ class ChatPortalClient {
       sessionsEmpty: container.querySelector("[data-sessions-empty]"),
       sessionsList: container.querySelector("[data-sessions-list]"),
       newSessionBtn: container.querySelector("[data-new-session-btn]"),
+      fileInput: container.querySelector("[data-chat-file-input]"),
+      uploadButton: container.querySelector("[data-chat-upload-button]"),
     };
 	    // Session management state
 	    this.sessionTokens = [];
@@ -80,6 +84,7 @@ class ChatPortalClient {
     this.pendingMessages = [];
     this.statusStyleInjected = false;
     this.ensureStatusStyle();
+    this.downloadFrame = null;
     // Session empty state tracking
     this.currentSessionHasMessages = false;
     this.sessionCreationInProgress = false;
@@ -90,12 +95,15 @@ class ChatPortalClient {
     // Streaming UX helpers
     this.scrollToBottomRaf = null;
     this.scrollToBottomBehavior = "auto";
+    this.streamingIdleStatusTimer = null;
+    this.streamingIdleStatusDelayMs = 200;
   }
 
   async init() {
     await this.waitForDependencies();
     this.configureMarked();
     this.bindSendForm();
+    this.bindFileUpload();
     this.bindCsatForm();
     this.bindScrollButton();
     this.initSessionManagement();
@@ -156,15 +164,18 @@ class ChatPortalClient {
 	    if (!container) return;
 	    const messageBodies = container.querySelectorAll('[data-message-body]');
 	    messageBodies.forEach((el) => {
-	      // data-message-body only appears on AI messages (not customer) per template
+	      const row = el.closest(".message-row");
+	      const isCustomer = Boolean(row && row.classList.contains("flex-row-reverse"));
 	      const messageId = el.dataset.messageId;
 	      
-	      // Add relative and group classes for AI messages
-	      el.classList.add("relative", "group", "pr-8");
+	      // Add relative and group classes for AI messages only.
+	      if (!isCustomer) {
+	        el.classList.add("relative", "group", "pr-8");
+	      }
 	
 	      if (!messageId) {
 	        // No message ID means no markdown to render, just add copy button
-	        if (!el.querySelector('button[data-copy-btn]')) {
+	        if (!isCustomer && !el.querySelector('button[data-copy-btn]')) {
 	          this.injectCopyButton(el);
         }
         return;
@@ -192,13 +203,15 @@ class ChatPortalClient {
           // Prefer canonical block rendering when available.
           if (Array.isArray(contentBlocks) && contentBlocks.length) {
             this.renderMessageContentBlocks(el, contentBlocks);
-          } else if (bodyText) {
+          } else if (!isCustomer && bodyText) {
             const blocks = this.coerceContentBlocks([], bodyText);
             this.renderMessageContentBlocks(el, blocks);
           }
 
           // Inject copy button ONLY after content is set
-          this.injectCopyButton(el);
+          if (!isCustomer) {
+            this.injectCopyButton(el);
+          }
         } catch (e) {
           console.warn('Failed to parse markdown for message', messageId, e);
         }
@@ -453,6 +466,141 @@ class ChatPortalClient {
     });
   }
 
+  bindFileUpload() {
+    const input = this.elements.fileInput;
+    const button = this.elements.uploadButton;
+    if (!input || !button) return;
+    if (!this.endpoints.fileUpload) return;
+
+    button.addEventListener("click", () => {
+      if (this.workflowLocked) return;
+      input.click();
+    });
+
+    input.addEventListener("change", async () => {
+      if (!this.sessionToken) {
+        this.showToast("Upload failed", "Session is still initialising.", true);
+        input.value = "";
+        return;
+      }
+      const file = input.files && input.files[0] ? input.files[0] : null;
+      if (!file) return;
+
+      // Reset immediately so selecting the same file twice triggers change.
+      input.value = "";
+
+      const name = (file.name || "").toLowerCase();
+      const type = (file.type || "").toLowerCase();
+      if (!(name.endsWith(".pdf") || type.includes("pdf"))) {
+        this.showToast("Unsupported file", "Only PDF uploads are supported right now.", true);
+        return;
+      }
+
+      const form = new FormData();
+      form.append("session_token", this.sessionToken);
+      form.append("file", file);
+
+      try {
+        this.showToast("Uploading…", file.name || "PDF");
+        const response = await fetch(this.endpoints.fileUpload, {
+          method: "POST",
+          body: form,
+        });
+        const data = await response.json().catch(() => null);
+        if (!response.ok) {
+          const msg = data && data.error && data.error.message ? data.error.message : "Upload failed.";
+          throw new Error(msg);
+        }
+
+        const message = data && data.message ? data.message : null;
+        if (message) {
+          this.appendMessage(message);
+          if (!this.currentSessionHasMessages) {
+            this.currentSessionHasMessages = true;
+            this.updateSessionEmptyState(1);
+          }
+        }
+      } catch (error) {
+        this.showToast("Upload failed", error.message || "Could not upload file.", true);
+      }
+    });
+  }
+
+  ensureDownloadFrame() {
+    if (this.downloadFrame && this.downloadFrame.parentNode) return;
+    const iframe = document.createElement("iframe");
+    iframe.setAttribute("aria-hidden", "true");
+    iframe.tabIndex = -1;
+    iframe.style.position = "absolute";
+    iframe.style.width = "1px";
+    iframe.style.height = "1px";
+    iframe.style.left = "-9999px";
+    iframe.style.top = "0";
+    iframe.style.opacity = "0";
+    iframe.style.pointerEvents = "none";
+    document.body.appendChild(iframe);
+    this.downloadFrame = iframe;
+  }
+
+  triggerDownload(downloadUrl) {
+    const url = (downloadUrl || "").toString().trim();
+    if (!url) return;
+    const lower = url.toLowerCase();
+    if (lower.startsWith("javascript:") || lower.startsWith("data:")) return;
+    this.ensureDownloadFrame();
+    try {
+      // Reset first so repeated downloads of the same URL still trigger.
+      this.downloadFrame.src = "about:blank";
+    } catch (_err) {
+      // ignore
+    }
+    this.downloadFrame.src = url;
+  }
+
+  buildFileDownloadUrlEndpoint(fileId) {
+    const token = (fileId || "").toString().trim();
+    if (!token) return "";
+    const template = (this.endpoints.fileDownloadUrlTemplate || "").toString().trim();
+    if (template && template.includes("{file_id}")) {
+      return template.replace("{file_id}", encodeURIComponent(token));
+    }
+    return `/api/chat/portal/files/${encodeURIComponent(token)}/download-url/`;
+  }
+
+  async downloadConversationFile(fileId, filename) {
+    const token = (fileId || "").toString().trim();
+    if (!token) return;
+    if (!this.sessionToken) {
+      this.showToast("Download unavailable", "Session token missing.", true);
+      return;
+    }
+    const endpoint = this.buildFileDownloadUrlEndpoint(token);
+    if (!endpoint) return;
+
+    try {
+      const url = new URL(endpoint, window.location.origin);
+      url.searchParams.set("session_token", this.sessionToken);
+
+      const response = await fetch(url.toString(), {
+        method: "GET",
+        headers: { Accept: "application/json" },
+      });
+      const payload = await response.json().catch(() => null);
+      if (!response.ok) {
+        const msg = payload && payload.error && payload.error.message ? payload.error.message : "Could not fetch download link.";
+        throw new Error(msg);
+      }
+      const downloadUrl = payload && payload.download_url ? payload.download_url : "";
+      if (!downloadUrl) {
+        throw new Error("Missing download_url.");
+      }
+      this.showToast("Downloading…", filename || "File");
+      this.triggerDownload(downloadUrl);
+    } catch (error) {
+      this.showToast("Download failed", error.message || "Could not download file.", true);
+    }
+  }
+
   bindCsatForm() {
     const form = this.elements.csatForm;
     if (!form) return;
@@ -564,7 +712,7 @@ class ChatPortalClient {
 	      sent_at: new Date().toISOString(),
 	    });
 	    // Instant feedback before the first SSE event arrives.
-	    this.setSpinnerText("Thinking…", { pending: true });
+	    this.setSpinnerText("", { pending: true });
 	    const controller = new AbortController();
 	    this.streamController = controller;
 
@@ -750,9 +898,13 @@ class ChatPortalClient {
     }
 	    if (!payload) return;
 	    this.usingStateMachine = true;
-	    const text = payload.text || "";
+	    let text = payload.text || "";
+      const normalized = (text || "").toString().trim().toLowerCase();
+      if (normalized === "thinking…" || normalized === "thinking..." || normalized === "thinking") {
+        text = "";
+      }
 	    const pending = payload.pending !== false;
-	    this.setSpinnerText(text, { pending });
+	    this.setSpinnerText(text, { pending, force: true });
 	  }
 
 	  handleBlockStartEvent(data) {
@@ -766,6 +918,7 @@ class ChatPortalClient {
     if (!payload || typeof payload !== "object") return;
     const block = payload.block && typeof payload.block === "object" ? payload.block : null;
     if (!block) return;
+    this.clearStreamingIdleStatusTimer();
     const messageId = (payload.message_id || payload.messageId || "").toString().trim() || null;
 	    this.ensureStreamingMessageNode(messageId || this.pendingMessageId);
 	    this.upsertStreamingContentBlock(block);
@@ -792,6 +945,7 @@ class ChatPortalClient {
     const ops = Array.isArray(payload.ops) ? payload.ops : [];
     if (!blockId || !ops.length) return;
 
+	    this.clearStreamingIdleStatusTimer();
 	    const messageId = (payload.message_id || payload.messageId || "").toString().trim() || null;
 	    this.ensureStreamingMessageNode(messageId || this.pendingMessageId);
 
@@ -835,15 +989,7 @@ class ChatPortalClient {
     }
 
 	    if (this.streamingTextBlockActiveIds.size === 0) {
-	      // During streaming, keep the status row hidden between text blocks to avoid
-	      // "flashing" as models emit structured blocks (e.g. list_item per line).
-	      // Tool/status updates remain the source of truth for loading states.
-	      if (!this.isStreaming || this.streamFinished) {
-	        this.setSpinnerText(this.spinnerDesiredText, {
-	          pending: this.spinnerDesiredPending,
-	          isError: this.spinnerDesiredIsError,
-	        });
-	      }
+	      this.scheduleStreamingIdleStatusReveal();
 	    }
 		  }
 
@@ -1918,7 +2064,38 @@ class ChatPortalClient {
       const valueEl = document.createElement("div");
       valueEl.dataset.toolPreviewValue = "true";
       valueEl.className = "flex-1 min-w-0 text-[11px] text-foreground/80 break-words";
-      valueEl.textContent = this.formatToolPreviewValue(value);
+      const maybeUrl = typeof value === "string" ? value.trim() : "";
+      const lowerUrl = maybeUrl.toLowerCase();
+      const isUrlLike =
+        Boolean(maybeUrl) &&
+        (maybeUrl.startsWith("/") || maybeUrl.startsWith("http://") || maybeUrl.startsWith("https://")) &&
+        !lowerUrl.startsWith("javascript:") &&
+        !lowerUrl.startsWith("data:");
+      if (isUrlLike) {
+        const normalizedKey = key.toLowerCase();
+        if (normalizedKey === "download_url" || normalizedKey === "downloadurl") {
+          const button = document.createElement("button");
+          button.type = "button";
+          button.className = "portal-file-inline-download";
+          button.textContent = "Download";
+          button.addEventListener("click", (event) => {
+            event.preventDefault();
+            event.stopPropagation();
+            this.triggerDownload(maybeUrl);
+          });
+          valueEl.appendChild(button);
+        } else {
+          const link = document.createElement("a");
+          link.href = maybeUrl;
+          link.rel = "noopener";
+          link.target = "_blank";
+          link.className = "underline underline-offset-2 text-primary hover:opacity-80";
+          link.textContent = maybeUrl;
+          valueEl.appendChild(link);
+        }
+      } else {
+        valueEl.textContent = this.formatToolPreviewValue(value);
+      }
 
       row.appendChild(keyEl);
       row.appendChild(valueEl);
@@ -1978,6 +2155,20 @@ class ChatPortalClient {
       return `Object{${preview}${suffix}}`;
     }
     return String(value);
+  }
+
+  formatBytes(value) {
+    const bytes = Number(value);
+    if (!Number.isFinite(bytes) || bytes <= 0) return "";
+    const units = ["B", "KB", "MB", "GB", "TB"];
+    let idx = 0;
+    let size = bytes;
+    while (size >= 1024 && idx < units.length - 1) {
+      size /= 1024;
+      idx += 1;
+    }
+    const rounded = idx === 0 ? String(Math.round(size)) : size >= 10 ? size.toFixed(1) : size.toFixed(2);
+    return `${rounded} ${units[idx]}`;
   }
 
   mapToolStatus(status) {
@@ -2482,6 +2673,184 @@ class ChatPortalClient {
       return card;
     }
 
+    if (type === "file") {
+      const fileId = (payload.file_id || payload.fileId || "").toString().trim();
+      const filename = (payload.filename || "").toString().trim() || "file";
+      const contentType = (payload.content_type || payload.contentType || "").toString().trim().toLowerCase();
+      const kind = (payload.kind || "").toString().trim().toLowerCase();
+      const status = (payload.status || "").toString().trim().toLowerCase();
+      const labelRaw = (payload.label || "").toString().trim();
+
+      const sizeBytesRaw = payload.size_bytes ?? payload.sizeBytes ?? 0;
+      const pageCountRaw = payload.page_count ?? payload.pageCount ?? 0;
+      const sizeBytes = Number.isFinite(Number(sizeBytesRaw)) ? Number(sizeBytesRaw) : 0;
+      const pageCount = Number.isFinite(Number(pageCountRaw)) ? Number(pageCountRaw) : 0;
+
+      const wrapper = document.createElement("div");
+      wrapper.dataset.contentBlock = "true";
+      wrapper.dataset.blockType = "file";
+      wrapper.dataset.fileId = fileId;
+      if (blockId) wrapper.dataset.blockId = blockId;
+      wrapper.className = "portal-file-card";
+
+      const icon = document.createElement("div");
+      icon.className = "portal-file-card__icon";
+      icon.innerHTML = `
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
+          <path d="M14 2v6h6"></path>
+          <path d="M8 13h8"></path>
+          <path d="M8 17h5"></path>
+        </svg>
+      `;
+
+      const main = document.createElement("div");
+      main.className = "portal-file-card__main";
+
+      const titleRow = document.createElement("div");
+      titleRow.className = "portal-file-card__title-row";
+
+      const nameEl = document.createElement("div");
+      nameEl.className = "portal-file-card__filename";
+      nameEl.textContent = filename;
+
+      const badge = document.createElement("span");
+      badge.className = "portal-file-card__badge";
+      const label =
+        labelRaw ||
+        (kind === "upload" ? "Uploaded" : kind === "artifact" ? "Generated" : "") ||
+        "";
+      badge.textContent = label;
+      badge.hidden = !label;
+
+      titleRow.appendChild(nameEl);
+      titleRow.appendChild(badge);
+
+      const meta = document.createElement("div");
+      meta.className = "portal-file-card__meta";
+
+      const parts = [];
+      const isPdf = contentType === "application/pdf" || filename.toLowerCase().endsWith(".pdf");
+      parts.push(isPdf ? "PDF" : contentType ? contentType : "File");
+      if (pageCount > 0) parts.push(`${pageCount} page${pageCount === 1 ? "" : "s"}`);
+      if (sizeBytes > 0) parts.push(this.formatBytes(sizeBytes));
+      meta.textContent = parts.join(" • ");
+
+      main.appendChild(titleRow);
+      main.appendChild(meta);
+
+      const actions = document.createElement("div");
+      actions.className = "portal-file-card__actions";
+
+      const statusEl = document.createElement("div");
+      statusEl.className = "portal-file-card__status";
+      const statusLabel = status === "ready" ? "Ready" : status === "failed" ? "Failed" : "Processing";
+      statusEl.textContent = statusLabel;
+      statusEl.dataset.status = status || "";
+
+      const button = document.createElement("button");
+      button.type = "button";
+      button.className = "portal-file-card__download";
+      button.textContent = status === "ready" ? "Download" : status === "failed" ? "Unavailable" : "Preparing…";
+      button.disabled = status !== "ready" || !fileId;
+      button.addEventListener("click", (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        if (!fileId) return;
+        void this.downloadConversationFile(fileId, filename);
+      });
+
+      actions.appendChild(statusEl);
+      actions.appendChild(button);
+
+      wrapper.appendChild(icon);
+      wrapper.appendChild(main);
+      wrapper.appendChild(actions);
+      return wrapper;
+    }
+
+    if (type === "file_text") {
+      const fileId = (payload.file_id || payload.fileId || "").toString().trim();
+      const filename = (payload.filename || "").toString().trim() || "document.pdf";
+      const title = (payload.title || "").toString().trim() || `Extracted text from ${filename}`;
+      const text = (payload.text || "").toString();
+      const collapsed = payload.collapsed !== false;
+
+      const wrapper = document.createElement("div");
+      wrapper.dataset.contentBlock = "true";
+      wrapper.dataset.blockType = "file_text";
+      wrapper.dataset.fileId = fileId;
+      if (blockId) wrapper.dataset.blockId = blockId;
+      wrapper.className = "portal-file-text";
+
+      const header = document.createElement("div");
+      header.className = "portal-file-text__header";
+
+      const headerTitle = document.createElement("div");
+      headerTitle.className = "portal-file-text__title";
+      headerTitle.textContent = title;
+
+      const headerActions = document.createElement("div");
+      headerActions.className = "portal-file-text__actions";
+
+      const copyBtn = document.createElement("button");
+      copyBtn.type = "button";
+      copyBtn.className = "portal-file-text__btn";
+      copyBtn.textContent = "Copy";
+      copyBtn.addEventListener("click", async (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        try {
+          await navigator.clipboard.writeText(text);
+          this.showToast("Copied", "Extracted text copied.");
+        } catch (_err) {
+          this.showToast("Copy failed", "Could not copy text.", true);
+        }
+      });
+
+      const downloadBtn = document.createElement("button");
+      downloadBtn.type = "button";
+      downloadBtn.className = "portal-file-text__btn portal-file-text__btn--download";
+      downloadBtn.textContent = "Download PDF";
+      downloadBtn.disabled = !fileId;
+      downloadBtn.addEventListener("click", (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        if (!fileId) return;
+        void this.downloadConversationFile(fileId, filename);
+      });
+
+      headerActions.appendChild(copyBtn);
+      headerActions.appendChild(downloadBtn);
+
+      header.appendChild(headerTitle);
+      header.appendChild(headerActions);
+
+      const details = document.createElement("details");
+      details.className = "portal-file-text__details";
+      if (!collapsed) {
+        details.open = true;
+      }
+
+      const summary = document.createElement("summary");
+      summary.className = "portal-file-text__summary";
+      summary.textContent = collapsed ? "Show extracted text" : "Hide extracted text";
+      details.addEventListener("toggle", () => {
+        summary.textContent = details.open ? "Hide extracted text" : "Show extracted text";
+      });
+
+      const pre = document.createElement("pre");
+      pre.className = "portal-file-text__content";
+      pre.textContent = text;
+
+      details.appendChild(summary);
+      details.appendChild(pre);
+
+      wrapper.appendChild(header);
+      wrapper.appendChild(details);
+      return wrapper;
+    }
+
     if (type === "table") {
       const columns = Array.isArray(payload.columns) ? payload.columns : [];
       const rows = Array.isArray(payload.rows) ? payload.rows : [];
@@ -2740,9 +3109,23 @@ class ChatPortalClient {
     body.dataset.messageBubble = "true";
 
     if (isCustomer) {
-      const cleanBody = this.stripInlineResponseBlocks(message.body || "");
-      body.innerHTML = this.renderMarkdown(cleanBody);
       body.className = "text-base leading-relaxed bg-muted text-foreground px-5 py-3 rounded-2xl rounded-tr-sm text-start inline-block shadow-sm";
+      body.dataset.messageBody = "true";
+      if (message.id) {
+        body.dataset.messageId = message.id;
+      }
+      const explicitBlocks = Array.isArray(message.contentBlocks) ? message.contentBlocks : [];
+      if (explicitBlocks.length) {
+        const blocksRoot = document.createElement("div");
+        blocksRoot.dataset.messageBlocks = "true";
+        blocksRoot.className = "space-y-2";
+        body.appendChild(blocksRoot);
+        const blocks = this.coerceContentBlocks(explicitBlocks, message.body);
+        this.renderContentBlocksInto(blocksRoot, blocks);
+      } else {
+        const cleanBody = this.stripInlineResponseBlocks(message.body || "");
+        body.innerHTML = this.renderMarkdown(cleanBody);
+      }
     } else {
       body.dataset.messageBody = "true";
       if (message.id) {
@@ -3524,6 +3907,7 @@ class ChatPortalClient {
 		    }
 		    this.streamingActive = false;
 		    this.isStreaming = false;
+		    this.clearStreamingIdleStatusTimer();
 		    this.clearStreamingStatus();
     if (removeNode && this.streamingMessageNode && this.streamingMessageNode.parentNode) {
       this.streamingMessageNode.parentNode.removeChild(this.streamingMessageNode);
@@ -3567,6 +3951,31 @@ class ChatPortalClient {
     const baseLabel = labelOverride || labelMap[mode] || labelMap.working;
     const isError = mode === "error";
     this.setSpinnerText(baseLabel, { pending: mode !== "done", isError });
+  }
+
+  clearStreamingIdleStatusTimer() {
+    if (!this.streamingIdleStatusTimer) return;
+    clearTimeout(this.streamingIdleStatusTimer);
+    this.streamingIdleStatusTimer = null;
+  }
+
+  scheduleStreamingIdleStatusReveal() {
+    if (!this.isStreaming || this.streamFinished) return;
+    if (!this.streamingStatusEl || !this.streamingStatusTextEl) return;
+    if (this.streamingTextBlockActiveIds.size > 0) return;
+    if (!this.spinnerDesiredPending) return;
+
+    this.clearStreamingIdleStatusTimer();
+    this.streamingIdleStatusTimer = setTimeout(() => {
+      this.streamingIdleStatusTimer = null;
+      if (!this.isStreaming || this.streamFinished) return;
+      if (this.streamingTextBlockActiveIds.size > 0) return;
+      if (!this.spinnerDesiredPending) return;
+      this.setSpinnerText(this.spinnerDesiredText, {
+        pending: this.spinnerDesiredPending,
+        isError: this.spinnerDesiredIsError,
+      });
+    }, this.streamingIdleStatusDelayMs);
   }
 
   repositionStreamingStatusRow() {

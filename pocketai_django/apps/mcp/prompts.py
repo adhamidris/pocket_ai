@@ -20,7 +20,13 @@ from opentelemetry import trace as otel_trace
 from django.conf import settings
 
 from apps.accounts.models import AgentProfile
-from apps.conversations.models import Conversation, ConversationSender
+from apps.conversations.models import (
+    Conversation,
+    ConversationFile,
+    ConversationFileKind,
+    ConversationFileStatus,
+    ConversationSender,
+)
 from apps.llm.ai_prompt_builder import PromptBuilder
 from apps.mcp.identifier_registry import IdentifierGuardrail
 from apps.mcp.sanitizer import sanitize_text
@@ -287,6 +293,7 @@ def build_system_message(
         - Avoid placeholder narration during tool use.
         - Use tables for multi-item comparisons when it helps.
         - Prefer clean markdown for prose (avoid flicker-prone partial formatting).
+        - If a tool creates a downloadable artifact (PDF/file), **do not paste raw download URLs**. Just say it's ready and the visitor can click the **Download** button on the attachment card in the chat.
 
         ---
 
@@ -475,6 +482,42 @@ def _conversation_memory_note(
     return "\n\n".join(sections).strip()
 
 
+def _conversation_files_note(conversation: Conversation, *, limit: int = 6) -> str | None:
+    """
+    Summarize uploaded files available in this conversation so the model knows they exist.
+
+    Keep this short; file contents should be accessed via tools.
+    """
+
+    try:
+        qs = (
+            ConversationFile.objects.filter(
+                conversation=conversation,
+                kind=ConversationFileKind.UPLOAD,
+                status=ConversationFileStatus.READY,
+            )
+            .order_by("-created_at")
+            .only("id", "filename", "page_count", "created_at")[: max(1, int(limit))]
+        )
+        files = list(qs)
+    except Exception:  # pragma: no cover - defensive (avoid prompt breakage)
+        return None
+
+    if not files:
+        return None
+
+    lines: list[str] = [
+        "Uploaded files are available in this chat session.",
+        "Use `search_conversation_files(query=...)` to find relevant passages, then `read_conversation_file(ids=[...])` to read them.",
+        "",
+        "Files:",
+    ]
+    for item in files:
+        pages = f", pages={item.page_count}" if getattr(item, "page_count", 0) else ""
+        lines.append(f"- {item.filename} (file_id={item.id}{pages})")
+    return "\n".join(lines).strip()
+
+
 def build_messages(*, conversation: Conversation, user_message: str) -> list[Mapping[str, object]]:
     """
     Assemble the message history that will be sent to the MCP-ready provider.
@@ -508,6 +551,9 @@ def build_messages(*, conversation: Conversation, user_message: str) -> list[Map
         memory_note = _conversation_memory_note(conversation)
         if memory_note:
             messages.append({"role": "system", "content": memory_note})
+        files_note = _conversation_files_note(conversation)
+        if files_note:
+            messages.append({"role": "system", "content": files_note})
         if agent:
             messages.append({"role": "system", "content": PLACEHOLDER_REMINDER})
             messages.append({"role": "system", "content": PORTAL_SPINNER_HINT_INSTRUCTIONS})

@@ -3078,6 +3078,11 @@ def chat_portal(request: HttpRequest, business_slug: str, agent_slug: str) -> Ht
             "csat": reverse("api:chat-csat"),
             "tool_approval": reverse("api:chat-portal-tools-approve"),
             "tool_history": reverse("api:chat-portal-tools-history"),
+            "file_upload": reverse("api:chat-portal-files-upload"),
+            "file_download_url_template": reverse(
+                "api:chat-portal-files-download-url",
+                args=["00000000-0000-0000-0000-000000000000"],
+            ).replace("00000000-0000-0000-0000-000000000000", "{file_id}"),
         },
     }
     response = render(request, "frontend/chat/portal.html", {"portal": portal_context})

@@ -3,6 +3,7 @@ from django.urls import path
 from . import views
 from . import mcp_connections
 from . import oauth
+from . import chat_portal_files
 from .chat_portal import (
     bootstrap_session,
     create_portal_session,
@@ -57,6 +58,17 @@ urlpatterns = [
     path("chat/portal/sessions/", bootstrap_session, name="chat-portal-session"),
     path("chat/portal/sessions/list/", list_portal_sessions, name="chat-portal-sessions-list"),
     path("chat/portal/sessions/create/", create_portal_session, name="chat-portal-sessions-create"),
+    path("chat/portal/files/upload/", chat_portal_files.portal_file_upload, name="chat-portal-files-upload"),
+    path(
+        "chat/portal/files/<uuid:file_id>/download/",
+        chat_portal_files.portal_file_download,
+        name="chat-portal-files-download",
+    ),
+    path(
+        "chat/portal/files/<uuid:file_id>/download-url/",
+        chat_portal_files.portal_file_download_url,
+        name="chat-portal-files-download-url",
+    ),
     path("chat/portal/verify/status/", portal_verification_status, name="chat-portal-verify-status"),
     path("chat/portal/verify/start/", portal_verification_start, name="chat-portal-verify-start"),
     path("chat/portal/verify/confirm/", portal_verification_confirm, name="chat-portal-verify-confirm"),

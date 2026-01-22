@@ -4,9 +4,12 @@ import secrets
 import uuid
 from datetime import datetime
 
+from django.conf import settings
 from django.core.validators import MaxValueValidator, MinValueValidator
 from django.db import models
 from django.utils import timezone
+
+from pgvector.django import VectorField
 
 
 def generate_session_token() -> str:
@@ -320,3 +323,133 @@ class IdentifierEvent(models.Model):
 
     def __str__(self) -> str:
         return f"{self.business_profile_id}:{self.status}:{self.tool}"
+
+
+class ConversationFileKind(models.TextChoices):
+    UPLOAD = "upload", "Upload"
+    ARTIFACT = "artifact", "Artifact"
+
+
+class ConversationFileStatus(models.TextChoices):
+    PROCESSING = "processing", "Processing"
+    READY = "ready", "Ready"
+    FAILED = "failed", "Failed"
+
+
+class ConversationFile(models.Model):
+    """
+    Conversation-scoped files for the public chat portal.
+
+    This model intentionally stays separate from the business-wide knowledge base
+    so visitor-provided documents do not become globally retrievable across tenants
+    or across unrelated conversations by default.
+    """
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    business_profile = models.ForeignKey(
+        "accounts.BusinessProfile",
+        related_name="conversation_files",
+        on_delete=models.CASCADE,
+    )
+    conversation = models.ForeignKey(
+        Conversation,
+        related_name="files",
+        on_delete=models.CASCADE,
+    )
+    kind = models.CharField(
+        max_length=24,
+        choices=ConversationFileKind.choices,
+        default=ConversationFileKind.UPLOAD,
+    )
+    status = models.CharField(
+        max_length=24,
+        choices=ConversationFileStatus.choices,
+        default=ConversationFileStatus.PROCESSING,
+    )
+    sender = models.CharField(
+        max_length=16,
+        choices=ConversationSender.choices,
+        default=ConversationSender.CUSTOMER,
+    )
+    filename = models.CharField(max_length=255)
+    content_type = models.CharField(max_length=120, blank=True, default="")
+    storage_path = models.CharField(max_length=512)
+    size_bytes = models.BigIntegerField(default=0, validators=[MinValueValidator(0)])
+    checksum_sha256 = models.CharField(max_length=128, blank=True, default="")
+    page_count = models.PositiveIntegerField(default=0)
+    metadata = models.JSONField(default=dict, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True, db_index=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = "conversations_conversation_file"
+        ordering = ("-created_at",)
+        indexes = [
+            models.Index(fields=["business_profile", "created_at"], name="conv_file_biz_created_idx"),
+            models.Index(fields=["conversation", "created_at"], name="conv_file_conv_created_idx"),
+            models.Index(fields=["conversation", "kind"], name="conv_file_conv_kind_idx"),
+        ]
+
+    def save(self, *args, **kwargs):
+        if self.conversation_id and not self.business_profile_id and getattr(self, "conversation", None):
+            self.business_profile = self.conversation.business_profile
+        super().save(*args, **kwargs)
+
+    def __str__(self) -> str:  # pragma: no cover
+        return f"{self.conversation_id}:{self.filename}"
+
+
+class ConversationFileChunk(models.Model):
+    """
+    Chunked extracted text for conversation files (PDFs, etc.) for retrieval.
+    """
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    business_profile = models.ForeignKey(
+        "accounts.BusinessProfile",
+        related_name="conversation_file_chunks",
+        on_delete=models.CASCADE,
+    )
+    conversation = models.ForeignKey(
+        Conversation,
+        related_name="file_chunks",
+        on_delete=models.CASCADE,
+    )
+    conversation_file = models.ForeignKey(
+        ConversationFile,
+        related_name="chunks",
+        on_delete=models.CASCADE,
+    )
+    chunk_index = models.PositiveIntegerField()
+    content = models.TextField()
+    token_count = models.PositiveIntegerField(default=0)
+    embedding = VectorField(dimensions=settings.EMBED_DIM, null=True, blank=True)
+    metadata = models.JSONField(default=dict, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = "conversations_conversation_file_chunk"
+        ordering = ("conversation_file_id", "chunk_index")
+        indexes = [
+            models.Index(fields=["conversation_file", "chunk_index"], name="conv_file_chunk_window_idx"),
+            models.Index(fields=["conversation", "chunk_index"], name="conv_file_chunk_conv_idx"),
+            models.Index(fields=["business_profile", "conversation"], name="conv_file_chunk_biz_conv_idx"),
+        ]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["conversation_file", "chunk_index"],
+                name="conv_file_chunk_unique_index",
+            )
+        ]
+
+    def save(self, *args, **kwargs):
+        if self.conversation_file_id:
+            if not self.conversation_id and getattr(self, "conversation_file", None):
+                self.conversation = self.conversation_file.conversation
+            if not self.business_profile_id and getattr(self, "conversation_file", None):
+                self.business_profile = self.conversation_file.business_profile
+        super().save(*args, **kwargs)
+
+    def __str__(self) -> str:  # pragma: no cover
+        return f"{self.conversation_file_id}:{self.chunk_index}"

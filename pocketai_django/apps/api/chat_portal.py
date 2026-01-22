@@ -852,7 +852,7 @@ def _parse_json_body(request: HttpRequest) -> dict:
         raise PortalValidationError("Invalid JSON payload") from exc
 
 
-def _business_prefers_mcp(business: BusinessProfile | None) -> bool:
+def _business_prefers_mcp(business: BusinessProfile | None, *, conversation=None) -> bool:
     """
     Evaluate whether a business should use the MCP orchestrator.
 
@@ -862,6 +862,11 @@ def _business_prefers_mcp(business: BusinessProfile | None) -> bool:
     """
 
     global_default = getattr(settings, "RAG_USE_MCP_ORCHESTRATOR", False)
+    # Allow per-conversation escalation to the MCP orchestrator when a portal
+    # feature requires tool calling (e.g., uploaded files).
+    convo_meta = getattr(conversation, "metadata", None)
+    if isinstance(convo_meta, dict) and convo_meta.get("mcp_required"):
+        return True
     if business is None:
         return global_default
     metadata = business.metadata if isinstance(business.metadata, dict) else {}
@@ -1674,7 +1679,7 @@ def stream_send(request: HttpRequest) -> StreamingHttpResponse:
     if not agent:
         return StreamingHttpResponse(status=500)
 
-    use_mcp = _business_prefers_mcp(conversation.business_profile)
+    use_mcp = _business_prefers_mcp(conversation.business_profile, conversation=conversation)
     trace_logger = PortalTraceLogger(
         conversation=conversation,
         agent=agent,
@@ -1848,7 +1853,7 @@ def stream_send(request: HttpRequest) -> StreamingHttpResponse:
         if text_value:
             lowered = text_value.strip().lower()
             if lowered.startswith("drafting") or lowered.startswith("responding"):
-                text_value = "Thinking…"
+                text_value = ""
         if text_value is None and allow_empty:
             text_value = ""
         if text_value is None:
@@ -2093,7 +2098,13 @@ def stream_send(request: HttpRequest) -> StreamingHttpResponse:
             if _progressive_spinner_update(code, label, meta):
                 return
             if code == "thinking":
-                _emit_spinner_status(label or "Thinking…", pending=True, fallback="Thinking…", reason="status:thinking")
+                _emit_spinner_status(
+                    "",
+                    pending=True,
+                    fallback=None,
+                    allow_empty=True,
+                    reason="status:thinking",
+                )
                 return
             if code in {"searching_complete", "reading_complete"}:
                 # Keep the last spinner label until the next concrete step replaces it.
@@ -2380,6 +2391,96 @@ def stream_send(request: HttpRequest) -> StreamingHttpResponse:
                         },
                     }
                 )
+
+                # File-oriented internal tools should render user-facing attachment blocks
+                # (download buttons, extracted text, etc.) separately from tool cards.
+                try:
+                    if isinstance(output_payload, Mapping) and str(payload.get("status") or "").strip().lower() in {"ok", "success"}:
+                        created_blocks: list[dict[str, object]] = []
+                        tool_lower = tool_name.strip().lower()
+
+                        if tool_lower in {"pdf_generate", "pdf_merge", "pdf_extract_pages"}:
+                            artifact = output_payload.get("artifact")
+                            if isinstance(artifact, Mapping):
+                                file_id_raw = artifact.get("file_id") or artifact.get("fileId") or artifact.get("id")
+                                filename = str(artifact.get("filename") or "").strip()
+                                try:
+                                    file_uuid = uuid.UUID(str(file_id_raw))
+                                except (TypeError, ValueError):
+                                    file_uuid = None
+                                if file_uuid:
+                                    from apps.conversations.models import ConversationFile
+                                    from apps.conversations.portal_files import portal_file_block
+
+                                    with tenant_context(getattr(conversation, "business_profile_id", None)):
+                                        file_obj = ConversationFile.objects.filter(
+                                            id=file_uuid, conversation=conversation
+                                        ).first()
+                                    if file_obj is not None:
+                                        label_map = {
+                                            "pdf_generate": "Generated",
+                                            "pdf_merge": "Merged",
+                                            "pdf_extract_pages": "Extracted pages",
+                                        }
+                                        created_blocks.append(portal_file_block(file_obj, label=label_map.get(tool_lower, "Generated")))
+                                    else:
+                                        # Fallback if the artifact record isn't readable (should be rare).
+                                        created_blocks.append(
+                                            {
+                                                "block_id": new_block_id(),
+                                                "type": "file",
+                                                "created_at": timezone.now().isoformat(),
+                                                "payload": {
+                                                    "file_id": str(file_uuid),
+                                                    "filename": filename or "document.pdf",
+                                                    "content_type": "application/pdf",
+                                                    "size_bytes": 0,
+                                                    "page_count": 0,
+                                                    "kind": "artifact",
+                                                    "status": "ready",
+                                                    "label": "Generated",
+                                                },
+                                            }
+                                        )
+
+                        elif tool_lower == "pdf_extract_text":
+                            file_meta = output_payload.get("file")
+                            text_value = output_payload.get("text")
+                            if isinstance(file_meta, Mapping) and isinstance(text_value, str) and text_value.strip():
+                                file_id_raw = file_meta.get("id") or file_meta.get("file_id") or file_meta.get("fileId")
+                                filename = str(file_meta.get("filename") or "").strip() or "document.pdf"
+                                try:
+                                    file_uuid = uuid.UUID(str(file_id_raw))
+                                except (TypeError, ValueError):
+                                    file_uuid = None
+                                if file_uuid:
+                                    from apps.conversations.portal_files import portal_file_text_block
+
+                                    created_blocks.append(
+                                        portal_file_text_block(
+                                            file_id=file_uuid,
+                                            filename=filename,
+                                            page_count=int(file_meta.get("page_count") or 0),
+                                            text=text_value.strip(),
+                                            title=f"Extracted text from {filename}",
+                                            collapsed=True,
+                                        )
+                                    )
+
+                        for block in created_blocks:
+                            _append_content_block(block)
+                            stream_queue.put(
+                                {
+                                    "type": "block_start",
+                                    "payload": {
+                                        "message_id": _current_message_id(),
+                                        "block": copy.deepcopy(block),
+                                    },
+                                }
+                            )
+                except Exception:  # pragma: no cover - best effort only
+                    logger.exception("portal file block creation failed for tool=%s", tool_name)
+
                 if state_machine_enabled and not stream_complete.is_set():
                     if deferred_spinner_label:
                         _emit_spinner_status(
@@ -2390,9 +2491,10 @@ def stream_send(request: HttpRequest) -> StreamingHttpResponse:
                         )
                     elif deferred_bridge_thinking and inflight_now == 0:
                         _emit_spinner_status(
-                            "Thinking…",
+                            "",
                             pending=True,
-                            fallback="Thinking…",
+                            fallback=None,
+                            allow_empty=True,
                             reason=f"tool:{tool_name}:{phase}:bridge_thinking",
                         )
             else:

@@ -270,15 +270,31 @@
     box-shadow: 0 6px 16px hsl(var(--primary) / 0.25);
   }
 
+  [data-chat-portal] .chat-input-action-btn--upload {
+    background: hsl(var(--muted));
+    background-image: none;
+    color: hsl(var(--foreground));
+    border: 1px solid hsl(var(--border));
+    box-shadow: none;
+  }
+
   [data-chat-portal] .chat-input-action-btn--send:hover,
   [data-chat-portal] .chat-input-action-btn--voice:hover {
     background: hsl(var(--primary) / 0.9);
     box-shadow: 0 6px 16px hsl(var(--primary) / 0.25), 0 0 0 2px hsl(var(--primary) / 0.12);
   }
 
+  [data-chat-portal] .chat-input-action-btn--upload:hover {
+    background: hsl(var(--muted) / 0.85);
+  }
+
   [data-chat-portal] .chat-input-action-btn--send:active,
   [data-chat-portal] .chat-input-action-btn--voice:active {
     background: hsl(var(--primary) / 0.85);
+  }
+
+  [data-chat-portal] .chat-input-action-btn--upload:active {
+    background: hsl(var(--muted) / 0.75);
   }
 
   [data-chat-portal] .chat-input-action-btn--send:disabled {
@@ -403,6 +419,230 @@
     font-size: var(--portal-font-sm);
   }
 
+  /* ------------------------------------------------------------------ */
+  /* File attachments (uploads + generated artifacts) */
+
+  [data-chat-portal] .portal-file-card {
+    width: 100%;
+    max-width: 560px;
+    display: flex;
+    align-items: center;
+    gap: 0.85rem;
+    padding: 0.85rem 0.95rem;
+    border-radius: 1rem;
+    border: 1px solid hsl(var(--border) / 0.6);
+    background: hsl(var(--background) / 0.75);
+    box-shadow: 0 1px 0 hsl(var(--border) / 0.35);
+  }
+
+  [data-chat-portal] .portal-file-card__icon {
+    width: 42px;
+    height: 42px;
+    border-radius: 0.9rem;
+    background: hsl(var(--primary) / 0.12);
+    color: hsl(var(--primary));
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+  }
+
+  [data-chat-portal] .portal-file-card__icon svg {
+    width: 20px;
+    height: 20px;
+  }
+
+  [data-chat-portal] .portal-file-card__main {
+    flex: 1;
+    min-width: 0;
+  }
+
+  [data-chat-portal] .portal-file-card__title-row {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    min-width: 0;
+  }
+
+  [data-chat-portal] .portal-file-card__filename {
+    font-size: var(--portal-font-sm);
+    font-weight: 600;
+    color: hsl(var(--foreground) / 0.92);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  [data-chat-portal] .portal-file-card__badge {
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    padding: 0.2rem 0.5rem;
+    border-radius: 999px;
+    border: 1px solid hsl(var(--border) / 0.65);
+    background: hsl(var(--muted) / 0.55);
+    color: hsl(var(--foreground) / 0.65);
+    flex-shrink: 0;
+  }
+
+  [data-chat-portal] .portal-file-card__meta {
+    margin-top: 0.25rem;
+    font-size: 11px;
+    color: hsl(var(--foreground) / 0.62);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  [data-chat-portal] .portal-file-card__actions {
+    display: flex;
+    align-items: center;
+    gap: 0.7rem;
+    flex-shrink: 0;
+  }
+
+  [data-chat-portal] .portal-file-card__status {
+    font-size: 11px;
+    font-weight: 600;
+    color: hsl(var(--foreground) / 0.65);
+  }
+
+  [data-chat-portal] .portal-file-card__status[data-status="failed"] {
+    color: hsl(var(--destructive) / 0.9);
+  }
+
+  [data-chat-portal] .portal-file-card__download {
+    min-height: 2.25rem;
+    padding: 0 0.85rem;
+    border-radius: 999px;
+    font-size: 0.875rem;
+    font-weight: 600;
+    background: hsl(var(--primary));
+    color: white;
+    transition: opacity 0.15s ease, transform 0.15s ease;
+  }
+
+  [data-chat-portal] .portal-file-card__download:hover {
+    opacity: 0.92;
+  }
+
+  [data-chat-portal] .portal-file-card__download:active {
+    transform: translateY(1px);
+  }
+
+  [data-chat-portal] .portal-file-card__download:disabled {
+    opacity: 0.45;
+    cursor: not-allowed;
+    transform: none;
+  }
+
+  [data-chat-portal] .portal-file-inline-download {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 1.9rem;
+    padding: 0 0.8rem;
+    border-radius: 999px;
+    font-size: 0.85rem;
+    font-weight: 600;
+    background: hsl(var(--primary));
+    color: white;
+  }
+
+  [data-chat-portal] .portal-file-inline-download:hover {
+    opacity: 0.92;
+  }
+
+  /* Extracted text (collapsed/expand) */
+  [data-chat-portal] .portal-file-text {
+    width: 100%;
+    max-width: 720px;
+    border-radius: 1rem;
+    border: 1px solid hsl(var(--border) / 0.6);
+    background: hsl(var(--background) / 0.75);
+    overflow: hidden;
+  }
+
+  [data-chat-portal] .portal-file-text__header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.75rem;
+    padding: 0.8rem 0.95rem;
+    border-bottom: 1px solid hsl(var(--border) / 0.5);
+  }
+
+  [data-chat-portal] .portal-file-text__title {
+    font-size: var(--portal-font-sm);
+    font-weight: 600;
+    color: hsl(var(--foreground) / 0.9);
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  [data-chat-portal] .portal-file-text__actions {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    flex-shrink: 0;
+  }
+
+  [data-chat-portal] .portal-file-text__btn {
+    min-height: 2rem;
+    padding: 0 0.75rem;
+    border-radius: 999px;
+    font-size: 0.85rem;
+    font-weight: 600;
+    background: hsl(var(--muted) / 0.65);
+    border: 1px solid hsl(var(--border) / 0.6);
+    color: hsl(var(--foreground) / 0.78);
+  }
+
+  [data-chat-portal] .portal-file-text__btn--download {
+    background: hsl(var(--primary));
+    border-color: transparent;
+    color: white;
+  }
+
+  [data-chat-portal] .portal-file-text__btn:disabled {
+    opacity: 0.45;
+    cursor: not-allowed;
+  }
+
+  [data-chat-portal] .portal-file-text__details {
+    padding: 0.75rem 0.95rem 0.95rem;
+  }
+
+  [data-chat-portal] .portal-file-text__summary {
+    cursor: pointer;
+    font-size: 0.9rem;
+    font-weight: 600;
+    color: hsl(var(--primary));
+    list-style: none;
+    user-select: none;
+  }
+
+  [data-chat-portal] .portal-file-text__summary::-webkit-details-marker {
+    display: none;
+  }
+
+  [data-chat-portal] .portal-file-text__content {
+    margin-top: 0.75rem;
+    max-height: 320px;
+    overflow: auto;
+    white-space: pre-wrap;
+    word-break: break-word;
+    font-size: 0.85rem;
+    line-height: 1.5;
+    padding: 0.85rem 0.9rem;
+    border-radius: 0.85rem;
+    background: hsl(var(--muted) / 0.55);
+    border: 1px solid hsl(var(--border) / 0.5);
+  }
+
   /* Timestamp Hover Effect */
   .message-timestamp {
     opacity: 0;
@@ -462,6 +702,8 @@
   data-endpoint-stream-send="{{ portal.endpoints.stream_send }}" data-endpoint-events="{{ portal.endpoints.events }}"
   data-endpoint-csat="{{ portal.endpoints.csat }}" data-endpoint-tool-approval="{{ portal.endpoints.tool_approval }}"
   data-endpoint-tool-history="{{ portal.endpoints.tool_history }}"
+  data-endpoint-file-upload="{{ portal.endpoints.file_upload }}"
+  data-endpoint-file-download-url-template="{{ portal.endpoints.file_download_url_template }}"
   data-business-slug="{{ portal.business.slug }}"
   data-agent-slug="{{ portal.agent.slug }}" data-agent-name="{{ portal.agent.name }}"
   data-agent-initials="{{ portal.agent.initials }}" data-bootstrap-script-id="{{ portal.bootstrap_script_id }}"
@@ -631,12 +873,10 @@
             </div>
             <div dir="auto"
               class="text-base leading-relaxed {% if message.sender|lower == 'customer' %}bg-muted text-foreground px-5 py-3 rounded-2xl rounded-tr-sm text-start inline-block shadow-sm{% else %}text-foreground text-start max-w-none break-words{% endif %}"
-              {% if message.sender|lower != 'customer' %}data-message-body data-message-id="{{ message.id }}"{% endif %}>
+              data-message-body data-message-id="{{ message.id }}">
               {% if message.sender|lower == 'customer' %}{{ message.body }}{% endif %}
             </div>
-            {% if message.sender|lower != 'customer' %}
             {{ message.render_payload|json_script:message.id }}
-            {% endif %}
             <div data-message-meta class="mt-2 text-xs text-muted-foreground space-y-1 hidden"></div>
             {% if message.sender|lower != 'customer' %}
             <div data-message-debug class="mt-2 text-xs text-muted-foreground hidden"></div>
@@ -700,6 +940,13 @@
             <textarea name="message" rows="1"
               class="flex-1 bg-transparent px-2 py-1.5 text-base md:text-sm text-foreground placeholder:text-muted-foreground focus:outline-none resize-none max-h-48 no-scrollbar"
               placeholder="Message {{ portal.agent.name }}..." style="field-sizing: content;" autofocus></textarea>
+            <input type="file" accept="application/pdf" class="sr-only" data-chat-file-input>
+            <button type="button" class="chat-input-action-btn chat-input-action-btn--upload" data-chat-upload-button aria-label="Upload PDF">
+              <svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.82-2.82l8.49-8.48"></path>
+              </svg>
+            </button>
             <button type="button" class="chat-input-action-btn chat-input-action-btn--voice" aria-label="Voice">
               <span class="chat-voice-inner" aria-hidden="true">
                 <svg class="chat-voice-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"

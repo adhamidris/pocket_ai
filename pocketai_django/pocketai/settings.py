@@ -1290,6 +1290,21 @@ PORTAL_DEBUG_TOOL_TRACE = os.getenv("PORTAL_DEBUG_TOOL_TRACE", "true").lower() i
 # PORTAL_ALLOW_MCP_TOOL_PREFERENCES: Allow the portal to persist per-agent "Always allow this tool" preferences.
 PORTAL_ALLOW_MCP_TOOL_PREFERENCES = os.getenv("PORTAL_ALLOW_MCP_TOOL_PREFERENCES", "false").lower() in {"1", "true", "yes"}
 
+# ---------------------------------------------------------------------------
+# Portal file uploads + artifacts
+
+# PORTAL_FILE_UPLOAD_MAX_BYTES: Maximum upload size for portal attachments (bytes).
+PORTAL_FILE_UPLOAD_MAX_BYTES = int(os.getenv("PORTAL_FILE_UPLOAD_MAX_BYTES", str(25 * 1024 * 1024)))
+# PORTAL_PDF_MAX_PAGES: Hard cap on PDF pages for portal uploads/artifacts.
+PORTAL_PDF_MAX_PAGES = int(os.getenv("PORTAL_PDF_MAX_PAGES", "250"))
+# PORTAL_FILE_DOWNLOAD_TTL_SECONDS: Signed download link TTL for portal files.
+PORTAL_FILE_DOWNLOAD_TTL_SECONDS = int(os.getenv("PORTAL_FILE_DOWNLOAD_TTL_SECONDS", "3600"))
+
+# Retrieval indexing caps (keep deterministic + bounded).
+PORTAL_FILE_MAX_CHUNKS = int(os.getenv("PORTAL_FILE_MAX_CHUNKS", "200"))
+PORTAL_FILE_CHUNK_CHARS = int(os.getenv("PORTAL_FILE_CHUNK_CHARS", "1200"))
+PORTAL_FILE_CHUNK_OVERLAP_CHARS = int(os.getenv("PORTAL_FILE_CHUNK_OVERLAP_CHARS", "160"))
+
 # ==============================================================================
 # SECURITY MIDDLEWARE & HEADERS
 # ==============================================================================

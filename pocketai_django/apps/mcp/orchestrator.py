@@ -354,7 +354,19 @@ class McpOrchestratorService:
         gateway_enabled = True
         internal_tool_defs.extend(mcp_tools.GATEWAY_TOOL_DEFINITIONS)
         if feature_state.rag_agentic_mode:
-            allowed = {"search_knowledge", "read_document", "mcp_search_tools", "mcp_call_tool", PORTAL_BLOCK_TOOL_NAME}
+            allowed = {
+                "search_knowledge",
+                "read_document",
+                "search_conversation_files",
+                "read_conversation_file",
+                "pdf_generate",
+                "pdf_merge",
+                "pdf_extract_pages",
+                "pdf_extract_text",
+                "mcp_search_tools",
+                "mcp_call_tool",
+                PORTAL_BLOCK_TOOL_NAME,
+            }
             internal_tool_defs = [
                 tool_def for tool_def in internal_tool_defs if self._tool_schema_name(tool_def) in allowed
             ]
@@ -1419,15 +1431,18 @@ class McpOrchestratorService:
                                                 )
                                         else:
                                             call_start = time.perf_counter()
-                                            if tool_name == "mcp_search_tools":
-                                                internal_event_payload = {
-                                                    "event_id": tool_event_id,
-                                                    "phase": "started",
-                                                    "status": "running",
-                                                    "tool_call_id": tool_call_id,
-                                                    "tool_name": tool_name,
-                                                    "kind": "mcp_internal",
-                                                }
+                                            internal_event_payload = {
+                                                "event_id": tool_event_id,
+                                                "phase": "started",
+                                                "status": "running",
+                                                "tool_call_id": tool_call_id,
+                                                "tool_name": tool_name,
+                                                "kind": "mcp_internal",
+                                            }
+                                            # Keep internal tool inputs minimal; portal UI should render
+                                            # user-facing results via dedicated blocks (attachments, etc.)
+                                            # rather than surfacing full tool arguments.
+                                            if tool_name in {"mcp_search_tools", "search_knowledge", "search_conversation_files"}:
                                                 query_value = arguments.get("query")
                                                 if isinstance(query_value, str):
                                                     query_text = query_value.strip()
@@ -1439,11 +1454,11 @@ class McpOrchestratorService:
                                                     internal_event_payload["input"] = {
                                                         "query": self._clip_text(query_text, 280),
                                                     }
-                                                if on_tool_event:
-                                                    try:
-                                                        on_tool_event(internal_event_payload)
-                                                    except Exception:  # pragma: no cover - UI callback must not break tools
-                                                        logger.exception("mcp portal tool event start callback failed")
+                                            if on_tool_event:
+                                                try:
+                                                    on_tool_event(internal_event_payload)
+                                                except Exception:  # pragma: no cover - UI callback must not break tools
+                                                    logger.exception("mcp portal tool event start callback failed")
                                             tool_result = mcp_tools.execute_tool(
                                                 tool_name,
                                                 arguments,
@@ -5492,6 +5507,112 @@ class McpOrchestratorService:
                     content_out.append(entry)
             if content_out:
                 compact["content"] = content_out
+            compact["prompt_compact"] = True
+            return compact
+
+        if normalized_name == "search_conversation_files":
+            raw_snippets = payload.get("snippets")
+            snippets_out: list[dict[str, object]] = []
+            preview_chars = max(200, min(900, int(snippet_content_chars)))
+            if isinstance(raw_snippets, list):
+                for entry in raw_snippets[: max(1, max_snippets)]:
+                    if not isinstance(entry, Mapping):
+                        continue
+                    out: dict[str, object] = {}
+                    snippet_id = entry.get("id")
+                    if isinstance(snippet_id, str) and snippet_id.strip():
+                        out["id"] = snippet_id.strip()
+                    file_meta = entry.get("file")
+                    if isinstance(file_meta, Mapping):
+                        file_out: dict[str, object] = {}
+                        for key in ("id", "filename", "page_count"):
+                            value = file_meta.get(key)
+                            if value is None:
+                                continue
+                            if isinstance(value, str) and not value.strip():
+                                continue
+                            file_out[key] = value
+                        if file_out:
+                            out["file"] = file_out
+                    preview = entry.get("preview")
+                    if isinstance(preview, str) and preview.strip():
+                        out["preview"] = self._clip_text(preview.strip(), preview_chars)
+                    read_hint = entry.get("read_hint") or entry.get("readHint")
+                    if isinstance(read_hint, Mapping):
+                        ids = read_hint.get("ids")
+                        if isinstance(ids, list):
+                            out["read_hint"] = {"ids": [str(v) for v in ids if str(v).strip()][:12]}
+                    if out:
+                        snippets_out.append(out)
+            compact["snippets"] = snippets_out
+            compact["prompt_compact"] = True
+            return compact
+
+        if normalized_name == "read_conversation_file":
+            raw_chunks = payload.get("chunks")
+            chunks_out: list[dict[str, object]] = []
+            content_chars = max(400, min(2400, int(snippet_content_chars)))
+            if isinstance(raw_chunks, list):
+                for entry in raw_chunks[: max(1, max_snippets)]:
+                    if not isinstance(entry, Mapping):
+                        continue
+                    out: dict[str, object] = {}
+                    chunk_id = entry.get("id")
+                    if isinstance(chunk_id, str) and chunk_id.strip():
+                        out["id"] = chunk_id.strip()
+                    file_meta = entry.get("file")
+                    if isinstance(file_meta, Mapping):
+                        file_out: dict[str, object] = {}
+                        for key in ("id", "filename", "page_count"):
+                            value = file_meta.get(key)
+                            if value is None:
+                                continue
+                            if isinstance(value, str) and not value.strip():
+                                continue
+                            file_out[key] = value
+                        if file_out:
+                            out["file"] = file_out
+                    content = entry.get("content")
+                    if isinstance(content, str) and content.strip():
+                        out["content"] = self._clip_text(content.strip(), content_chars)
+                    if out:
+                        chunks_out.append(out)
+            compact["chunks"] = chunks_out
+            compact["prompt_compact"] = True
+            return compact
+
+        if normalized_name in {"pdf_generate", "pdf_merge", "pdf_extract_pages"}:
+            artifact = payload.get("artifact")
+            if isinstance(artifact, Mapping):
+                artifact_out: dict[str, object] = {}
+                file_id = artifact.get("file_id") or artifact.get("fileId") or artifact.get("id")
+                filename = artifact.get("filename")
+                if file_id is not None:
+                    artifact_out["file_id"] = str(file_id)
+                if isinstance(filename, str) and filename.strip():
+                    artifact_out["filename"] = self._clip_text(filename.strip(), 180)
+                if artifact_out:
+                    compact["artifact"] = artifact_out
+            compact["prompt_compact"] = True
+            return compact
+
+        if normalized_name == "pdf_extract_text":
+            file_meta = payload.get("file")
+            if isinstance(file_meta, Mapping):
+                file_out: dict[str, object] = {}
+                for key in ("id", "filename", "page_count"):
+                    value = file_meta.get(key)
+                    if value is None:
+                        continue
+                    if isinstance(value, str) and not value.strip():
+                        continue
+                    file_out[key] = value
+                if file_out:
+                    compact["file"] = file_out
+            text_value = payload.get("text")
+            if isinstance(text_value, str) and text_value.strip():
+                max_text = max(2000, min(15000, int(snippet_content_chars) * 10))
+                compact["text"] = self._clip_text(text_value.strip(), max_text)
             compact["prompt_compact"] = True
             return compact
 
