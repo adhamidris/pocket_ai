@@ -36,6 +36,7 @@ from apps.accounts.models import (
     McpConnectionToolSetting,
     McpToolOperationType,
 )
+from apps.accounts.oauth_helpers import OAuthFlowError, ensure_fresh_oauth_credentials
 from apps.mcp.connectors import _infer_operation_type_from_tool_name
 from apps.mcp.remote_client import McpRemoteError, test_mcp_server
 
@@ -166,10 +167,15 @@ def _validate_mcp_server_url(value: str) -> tuple[str | None, str | None]:
 def _mcp_auth_headers(connection: McpConnection) -> dict[str, str]:
     if connection.auth_type == McpConnectionAuthType.NONE:
         return {}
-    credentials = connection.credentials or {}
     if connection.auth_type == McpConnectionAuthType.BEARER:
-        token = str(credentials.get("token") or "").strip()
+        try:
+            ensure_fresh_oauth_credentials(connection)
+        except OAuthFlowError as exc:
+            logger.warning("mcp_oauth_refresh_failed connection_id=%s error=%s", connection.id, str(exc)[:200])
+        credentials = connection.credentials or {}
+        token = str(credentials.get("token") or credentials.get("access_token") or "").strip()
         return {"Authorization": f"Bearer {token}"} if token else {}
+    credentials = connection.credentials or {}
     if connection.auth_type == McpConnectionAuthType.HEADER:
         header_name = str(credentials.get("header_name") or "").strip()
         header_value = str(credentials.get("header_value") or "").strip()
@@ -339,6 +345,7 @@ def _mcp_marketplace_catalog() -> list[dict[str, Any]]:
             "category": "communication",
             "industries": ["marketing", "ecommerce", "legal", "real_estate", "consulting", "general"],
             "connectionType": "oauth",
+            "oauthProvider": "google",
             "recommendedAuth": "bearer",
             "serverUrl": "https://mcp.composio.dev/gmail",
             "docsUrl": "https://mcp.composio.dev/",
@@ -353,6 +360,7 @@ def _mcp_marketplace_catalog() -> list[dict[str, Any]]:
             "category": "communication",
             "industries": ["marketing", "saas_tech", "consulting", "general"],
             "connectionType": "oauth",
+            "oauthProvider": "slack",
             "recommendedAuth": "bearer",
             "serverUrl": "https://mcp.composio.dev/slack",
             "docsUrl": "https://mcp.composio.dev/",
@@ -367,6 +375,7 @@ def _mcp_marketplace_catalog() -> list[dict[str, Any]]:
             "category": "communication",
             "industries": ["consulting", "finance", "legal", "general"],
             "connectionType": "oauth",
+            "oauthProvider": "microsoft",
             "recommendedAuth": "bearer",
             "serverUrl": "https://mcp.composio.dev/microsoft-teams",
             "docsUrl": "https://mcp.composio.dev/",
@@ -399,6 +408,7 @@ def _mcp_marketplace_catalog() -> list[dict[str, Any]]:
             "category": "storage",
             "industries": ["marketing", "ecommerce", "legal", "consulting", "general"],
             "connectionType": "oauth",
+            "oauthProvider": "google",
             "recommendedAuth": "bearer",
             "serverUrl": "https://mcp.composio.dev/googledrive",
             "docsUrl": "https://mcp.composio.dev/",
@@ -427,6 +437,7 @@ def _mcp_marketplace_catalog() -> list[dict[str, Any]]:
             "category": "storage",
             "industries": ["consulting", "finance", "legal", "general"],
             "connectionType": "oauth",
+            "oauthProvider": "microsoft",
             "recommendedAuth": "bearer",
             "serverUrl": "https://mcp.composio.dev/onedrive",
             "docsUrl": "https://mcp.composio.dev/",
@@ -505,6 +516,7 @@ def _mcp_marketplace_catalog() -> list[dict[str, Any]]:
             "category": "productivity",
             "industries": ["real_estate", "consulting", "legal", "healthcare", "general"],
             "connectionType": "oauth",
+            "oauthProvider": "google",
             "recommendedAuth": "bearer",
             "serverUrl": "https://mcp.composio.dev/googlecalendar",
             "docsUrl": "https://mcp.composio.dev/",
@@ -522,6 +534,7 @@ def _mcp_marketplace_catalog() -> list[dict[str, Any]]:
             "category": "crm",
             "industries": ["marketing", "ecommerce", "consulting", "general"],
             "connectionType": "oauth",
+            "oauthProvider": "salesforce",
             "recommendedAuth": "bearer",
             "serverUrl": "https://mcp.composio.dev/salesforce",
             "docsUrl": "https://mcp.composio.dev/",
@@ -536,6 +549,7 @@ def _mcp_marketplace_catalog() -> list[dict[str, Any]]:
             "category": "crm",
             "industries": ["marketing", "saas_tech", "consulting", "general"],
             "connectionType": "oauth",
+            "oauthProvider": "hubspot",
             "recommendedAuth": "bearer",
             "serverUrl": "https://mcp.composio.dev/hubspot",
             "docsUrl": "https://mcp.composio.dev/",
@@ -568,6 +582,7 @@ def _mcp_marketplace_catalog() -> list[dict[str, Any]]:
             "category": "analytics",
             "industries": ["marketing", "ecommerce", "saas_tech", "general"],
             "connectionType": "oauth",
+            "oauthProvider": "google",
             "recommendedAuth": "bearer",
             "serverUrl": "https://mcp.composio.dev/googleanalytics",
             "docsUrl": "https://mcp.composio.dev/",
@@ -679,6 +694,7 @@ def _mcp_marketplace_catalog() -> list[dict[str, Any]]:
             "category": "marketing",
             "industries": ["marketing", "ecommerce", "general"],
             "connectionType": "oauth",
+            "oauthProvider": "google",
             "recommendedAuth": "bearer",
             "serverUrl": "https://mcp.composio.dev/googleads",
             "docsUrl": "https://mcp.composio.dev/",

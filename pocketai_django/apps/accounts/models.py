@@ -2000,6 +2000,121 @@ class IntegrationCredentialEvent(models.Model):
         return f"{self.integration_id}:{self.event_type}"
 
 
+class OAuthProvider(models.Model):
+    """
+    Stores OAuth app credentials for marketplace OAuth flows.
+
+    This is a global configuration managed by staff/admin users and shared by all
+    tenants. Client secrets are encrypted using the same credential manager as
+    other integrations.
+    """
+
+    key = models.CharField(max_length=50, unique=True)  # e.g. "google", "slack"
+    name = models.CharField(max_length=100)
+
+    authorization_url = models.URLField(max_length=500)
+    token_url = models.URLField(max_length=500)
+
+    client_id = models.CharField(max_length=500)
+    client_secret_encrypted = models.TextField(blank=True, default="")
+    client_secret_key_version = models.PositiveSmallIntegerField(default=1)
+    client_secret_last_rotated_at = models.DateTimeField(null=True, blank=True)
+    client_secret_error_count = models.PositiveSmallIntegerField(default=0)
+
+    scopes = models.JSONField(default=list, blank=True)
+    marketplace_keys = models.JSONField(
+        default=list,
+        blank=True,
+        help_text="Marketplace keys that should use this provider (e.g. ['gmail', 'google_drive']).",
+    )
+
+    is_active = models.BooleanField(default=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = "accounts_oauth_provider"
+        ordering = ("key",)
+
+    def __str__(self) -> str:  # pragma: no cover - human readable only
+        return f"{self.name} ({self.key})"
+
+    def _secret_tenant(self) -> str:
+        return f"oauth_provider:{self.key}"
+
+    def get_client_secret(self) -> str:
+        if not self.client_secret_encrypted:
+            return ""
+        manager = get_secret_manager()
+        try:
+            payload = manager.decrypt(self.client_secret_encrypted, tenant=self._secret_tenant())
+        except IntegrationSecretError as exc:
+            logger.warning("oauth_provider_secret_decrypt_failed provider=%s error=%s", self.key, exc)
+            return ""
+        secret = payload.get("client_secret") if isinstance(payload, dict) else None
+        return str(secret or "")
+
+    def set_client_secret(self, value: str | None) -> None:
+        secret = str(value or "").strip()
+        if not secret:
+            self.client_secret_encrypted = ""
+            self.client_secret_key_version = 1
+            self.client_secret_last_rotated_at = None
+            self.client_secret_error_count = 0
+            return
+        manager = get_secret_manager()
+        ciphertext = manager.encrypt({"client_secret": secret}, tenant=self._secret_tenant())
+        self.client_secret_encrypted = ciphertext
+        self.client_secret_key_version = manager.key_version
+        self.client_secret_last_rotated_at = timezone.now()
+        self.client_secret_error_count = 0
+
+    def supports_marketplace_key(self, marketplace_key: str) -> bool:
+        candidate = str(marketplace_key or "").strip()
+        if not candidate:
+            return False
+        keys = self.marketplace_keys or []
+        return candidate in keys if isinstance(keys, list) else False
+
+
+class OAuthState(models.Model):
+    """Ephemeral state record for OAuth handshakes (CSRF protection)."""
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    business_profile = models.ForeignKey(
+        BusinessProfile,
+        related_name="oauth_states",
+        on_delete=models.CASCADE,
+    )
+    user = models.ForeignKey(
+        User,
+        related_name="oauth_states",
+        on_delete=models.CASCADE,
+    )
+    provider = models.ForeignKey(
+        OAuthProvider,
+        related_name="oauth_states",
+        on_delete=models.CASCADE,
+    )
+    marketplace_key = models.CharField(max_length=100)
+    state_token = models.CharField(max_length=128, unique=True)
+    redirect_after = models.URLField(max_length=500, blank=True, default="")
+    created_at = models.DateTimeField(auto_now_add=True)
+    expires_at = models.DateTimeField()
+    is_used = models.BooleanField(default=False)
+
+    class Meta:
+        db_table = "accounts_oauth_state"
+        ordering = ("-created_at",)
+        indexes = [
+            models.Index(fields=["expires_at"], name="oauth_state_expires_idx"),
+            models.Index(fields=["provider", "is_used"], name="oauth_state_provider_used_idx"),
+        ]
+
+    def __str__(self) -> str:  # pragma: no cover - human readable only
+        return f"OAuthState<{self.provider_id}:{self.marketplace_key}>"
+
+
 class McpConnection(models.Model):
     """
     Represents an MCP server connection configured for a workspace (business).

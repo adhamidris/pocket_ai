@@ -536,6 +536,18 @@
 		      }, 6500);
 		    }
 
+        window.addEventListener("message", function (event) {
+          if (!event || event.origin !== window.location.origin) return;
+          var data = event.data || {};
+          if (!data || typeof data !== "object") return;
+          if (data.type === "mcp_oauth_success") {
+            showFlash("Connected " + (data.marketplaceKey || "OAuth") + ".", "success");
+            loadAll();
+          } else if (data.type === "mcp_oauth_error") {
+            showFlash("OAuth failed: " + (data.error || "unknown_error") + ".", "error");
+          }
+        });
+
 	    function parseRetryAfterSeconds(value) {
 	      if (value == null) return null;
 	      if (typeof value === "number" && isFinite(value)) {
@@ -1685,6 +1697,44 @@
           // 1-Click: No setup needed, add directly
           if (connType === "none" && !hasSetupFields) {
             quickAddMcp(item);
+            return;
+          }
+
+          // OAuth: open provider popup when configured
+          if (connType === "oauth" && item.oauthProvider) {
+            if (!businessId) {
+              showFlash("Missing business context. Refresh the page and try again.", "error");
+              return;
+            }
+
+            var oauthUrl = "/api/oauth/start/" +
+              encodeURIComponent(item.oauthProvider) + "/" +
+              encodeURIComponent(item.key) + "/" +
+              "?business_id=" + encodeURIComponent(businessId) +
+              "&redirect=" + encodeURIComponent(window.location.href);
+
+            var width = 500, height = 650;
+            var left = Math.max(0, (window.innerWidth - width) / 2);
+            var top = Math.max(0, (window.innerHeight - height) / 2);
+
+            var popup = window.open(
+              oauthUrl,
+              "oauth_popup",
+              "width=" + width + ",height=" + height + ",left=" + left + ",top=" + top
+            );
+
+            if (!popup) {
+              showFlash("Popup blocked. Please allow popups for this site and try again.", "error");
+              return;
+            }
+
+            var pollTimer = window.setInterval(function () {
+              if (popup.closed) {
+                window.clearInterval(pollTimer);
+                loadAll();
+              }
+            }, 500);
+
             return;
           }
 

@@ -2,6 +2,7 @@ from django.urls import path
 
 from . import views
 from . import mcp_connections
+from . import oauth
 from .chat_portal import (
     bootstrap_session,
     create_portal_session,
@@ -112,4 +113,7 @@ urlpatterns = [
     path("mcp/connections/<uuid:connection_id>/agents/", mcp_connections.mcp_connection_agents, name="mcp-connection-agents"),
     path("mcp/connections/<uuid:connection_id>/tools/", mcp_connections.mcp_connection_tools, name="mcp-connection-tools"),
     path("mcp/agents/approval-defaults/", mcp_connections.mcp_agent_approval_defaults, name="mcp-agent-approval-defaults"),
+    path("oauth/start/<str:provider_key>/<str:marketplace_key>/", oauth.oauth_start, name="oauth_start"),
+    path("oauth/callback/<str:provider_key>/", oauth.oauth_callback, name="oauth_callback"),
+    path("oauth/refresh/<uuid:connection_id>/", oauth.oauth_refresh, name="oauth_refresh"),
 ]

@@ -22,6 +22,7 @@ from .models import (
     KnowledgeUpload,
     KnowledgeVisibility,
     KnowledgeDriftSample,
+    OAuthProvider,
     RAGEvaluationRun,
     RegistrationSession,
     User,
@@ -446,3 +447,80 @@ class KnowledgeFeedbackCaseAdmin(admin.ModelAdmin):
                 )
             except Exception as exc:
                 self.message_user(request, f"Failed to replay {case}: {exc}", level=messages.ERROR)
+
+
+class OAuthProviderAdminForm(forms.ModelForm):
+    client_secret = forms.CharField(
+        required=False,
+        widget=forms.PasswordInput(render_value=False),
+        help_text="Leave blank to keep the existing secret. Provide a new value to rotate.",
+    )
+    scopes = forms.JSONField(
+        required=False,
+        widget=MonospaceJSONWidget,
+        help_text="JSON list of OAuth scopes for this provider.",
+    )
+    marketplace_keys = forms.JSONField(
+        required=False,
+        widget=MonospaceJSONWidget,
+        help_text="JSON list of marketplace keys that should use this provider.",
+    )
+
+    class Meta:
+        model = OAuthProvider
+        fields = (
+            "key",
+            "name",
+            "authorization_url",
+            "token_url",
+            "client_id",
+            "client_secret",
+            "scopes",
+            "marketplace_keys",
+            "is_active",
+        )
+
+    def _clean_list_field(self, field_name: str) -> list[str]:
+        value = self.cleaned_data.get(field_name)
+        if not value:
+            return []
+        if not isinstance(value, list):
+            raise forms.ValidationError("Value must be a JSON list.")
+        normalized: list[str] = []
+        for item in value:
+            text = str(item or "").strip()
+            if text:
+                normalized.append(text)
+        return normalized
+
+    def clean_scopes(self):
+        return self._clean_list_field("scopes")
+
+    def clean_marketplace_keys(self):
+        return self._clean_list_field("marketplace_keys")
+
+    def save(self, commit=True):
+        instance: OAuthProvider = super().save(commit=False)
+        secret = self.cleaned_data.get("client_secret")
+        if secret:
+            instance.set_client_secret(secret)
+        if commit:
+            instance.save()
+            self.save_m2m()
+        return instance
+
+
+@admin.register(OAuthProvider)
+class OAuthProviderAdmin(admin.ModelAdmin):
+    form = OAuthProviderAdminForm
+    list_display = ("key", "name", "is_active", "updated_at")
+    list_filter = ("is_active",)
+    search_fields = ("key", "name")
+    readonly_fields = (
+        "client_secret_encrypted",
+        "client_secret_key_version",
+        "client_secret_last_rotated_at",
+        "client_secret_error_count",
+        "created_at",
+        "updated_at",
+    )
