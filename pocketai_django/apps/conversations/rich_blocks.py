@@ -133,6 +133,105 @@ def parse_inline_nodes(text: str) -> list[dict[str, object]]:
     return merged
 
 
+def find_inline_safe_boundary(text: str) -> int:
+    """
+    Return the last index (0..len(text)) that can be safely parsed for inline marks.
+
+    We only support a small subset of markdown inline constructs (bold/italic/code/link),
+    so the "safe boundary" is when all of these constructs are closed (not mid-token).
+
+    This powers incremental streaming: we can emit stable inline nodes without showing
+    raw markdown markers, while buffering any incomplete tail until more text arrives.
+    """
+
+    if not text:
+        return 0
+
+    in_code = False
+    in_bold = False
+    in_italic = False
+    in_link_label = False
+    in_link_href = False
+
+    last_safe = 0
+    i = 0
+    length = len(text)
+
+    while i < length:
+        ch = text[i]
+
+        if in_link_label:
+            if ch == "]" and i + 1 < length and text[i + 1] == "(":
+                in_link_label = False
+                in_link_href = True
+                i += 2
+                continue
+            i += 1
+            continue
+
+        if in_link_href:
+            if ch == ")":
+                in_link_href = False
+                i += 1
+                if not (in_code or in_bold or in_italic or in_link_label or in_link_href):
+                    last_safe = i
+                continue
+            i += 1
+            continue
+
+        if in_code:
+            if ch == "`":
+                in_code = False
+            i += 1
+            if not (in_code or in_bold or in_italic or in_link_label or in_link_href):
+                last_safe = i
+            continue
+
+        if in_bold:
+            if text.startswith("**", i):
+                in_bold = False
+                i += 2
+                if not (in_code or in_bold or in_italic or in_link_label or in_link_href):
+                    last_safe = i
+                continue
+            i += 1
+            continue
+
+        if in_italic:
+            if ch == "*":
+                in_italic = False
+                i += 1
+                if not (in_code or in_bold or in_italic or in_link_label or in_link_href):
+                    last_safe = i
+                continue
+            i += 1
+            continue
+
+        # Normal state: open markers.
+        if text.startswith("**", i):
+            in_bold = True
+            i += 2
+            continue
+        if ch == "*":
+            in_italic = True
+            i += 1
+            continue
+        if ch == "`":
+            in_code = True
+            i += 1
+            continue
+        if ch == "[":
+            in_link_label = True
+            i += 1
+            continue
+
+        i += 1
+        if not (in_code or in_bold or in_italic or in_link_label or in_link_href):
+            last_safe = i
+
+    return last_safe
+
+
 def coerce_inline_nodes(value: object) -> list[dict[str, object]]:
     if isinstance(value, str):
         text_value = value
@@ -302,10 +401,39 @@ def apply_block_ops(block: dict[str, object], ops: Iterable[Mapping[str, object]
             content_raw = payload.get("content")
             content: list[dict[str, object]] = list(content_raw) if isinstance(content_raw, list) else []
             for node in nodes:
+                if not isinstance(node, Mapping):
+                    continue
+                text_value = node.get("text")
+                if not isinstance(text_value, str) or not text_value:
+                    continue
+                marks = node.get("marks")
+                if content and content[-1].get("marks") == marks:
+                    prev_text = str(content[-1].get("text") or "")
+                    merged_text = f"{prev_text}{text_value}"
+                    if len(merged_text) <= INLINE_TEXT_LIMIT:
+                        content[-1]["text"] = merged_text
+                        continue
+                    remaining = text_value
+                    space = INLINE_TEXT_LIMIT - len(prev_text)
+                    if space > 0:
+                        content[-1]["text"] = f"{prev_text}{text_value[:space]}"
+                        remaining = text_value[space:]
+                    while remaining:
+                        if len(content) >= INLINE_NODE_LIMIT:
+                            break
+                        chunk = remaining[:INLINE_TEXT_LIMIT]
+                        out_node: dict[str, object] = {"text": chunk}
+                        if marks:
+                            out_node["marks"] = copy.deepcopy(marks)
+                        content.append(out_node)
+                        remaining = remaining[INLINE_TEXT_LIMIT:]
+                    continue
                 if len(content) >= INLINE_NODE_LIMIT:
                     break
-                if isinstance(node, Mapping) and isinstance(node.get("text"), str) and node.get("text"):
-                    content.append(dict(node))
+                out_node: dict[str, object] = {"text": text_value}
+                if marks:
+                    out_node["marks"] = copy.deepcopy(marks)
+                content.append(out_node)
             payload["content"] = content
         elif op_type == "append_code":
             text_value = op.get("text")
@@ -340,6 +468,11 @@ class RichBlockStreamBuilder:
         self.blocks: list[dict[str, object]] = []
         self.blocks_by_id: dict[str, dict[str, object]] = {}
         self.pending_line = ""
+        # Streaming line state (for incremental block_delta emission before newline).
+        self.line_kind: str | None = None
+        self.line_parent_id: str | None = None
+        self.line_block_id: str | None = None
+        self.line_inline_buffer = ""
         self.active_paragraph_id: str | None = None
         self.active_paragraph_parent: str | None = None
         self.active_list_id: str | None = None
@@ -363,19 +496,17 @@ class RichBlockStreamBuilder:
     def feed_text(self, chunk: str) -> list[dict[str, object]]:
         if not chunk:
             return []
-        self.pending_line = f"{self.pending_line}{chunk}"
         events: list[dict[str, object]] = []
-        while "\n" in self.pending_line:
-            line, remainder = self.pending_line.split("\n", 1)
-            self.pending_line = remainder
-            events.extend(self._process_line(line, line_ended=True))
+        parts = chunk.split("\n")
+        for segment in parts[:-1]:
+            events.extend(self._ingest_line_segment(segment, line_ended=True))
+        # Tail segment (no newline)
+        events.extend(self._ingest_line_segment(parts[-1], line_ended=False))
         return events
 
     def finalize(self) -> list[dict[str, object]]:
         events: list[dict[str, object]] = []
-        if self.pending_line:
-            events.extend(self._process_line(self.pending_line, line_ended=False))
-            self.pending_line = ""
+        events.extend(self._finalize_pending_line())
         if self.in_code_block and self.active_code_block_id:
             events.append({"type": "block_end", "payload": {"block_id": self.active_code_block_id}})
             self.in_code_block = False
@@ -387,11 +518,264 @@ class RichBlockStreamBuilder:
 
     def break_flow(self) -> list[dict[str, object]]:
         events: list[dict[str, object]] = []
-        if self.pending_line:
-            events.extend(self._process_line(self.pending_line, line_ended=False))
-            self.pending_line = ""
+        events.extend(self._finalize_pending_line(force=True))
         events.extend(self._close_paragraph())
         self._close_list()
+        return events
+
+    def _reset_line_state(self) -> None:
+        self.line_kind = None
+        self.line_parent_id = None
+        self.line_block_id = None
+        self.line_inline_buffer = ""
+
+    def _append_line_inline_segment(self, segment: str) -> None:
+        if not segment:
+            return
+        self.line_inline_buffer = f"{self.line_inline_buffer}{segment}"
+
+    def _emit_inline_nodes(self, block_id: str, nodes: list[dict[str, object]]) -> list[dict[str, object]]:
+        if not block_id or not nodes:
+            return []
+        ops = self._append_inline(block_id, nodes)
+        if not ops:
+            return []
+        return [{"type": "block_delta", "payload": {"block_id": block_id, "ops": ops}}]
+
+    def _flush_inline_buffer(self, *, final: bool) -> list[dict[str, object]]:
+        if not self.line_block_id or not self.line_inline_buffer:
+            return []
+        buffer = self.line_inline_buffer
+        safe_idx = find_inline_safe_boundary(buffer)
+        events: list[dict[str, object]] = []
+
+        if safe_idx > 0:
+            safe_text = buffer[:safe_idx]
+            nodes = parse_inline_nodes(safe_text)
+            events.extend(self._emit_inline_nodes(self.line_block_id, nodes))
+            buffer = buffer[safe_idx:]
+
+        if final and buffer:
+            # Emit any unfinished tail as plain text so we don't drop characters.
+            events.extend(self._emit_inline_nodes(self.line_block_id, [{"text": buffer}]))
+            buffer = ""
+
+        self.line_inline_buffer = buffer
+        return events
+
+    def _ensure_line_context(self, *, line_ended: bool) -> list[dict[str, object]]:
+        """
+        If possible, classify the current pending_line into a block type and start it.
+
+        For line fragments that could still become a heading/list marker, we defer
+        classification until either we have enough prefix to decide or the line ends.
+        """
+
+        if self.line_kind is not None:
+            return []
+
+        events: list[dict[str, object]] = []
+        raw = (self.pending_line or "").rstrip("\r")
+        if not raw:
+            return events
+
+        # Code fences are line-level; only act once the line ends.
+        if raw.strip().startswith("```") and not line_ended:
+            return events
+
+        parent_id: str | None = None
+        content = raw
+
+        stripped = raw.lstrip()
+        if stripped.startswith(">"):
+            content = stripped[1:]
+            if content.startswith(" "):
+                content = content[1:]
+            if not self.active_quote_id:
+                quote_block = self._start_block("quote", {})
+                self.active_quote_id = str(quote_block.get("block_id") or "")
+                events.append({"type": "block_start", "payload": {"block": copy.deepcopy(quote_block)}})
+            parent_id = self.active_quote_id
+        else:
+            if self.active_quote_id is not None:
+                events.extend(self._close_paragraph())
+                self._close_list()
+            self.active_quote_id = None
+
+        self.line_parent_id = parent_id
+
+        if not content.strip():
+            events.extend(self._close_paragraph())
+            self._close_list()
+            return events
+
+        heading_match = re.match(r"^(#{1,3})\s+(.*)$", content)
+        if not line_ended and content.startswith("#") and not heading_match:
+            return events
+
+        list_match = re.match(r"^(\s*)([-*+])\s+(.*)$", content)
+        ordered_match = re.match(r"^(\s*)(\d+)\.\s+(.*)$", content)
+        if not line_ended and not (list_match or ordered_match):
+            trimmed = content.lstrip()
+            if trimmed and trimmed[0] in {"-", "*", "+"}:
+                if len(trimmed) == 1 or not trimmed[1].isspace():
+                    return events
+            if trimmed and trimmed[0].isdigit():
+                if re.match(r"^\d+\.?$", trimmed):
+                    return events
+
+        if heading_match:
+            events.extend(self._close_paragraph())
+            self._close_list()
+            level = len(heading_match.group(1))
+            heading_text = heading_match.group(2)
+            if not line_ended and not heading_text.strip():
+                return events
+            heading_block = self._start_block("heading", {"level": level, "content": []}, parent=parent_id)
+            heading_id = str(heading_block.get("block_id") or "")
+            events.append({"type": "block_start", "payload": {"block": copy.deepcopy(heading_block)}})
+            self.line_kind = "heading"
+            self.line_block_id = heading_id
+            self.line_inline_buffer = heading_text
+            return events
+
+        if list_match or ordered_match:
+            events.extend(self._close_paragraph())
+            ordered = bool(ordered_match)
+            item_text = ordered_match.group(3) if ordered_match else list_match.group(3)
+            if not line_ended and not item_text.strip():
+                return events
+            list_parent = parent_id
+            if not self.active_list_id or self.active_list_ordered != ordered or self.active_list_parent != list_parent:
+                list_payload: dict[str, object] = {"ordered": ordered}
+                if ordered_match:
+                    try:
+                        list_payload["start"] = int(ordered_match.group(2))
+                    except (TypeError, ValueError):
+                        pass
+                list_block = self._start_block("list", list_payload, parent=list_parent)
+                self.active_list_id = str(list_block.get("block_id") or "")
+                self.active_list_ordered = ordered
+                self.active_list_parent = list_parent
+                events.append({"type": "block_start", "payload": {"block": copy.deepcopy(list_block)}})
+            item_block = self._start_block("list_item", {"content": []}, parent=self.active_list_id)
+            item_id = str(item_block.get("block_id") or "")
+            events.append({"type": "block_start", "payload": {"block": copy.deepcopy(item_block)}})
+            self.line_kind = "list_item"
+            self.line_block_id = item_id
+            self.line_inline_buffer = item_text
+            return events
+
+        # Default: paragraph line.
+        self._close_list()
+        paragraph, is_new_paragraph = self._ensure_paragraph(parent_id)
+        paragraph_id = str(paragraph.get("block_id") or "")
+        if is_new_paragraph:
+            events.append({"type": "block_start", "payload": {"block": copy.deepcopy(paragraph)}})
+        elif self._paragraph_has_content(paragraph_id):
+            ops = self._append_inline(paragraph_id, [{"text": "\n"}])
+            if ops:
+                events.append({"type": "block_delta", "payload": {"block_id": paragraph_id, "ops": ops}})
+        self.line_kind = "paragraph"
+        self.line_block_id = paragraph_id
+        self.line_inline_buffer = content
+        return events
+
+    def _ingest_line_segment(self, segment: str, *, line_ended: bool) -> list[dict[str, object]]:
+        events: list[dict[str, object]] = []
+
+        if line_ended and segment:
+            segment = segment.rstrip("\r")
+
+        had_context = self.line_kind is not None
+
+        if segment:
+            self.pending_line = f"{self.pending_line}{segment}"
+            if had_context:
+                self._append_line_inline_segment(segment)
+
+        if not self.in_code_block and line_ended and not self.pending_line and not self.line_inline_buffer:
+            # Blank line: break paragraphs, lists, and quote context.
+            events.extend(self._close_paragraph())
+            self._close_list()
+            self.active_quote_id = None
+            self._reset_line_state()
+            return events
+
+        if self.in_code_block:
+            if not line_ended:
+                return events
+            line = self.pending_line.rstrip("\r")
+            self.pending_line = ""
+            if line.strip().startswith("```"):
+                if self.active_code_block_id:
+                    events.append({"type": "block_end", "payload": {"block_id": self.active_code_block_id}})
+                self.in_code_block = False
+                self.active_code_block_id = None
+            elif self.active_code_block_id:
+                ops = self._append_code(self.active_code_block_id, f"{line}\n")
+                if ops:
+                    events.append({"type": "block_delta", "payload": {"block_id": self.active_code_block_id, "ops": ops}})
+            self._reset_line_state()
+            return events
+
+        if line_ended and self.pending_line.strip().startswith("```"):
+            raw = self.pending_line.rstrip("\r")
+            self.pending_line = ""
+            fence = raw.strip()[3:]
+            language = fence.strip() if fence.strip() else ""
+            events.extend(self._close_paragraph())
+            self._close_list()
+            code_block = self._start_block("code_block", {"language": language, "code": ""}, parent=self.active_quote_id)
+            self.in_code_block = True
+            self.active_code_block_id = str(code_block.get("block_id") or "")
+            events.append({"type": "block_start", "payload": {"block": copy.deepcopy(code_block)}})
+            self._reset_line_state()
+            return events
+
+        if not had_context:
+            events.extend(self._ensure_line_context(line_ended=line_ended))
+
+        if self.line_kind is not None:
+            events.extend(self._flush_inline_buffer(final=line_ended))
+
+        if line_ended:
+            if self.line_kind in {"heading", "list_item"} and self.line_block_id:
+                events.append({"type": "block_end", "payload": {"block_id": self.line_block_id}})
+            self.pending_line = ""
+            self._reset_line_state()
+
+        return events
+
+    def _finalize_pending_line(self, *, force: bool = False) -> list[dict[str, object]]:
+        if not self.pending_line and not self.line_inline_buffer:
+            return []
+
+        events: list[dict[str, object]] = []
+
+        if self.in_code_block:
+            if self.pending_line and self.active_code_block_id:
+                line = self.pending_line.rstrip("\r")
+                if line.strip().startswith("```"):
+                    events.append({"type": "block_end", "payload": {"block_id": self.active_code_block_id}})
+                    self.in_code_block = False
+                    self.active_code_block_id = None
+                else:
+                    ops = self._append_code(self.active_code_block_id, line)
+                    if ops:
+                        events.append({"type": "block_delta", "payload": {"block_id": self.active_code_block_id, "ops": ops}})
+            self.pending_line = ""
+            self._reset_line_state()
+            return events
+
+        events.extend(self._ensure_line_context(line_ended=True))
+        if self.line_kind is not None:
+            events.extend(self._flush_inline_buffer(final=True))
+            if self.line_kind in {"heading", "list_item"} and self.line_block_id:
+                events.append({"type": "block_end", "payload": {"block_id": self.line_block_id}})
+
+        self.pending_line = ""
+        self._reset_line_state()
         return events
 
     def _register_block(self, block: dict[str, object]) -> dict[str, object]:
@@ -417,12 +801,37 @@ class RichBlockStreamBuilder:
         for node in nodes:
             if not isinstance(node, dict):
                 continue
-            if len(content) >= INLINE_NODE_LIMIT:
-                break
             text_value = node.get("text")
             if not isinstance(text_value, str) or not text_value:
                 continue
-            content.append(node)
+            marks = node.get("marks")
+            if content and content[-1].get("marks") == marks:
+                prev_text = str(content[-1].get("text") or "")
+                merged_text = f"{prev_text}{text_value}"
+                if len(merged_text) <= INLINE_TEXT_LIMIT:
+                    content[-1]["text"] = merged_text
+                    continue
+                remaining = text_value
+                space = INLINE_TEXT_LIMIT - len(prev_text)
+                if space > 0:
+                    content[-1]["text"] = f"{prev_text}{text_value[:space]}"
+                    remaining = text_value[space:]
+                while remaining:
+                    if len(content) >= INLINE_NODE_LIMIT:
+                        break
+                    chunk = remaining[:INLINE_TEXT_LIMIT]
+                    out_node: dict[str, object] = {"text": chunk}
+                    if marks:
+                        out_node["marks"] = copy.deepcopy(marks)
+                    content.append(out_node)
+                    remaining = remaining[INLINE_TEXT_LIMIT:]
+                continue
+            if len(content) >= INLINE_NODE_LIMIT:
+                break
+            out_node: dict[str, object] = {"text": text_value}
+            if marks:
+                out_node["marks"] = copy.deepcopy(marks)
+            content.append(out_node)
         payload_out["content"] = content
         block["payload"] = payload_out
         return [{"op": "append_inline", "nodes": list(nodes)}]

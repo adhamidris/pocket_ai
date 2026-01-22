@@ -60,11 +60,12 @@
         </div>
       </section>
 
-      <section class="space-y-4" data-mcp-tabs data-active-tab="connections">
+      <section class="space-y-4" data-mcp-tabs data-active-tab="industry">
         <div class="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
           <div class="inline-flex rounded-lg border border-border/40 bg-muted/70 p-1" data-tabs-list>
-            <button type="button" class="rounded-md px-3 py-1.5 text-xs font-semibold tracking-wide uppercase transition-colors bg-primary text-primary-foreground shadow-sm" data-tab-button="connections">Connections</button>
-            <button type="button" class="rounded-md px-3 py-1.5 text-xs font-semibold tracking-wide uppercase transition-colors text-muted-foreground hover:text-primary" data-tab-button="marketplace">Marketplace</button>
+            <button type="button" class="rounded-md px-3 py-1.5 text-xs font-semibold tracking-wide uppercase transition-colors bg-primary text-primary-foreground shadow-sm" data-tab-button="industry">Industry Tools</button>
+            <button type="button" class="rounded-md px-3 py-1.5 text-xs font-semibold tracking-wide uppercase transition-colors text-muted-foreground hover:text-primary" data-tab-button="all">All MCPs</button>
+            <button type="button" class="rounded-md px-3 py-1.5 text-xs font-semibold tracking-wide uppercase transition-colors text-muted-foreground hover:text-primary" data-tab-button="connected">Connected</button>
           </div>
           <div class="flex flex-wrap items-center gap-2 md:ml-auto">
             <button type="button" class="inline-flex items-center gap-2 rounded-md border border-input bg-background px-3 py-2 text-xs font-medium hover:bg-accent hover:text-accent-foreground" data-mcp-refresh>
@@ -73,35 +74,69 @@
           </div>
         </div>
 
-	        <div class="space-y-4" data-tab-panel="connections">
+        <div class="rounded-xl border border-border/60 bg-muted/30 p-4 text-sm hidden" data-mcp-flash role="status" aria-live="polite"></div>
+
+        <!-- INDUSTRY TOOLS TAB -->
+        <div class="space-y-6" data-tab-panel="industry">
+          <div class="rounded-xl border border-border/70 bg-background/60 p-4">
+            <div class="flex items-center justify-between gap-3">
+              <div>
+                <div class="text-sm font-semibold text-foreground">Recommended for <span data-mcp-industry-name>your industry</span></div>
+                <div class="text-xs text-muted-foreground">Tools commonly used by businesses in your industry. Click to add.</div>
+              </div>
+              <div class="text-xs text-muted-foreground" data-mcp-industry-count>—</div>
+            </div>
+          </div>
+          <div class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4" data-mcp-industry-grid></div>
+
+          <div class="rounded-xl border border-border/70 bg-background/60 p-4">
+            <div class="flex items-center justify-between gap-3">
+              <div>
+                <div class="text-sm font-semibold text-foreground">Common Tools</div>
+                <div class="text-xs text-muted-foreground">Universal tools used across all industries.</div>
+              </div>
+              <div class="text-xs text-muted-foreground" data-mcp-common-count>—</div>
+            </div>
+          </div>
+          <div class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4" data-mcp-common-grid></div>
+        </div>
+
+        <!-- ALL MCPs TAB -->
+        <div class="space-y-4 hidden" data-tab-panel="all">
+          <div class="rounded-xl border border-border/70 bg-background/60 p-4">
+            <div class="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+              <div>
+                <div class="text-sm font-semibold text-foreground">All Available MCPs</div>
+                <div class="text-xs text-muted-foreground">Browse all MCP integrations. Filter by category or search.</div>
+              </div>
+              <div class="flex items-center gap-2">
+                <input type="text" class="h-9 w-48 rounded-md border border-border/60 bg-muted/60 px-3 text-xs focus-visible:ring-0 focus-visible:border-border" data-mcp-search placeholder="Search MCPs..." />
+                <div class="text-xs text-muted-foreground" data-mcp-marketplace-count>—</div>
+              </div>
+            </div>
+          </div>
+          <div class="flex flex-wrap gap-2" data-mcp-category-filters>
+            <button type="button" class="rounded-full px-3 py-1 text-xs font-medium transition-colors bg-primary text-primary-foreground" data-mcp-category="all">All</button>
+          </div>
+          <div class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4" data-mcp-marketplace-grid></div>
+        </div>
+
+        <!-- CONNECTED TAB -->
+	        <div class="space-y-4 hidden" data-tab-panel="connected">
 	          <div class="rounded-xl border border-border/70 bg-background/60 p-4">
 	            <div class="flex items-center justify-between gap-3">
 	              <div>
-	                <div class="text-sm font-semibold text-foreground">Your MCP connections</div>
+	                <div class="text-sm font-semibold text-foreground">Your Connected MCPs</div>
 	                <div class="text-xs text-muted-foreground">Enable/disable connections, test connectivity, and manage agent opt-outs.</div>
 	              </div>
 	              <div class="text-xs text-muted-foreground" data-mcp-count>—</div>
 	            </div>
 	          </div>
-	          <div class="rounded-xl border border-border/60 bg-muted/30 p-4 text-sm hidden" data-mcp-flash role="status" aria-live="polite"></div>
-	
+
 	          <div class="space-y-3" data-mcp-connection-list>
 	            <div class="rounded-xl border border-border/60 bg-muted/30 p-6 text-sm text-muted-foreground">Loading MCP connections…</div>
 	          </div>
 	        </div>
-
-        <div class="space-y-4 hidden" data-tab-panel="marketplace">
-          <div class="rounded-xl border border-border/70 bg-background/60 p-4">
-            <div class="flex items-center justify-between gap-3">
-                <div>
-                  <div class="text-sm font-semibold text-foreground">Marketplace</div>
-                  <div class="text-xs text-muted-foreground">Curated MCP servers and templates. For templates, paste your deployment URL to connect.</div>
-                </div>
-              <div class="text-xs text-muted-foreground" data-mcp-marketplace-count>—</div>
-            </div>
-          </div>
-          <div class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4" data-mcp-marketplace-grid></div>
-        </div>
       </section>
     </div>
   </main>
@@ -123,17 +158,28 @@
     </div>
 
     <div class="mt-4 space-y-4">
-      <div class="space-y-1.5">
+      <!-- Simplified mode info (shown for marketplace items) -->
+      <div class="rounded-lg border border-emerald-500/30 bg-emerald-500/10 p-3 text-xs text-emerald-300 hidden" data-mcp-simple-info>
+        <div class="flex items-center gap-2">
+          <svg class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/></svg>
+          <span>Server URL pre-configured. Just add your credentials below.</span>
+        </div>
+      </div>
+
+      <div class="space-y-1.5" data-mcp-name-row>
         <label class="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Name</label>
         <input type="text" class="w-full h-10 rounded-md border border-border/60 bg-muted/60 px-3 text-sm focus-visible:ring-0 focus-visible:border-border" data-mcp-field="name" placeholder="e.g. GitHub Tools" />
       </div>
-      <div class="space-y-1.5">
+      <div class="space-y-1.5" data-mcp-url-row>
         <label class="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Server URL</label>
         <input type="url" class="w-full h-10 rounded-md border border-border/60 bg-muted/60 px-3 text-sm focus-visible:ring-0 focus-visible:border-border" data-mcp-field="serverUrl" placeholder="https://your-domain.com/mcp" />
         <div class="text-[11px] text-muted-foreground">Use the MCP endpoint (Streamable HTTP) or legacy SSE endpoint.</div>
       </div>
 
-      <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
+      <!-- Dynamic setup fields container (for marketplace items) -->
+      <div class="space-y-3 hidden" data-mcp-setup-fields></div>
+
+      <div class="grid grid-cols-1 md:grid-cols-2 gap-3" data-mcp-auth-row>
         <div class="space-y-1.5">
           <label class="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Auth</label>
           <select class="w-full h-10 rounded-md border border-border/60 bg-muted/60 px-3 text-sm focus-visible:ring-0 focus-visible:border-border" data-mcp-field="authType">
@@ -151,7 +197,7 @@
           </select>
         </div>
       </div>
-      <div class="flex items-center gap-2">
+      <div class="flex items-center gap-2" data-mcp-enabled-row>
         <input type="checkbox" class="h-4 w-4 rounded border-border/60" data-mcp-field="enabled" checked />
         <label class="text-sm text-muted-foreground">Enabled</label>
       </div>
@@ -285,14 +331,33 @@
     }
 
     var tabRoot = document.querySelector("[data-mcp-tabs]");
-    var connectionsPanel = document.querySelector('[data-tab-panel="connections"]');
-    var marketplacePanel = document.querySelector('[data-tab-panel="marketplace"]');
+    var industryPanel = document.querySelector('[data-tab-panel="industry"]');
+    var allPanel = document.querySelector('[data-tab-panel="all"]');
+    var connectedPanel = document.querySelector('[data-tab-panel="connected"]');
 	    var listEl = document.querySelector("[data-mcp-connection-list]");
 	    var countEl = document.querySelector("[data-mcp-count]");
 	    var flashEl = document.querySelector("[data-mcp-flash]");
 	    var marketplaceGrid = document.querySelector("[data-mcp-marketplace-grid]");
 	    var marketplaceCount = document.querySelector("[data-mcp-marketplace-count]");
       var agentDefaultsList = document.querySelector("[data-mcp-agent-defaults-list]");
+
+    // New elements for industry tools
+    var industryGrid = document.querySelector("[data-mcp-industry-grid]");
+    var industryCount = document.querySelector("[data-mcp-industry-count]");
+    var industryName = document.querySelector("[data-mcp-industry-name]");
+    var commonGrid = document.querySelector("[data-mcp-common-grid]");
+    var commonCount = document.querySelector("[data-mcp-common-count]");
+    var categoryFilters = document.querySelector("[data-mcp-category-filters]");
+    var searchInput = document.querySelector("[data-mcp-search]");
+
+    // State for filtering
+    var cachedMarketplace = [];
+    var cachedIndustryTools = [];
+    var cachedCommonTools = [];
+    var cachedCategories = [];
+    var cachedConnectedKeys = new Set();
+    var activeCategory = "all";
+    var searchQuery = "";
 
     var modalWrap = document.querySelector("[data-mcp-modal]");
     var modalOverlay = document.querySelector("[data-mcp-modal-overlay]");
@@ -354,30 +419,31 @@
 	    var pendingTestClicks = {};  // Track pending clicks to prevent race conditions
 
     function setTab(tab) {
-      var connectionsBtn = document.querySelector('[data-tab-button="connections"]');
-      var marketplaceBtn = document.querySelector('[data-tab-button="marketplace"]');
-      var active = tab === "marketplace" ? "marketplace" : "connections";
+      var industryBtn = document.querySelector('[data-tab-button="industry"]');
+      var allBtn = document.querySelector('[data-tab-button="all"]');
+      var connectedBtn = document.querySelector('[data-tab-button="connected"]');
+      var active = ["industry", "all", "connected"].includes(tab) ? tab : "industry";
       if (tabRoot) {
         tabRoot.setAttribute("data-active-tab", active);
       }
-      if (connectionsPanel) {
-        connectionsPanel.classList.toggle("hidden", active !== "connections");
+      if (industryPanel) {
+        industryPanel.classList.toggle("hidden", active !== "industry");
       }
-      if (marketplacePanel) {
-        marketplacePanel.classList.toggle("hidden", active !== "marketplace");
+      if (allPanel) {
+        allPanel.classList.toggle("hidden", active !== "all");
       }
-      if (connectionsBtn) {
-        connectionsBtn.classList.toggle("bg-primary", active === "connections");
-        connectionsBtn.classList.toggle("text-primary-foreground", active === "connections");
-        connectionsBtn.classList.toggle("shadow-sm", active === "connections");
-        connectionsBtn.classList.toggle("text-muted-foreground", active !== "connections");
+      if (connectedPanel) {
+        connectedPanel.classList.toggle("hidden", active !== "connected");
       }
-      if (marketplaceBtn) {
-        marketplaceBtn.classList.toggle("bg-primary", active === "marketplace");
-        marketplaceBtn.classList.toggle("text-primary-foreground", active === "marketplace");
-        marketplaceBtn.classList.toggle("shadow-sm", active === "marketplace");
-        marketplaceBtn.classList.toggle("text-muted-foreground", active !== "marketplace");
-      }
+      [industryBtn, allBtn, connectedBtn].forEach(function (btn) {
+        if (!btn) return;
+        var btnTab = btn.getAttribute("data-tab-button");
+        var isActive = btnTab === active;
+        btn.classList.toggle("bg-primary", isActive);
+        btn.classList.toggle("text-primary-foreground", isActive);
+        btn.classList.toggle("shadow-sm", isActive);
+        btn.classList.toggle("text-muted-foreground", !isActive);
+      });
     }
 
     function showModal(show) {
@@ -725,6 +791,7 @@
       editingConnectionId = null;
       currentSourceType = "manual";
       currentMarketplaceKey = "";
+      currentSetupItem = null;
       if (modalTitle) modalTitle.textContent = "Add MCP server";
       setModalError("");
       modalFields.name.value = "";
@@ -735,17 +802,142 @@
       modalFields.bearerToken.value = "";
       modalFields.headerName.value = "";
       modalFields.headerValue.value = "";
+
+      // Reset simplified mode elements
+      if (modalSimpleInfo) modalSimpleInfo.classList.add("hidden");
+      if (modalUrlRow) modalUrlRow.classList.remove("hidden");
+      if (modalAuthRow) modalAuthRow.classList.remove("hidden");
+      if (modalSetupFields) {
+        modalSetupFields.innerHTML = "";
+        modalSetupFields.classList.add("hidden");
+      }
+
       setAuthPanels();
+    }
+
+    // Quick add for 1-click items (no modal)
+    function quickAddMcp(item) {
+      if (!item) return;
+
+      // For built-in tools, just show a message
+      if (item.isBuiltIn) {
+        showFlash(item.name + " is built into your AI and always available.", "success");
+        return Promise.resolve();
+      }
+
+      var payload = {
+        businessId: businessId || undefined,
+        name: item.name || "MCP Connection",
+        serverUrl: item.serverUrl || "",
+        enabled: true,
+        defaultApprovalMode: "approve_writes",
+        sourceType: "marketplace",
+        marketplaceKey: item.key || "",
+        auth: { type: item.recommendedAuth || "none" }
+      };
+
+      showFlash("Adding " + (item.name || "MCP") + "...", "info");
+
+      return apiFetch("/api/mcp/connections/", { method: "POST", body: JSON.stringify(payload) })
+        .then(function () {
+          showFlash(item.name + " added successfully!", "success");
+          return loadAll();
+        })
+        .catch(function (err) {
+          showFlash("Failed to add: " + (err.message || "Error"), "error");
+        });
+    }
+
+    // Get modal elements for simplified mode
+    var modalSimpleInfo = document.querySelector("[data-mcp-simple-info]");
+    var modalNameRow = document.querySelector("[data-mcp-name-row]");
+    var modalUrlRow = document.querySelector("[data-mcp-url-row]");
+    var modalAuthRow = document.querySelector("[data-mcp-auth-row]");
+    var modalEnabledRow = document.querySelector("[data-mcp-enabled-row]");
+    var modalSetupFields = document.querySelector("[data-mcp-setup-fields]");
+    var currentSetupItem = null;
+
+    function setModalMode(mode, item) {
+      // mode: "full" (manual), "simple" (marketplace with pre-filled URL), "api_key" (just needs token)
+      currentSetupItem = item;
+
+      var isSimple = mode === "simple" || mode === "api_key" || mode === "oauth";
+      var hasSetupFields = item && item.setupFields && item.setupFields.length > 0;
+
+      // Show/hide elements based on mode
+      if (modalSimpleInfo) modalSimpleInfo.classList.toggle("hidden", !isSimple || mode === "full");
+      if (modalUrlRow) modalUrlRow.classList.toggle("hidden", isSimple);
+      if (modalAuthRow) modalAuthRow.classList.toggle("hidden", isSimple && !hasSetupFields);
+
+      // Build dynamic setup fields
+      if (modalSetupFields) {
+        modalSetupFields.innerHTML = "";
+        modalSetupFields.classList.toggle("hidden", !hasSetupFields);
+
+        if (hasSetupFields && item.setupFields) {
+          item.setupFields.forEach(function (fieldKey) {
+            var label = (item.setupLabels && item.setupLabels[fieldKey]) || fieldKey;
+            var help = (item.setupHelp && item.setupHelp[fieldKey]) || "";
+            var isPassword = fieldKey.toLowerCase().includes("token") ||
+                            fieldKey.toLowerCase().includes("secret") ||
+                            fieldKey.toLowerCase().includes("key") ||
+                            fieldKey.toLowerCase().includes("password");
+
+            var fieldDiv = document.createElement("div");
+            fieldDiv.className = "space-y-1.5";
+            fieldDiv.innerHTML =
+              '<label class="text-xs font-semibold text-muted-foreground uppercase tracking-wide">' + escapeHtml(label) + '</label>' +
+              '<input type="' + (isPassword ? "password" : "text") + '" class="w-full h-10 rounded-md border border-border/60 bg-muted/60 px-3 text-sm focus-visible:ring-0 focus-visible:border-border" data-mcp-setup-field="' + escapeHtml(fieldKey) + '" placeholder="Enter ' + escapeHtml(label.toLowerCase()) + '" autocomplete="off" />' +
+              (help ? '<div class="text-[11px] text-muted-foreground">' + escapeHtml(help) + '</div>' : '');
+            modalSetupFields.appendChild(fieldDiv);
+          });
+        }
+      }
+    }
+
+    function collectSetupFieldsForPayload() {
+      var result = {};
+      if (!modalSetupFields) return result;
+      var fields = modalSetupFields.querySelectorAll("[data-mcp-setup-field]");
+      fields.forEach(function (field) {
+        var key = field.getAttribute("data-mcp-setup-field");
+        var value = (field.value || "").trim();
+        if (key && value) {
+          result[key] = value;
+        }
+      });
+      return result;
     }
 
     function openCreate(prefill) {
       resetModal();
       var data = prefill || {};
+      var item = data._item || null; // Full item object for marketplace items
+
       if (data.name) modalFields.name.value = data.name;
       if (data.serverUrl) modalFields.serverUrl.value = data.serverUrl;
       if (data.recommendedAuth) modalFields.authType.value = data.recommendedAuth;
       if (data.sourceType) currentSourceType = data.sourceType;
       if (data.marketplaceKey) currentMarketplaceKey = data.marketplaceKey;
+
+      // Determine modal mode based on item
+      var mode = "full";
+      if (item && data.sourceType === "marketplace") {
+        if (item.connectionType === "api_key") {
+          mode = "api_key";
+        } else if (item.connectionType === "oauth") {
+          mode = "oauth";
+        } else if (item.serverUrl) {
+          mode = "simple";
+        }
+
+        // Update modal title for marketplace items
+        if (modalTitle) {
+          modalTitle.textContent = "Connect " + (item.name || "MCP");
+        }
+      }
+
+      setModalMode(mode, item);
       setAuthPanels();
       showModal(true);
     }
@@ -766,6 +958,160 @@
       }
       setAuthPanels();
       showModal(true);
+    }
+
+    function getConnectionTypeBadge(connectionType) {
+      if (connectionType === "oauth") {
+        return '<span class="inline-flex items-center rounded-full border border-sky-500/30 bg-sky-500/10 px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide text-sky-400">Sign In</span>';
+      } else if (connectionType === "api_key") {
+        return '<span class="inline-flex items-center rounded-full border border-amber-500/30 bg-amber-500/10 px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide text-amber-400">API Key</span>';
+      } else {
+        return '<span class="inline-flex items-center rounded-full border border-emerald-500/30 bg-emerald-500/10 px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide text-emerald-400">1-Click</span>';
+      }
+    }
+
+    function renderMcpCard(item, targetGrid) {
+      var isConnected = cachedConnectedKeys.has(item.key);
+      var el = document.createElement("div");
+      el.setAttribute("data-mcp-marketplace-card", (item && item.key) ? item.key : "1");
+      el.className = "rounded-xl border bg-background/60 p-5 shadow-sm transition-all " + (isConnected ? "border-emerald-500/40" : "border-border/70 hover:border-primary/40");
+
+      var badgeHtml = "";
+      if (item.badge) {
+        var badgeColor = "border-border/60 bg-muted/40 text-muted-foreground";
+        if (item.badge === "Popular") badgeColor = "border-violet-500/30 bg-violet-500/10 text-violet-400";
+        else if (item.badge === "Official") badgeColor = "border-sky-500/30 bg-sky-500/10 text-sky-400";
+        else if (item.badge === "Premium") badgeColor = "border-amber-500/30 bg-amber-500/10 text-amber-400";
+        else if (item.badge === "Built-in") badgeColor = "border-emerald-500/30 bg-emerald-500/10 text-emerald-400";
+        badgeHtml = '<span class="inline-flex items-center rounded-full border ' + badgeColor + ' px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide">' + escapeHtml(item.badge) + "</span>";
+      }
+
+      var categoryHtml = item.category ? '<span class="text-[10px] text-muted-foreground capitalize">' + escapeHtml(item.category) + '</span>' : '';
+
+      var connectionTypeBadge = getConnectionTypeBadge(item.connectionType || "none");
+
+      var buttonHtml = isConnected
+        ? '<button type="button" class="inline-flex items-center gap-2 rounded-md bg-emerald-500/20 text-emerald-400 px-3 py-2 text-xs font-semibold cursor-default" disabled><svg class="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/></svg>Connected</button>'
+        : '<button type="button" class="inline-flex items-center gap-2 rounded-md bg-primary text-primary-foreground px-3 py-2 text-xs font-semibold hover:bg-primary/90" data-mcp-market-add="' + escapeHtml(item.key) + '">Add</button>';
+
+      el.innerHTML =
+        '<div class="space-y-3">' +
+          '<div class="flex items-start justify-between gap-3">' +
+            '<div class="min-w-0 flex-1">' +
+              '<div class="flex items-center gap-2 flex-wrap">' +
+                '<span class="text-sm font-semibold text-foreground">' + escapeHtml(item.name || "MCP Server") + '</span>' +
+                connectionTypeBadge +
+              '</div>' +
+              '<div class="text-xs text-muted-foreground mt-1 line-clamp-2">' + escapeHtml(item.description || "") + '</div>' +
+            '</div>' +
+            badgeHtml +
+          '</div>' +
+          '<div class="flex items-center justify-between gap-2 pt-2">' +
+            '<div class="flex items-center gap-2">' +
+              categoryHtml +
+              (item.docsUrl ? '<a class="text-xs text-primary hover:underline" href="' + escapeHtml(item.docsUrl) + '" target="_blank" rel="noreferrer">Docs</a>' : '') +
+            '</div>' +
+            buttonHtml +
+          '</div>' +
+        '</div>';
+
+      el.__item = item;
+      targetGrid.appendChild(el);
+    }
+
+    function renderIndustryTools(items, industryDisplay) {
+      if (!industryGrid) return;
+      var rows = items || [];
+      if (industryCount) {
+        industryCount.textContent = rows.length ? rows.length + " tools" : "No tools";
+      }
+      if (industryName) {
+        industryName.textContent = industryDisplay || "your industry";
+      }
+      industryGrid.innerHTML = "";
+      if (!rows.length) {
+        industryGrid.innerHTML = '<div class="col-span-full rounded-xl border border-border/60 bg-muted/30 p-6 text-sm text-muted-foreground">No industry-specific tools found. Check the "All MCPs" tab for more options.</div>';
+        return;
+      }
+      rows.forEach(function (item) {
+        renderMcpCard(item, industryGrid);
+      });
+    }
+
+    function renderCommonTools(items) {
+      if (!commonGrid) return;
+      var rows = items || [];
+      if (commonCount) {
+        commonCount.textContent = rows.length ? rows.length + " tools" : "No tools";
+      }
+      commonGrid.innerHTML = "";
+      rows.forEach(function (item) {
+        renderMcpCard(item, commonGrid);
+      });
+    }
+
+    function renderCategoryFilters(categories) {
+      if (!categoryFilters) return;
+      categoryFilters.innerHTML = "";
+
+      // Add "All" button
+      var allBtn = document.createElement("button");
+      allBtn.type = "button";
+      allBtn.className = activeCategory === "all"
+        ? "rounded-full px-3 py-1 text-xs font-medium transition-colors bg-primary text-primary-foreground"
+        : "rounded-full px-3 py-1 text-xs font-medium transition-colors border border-border/60 bg-background text-muted-foreground hover:bg-accent hover:text-accent-foreground";
+      allBtn.setAttribute("data-mcp-category", "all");
+      allBtn.textContent = "All";
+      categoryFilters.appendChild(allBtn);
+
+      // Add category buttons
+      (categories || []).forEach(function (cat) {
+        var btn = document.createElement("button");
+        btn.type = "button";
+        btn.className = activeCategory === cat.key
+          ? "rounded-full px-3 py-1 text-xs font-medium transition-colors bg-primary text-primary-foreground"
+          : "rounded-full px-3 py-1 text-xs font-medium transition-colors border border-border/60 bg-background text-muted-foreground hover:bg-accent hover:text-accent-foreground";
+        btn.setAttribute("data-mcp-category", cat.key);
+        btn.textContent = cat.label;
+        categoryFilters.appendChild(btn);
+      });
+    }
+
+    function filterAndRenderMarketplace() {
+      if (!marketplaceGrid) return;
+      var filtered = cachedMarketplace;
+
+      // Filter by category
+      if (activeCategory && activeCategory !== "all") {
+        filtered = filtered.filter(function (item) {
+          return (item.category || "").toLowerCase() === activeCategory.toLowerCase();
+        });
+      }
+
+      // Filter by search query
+      if (searchQuery && searchQuery.trim()) {
+        var query = searchQuery.trim().toLowerCase();
+        filtered = filtered.filter(function (item) {
+          var name = (item.name || "").toLowerCase();
+          var desc = (item.description || "").toLowerCase();
+          var cat = (item.category || "").toLowerCase();
+          return name.indexOf(query) !== -1 || desc.indexOf(query) !== -1 || cat.indexOf(query) !== -1;
+        });
+      }
+
+      if (marketplaceCount) {
+        marketplaceCount.textContent = filtered.length ? filtered.length + " tools" : "No tools";
+      }
+
+      marketplaceGrid.innerHTML = "";
+      if (!filtered.length) {
+        marketplaceGrid.innerHTML = '<div class="col-span-full rounded-xl border border-border/60 bg-muted/30 p-6 text-sm text-muted-foreground">No MCPs found matching your criteria.</div>';
+        return;
+      }
+
+      filtered.forEach(function (item) {
+        renderMcpCard(item, marketplaceGrid);
+      });
     }
 
     function renderConnections(connections) {
@@ -846,33 +1192,10 @@
 	    }
 
     function renderMarketplace(items) {
-      if (!marketplaceGrid) return;
-      var rows = items || [];
-      if (marketplaceCount) {
-        marketplaceCount.textContent = rows.length ? rows.length + " templates" : "—";
-      }
-      marketplaceGrid.innerHTML = "";
-      rows.forEach(function (item) {
-        var el = document.createElement("div");
-        el.setAttribute("data-mcp-marketplace-card", (item && item.key) ? item.key : "1");
-        el.className = "rounded-xl border border-border/70 bg-background/60 p-5 shadow-sm";
-        el.innerHTML =
-          '<div class="space-y-3">' +
-            '<div class="flex items-start justify-between gap-3">' +
-              '<div class="min-w-0">' +
-                '<div class="text-sm font-semibold text-foreground">' + escapeHtml(item.name || "MCP Server") + "</div>" +
-                '<div class="text-xs text-muted-foreground mt-1">' + escapeHtml(item.description || "") + "</div>" +
-              "</div>" +
-              (item.badge ? '<span class="inline-flex items-center rounded-full border border-border/60 bg-muted/40 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">' + escapeHtml(item.badge) + "</span>" : "") +
-            "</div>" +
-            '<div class="flex items-center justify-between gap-2 pt-2">' +
-              (item.docsUrl ? '<a class="text-xs text-primary hover:underline" href="' + escapeHtml(item.docsUrl) + '" target="_blank" rel="noreferrer">Docs</a>' : '<span class="text-xs text-muted-foreground">Docs</span>') +
-              '<button type="button" class="inline-flex items-center gap-2 rounded-md bg-primary text-primary-foreground px-3 py-2 text-xs font-semibold hover:bg-primary/90" data-mcp-market-add="' + escapeHtml(item.key) + '">Add</button>' +
-            "</div>" +
-          "</div>";
-        el.__item = item;
-        marketplaceGrid.appendChild(el);
-      });
+      // This function is now just for backwards compatibility
+      // The actual rendering happens in filterAndRenderMarketplace
+      cachedMarketplace = items || [];
+      filterAndRenderMarketplace();
     }
 
     function renderAgentDefaults(data) {
@@ -929,13 +1252,36 @@
 	      if (!listEl) return;
         loadAgentDefaults();
 	      listEl.innerHTML = '<div class="rounded-xl border border-border/60 bg-muted/30 p-6 text-sm text-muted-foreground">Loading MCP connections…</div>';
+        if (industryGrid) industryGrid.innerHTML = '<div class="col-span-full rounded-xl border border-border/60 bg-muted/30 p-6 text-sm text-muted-foreground">Loading tools…</div>';
+        if (commonGrid) commonGrid.innerHTML = '<div class="col-span-full rounded-xl border border-border/60 bg-muted/30 p-6 text-sm text-muted-foreground">Loading tools…</div>';
+        if (marketplaceGrid) marketplaceGrid.innerHTML = '<div class="col-span-full rounded-xl border border-border/60 bg-muted/30 p-6 text-sm text-muted-foreground">Loading tools…</div>';
+
 	      return apiFetch("/api/mcp/connections/", { method: "GET" }).then(function (data) {
+          // Update connected keys set for visual feedback
+          cachedConnectedKeys = new Set();
+          (data.connections || []).forEach(function (conn) {
+            if (conn.marketplaceKey) {
+              cachedConnectedKeys.add(conn.marketplaceKey);
+            }
+          });
+
+          // Cache data for filtering
+          cachedMarketplace = data.marketplace || [];
+          cachedIndustryTools = data.industryTools || [];
+          cachedCommonTools = data.commonTools || [];
+          cachedCategories = data.categories || [];
+
+          // Render all sections
 	        renderConnections(data.connections || []);
-	        renderMarketplace(data.marketplace || []);
+          renderIndustryTools(cachedIndustryTools, data.industryDisplay || "");
+          renderCommonTools(cachedCommonTools);
+          renderCategoryFilters(cachedCategories);
+	        renderMarketplace(cachedMarketplace);
 	        applyUiState();
 	        return data;
 	      }).catch(function (err) {
 	        listEl.innerHTML = '<div class="rounded-xl border border-rose-500/30 bg-rose-500/10 p-6 text-sm text-rose-300">Failed to load MCP connections: ' + escapeHtml(err.message || "Error") + "</div>";
+          if (industryGrid) industryGrid.innerHTML = '<div class="col-span-full rounded-xl border border-rose-500/30 bg-rose-500/10 p-6 text-sm text-rose-300">Failed to load: ' + escapeHtml(err.message || "Error") + "</div>";
 	      });
 	    }
 
@@ -949,17 +1295,39 @@
         enabled: Boolean(modalFields.enabled.checked),
         defaultApprovalMode: approvalMode
       };
+
       if (!editingConnectionId) {
         payload.sourceType = currentSourceType || "manual";
         if (currentMarketplaceKey) payload.marketplaceKey = currentMarketplaceKey;
       }
-      if (authType === "bearer") {
+
+      // For marketplace items with setup fields, collect those values
+      var setupFields = collectSetupFieldsForPayload();
+      var hasSetupToken = setupFields.token || setupFields.api_key || setupFields.secret;
+
+      // Determine auth type based on setup fields or manual selection
+      if (currentSetupItem && currentSetupItem.connectionType === "api_key" && hasSetupToken) {
+        // Use setup field token as bearer token
+        var tokenValue = setupFields.token || setupFields.api_key || setupFields.secret || "";
+        payload.auth = { type: "bearer", token: tokenValue };
+      } else if (currentSetupItem && currentSetupItem.connectionType === "oauth") {
+        // OAuth - will be handled separately, for now just use bearer placeholder
+        var oauthToken = modalFields.bearerToken.value.trim() || setupFields.token || "";
+        payload.auth = { type: "bearer", token: oauthToken };
+      } else if (authType === "bearer") {
         payload.auth = { type: "bearer", token: modalFields.bearerToken.value.trim() };
       } else if (authType === "header") {
         payload.auth = { type: "header", headerName: modalFields.headerName.value.trim(), headerValue: modalFields.headerValue.value.trim() };
       } else {
         payload.auth = { type: "none" };
       }
+
+      // Store any additional setup fields in metadata
+      if (Object.keys(setupFields).length > 0) {
+        payload.metadata = payload.metadata || {};
+        payload.metadata.setupFields = setupFields;
+      }
+
       return payload;
     }
 
@@ -1308,8 +1676,27 @@
         var key = marketAdd.getAttribute("data-mcp-market-add");
         var card = marketAdd.closest("[data-mcp-marketplace-card]");
         var item = card && card.__item;
+
         if (item && item.key === key) {
-          openCreate({ name: item.name, serverUrl: item.serverUrl || "", recommendedAuth: item.recommendedAuth || "none", sourceType: "marketplace", marketplaceKey: item.key });
+          // Handle different connection types
+          var connType = item.connectionType || "none";
+          var hasSetupFields = item.setupFields && item.setupFields.length > 0;
+
+          // 1-Click: No setup needed, add directly
+          if (connType === "none" && !hasSetupFields) {
+            quickAddMcp(item);
+            return;
+          }
+
+          // OAuth or API Key or has setup fields: Show modal
+          openCreate({
+            name: item.name,
+            serverUrl: item.serverUrl || "",
+            recommendedAuth: item.recommendedAuth || "none",
+            sourceType: "marketplace",
+            marketplaceKey: item.key,
+            _item: item  // Pass full item for setup fields
+          });
         } else {
           openCreate({});
         }
@@ -1363,7 +1750,16 @@
 
       var openMarketBtn = target.closest("[data-mcp-open-marketplace]");
       if (openMarketBtn) {
-        setTab("marketplace");
+        setTab("all");
+        return;
+      }
+
+      var categoryBtn = target.closest("[data-mcp-category]");
+      if (categoryBtn) {
+        var newCategory = categoryBtn.getAttribute("data-mcp-category") || "all";
+        activeCategory = newCategory;
+        renderCategoryFilters(cachedCategories);
+        filterAndRenderMarketplace();
         return;
       }
 
@@ -1471,6 +1867,18 @@
         showToolsModal(false);
       }
     });
+
+    // Search input handler with debounce
+    var searchDebounce = null;
+    if (searchInput) {
+      searchInput.addEventListener("input", function (event) {
+        if (searchDebounce) clearTimeout(searchDebounce);
+        searchDebounce = setTimeout(function () {
+          searchQuery = (searchInput.value || "").trim();
+          filterAndRenderMarketplace();
+        }, 200);
+      });
+    }
 
     loadAll();
   })();

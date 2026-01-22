@@ -426,6 +426,7 @@ class McpOrchestratorService:
         active_phase_payloads: dict[str, dict[str, object]] = {}
         final_answer_started = False
         inline_response_blocks_detected = False
+        dsml_skip_line = False
         preplan_note: str | None = None
         preplan_payload: dict[str, object] | None = None
         provider_name = (os.getenv("MCP_PROVIDER") or "").strip().lower()
@@ -821,6 +822,49 @@ class McpOrchestratorService:
                 return
             _emit_tokens(text)
 
+        DSML_MARKERS = ("<｜DSML｜", "</｜DSML｜")
+
+        def _filter_dsml_stream(chunk: str) -> str:
+            """
+            Some models (notably DeepSeek) can emit DSML tool-call markup in the visible
+            content stream. This is never visitor-facing; strip it line-by-line in a
+            stream-safe way so partial tags never leak.
+            """
+
+            nonlocal dsml_skip_line
+            if not chunk:
+                return ""
+
+            remaining = chunk
+            out_parts: list[str] = []
+
+            while remaining:
+                if dsml_skip_line:
+                    newline_idx = remaining.find("\n")
+                    if newline_idx == -1:
+                        # Still inside a DSML line; drop until we see the terminating newline.
+                        return "".join(out_parts)
+                    # Drop DSML line content; preserve a single newline to keep spacing stable.
+                    out_parts.append("\n")
+                    remaining = remaining[newline_idx + 1 :]
+                    dsml_skip_line = False
+                    continue
+
+                next_idx = -1
+                for marker in DSML_MARKERS:
+                    idx = remaining.find(marker)
+                    if idx != -1 and (next_idx == -1 or idx < next_idx):
+                        next_idx = idx
+                if next_idx == -1:
+                    out_parts.append(remaining)
+                    break
+
+                out_parts.append(remaining[:next_idx])
+                remaining = remaining[next_idx:]
+                dsml_skip_line = True
+
+            return "".join(out_parts)
+
         def _emit_final_answer(text: str) -> None:
             if not text:
                 return
@@ -863,6 +907,9 @@ class McpOrchestratorService:
         # second content call.
         def _first_stream_chunk(chunk: str) -> None:
             nonlocal stream_buffer, sentence_space_pending, initial_stream_started, inline_response_blocks_detected
+            if not chunk:
+                return
+            chunk = _filter_dsml_stream(chunk)
             if not chunk:
                 return
             if inline_response_blocks_detected:
@@ -916,6 +963,9 @@ class McpOrchestratorService:
 
         def _answer_stream_chunk(chunk: str) -> None:
             nonlocal stream_buffer, sentence_space_pending, inline_response_blocks_detected
+            if not chunk:
+                return
+            chunk = _filter_dsml_stream(chunk)
             if not chunk:
                 return
             if inline_response_blocks_detected:

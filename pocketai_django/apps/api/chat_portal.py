@@ -2081,6 +2081,11 @@ def stream_send(request: HttpRequest) -> StreamingHttpResponse:
         if not code:
             return
         trace_logger.log_status(code, label=label, meta=meta)
+        # Ensure any buffered tail text is flushed before the UI sees `stream_complete`.
+        # Otherwise the final paragraph/list item (often missing a trailing newline) can
+        # appear *after* the stream_complete status and spinner shutdown.
+        if code == "stream_complete" and not block_ops_active:
+            _emit_block_events(rich_builder.finalize())
         _enqueue_status_events(stream_queue, code=code, label=label, meta=meta)
         if state_machine_enabled:
             if int(spinner_state.get("tool_inflight") or 0) > 0 and code not in {"answer_started", "stream_complete", "complete"}:
@@ -2129,8 +2134,14 @@ def stream_send(request: HttpRequest) -> StreamingHttpResponse:
             deferred_spinner_label: str | None = None
             deferred_spinner_reason: str | None = None
             deferred_bridge_thinking = False
-            
+
             is_tool_discovery = tool_name.strip().lower() == "mcp_search_tools"
+            # Ensure tool discovery spinner renders even if the assistant was mid-streaming
+            # a text block (close the block first so the frontend doesn't hide the spinner).
+            if is_tool_discovery and phase in {"started", "approval_requested"}:
+                if not block_ops_active:
+                    _emit_block_events(rich_builder.break_flow())
+
             if state_machine_enabled or is_tool_discovery:
                 phase_lower = phase
                 status_lower = status_value.lower()
@@ -2224,12 +2235,7 @@ def stream_send(request: HttpRequest) -> StreamingHttpResponse:
                     deferred_spinner_reason = f"tool:{tool_name}:{phase_lower}:{status_lower}"
 
             # Tool discovery is an internal gateway step; render it as spinner only (no tool block).
-            if tool_name.strip().lower() == "mcp_search_tools":
-                # If the assistant was streaming a text block, close it so the "Searching tools…"
-                # spinner can render immediately (Claude-style: no hidden spinner during a paused stream).
-                if phase in {"started", "approval_requested"}:
-                    if not block_ops_active:
-                        _emit_block_events(rich_builder.break_flow())
+            if is_tool_discovery:
                 return
 
             payload: dict[str, object] = {
@@ -2822,6 +2828,9 @@ def stream_send(request: HttpRequest) -> StreamingHttpResponse:
     worker.start()
 
     def _block_event_stream() -> Iterable[str]:
+        # Force an early flush so proxies (or WSGI servers) don't buffer the first real event.
+        # This is a valid SSE "comment" line that the client safely ignores.
+        yield ": stream_open\n\n"
         while True:
             try:
                 chunk = stream_queue.get(timeout=0.25)
@@ -2940,7 +2949,10 @@ def stream_send(request: HttpRequest) -> StreamingHttpResponse:
     def event_stream() -> Iterable[str]:
         yield from _block_event_stream()
 
-    return StreamingHttpResponse(event_stream(), content_type="text/event-stream")
+    response = StreamingHttpResponse(event_stream(), content_type="text/event-stream")
+    response["Cache-Control"] = "no-cache"
+    response["X-Accel-Buffering"] = "no"
+    return response
 
 
 @require_GET

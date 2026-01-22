@@ -28,6 +28,8 @@ INLINE_RESPONSE_BLOCK_PATTERN = re.compile(
     re.IGNORECASE,
 )
 
+DSML_LINE_PATTERN = re.compile(r"^\\s*</?｜DSML｜.*$", re.MULTILINE)
+
 
 def strip_inline_response_blocks(text: str) -> str:
     """
@@ -45,6 +47,26 @@ def strip_inline_response_blocks(text: str) -> str:
     if not match:
         return text
     return text[: match.start()].rstrip()
+
+
+def strip_dsml_markup(text: str) -> str:
+    """
+    Remove DSML tool-call markup that can leak into visible model text.
+
+    DeepSeek (and some tool-enabled prompts) may emit DSML tags like:
+      <｜DSML｜function_calls>
+      <｜DSML｜invoke name="...">
+      <｜DSML｜parameter ...>...</｜DSML｜parameter>
+
+    These are internal and must never be shown to portal visitors.
+    """
+
+    if not text:
+        return ""
+    cleaned = DSML_LINE_PATTERN.sub("", text)
+    # Collapse any resulting excessive blank lines.
+    cleaned = re.sub(r"\n{3,}", "\n\n", cleaned)
+    return cleaned.strip("\n")
 
 
 def sanitize_with_diagnostics(
@@ -208,7 +230,7 @@ def sanitize_text(text: str) -> str:
 
 
 def _sanitize(text: str, filter_level: str = "friendly") -> tuple[str, list[str]]:
-    text = strip_inline_response_blocks(text)
+    text = strip_dsml_markup(strip_inline_response_blocks(text))
     sentences, remainder = extract_sentences(text)
     keep_parts: list[str] = []
     dropped: list[str] = []

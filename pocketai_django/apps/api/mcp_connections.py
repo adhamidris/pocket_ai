@@ -311,46 +311,683 @@ def _mcp_marketplace_catalog() -> list[dict[str, Any]]:
 
     Note: Entries are templates—customers still supply their own server URL unless
     an entry includes a hosted URL.
+
+    Categories:
+    - communication: Email, chat, messaging tools
+    - storage: File storage, cloud drives
+    - productivity: Project management, notes, databases
+    - crm: Customer relationship management
+    - analytics: Data analytics, reporting
+    - development: Code, repos, CI/CD
+    - marketing: Ads, email marketing, social
+    - ecommerce: Shopping, payments, inventory
+    - finance: Accounting, invoicing, banking
+    - utilities: Search, web scraping, general tools
+
+    Industries (matches BusinessProfile.industry_key):
+    - marketing, ecommerce, healthcare, legal, real_estate, saas_tech, finance, consulting, general
     """
 
     return [
+        # ═══════════════════════════════════════════════════════════════════════
+        # COMMUNICATION
+        # ═══════════════════════════════════════════════════════════════════════
         {
-            "key": "context7",
-            "name": "Context7 Docs",
-            "description": "Up-to-date library documentation tools via MCP.",
-            "recommendedAuth": "none",
-            "serverUrl": "",
-            "docsUrl": "https://context7.com/",
+            "key": "gmail",
+            "name": "Gmail",
+            "description": "Send and read emails via Gmail API.",
+            "category": "communication",
+            "industries": ["marketing", "ecommerce", "legal", "real_estate", "consulting", "general"],
+            "connectionType": "oauth",
+            "recommendedAuth": "bearer",
+            "serverUrl": "https://mcp.composio.dev/gmail",
+            "docsUrl": "https://mcp.composio.dev/",
             "badge": "Popular",
+            "tier": 2,
+            "setupFields": [],  # OAuth only - no extra fields
         },
         {
+            "key": "slack",
+            "name": "Slack",
+            "description": "Send messages, read channels, and automate team communication.",
+            "category": "communication",
+            "industries": ["marketing", "saas_tech", "consulting", "general"],
+            "connectionType": "oauth",
+            "recommendedAuth": "bearer",
+            "serverUrl": "https://mcp.composio.dev/slack",
+            "docsUrl": "https://mcp.composio.dev/",
+            "badge": "Popular",
+            "tier": 2,
+            "setupFields": [],
+        },
+        {
+            "key": "microsoft_teams",
+            "name": "Microsoft Teams",
+            "description": "Send messages and manage team channels via Teams API.",
+            "category": "communication",
+            "industries": ["consulting", "finance", "legal", "general"],
+            "connectionType": "oauth",
+            "recommendedAuth": "bearer",
+            "serverUrl": "https://mcp.composio.dev/microsoft-teams",
+            "docsUrl": "https://mcp.composio.dev/",
+            "badge": "Template",
+            "tier": 2,
+            "setupFields": [],
+        },
+        {
+            "key": "discord",
+            "name": "Discord",
+            "description": "Bot integration for Discord servers and channels.",
+            "category": "communication",
+            "industries": ["saas_tech", "general"],
+            "connectionType": "api_key",
+            "recommendedAuth": "bearer",
+            "serverUrl": "https://mcp.composio.dev/discord",
+            "docsUrl": "https://mcp.composio.dev/",
+            "badge": "Template",
+            "tier": 2,
+            "setupFields": ["token"],  # Just needs bot token
+            "setupLabels": {"token": "Discord Bot Token"},
+        },
+        # ═══════════════════════════════════════════════════════════════════════
+        # STORAGE
+        # ═══════════════════════════════════════════════════════════════════════
+        {
+            "key": "google_drive",
+            "name": "Google Drive",
+            "description": "Access, create, and manage files in Google Drive.",
+            "category": "storage",
+            "industries": ["marketing", "ecommerce", "legal", "consulting", "general"],
+            "connectionType": "oauth",
+            "recommendedAuth": "bearer",
+            "serverUrl": "https://mcp.composio.dev/googledrive",
+            "docsUrl": "https://mcp.composio.dev/",
+            "badge": "Popular",
+            "tier": 2,
+            "setupFields": [],
+        },
+        {
+            "key": "dropbox",
+            "name": "Dropbox",
+            "description": "File storage and sharing via Dropbox API.",
+            "category": "storage",
+            "industries": ["consulting", "legal", "general"],
+            "connectionType": "oauth",
+            "recommendedAuth": "bearer",
+            "serverUrl": "https://mcp.composio.dev/dropbox",
+            "docsUrl": "https://mcp.composio.dev/",
+            "badge": "Template",
+            "tier": 2,
+            "setupFields": [],
+        },
+        {
+            "key": "onedrive",
+            "name": "OneDrive",
+            "description": "Microsoft OneDrive file access and management.",
+            "category": "storage",
+            "industries": ["consulting", "finance", "legal", "general"],
+            "connectionType": "oauth",
+            "recommendedAuth": "bearer",
+            "serverUrl": "https://mcp.composio.dev/onedrive",
+            "docsUrl": "https://mcp.composio.dev/",
+            "badge": "Template",
+            "tier": 2,
+            "setupFields": [],
+        },
+        # ═══════════════════════════════════════════════════════════════════════
+        # PRODUCTIVITY
+        # ═══════════════════════════════════════════════════════════════════════
+        {
+            "key": "notion",
+            "name": "Notion",
+            "description": "Access pages, databases, and workspace content in Notion.",
+            "category": "productivity",
+            "industries": ["marketing", "saas_tech", "consulting", "general"],
+            "connectionType": "api_key",
+            "recommendedAuth": "bearer",
+            "serverUrl": "https://mcp.composio.dev/notion",
+            "docsUrl": "https://mcp.composio.dev/",
+            "badge": "Popular",
+            "tier": 2,
+            "setupFields": ["token"],
+            "setupLabels": {"token": "Notion Integration Token"},
+            "setupHelp": {"token": "Create an integration at notion.so/my-integrations"},
+        },
+        {
+            "key": "airtable",
+            "name": "Airtable",
+            "description": "Database and spreadsheet hybrid for structured data management.",
+            "category": "productivity",
+            "industries": ["marketing", "ecommerce", "consulting", "general"],
+            "connectionType": "api_key",
+            "recommendedAuth": "bearer",
+            "serverUrl": "https://mcp.composio.dev/airtable",
+            "docsUrl": "https://mcp.composio.dev/",
+            "badge": "Popular",
+            "tier": 2,
+            "setupFields": ["token"],
+            "setupLabels": {"token": "Airtable API Key"},
+            "setupHelp": {"token": "Find at airtable.com/account"},
+        },
+        {
+            "key": "trello",
+            "name": "Trello",
+            "description": "Kanban boards and task management via Trello API.",
+            "category": "productivity",
+            "industries": ["marketing", "consulting", "general"],
+            "connectionType": "api_key",
+            "recommendedAuth": "bearer",
+            "serverUrl": "https://mcp.composio.dev/trello",
+            "docsUrl": "https://mcp.composio.dev/",
+            "badge": "Template",
+            "tier": 2,
+            "setupFields": ["token"],
+            "setupLabels": {"token": "Trello API Key"},
+        },
+        {
+            "key": "asana",
+            "name": "Asana",
+            "description": "Project and task management via Asana API.",
+            "category": "productivity",
+            "industries": ["marketing", "consulting", "general"],
+            "connectionType": "oauth",
+            "recommendedAuth": "bearer",
+            "serverUrl": "https://mcp.composio.dev/asana",
+            "docsUrl": "https://mcp.composio.dev/",
+            "badge": "Template",
+            "tier": 2,
+            "setupFields": [],
+        },
+        {
+            "key": "google_calendar",
+            "name": "Google Calendar",
+            "description": "Manage events, schedules, and calendar entries.",
+            "category": "productivity",
+            "industries": ["real_estate", "consulting", "legal", "healthcare", "general"],
+            "connectionType": "oauth",
+            "recommendedAuth": "bearer",
+            "serverUrl": "https://mcp.composio.dev/googlecalendar",
+            "docsUrl": "https://mcp.composio.dev/",
+            "badge": "Popular",
+            "tier": 2,
+            "setupFields": [],
+        },
+        # ═══════════════════════════════════════════════════════════════════════
+        # CRM
+        # ═══════════════════════════════════════════════════════════════════════
+        {
+            "key": "salesforce",
+            "name": "Salesforce",
+            "description": "Access leads, opportunities, accounts, and CRM data.",
+            "category": "crm",
+            "industries": ["marketing", "ecommerce", "consulting", "general"],
+            "connectionType": "oauth",
+            "recommendedAuth": "bearer",
+            "serverUrl": "https://mcp.composio.dev/salesforce",
+            "docsUrl": "https://mcp.composio.dev/",
+            "badge": "Premium",
+            "tier": 3,
+            "setupFields": [],
+        },
+        {
+            "key": "hubspot",
+            "name": "HubSpot",
+            "description": "CRM, contacts, deals, and marketing automation.",
+            "category": "crm",
+            "industries": ["marketing", "saas_tech", "consulting", "general"],
+            "connectionType": "oauth",
+            "recommendedAuth": "bearer",
+            "serverUrl": "https://mcp.composio.dev/hubspot",
+            "docsUrl": "https://mcp.composio.dev/",
+            "badge": "Popular",
+            "tier": 3,
+            "setupFields": [],
+        },
+        {
+            "key": "pipedrive",
+            "name": "Pipedrive",
+            "description": "Sales pipeline and deal management CRM.",
+            "category": "crm",
+            "industries": ["real_estate", "consulting", "general"],
+            "connectionType": "api_key",
+            "recommendedAuth": "bearer",
+            "serverUrl": "https://mcp.composio.dev/pipedrive",
+            "docsUrl": "https://mcp.composio.dev/",
+            "badge": "Template",
+            "tier": 3,
+            "setupFields": ["token"],
+            "setupLabels": {"token": "Pipedrive API Token"},
+        },
+        # ═══════════════════════════════════════════════════════════════════════
+        # ANALYTICS
+        # ═══════════════════════════════════════════════════════════════════════
+        {
+            "key": "google_analytics",
+            "name": "Google Analytics",
+            "description": "Website traffic and user behavior analytics.",
+            "category": "analytics",
+            "industries": ["marketing", "ecommerce", "saas_tech", "general"],
+            "connectionType": "oauth",
+            "recommendedAuth": "bearer",
+            "serverUrl": "https://mcp.composio.dev/googleanalytics",
+            "docsUrl": "https://mcp.composio.dev/",
+            "badge": "Popular",
+            "tier": 3,
+            "setupFields": [],
+        },
+        {
+            "key": "mixpanel",
+            "name": "Mixpanel",
+            "description": "Product analytics and user event tracking.",
+            "category": "analytics",
+            "industries": ["saas_tech", "ecommerce", "general"],
+            "connectionType": "api_key",
+            "recommendedAuth": "bearer",
+            "serverUrl": "https://mcp.composio.dev/mixpanel",
+            "docsUrl": "https://mcp.composio.dev/",
+            "badge": "Template",
+            "tier": 3,
+            "setupFields": ["token"],
+            "setupLabels": {"token": "Mixpanel API Secret"},
+        },
+        # ═══════════════════════════════════════════════════════════════════════
+        # DEVELOPMENT
+        # ═══════════════════════════════════════════════════════════════════════
+        {
             "key": "github",
-            "name": "GitHub (MCP)",
-            "description": "Official GitHub-hosted MCP server for repos, issues, pull requests, and more (Bearer token auth).",
+            "name": "GitHub",
+            "description": "Official GitHub MCP for repos, issues, pull requests, and code.",
+            "category": "development",
+            "industries": ["saas_tech", "general"],
+            "connectionType": "api_key",
             "recommendedAuth": "bearer",
             "serverUrl": "https://api.githubcopilot.com/mcp/",
             "docsUrl": "https://docs.github.com/en/copilot/how-tos/provide-context/use-mcp/set-up-the-github-mcp-server",
             "badge": "Official",
+            "tier": 2,
+            "setupFields": ["token"],
+            "setupLabels": {"token": "GitHub Personal Access Token"},
+            "setupHelp": {"token": "Create at github.com/settings/tokens"},
         },
         {
-            "key": "slack",
-            "name": "Slack (MCP)",
-            "description": "Messaging and channel automation via a Slack MCP server deployment.",
+            "key": "gitlab",
+            "name": "GitLab",
+            "description": "Repository management, issues, and CI/CD pipelines.",
+            "category": "development",
+            "industries": ["saas_tech", "general"],
+            "connectionType": "api_key",
             "recommendedAuth": "bearer",
-            "serverUrl": "",
-            "docsUrl": "https://modelcontextprotocol.io/examples",
+            "serverUrl": "https://mcp.composio.dev/gitlab",
+            "docsUrl": "https://mcp.composio.dev/",
             "badge": "Template",
+            "tier": 2,
+            "setupFields": ["token"],
+            "setupLabels": {"token": "GitLab Personal Access Token"},
+        },
+        {
+            "key": "jira",
+            "name": "Jira",
+            "description": "Issue tracking and agile project management.",
+            "category": "development",
+            "industries": ["saas_tech", "consulting", "general"],
+            "connectionType": "api_key",
+            "recommendedAuth": "bearer",
+            "serverUrl": "https://mcp.composio.dev/jira",
+            "docsUrl": "https://mcp.composio.dev/",
+            "badge": "Popular",
+            "tier": 2,
+            "setupFields": ["token"],
+            "setupLabels": {"token": "Jira API Token"},
+            "setupHelp": {"token": "Create at id.atlassian.com/manage-profile/security/api-tokens"},
+        },
+        {
+            "key": "linear",
+            "name": "Linear",
+            "description": "Modern issue tracking for software teams.",
+            "category": "development",
+            "industries": ["saas_tech"],
+            "connectionType": "api_key",
+            "recommendedAuth": "bearer",
+            "serverUrl": "https://mcp.composio.dev/linear",
+            "docsUrl": "https://mcp.composio.dev/",
+            "badge": "Template",
+            "tier": 2,
+            "setupFields": ["token"],
+            "setupLabels": {"token": "Linear API Key"},
+        },
+        {
+            "key": "context7",
+            "name": "Context7 Docs",
+            "description": "Up-to-date library documentation tools via MCP.",
+            "category": "development",
+            "industries": ["saas_tech", "general"],
+            "connectionType": "none",
+            "recommendedAuth": "none",
+            "serverUrl": "https://mcp.context7.com/mcp",
+            "docsUrl": "https://context7.com/",
+            "badge": "Popular",
+            "tier": 1,
+            "setupFields": [],  # 1-click - no setup needed
+        },
+        # ═══════════════════════════════════════════════════════════════════════
+        # MARKETING
+        # ═══════════════════════════════════════════════════════════════════════
+        {
+            "key": "google_ads",
+            "name": "Google Ads",
+            "description": "Campaign management and advertising analytics.",
+            "category": "marketing",
+            "industries": ["marketing", "ecommerce", "general"],
+            "connectionType": "oauth",
+            "recommendedAuth": "bearer",
+            "serverUrl": "https://mcp.composio.dev/googleads",
+            "docsUrl": "https://mcp.composio.dev/",
+            "badge": "Popular",
+            "tier": 3,
+            "setupFields": [],
+        },
+        {
+            "key": "mailchimp",
+            "name": "Mailchimp",
+            "description": "Email marketing campaigns and audience management.",
+            "category": "marketing",
+            "industries": ["marketing", "ecommerce", "general"],
+            "connectionType": "api_key",
+            "recommendedAuth": "bearer",
+            "serverUrl": "https://mcp.composio.dev/mailchimp",
+            "docsUrl": "https://mcp.composio.dev/",
+            "badge": "Popular",
+            "tier": 2,
+            "setupFields": ["token"],
+            "setupLabels": {"token": "Mailchimp API Key"},
+            "setupHelp": {"token": "Find at mailchimp.com/account/api"},
+        },
+        {
+            "key": "sendgrid",
+            "name": "SendGrid",
+            "description": "Transactional and marketing email delivery.",
+            "category": "marketing",
+            "industries": ["saas_tech", "ecommerce", "general"],
+            "connectionType": "api_key",
+            "recommendedAuth": "bearer",
+            "serverUrl": "https://mcp.composio.dev/sendgrid",
+            "docsUrl": "https://mcp.composio.dev/",
+            "badge": "Template",
+            "tier": 2,
+            "setupFields": ["token"],
+            "setupLabels": {"token": "SendGrid API Key"},
+        },
+        {
+            "key": "linkedin",
+            "name": "LinkedIn",
+            "description": "Professional network data and posting (read-only for most).",
+            "category": "marketing",
+            "industries": ["marketing", "consulting", "general"],
+            "connectionType": "oauth",
+            "recommendedAuth": "bearer",
+            "serverUrl": "https://mcp.composio.dev/linkedin",
+            "docsUrl": "https://mcp.composio.dev/",
+            "badge": "Template",
+            "tier": 2,
+            "setupFields": [],
+        },
+        # ═══════════════════════════════════════════════════════════════════════
+        # ECOMMERCE
+        # ═══════════════════════════════════════════════════════════════════════
+        {
+            "key": "shopify",
+            "name": "Shopify",
+            "description": "E-commerce store management, orders, and products.",
+            "category": "ecommerce",
+            "industries": ["ecommerce"],
+            "connectionType": "api_key",
+            "recommendedAuth": "bearer",
+            "serverUrl": "https://mcp.composio.dev/shopify",
+            "docsUrl": "https://mcp.composio.dev/",
+            "badge": "Popular",
+            "tier": 3,
+            "setupFields": ["token", "store_url"],
+            "setupLabels": {"token": "Shopify Access Token", "store_url": "Store URL"},
+            "setupHelp": {"store_url": "e.g., mystore.myshopify.com"},
+        },
+        {
+            "key": "stripe",
+            "name": "Stripe",
+            "description": "Payment processing, subscriptions, and invoices.",
+            "category": "ecommerce",
+            "industries": ["ecommerce", "saas_tech", "general"],
+            "connectionType": "api_key",
+            "recommendedAuth": "bearer",
+            "serverUrl": "https://mcp.composio.dev/stripe",
+            "docsUrl": "https://mcp.composio.dev/",
+            "badge": "Popular",
+            "tier": 3,
+            "setupFields": ["token"],
+            "setupLabels": {"token": "Stripe Secret Key"},
+            "setupHelp": {"token": "Find at dashboard.stripe.com/apikeys"},
+        },
+        {
+            "key": "woocommerce",
+            "name": "WooCommerce",
+            "description": "WordPress e-commerce store management.",
+            "category": "ecommerce",
+            "industries": ["ecommerce"],
+            "connectionType": "api_key",
+            "recommendedAuth": "header",
+            "serverUrl": "https://mcp.composio.dev/woocommerce",
+            "docsUrl": "https://mcp.composio.dev/",
+            "badge": "Template",
+            "tier": 3,
+            "setupFields": ["consumer_key", "consumer_secret", "store_url"],
+            "setupLabels": {"consumer_key": "Consumer Key", "consumer_secret": "Consumer Secret", "store_url": "Store URL"},
+        },
+        # ═══════════════════════════════════════════════════════════════════════
+        # FINANCE
+        # ═══════════════════════════════════════════════════════════════════════
+        {
+            "key": "quickbooks",
+            "name": "QuickBooks",
+            "description": "Accounting, invoicing, and financial reporting.",
+            "category": "finance",
+            "industries": ["finance", "consulting", "general"],
+            "connectionType": "oauth",
+            "recommendedAuth": "bearer",
+            "serverUrl": "https://mcp.composio.dev/quickbooks",
+            "docsUrl": "https://mcp.composio.dev/",
+            "badge": "Popular",
+            "tier": 3,
+            "setupFields": [],
+        },
+        {
+            "key": "xero",
+            "name": "Xero",
+            "description": "Cloud accounting and bookkeeping.",
+            "category": "finance",
+            "industries": ["finance", "consulting", "general"],
+            "connectionType": "oauth",
+            "recommendedAuth": "bearer",
+            "serverUrl": "https://mcp.composio.dev/xero",
+            "docsUrl": "https://mcp.composio.dev/",
+            "badge": "Template",
+            "tier": 3,
+            "setupFields": [],
+        },
+        # ═══════════════════════════════════════════════════════════════════════
+        # LEGAL
+        # ═══════════════════════════════════════════════════════════════════════
+        {
+            "key": "docusign",
+            "name": "DocuSign",
+            "description": "Electronic signatures and document workflows.",
+            "category": "legal",
+            "industries": ["legal", "real_estate", "consulting", "general"],
+            "connectionType": "oauth",
+            "recommendedAuth": "bearer",
+            "serverUrl": "https://mcp.composio.dev/docusign",
+            "docsUrl": "https://mcp.composio.dev/",
+            "badge": "Popular",
+            "tier": 3,
+            "setupFields": [],
+        },
+        {
+            "key": "clio",
+            "name": "Clio",
+            "description": "Legal practice management and case tracking.",
+            "category": "legal",
+            "industries": ["legal"],
+            "connectionType": "oauth",
+            "recommendedAuth": "bearer",
+            "serverUrl": "https://mcp.composio.dev/clio",
+            "docsUrl": "https://mcp.composio.dev/",
+            "badge": "Template",
+            "tier": 3,
+            "setupFields": [],
+        },
+        # ═══════════════════════════════════════════════════════════════════════
+        # REAL ESTATE
+        # ═══════════════════════════════════════════════════════════════════════
+        {
+            "key": "zillow",
+            "name": "Zillow",
+            "description": "Property listings and real estate data.",
+            "category": "real_estate",
+            "industries": ["real_estate"],
+            "connectionType": "api_key",
+            "recommendedAuth": "bearer",
+            "serverUrl": "https://mcp.composio.dev/zillow",
+            "docsUrl": "https://mcp.composio.dev/",
+            "badge": "Template",
+            "tier": 3,
+            "setupFields": ["token"],
+            "setupLabels": {"token": "Zillow API Key"},
+        },
+        # ═══════════════════════════════════════════════════════════════════════
+        # UTILITIES (Universal tools available to all)
+        # ═══════════════════════════════════════════════════════════════════════
+        {
+            "key": "brave_search",
+            "name": "Brave Search",
+            "description": "Web search with privacy-focused results.",
+            "category": "utilities",
+            "industries": ["general"],
+            "connectionType": "api_key",
+            "recommendedAuth": "bearer",
+            "serverUrl": "https://mcp.composio.dev/bravesearch",
+            "docsUrl": "https://mcp.composio.dev/",
+            "badge": "Popular",
+            "tier": 1,
+            "setupFields": ["token"],
+            "setupLabels": {"token": "Brave Search API Key"},
+            "setupHelp": {"token": "Get at brave.com/search/api"},
         },
         {
             "key": "postgres",
-            "name": "Postgres (MCP)",
-            "description": "Query and analytics workflows via a Postgres MCP server deployment.",
+            "name": "PostgreSQL",
+            "description": "Query and analytics workflows via a Postgres MCP server.",
+            "category": "utilities",
+            "industries": ["saas_tech", "general"],
+            "connectionType": "api_key",
             "recommendedAuth": "bearer",
-            "serverUrl": "",
-            "docsUrl": "https://modelcontextprotocol.io/examples",
+            "serverUrl": "https://mcp.composio.dev/postgresql",
+            "docsUrl": "https://mcp.composio.dev/",
             "badge": "Template",
+            "tier": 2,
+            "setupFields": ["connection_string"],
+            "setupLabels": {"connection_string": "Connection String"},
+            "setupHelp": {"connection_string": "postgresql://user:pass@host:5432/db"},
+        },
+        {
+            "key": "excel",
+            "name": "Excel / Sheets",
+            "description": "Spreadsheet creation and manipulation. Built into your AI.",
+            "category": "utilities",
+            "industries": ["finance", "consulting", "marketing", "general"],
+            "connectionType": "none",
+            "recommendedAuth": "none",
+            "serverUrl": "__builtin__",
+            "docsUrl": "",
+            "badge": "Built-in",
+            "tier": 1,
+            "setupFields": [],  # Built-in, no setup
+            "isBuiltIn": True,
+        },
+        {
+            "key": "pdf_tools",
+            "name": "PDF Tools",
+            "description": "Create, read, and manipulate PDF documents. Built into your AI.",
+            "category": "utilities",
+            "industries": ["legal", "consulting", "general"],
+            "connectionType": "none",
+            "recommendedAuth": "none",
+            "serverUrl": "__builtin__",
+            "docsUrl": "",
+            "badge": "Built-in",
+            "tier": 1,
+            "setupFields": [],  # Built-in, no setup
+            "isBuiltIn": True,
         },
     ]
+
+
+def _get_marketplace_categories() -> list[dict[str, str]]:
+    """Return available marketplace categories for filtering."""
+    return [
+        {"key": "communication", "label": "Communication"},
+        {"key": "storage", "label": "Storage"},
+        {"key": "productivity", "label": "Productivity"},
+        {"key": "crm", "label": "CRM"},
+        {"key": "analytics", "label": "Analytics"},
+        {"key": "development", "label": "Development"},
+        {"key": "marketing", "label": "Marketing"},
+        {"key": "ecommerce", "label": "E-commerce"},
+        {"key": "finance", "label": "Finance"},
+        {"key": "legal", "label": "Legal"},
+        {"key": "real_estate", "label": "Real Estate"},
+        {"key": "utilities", "label": "Utilities"},
+    ]
+
+
+def _get_industry_display_names() -> dict[str, str]:
+    """Map industry keys to display names."""
+    return {
+        "marketing": "Marketing",
+        "ecommerce": "E-commerce",
+        "healthcare": "Healthcare",
+        "legal": "Legal",
+        "real_estate": "Real Estate",
+        "saas_tech": "SaaS & Tech",
+        "finance": "Finance",
+        "consulting": "Consulting",
+        "general": "General",
+    }
+
+
+def _filter_marketplace_by_industry(catalog: list[dict[str, Any]], industry_key: str) -> list[dict[str, Any]]:
+    """Filter marketplace items that match a given industry."""
+    if not industry_key:
+        return []
+
+    industry_lower = industry_key.lower().replace(" ", "_").replace("-", "_")
+
+    matched = []
+    for item in catalog:
+        industries = item.get("industries") or []
+        industries_lower = [i.lower() for i in industries]
+        if industry_lower in industries_lower or "general" in industries_lower:
+            matched.append(item)
+
+    return matched
+
+
+def _get_common_tools(catalog: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Return tools that are common across all industries (tier 1 or general)."""
+    common = []
+    for item in catalog:
+        tier = item.get("tier", 2)
+        industries = item.get("industries") or []
+        if tier == 1 or "general" in industries:
+            common.append(item)
+    return common
 
 
 def _log_mcp_audit(
@@ -401,12 +1038,31 @@ def mcp_connections_collection(request: HttpRequest) -> JsonResponse:
         with tenant_context(business.id):
             connections = list(McpConnection.objects.filter(business_profile=business).order_by("name"))
             connections_payload = [_serialize_mcp_connection(connection, business=business) for connection in connections]
+
+        # Get full marketplace catalog
+        full_catalog = _mcp_marketplace_catalog()
+
+        # Get industry-specific recommendations
+        industry_key = getattr(business, "industry_key", "") or ""
+        industry_display = business.industry if hasattr(business, "industry") else ""
+
+        # Filter for industry-specific tools
+        industry_tools = _filter_marketplace_by_industry(full_catalog, industry_key)
+
+        # Get common tools (tier 1 / universal)
+        common_tools = _get_common_tools(full_catalog)
+
         return JsonResponse(
             {
                 "businessId": str(business.id),
                 "dashboardUrl": "/dashboard/mcp/",
                 "connections": connections_payload,
-                "marketplace": _mcp_marketplace_catalog(),
+                "marketplace": full_catalog,
+                "industryTools": industry_tools,
+                "commonTools": common_tools,
+                "industryKey": industry_key,
+                "industryDisplay": industry_display or _get_industry_display_names().get(industry_key, "Your Industry"),
+                "categories": _get_marketplace_categories(),
             },
             status=HTTPStatus.OK,
         )
