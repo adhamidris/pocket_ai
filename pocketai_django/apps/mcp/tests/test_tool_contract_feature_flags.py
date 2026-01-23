@@ -12,7 +12,18 @@ class _ToolRecordingProvider:
     def __init__(self) -> None:
         self.tool_name_sets: list[set[str]] = []
 
-    def chat(self, messages, *, tools=None, on_stream_delta=None, on_tool_call_start=None, response_format=None):
+    def chat(
+        self,
+        messages,
+        *,
+        tools=None,
+        on_stream_delta=None,
+        on_reasoning_delta=None,
+        on_tool_call_start=None,
+        on_tool_call_delta=None,
+        response_format=None,
+        should_cancel=None,
+    ):
         if tools is not None:
             names: set[str] = set()
             for tool_def in tools:

@@ -3074,10 +3074,13 @@ def chat_portal(request: HttpRequest, business_slug: str, agent_slug: str) -> Ht
             "bootstrap": reverse("api:chat-portal-session"),
             "messages": reverse("api:chat-messages"),
             "stream_send": reverse("api:chat-stream-send"),
+            "stream_stop": reverse("api:chat-stream-stop"),
             "events": reverse("api:chat-events"),
             "csat": reverse("api:chat-csat"),
             "tool_approval": reverse("api:chat-portal-tools-approve"),
             "tool_history": reverse("api:chat-portal-tools-history"),
+            "email_send_draft": reverse("api:chat-portal-email-send-draft"),
+            "email_discard_draft": reverse("api:chat-portal-email-discard-draft"),
             "file_upload": reverse("api:chat-portal-files-upload"),
             "file_download_url_template": reverse(
                 "api:chat-portal-files-download-url",

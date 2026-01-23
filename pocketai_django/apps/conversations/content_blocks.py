@@ -15,6 +15,7 @@ ContentBlockType = Literal[
     "list_item",
     "quote",
     "code_block",
+    "reasoning",
     "tool_use",
     "tool_result",
     "table",

@@ -582,6 +582,215 @@
   }
 
   /* ------------------------------------------------------------------ */
+  /* Email Preview Card */
+
+  [data-chat-portal] .email-preview-card {
+    margin: 0.75rem 0;
+    border: 1px solid hsl(var(--border));
+    border-radius: 0.75rem;
+    background: hsl(var(--card) / 0.5);
+    overflow: hidden;
+    transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+  }
+
+  [data-chat-portal] .email-card-animate-in {
+    animation: emailCardSlideIn 0.3s ease-out;
+  }
+
+  @keyframes emailCardSlideIn {
+    from {
+      opacity: 0;
+      transform: translateY(-8px);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0);
+    }
+  }
+
+  [data-chat-portal] .email-preview-container {
+    padding: 1rem;
+  }
+
+  [data-chat-portal] .email-preview-header {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    margin-bottom: 1rem;
+    padding-bottom: 0.75rem;
+    border-bottom: 1px solid hsl(var(--border) / 0.5);
+  }
+
+  [data-chat-portal] .email-preview-icon {
+    font-size: 1.25rem;
+    line-height: 1;
+  }
+
+  [data-chat-portal] .email-preview-status {
+    font-size: var(--portal-font-sm);
+    font-weight: 500;
+    color: hsl(var(--foreground));
+  }
+
+  [data-chat-portal] .email-preview-fields {
+    display: flex;
+    flex-direction: column;
+    gap: 0.75rem;
+  }
+
+  [data-chat-portal] .email-field {
+    display: flex;
+    gap: 0.75rem;
+    opacity: 0;
+    transform: translateX(-8px);
+    transition: opacity 0.3s ease-out, transform 0.3s ease-out;
+  }
+
+  [data-chat-portal] .email-field.email-field-visible {
+    opacity: 1;
+    transform: translateX(0);
+  }
+
+  [data-chat-portal] .email-field-label {
+    min-width: 5rem;
+    font-size: var(--portal-font-sm);
+    font-weight: 600;
+    color: hsl(var(--foreground) / 0.6);
+    flex-shrink: 0;
+  }
+
+  [data-chat-portal] .email-field-value {
+    font-size: var(--portal-font-sm);
+    color: hsl(var(--foreground) / 0.9);
+    word-break: break-word;
+    flex: 1;
+  }
+
+  [data-chat-portal] .email-field-body {
+    flex-direction: column;
+    gap: 0.5rem;
+  }
+
+  [data-chat-portal] .email-body-content {
+    padding: 0.75rem;
+    background: hsl(var(--muted) / 0.3);
+    border: 1px solid hsl(var(--border) / 0.5);
+    border-radius: 0.5rem;
+    white-space: pre-wrap;
+    max-height: 300px;
+    min-height: 60px;
+    overflow-y: auto;
+    font-family: inherit;
+    line-height: 1.5;
+  }
+
+  [data-chat-portal] .email-field-value:not(.email-stream-complete)::after {
+    content: "▋";
+    animation: emailCursorBlink 1s step-end infinite;
+    color: hsl(var(--primary));
+    margin-left: 1px;
+  }
+
+  @keyframes emailCursorBlink {
+    0%, 50% { opacity: 1; }
+    51%, 100% { opacity: 0; }
+  }
+
+  [data-chat-portal] .email-field-input {
+    padding: 0.5rem 0.75rem;
+    background: hsl(var(--background));
+    border: 1px solid hsl(var(--border));
+    border-radius: 0.5rem;
+    font-size: var(--portal-font-sm);
+    color: hsl(var(--foreground));
+    font-family: inherit;
+    width: 100%;
+  }
+
+  [data-chat-portal] .email-field-input:focus {
+    outline: none;
+    border-color: hsl(var(--primary));
+    box-shadow: 0 0 0 3px hsl(var(--primary) / 0.1);
+  }
+
+  [data-chat-portal] .email-body-input {
+    min-height: 150px;
+    resize: vertical;
+    font-family: inherit;
+  }
+
+  [data-chat-portal] .email-preview-actions,
+  [data-chat-portal] .email-approval-actions {
+    display: flex;
+    gap: 0.5rem;
+    margin-top: 1rem;
+    padding-top: 1rem;
+    border-top: 1px solid hsl(var(--border) / 0.5);
+  }
+
+  [data-chat-portal] .email-preview-actions[hidden],
+  [data-chat-portal] .email-approval-actions[hidden] {
+    display: none !important;
+  }
+
+  [data-chat-portal] .email-action-btn {
+    padding: 0.5rem 1rem;
+    font-size: var(--portal-font-sm);
+    font-weight: 500;
+    border: 1px solid hsl(var(--border));
+    border-radius: 0.5rem;
+    background: hsl(var(--background));
+    color: hsl(var(--foreground));
+    cursor: pointer;
+    transition: all 0.2s;
+  }
+
+  [data-chat-portal] .email-action-btn:hover {
+    background: hsl(var(--accent));
+  }
+
+  [data-chat-portal] .email-approve-btn {
+    background: hsl(var(--primary));
+    color: white;
+    border-color: hsl(var(--primary));
+  }
+
+  [data-chat-portal] .email-approve-btn:hover {
+    background: hsl(var(--primary) / 0.9);
+  }
+
+  [data-chat-portal] .email-reject-btn {
+    background: hsl(var(--background));
+    color: hsl(var(--foreground) / 0.7);
+  }
+
+  [data-chat-portal] .email-reject-btn:hover {
+    background: hsl(var(--destructive) / 0.1);
+    color: hsl(var(--destructive));
+    border-color: hsl(var(--destructive) / 0.5);
+  }
+
+  /* State classes */
+  [data-chat-portal] .email-draft-created {
+    border-color: hsl(var(--primary) / 0.4);
+  }
+
+  [data-chat-portal] .email-sent {
+    border-color: hsl(var(--primary) / 0.6);
+    background: hsl(var(--primary) / 0.05);
+  }
+
+  [data-chat-portal] .email-rejected {
+    border-color: hsl(var(--destructive) / 0.4);
+    background: hsl(var(--destructive) / 0.05);
+  }
+
+  [data-chat-portal] .email-error {
+    border-color: hsl(var(--destructive) / 0.6);
+    background: hsl(var(--destructive) / 0.08);
+  }
+
+  /* ------------------------------------------------------------------ */
   /* File attachments (uploads + generated artifacts) */
 
   [data-chat-portal] .portal-file-card {
@@ -776,6 +985,47 @@
     border: 1px solid hsl(var(--border) / 0.5);
   }
 
+  /* Reasoning (collapsed/expand) */
+  [data-chat-portal] .portal-reasoning {
+    width: 100%;
+    max-width: 720px;
+    border-radius: 1rem;
+    border: 1px solid hsl(var(--border) / 0.6);
+    background: hsl(var(--background) / 0.75);
+    overflow: hidden;
+  }
+
+  [data-chat-portal] .portal-reasoning__details {
+    padding: 0.75rem 0.95rem 0.95rem;
+  }
+
+  [data-chat-portal] .portal-reasoning__summary {
+    cursor: pointer;
+    font-size: 0.9rem;
+    font-weight: 600;
+    color: hsl(var(--primary));
+    list-style: none;
+    user-select: none;
+  }
+
+  [data-chat-portal] .portal-reasoning__summary::-webkit-details-marker {
+    display: none;
+  }
+
+  [data-chat-portal] .portal-reasoning__content {
+    margin-top: 0.75rem;
+    max-height: 320px;
+    overflow: auto;
+    white-space: pre-wrap;
+    word-break: break-word;
+    font-size: 0.85rem;
+    line-height: 1.5;
+    padding: 0.85rem 0.9rem;
+    border-radius: 0.85rem;
+    background: hsl(var(--muted) / 0.55);
+    border: 1px solid hsl(var(--border) / 0.5);
+  }
+
   /* Timestamp Hover Effect */
   .message-timestamp {
     opacity: 0;
@@ -833,8 +1083,11 @@
   data-session-cache-key="{{ portal.session_storage_key }}" data-endpoint-bootstrap="{{ portal.endpoints.bootstrap }}"
   data-endpoint-messages="{{ portal.endpoints.messages }}"
   data-endpoint-stream-send="{{ portal.endpoints.stream_send }}" data-endpoint-events="{{ portal.endpoints.events }}"
+  data-endpoint-stream-stop="{{ portal.endpoints.stream_stop }}"
   data-endpoint-csat="{{ portal.endpoints.csat }}" data-endpoint-tool-approval="{{ portal.endpoints.tool_approval }}"
   data-endpoint-tool-history="{{ portal.endpoints.tool_history }}"
+  data-endpoint-email-send-draft="{{ portal.endpoints.email_send_draft }}"
+  data-endpoint-email-discard-draft="{{ portal.endpoints.email_discard_draft }}"
   data-endpoint-file-upload="{{ portal.endpoints.file_upload }}"
   data-endpoint-file-download-url-template="{{ portal.endpoints.file_download_url_template }}"
   data-business-slug="{{ portal.business.slug }}"

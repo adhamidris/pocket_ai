@@ -20,7 +20,7 @@ will replace segment-based tool chip reconstruction.
 - `spinnerStatus`
   - Payload: `{ "message_id": "<uuid>", "text": "...", "pending": true|false }`
 - `block_start` / `block_delta` / `block_end`
-  - Ordered streaming events for text blocks.
+  - Ordered streaming events for text-like blocks (`text`, `reasoning`, rich text).
 - `block_tool_use` / `block_tool_result`
   - Ordered streaming events for tool lifecycle + results.
 - `turnPersisted`
@@ -48,6 +48,7 @@ Every entry in `content_blocks[]` is a dict with:
 
 - `block_id` (string, stable)
 - `type` (`"text" | "tool_use" | "tool_result"`)
+  - `reasoning` blocks are supported as well (see below).
 - `created_at` (ISO8601 string)
 - `payload` (type-specific object)
 
@@ -60,6 +61,21 @@ Text:
   "type": "text",
   "created_at": "2026-01-20T12:34:56.000000+00:00",
   "payload": { "text": "Hello **world**" }
+}
+```
+
+Reasoning (streamed, collapsible UI panel):
+```json
+{
+  "block_id": "blk_7f21…",
+  "type": "reasoning",
+  "created_at": "2026-01-20T12:34:57.000000+00:00",
+  "payload": {
+    "title": "Tool step 1",
+    "stage": "tool_iteration",
+    "collapsed": false,
+    "code": "Thinking…\\n"
+  }
 }
 ```
 
@@ -98,3 +114,4 @@ Tool result (future streaming):
 
 - When the portal persists an AI message via `ChatPortalService.append_message`, it now ensures `content_blocks` contains a single canonical `"text"` block mirroring `body`.
 - Tool events remain in `metadata["tool_events"]` until Phase 1 moves tool lifecycle + results into ordered blocks.
+- Reasoning blocks stream as `block_start` + `block_delta` ops (`append_code`) and end with `block_end` (which flips `payload.collapsed=true` for UI auto-collapse). On user cancellation, the backend skips `block_end` so the reasoning panel stays expanded at its last streamed state.

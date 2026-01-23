@@ -1,15 +1,18 @@
 class ChatPortalClient {
   constructor(container) {
     this.container = container;
-    this.endpoints = {
-      bootstrap: container.getAttribute("data-endpoint-bootstrap"),
-      messages: container.getAttribute("data-endpoint-messages"),
-      streamSend: container.getAttribute("data-endpoint-stream-send"),
-      events: container.getAttribute("data-endpoint-events"),
-      csat: container.getAttribute("data-endpoint-csat"),
-      toolApproval: container.getAttribute("data-endpoint-tool-approval"),
-      toolHistory: container.getAttribute("data-endpoint-tool-history"),
-      fileUpload: container.getAttribute("data-endpoint-file-upload"),
+	    this.endpoints = {
+	      bootstrap: container.getAttribute("data-endpoint-bootstrap"),
+	      messages: container.getAttribute("data-endpoint-messages"),
+	      streamSend: container.getAttribute("data-endpoint-stream-send"),
+	      streamStop: container.getAttribute("data-endpoint-stream-stop"),
+	      events: container.getAttribute("data-endpoint-events"),
+	      csat: container.getAttribute("data-endpoint-csat"),
+	      toolApproval: container.getAttribute("data-endpoint-tool-approval"),
+	      toolHistory: container.getAttribute("data-endpoint-tool-history"),
+      emailSendDraft: container.getAttribute("data-endpoint-email-send-draft"),
+      emailDiscardDraft: container.getAttribute("data-endpoint-email-discard-draft"),
+	      fileUpload: container.getAttribute("data-endpoint-file-upload"),
       fileDownloadUrlTemplate: container.getAttribute("data-endpoint-file-download-url-template"),
     };
     this.businessSlug = container.getAttribute("data-business-slug") || "";
@@ -21,12 +24,13 @@ class ChatPortalClient {
     this.bootstrapScriptId = container.getAttribute("data-bootstrap-script-id") || "";
     this.currentStatus = container.getAttribute("data-initial-status") || "new";
     this.eventSource = null;
-    this.awaitingReply = false;
-    this.streamController = null;
-    this.bootstrapPayload = null;
-    this.elements = {
-      messages: container.querySelector("[data-chat-messages]"),
-      messagesInner: container.querySelector("[data-chat-inner-container]"),
+	    this.awaitingReply = false;
+	    this.streamController = null;
+	    this.stopRequested = false;
+	    this.bootstrapPayload = null;
+	    this.elements = {
+	      messages: container.querySelector("[data-chat-messages]"),
+	      messagesInner: container.querySelector("[data-chat-inner-container]"),
       sendForm: container.querySelector("[data-chat-send-form]"),
       sendButton: container.querySelector("[data-chat-send-button]"),
       sendIcon: container.querySelector("[data-chat-send-icon]"),
@@ -85,6 +89,8 @@ class ChatPortalClient {
     this.statusStyleInjected = false;
     this.ensureStatusStyle();
     this.downloadFrame = null;
+    // Email draft tracking: maps draft_id to email preview card element
+    this.draftIdToCardMap = new Map();
     // Session empty state tracking
     this.currentSessionHasMessages = false;
     this.sessionCreationInProgress = false;
@@ -399,10 +405,22 @@ class ChatPortalClient {
     });
   }
 
-  bindSendForm() {
-    const form = this.elements.sendForm;
-    const textarea = form ? form.querySelector("textarea[name='message']") : null;
-    if (!form) return;
+	  bindSendForm() {
+	    const form = this.elements.sendForm;
+	    const textarea = form ? form.querySelector("textarea[name='message']") : null;
+	    const sendButton = this.elements.sendButton;
+	    if (!form) return;
+
+	    if (sendButton) {
+	      sendButton.addEventListener("click", (event) => {
+	        if (!this.awaitingReply && !this.isStreaming) {
+	          return;
+	        }
+	        event.preventDefault();
+	        event.stopPropagation();
+	        void this.requestStop();
+	      });
+	    }
 
     // Auto-resize logic (optional but good for UX)
     const resizeTextarea = () => {
@@ -420,10 +438,10 @@ class ChatPortalClient {
       });
     }
 
-    form.addEventListener("submit", async (event) => {
-      event.preventDefault();
-      const data = new FormData(form);
-      const message = (data.get("message") || "").toString().trim();
+	    form.addEventListener("submit", async (event) => {
+	      event.preventDefault();
+	      const data = new FormData(form);
+	      const message = (data.get("message") || "").toString().trim();
       if (!message || !this.sessionToken) {
         this.showToast("Start failed", "Session is still initialising.", true);
         return;
@@ -451,11 +469,12 @@ class ChatPortalClient {
           textarea.style.height = targetHeight;
         }
       }
-      const wasEmpty = this.isCurrentSessionEmpty();
-      if (this.isSending || this.isStreaming) {
-        this.enqueueMessage(message);
-        return;
-      }
+	      const wasEmpty = this.isCurrentSessionEmpty();
+	      if (this.isSending || this.isStreaming) {
+	        this.enqueueMessage(message);
+	        void this.requestStop();
+	        return;
+	      }
       if (wasEmpty) {
         this.updateSessionTitleFromMessage(message);
         this.currentSessionHasMessages = true;
@@ -697,11 +716,12 @@ class ChatPortalClient {
     return data;
   }
 
-	  async sendMessage(message) {
-	    if (!this.sessionToken) return;
-	    this.clearStreamingStatus();
-	    this.resetStreamingState(true, false);
-	    this.pendingMessageId = null;
+		  async sendMessage(message) {
+		    if (!this.sessionToken) return;
+		    this.stopRequested = false;
+		    this.clearStreamingStatus();
+		    this.resetStreamingState(true, false);
+		    this.pendingMessageId = null;
 	    this.pendingMetadataVersion = 0;
 	    this.usingStateMachine = false;
 	    this.workflowLocked = false;
@@ -914,7 +934,33 @@ class ChatPortalClient {
         this.clearStreamingIdleStatusTimer();
       }
       const force = Boolean(text) || this.streamingTextBlockActiveIds.size === 0;
+      console.log("[Spinner] Received status:", { text, pending, force, reason: payload.reason });
 	    this.setSpinnerText(text, { pending, force });
+	  }
+
+	  async requestStop() {
+	    if (this.stopRequested) return;
+	    if (!this.sessionToken) return;
+	    if (!this.awaitingReply && !this.isStreaming) return;
+	    if (!this.endpoints.streamStop) {
+	      this.showToast("Stop unavailable", "Stop endpoint is not configured.", true);
+	      return;
+	    }
+	    this.stopRequested = true;
+	    this.setSpinnerText("Stopping…", { pending: true, force: true });
+	    try {
+	      const response = await fetch(this.endpoints.streamStop, {
+	        method: "POST",
+	        headers: this.jsonHeaders(),
+	        body: JSON.stringify({ session_token: this.sessionToken }),
+	      });
+	      if (!response.ok) {
+	        throw new Error("Stop request failed");
+	      }
+	    } catch (error) {
+	      this.stopRequested = false;
+	      this.showToast("Stop failed", error.message || "Could not stop the workflow.", true);
+	    }
 	  }
 
   handleBlockStartEvent(data) {
@@ -951,7 +997,7 @@ class ChatPortalClient {
 	    }
 	  }
 
-		  handleBlockDeltaEvent(data) {
+	  handleBlockDeltaEvent(data) {
 		    let payload = null;
 		    try {
 		      payload = data ? JSON.parse(data) : null;
@@ -977,7 +1023,11 @@ class ChatPortalClient {
 	    const messageId = (payload.message_id || payload.messageId || "").toString().trim() || null;
 	    this.ensureStreamingMessageNode(messageId || this.pendingMessageId);
 
-	    this.streamingTextBlockActiveIds.add(blockId);
+	    const wrapper = this.streamingContentBlockEls.get(blockId);
+      const blockType = wrapper && wrapper.dataset ? (wrapper.dataset.blockType || "").toString().trim().toLowerCase() : "";
+      if (!blockType || this.isStreamingTextBlock(blockType)) {
+	      this.streamingTextBlockActiveIds.add(blockId);
+      }
 		    if (this.streamingStatusEl) {
 		      this.streamingStatusEl.classList.add("hidden");
 		    }
@@ -1010,6 +1060,14 @@ class ChatPortalClient {
 	      this.applyBlockOps(blockId, pendingOps);
 	    }
 	    this.streamingTextBlockActiveIds.delete(blockId);
+      const wrapper = this.streamingContentBlockEls.get(blockId);
+      const type = wrapper && wrapper.dataset ? (wrapper.dataset.blockType || "").toString().trim().toLowerCase() : "";
+      if (type === "reasoning") {
+        const details = wrapper ? wrapper.querySelector("details") : null;
+        if (details && details.open && details.dataset.userOverride !== "true") {
+          details.open = false;
+        }
+      }
 
 	    if (this.streamingTextBlockActiveIds.size === 0) {
 	      this.scheduleStreamingIdleStatusReveal();
@@ -1083,7 +1141,7 @@ class ChatPortalClient {
   }
 
   isStreamingTextBlock(type) {
-    return ["paragraph", "heading", "list_item", "code_block", "text"].includes(type);
+    return ["paragraph", "heading", "list_item", "code_block", "text", "reasoning"].includes(type);
   }
 
   applyBlockOps(blockId, ops) {
@@ -1143,6 +1201,28 @@ class ChatPortalClient {
 	    const blockType = (block.type || "").toString().trim().toLowerCase();
 	    const blockId = (block.block_id || block.blockId || "").toString().trim();
     if (!blockId) return;
+
+    // Special handling for email_send_draft: update the existing draft card (avoid duplicate cards)
+    if (blockType === "tool_use") {
+      const payload = block.payload && typeof block.payload === "object" ? block.payload : {};
+      const toolName = (payload.tool_name || "").toString().trim().toLowerCase();
+
+      if (toolName === "email_send_draft") {
+        const draftId = this.getEmailDraftIdFromToolPayload(payload);
+        const existingDraftCard = draftId ? this.draftIdToCardMap.get(draftId) : null;
+        if (existingDraftCard) {
+          const existing = this.streamingContentBlockEls.get(blockId);
+          if (existing && existing !== existingDraftCard && existing.parentNode) {
+            existing.remove();
+          }
+          this.updateEmailPreviewCard(existingDraftCard, payload);
+          existingDraftCard.dataset.blockId = blockId;
+          this.streamingContentBlockEls.set(blockId, existingDraftCard);
+          this.updateInlineToolCardsVisibility(this.streamingMessageNode);
+          return;
+        }
+      }
+    }
 
     const existing = this.streamingContentBlockEls.get(blockId);
     if (existing) {
@@ -1491,6 +1571,10 @@ class ChatPortalClient {
     if (toolName === "mcp_search_tools") {
       return null;
     }
+    // Use custom email preview card for email tools
+    if (toolName === "email_create_draft" || toolName === "email_send_draft") {
+      return this.buildEmailPreviewCard(payload, toolName);
+    }
     const eventId = (payload.event_id || payload.eventId || "").toString().trim();
     if (!eventId) return null;
 
@@ -1565,8 +1649,220 @@ class ChatPortalClient {
     return card;
   }
 
+  buildEmailPreviewCard(payload, toolName) {
+    const eventId = (payload.event_id || payload.eventId || "").toString().trim();
+    if (!eventId) return null;
+
+    const card = document.createElement("div");
+    card.className = "email-preview-card";
+    card.dataset.emailCard = "true";
+    card.dataset.toolEventId = eventId;
+    card.dataset.toolName = toolName;
+
+    // Extract email data from tool arguments
+    const input = payload.input || {};
+    const to = Array.isArray(input.to) ? input.to : [input.to].filter(Boolean);
+    const cc = Array.isArray(input.cc) ? input.cc : [];
+    const bcc = Array.isArray(input.bcc) ? input.bcc : [];
+    const subject = input.subject || "";
+    const body = input.body_text || input.body || "";
+
+    // Store original content for streaming
+    card._emailData = { to, cc, bcc, subject, body };
+
+    // Build email preview container
+    const container = document.createElement("div");
+    container.className = "email-preview-container";
+
+    // Header
+    const header = document.createElement("div");
+    header.className = "email-preview-header";
+
+    const icon = document.createElement("span");
+    icon.className = "email-preview-icon";
+    icon.textContent = "✉️";
+
+    const status = document.createElement("span");
+    status.className = "email-preview-status";
+    status.textContent = toolName === "email_send_draft" ? "Sending email..." : "Creating draft...";
+
+    header.appendChild(icon);
+    header.appendChild(status);
+
+    // Fields container
+    const fieldsContainer = document.createElement("div");
+    fieldsContainer.className = "email-preview-fields";
+
+    // To field
+    const toField = document.createElement("div");
+    toField.className = "email-field";
+    toField.dataset.field = "to";
+    const toLabel = document.createElement("span");
+    toLabel.className = "email-field-label";
+    toLabel.textContent = "To:";
+    const toValue = document.createElement("span");
+    toValue.className = "email-field-value";
+    toValue.dataset.fullText = this.escapeHtml(to.join(", "));
+    toField.appendChild(toLabel);
+    toField.appendChild(toValue);
+    fieldsContainer.appendChild(toField);
+
+    // CC field (if present)
+    if (cc.length > 0) {
+      const ccField = document.createElement("div");
+      ccField.className = "email-field";
+      ccField.dataset.field = "cc";
+      const ccLabel = document.createElement("span");
+      ccLabel.className = "email-field-label";
+      ccLabel.textContent = "CC:";
+      const ccValue = document.createElement("span");
+      ccValue.className = "email-field-value";
+      ccValue.dataset.fullText = this.escapeHtml(cc.join(", "));
+      ccField.appendChild(ccLabel);
+      ccField.appendChild(ccValue);
+      fieldsContainer.appendChild(ccField);
+    }
+
+    // Subject field
+    const subjectField = document.createElement("div");
+    subjectField.className = "email-field";
+    subjectField.dataset.field = "subject";
+    const subjectLabel = document.createElement("span");
+    subjectLabel.className = "email-field-label";
+    subjectLabel.textContent = "Subject:";
+    const subjectValue = document.createElement("span");
+    subjectValue.className = "email-field-value";
+    subjectValue.dataset.fullText = this.escapeHtml(subject);
+    subjectField.appendChild(subjectLabel);
+    subjectField.appendChild(subjectValue);
+    fieldsContainer.appendChild(subjectField);
+
+    // Body field
+    const bodyField = document.createElement("div");
+    bodyField.className = "email-field email-field-body";
+    bodyField.dataset.field = "body";
+    const bodyLabel = document.createElement("span");
+    bodyLabel.className = "email-field-label";
+    bodyLabel.textContent = "Message:";
+    const bodyContent = document.createElement("div");
+    bodyContent.className = "email-field-value email-body-content";
+    bodyContent.dataset.fullText = this.escapeHtml(body);
+    bodyField.appendChild(bodyLabel);
+    bodyField.appendChild(bodyContent);
+    fieldsContainer.appendChild(bodyField);
+
+    // Edit actions container (hidden by default)
+    const editActions = document.createElement("div");
+    editActions.className = "email-preview-actions";
+    editActions.hidden = true;
+    const editBtn = document.createElement("button");
+    editBtn.className = "email-action-btn email-edit-btn";
+    editBtn.dataset.action = "edit";
+    editBtn.textContent = "Edit";
+    editActions.appendChild(editBtn);
+
+    // Approval actions container (hidden by default)
+    const approvalActions = document.createElement("div");
+    approvalActions.className = "email-approval-actions";
+    approvalActions.hidden = true;
+    const approveBtn = document.createElement("button");
+    approveBtn.className = "email-action-btn email-approve-btn";
+    approveBtn.dataset.action = "approve";
+    approveBtn.textContent = "Send Email";
+    const rejectBtn = document.createElement("button");
+    rejectBtn.className = "email-action-btn email-reject-btn";
+    rejectBtn.dataset.action = "reject";
+    rejectBtn.textContent = "Don't Send";
+    approvalActions.appendChild(approveBtn);
+    approvalActions.appendChild(rejectBtn);
+
+    // Assemble container
+    container.appendChild(header);
+    container.appendChild(fieldsContainer);
+    container.appendChild(editActions);
+    container.appendChild(approvalActions);
+    card.appendChild(container);
+
+    // Attach event listeners
+    this.attachEmailCardEvents(card);
+
+    // Apply approval/status state if present (ensures approval_id is captured)
+    this.updateEmailPreviewCard(card, payload);
+
+    // Trigger staggered animation and streaming effect
+    requestAnimationFrame(() => {
+      card.classList.add("email-card-animate-in");
+      const fields = fieldsContainer.querySelectorAll(".email-field");
+      fields.forEach((field, index) => {
+        setTimeout(() => {
+          field.classList.add("email-field-visible");
+          // Start streaming content for this field
+          const valueEl = field.querySelector(".email-field-value");
+          if (valueEl && valueEl.dataset.fullText) {
+            this.streamEmailFieldContent(valueEl, valueEl.dataset.fullText);
+          }
+        }, index * 150); // 150ms delay between each field
+      });
+    });
+
+    return card;
+  }
+
+  streamEmailFieldContent(element, fullText) {
+    if (!element || !fullText) {
+      console.warn("[Email Stream] Missing element or text", { element, fullText });
+      return;
+    }
+
+    // Decode HTML entities for display
+    const tempDiv = document.createElement("div");
+    tempDiv.innerHTML = fullText;
+    const decodedText = tempDiv.textContent || tempDiv.innerText || "";
+
+    console.log("[Email Stream] Starting stream", {
+      fieldClass: element.className,
+      textLength: decodedText.length,
+      preview: decodedText.substring(0, 50) + "..."
+    });
+
+    let currentIndex = 0;
+    const isBodyContent = element.classList.contains("email-body-content");
+
+    // Faster streaming for shorter content, slower for body
+    const chunkSize = isBodyContent ? 3 : 5;
+    const intervalTime = isBodyContent ? 8 : 5;
+
+    element.textContent = "";
+
+    const streamInterval = setInterval(() => {
+      if (currentIndex >= decodedText.length) {
+        clearInterval(streamInterval);
+        element.classList.add("email-stream-complete");
+        console.log("[Email Stream] Complete", { fieldClass: element.className });
+        return;
+      }
+
+      const nextChunk = decodedText.slice(currentIndex, currentIndex + chunkSize);
+      element.textContent += nextChunk;
+      currentIndex += chunkSize;
+
+      // Auto-scroll body content as it streams
+      if (isBodyContent && element.scrollHeight > element.clientHeight) {
+        element.scrollTop = element.scrollHeight;
+      }
+    }, intervalTime);
+
+    // Store interval ID in case we need to cancel it
+    element._streamInterval = streamInterval;
+  }
+
 	  updateToolEventCard(card, payload) {
 	    if (!card || !payload) return;
+	    // Handle email preview cards with custom logic
+	    if (card.dataset.emailCard === "true") {
+	      this.updateEmailPreviewCard(card, payload);
+	      return;
+	    }
 	    const phase = (payload.phase || "").toString().trim().toLowerCase();
 	    const statusRaw = (payload.status || "").toString().trim().toLowerCase();
 	    const remote = payload.remote && typeof payload.remote === "object" ? payload.remote : null;
@@ -1891,6 +2187,123 @@ class ChatPortalClient {
     }
   }
 
+  getEmailDraftIdFromToolPayload(payload) {
+    if (!payload || typeof payload !== "object") return "";
+    const input = payload.input && typeof payload.input === "object" ? payload.input : null;
+    const output = payload.output && typeof payload.output === "object" ? payload.output : null;
+    const outputPreview = payload.output_preview && typeof payload.output_preview === "object" ? payload.output_preview : null;
+
+    const draftId =
+      (input && (input.draft_id || input.draftId)) ||
+      (output && (output.draft_id || output.draftId || output.id)) ||
+      (outputPreview && (outputPreview.draft_id || outputPreview.draftId || outputPreview.id)) ||
+      "";
+
+    return draftId ? draftId.toString().trim() : "";
+  }
+
+  async submitEmailDraftAction(action, card) {
+    if (!card) return;
+    const normalized = (action || "").toString().trim().toLowerCase();
+    const isSend = normalized === "send" || normalized === "approve";
+    const endpoint = isSend ? this.endpoints.emailSendDraft : this.endpoints.emailDiscardDraft;
+    if (!endpoint) {
+      this.showToast("Email unavailable", "Email draft endpoint is not configured.", true);
+      return;
+    }
+    if (!this.sessionToken) {
+      this.showToast("Email unavailable", "Session token missing.", true);
+      return;
+    }
+
+    const draftId = (card.dataset.draftId || "").toString().trim();
+    if (!draftId) {
+      this.showToast("Draft unavailable", "Draft request is missing an identifier.", true);
+      return;
+    }
+    if (card.dataset.emailDraftBusy === "true") {
+      return;
+    }
+    card.dataset.emailDraftBusy = "true";
+
+    const approveBtn = card.querySelector('[data-action="approve"]');
+    const rejectBtn = card.querySelector('[data-action="reject"]');
+    const editBtn = card.querySelector('[data-action="edit"], [data-action="save"]');
+    [approveBtn, rejectBtn, editBtn].filter(Boolean).forEach((btn) => {
+      btn.disabled = true;
+      btn.classList.add("opacity-60", "cursor-not-allowed");
+    });
+
+    const statusEl = card.querySelector(".email-preview-status");
+    const previousStatus = statusEl ? statusEl.textContent : "";
+    if (statusEl) {
+      statusEl.textContent = isSend ? "Sending..." : "Not sending...";
+    }
+
+    try {
+      const response = await fetch(endpoint, {
+        method: "POST",
+        headers: this.jsonHeaders(),
+        body: JSON.stringify({
+          session_token: this.sessionToken,
+          draft_id: draftId,
+          email_account_id: card.dataset.emailAccountId || "",
+        }),
+      });
+      const payload = await response.json().catch(() => null);
+      if (!response.ok) {
+        const message = payload && payload.error && payload.error.message ? payload.error.message : "Email action failed.";
+        throw new Error(message);
+      }
+
+      if (isSend) {
+        this.updateEmailPreviewCard(card, {
+          phase: "finished",
+          status: "ok",
+          tool_name: "email_send_draft",
+          input: { draft_id: draftId },
+        });
+      } else {
+        this.updateEmailPreviewCard(card, {
+          phase: "approval_resolved",
+          status: "denied",
+          tool_name: "email_send_draft",
+          input: { draft_id: draftId },
+        });
+      }
+
+      if (isSend) {
+        this.showToast("Email sent", "The draft email was sent successfully.");
+      } else {
+        this.showToast("Email not sent", "The draft email was not sent.");
+      }
+    } catch (error) {
+      console.warn("Email draft action failed", error);
+      if (statusEl) {
+        statusEl.textContent = previousStatus || "Draft created";
+      }
+      this.showToast("Email action failed", error.message || "Please try again.", true);
+      [approveBtn, rejectBtn, editBtn].filter(Boolean).forEach((btn) => {
+        btn.disabled = false;
+        btn.classList.remove("opacity-60", "cursor-not-allowed");
+      });
+      return;
+    } finally {
+      card.dataset.emailDraftBusy = "false";
+    }
+
+    // After completion: lock send/reject, but keep Edit available on "Don't send"
+    [approveBtn, rejectBtn].filter(Boolean).forEach((btn) => {
+      btn.disabled = true;
+      btn.classList.add("opacity-60", "cursor-not-allowed");
+    });
+    if (editBtn) {
+      editBtn.disabled = isSend;
+      editBtn.classList.toggle("opacity-60", isSend);
+      editBtn.classList.toggle("cursor-not-allowed", isSend);
+    }
+  }
+
   attachToolCardEvents(card) {
     if (!card || card.dataset.toolEventsBound === "true") return;
     card.dataset.toolEventsBound = "true";
@@ -1939,6 +2352,251 @@ class ChatPortalClient {
         this.submitToolApproval(approvalId, decision, card);
       });
     });
+  }
+
+  attachEmailCardEvents(card) {
+    if (!card || card.dataset.emailEventsBound === "true") return;
+    card.dataset.emailEventsBound = "true";
+
+    // Edit button
+    const editBtn = card.querySelector('[data-action="edit"]');
+    if (editBtn) {
+      editBtn.addEventListener("click", (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        this.makeEmailFieldsEditable(card);
+      });
+    }
+
+    // Approve button
+    const approveBtn = card.querySelector('[data-action="approve"]');
+    if (approveBtn) {
+      approveBtn.addEventListener("click", (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        const approvalId = card.dataset.approvalId;
+        if (approvalId) {
+          this.submitToolApproval(approvalId, "approve", card);
+          return;
+        }
+        this.submitEmailDraftAction("send", card);
+      });
+    }
+
+    // Reject button
+    const rejectBtn = card.querySelector('[data-action="reject"]');
+    if (rejectBtn) {
+      rejectBtn.addEventListener("click", (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        const approvalId = card.dataset.approvalId;
+        if (approvalId) {
+          this.submitToolApproval(approvalId, "deny", card);
+          return;
+        }
+        this.submitEmailDraftAction("discard", card);
+      });
+    }
+  }
+
+  updateEmailPreviewCard(card, payload) {
+    if (!card || !payload) return;
+
+    const phase = (payload.phase || "").toString().trim().toLowerCase();
+    const status = (payload.status || "").toString().trim().toLowerCase();
+    const approvalData = payload.approval && typeof payload.approval === "object" ? payload.approval : null;
+    const approvalStatusRaw =
+      (approvalData && approvalData.status) ||
+      payload.approval_status ||
+      payload.approvalStatus ||
+      card.dataset.approvalStatus ||
+      "";
+    const approvalStatus = approvalStatusRaw.toString().trim().toLowerCase();
+    const toolName = (payload.tool_name || "").toString().trim().toLowerCase();
+
+    const statusEl = card.querySelector(".email-preview-status");
+    const actionsEl = card.querySelector(".email-preview-actions");
+    const approvalEl = card.querySelector(".email-approval-actions");
+
+    const approvalId =
+      (
+        payload.approval_id ||
+        payload.approvalId ||
+        (approvalData && (approvalData.id || approvalData.approval_id || approvalData.approvalId)) ||
+        card.dataset.approvalId ||
+        ""
+      )
+        .toString()
+        .trim();
+    if (approvalId) {
+      card.dataset.approvalId = approvalId;
+    }
+    if (approvalStatus) {
+      card.dataset.approvalStatus = approvalStatus;
+    }
+
+    // Phase: started (draft creation)
+    if (phase === "started" && toolName === "email_create_draft") {
+      if (statusEl) statusEl.textContent = "Creating draft...";
+    }
+
+    if (phase === "started" && toolName === "email_send_draft") {
+      if (statusEl) statusEl.textContent = "Sending email...";
+      if (approvalEl) approvalEl.hidden = true;
+      if (actionsEl) actionsEl.hidden = true;
+    }
+
+    // Phase: finished (draft created successfully)
+    if (phase === "finished" && toolName === "email_create_draft") {
+      if (status === "ok") {
+        if (statusEl) statusEl.textContent = "Draft created";
+        card.classList.add("email-draft-created");
+        if (actionsEl) actionsEl.hidden = false; // Show "Edit" button
+        if (approvalEl) approvalEl.hidden = false; // Show "Send/Don't Send" buttons
+
+        const emailAccountId =
+          payload.output?.email_account_id ||
+          payload.output?.emailAccountId ||
+          payload.output_preview?.email_account_id ||
+          payload.output_preview?.emailAccountId;
+        if (emailAccountId) {
+          card.dataset.emailAccountId = emailAccountId;
+        }
+
+        // Store draft_id for later reference
+        const draftId =
+          payload.output?.draft_id ||
+          payload.output?.draftId ||
+          payload.output?.id ||
+          payload.output_preview?.draft_id ||
+          payload.output_preview?.draftId ||
+          payload.output_preview?.id;
+        if (draftId) {
+          card.dataset.draftId = draftId;
+          this.draftIdToCardMap.set(draftId, card);
+        }
+      } else {
+        if (statusEl) statusEl.textContent = "Draft creation failed";
+        card.classList.add("email-error");
+      }
+    }
+
+    if (phase === "finished" && toolName === "email_send_draft") {
+      if (approvalEl) approvalEl.hidden = true;
+      if (status === "ok") {
+        if (statusEl) statusEl.textContent = "Email sent ✓";
+        card.classList.add("email-sent");
+        if (actionsEl) actionsEl.hidden = true;
+      } else {
+        if (statusEl) statusEl.textContent = "Email send failed";
+        card.classList.add("email-error");
+        if (actionsEl) actionsEl.hidden = false;
+      }
+    }
+
+    // Phase: approval_requested (send approval needed)
+    if (phase === "approval_requested" || approvalStatus === "pending") {
+      if (statusEl) statusEl.textContent = "Ready to send";
+      if (actionsEl) actionsEl.hidden = false; // Keep Edit available while awaiting approval
+      if (approvalEl) approvalEl.hidden = false; // Show Send/Don't Send buttons
+      const draftId = this.getEmailDraftIdFromToolPayload(payload) || card.dataset.draftId || "";
+      if (draftId) {
+        card.dataset.draftId = draftId;
+      }
+    }
+
+    // Phase: approval_resolved (user approved or rejected)
+    if (phase === "approval_resolved") {
+      if (approvalEl) approvalEl.hidden = true;
+
+      if (approvalStatus === "approved" || status === "approved") {
+        if (statusEl) statusEl.textContent = "Sending email...";
+        if (actionsEl) actionsEl.hidden = true;
+      } else if (approvalStatus === "denied" || status === "denied") {
+        if (statusEl) statusEl.textContent = "Not sent";
+        card.classList.add("email-rejected");
+        if (actionsEl) actionsEl.hidden = false; // Show edit button again
+      } else if (approvalStatus === "expired" || status === "expired") {
+        if (statusEl) statusEl.textContent = "Approval expired";
+        card.classList.add("email-rejected");
+        if (actionsEl) actionsEl.hidden = false;
+      }
+    }
+  }
+
+  makeEmailFieldsEditable(card) {
+    if (!card) return;
+
+    const fields = card.querySelectorAll(".email-field-value");
+    fields.forEach((field) => {
+      if (field.classList.contains("email-body-content")) {
+        // Body field - use textarea
+        const textarea = document.createElement("textarea");
+        textarea.className = "email-field-input email-body-input";
+        textarea.value = field.textContent;
+        field.replaceWith(textarea);
+      } else {
+        // Other fields - use input
+        const input = document.createElement("input");
+        input.className = "email-field-input";
+        input.value = field.textContent;
+        field.replaceWith(input);
+      }
+    });
+
+    // Change Edit button to Save button
+    const editBtn = card.querySelector('[data-action="edit"]');
+    if (editBtn) {
+      editBtn.textContent = "Save Changes";
+      editBtn.dataset.action = "save";
+      // Remove old event listener and add new one
+      const newEditBtn = editBtn.cloneNode(true);
+      editBtn.replaceWith(newEditBtn);
+      newEditBtn.addEventListener("click", (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        this.saveEmailFieldChanges(card);
+      });
+    }
+  }
+
+  saveEmailFieldChanges(card) {
+    if (!card) return;
+
+    // Convert inputs back to display elements
+    const inputs = card.querySelectorAll(".email-field-input");
+    inputs.forEach((input) => {
+      if (input.classList.contains("email-body-input")) {
+        // Body field
+        const div = document.createElement("div");
+        div.className = "email-field-value email-body-content";
+        div.textContent = input.value;
+        input.replaceWith(div);
+      } else {
+        // Other fields
+        const span = document.createElement("span");
+        span.className = "email-field-value";
+        span.textContent = input.value;
+        input.replaceWith(span);
+      }
+    });
+
+    // Change Save button back to Edit button
+    const saveBtn = card.querySelector('[data-action="save"]');
+    if (saveBtn) {
+      saveBtn.textContent = "Edit";
+      saveBtn.dataset.action = "edit";
+      // Remove old event listener and add new one
+      const newSaveBtn = saveBtn.cloneNode(true);
+      saveBtn.replaceWith(newSaveBtn);
+      newSaveBtn.addEventListener("click", (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        this.makeEmailFieldsEditable(card);
+      });
+    }
+
+    this.showToast("Changes saved", "Email edits have been saved locally.");
   }
 
   setToolCardTab(card, tab, userInitiated = false) {
@@ -2714,6 +3372,55 @@ class ChatPortalClient {
 	      return wrapper;
 	    }
 
+    if (type === "reasoning") {
+      const title = (payload.title || payload.label || payload.stage || "Reasoning").toString().trim() || "Reasoning";
+      const collapsed = payload.collapsed !== false;
+      const text = typeof payload.code === "string" ? payload.code : typeof payload.text === "string" ? payload.text : "";
+
+      const wrapper = document.createElement("div");
+      wrapper.dataset.contentBlock = "true";
+      wrapper.dataset.blockType = "reasoning";
+      if (blockId) wrapper.dataset.blockId = blockId;
+      wrapper.className = "portal-reasoning";
+
+      const details = document.createElement("details");
+      details.className = "portal-reasoning__details";
+      details.dataset.reasoningTitle = title;
+      if (!collapsed) {
+        details.open = true;
+      }
+
+      const summary = document.createElement("summary");
+      summary.className = "portal-reasoning__summary";
+      const summaryLabel = document.createElement("span");
+      summaryLabel.dataset.reasoningSummaryLabel = "true";
+      summary.appendChild(summaryLabel);
+
+      const pre = document.createElement("pre");
+      pre.className = "portal-reasoning__content";
+      const code = document.createElement("code");
+      code.dataset.contentBlockCode = "true";
+      code.textContent = text || "";
+      pre.appendChild(code);
+
+      const updateSummary = () => {
+        const base = details.open ? "Hide reasoning" : "Show reasoning";
+        summaryLabel.textContent = title ? `${base} • ${title}` : base;
+      };
+      updateSummary();
+      details.addEventListener("toggle", (event) => {
+        if (event && event.isTrusted) {
+          details.dataset.userOverride = "true";
+        }
+        updateSummary();
+      });
+
+      details.appendChild(summary);
+      details.appendChild(pre);
+      wrapper.appendChild(details);
+      return wrapper;
+    }
+
     if (type === "text") {
       const wrapper = document.createElement("p");
       wrapper.dataset.contentBlock = "true";
@@ -2729,6 +3436,15 @@ class ChatPortalClient {
     }
 
     if (type === "tool_use") {
+      const normalizedTool = (payload.tool_name || payload.toolName || "").toString().trim().toLowerCase();
+      if (normalizedTool === "email_send_draft") {
+        const draftId = this.getEmailDraftIdFromToolPayload(payload);
+        const existingDraftCard = draftId ? this.draftIdToCardMap.get(draftId) : null;
+        if (existingDraftCard) {
+          this.updateEmailPreviewCard(existingDraftCard, payload);
+          return null;
+        }
+      }
       const card = this.buildToolEventCard(payload);
       if (!card) return null;
       card.dataset.contentBlock = "true";

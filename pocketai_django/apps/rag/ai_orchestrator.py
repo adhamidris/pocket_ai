@@ -7574,6 +7574,8 @@ class AiOrchestratorService:
         on_spinner_update: Callable[[str], None] | None = None,
         on_tool_event: Callable[[Mapping[str, object]], None] | None = None,
         on_block_event: Callable[[Mapping[str, object]], None] | None = None,
+        on_reasoning_event: Callable[[Mapping[str, object]], None] | None = None,
+        should_cancel: Callable[[], bool] | None = None,
     ) -> StreamingTurnContext:
         """
         Execute the streaming phase of an orchestration turn.
@@ -7837,7 +7839,13 @@ class AiOrchestratorService:
 
             iteration_streamed = False
             stream_callback = _provider_stream_callback if on_response_text_delta else None
-            plan_candidate = self._invoke_llm(prompt_bundle, on_response_text_delta=stream_callback)
+            plan_candidate = self._invoke_llm(
+                prompt_bundle,
+                on_response_text_delta=stream_callback,
+                on_reasoning_event=on_reasoning_event,
+                reasoning_label=f"Answer draft {iteration_index + 1}",
+                should_cancel=should_cancel,
+            )
             if not plan_candidate:
                 final_plan = None
                 _notify_stream_complete_once()
@@ -9500,13 +9508,75 @@ class AiOrchestratorService:
             "suppress_in_prompt": True,  # <-- do not surface in ledger
         }
 
-    def _invoke_llm(self, bundle: PromptBundle, *, on_response_text_delta: Callable[[str], None] | None = None) -> LlmPlan | None:
+    def _invoke_llm(
+        self,
+        bundle: PromptBundle,
+        *,
+        on_response_text_delta: Callable[[str], None] | None = None,
+        on_reasoning_event: Callable[[Mapping[str, object]], None] | None = None,
+        reasoning_label: str | None = None,
+        should_cancel: Callable[[], bool] | None = None,
+    ) -> LlmPlan | None:
         if not self.provider:
             logger.info("LLM provider is not configured; using heuristic planner.")
             return None
         try:
             logger.info("Invoking LLM provider %s", self.provider.__class__.__name__)
-            raw = self.provider.generate(bundle, on_stream_delta=on_response_text_delta)
+            call_id = f"llm_{uuid.uuid4().hex}"
+            label_value = (reasoning_label or "Answer").strip() or "Answer"
+
+            reasoning_started = False
+            reasoning_ended = False
+
+            def _emit_reasoning_event(event_type: str, *, delta: str | None = None) -> None:
+                if not on_reasoning_event:
+                    return
+                payload: dict[str, object] = {
+                    "type": event_type,
+                    "call_id": call_id,
+                    "stage": "legacy_llm",
+                    "label": label_value,
+                }
+                if delta is not None:
+                    payload["delta"] = delta
+                try:
+                    on_reasoning_event(payload)
+                except Exception:  # pragma: no cover - defensive
+                    logger.exception("on_reasoning_event callback failed")
+
+            def _should_skip_reasoning_end() -> bool:
+                return bool(should_cancel and should_cancel())
+
+            def _maybe_end_reasoning() -> None:
+                nonlocal reasoning_ended
+                if reasoning_ended or not reasoning_started:
+                    return
+                if _should_skip_reasoning_end():
+                    return
+                reasoning_ended = True
+                _emit_reasoning_event("reasoning_end")
+
+            def _on_reasoning_delta(delta: str) -> None:
+                nonlocal reasoning_started
+                if not delta:
+                    return
+                if should_cancel and should_cancel():
+                    return
+                reasoning_started = True
+                _emit_reasoning_event("reasoning_delta", delta=delta)
+
+            def _on_stream_delta(chunk: str) -> None:
+                _maybe_end_reasoning()
+                if on_response_text_delta:
+                    on_response_text_delta(chunk)
+
+            raw = self.provider.generate(
+                bundle,
+                on_stream_delta=_on_stream_delta if (on_response_text_delta and on_reasoning_event) else on_response_text_delta,
+                on_reasoning_delta=_on_reasoning_delta if on_reasoning_event else None,
+                should_cancel=should_cancel,
+            )
+            _maybe_end_reasoning()
         except PromptGenerationError as exc:
             logger.warning("LLM provider failed; falling back to heuristics: %s", exc)
             return None

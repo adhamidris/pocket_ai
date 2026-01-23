@@ -324,6 +324,8 @@ class McpOrchestratorService:
         on_spinner_update: Callable[[str], None] | None = None,
         on_tool_event: Callable[[Mapping[str, object]], None] | None = None,
         on_block_event: Callable[[Mapping[str, object]], None] | None = None,
+        on_reasoning_event: Callable[[Mapping[str, object]], None] | None = None,
+        should_cancel: Callable[[], bool] | None = None,
     ) -> dict[str, object]:
         """
         Build the orchestration plan for the latest customer message.
@@ -1089,6 +1091,9 @@ class McpOrchestratorService:
                 on_tool_call_start=_on_stream_tool_call_start,
                 on_tool_call_delta=_on_stream_tool_call_delta,
                 tool_context=tool_context,
+                on_reasoning_event=on_reasoning_event,
+                reasoning_label="Initial pass",
+                should_cancel=should_cancel,
             )
         first_message = self._coerce_assistant_message(first_payload)
         first_stream_message = dict(first_message or {})
@@ -1147,6 +1152,17 @@ class McpOrchestratorService:
                     portal_block_stream.ingest_tool_calls(portal_tool_calls)
                 if not current_tool_calls:
                     break
+                email_send_requested = False
+                for tool_call in current_tool_calls:
+                    if not isinstance(tool_call, Mapping):
+                        continue
+                    try:
+                        email_send_requested = self._tool_name(tool_call) == "email_send_draft"
+                    except Exception:
+                        email_send_requested = False
+                    if email_send_requested:
+                        break
+                created_email_draft: dict[str, str] | None = None
                 # Collect document IDs for deferred structure injection to avoid
                 # breaking tool_call/response ordering (OpenAI requires all tool
                 # responses to immediately follow their assistant message).
@@ -1627,6 +1643,10 @@ class McpOrchestratorService:
                                                         )
                                                         draft_id = str(tool_result.get("draft_id") or "").strip()
                                                         if account_id and draft_id:
+                                                            created_email_draft = {
+                                                                "draft_id": draft_id,
+                                                                "email_account_id": str(account_id),
+                                                            }
                                                             self._set_pending_email_draft(
                                                                 conversation=conversation,
                                                                 email_account_id=account_id,
@@ -1915,19 +1935,172 @@ class McpOrchestratorService:
                         # Ask the model again with tools enabled to see if more tool_calls are needed.
                         # Trim tool-loop prompts so each call focuses on the newest inputs.
 
-                    # Inject deferred document structures AFTER all tool responses
-                    # have been added to maintain proper tool_call/response ordering.
-                    if deferred_structure_doc_ids:
-                        self._inject_document_structures(
-                            conversation=conversation,
-                            tool_context=tool_context,
-                            transcript=transcript,
-                            document_ids=deferred_structure_doc_ids,
-                            attributes=auto_fetch_attributes,
-                            auto_fetch_enabled=auto_fetch_enabled,
-                            auto_fetch_max_rows=auto_fetch_max_rows,
-                            auto_fetch_max_tables=auto_fetch_max_tables,
-                        )
+                        # Inject deferred document structures AFTER all tool responses
+                        # have been added to maintain proper tool_call/response ordering.
+                        if deferred_structure_doc_ids:
+                            self._inject_document_structures(
+                                conversation=conversation,
+                                tool_context=tool_context,
+                                transcript=transcript,
+                                document_ids=deferred_structure_doc_ids,
+                                attributes=auto_fetch_attributes,
+                                auto_fetch_enabled=auto_fetch_enabled,
+                                auto_fetch_max_rows=auto_fetch_max_rows,
+                                auto_fetch_max_tables=auto_fetch_max_tables,
+                            )
+
+                        if created_email_draft and not email_send_requested:
+                            lowered = (user_message or "").strip().lower()
+                            send_intent = False
+                            if lowered:
+                                if re.search(r"\b(send|reply|respond|forward)\b", lowered):
+                                    send_intent = True
+                                elif ("email" in lowered or "e-mail" in lowered) and not re.search(r"\bdraft\b", lowered):
+                                    send_intent = True
+
+                            if send_intent:
+                                draft_id = str(created_email_draft.get("draft_id") or "").strip()
+                                account_id = str(created_email_draft.get("email_account_id") or "").strip()
+                                send_args: dict[str, object] = {"draft_id": draft_id}
+                                if account_id:
+                                    send_args["email_account_id"] = account_id
+                                email_account = self._resolve_email_account_for_tool_call(
+                                    conversation=conversation,
+                                    arguments=send_args,
+                                )
+                                if email_account and draft_id:
+                                    approval_needed, approval_reason = self._email_send_requires_approval(
+                                        conversation=conversation,
+                                        email_account=email_account,
+                                        draft_id=draft_id,
+                                    )
+                                    if approval_needed:
+                                        approved, _, _ = self._maybe_request_email_tool_approval(
+                                            conversation=conversation,
+                                            tool_name="email_send_draft",
+                                            tool_call_id="",
+                                            tool_event_id=str(uuid.uuid4()),
+                                            arguments=send_args,
+                                            reason=approval_reason,
+                                            on_tool_event=on_tool_event,
+                                        )
+                                        if not approved:
+                                            self._clear_pending_email_draft(
+                                                conversation=conversation,
+                                                email_account_id=getattr(email_account, "id", None),
+                                                draft_id=draft_id,
+                                            )
+                                            response_text = "Okay — I won't send it."
+                                            _emit_final_answer(response_text)
+                                            _status_event("answer_finalized", "Answer ready")
+                                            _status_event("stream_complete", "")
+                                            self._log_turn_metrics(conversation, tool_context)
+                                            normalized_assistant = {
+                                                "role": "assistant",
+                                                "content": response_text,
+                                                "actions": [],
+                                                "extractions": [],
+                                                "placeholder_response": None,
+                                            }
+                                            response_blocks = self._extract_response_blocks(normalized_assistant)
+                                            return {
+                                                "assistant_message": normalized_assistant,
+                                                "tool_context": tool_context,
+                                                "streamed_chunks": tuple(answer_streamed_chunks),
+                                                "clean_answer_text": response_text,
+                                                "dropped_sentences": tuple(),
+                                                "llm_strategy": "mcp_tools_email_draft_gate",
+                                                "response_blocks": response_blocks,
+                                            }
+
+                                    send_event_id = str(uuid.uuid4())
+                                    send_started_payload = {
+                                        "event_id": send_event_id,
+                                        "phase": "started",
+                                        "status": "running",
+                                        "tool_call_id": "",
+                                        "tool_name": "email_send_draft",
+                                        "kind": "email",
+                                    }
+                                    email_input = self._email_tool_event_input("email_send_draft", send_args)
+                                    if email_input:
+                                        send_started_payload["input"] = email_input
+                                    if on_tool_event:
+                                        try:
+                                            on_tool_event(send_started_payload)
+                                        except Exception:  # pragma: no cover - UI callback must not break tools
+                                            logger.exception("mcp portal email send start callback failed")
+
+                                    call_start = time.perf_counter()
+                                    send_tool_result = mcp_tools.execute_tool(
+                                        "email_send_draft",
+                                        send_args,
+                                        conversation=conversation,
+                                        context=tool_context,
+                                    )
+                                    call_duration_ms = (time.perf_counter() - call_start) * 1000.0
+                                    finish_payload = dict(send_started_payload)
+                                    finish_payload["phase"] = "finished"
+                                    finish_payload["duration_ms"] = int(call_duration_ms) if call_duration_ms is not None else 0
+                                    if isinstance(send_tool_result, Mapping):
+                                        finish_payload["status"] = str(send_tool_result.get("status") or "") or "ok"
+                                        finish_payload["output"] = self._email_tool_event_output(
+                                            "email_send_draft",
+                                            send_tool_result,
+                                        )
+                                    else:
+                                        finish_payload["status"] = "ok"
+                                    if on_tool_event:
+                                        try:
+                                            on_tool_event(finish_payload)
+                                        except Exception:  # pragma: no cover - UI callback must not break tools
+                                            logger.exception("mcp portal email send finish callback failed")
+
+                                    response_text = "Email sent."
+                                    if isinstance(send_tool_result, Mapping):
+                                        self._record_email_send_audit(
+                                            conversation=conversation,
+                                            email_account=email_account,
+                                            tool_result=send_tool_result,
+                                        )
+                                        status_value = str(send_tool_result.get("status") or "").strip().lower()
+                                        if status_value == "ok":
+                                            resolved_draft_id = str(
+                                                send_tool_result.get("draft_id")
+                                                or send_tool_result.get("draftId")
+                                                or draft_id
+                                            ).strip()
+                                            self._clear_pending_email_draft(
+                                                conversation=conversation,
+                                                email_account_id=getattr(email_account, "id", None),
+                                                draft_id=resolved_draft_id,
+                                            )
+                                        else:
+                                            response_text = "I couldn't send that email draft."
+                                    else:
+                                        response_text = "I couldn't send that email draft."
+
+                                    _emit_final_answer(response_text)
+                                    _status_event("answer_finalized", "Answer ready")
+                                    _status_event("stream_complete", "")
+                                    self._log_turn_metrics(conversation, tool_context)
+                                    normalized_assistant = {
+                                        "role": "assistant",
+                                        "content": response_text,
+                                        "actions": [],
+                                        "extractions": [],
+                                        "placeholder_response": None,
+                                    }
+                                    response_blocks = self._extract_response_blocks(normalized_assistant)
+                                    return {
+                                        "assistant_message": normalized_assistant,
+                                        "tool_context": tool_context,
+                                        "streamed_chunks": tuple(answer_streamed_chunks),
+                                        "clean_answer_text": response_text,
+                                        "dropped_sentences": tuple(),
+                                        "llm_strategy": "mcp_tools_email_draft_gate",
+                                        "response_blocks": response_blocks,
+                                    }
 
                     loop_messages = prompts.limit_messages_for_stage(transcript, stage="tool_iteration")
                     reminder = {
@@ -1994,6 +2167,9 @@ class McpOrchestratorService:
                             on_stream_delta=_answer_stream_chunk if streaming_allowed else None,
                             on_tool_call_delta=_on_stream_tool_call_delta,
                             tool_context=tool_context,
+                            on_reasoning_event=on_reasoning_event,
+                            reasoning_label="Final answer",
+                            should_cancel=should_cancel,
                         )
                         assistant_message = self._coerce_assistant_message(forced_payload)
                         forced_tool_calls_raw = list(assistant_message.get("tool_calls") or [])
@@ -2030,6 +2206,9 @@ class McpOrchestratorService:
                         on_tool_call_start=_on_stream_tool_call_start,
                         on_tool_call_delta=_on_stream_tool_call_delta,
                         tool_context=tool_context,
+                        on_reasoning_event=on_reasoning_event,
+                        reasoning_label=f"Tool step {iteration_index + 1}",
+                        should_cancel=should_cancel,
                     )
                     assistant_message = self._coerce_assistant_message(payload)
                     next_tool_calls_raw = list(assistant_message.get("tool_calls") or [])
@@ -2442,6 +2621,8 @@ class McpOrchestratorService:
         on_spinner_update: Callable[[str], None] | None = None,
         on_tool_event: Callable[[Mapping[str, object]], None] | None = None,
         on_block_event: Callable[[Mapping[str, object]], None] | None = None,
+        on_reasoning_event: Callable[[Mapping[str, object]], None] | None = None,
+        should_cancel: Callable[[], bool] | None = None,
     ) -> StreamingTurnContext:
         turn_start = time.perf_counter()
         result = self._execute_turn(
@@ -2453,6 +2634,8 @@ class McpOrchestratorService:
             on_spinner_update=on_spinner_update,
             on_tool_event=on_tool_event,
             on_block_event=on_block_event,
+            on_reasoning_event=on_reasoning_event,
+            should_cancel=should_cancel,
         )
         turn_duration_ms = int((time.perf_counter() - turn_start) * 1000.0)
         streamed_chunks = tuple(result.get("streamed_chunks") or ())
@@ -7476,10 +7659,13 @@ class McpOrchestratorService:
         messages: Sequence[Mapping[str, object]],
         tools: Iterable[Mapping[str, object]] | None,
         on_stream_delta: Callable[[str], None] | None,
+        on_reasoning_event: Callable[[Mapping[str, object]], None] | None = None,
+        reasoning_label: str | None = None,
         on_tool_call_start: Callable[[Mapping[str, object]], None] | None = None,
         on_tool_call_delta: Callable[[Mapping[str, object]], None] | None = None,
         response_format: Mapping[str, object] | None = None,
         tool_context: ToolExecutionContext | None = None,
+        should_cancel: Callable[[], bool] | None = None,
     ) -> Mapping[str, Any]:
         if not self.provider:
             raise PromptGenerationError("MCP provider is not configured.")
@@ -7564,14 +7750,67 @@ class McpOrchestratorService:
             pass
 
         try:
+            call_id = f"llm_{uuid.uuid4().hex}"
+            label_value = (reasoning_label or stage.replace("_", " ").strip()).strip()
+            if not label_value:
+                label_value = "LLM"
+
+            reasoning_started = False
+            reasoning_ended = False
+
+            def _emit_reasoning_event(event_type: str, *, delta: str | None = None) -> None:
+                if not on_reasoning_event:
+                    return
+                payload: dict[str, object] = {
+                    "type": event_type,
+                    "call_id": call_id,
+                    "stage": stage,
+                    "label": label_value,
+                }
+                if delta is not None:
+                    payload["delta"] = delta
+                try:
+                    on_reasoning_event(payload)
+                except Exception:  # pragma: no cover - defensive
+                    logger.exception("on_reasoning_event callback failed")
+
+            def _should_skip_reasoning_end() -> bool:
+                return bool(should_cancel and should_cancel())
+
+            def _maybe_end_reasoning() -> None:
+                nonlocal reasoning_ended
+                if reasoning_ended or not reasoning_started:
+                    return
+                if _should_skip_reasoning_end():
+                    return
+                reasoning_ended = True
+                _emit_reasoning_event("reasoning_end")
+
+            def _on_reasoning_delta(delta: str) -> None:
+                nonlocal reasoning_started
+                if not delta:
+                    return
+                if should_cancel and should_cancel():
+                    return
+                reasoning_started = True
+                _emit_reasoning_event("reasoning_delta", delta=delta)
+
+            def _on_stream_delta(chunk: str) -> None:
+                _maybe_end_reasoning()
+                if on_stream_delta:
+                    on_stream_delta(chunk)
+
             payload = self.provider.chat(
                 governed_messages,
                 tools=tools,
-                on_stream_delta=on_stream_delta,
+                on_stream_delta=_on_stream_delta if (on_stream_delta and on_reasoning_event) else on_stream_delta,
+                on_reasoning_delta=_on_reasoning_delta if on_reasoning_event else None,
                 on_tool_call_start=on_tool_call_start,
                 on_tool_call_delta=on_tool_call_delta,
                 response_format=response_format,
+                should_cancel=should_cancel,
             )
+            _maybe_end_reasoning()
             self._record_llm_usage(tool_context, stage, payload)
             if tool_context and prompt_budget_index is not None:
                 usage = payload.get("usage") if isinstance(payload, Mapping) else None

@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-from __future__ import annotations
-
 import json
 import logging
 import os
@@ -217,7 +215,14 @@ class PromptGenerationError(RuntimeError):
 class BaseLLMProvider(Protocol):
     """Interface for future provider implementations (OpenAI, Azure, etc.)."""
 
-    def generate(self, bundle: PromptBundle, *, on_stream_delta: Callable[[str], None] | None = None) -> Mapping[str, Any]:
+    def generate(
+        self,
+        bundle: PromptBundle,
+        *,
+        on_stream_delta: Callable[[str], None] | None = None,
+        on_reasoning_delta: Callable[[str], None] | None = None,
+        should_cancel: Callable[[], bool] | None = None,
+    ) -> Mapping[str, Any]:
         ...
 
 
@@ -236,9 +241,11 @@ class BaseMcpProvider(Protocol):
         *,
         tools: Iterable[Mapping[str, object]] | None = None,
         on_stream_delta: Callable[[str], None] | None = None,
+        on_reasoning_delta: Callable[[str], None] | None = None,
         on_tool_call_start: Callable[[Mapping[str, object]], None] | None = None,
         on_tool_call_delta: Callable[[Mapping[str, object]], None] | None = None,
         response_format: Mapping[str, object] | None = None,
+        should_cancel: Callable[[], bool] | None = None,
     ) -> Mapping[str, Any]:  # pragma: no cover - interface only
         ...
 
@@ -252,7 +259,14 @@ class StubLLMProvider:
     (heuristics) should be used.
     """
 
-    def generate(self, bundle: PromptBundle, *, on_stream_delta: Callable[[str], None] | None = None) -> Mapping[str, Any]:
+    def generate(
+        self,
+        bundle: PromptBundle,
+        *,
+        on_stream_delta: Callable[[str], None] | None = None,
+        on_reasoning_delta: Callable[[str], None] | None = None,
+        should_cancel: Callable[[], bool] | None = None,
+    ) -> Mapping[str, Any]:
         raise PromptGenerationError("LLM provider not configured")
 
 
@@ -283,7 +297,14 @@ class OpenAIChatProvider:
         self.temperature = temperature
         self.top_p = top_p
 
-    def generate(self, bundle: PromptBundle, *, on_stream_delta: Callable[[str], None] | None = None) -> Mapping[str, Any]:
+    def generate(
+        self,
+        bundle: PromptBundle,
+        *,
+        on_stream_delta: Callable[[str], None] | None = None,
+        on_reasoning_delta: Callable[[str], None] | None = None,
+        should_cancel: Callable[[], bool] | None = None,
+    ) -> Mapping[str, Any]:
         streaming = bool(on_stream_delta)
         with TRACER.start_as_current_span("llm.openai.chat") as span:
             if span.is_recording():
@@ -331,7 +352,12 @@ class OpenAIChatProvider:
                 with urllib_request.urlopen(request, timeout=self.timeout) as resp:
                     status_code = getattr(resp, "status", 200)
                     if streaming:
-                        data = _consume_chat_completion_stream(resp, on_stream_delta)
+                        data = _consume_chat_completion_stream(
+                            resp,
+                            on_stream_delta,
+                            on_reasoning_delta=on_reasoning_delta,
+                            should_cancel=should_cancel,
+                        )
                         raw_body = None
                     else:
                         raw_body = resp.read().decode("utf-8")
@@ -353,6 +379,16 @@ class OpenAIChatProvider:
 
             if streaming:
                 usage_payload = None
+                if should_cancel and should_cancel():
+                    usage_payload = _normalize_usage_payload(
+                        data.get("usage") if isinstance(data, Mapping) else None,
+                        provider="OpenAIChat",
+                        model=self.model,
+                    )
+                    payload_out: dict[str, Any] = {"response_text": "", "actions": [], "extractions": []}
+                    if usage_payload:
+                        payload_out["llm_usage"] = usage_payload
+                    return payload_out
                 try:
                     content = self._extract_content(data)
                 except Exception as exc:
@@ -499,7 +535,14 @@ class DeepSeekChatProvider(OpenAIChatProvider):
         self.top_p = top_p
         self._client = OpenAI(api_key=self.api_key, base_url=self.base_url, timeout=self.timeout)
 
-    def generate(self, bundle: PromptBundle, *, on_stream_delta: Callable[[str], None] | None = None) -> Mapping[str, Any]:
+    def generate(
+        self,
+        bundle: PromptBundle,
+        *,
+        on_stream_delta: Callable[[str], None] | None = None,
+        on_reasoning_delta: Callable[[str], None] | None = None,
+        should_cancel: Callable[[], bool] | None = None,
+    ) -> Mapping[str, Any]:
         streaming = bool(on_stream_delta)
         with TRACER.start_as_current_span("llm.deepseek.chat") as span:
             if span.is_recording():
@@ -520,7 +563,12 @@ class DeepSeekChatProvider(OpenAIChatProvider):
             self._log_pretty("DeepSeek request payload", request_payload)
             usage_payload = None
             if streaming:
-                content, usage_payload = self._generate_streaming(messages, on_stream_delta)
+                content, usage_payload = self._generate_streaming(
+                    messages,
+                    on_stream_delta,
+                    on_reasoning_delta=on_reasoning_delta,
+                    should_cancel=should_cancel,
+                )
             else:
                 content, usage_payload = self._generate_blocking(messages)
             self._log_pretty("DeepSeek raw response", content)
@@ -559,9 +607,21 @@ class DeepSeekChatProvider(OpenAIChatProvider):
         self,
         messages: list[Mapping[str, str]],
         on_stream_delta: Callable[[str], None],
+        *,
+        on_reasoning_delta: Callable[[str], None] | None = None,
+        should_cancel: Callable[[], bool] | None = None,
     ) -> tuple[str, dict[str, object] | None]:
-        extractor = _ResponseTextExtractor(on_stream_delta)
+        streamed_response_text_parts: list[str] = []
+
+        def _emit_response_text(chunk: str) -> None:
+            if not chunk:
+                return
+            streamed_response_text_parts.append(chunk)
+            on_stream_delta(chunk)
+
+        extractor = _ResponseTextExtractor(_emit_response_text)
         assembled: list[str] = []
+        reasoning_parts: list[str] = []
         usage_payload = None
         try:
             stream = self._client.chat.completions.create(
@@ -573,12 +633,22 @@ class DeepSeekChatProvider(OpenAIChatProvider):
                 stream_options={"include_usage": True},
             )
             for chunk in stream:
+                if should_cancel and should_cancel():
+                    break
                 if usage_payload is None:
                     usage_payload = _normalize_usage_payload(
                         getattr(chunk, "usage", None),
                         provider="DeepSeekChat",
                         model=self.model,
                     )
+                reasoning_delta = getattr(getattr(chunk.choices[0], "delta", None), "reasoning_content", None)
+                if isinstance(reasoning_delta, str) and reasoning_delta:
+                    reasoning_parts.append(reasoning_delta)
+                    if on_reasoning_delta:
+                        try:
+                            on_reasoning_delta(reasoning_delta)
+                        except Exception:  # pragma: no cover - safeguard user callbacks
+                            logger.exception("Streaming callback failed while emitting reasoning delta chunk.")
                 delta_text = self._stringify_message_content(getattr(chunk.choices[0], "delta", None))
                 if not delta_text:
                     continue
@@ -588,6 +658,19 @@ class DeepSeekChatProvider(OpenAIChatProvider):
             raise PromptGenerationError(f"DeepSeek streaming request failed: {exc}") from exc
         finally:
             extractor.flush()
+
+        if should_cancel and should_cancel():
+            return (
+                json.dumps(
+                    {
+                        "response_text": "".join(streamed_response_text_parts),
+                        "actions": [],
+                        "extractions": [],
+                    },
+                    ensure_ascii=False,
+                ),
+                usage_payload,
+            )
 
         content = "".join(assembled).strip()
         if not content:
@@ -1041,8 +1124,10 @@ def _consume_chat_completion_stream(
     stream,
     on_stream_delta: Callable[[str], None] | None,
     *,
+    on_reasoning_delta: Callable[[str], None] | None = None,
     on_tool_call_start: Callable[[Mapping[str, object]], None] | None = None,
     on_tool_call_delta: Callable[[Mapping[str, object]], None] | None = None,
+    should_cancel: Callable[[], bool] | None = None,
 ) -> dict[str, object]:
     """
     Assemble a chat-completions style payload from a streaming HTTP response.
@@ -1071,6 +1156,8 @@ def _consume_chat_completion_stream(
     first_delta_at: float | None = None
 
     for payload in _iter_sse_events(stream):
+        if should_cancel and should_cancel():
+            break
         if not payload:
             continue
         try:
@@ -1130,8 +1217,19 @@ def _consume_chat_completion_stream(
                 text = _normalize_delta(chunk.get("text") or "")
                 if text:
                     reasoning_parts.append(text)
+                    if on_reasoning_delta:
+                        try:
+                            on_reasoning_delta(text)
+                        except Exception:  # pragma: no cover - safeguard user callbacks
+                            logger.exception("Streaming callback failed while emitting reasoning delta chunk.")
         elif isinstance(reasoning_block, str) and reasoning_block:
-            reasoning_parts.append(_normalize_delta(reasoning_block))
+            normalized_reasoning = _normalize_delta(reasoning_block)
+            reasoning_parts.append(normalized_reasoning)
+            if on_reasoning_delta:
+                try:
+                    on_reasoning_delta(normalized_reasoning)
+                except Exception:  # pragma: no cover - safeguard user callbacks
+                    logger.exception("Streaming callback failed while emitting reasoning delta chunk.")
 
         for tool_delta in delta.get("tool_calls") or []:
             if isinstance(tool_delta, Mapping):
@@ -1280,9 +1378,11 @@ class OpenAIToolsProvider(BaseMcpProvider):
         *,
         tools: Iterable[Mapping[str, object]] | None = None,
         on_stream_delta: Callable[[str], None] | None = None,
+        on_reasoning_delta: Callable[[str], None] | None = None,
         on_tool_call_start: Callable[[Mapping[str, object]], None] | None = None,
         on_tool_call_delta: Callable[[Mapping[str, object]], None] | None = None,
         response_format: Mapping[str, object] | None = None,
+        should_cancel: Callable[[], bool] | None = None,
     ) -> Mapping[str, Any]:
         streaming = bool(on_stream_delta)
         with TRACER.start_as_current_span("llm.openai.tools") as span:
@@ -1393,8 +1493,10 @@ class OpenAIToolsProvider(BaseMcpProvider):
                                 data = _consume_chat_completion_stream(
                                     _HttpxLineStream(resp.iter_lines()),
                                     on_stream_delta,
+                                    on_reasoning_delta=on_reasoning_delta,
                                     on_tool_call_start=on_tool_call_start,
                                     on_tool_call_delta=on_tool_call_delta,
+                                    should_cancel=should_cancel,
                                 )
                         else:
                             resp = self._http_client.post(
@@ -1425,8 +1527,10 @@ class OpenAIToolsProvider(BaseMcpProvider):
                                 data = _consume_chat_completion_stream(
                                     resp,
                                     on_stream_delta,
+                                    on_reasoning_delta=on_reasoning_delta,
                                     on_tool_call_start=on_tool_call_start,
                                     on_tool_call_delta=on_tool_call_delta,
+                                    should_cancel=should_cancel,
                                 )
                                 raw_body = None
                             else:
@@ -1587,9 +1691,11 @@ class DeepSeekToolsProvider(BaseMcpProvider):
         *,
         tools: Iterable[Mapping[str, object]] | None = None,
         on_stream_delta: Callable[[str], None] | None = None,
+        on_reasoning_delta: Callable[[str], None] | None = None,
         on_tool_call_start: Callable[[Mapping[str, object]], None] | None = None,
         on_tool_call_delta: Callable[[Mapping[str, object]], None] | None = None,
         response_format: Mapping[str, object] | None = None,
+        should_cancel: Callable[[], bool] | None = None,
     ) -> Mapping[str, Any]:
         streaming = bool(on_stream_delta)
         with TRACER.start_as_current_span("llm.deepseek.tools") as span:
@@ -1686,8 +1792,10 @@ class DeepSeekToolsProvider(BaseMcpProvider):
                                 data = _consume_chat_completion_stream(
                                     _HttpxLineStream(resp.iter_lines()),
                                     on_stream_delta,
+                                    on_reasoning_delta=on_reasoning_delta,
                                     on_tool_call_start=on_tool_call_start,
                                     on_tool_call_delta=on_tool_call_delta,
+                                    should_cancel=should_cancel,
                                 )
                         else:
                             resp = self._http_client.post(
@@ -1718,8 +1826,10 @@ class DeepSeekToolsProvider(BaseMcpProvider):
                                 data = _consume_chat_completion_stream(
                                     resp,
                                     on_stream_delta,
+                                    on_reasoning_delta=on_reasoning_delta,
                                     on_tool_call_start=on_tool_call_start,
                                     on_tool_call_delta=on_tool_call_delta,
+                                    should_cancel=should_cancel,
                                 )
                                 raw_body = None
                             else:
@@ -1753,6 +1863,8 @@ class DeepSeekToolsProvider(BaseMcpProvider):
                                     content = message.get("content")
                                     has_text = isinstance(content, str) and bool(content.strip())
                                     if not has_text and not tool_calls:
+                                        if should_cancel and should_cancel():
+                                            return data
                                         structured_log(
                                             "llm",
                                             "warning",

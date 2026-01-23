@@ -12,7 +12,18 @@ class _FakeProvider:
     def __init__(self) -> None:
         self.calls = 0
 
-    def chat(self, messages, *, tools=None, on_stream_delta=None, on_tool_call_start=None, response_format=None):
+    def chat(
+        self,
+        messages,
+        *,
+        tools=None,
+        on_stream_delta=None,
+        on_reasoning_delta=None,
+        on_tool_call_start=None,
+        on_tool_call_delta=None,
+        response_format=None,
+        should_cancel=None,
+    ):
         self.calls += 1
         content = "I'll check the docs. The fee is $100 per year."
         if on_stream_delta:

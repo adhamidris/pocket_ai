@@ -65,6 +65,14 @@ from core.tenancy import tenant_context
 logger = logging.getLogger(__name__)
 TRACER = otel_trace.get_tracer(__name__)
 
+# Active streaming turn cancellation registry.
+#
+# The portal UI supports an explicit "Stop" action. A parallel HTTP request can
+# set the cancellation event for the active streaming turn so the backend stops
+# generating and persists the partial transcript (including reasoning blocks).
+_ACTIVE_STREAM_CANCEL_EVENTS: dict[str, threading.Event] = {}
+_ACTIVE_STREAM_CANCEL_LOCK = threading.Lock()
+
 CONTEXT_STATUS_CODES = {
     "searching_knowledge",
     "searching_start",
@@ -80,6 +88,51 @@ CONTEXT_STATUS_CODES = {
 }
 
 TOOL_EVENT_PHASES = {"started", "finished", "approval_requested", "approval_resolved"}
+EMAIL_PENDING_DRAFT_META_KEY = "email_pending_draft"
+
+
+def _pending_email_account_id_for_draft(conversation: object, *, draft_id: str) -> str:
+    if not draft_id:
+        return ""
+    meta = getattr(conversation, "metadata", None)
+    if not isinstance(meta, Mapping):
+        return ""
+    pending = meta.get(EMAIL_PENDING_DRAFT_META_KEY)
+    if not isinstance(pending, Mapping):
+        return ""
+    pending_draft_id = str(pending.get("draft_id") or "").strip()
+    if not pending_draft_id or pending_draft_id != draft_id:
+        return ""
+    return str(pending.get("email_account_id") or "").strip()
+
+
+def _clear_pending_email_draft_meta(
+    conversation: object,
+    *,
+    draft_id: str,
+    email_account_id: str | None = None,
+) -> bool:
+    if not draft_id:
+        return False
+    business_id = getattr(conversation, "business_profile_id", None)
+    with tenant_context(business_id):
+        existing_meta = getattr(conversation, "metadata", None)
+        meta = dict(existing_meta) if isinstance(existing_meta, Mapping) else {}
+        pending = meta.get(EMAIL_PENDING_DRAFT_META_KEY)
+        if not isinstance(pending, Mapping):
+            return False
+        pending_draft_id = str(pending.get("draft_id") or "").strip()
+        if pending_draft_id and pending_draft_id != draft_id:
+            return False
+        pending_email_account_id = str(pending.get("email_account_id") or "").strip()
+        if email_account_id and pending_email_account_id and pending_email_account_id != email_account_id:
+            return False
+        meta.pop(EMAIL_PENDING_DRAFT_META_KEY, None)
+        setattr(conversation, "metadata", meta)
+        save = getattr(conversation, "save", None)
+        if callable(save):
+            conversation.save(update_fields=["metadata", "last_activity_at"])
+        return True
 
 
 def _queue_put(queue, item):
@@ -1657,6 +1710,123 @@ def portal_tool_history(request: HttpRequest) -> JsonResponse:
 
 @csrf_exempt
 @require_POST
+def portal_email_send_draft(request: HttpRequest) -> JsonResponse:
+    service = _service()
+    try:
+        payload = _parse_json_body(request)
+    except PortalValidationError as exc:
+        return _json_error("invalid_json", str(exc))
+
+    session_token = (payload.get("session_token") or payload.get("sessionToken") or "").strip()
+    draft_id = (payload.get("draft_id") or payload.get("draftId") or "").strip()
+    email_account_id = (payload.get("email_account_id") or payload.get("emailAccountId") or "").strip()
+    if not session_token or not draft_id:
+        return _json_error("validation_error", "session_token and draft_id are required.")
+
+    try:
+        conversation = service.get_conversation(session_token=session_token, include_messages=False)
+        session = service.get_session_state(session_token=session_token, conversation=conversation)
+    except PortalNotFoundError as exc:
+        return _json_error("not_found", str(exc), status=404)
+
+    if not email_account_id:
+        email_account_id = _pending_email_account_id_for_draft(conversation, draft_id=draft_id)
+
+    arguments: dict[str, object] = {"draft_id": draft_id}
+    if email_account_id:
+        arguments["email_account_id"] = email_account_id
+
+    from apps.mcp.tools import execute_tool
+    from apps.mcp.types import ToolExecutionContext
+
+    result = execute_tool(
+        "email_send_draft",
+        arguments,
+        conversation=conversation,
+        context=ToolExecutionContext(),
+    )
+
+    status_value = str(result.get("status") or "").strip().lower()
+    if status_value != "ok":
+        hint = str(result.get("hint") or result.get("error") or "Email send failed.").strip()
+        return JsonResponse(
+            {
+                "session": _session_to_dict(session),
+                "result": result,
+                "error": {"code": "email_send_failed", "message": hint or "Email send failed."},
+            },
+            status=400,
+        )
+
+    _clear_pending_email_draft_meta(conversation, draft_id=draft_id, email_account_id=email_account_id or None)
+    return JsonResponse({"session": _session_to_dict(session), "result": result})
+
+
+@csrf_exempt
+@require_POST
+def portal_email_discard_draft(request: HttpRequest) -> JsonResponse:
+    service = _service()
+    try:
+        payload = _parse_json_body(request)
+    except PortalValidationError as exc:
+        return _json_error("invalid_json", str(exc))
+
+    session_token = (payload.get("session_token") or payload.get("sessionToken") or "").strip()
+    draft_id = (payload.get("draft_id") or payload.get("draftId") or "").strip()
+    email_account_id = (payload.get("email_account_id") or payload.get("emailAccountId") or "").strip()
+    if not session_token or not draft_id:
+        return _json_error("validation_error", "session_token and draft_id are required.")
+
+    try:
+        conversation = service.get_conversation(session_token=session_token, include_messages=False)
+        session = service.get_session_state(session_token=session_token, conversation=conversation)
+    except PortalNotFoundError as exc:
+        return _json_error("not_found", str(exc), status=404)
+
+    if not email_account_id:
+        email_account_id = _pending_email_account_id_for_draft(conversation, draft_id=draft_id)
+
+    cleared = _clear_pending_email_draft_meta(conversation, draft_id=draft_id, email_account_id=email_account_id or None)
+    return JsonResponse(
+        {
+            "session": _session_to_dict(session),
+            "discarded": True,
+            "cleared_pending": cleared,
+        }
+    )
+
+
+@csrf_exempt
+@require_POST
+def stream_stop(request: HttpRequest) -> JsonResponse:
+    """
+    Request cancellation of the currently active streaming turn for a session.
+
+    This is best-effort: if no active stream is registered the call succeeds
+    with `cancelled=false`.
+    """
+
+    try:
+        payload = _parse_json_body(request)
+    except PortalValidationError:
+        return _json_error("invalid_payload", "Invalid JSON payload")
+
+    session_token = str(payload.get("session_token") or payload.get("sessionToken") or "").strip()
+    if not session_token:
+        return _json_error("missing_session_token", "session_token is required")
+
+    cancel_event = None
+    with _ACTIVE_STREAM_CANCEL_LOCK:
+        cancel_event = _ACTIVE_STREAM_CANCEL_EVENTS.get(session_token)
+
+    if cancel_event is not None:
+        cancel_event.set()
+        return JsonResponse({"ok": True, "cancelled": True})
+    return JsonResponse({"ok": True, "cancelled": False})
+
+
+@csrf_exempt
+@require_POST
 def stream_send(request: HttpRequest) -> StreamingHttpResponse:
     service = _service()
     try:
@@ -1768,6 +1938,7 @@ def stream_send(request: HttpRequest) -> StreamingHttpResponse:
     actions_sentinel = object()
     stream_complete = threading.Event()
     stream_stopped = threading.Event()
+    cancel_requested = threading.Event()
     plan_holder: dict[str, Any] = {}
     state_machine_enabled = getattr(settings, "PORTAL_STREAM_STATE_MACHINE", False)
     plan_holder["metadata_version"] = 1
@@ -1775,6 +1946,16 @@ def stream_send(request: HttpRequest) -> StreamingHttpResponse:
     plan_holder["spinner_text"] = None
     reserved_message_id = uuid.uuid4()
     plan_holder["pending_message_id"] = reserved_message_id
+
+    # Register cancel handle so a parallel HTTP request can stop this turn.
+    with _ACTIVE_STREAM_CANCEL_LOCK:
+        _ACTIVE_STREAM_CANCEL_EVENTS[session_token] = cancel_requested
+
+    def _unregister_cancel_handle() -> None:
+        with _ACTIVE_STREAM_CANCEL_LOCK:
+            current = _ACTIVE_STREAM_CANCEL_EVENTS.get(session_token)
+            if current is cancel_requested:
+                _ACTIVE_STREAM_CANCEL_EVENTS.pop(session_token, None)
 
     blocks_lock = threading.Lock()
     content_blocks: list[dict[str, object]] = []
@@ -1784,6 +1965,7 @@ def stream_send(request: HttpRequest) -> StreamingHttpResponse:
     rich_builder.blocks_by_id = content_blocks_by_id
     block_ops_active = False
     tool_use_block_id_by_event_id: dict[str, str] = {}
+    reasoning_block_id_by_call_id: dict[str, str] = {}
     spinner_state = {
         "text": None,
         "pending": True,
@@ -2020,6 +2202,88 @@ def stream_send(request: HttpRequest) -> StreamingHttpResponse:
             payload["message_id"] = message_id
             stream_queue.put({"type": event_type, "payload": payload})
 
+    def on_reasoning_event(event: Mapping[str, object] | None) -> None:
+        if not event or not isinstance(event, Mapping):
+            return
+        event_type = str(event.get("type") or "").strip().lower()
+        if event_type not in {"reasoning_delta", "reasoning_end"}:
+            return
+        call_id = str(event.get("call_id") or "").strip()
+        if not call_id:
+            return
+        stage = str(event.get("stage") or "").strip() or "llm"
+        label = str(event.get("label") or "").strip() or stage.replace("_", " ").strip() or "LLM"
+        block_id = reasoning_block_id_by_call_id.get(call_id)
+
+        if event_type == "reasoning_delta":
+            delta = event.get("delta")
+            if not isinstance(delta, str) or not delta:
+                return
+            if not block_id:
+                block = {
+                    "block_id": new_block_id(),
+                    "type": "reasoning",
+                    "created_at": timezone.now().isoformat(),
+                    "payload": {
+                        "title": label,
+                        "stage": stage,
+                        "collapsed": False,
+                        "code": "",
+                    },
+                }
+                _append_content_block(block)
+                block_id = str(block.get("block_id") or "").strip()
+                if not block_id:
+                    return
+                reasoning_block_id_by_call_id[call_id] = block_id
+                stream_queue.put(
+                    {
+                        "type": "block_start",
+                        "payload": {
+                            "message_id": _current_message_id(),
+                            "block": copy.deepcopy(block),
+                        },
+                    }
+                )
+            block = _get_content_block(block_id)
+            if not block:
+                return
+            ops = [{"op": "append_code", "text": delta}]
+            with blocks_lock:
+                apply_block_ops(block, ops)
+            stream_queue.put(
+                {
+                    "type": "block_delta",
+                    "payload": {
+                        "message_id": _current_message_id(),
+                        "block_id": block_id,
+                        "ops": ops,
+                    },
+                }
+            )
+            return
+
+        if event_type == "reasoning_end":
+            if not block_id:
+                return
+            block = _get_content_block(block_id)
+            if block:
+                payload_raw = block.get("payload")
+                payload = payload_raw if isinstance(payload_raw, dict) else {}
+                payload["collapsed"] = True
+                payload["completed_at"] = timezone.now().isoformat()
+                block["payload"] = payload
+            stream_queue.put(
+                {
+                    "type": "block_end",
+                    "payload": {
+                        "message_id": _current_message_id(),
+                        "block_id": block_id,
+                    },
+                }
+            )
+            return
+
     def _apply_block_event(event: Mapping[str, object]) -> bool:
         event_type = str(event.get("type") or "").strip()
         payload = event.get("payload") or {}
@@ -2226,6 +2490,26 @@ def stream_send(request: HttpRequest) -> StreamingHttpResponse:
                         spinner_label = "Reading knowledge…"
                     elif tool_name == "mcp_search_tools":
                         spinner_label = "Searching tools…"
+                    # Email operations
+                    elif tool_name == "email_search":
+                        spinner_label = "Searching emails…"
+                    elif tool_name == "email_get_message":
+                        spinner_label = "Retrieving email…"
+                    elif tool_name == "email_get_thread":
+                        spinner_label = "Retrieving email thread…"
+                    elif tool_name == "email_create_draft":
+                        spinner_label = "Creating email draft…"
+                    elif tool_name == "email_send_draft":
+                        spinner_label = "Sending email…"
+                    # PDF/Document operations
+                    elif tool_name == "pdf_generate":
+                        spinner_label = "Generating PDF…"
+                    elif tool_name == "pdf_merge":
+                        spinner_label = "Merging PDFs…"
+                    elif tool_name == "pdf_extract_pages":
+                        spinner_label = "Extracting PDF pages…"
+                    elif tool_name == "pdf_extract_text":
+                        spinner_label = "Extracting text from PDF…"
                     else:
                         spinner_label = "Working…"
                 elif phase_lower == "finished":
@@ -2875,16 +3159,17 @@ def stream_send(request: HttpRequest) -> StreamingHttpResponse:
                 plan_holder["ai_message_id"] = ai_message.id
                 plan_holder["pending_message_id"] = ai_message.id
 
-                threading.Thread(
-                    target=run_planner_async,
-                    args=(
-                        stream_context,
-                        response_text,
-                        ai_message.id,
-                        otel_context.get_current(),
-                    ),
-                    daemon=True,
-                ).start()
+                if not cancel_requested.is_set():
+                    threading.Thread(
+                        target=run_planner_async,
+                        args=(
+                            stream_context,
+                            response_text,
+                            ai_message.id,
+                            otel_context.get_current(),
+                        ),
+                        daemon=True,
+                    ).start()
         except Exception as exc:  # pragma: no cover - defensive
             logger.exception("Orchestrator finalize failed: %s", exc)
             trace_logger.log_error("finalize", exc, indent=1)
@@ -2916,6 +3201,8 @@ def stream_send(request: HttpRequest) -> StreamingHttpResponse:
                     on_spinner_update=on_spinner_update,
                     on_tool_event=on_tool_event,
                     on_block_event=on_block_event,
+                    on_reasoning_event=on_reasoning_event,
+                    should_cancel=cancel_requested.is_set,
                 )
                 plan_holder["context"] = stream_context
                 threading.Thread(
@@ -3062,7 +3349,10 @@ def stream_send(request: HttpRequest) -> StreamingHttpResponse:
                 yield f"data: {json.dumps(payload)}\n\n"
 
     def event_stream() -> Iterable[str]:
-        yield from _block_event_stream()
+        try:
+            yield from _block_event_stream()
+        finally:
+            _unregister_cancel_handle()
 
     response = StreamingHttpResponse(event_stream(), content_type="text/event-stream")
     response["Cache-Control"] = "no-cache"

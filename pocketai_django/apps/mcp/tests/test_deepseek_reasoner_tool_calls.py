@@ -24,7 +24,18 @@ class _DeepSeekReasonerToolLoopProvider:
         self.model = "deepseek-reasoner"
         self.requests: list[dict[str, object]] = []
 
-    def chat(self, messages, *, tools=None, on_stream_delta=None, on_tool_call_start=None, response_format=None):
+    def chat(
+        self,
+        messages,
+        *,
+        tools=None,
+        on_stream_delta=None,
+        on_reasoning_delta=None,
+        on_tool_call_start=None,
+        on_tool_call_delta=None,
+        response_format=None,
+        should_cancel=None,
+    ):
         materialized = [dict(m) for m in messages]
         self.requests.append({"tools": bool(tools), "messages": materialized})
 
@@ -126,4 +137,3 @@ class DeepSeekReasonerToolLoopTests(TestCase):
                 break
         else:
             self.fail("Expected follow-up DeepSeek tool-loop request to include the original assistant tool-call message.")
-
