@@ -545,6 +545,18 @@
           if (data.type === "mcp_oauth_success") {
             showFlash("Connected " + (data.marketplaceKey || "OAuth") + ".", "success");
             loadAll();
+          } else if (data.type === "email_oauth_success") {
+            // Native email connector connected (Gmail/Outlook)
+            var providerLabel = (data.provider || "").toLowerCase();
+            if (providerLabel === "google") providerLabel = "Gmail";
+            else if (providerLabel === "microsoft") providerLabel = "Outlook";
+            else providerLabel = providerLabel || "Email";
+            showFlash("Connected " + providerLabel + " email account.", "success");
+            loadAll();
+          } else if (data.type === "email_oauth_error") {
+            var emailError = (data.error || "unknown_error").toString();
+            var emailHint = data.hint ? (" " + String(data.hint)) : "";
+            showFlash("Email connection failed: " + emailError + "." + emailHint, "error");
           } else if (data.type === "mcp_oauth_error") {
             var code = (data.error || "unknown_error").toString();
             var hint = data.hint ? (" " + String(data.hint)) : "";
@@ -1251,18 +1263,74 @@
       });
     }
 
-    function renderConnections(connections) {
+    function renderConnections(connections, emailAccounts) {
       if (!listEl) return;
-      var rows = connections || [];
+      var mcpRows = connections || [];
+      var emailRows = emailAccounts || [];
+      var totalCount = mcpRows.length + emailRows.length;
       if (countEl) {
-        countEl.textContent = rows.length ? rows.length + " connections" : "No connections";
+        countEl.textContent = totalCount ? totalCount + " connections" : "No connections";
       }
-      if (!rows.length) {
-        listEl.innerHTML = '<div class="rounded-xl border border-border/60 bg-muted/30 p-6 text-sm text-muted-foreground">No MCP connections yet. Add one from the marketplace or manually.</div>';
+      if (!totalCount) {
+        listEl.innerHTML = '<div class="rounded-xl border border-border/60 bg-muted/30 p-6 text-sm text-muted-foreground">No connections yet. Add one from the marketplace or manually.</div>';
         return;
       }
       listEl.innerHTML = "";
-      rows.forEach(function (conn) {
+
+      // Render email accounts first (native Gmail/Outlook)
+      emailRows.forEach(function (account) {
+        var statusBadge = account.status === "connected"
+          ? '<span class="inline-flex items-center rounded-full border border-emerald-500/30 bg-emerald-500/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-emerald-400">Connected</span>'
+          : account.status === "error"
+          ? '<span class="inline-flex items-center rounded-full border border-rose-500/30 bg-rose-500/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-rose-400">Error</span>'
+          : '<span class="inline-flex items-center rounded-full border border-border/60 bg-muted/40 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">' + escapeHtml(account.status || "Unknown") + '</span>';
+
+        var sendModeBadge = account.sendMode === "auto_send"
+          ? '<span class="inline-flex items-center rounded-full border border-amber-500/30 bg-amber-500/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-amber-400" title="Emails send automatically">Auto-Send</span>'
+          : '<span class="inline-flex items-center rounded-full border border-teal-500/30 bg-teal-500/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-teal-400" title="Emails require approval before sending">Draft + Approval</span>';
+
+        var providerIcon = account.provider === "google"
+          ? '<img src="/static/img/mcp/gmail.svg" alt="Gmail" class="h-5 w-5" />'
+          : account.provider === "microsoft"
+          ? '<img src="/static/img/mcp/microsoftteams.svg" alt="Outlook" class="h-5 w-5" />'
+          : '<span class="h-5 w-5 flex items-center justify-center text-xs">📧</span>';
+
+        var errorMeta = account.lastError ? ('<div class="text-[11px] text-rose-400 truncate" title="' + escapeHtml(account.lastError) + '">' + escapeHtml(account.lastError) + "</div>") : "";
+
+        var el = document.createElement("div");
+        el.setAttribute("data-email-account-card", account.id || "");
+        el.className = "rounded-xl border border-border/70 bg-background/60 p-4 shadow-sm";
+        el.innerHTML =
+          '<div class="flex items-start justify-between gap-4">' +
+            '<div class="min-w-0 space-y-1">' +
+              '<div class="flex flex-wrap items-center gap-2">' +
+                providerIcon +
+                '<div class="text-sm font-semibold text-foreground truncate">' + escapeHtml(account.name || "Email Account") + "</div>" +
+                statusBadge +
+                sendModeBadge +
+                '<span class="inline-flex items-center rounded-full border border-blue-500/30 bg-blue-500/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-blue-400">Native</span>' +
+              "</div>" +
+              '<div class="text-xs text-muted-foreground truncate">' + escapeHtml(account.emailAddress || "") + "</div>" +
+              '<div class="text-[11px] text-muted-foreground">' +
+                "Email read/search/send" +
+                (account.lastHealthCheckedAt ? " · Last checked " + new Date(account.lastHealthCheckedAt).toLocaleDateString() : "") +
+              "</div>" +
+              errorMeta +
+            "</div>" +
+            '<div class="flex flex-col items-end gap-2 shrink-0">' +
+              '<button type="button" class="inline-flex items-center gap-2 rounded-md border border-rose-500/50 bg-rose-500/10 text-rose-400 px-3 py-2 text-xs font-medium hover:bg-rose-500/20 hover:border-rose-500" data-email-disconnect="' + escapeHtml(account.id) + '" title="Disconnect email account">' +
+                '<svg class="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1"/></svg>' +
+                'Disconnect' +
+              '</button>' +
+            "</div>" +
+          "</div>";
+
+        el.__emailAccount = account;
+        listEl.appendChild(el);
+      });
+
+      // Render MCP connections
+      mcpRows.forEach(function (conn) {
         var job = conn.testJob || conn.test_job || null;
         var jobStatus = job && job.status ? String(job.status).toLowerCase().trim() : "";
         var autoTesting = jobStatus === "queued" || jobStatus === "running";
@@ -1321,6 +1389,9 @@
 	                '<button type="button" class="inline-flex items-center gap-2 rounded-md border border-input bg-background px-3 py-2 text-xs font-medium hover:bg-accent hover:text-accent-foreground" data-mcp-tools="' + escapeHtml(conn.id) + '">Tools</button>' +
 	                '<button type="button" class="inline-flex items-center gap-2 rounded-md border border-input bg-background px-3 py-2 text-xs font-medium hover:bg-accent hover:text-accent-foreground" data-mcp-agents="' + escapeHtml(conn.id) + '">Agents</button>' +
 	                '<button type="button" class="inline-flex items-center gap-2 rounded-md bg-primary/10 text-primary px-3 py-2 text-xs font-semibold hover:bg-primary/15" data-mcp-edit="' + escapeHtml(conn.id) + '">Edit</button>' +
+	                '<button type="button" class="inline-flex items-center gap-2 rounded-md border border-rose-500/50 bg-rose-500/10 text-rose-400 px-3 py-2 text-xs font-medium hover:bg-rose-500/20 hover:border-rose-500" data-mcp-delete="' + escapeHtml(conn.id) + '" title="Delete connection">' +
+	                  '<svg class="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg>' +
+	                '</button>' +
 	              "</div>" +
 	              '<div class="text-[11px] text-muted-foreground">Assigned ' + escapeHtml(String((conn.agents && conn.agents.assigned) || 0)) + "/" + escapeHtml(String((conn.agents && conn.agents.total) || 0)) + "</div>" +
 	            "</div>" +
@@ -1408,6 +1479,12 @@
               cachedConnectedKeys.add(conn.marketplaceKey);
             }
           });
+          // Also track connected email accounts (native Gmail/Outlook)
+          (data.emailAccounts || []).forEach(function (account) {
+            if (account.marketplaceKey) {
+              cachedConnectedKeys.add(account.marketplaceKey);
+            }
+          });
 
           // Cache data for filtering
           cachedMarketplace = data.marketplace || [];
@@ -1415,8 +1492,8 @@
           cachedCommonTools = data.commonTools || [];
           cachedCategories = data.categories || [];
 
-          // Render all sections
-	        renderConnections(data.connections || []);
+          // Render all sections (including email accounts in connections view)
+	        renderConnections(data.connections || [], data.emailAccounts || []);
 	        var hasAutoTests = updateAutoTestStatuses(data.connections || []);
           renderIndustryTools(cachedIndustryTools, data.industryDisplay || "");
           renderCommonTools(cachedCommonTools);
@@ -1836,7 +1913,49 @@
             return;
           }
 
-          // OAuth: open provider popup when configured
+          // Native Email OAuth: Gmail/Outlook first-party connectors
+          if (connType === "email_oauth" && item.oauthProvider) {
+            if (!businessId) {
+              showFlash("Missing business context. Refresh the page and try again.", "error");
+              return;
+            }
+
+            // Map provider key to the email OAuth endpoint provider name
+            var emailProvider = item.oauthProvider;
+            if (emailProvider === "google_email") emailProvider = "google";
+            else if (emailProvider === "microsoft_email") emailProvider = "microsoft";
+
+            var emailOauthUrl = "/api/email/oauth/start/" +
+              encodeURIComponent(emailProvider) + "/" +
+              "?business_id=" + encodeURIComponent(businessId) +
+              "&redirect=" + encodeURIComponent(window.location.href);
+
+            var width = 500, height = 650;
+            var left = Math.max(0, (window.innerWidth - width) / 2);
+            var top = Math.max(0, (window.innerHeight - height) / 2);
+
+            var popup = window.open(
+              emailOauthUrl,
+              "email_oauth_popup",
+              "width=" + width + ",height=" + height + ",left=" + left + ",top=" + top
+            );
+
+            if (!popup) {
+              showFlash("Popup blocked. Please allow popups for this site and try again.", "error");
+              return;
+            }
+
+            var pollTimer = window.setInterval(function () {
+              if (popup.closed) {
+                window.clearInterval(pollTimer);
+                loadAll();
+              }
+            }, 500);
+
+            return;
+          }
+
+          // OAuth: open provider popup when configured (MCP marketplace connectors)
           if (connType === "oauth" && item.oauthProvider) {
             if (!businessId) {
               showFlash("Missing business context. Refresh the page and try again.", "error");
@@ -1925,6 +2044,35 @@
         var card3 = toolsBtn.closest(".rounded-xl");
         var conn3 = card3 && card3.__conn;
         openTools(toolsId, conn3 ? conn3.name : "");
+        return;
+      }
+
+      var deleteBtn = target.closest("[data-mcp-delete]");
+      if (deleteBtn) {
+        var deleteId = deleteBtn.getAttribute("data-mcp-delete");
+        var deleteCard = deleteBtn.closest("[data-mcp-connection-card]");
+        var connForDelete = deleteCard && deleteCard.__conn;
+        var connName = connForDelete ? connForDelete.name : "this connection";
+
+        if (confirm("Are you sure you want to delete \"" + connName + "\"? This action cannot be undone.")) {
+          deleteBtn.disabled = true;
+          deleteBtn.style.opacity = "0.5";
+
+          apiFetch("/api/mcp/connections/" + encodeURIComponent(deleteId) + "/", {
+            method: "DELETE",
+            body: JSON.stringify({ businessId: businessId || undefined })
+          })
+          .then(function () {
+            showFlash("MCP connection deleted successfully.", "success");
+            loadAll();
+          })
+          .catch(function (err) {
+            console.warn("Delete failed", err);
+            showFlash("Failed to delete connection: " + (err.message || "Unknown error"), "error");
+            deleteBtn.disabled = false;
+            deleteBtn.style.opacity = "1";
+          });
+        }
         return;
       }
 

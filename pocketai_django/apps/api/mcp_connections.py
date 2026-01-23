@@ -26,6 +26,8 @@ from core.tenancy import tenant_context
 from apps.accounts.models import (
     AgentProfile,
     BusinessProfile,
+    EmailAccount,
+    EmailAccountStatus,
     McpConnection,
     McpConnectionAgentOptOut,
     McpConnectionApprovalMode,
@@ -475,23 +477,39 @@ def _mcp_marketplace_catalog() -> list[dict[str, Any]]:
 
     return [
         # ═══════════════════════════════════════════════════════════════════════
-        # COMMUNICATION
+        # COMMUNICATION - EMAIL (Native first-party connectors)
         # ═══════════════════════════════════════════════════════════════════════
         {
             "key": "gmail",
             "name": "Gmail",
-            "description": "Send and read emails via Gmail API.",
+            "description": "Search, read, and send emails via Gmail. Native integration with draft approval for safe sending.",
             "category": "communication",
             "industries": ["marketing", "ecommerce", "legal", "real_estate", "consulting", "general"],
-            "connectionType": "oauth",
-            "oauthProvider": "google",
-            "recommendedAuth": "bearer",
-            "serverUrl": "https://mcp.composio.dev/gmail",
-            "docsUrl": "https://mcp.composio.dev/",
+            "connectionType": "email_oauth",  # Special type for native email connectors
+            "oauthProvider": "google_email",  # Uses /api/email/oauth/start/
+            "serverUrl": "__builtin__",  # Native - no external MCP server
+            "docsUrl": "https://developers.google.com/gmail/api",
             "badge": "Popular",
-            "tier": 2,
-            "setupFields": [],  # OAuth only - no extra fields
+            "tier": 1,  # First-party = tier 1
+            "setupFields": [],
         },
+        {
+            "key": "outlook",
+            "name": "Outlook / Microsoft 365",
+            "description": "Search, read, and send emails via Microsoft Graph. Native integration with draft approval for safe sending.",
+            "category": "communication",
+            "industries": ["consulting", "finance", "legal", "real_estate", "general"],
+            "connectionType": "email_oauth",  # Special type for native email connectors
+            "oauthProvider": "microsoft_email",  # Uses /api/email/oauth/start/
+            "serverUrl": "__builtin__",  # Native - no external MCP server
+            "docsUrl": "https://learn.microsoft.com/en-us/graph/api/resources/mail-api-overview",
+            "badge": "Popular",
+            "tier": 1,  # First-party = tier 1
+            "setupFields": [],
+        },
+        # ═══════════════════════════════════════════════════════════════════════
+        # COMMUNICATION - MESSAGING
+        # ═══════════════════════════════════════════════════════════════════════
         {
             "key": "slack",
             "name": "Slack",
@@ -1145,6 +1163,45 @@ def _get_common_tools(catalog: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return common
 
 
+def _get_email_accounts_payload(business: BusinessProfile) -> list[dict[str, Any]]:
+    """
+    Return serialized email accounts for the business.
+
+    These are native first-party email connectors (Gmail/Outlook) that create
+    EmailAccount records rather than McpConnection records.
+    """
+    accounts = EmailAccount.objects.filter(business_profile=business).order_by("email_address")
+    result = []
+    for account in accounts:
+        # Map provider to marketplace key
+        provider = str(account.provider or "").strip().lower()
+        if provider == "google":
+            marketplace_key = "gmail"
+            display_name = "Gmail"
+        elif provider == "microsoft":
+            marketplace_key = "outlook"
+            display_name = "Outlook"
+        else:
+            marketplace_key = provider
+            display_name = provider.title()
+
+        result.append({
+            "id": str(account.id),
+            "type": "email_account",  # Distinguish from MCP connections
+            "marketplaceKey": marketplace_key,
+            "name": f"{display_name} ({account.email_address})",
+            "provider": provider,
+            "emailAddress": account.email_address,
+            "status": account.status,
+            "sendMode": account.send_mode,
+            "lastError": account.last_error or "",
+            "lastHealthCheckedAt": account.last_health_checked_at.isoformat() if account.last_health_checked_at else None,
+            "createdAt": account.created_at.isoformat() if account.created_at else None,
+            "updatedAt": account.updated_at.isoformat() if account.updated_at else None,
+        })
+    return result
+
+
 def _log_mcp_audit(
     *,
     business: BusinessProfile,
@@ -1228,11 +1285,15 @@ def mcp_connections_collection(request: HttpRequest) -> JsonResponse:
         # Get common tools (tier 1 / universal)
         common_tools = _get_common_tools(full_catalog)
 
+        # Get connected email accounts (native Gmail/Outlook)
+        email_accounts_payload = _get_email_accounts_payload(business)
+
         return JsonResponse(
             {
                 "businessId": str(business.id),
                 "dashboardUrl": "/dashboard/mcp/",
                 "connections": connections_payload,
+                "emailAccounts": email_accounts_payload,
                 "marketplace": full_catalog,
                 "industryTools": industry_tools,
                 "commonTools": common_tools,

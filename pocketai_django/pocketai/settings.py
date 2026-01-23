@@ -272,6 +272,12 @@ INTEGRATION_CREDENTIALS_KEY = _integration_credentials_key()
 INTEGRATION_CREDENTIAL_ROTATION_DAYS = int(os.getenv("INTEGRATION_CREDENTIAL_ROTATION_DAYS", "30"))
 # INTEGRATION_CREDENTIAL_MAX_ERRORS: Disable/flag a credential after N consecutive errors.
 INTEGRATION_CREDENTIAL_MAX_ERRORS = int(os.getenv("INTEGRATION_CREDENTIAL_MAX_ERRORS", "3"))
+
+# API_PUBLIC_URL: Optional public URL base (e.g., "https://api.example.com" or "http://localhost:3000")
+# Used to construct OAuth callback URLs when the request host (e.g., localhost:8000) differs from
+# the registered OAuth redirect URI (e.g., localhost:3000).
+API_PUBLIC_URL = os.getenv("API_PUBLIC_URL", "").strip()
+
 # INGEST_NORMALIZE_TABLES: Enable ingestion-time table normalization/cleanup.
 INGEST_NORMALIZE_TABLES = os.getenv("INGEST_NORMALIZE_TABLES", "true").lower() in {"1", "true", "yes"}
 # INGEST_NORMALIZATION_POLICY_VERSION: Ingestion normalization policy version tag (for safe rollouts).

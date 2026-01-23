@@ -4,11 +4,15 @@ import base64
 import binascii
 import logging
 import re
+import uuid
 from dataclasses import dataclass
 from datetime import date
+from email.mime.multipart import MIMEMultipart
+from email.mime.text import MIMEText
 from html.parser import HTMLParser
 from typing import Any, Iterable, Mapping
 
+import markdown
 import requests
 from django.utils.dateparse import parse_date, parse_datetime
 from django.utils import timezone
@@ -402,6 +406,147 @@ def gmail_get_thread(
     }
 
 
+def _markdown_to_html(text: str) -> str:
+    """Convert markdown text to HTML."""
+    md = markdown.Markdown(
+        extensions=["nl2br", "tables", "fenced_code"],
+        output_format="html5",
+    )
+    return md.convert(text or "")
+
+
+def _build_html_email(body_html: str) -> str:
+    """Wrap HTML content in a professional email template."""
+    return f"""<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta http-equiv="X-UA-Compatible" content="IE=edge">
+    <title>Email</title>
+    <!--[if mso]>
+    <noscript>
+        <xml>
+            <o:OfficeDocumentSettings>
+                <o:PixelsPerInch>96</o:PixelsPerInch>
+            </o:OfficeDocumentSettings>
+        </xml>
+    </noscript>
+    <![endif]-->
+    <style type="text/css">
+        /* Reset */
+        body, table, td, p, a, li, blockquote {{
+            -webkit-text-size-adjust: 100%;
+            -ms-text-size-adjust: 100%;
+        }}
+        body {{
+            margin: 0 !important;
+            padding: 0 !important;
+            width: 100% !important;
+        }}
+
+        /* Email Body */
+        .email-body {{
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+            font-size: 15px;
+            line-height: 1.6;
+            color: #1a1a1a;
+            background-color: #ffffff;
+        }}
+
+        /* Typography */
+        h1, h2, h3, h4, h5, h6 {{
+            margin: 0 0 16px 0;
+            font-weight: 600;
+            line-height: 1.3;
+            color: #1a1a1a;
+        }}
+        h1 {{ font-size: 24px; }}
+        h2 {{ font-size: 20px; }}
+        h3 {{ font-size: 18px; }}
+
+        p {{
+            margin: 0 0 16px 0;
+        }}
+
+        a {{
+            color: #0066cc;
+            text-decoration: none;
+        }}
+        a:hover {{
+            text-decoration: underline;
+        }}
+
+        /* Lists */
+        ul, ol {{
+            margin: 0 0 16px 0;
+            padding-left: 24px;
+        }}
+        li {{
+            margin-bottom: 8px;
+        }}
+
+        /* Blockquote */
+        blockquote {{
+            margin: 0 0 16px 0;
+            padding: 12px 20px;
+            border-left: 4px solid #e0e0e0;
+            background-color: #f9f9f9;
+            color: #555;
+        }}
+
+        /* Code */
+        code {{
+            font-family: 'SF Mono', Monaco, 'Courier New', monospace;
+            font-size: 13px;
+            background-color: #f4f4f4;
+            padding: 2px 6px;
+            border-radius: 4px;
+        }}
+        pre {{
+            margin: 0 0 16px 0;
+            padding: 16px;
+            background-color: #f4f4f4;
+            border-radius: 8px;
+            overflow-x: auto;
+        }}
+        pre code {{
+            padding: 0;
+            background: none;
+        }}
+
+        /* Tables */
+        table {{
+            border-collapse: collapse;
+            margin: 0 0 16px 0;
+            width: 100%;
+        }}
+        th, td {{
+            padding: 10px 12px;
+            text-align: left;
+            border-bottom: 1px solid #e0e0e0;
+        }}
+        th {{
+            font-weight: 600;
+            background-color: #f9f9f9;
+        }}
+
+        /* Horizontal rule */
+        hr {{
+            border: none;
+            border-top: 1px solid #e0e0e0;
+            margin: 24px 0;
+        }}
+    </style>
+</head>
+<body>
+    <div class="email-body" style="padding: 0; margin: 0;">
+        {body_html}
+    </div>
+</body>
+</html>"""
+
+
 def gmail_create_draft(
     *,
     access_token: str,
@@ -411,24 +556,34 @@ def gmail_create_draft(
     subject: str,
     body_text: str,
 ) -> dict[str, object]:
-    # RFC 2822 minimal message
+    """Create a Gmail draft with both plain text and HTML versions."""
     to_value = ", ".join([addr.strip() for addr in to if addr and str(addr).strip()])
     cc_value = ", ".join([addr.strip() for addr in (cc or []) if addr and str(addr).strip()])
     bcc_value = ", ".join([addr.strip() for addr in (bcc or []) if addr and str(addr).strip()])
 
-    lines: list[str] = []
-    lines.append(f"To: {to_value}")
+    # Convert markdown body to HTML
+    body_html_content = _markdown_to_html(body_text)
+    body_html = _build_html_email(body_html_content)
+
+    # Create multipart/alternative message (plain text + HTML)
+    msg = MIMEMultipart("alternative")
+    msg["To"] = to_value
     if cc_value:
-        lines.append(f"Cc: {cc_value}")
+        msg["Cc"] = cc_value
     if bcc_value:
-        lines.append(f"Bcc: {bcc_value}")
-    lines.append(f"Subject: {subject}")
-    lines.append("MIME-Version: 1.0")
-    lines.append('Content-Type: text/plain; charset="UTF-8"')
-    lines.append("Content-Transfer-Encoding: 8bit")
-    lines.append("")
-    lines.append(body_text)
-    raw_bytes = "\r\n".join(lines).encode("utf-8", errors="replace")
+        msg["Bcc"] = bcc_value
+    msg["Subject"] = subject
+    msg["Message-ID"] = f"<{uuid.uuid4()}@pocketai.local>"
+
+    # Attach plain text version first (fallback)
+    part_text = MIMEText(body_text, "plain", "utf-8")
+    msg.attach(part_text)
+
+    # Attach HTML version (preferred)
+    part_html = MIMEText(body_html, "html", "utf-8")
+    msg.attach(part_html)
+
+    raw_bytes = msg.as_bytes()
     raw_b64 = _b64url_encode(raw_bytes)
 
     payload = _gmail_request(

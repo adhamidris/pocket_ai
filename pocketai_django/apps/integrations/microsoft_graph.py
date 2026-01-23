@@ -7,12 +7,107 @@ from datetime import date, datetime, time
 from html.parser import HTMLParser
 from typing import Any, Iterable, Mapping
 
+import markdown
 import requests
 from django.utils import timezone
 from django.utils.dateparse import parse_date, parse_datetime
 
 
 logger = logging.getLogger(__name__)
+
+
+def _markdown_to_html(text: str) -> str:
+    """Convert markdown text to HTML."""
+    md = markdown.Markdown(
+        extensions=["nl2br", "tables", "fenced_code"],
+        output_format="html5",
+    )
+    return md.convert(text or "")
+
+
+def _build_html_email(body_html: str) -> str:
+    """Wrap HTML content in a professional email template."""
+    return f"""<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta http-equiv="X-UA-Compatible" content="IE=edge">
+    <title>Email</title>
+    <!--[if mso]>
+    <noscript>
+        <xml>
+            <o:OfficeDocumentSettings>
+                <o:PixelsPerInch>96</o:PixelsPerInch>
+            </o:OfficeDocumentSettings>
+        </xml>
+    </noscript>
+    <![endif]-->
+    <style type="text/css">
+        body, table, td, p, a, li, blockquote {{
+            -webkit-text-size-adjust: 100%;
+            -ms-text-size-adjust: 100%;
+        }}
+        body {{
+            margin: 0 !important;
+            padding: 0 !important;
+            width: 100% !important;
+        }}
+        .email-body {{
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+            font-size: 15px;
+            line-height: 1.6;
+            color: #1a1a1a;
+            background-color: #ffffff;
+        }}
+        h1, h2, h3, h4, h5, h6 {{
+            margin: 0 0 16px 0;
+            font-weight: 600;
+            line-height: 1.3;
+            color: #1a1a1a;
+        }}
+        h1 {{ font-size: 24px; }}
+        h2 {{ font-size: 20px; }}
+        h3 {{ font-size: 18px; }}
+        p {{ margin: 0 0 16px 0; }}
+        a {{ color: #0066cc; text-decoration: none; }}
+        a:hover {{ text-decoration: underline; }}
+        ul, ol {{ margin: 0 0 16px 0; padding-left: 24px; }}
+        li {{ margin-bottom: 8px; }}
+        blockquote {{
+            margin: 0 0 16px 0;
+            padding: 12px 20px;
+            border-left: 4px solid #e0e0e0;
+            background-color: #f9f9f9;
+            color: #555;
+        }}
+        code {{
+            font-family: 'SF Mono', Monaco, 'Courier New', monospace;
+            font-size: 13px;
+            background-color: #f4f4f4;
+            padding: 2px 6px;
+            border-radius: 4px;
+        }}
+        pre {{
+            margin: 0 0 16px 0;
+            padding: 16px;
+            background-color: #f4f4f4;
+            border-radius: 8px;
+            overflow-x: auto;
+        }}
+        pre code {{ padding: 0; background: none; }}
+        table {{ border-collapse: collapse; margin: 0 0 16px 0; width: 100%; }}
+        th, td {{ padding: 10px 12px; text-align: left; border-bottom: 1px solid #e0e0e0; }}
+        th {{ font-weight: 600; background-color: #f9f9f9; }}
+        hr {{ border: none; border-top: 1px solid #e0e0e0; margin: 24px 0; }}
+    </style>
+</head>
+<body>
+    <div class="email-body" style="padding: 0; margin: 0;">
+        {body_html}
+    </div>
+</body>
+</html>"""
 
 GRAPH_API_BASE = "https://graph.microsoft.com/v1.0/me"
 
@@ -416,6 +511,7 @@ def graph_create_draft(
     subject: str,
     body_text: str,
 ) -> dict[str, object]:
+    """Create an Outlook draft with professional HTML formatting."""
     def to_recipient(address: str) -> dict[str, object]:
         return {"emailAddress": {"address": address}}
 
@@ -425,13 +521,17 @@ def graph_create_draft(
     if not to_list:
         raise GraphApiError("to recipients are required.")
 
+    # Convert markdown to professional HTML
+    body_html_content = _markdown_to_html(body_text)
+    body_html = _build_html_email(body_html_content)
+
     _, payload = _graph_request(
         method="POST",
         url=f"{GRAPH_API_BASE}/messages",
         access_token=access_token,
         json_body={
             "subject": str(subject or ""),
-            "body": {"contentType": "Text", "content": str(body_text or "")},
+            "body": {"contentType": "HTML", "content": body_html},
             "toRecipients": [to_recipient(addr) for addr in to_list],
             **({"ccRecipients": [to_recipient(addr) for addr in cc_list]} if cc_list else {}),
             **({"bccRecipients": [to_recipient(addr) for addr in bcc_list]} if bcc_list else {}),

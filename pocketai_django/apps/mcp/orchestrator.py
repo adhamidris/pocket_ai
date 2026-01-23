@@ -382,6 +382,11 @@ class McpOrchestratorService:
                 "mcp_search_tools",
                 "mcp_call_tool",
                 PORTAL_BLOCK_TOOL_NAME,
+                "email_search",
+                "email_get_message",
+                "email_get_thread",
+                "email_create_draft",
+                "email_send_draft",
             }
             internal_tool_defs = [
                 tool_def for tool_def in internal_tool_defs if self._tool_schema_name(tool_def) in allowed
@@ -1505,6 +1510,11 @@ class McpOrchestratorService:
                                         else:
                                             call_start = time.perf_counter()
                                             is_email_tool = self._is_email_tool(tool_name)
+                                            effective_arguments = (
+                                                self._sanitize_email_tool_arguments(tool_name, arguments)
+                                                if is_email_tool
+                                                else arguments
+                                            )
                                             internal_event_payload = {
                                                 "event_id": tool_event_id,
                                                 "phase": "started",
@@ -1517,11 +1527,11 @@ class McpOrchestratorService:
                                             # user-facing results via dedicated blocks (attachments, etc.)
                                             # rather than surfacing full tool arguments.
                                             if is_email_tool:
-                                                email_input = self._email_tool_event_input(tool_name, arguments)
+                                                email_input = self._email_tool_event_input(tool_name, effective_arguments)
                                                 if email_input:
                                                     internal_event_payload["input"] = email_input
                                             elif tool_name in {"mcp_search_tools", "search_knowledge", "search_conversation_files"}:
-                                                query_value = arguments.get("query")
+                                                query_value = effective_arguments.get("query") if isinstance(effective_arguments, Mapping) else None
                                                 if isinstance(query_value, str):
                                                     query_text = query_value.strip()
                                                 elif query_value is not None:
@@ -1539,11 +1549,23 @@ class McpOrchestratorService:
                                                     logger.exception("mcp portal tool event start callback failed")
                                             tool_result = None
                                             if tool_name == "email_send_draft":
-                                                draft_id = str(arguments.get("draft_id") or arguments.get("draftId") or "").strip()
+                                                draft_id = str(
+                                                    effective_arguments.get("draft_id") or effective_arguments.get("draftId") or ""
+                                                ).strip()
                                                 email_account = self._resolve_email_account_for_tool_call(
                                                     conversation=conversation,
-                                                    arguments=arguments,
+                                                    arguments=effective_arguments,
                                                 )
+                                                if self._looks_like_placeholder_draft_id(draft_id) or not draft_id:
+                                                    pending = self._pending_email_draft_for_conversation(
+                                                        conversation=conversation,
+                                                        email_account_id=getattr(email_account, "id", None) if email_account else None,
+                                                    )
+                                                    if pending:
+                                                        effective_arguments = dict(effective_arguments)
+                                                        effective_arguments.pop("draftId", None)
+                                                        effective_arguments["draft_id"] = pending["draft_id"]
+                                                        draft_id = pending["draft_id"]
                                                 approval_needed = False
                                                 approval_reason = "draft_plus_approval_default"
                                                 if email_account and draft_id:
@@ -1558,7 +1580,7 @@ class McpOrchestratorService:
                                                         tool_name=tool_name,
                                                         tool_call_id=tool_call_id,
                                                         tool_event_id=tool_event_id,
-                                                        arguments=arguments,
+                                                        arguments=effective_arguments,
                                                         reason=approval_reason,
                                                         on_tool_event=on_tool_event,
                                                     )
@@ -1568,7 +1590,7 @@ class McpOrchestratorService:
                                                 if tool_result is None:
                                                     tool_result = mcp_tools.execute_tool(
                                                         tool_name,
-                                                        arguments,
+                                                        effective_arguments,
                                                         conversation=conversation,
                                                         context=tool_context,
                                                     )
@@ -1578,13 +1600,41 @@ class McpOrchestratorService:
                                                             email_account=email_account,
                                                             tool_result=tool_result,
                                                         )
+                                                        status_value = str(tool_result.get("status") or "").strip().lower()
+                                                        if status_value == "ok":
+                                                            resolved_draft_id = str(
+                                                                tool_result.get("draft_id")
+                                                                or tool_result.get("draftId")
+                                                                or draft_id
+                                                            ).strip()
+                                                            self._clear_pending_email_draft(
+                                                                conversation=conversation,
+                                                                email_account_id=getattr(email_account, "id", None),
+                                                                draft_id=resolved_draft_id,
+                                                            )
                                             else:
                                                 tool_result = mcp_tools.execute_tool(
                                                     tool_name,
-                                                    arguments,
+                                                    effective_arguments,
                                                     conversation=conversation,
                                                     context=tool_context,
                                                 )
+                                                if tool_name == "email_create_draft" and isinstance(tool_result, Mapping):
+                                                    status_value = str(tool_result.get("status") or "").strip().lower()
+                                                    if status_value == "ok":
+                                                        account_id = self._try_parse_uuid(
+                                                            str(tool_result.get("email_account_id") or "").strip()
+                                                        )
+                                                        draft_id = str(tool_result.get("draft_id") or "").strip()
+                                                        if account_id and draft_id:
+                                                            self._set_pending_email_draft(
+                                                                conversation=conversation,
+                                                                email_account_id=account_id,
+                                                                provider=str(tool_result.get("provider") or ""),
+                                                                draft_id=draft_id,
+                                                                message_id=str(tool_result.get("message_id") or "").strip(),
+                                                                thread_id=str(tool_result.get("thread_id") or "").strip(),
+                                                            )
                                 except ToolConstraintError as exc:
                                     structured_log(
                                         "mcp",
@@ -3189,6 +3239,117 @@ class McpOrchestratorService:
     def _is_email_tool(tool_name: str) -> bool:
         return str(tool_name or "").strip().lower().startswith("email_")
 
+    _EMAIL_PENDING_DRAFT_META_KEY = "email_pending_draft"
+
+    @staticmethod
+    def _try_parse_uuid(value: str) -> uuid.UUID | None:
+        try:
+            return uuid.UUID(str(value))
+        except (TypeError, ValueError):
+            return None
+
+    def _sanitize_email_tool_arguments(self, tool_name: str, arguments: Mapping[str, object]) -> dict[str, object]:
+        """
+        Email tools support an optional `email_account_id`, but LLMs sometimes
+        hallucinate placeholder IDs (e.g. "email-1") which would otherwise
+        short-circuit execution with a validation error.
+        """
+
+        effective: dict[str, object] = dict(arguments) if isinstance(arguments, Mapping) else {}
+        if not self._is_email_tool(tool_name):
+            return effective
+
+        raw_account_id = str(effective.get("email_account_id") or effective.get("emailAccountId") or "").strip()
+        if raw_account_id and self._try_parse_uuid(raw_account_id) is None:
+            effective.pop("email_account_id", None)
+            effective.pop("emailAccountId", None)
+
+        return effective
+
+    @staticmethod
+    def _looks_like_placeholder_draft_id(value: str) -> bool:
+        lowered = (value or "").strip().lower()
+        if not lowered:
+            return False
+        if lowered in {"draft", "draft_id", "draftid"}:
+            return True
+        if lowered.startswith(("draft-", "draft_")) and lowered[6:].isdigit():
+            return True
+        return False
+
+    def _pending_email_draft_for_conversation(
+        self,
+        *,
+        conversation: Conversation,
+        email_account_id: uuid.UUID | None,
+    ) -> dict[str, str] | None:
+        meta = conversation.metadata if isinstance(getattr(conversation, "metadata", None), Mapping) else {}
+        pending = meta.get(self._EMAIL_PENDING_DRAFT_META_KEY)
+        if not isinstance(pending, Mapping):
+            return None
+
+        draft_id = str(pending.get("draft_id") or "").strip()
+        if not draft_id:
+            return None
+
+        account_snapshot = self._try_parse_uuid(str(pending.get("email_account_id") or "").strip())
+        if email_account_id and account_snapshot and account_snapshot != email_account_id:
+            return None
+
+        return {
+            "draft_id": draft_id,
+            "email_account_id": str(account_snapshot) if account_snapshot else "",
+        }
+
+    def _set_pending_email_draft(
+        self,
+        *,
+        conversation: Conversation,
+        email_account_id: uuid.UUID,
+        provider: str,
+        draft_id: str,
+        message_id: str,
+        thread_id: str,
+    ) -> None:
+        business_id = getattr(conversation, "business_profile_id", None)
+        with tenant_context(business_id):
+            meta = dict(conversation.metadata) if isinstance(getattr(conversation, "metadata", None), Mapping) else {}
+            meta[self._EMAIL_PENDING_DRAFT_META_KEY] = {
+                "email_account_id": str(email_account_id),
+                "provider": str(provider or ""),
+                "draft_id": str(draft_id or ""),
+                "message_id": str(message_id or ""),
+                "thread_id": str(thread_id or ""),
+                "created_at": timezone.now().isoformat(),
+            }
+            conversation.metadata = meta
+            conversation.save(update_fields=["metadata", "last_activity_at"])
+
+    def _clear_pending_email_draft(
+        self,
+        *,
+        conversation: Conversation,
+        email_account_id: uuid.UUID | None,
+        draft_id: str | None,
+    ) -> None:
+        if not draft_id:
+            return
+        business_id = getattr(conversation, "business_profile_id", None)
+        with tenant_context(business_id):
+            meta = dict(conversation.metadata) if isinstance(getattr(conversation, "metadata", None), Mapping) else {}
+            pending = meta.get(self._EMAIL_PENDING_DRAFT_META_KEY)
+            if not isinstance(pending, Mapping):
+                return
+            pending_draft_id = str(pending.get("draft_id") or "").strip()
+            if pending_draft_id and pending_draft_id != str(draft_id):
+                return
+            pending_account_id = self._try_parse_uuid(str(pending.get("email_account_id") or "").strip())
+            if email_account_id and pending_account_id and pending_account_id != email_account_id:
+                return
+            meta.pop(self._EMAIL_PENDING_DRAFT_META_KEY, None)
+            conversation.metadata = meta
+            conversation.save(update_fields=["metadata", "last_activity_at"])
+
     def _email_tool_event_input(self, tool_name: str, arguments: Mapping[str, object]) -> dict[str, object] | None:
         normalized = str(tool_name or "").strip().lower()
         if normalized == "email_search":
@@ -3325,21 +3486,40 @@ class McpOrchestratorService:
             actor_user_id = None
             if isinstance(meta, Mapping):
                 actor_user_id = meta.get("actor_user_id") or meta.get("actorUserId") or meta.get("user_id") or meta.get("userId")
-            if not actor_user_id:
-                return None
-            try:
-                user_uuid = uuid.UUID(str(actor_user_id))
-            except (TypeError, ValueError):
-                return None
-            return (
+            
+            if actor_user_id:
+                try:
+                    user_uuid = uuid.UUID(str(actor_user_id))
+                except (TypeError, ValueError):
+                    user_uuid = None
+                
+                if user_uuid:
+                    return (
+                        EmailAccount.objects.filter(
+                            business_profile_id=business_id,
+                            user_id=user_uuid,
+                            status=EmailAccountStatus.CONNECTED,
+                        )
+                        .select_related("business_profile", "user")
+                        .first()
+                    )
+
+            # Fallback: if no actor_user_id is present (e.g. anonymous test session),
+            # check if the business has exactly one connected email account.
+            # This handles the common "Owner testing their own agent" case without
+            # risking data leakage in multi-user environments.
+            candidates = list(
                 EmailAccount.objects.filter(
                     business_profile_id=business_id,
-                    user_id=user_uuid,
                     status=EmailAccountStatus.CONNECTED,
                 )
                 .select_related("business_profile", "user")
-                .first()
+                [:2]
             )
+            if len(candidates) == 1:
+                return candidates[0]
+            
+            return None
 
     def _effective_email_send_mode(
         self,
@@ -5850,6 +6030,55 @@ class McpOrchestratorService:
         tool_name: str,
         payload: Mapping[str, object],
         *,
+        max_snippets: int = 50,
+        snippet_content_chars: int = 8000,
+        max_rows: int = 100,
+        max_contributions: int = 50,
+        max_cells: int = 50,
+        max_cells_exact: int = 100,
+    ) -> dict[str, object]:
+        """
+        Pass through tool results with minimal modification.
+
+        Only truncate if the result exceeds a large threshold.
+        The old approach of aggressive compaction caused tools to break
+        (e.g., email search results being filtered out, causing LLM hallucinations).
+        """
+        MAX_RESULT_CHARS = 80_000  # 80KB is plenty for any tool result
+
+        # Start with a copy of the full payload
+        result = dict(payload)
+
+        # Ensure tool name is present
+        if "tool" not in result:
+            result["tool"] = tool_name
+
+        # Check total size and truncate only if necessary
+        try:
+            result_json = json.dumps(result, ensure_ascii=False, default=str)
+            if len(result_json) > MAX_RESULT_CHARS:
+                # Only truncate large text fields, keep structure intact
+                result = self._truncate_large_fields(result, MAX_RESULT_CHARS)
+        except (TypeError, ValueError):
+            pass  # If serialization fails, return as-is
+
+        return result
+
+    def _truncate_large_fields(self, obj: Any, max_total: int, max_field: int = 10000) -> Any:
+        """Recursively truncate only large string fields."""
+        if isinstance(obj, str):
+            return obj[:max_field] + "..." if len(obj) > max_field else obj
+        if isinstance(obj, dict):
+            return {k: self._truncate_large_fields(v, max_total, max_field) for k, v in obj.items()}
+        if isinstance(obj, list):
+            return [self._truncate_large_fields(item, max_total, max_field) for item in obj]
+        return obj
+
+    def _legacy_compact_tool_payload_for_prompt(
+        self,
+        tool_name: str,
+        payload: Mapping[str, object],
+        *,
         max_snippets: int,
         snippet_content_chars: int,
         max_rows: int,
@@ -5857,6 +6086,7 @@ class McpOrchestratorService:
         max_cells: int = 12,
         max_cells_exact: int = 60,
     ) -> dict[str, object]:
+        """Legacy compaction function - kept for reference but no longer used."""
         normalized_name = (tool_name or payload.get("tool") or "").strip()
         compact: dict[str, object] = {"tool": normalized_name or payload.get("tool") or tool_name}
         status = payload.get("status")
@@ -6755,6 +6985,86 @@ class McpOrchestratorService:
                     if entry:
                         results_out.append(entry)
             compact["results"] = results_out
+            compact["prompt_compact"] = True
+            return compact
+
+        # Handle email tools to ensure results reach the LLM
+        if normalized_name == "email_search":
+            for key in ("provider", "email_account_id", "query", "result_size_estimate", "next_page_token"):
+                value = payload.get(key)
+                if value is not None and value != "":
+                    compact[key] = value
+            raw_results = payload.get("results")
+            results_out: list[dict[str, object]] = []
+            if isinstance(raw_results, list):
+                for result in raw_results[: max(1, max_snippets)]:
+                    if not isinstance(result, Mapping):
+                        continue
+                    entry: dict[str, object] = {}
+                    for key in ("message_id", "thread_id", "snippet", "subject", "from", "to", "date"):
+                        value = result.get(key)
+                        if value is not None and value != "":
+                            if key == "snippet":
+                                entry[key] = self._clip_text(str(value), 200)
+                            else:
+                                entry[key] = value
+                    if entry:
+                        results_out.append(entry)
+            compact["results"] = results_out
+            compact["prompt_compact"] = True
+            return compact
+
+        if normalized_name == "email_get_message":
+            for key in ("provider", "email_account_id", "message_id", "thread_id", "snippet", "labels"):
+                value = payload.get(key)
+                if value is not None and value != "":
+                    compact[key] = value
+            headers = payload.get("headers")
+            if isinstance(headers, Mapping):
+                compact["headers"] = dict(headers)
+            body_text = payload.get("body_text")
+            if isinstance(body_text, str) and body_text.strip():
+                compact["body_text"] = self._clip_text(body_text.strip(), int(snippet_content_chars) * 2)
+            if payload.get("body_truncated"):
+                compact["body_truncated"] = True
+            compact["prompt_compact"] = True
+            return compact
+
+        if normalized_name == "email_get_thread":
+            for key in ("provider", "email_account_id", "thread_id", "message_count", "truncated"):
+                value = payload.get(key)
+                if value is not None and value != "":
+                    compact[key] = value
+            raw_messages = payload.get("messages")
+            messages_out: list[dict[str, object]] = []
+            if isinstance(raw_messages, list):
+                for msg in raw_messages[: max(1, max_snippets)]:
+                    if not isinstance(msg, Mapping):
+                        continue
+                    entry: dict[str, object] = {}
+                    for key in ("message_id", "thread_id", "snippet", "labels"):
+                        value = msg.get(key)
+                        if value is not None and value != "":
+                            entry[key] = value
+                    headers = msg.get("headers")
+                    if isinstance(headers, Mapping):
+                        entry["headers"] = dict(headers)
+                    body_text = msg.get("body_text")
+                    if isinstance(body_text, str) and body_text.strip():
+                        entry["body_text"] = self._clip_text(body_text.strip(), int(snippet_content_chars))
+                    if msg.get("body_truncated"):
+                        entry["body_truncated"] = True
+                    if entry:
+                        messages_out.append(entry)
+            compact["messages"] = messages_out
+            compact["prompt_compact"] = True
+            return compact
+
+        if normalized_name in ("email_create_draft", "email_send_draft"):
+            for key in ("provider", "email_account_id", "draft_id", "message_id", "thread_id"):
+                value = payload.get(key)
+                if value is not None and value != "":
+                    compact[key] = value
             compact["prompt_compact"] = True
             return compact
 

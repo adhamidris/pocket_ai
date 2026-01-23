@@ -955,15 +955,18 @@ TOOL_DEFINITIONS: tuple[Mapping[str, object], ...] = (
         name="email_send_draft",
         description="Send a previously created draft (may require approval depending on policy).",
         properties={
-            "draft_id": {"type": "string"},
+            "draft_id": {
+                "type": "string",
+                "description": "Optional: provider draft id returned by email_create_draft. If omitted, the system will try to send the most recent pending draft in this conversation.",
+            },
             "__ui": {
                 "type": "object",
                 "description": "UI-only metadata (ignored by the tool).",
                 "properties": {"spinner_text": {"type": "string"}},
             },
-            "email_account_id": {"type": "string", "description": "Optional: specific connected mailbox id."},
+            "email_account_id": {"type": "string", "description": "Optional: UUID of a specific connected mailbox id (usually omit)."},
         },
-        required=("draft_id",),
+        required=(),
     ),
 )
 

@@ -319,7 +319,15 @@ def email_oauth_start(request: HttpRequest, provider_key: str) -> HttpResponse:
     challenge = _pkce_challenge(code_verifier)
 
     callback_path = reverse("api:email_oauth_callback", kwargs={"provider_key": str(provider_key).strip().lower()})
-    callback_url = request.build_absolute_uri(callback_path)
+    
+    # Allow override via settings, useful for local dev when request.get_host() (e.g. 8000)
+    # differs from the registered OAuth redirect URI (e.g. 3000).
+    base_url = str(getattr(settings, "API_PUBLIC_URL", "") or "").strip()
+    if base_url:
+        # Strip trailing slash from base and ensure path starts with slash
+        callback_url = f"{base_url.rstrip('/')}{callback_path}"
+    else:
+        callback_url = request.build_absolute_uri(callback_path)
 
     EmailOAuthState.objects.create(
         business_profile=business,
