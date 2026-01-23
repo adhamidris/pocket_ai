@@ -968,10 +968,23 @@ def bootstrap_session(request: HttpRequest) -> JsonResponse:
     business_slug = (payload.get("business_slug") or payload.get("businessSlug") or "").strip()
     agent_slug = (payload.get("agent_slug") or payload.get("agentSlug") or "").strip()
     existing_session_token = (payload.get("session_token") or payload.get("sessionToken") or "").strip() or None
-    metadata = payload.get("metadata") or {}
+    metadata_raw = payload.get("metadata") or {}
+    metadata: dict[str, object] = dict(metadata_raw) if isinstance(metadata_raw, Mapping) else {}
 
     if not business_slug or not agent_slug:
         return _json_error("validation_error", "business_slug and agent_slug are required.")
+
+    # If an authenticated tenant user is bootstrapping the portal, attach their id
+    # to the session metadata so internal tools can resolve per-user integrations.
+    try:
+        user = getattr(request, "user", None)
+        if user and user.is_authenticated:
+            business, _agent = service.resolve_handle(business_slug, agent_slug)
+            allowed = bool(user.is_staff or user.business_profiles.filter(id=business.id).exists())
+            if allowed and "actor_user_id" not in metadata and "actorUserId" not in metadata:
+                metadata["actor_user_id"] = str(user.id)
+    except Exception:  # pragma: no cover - best effort only
+        pass
 
     try:
         result = service.bootstrap_session(
@@ -3168,10 +3181,23 @@ def create_portal_session(request: HttpRequest) -> JsonResponse:
 
     business_slug = (payload.get("business_slug") or payload.get("businessSlug") or "").strip()
     agent_slug = (payload.get("agent_slug") or payload.get("agentSlug") or "").strip()
-    metadata = payload.get("metadata") or {}
+    metadata_raw = payload.get("metadata") or {}
+    metadata: dict[str, object] = dict(metadata_raw) if isinstance(metadata_raw, Mapping) else {}
 
     if not business_slug or not agent_slug:
         return _json_error("validation_error", "business_slug and agent_slug are required.")
+
+    # If the request is from an authenticated tenant user and they belong to the business,
+    # attach actor_user_id so per-user integrations can be resolved safely.
+    try:
+        user = getattr(request, "user", None)
+        if user and user.is_authenticated:
+            business, _agent = service.resolve_handle(business_slug, agent_slug)
+            allowed = bool(user.is_staff or user.business_profiles.filter(id=business.id).exists())
+            if allowed and "actor_user_id" not in metadata and "actorUserId" not in metadata:
+                metadata["actor_user_id"] = str(user.id)
+    except Exception:  # pragma: no cover - best effort only
+        pass
 
     try:
         result = service.create_new_session(

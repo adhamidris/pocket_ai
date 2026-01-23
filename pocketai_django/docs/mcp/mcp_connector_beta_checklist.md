@@ -12,6 +12,13 @@
   - Failure: error message is shown and stored (without leaking secrets).
   - Rate limit (429): UI shows a cooldown/countdown before allowing another test.
 
+## Auto Test Jobs (Production)
+- After creating or updating a connection (including OAuth), the platform should enqueue an automatic “Test connection” job.
+- Ensure the worker is running in production as a long-lived process:
+  - `./venv/bin/python manage.py run_mcp_connection_test_jobs`
+  - For a one-off drain: `./venv/bin/python manage.py run_mcp_connection_test_jobs --once --limit 50`
+- Expected UX: connections briefly show “Testing” and then populate tool cache without the user clicking **Test**.
+
 ## Agent Assignment
 - Open **Agents** for a connection and opt an agent out, then refresh and confirm:
   - Assigned count decreases.

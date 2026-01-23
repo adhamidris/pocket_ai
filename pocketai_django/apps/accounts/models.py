@@ -516,6 +516,46 @@ class IntegrationCredentialEventType(models.TextChoices):
     ROTATION_REQUIRED = "rotation_required", "Rotation Required"
 
 
+class EmailAccountProvider(models.TextChoices):
+    GOOGLE = "google", "Google (Gmail/Workspace)"
+    MICROSOFT = "microsoft", "Microsoft (Outlook/M365)"
+
+
+class EmailAccountStatus(models.TextChoices):
+    DISCONNECTED = "disconnected", "Disconnected"
+    CONNECTING = "connecting", "Connecting"
+    CONNECTED = "connected", "Connected"
+    ERROR = "error", "Error"
+
+
+class EmailSendMode(models.TextChoices):
+    DRAFT_APPROVAL = "draft_approval", "Draft + approval"
+    AUTO_SEND = "auto_send", "Auto-send"
+
+
+class EmailAccountAuditAction(models.TextChoices):
+    CONNECTED = "connected", "Connected"
+    UPDATED = "updated", "Updated"
+    DISCONNECTED = "disconnected", "Disconnected"
+    SEARCHED = "searched", "Searched"
+    READ_MESSAGE = "read_message", "Read message"
+    READ_THREAD = "read_thread", "Read thread"
+    DRAFT_CREATED = "draft_created", "Draft created"
+    SEND_REQUESTED = "send_requested", "Send requested"
+    SEND_APPROVED = "send_approved", "Send approved"
+    SEND_DENIED = "send_denied", "Send denied"
+    SENT = "sent", "Sent"
+    ERROR = "error", "Error"
+
+
+class EmailAccountHealthJobStatus(models.TextChoices):
+    QUEUED = "queued", "Queued"
+    RUNNING = "running", "Running"
+    SUCCEEDED = "succeeded", "Succeeded"
+    FAILED = "failed", "Failed"
+    CANCELLED = "cancelled", "Cancelled"
+
+
 class McpConnectionSourceType(models.TextChoices):
     MARKETPLACE = "marketplace", "Marketplace"
     MANUAL = "manual", "Manual"
@@ -2000,6 +2040,302 @@ class IntegrationCredentialEvent(models.Model):
         return f"{self.integration_id}:{self.event_type}"
 
 
+class EmailAccount(models.Model):
+    """
+    Represents a first-party email account connection (Google/Microsoft) for a tenant user.
+
+    Privacy note: this model stores OAuth tokens encrypted at rest. Do not log raw
+    credentials or full email contents in audit events.
+    """
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    business_profile = models.ForeignKey(
+        BusinessProfile,
+        related_name="email_accounts",
+        on_delete=models.CASCADE,
+    )
+    user = models.ForeignKey(
+        User,
+        related_name="email_accounts",
+        on_delete=models.CASCADE,
+    )
+    provider = models.CharField(
+        max_length=16,
+        choices=EmailAccountProvider.choices,
+    )
+    email_address = models.EmailField(max_length=255, blank=True, default="", db_index=True)
+    external_account_id = models.CharField(max_length=255, blank=True, default="")
+
+    status = models.CharField(
+        max_length=16,
+        choices=EmailAccountStatus.choices,
+        default=EmailAccountStatus.DISCONNECTED,
+    )
+    send_mode = models.CharField(
+        max_length=24,
+        choices=EmailSendMode.choices,
+        default=EmailSendMode.DRAFT_APPROVAL,
+        help_text="Default send behavior for this connected mailbox.",
+    )
+    policy_config = models.JSONField(default=dict, blank=True)
+
+    credentials_encrypted = models.TextField(blank=True, default="")
+    credentials_key_version = models.PositiveSmallIntegerField(default=1)
+    credentials_last_rotated_at = models.DateTimeField(null=True, blank=True)
+    credential_error_count = models.PositiveSmallIntegerField(default=0)
+
+    metadata = models.JSONField(default=dict, blank=True)
+    last_error = models.TextField(blank=True, default="")
+    last_health_checked_at = models.DateTimeField(null=True, blank=True, db_index=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = "accounts_email_account"
+        ordering = ("-created_at",)
+        constraints = [
+            models.UniqueConstraint(
+                fields=["business_profile", "user"],
+                name="email_account_unique_user",
+            ),
+        ]
+        indexes = [
+            models.Index(fields=["business_profile", "status"], name="email_acct_biz_status_idx"),
+            models.Index(fields=["business_profile", "provider"], name="email_acct_biz_provider_idx"),
+        ]
+
+    def __str__(self) -> str:  # pragma: no cover - human readable only
+        label = self.email_address or self.external_account_id or "unlinked"
+        return f"{label} ({self.provider})"
+
+    def _credential_tenant(self) -> str:
+        business_id = self.business_profile_id or getattr(self.business_profile, "id", None)
+        if not business_id:
+            raise ValueError("Business profile must be saved before storing credentials.")
+        return str(business_id)
+
+    def _cache_credentials(self, payload: dict[str, Any]) -> None:
+        self._cached_credentials = dict(payload)
+
+    def _get_cached_credentials(self) -> dict[str, Any] | None:
+        return getattr(self, "_cached_credentials", None)
+
+    def _clear_cached_credentials(self) -> None:
+        if hasattr(self, "_cached_credentials"):
+            delattr(self, "_cached_credentials")
+
+    @property
+    def credentials(self) -> dict[str, Any]:
+        cached = self._get_cached_credentials()
+        if cached is not None:
+            return dict(cached)
+        tenant = self.business_profile_id or getattr(self.business_profile, "id", None)
+        if not tenant or not self.credentials_encrypted:
+            self._cache_credentials({})
+            return {}
+        manager = get_secret_manager()
+        try:
+            payload = manager.decrypt(self.credentials_encrypted, tenant=str(tenant))
+        except IntegrationSecretError as exc:
+            logger.warning("email_account_credentials_decrypt_failed account=%s error=%s", self.id, exc)
+            payload = {}
+        self._cache_credentials(payload)
+        return dict(payload)
+
+    @credentials.setter
+    def credentials(self, value: dict[str, Any] | None) -> None:
+        payload = dict(value or {})
+        if not payload:
+            self.credentials_encrypted = ""
+            self.credentials_key_version = 1
+            self.credentials_last_rotated_at = None
+            self.credential_error_count = 0
+            self._cache_credentials({})
+            return
+        manager = get_secret_manager()
+        ciphertext = manager.encrypt(payload, tenant=self._credential_tenant())
+        self.credentials_encrypted = ciphertext
+        self.credentials_key_version = manager.key_version
+        self.credentials_last_rotated_at = timezone.now()
+        self.credential_error_count = 0
+        self._cache_credentials(payload)
+
+    def has_credentials(self) -> bool:
+        return bool(self.credentials_encrypted)
+
+    def credentials_need_rotation(self) -> bool:
+        return credentials_are_stale(self.credentials_last_rotated_at)
+
+    def refresh_from_db(self, *args: Any, **kwargs: Any) -> None:
+        super().refresh_from_db(*args, **kwargs)
+        self._clear_cached_credentials()
+
+
+class AgentEmailAccountPolicyOverride(models.Model):
+    """
+    Per-agent overrides for how email tools behave for a specific mailbox.
+
+    This is used to support "Auto-send per connection" with an optional per-agent override.
+    """
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    agent_profile = models.ForeignKey(
+        AgentProfile,
+        related_name="email_policy_overrides",
+        on_delete=models.CASCADE,
+    )
+    email_account = models.ForeignKey(
+        EmailAccount,
+        related_name="agent_policy_overrides",
+        on_delete=models.CASCADE,
+    )
+    send_mode = models.CharField(
+        max_length=24,
+        choices=EmailSendMode.choices,
+        null=True,
+        blank=True,
+        help_text="Override the email account default. NULL = inherit from EmailAccount.",
+    )
+    policy_config = models.JSONField(default=dict, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = "accounts_agent_email_policy_override"
+        ordering = ("-created_at",)
+        constraints = [
+            models.UniqueConstraint(
+                fields=["agent_profile", "email_account"],
+                name="agent_email_policy_override_uniq",
+            )
+        ]
+        indexes = [
+            models.Index(fields=["agent_profile", "email_account"], name="agent_email_ov_agent_acct_idx"),
+        ]
+
+    def __str__(self) -> str:  # pragma: no cover
+        return f"{self.agent_profile_id}:{self.email_account_id}"
+
+
+class EmailAccountAuditEvent(models.Model):
+    """
+    Immutable log of key email connector events for compliance and debugging.
+
+    IMPORTANT: Do not store raw email bodies or OAuth tokens in metadata.
+    """
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    business_profile = models.ForeignKey(
+        BusinessProfile,
+        related_name="email_audit_events",
+        on_delete=models.CASCADE,
+    )
+    email_account = models.ForeignKey(
+        EmailAccount,
+        related_name="audit_events",
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+    )
+    email_account_id_snapshot = models.UUIDField(
+        null=True,
+        blank=True,
+        db_index=True,
+        help_text="Snapshot of the EmailAccount UUID for retention when the account is deleted.",
+    )
+    actor_user = models.ForeignKey(
+        User,
+        related_name="email_audit_events",
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+    )
+    actor_agent = models.ForeignKey(
+        AgentProfile,
+        related_name="email_audit_events",
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+    )
+    action = models.CharField(max_length=32, choices=EmailAccountAuditAction.choices)
+    description = models.TextField(blank=True)
+    metadata = models.JSONField(default=dict, blank=True)
+    occurred_at = models.DateTimeField(default=timezone.now, db_index=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = "accounts_email_account_audit_event"
+        ordering = ("-occurred_at",)
+        indexes = [
+            models.Index(fields=["email_account", "action"], name="email_audit_action_idx"),
+            models.Index(fields=["email_account_id_snapshot", "action"], name="email_audit_snap_action_idx"),
+        ]
+
+    def __str__(self) -> str:  # pragma: no cover - human readable only
+        ref = self.email_account_id_snapshot or getattr(self.email_account, "id", None) or "unknown-email-account"
+        return f"{ref} - {self.get_action_display()}"
+
+
+class EmailAccountHealthJob(models.Model):
+    """
+    Background job to verify/refresh an EmailAccount OAuth connection.
+
+    Used for production-friendly "health checks" (status updates) without relying
+    on in-memory queues.
+    """
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    business_profile = models.ForeignKey(
+        BusinessProfile,
+        related_name="email_account_health_jobs",
+        on_delete=models.CASCADE,
+    )
+    email_account = models.ForeignKey(
+        EmailAccount,
+        related_name="health_jobs",
+        on_delete=models.CASCADE,
+    )
+    status = models.CharField(
+        max_length=24,
+        choices=EmailAccountHealthJobStatus.choices,
+        default=EmailAccountHealthJobStatus.QUEUED,
+    )
+    trigger = models.CharField(max_length=48, blank=True, default="")
+    attempt_count = models.PositiveIntegerField(default=0)
+    max_attempts = models.PositiveIntegerField(default=5)
+    run_after = models.DateTimeField(null=True, blank=True)
+    lease_expires_at = models.DateTimeField(null=True, blank=True)
+    started_at = models.DateTimeField(null=True, blank=True)
+    finished_at = models.DateTimeField(null=True, blank=True)
+    error_detail = models.TextField(blank=True, default="")
+    payload = models.JSONField(default=dict, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = "accounts_email_account_health_job"
+        ordering = ("-created_at",)
+        indexes = [
+            models.Index(fields=["status", "run_after"], name="email_health_run_after_idx"),
+            models.Index(fields=["status", "lease_expires_at"], name="email_health_lease_idx"),
+            models.Index(fields=["email_account", "status"], name="email_health_acct_status_idx"),
+            models.Index(fields=["business_profile", "status"], name="email_health_biz_status_idx"),
+        ]
+
+    def __str__(self) -> str:  # pragma: no cover
+        return f"{self.email_account_id}:{self.get_status_display()}"
+
+    def mark_cancelled(self, *, reason: str = "") -> None:
+        now = timezone.now()
+        self.status = EmailAccountHealthJobStatus.CANCELLED
+        self.finished_at = now
+        if reason:
+            self.error_detail = (reason or "")[:500]
+        self.lease_expires_at = None
+        self.run_after = None
+        self.save(update_fields=["status", "finished_at", "error_detail", "lease_expires_at", "run_after", "updated_at"])
+
+
 class OAuthProvider(models.Model):
     """
     Stores OAuth app credentials for marketplace OAuth flows.
@@ -2113,6 +2449,48 @@ class OAuthState(models.Model):
 
     def __str__(self) -> str:  # pragma: no cover - human readable only
         return f"OAuthState<{self.provider_id}:{self.marketplace_key}>"
+
+
+class EmailOAuthState(models.Model):
+    """Ephemeral state record for email connector OAuth handshakes (CSRF + PKCE)."""
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    business_profile = models.ForeignKey(
+        BusinessProfile,
+        related_name="email_oauth_states",
+        on_delete=models.CASCADE,
+    )
+    user = models.ForeignKey(
+        User,
+        related_name="email_oauth_states",
+        on_delete=models.CASCADE,
+    )
+    provider = models.ForeignKey(
+        OAuthProvider,
+        related_name="email_oauth_states",
+        on_delete=models.CASCADE,
+        help_text="OAuth provider configuration (e.g., google_email, microsoft_email).",
+    )
+    email_provider = models.CharField(max_length=16, choices=EmailAccountProvider.choices)
+    state_token = models.CharField(max_length=128, unique=True)
+    redirect_after = models.URLField(max_length=500, blank=True, default="")
+    redirect_uri = models.URLField(max_length=500, blank=True, default="")
+    code_verifier = models.CharField(max_length=256, blank=True, default="")
+    created_at = models.DateTimeField(auto_now_add=True)
+    expires_at = models.DateTimeField()
+    is_used = models.BooleanField(default=False)
+
+    class Meta:
+        db_table = "accounts_email_oauth_state"
+        ordering = ("-created_at",)
+        indexes = [
+            models.Index(fields=["expires_at"], name="email_oauth_exp_idx"),
+            models.Index(fields=["provider", "is_used"], name="email_oauth_prov_used_idx"),
+            models.Index(fields=["business_profile", "email_provider"], name="email_oauth_biz_prov_idx"),
+        ]
+
+    def __str__(self) -> str:  # pragma: no cover - human readable only
+        return f"EmailOAuthState<{self.email_provider}:{self.provider_id}>"
 
 
 class McpConnection(models.Model):

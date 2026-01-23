@@ -13,6 +13,7 @@ from datetime import timedelta
 
 from django.conf import settings
 from django.http import HttpRequest, JsonResponse
+from django.db.models import OuterRef, Subquery
 from django.utils import timezone
 from django.views.decorators.csrf import csrf_protect
 from django.views.decorators.http import require_http_methods
@@ -38,10 +39,15 @@ from apps.accounts.models import (
 )
 from apps.accounts.oauth_helpers import OAuthFlowError, ensure_fresh_oauth_credentials
 from apps.mcp.connectors import _infer_operation_type_from_tool_name
+from apps.mcp.models import McpConnectionTestJob, McpConnectionTestJobStatus
 from apps.mcp.remote_client import McpRemoteError, test_mcp_server
 
 
 logger = logging.getLogger(__name__)
+
+_MCP_SETUP_FIELDS_MAX_KEYS = 25
+_MCP_SETUP_FIELD_MAX_CHARS = 4096
+_MCP_SETUP_FIELDS_TOTAL_MAX_CHARS = 16384
 
 
 def _parse_json_body(request: HttpRequest) -> tuple[dict[str, Any] | None, JsonResponse | None]:
@@ -162,6 +168,83 @@ def _validate_mcp_server_url(value: str) -> tuple[str | None, str | None]:
             return None, "serverUrl must not resolve to a private or local network address."
 
     return raw, None
+
+
+def _marketplace_entry(marketplace_key: str) -> dict[str, Any] | None:
+    key = str(marketplace_key or "").strip()
+    if not key:
+        return None
+    for item in _mcp_marketplace_catalog():
+        if str(item.get("key") or "").strip() == key:
+            return item
+    return None
+
+
+def _extract_setup_fields(payload: Mapping[str, Any]) -> dict[str, Any] | None:
+    """
+    Extract optional setup fields from request payload.
+
+    Supports either top-level "setupFields" or legacy "metadata.setupFields".
+    """
+    direct = payload.get("setupFields")
+    if isinstance(direct, dict):
+        return direct
+    metadata = payload.get("metadata")
+    if isinstance(metadata, Mapping):
+        nested = metadata.get("setupFields")
+        if isinstance(nested, dict):
+            return nested
+    return None
+
+
+def _validate_setup_fields(
+    setup_fields: Mapping[str, Any],
+    *,
+    marketplace_key: str | None,
+) -> tuple[dict[str, str] | None, str | None]:
+    """
+    Validate + normalize marketplace setup fields.
+
+    Stored values are treated as sensitive and persisted encrypted (inside McpConnection.credentials).
+    """
+    entry = _marketplace_entry(marketplace_key or "")
+    if entry is None:
+        if marketplace_key:
+            return None, "marketplaceKey is invalid."
+        return None, "setupFields require a marketplaceKey."
+    allowed = entry.get("setupFields") if isinstance(entry, Mapping) else None
+    allowed_keys = [str(key).strip() for key in allowed if str(key).strip()] if isinstance(allowed, list) else []
+    allowed_set = set(allowed_keys)
+
+    if not allowed_set:
+        return None, "This MCP does not accept setup fields."
+
+    cleaned: dict[str, str] = {}
+    total_chars = 0
+    for raw_key, raw_value in setup_fields.items():
+        key = str(raw_key or "").strip()
+        if not key:
+            continue
+        if key not in allowed_set:
+            return None, f"Unknown setup field: {key}."
+
+        if raw_value is None:
+            continue
+        if not isinstance(raw_value, str):
+            return None, f"Setup field {key} must be a string."
+        value = raw_value.strip()
+        if not value:
+            continue
+        if len(value) > _MCP_SETUP_FIELD_MAX_CHARS:
+            return None, f"Setup field {key} is too long."
+        cleaned[key] = value
+        total_chars += len(value)
+        if total_chars > _MCP_SETUP_FIELDS_TOTAL_MAX_CHARS:
+            return None, "Setup fields payload is too large."
+        if len(cleaned) > _MCP_SETUP_FIELDS_MAX_KEYS:
+            return None, "Too many setup fields."
+
+    return cleaned, None
 
 
 def _mcp_auth_headers(connection: McpConnection) -> dict[str, str]:
@@ -305,10 +388,66 @@ def _serialize_mcp_connection(connection: McpConnection, *, business: BusinessPr
         "updatedAt": connection.updated_at.isoformat() if connection.updated_at else None,
     }
 
+    test_job = _serialize_mcp_connection_test_job(connection)
+    if test_job:
+        result["testJob"] = test_job
+
     if include_tool_settings:
         result["toolSettings"] = tool_settings_list
 
     return result
+
+
+def _serialize_mcp_connection_test_job(connection: McpConnection) -> dict[str, Any] | None:
+    """
+    Surface active background test jobs so the UI can show 'Testing…' without manual clicks.
+
+    Prefers annotated fields when present (list endpoint), falls back to a DB lookup otherwise.
+    """
+
+    status = getattr(connection, "active_test_job_status", None)
+    if isinstance(status, str) and status.strip():
+        job_id = getattr(connection, "active_test_job_id", None)
+        run_after = getattr(connection, "active_test_job_run_after", None)
+        lease_expires_at = getattr(connection, "active_test_job_lease_expires_at", None)
+        updated_at = getattr(connection, "active_test_job_updated_at", None)
+        return {
+            "id": str(job_id) if job_id else None,
+            "status": status,
+            "trigger": getattr(connection, "active_test_job_trigger", None),
+            "attemptCount": getattr(connection, "active_test_job_attempt_count", None),
+            "maxAttempts": getattr(connection, "active_test_job_max_attempts", None),
+            "runAfter": run_after.isoformat() if hasattr(run_after, "isoformat") and run_after else None,
+            "leaseExpiresAt": lease_expires_at.isoformat()
+            if hasattr(lease_expires_at, "isoformat") and lease_expires_at
+            else None,
+            "updatedAt": updated_at.isoformat() if hasattr(updated_at, "isoformat") and updated_at else None,
+        }
+
+    try:
+        job = (
+            McpConnectionTestJob.objects.filter(
+                connection=connection,
+                business_profile_id=connection.business_profile_id,
+                status__in=(McpConnectionTestJobStatus.QUEUED, McpConnectionTestJobStatus.RUNNING),
+            )
+            .order_by("-created_at")
+            .first()
+        )
+    except Exception:
+        return None
+    if not job:
+        return None
+    return {
+        "id": str(job.id),
+        "status": job.status,
+        "trigger": job.trigger,
+        "attemptCount": job.attempt_count,
+        "maxAttempts": job.max_attempts,
+        "runAfter": job.run_after.isoformat() if job.run_after else None,
+        "leaseExpiresAt": job.lease_expires_at.isoformat() if job.lease_expires_at else None,
+        "updatedAt": job.updated_at.isoformat() if job.updated_at else None,
+    }
 
 
 def _mcp_marketplace_catalog() -> list[dict[str, Any]]:
@@ -1052,7 +1191,28 @@ def mcp_connections_collection(request: HttpRequest) -> JsonResponse:
 
     if request.method == "GET":
         with tenant_context(business.id):
-            connections = list(McpConnection.objects.filter(business_profile=business).order_by("name"))
+            active_jobs = (
+                McpConnectionTestJob.objects.filter(
+                    connection_id=OuterRef("id"),
+                    business_profile_id=OuterRef("business_profile_id"),
+                    status__in=(McpConnectionTestJobStatus.QUEUED, McpConnectionTestJobStatus.RUNNING),
+                )
+                .order_by("-created_at")
+            )
+            connections = list(
+                McpConnection.objects.filter(business_profile=business)
+                .annotate(
+                    active_test_job_id=Subquery(active_jobs.values("id")[:1]),
+                    active_test_job_status=Subquery(active_jobs.values("status")[:1]),
+                    active_test_job_trigger=Subquery(active_jobs.values("trigger")[:1]),
+                    active_test_job_attempt_count=Subquery(active_jobs.values("attempt_count")[:1]),
+                    active_test_job_max_attempts=Subquery(active_jobs.values("max_attempts")[:1]),
+                    active_test_job_run_after=Subquery(active_jobs.values("run_after")[:1]),
+                    active_test_job_lease_expires_at=Subquery(active_jobs.values("lease_expires_at")[:1]),
+                    active_test_job_updated_at=Subquery(active_jobs.values("updated_at")[:1]),
+                )
+                .order_by("name")
+            )
             connections_payload = [_serialize_mcp_connection(connection, business=business) for connection in connections]
 
         # Get full marketplace catalog
@@ -1093,6 +1253,19 @@ def mcp_connections_collection(request: HttpRequest) -> JsonResponse:
         return JsonResponse({"error": "VALIDATION_ERROR", "message": "sourceType is invalid.", "field": "sourceType"}, status=HTTPStatus.BAD_REQUEST)
     marketplace_key = str((payload or {}).get("marketplaceKey") or "").strip()
 
+    setup_fields_in = _extract_setup_fields(payload or {})
+    setup_fields_cleaned: dict[str, str] | None = None
+    if setup_fields_in is not None:
+        setup_fields_cleaned, setup_error = _validate_setup_fields(
+            setup_fields_in,
+            marketplace_key=marketplace_key or None,
+        )
+        if setup_error:
+            return JsonResponse(
+                {"error": "VALIDATION_ERROR", "message": setup_error, "field": "setupFields"},
+                status=HTTPStatus.BAD_REQUEST,
+            )
+
     auth_payload = (payload or {}).get("auth") if isinstance((payload or {}).get("auth"), dict) else {}
     auth_type = str(auth_payload.get("type") or (payload or {}).get("authType") or McpConnectionAuthType.NONE).strip() or McpConnectionAuthType.NONE
     if auth_type not in {choice for choice, _ in McpConnectionAuthType.choices}:
@@ -1118,6 +1291,10 @@ def mcp_connections_collection(request: HttpRequest) -> JsonResponse:
                 status=HTTPStatus.BAD_REQUEST,
             )
         credentials_value = {"header_name": header_name, "header_value": header_value}
+
+    if setup_fields_cleaned:
+        credentials_value = dict(credentials_value)
+        credentials_value["setup_fields"] = setup_fields_cleaned
 
     status_value = (payload or {}).get("enabled")
     status = McpConnectionStatus.ENABLED if bool(status_value) else McpConnectionStatus.DISABLED
@@ -1154,6 +1331,12 @@ def mcp_connections_collection(request: HttpRequest) -> JsonResponse:
             description="MCP connection created.",
             metadata={"source_type": source_type, "marketplace_key": marketplace_key or None},
         )
+        try:
+            from apps.mcp.connection_test_jobs import enqueue_mcp_connection_test_job
+
+            enqueue_mcp_connection_test_job(connection=connection, trigger="create")
+        except Exception:  # pragma: no cover - background enqueue must not break API
+            logger.exception("mcp_test_job_enqueue_failed connection=%s", connection.id)
         serialized = _serialize_mcp_connection(connection, business=business)
 
     return JsonResponse({"connection": serialized}, status=HTTPStatus.CREATED)
@@ -1226,6 +1409,19 @@ def mcp_connection_detail(request: HttpRequest, connection_id: uuid.UUID) -> Jso
             return JsonResponse({"error": "VALIDATION_ERROR", "message": "approvalMode is invalid.", "field": "defaultApprovalMode"}, status=HTTPStatus.BAD_REQUEST)
         updates["default_approval_mode"] = approval_mode
 
+    setup_fields_in = _extract_setup_fields(payload)
+    setup_fields_cleaned: dict[str, str] | None = None
+    if setup_fields_in is not None:
+        setup_fields_cleaned, setup_error = _validate_setup_fields(
+            setup_fields_in,
+            marketplace_key=connection.marketplace_key or None,
+        )
+        if setup_error:
+            return JsonResponse(
+                {"error": "VALIDATION_ERROR", "message": setup_error, "field": "setupFields"},
+                status=HTTPStatus.BAD_REQUEST,
+            )
+
     auth_payload = payload.get("auth") if isinstance(payload.get("auth"), dict) else None
     auth_type_value = payload.get("authType")
     if auth_type_value or auth_payload:
@@ -1260,20 +1456,74 @@ def mcp_connection_detail(request: HttpRequest, connection_id: uuid.UUID) -> Jso
             setattr(connection, field, value)
         connection.save(update_fields=[*updates.keys(), "updated_at"])
 
+        credentials_changed = False
+        next_credentials = dict(connection.credentials or {})
+
         if auth_payload is not None or auth_type_value is not None:
             auth_type = desired_auth_type
             if auth_type == McpConnectionAuthType.BEARER:
                 token = str((auth_payload or {}).get("token") or (auth_payload or {}).get("bearerToken") or "").strip()
                 if token:
-                    connection.credentials = {"token": token}
+                    next_credentials["token"] = token
+                    credentials_changed = True
             elif auth_type == McpConnectionAuthType.HEADER:
                 header_name = str((auth_payload or {}).get("headerName") or "").strip()
                 header_value = str((auth_payload or {}).get("headerValue") or "").strip()
                 if header_name and header_value:
-                    connection.credentials = {"header_name": header_name, "header_value": header_value}
+                    next_credentials["header_name"] = header_name
+                    next_credentials["header_value"] = header_value
+                    credentials_changed = True
             elif auth_type == McpConnectionAuthType.NONE:
-                connection.credentials = {}
-            connection.save(update_fields=["credentials_encrypted", "credentials_key_version", "credentials_last_rotated_at", "credential_error_count", "updated_at"])
+                for key in (
+                    "token",
+                    "access_token",
+                    "refresh_token",
+                    "expires_at",
+                    "token_type",
+                    "scope",
+                    "header_name",
+                    "header_value",
+                ):
+                    if key in next_credentials:
+                        next_credentials.pop(key, None)
+                        credentials_changed = True
+
+        if setup_fields_in is not None:
+            if setup_fields_cleaned:
+                next_credentials["setup_fields"] = setup_fields_cleaned
+            else:
+                next_credentials.pop("setup_fields", None)
+            credentials_changed = True
+
+        if credentials_changed:
+            connection.credentials = next_credentials
+            connection.save(
+                update_fields=[
+                    "credentials_encrypted",
+                    "credentials_key_version",
+                    "credentials_last_rotated_at",
+                    "credential_error_count",
+                    "updated_at",
+                ]
+            )
+
+        try:
+            from apps.mcp.connection_test_jobs import enqueue_mcp_connection_test_job
+
+            trigger = None
+            if "server_url" in updates:
+                trigger = "update_server_url"
+            elif auth_payload is not None or auth_type_value is not None:
+                trigger = "update_auth"
+            elif setup_fields_in is not None:
+                trigger = "update_setup_fields"
+            elif updates.get("status") == McpConnectionStatus.ENABLED:
+                trigger = "update_enabled"
+
+            if trigger:
+                enqueue_mcp_connection_test_job(connection=connection, trigger=trigger)
+        except Exception:  # pragma: no cover - background enqueue must not break API
+            logger.exception("mcp_test_job_enqueue_failed connection=%s", connection.id)
 
         _log_mcp_audit(
             business=business,
@@ -1281,7 +1531,14 @@ def mcp_connection_detail(request: HttpRequest, connection_id: uuid.UUID) -> Jso
             actor=request.user,
             action=McpConnectionAuditAction.UPDATED,
             description="MCP connection updated.",
-            metadata={"fields": sorted(list(updates.keys()))},
+            metadata={
+                "fields": sorted(list(updates.keys())),
+                **(
+                    {"setup_fields_keys": sorted(list(setup_fields_cleaned.keys()))}
+                    if setup_fields_in is not None and setup_fields_cleaned
+                    else {}
+                ),
+            },
         )
         serialized = _serialize_mcp_connection(connection, business=business)
 

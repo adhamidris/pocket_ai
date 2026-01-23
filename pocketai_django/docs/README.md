@@ -16,6 +16,7 @@
 - `rag/` — RAG rollout + evaluation docs
 - `ingestion/` — ingestion + normalization docs
 - `integrations/` — integrations docs (Google, etc.)
+  - `integrations/email-connectors.md` — first‑party email connector design (Google/Microsoft)
 - `mcp/` — MCP-specific prompt/validation docs
 
 ## Prompts

@@ -78,6 +78,8 @@ def exchange_authorization_code(
     *,
     code: str,
     redirect_uri: str,
+    scope: str | None = None,
+    code_verifier: str | None = None,
     timeout_s: int = DEFAULT_OAUTH_TIMEOUT_S,
 ) -> dict[str, Any]:
     secret = provider.get_client_secret()
@@ -91,6 +93,10 @@ def exchange_authorization_code(
         "redirect_uri": redirect_uri,
         "grant_type": "authorization_code",
     }
+    if scope:
+        payload["scope"] = str(scope).strip()
+    if code_verifier:
+        payload["code_verifier"] = str(code_verifier).strip()
     try:
         response = requests.post(
             provider.token_url,
@@ -108,6 +114,7 @@ def refresh_access_token(
     provider: OAuthProvider,
     *,
     refresh_token: str,
+    scope: str | None = None,
     timeout_s: int = DEFAULT_OAUTH_TIMEOUT_S,
 ) -> dict[str, Any]:
     secret = provider.get_client_secret()
@@ -120,6 +127,8 @@ def refresh_access_token(
         "refresh_token": refresh_token,
         "grant_type": "refresh_token",
     }
+    if scope:
+        payload["scope"] = str(scope).strip()
     try:
         response = requests.post(
             provider.token_url,

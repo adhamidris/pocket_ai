@@ -18,6 +18,7 @@ import threading
 import time
 import uuid
 from datetime import timedelta
+from email.utils import getaddresses
 from typing import Any, Callable, Iterable, Mapping, MutableMapping, Sequence
 
 from django.conf import settings
@@ -26,7 +27,17 @@ from django.utils import timezone
 
 from opentelemetry import trace as otel_trace
 
-from apps.accounts.models import AgentProfile, KnowledgeUpload
+from apps.accounts.models import (
+    AgentEmailAccountPolicyOverride,
+    AgentProfile,
+    EmailAccount,
+    EmailAccountAuditAction,
+    EmailAccountAuditEvent,
+    EmailAccountProvider,
+    EmailAccountStatus,
+    EmailSendMode,
+    KnowledgeUpload,
+)
 from apps.accounts.feature_flags import FeatureFlagService
 from apps.conversations.models import (
     Conversation,
@@ -49,6 +60,10 @@ from apps.rag.rag_logging import structured_log
 from apps.conversations.response_blocks import normalize_response_blocks
 from apps.conversations.rich_blocks import coerce_block_event
 from apps.knowledge.privacy import redact_free_text
+from apps.integrations.email_accounts import ensure_fresh_email_credentials
+from apps.integrations.email_policy import evaluate_email_send_policy
+from apps.integrations.gmail import GmailApiError, gmail_get_draft_headers
+from apps.integrations.microsoft_graph import GraphApiError, graph_get_draft_headers
 
 from . import prompts, tools as mcp_tools
 from .connectors import (
@@ -58,6 +73,7 @@ from .connectors import (
     mcp_connection_auth_headers,
 )
 from .remote_client import McpRemoteError, call_mcp_tool_streamable_http
+from .redaction import redact_tool_input_payload
 from .tool_artifacts import build_prompt_view_for_remote_tool_result, store_remote_tool_output_artifact
 from .sanitizer import (
     extract_sentences,
@@ -379,15 +395,33 @@ class McpOrchestratorService:
             remote_descriptors = list_remote_tool_descriptors(all_remote_connections)
             gateway_catalog: dict[str, dict[str, object]] = {}
             remote_registry: dict[str, tuple[object, str]] = {}
+            default_arg_keys_by_connection: dict[str, list[str]] = {}
             for desc in remote_descriptors:
                 tool_id = desc.safe_name
                 remote_registry[tool_id] = (desc.connection, desc.remote_name)
+                connection_id = str(getattr(desc.connection, "id", "") or "")
+                default_arg_keys = default_arg_keys_by_connection.get(connection_id)
+                if default_arg_keys is None:
+                    creds = getattr(desc.connection, "credentials", None) or {}
+                    setup_fields = creds.get("setup_fields") if isinstance(creds, Mapping) else None
+                    if isinstance(setup_fields, Mapping):
+                        default_arg_keys = sorted(
+                            {
+                                str(key).strip()
+                                for key, value in setup_fields.items()
+                                if str(key).strip() and isinstance(value, str) and value.strip()
+                            }
+                        )
+                    else:
+                        default_arg_keys = []
+                    default_arg_keys_by_connection[connection_id] = default_arg_keys
                 gateway_catalog[tool_id] = {
-                    "connection_id": str(getattr(desc.connection, "id", "") or ""),
+                    "connection_id": connection_id,
                     "connection_name": str(getattr(desc.connection, "name", "") or ""),
                     "remote_tool": desc.remote_name,
                     "description": desc.description,
                     "input_schema": dict(desc.input_schema) if isinstance(desc.input_schema, Mapping) else None,
+                    "default_arg_keys": list(default_arg_keys),
                 }
             tool_context.mcp_gateway_catalog = gateway_catalog
             self._remote_tool_registry = remote_registry
@@ -1283,8 +1317,20 @@ class McpOrchestratorService:
                                                 if isinstance(catalog_entry, Mapping) and isinstance(catalog_entry.get("input_schema"), Mapping)
                                                 else None
                                             )
+                                            effective_inner_args = inner_args
+                                            defaults_applied: list[str] = []
+                                            if remote_entry:
+                                                try:
+                                                    effective_inner_args, defaults_applied = self._apply_mcp_setup_defaults(
+                                                        inner_args,
+                                                        connection=remote_entry[0],
+                                                        input_schema=input_schema,
+                                                    )
+                                                except Exception:  # pragma: no cover - defensive
+                                                    effective_inner_args = inner_args
+                                                    defaults_applied = []
                                             missing_fields, type_errors = self._validate_gateway_tool_arguments(
-                                                inner_args, input_schema
+                                                effective_inner_args, input_schema
                                             )
                                             if not remote_entry:
                                                 call_origin = "validation"
@@ -1346,6 +1392,10 @@ class McpOrchestratorService:
                                                 if not skip_remote_execution:
                                                     call_start = time.perf_counter()
                                                     remote_event_id = tool_event_id
+                                                    sensitive_keys = self._mcp_setup_fields_for_connection(connection).keys()
+                                                    redacted_input = redact_tool_input_payload(inner_args, sensitive_keys=sensitive_keys)
+                                                    if not isinstance(redacted_input, Mapping):
+                                                        redacted_input = {}
                                                     remote_event_payload = {
                                                         "event_id": remote_event_id,
                                                         "phase": "started",
@@ -1359,8 +1409,10 @@ class McpOrchestratorService:
                                                             "endpoint_url": str(getattr(connection, "server_url", "") or ""),
                                                             "remote_tool": remote_tool_name,
                                                         },
-                                                        "input": dict(inner_args),
+                                                        "input": dict(redacted_input),
                                                     }
+                                                    if defaults_applied:
+                                                        remote_event_payload["defaults_applied"] = list(defaults_applied)
                                                     if on_tool_event:
                                                         try:
                                                             on_tool_event(remote_event_payload)
@@ -1370,7 +1422,7 @@ class McpOrchestratorService:
                                                         tool_name=tool_name_for_remote,
                                                         remote_tool_name=remote_tool_name,
                                                         connection=connection,
-                                                        arguments=inner_args,
+                                                        arguments=effective_inner_args,
                                                         conversation=conversation,
                                                     )
                                     else:
@@ -1401,7 +1453,26 @@ class McpOrchestratorService:
                                                     skip_remote_execution = True
                                             if not skip_remote_execution:
                                                 call_start = time.perf_counter()
+                                                catalog_entry = (
+                                                    tool_context.mcp_gateway_catalog.get(tool_name)
+                                                    if isinstance(getattr(tool_context, "mcp_gateway_catalog", None), Mapping)
+                                                    else None
+                                                )
+                                                input_schema = (
+                                                    catalog_entry.get("input_schema")
+                                                    if isinstance(catalog_entry, Mapping) and isinstance(catalog_entry.get("input_schema"), Mapping)
+                                                    else None
+                                                )
+                                                effective_remote_args, defaults_applied = self._apply_mcp_setup_defaults(
+                                                    arguments,
+                                                    connection=connection,
+                                                    input_schema=input_schema,
+                                                )
                                                 remote_event_id = tool_event_id
+                                                sensitive_keys = self._mcp_setup_fields_for_connection(connection).keys()
+                                                redacted_input = redact_tool_input_payload(arguments, sensitive_keys=sensitive_keys)
+                                                if not isinstance(redacted_input, Mapping):
+                                                    redacted_input = {}
                                                 remote_event_payload = {
                                                     "event_id": remote_event_id,
                                                     "phase": "started",
@@ -1415,8 +1486,10 @@ class McpOrchestratorService:
                                                         "endpoint_url": str(getattr(connection, "server_url", "") or ""),
                                                         "remote_tool": remote_tool_name,
                                                     },
-                                                    "input": dict(arguments),
+                                                    "input": dict(redacted_input),
                                                 }
+                                                if defaults_applied:
+                                                    remote_event_payload["defaults_applied"] = list(defaults_applied)
                                                 if on_tool_event:
                                                     try:
                                                         on_tool_event(remote_event_payload)
@@ -1426,23 +1499,28 @@ class McpOrchestratorService:
                                                     tool_name=tool_name,
                                                     remote_tool_name=remote_tool_name,
                                                     connection=connection,
-                                                    arguments=arguments,
+                                                    arguments=effective_remote_args,
                                                     conversation=conversation,
                                                 )
                                         else:
                                             call_start = time.perf_counter()
+                                            is_email_tool = self._is_email_tool(tool_name)
                                             internal_event_payload = {
                                                 "event_id": tool_event_id,
                                                 "phase": "started",
                                                 "status": "running",
                                                 "tool_call_id": tool_call_id,
                                                 "tool_name": tool_name,
-                                                "kind": "mcp_internal",
+                                                "kind": "email" if is_email_tool else "mcp_internal",
                                             }
                                             # Keep internal tool inputs minimal; portal UI should render
                                             # user-facing results via dedicated blocks (attachments, etc.)
                                             # rather than surfacing full tool arguments.
-                                            if tool_name in {"mcp_search_tools", "search_knowledge", "search_conversation_files"}:
+                                            if is_email_tool:
+                                                email_input = self._email_tool_event_input(tool_name, arguments)
+                                                if email_input:
+                                                    internal_event_payload["input"] = email_input
+                                            elif tool_name in {"mcp_search_tools", "search_knowledge", "search_conversation_files"}:
                                                 query_value = arguments.get("query")
                                                 if isinstance(query_value, str):
                                                     query_text = query_value.strip()
@@ -1459,12 +1537,54 @@ class McpOrchestratorService:
                                                     on_tool_event(internal_event_payload)
                                                 except Exception:  # pragma: no cover - UI callback must not break tools
                                                     logger.exception("mcp portal tool event start callback failed")
-                                            tool_result = mcp_tools.execute_tool(
-                                                tool_name,
-                                                arguments,
-                                                conversation=conversation,
-                                                context=tool_context,
-                                            )
+                                            tool_result = None
+                                            if tool_name == "email_send_draft":
+                                                draft_id = str(arguments.get("draft_id") or arguments.get("draftId") or "").strip()
+                                                email_account = self._resolve_email_account_for_tool_call(
+                                                    conversation=conversation,
+                                                    arguments=arguments,
+                                                )
+                                                approval_needed = False
+                                                approval_reason = "draft_plus_approval_default"
+                                                if email_account and draft_id:
+                                                    approval_needed, approval_reason = self._email_send_requires_approval(
+                                                        conversation=conversation,
+                                                        email_account=email_account,
+                                                        draft_id=draft_id,
+                                                    )
+                                                if approval_needed:
+                                                    approved, _, approval_result = self._maybe_request_email_tool_approval(
+                                                        conversation=conversation,
+                                                        tool_name=tool_name,
+                                                        tool_call_id=tool_call_id,
+                                                        tool_event_id=tool_event_id,
+                                                        arguments=arguments,
+                                                        reason=approval_reason,
+                                                        on_tool_event=on_tool_event,
+                                                    )
+                                                    if not approved:
+                                                        tool_result = approval_result
+                                                        call_origin = "policy"
+                                                if tool_result is None:
+                                                    tool_result = mcp_tools.execute_tool(
+                                                        tool_name,
+                                                        arguments,
+                                                        conversation=conversation,
+                                                        context=tool_context,
+                                                    )
+                                                    if email_account and isinstance(tool_result, Mapping):
+                                                        self._record_email_send_audit(
+                                                            conversation=conversation,
+                                                            email_account=email_account,
+                                                            tool_result=tool_result,
+                                                        )
+                                            else:
+                                                tool_result = mcp_tools.execute_tool(
+                                                    tool_name,
+                                                    arguments,
+                                                    conversation=conversation,
+                                                    context=tool_context,
+                                                )
                                 except ToolConstraintError as exc:
                                     structured_log(
                                         "mcp",
@@ -1589,11 +1709,14 @@ class McpOrchestratorService:
                                             )
                                             if isinstance(tool_result, Mapping):
                                                 finish_payload["status"] = str(tool_result.get("status") or "") or "ok"
-                                                finish_payload["output"] = self._compact_tool_payload_for_prompt(
-                                                    tool_name,
-                                                    tool_result,
-                                                    **self._prompt_compaction_limits(),
-                                                )
+                                                if self._is_email_tool(tool_name):
+                                                    finish_payload["output"] = self._email_tool_event_output(tool_name, tool_result)
+                                                else:
+                                                    finish_payload["output"] = self._compact_tool_payload_for_prompt(
+                                                        tool_name,
+                                                        tool_result,
+                                                        **self._prompt_compaction_limits(),
+                                                    )
                                             on_tool_event(finish_payload)
                                         except Exception:  # pragma: no cover - UI callback must not break tools
                                             logger.exception("mcp portal tool event finish callback failed")
@@ -1629,10 +1752,14 @@ class McpOrchestratorService:
                             page = tool_result.get("page") or diagnostics.get("page")
                             token_budget = tool_result.get("token_budget") or diagnostics.get("token_budget")
 
+                            trace_arguments = arguments
+                            if self._is_email_tool(tool_name):
+                                trace_arguments = self._email_tool_trace_arguments(tool_name, arguments)
+
                             tool_context.add_tool_trace(
                                 {
                                     "tool": tool_name,
-                                    "arguments": arguments,
+                                    "arguments": trace_arguments,
                                     "result_keys": sorted(tool_result.keys()),
                                     "status": tool_result.get("status"),
                                     "error_code": tool_result.get("error_code"),
@@ -3038,6 +3165,433 @@ class McpOrchestratorService:
         if isinstance(value, dict):
             return len(value) == 0
         return False
+
+    @staticmethod
+    def _mcp_setup_fields_for_connection(connection: object) -> dict[str, str]:
+        creds = getattr(connection, "credentials", None)
+        if not isinstance(creds, Mapping):
+            return {}
+        setup_fields = creds.get("setup_fields")
+        if not isinstance(setup_fields, Mapping):
+            return {}
+        cleaned: dict[str, str] = {}
+        for key, value in setup_fields.items():
+            name = str(key or "").strip()
+            if not name or not isinstance(value, str):
+                continue
+            val = value.strip()
+            if not val:
+                continue
+            cleaned[name] = val
+        return cleaned
+
+    @staticmethod
+    def _is_email_tool(tool_name: str) -> bool:
+        return str(tool_name or "").strip().lower().startswith("email_")
+
+    def _email_tool_event_input(self, tool_name: str, arguments: Mapping[str, object]) -> dict[str, object] | None:
+        normalized = str(tool_name or "").strip().lower()
+        if normalized == "email_search":
+            query = str(arguments.get("query") or "").strip()
+            if not query:
+                return None
+            try:
+                limit = int(arguments.get("limit") or 0)
+            except (TypeError, ValueError):
+                limit = 0
+            payload: dict[str, object] = {"query": self._clip_text(query, 240)}
+            if limit:
+                payload["limit"] = max(1, min(25, limit))
+            return payload
+        if normalized == "email_get_message":
+            message_id = str(arguments.get("message_id") or arguments.get("messageId") or "").strip()
+            return {"message_id": message_id} if message_id else None
+        if normalized == "email_get_thread":
+            thread_id = str(arguments.get("thread_id") or arguments.get("threadId") or "").strip()
+            return {"thread_id": thread_id} if thread_id else None
+        if normalized == "email_create_draft":
+            subject = str(arguments.get("subject") or "").strip()
+            to_value = arguments.get("to")
+            to_count = len([item for item in to_value if str(item or "").strip()]) if isinstance(to_value, list) else 0
+            payload = {}
+            if subject:
+                payload["subject"] = self._clip_text(subject, 120)
+            if to_count:
+                payload["to_count"] = to_count
+            return payload or None
+        if normalized == "email_send_draft":
+            draft_id = str(arguments.get("draft_id") or arguments.get("draftId") or "").strip()
+            return {"draft_id": draft_id} if draft_id else None
+        return None
+
+    def _email_tool_trace_arguments(self, tool_name: str, arguments: Mapping[str, object]) -> dict[str, object]:
+        # Keep trace payloads privacy-safe; do not store full email bodies/recipients.
+        payload = self._email_tool_event_input(tool_name, arguments) or {}
+        account_id = str(arguments.get("email_account_id") or arguments.get("emailAccountId") or "").strip()
+        if account_id:
+            payload["email_account_id"] = account_id
+        return payload
+
+    def _email_tool_event_output(self, tool_name: str, tool_result: Mapping[str, object]) -> dict[str, object]:
+        normalized = str(tool_name or "").strip().lower()
+        status = str(tool_result.get("status") or "").strip() or "ok"
+        output: dict[str, object] = {"status": status}
+        if status != "ok":
+            error_code = str(tool_result.get("error_code") or tool_result.get("error") or "").strip()
+            hint = str(tool_result.get("hint") or "").strip()
+            if error_code:
+                output["error_code"] = error_code
+            if hint:
+                output["hint"] = self._clip_text(hint, 240)
+            return output
+
+        if normalized == "email_search":
+            results = tool_result.get("results")
+            if isinstance(results, list):
+                output["result_count"] = len(results)
+                message_ids: list[str] = []
+                thread_ids: list[str] = []
+                for item in results[:5]:
+                    if not isinstance(item, Mapping):
+                        continue
+                    mid = str(item.get("message_id") or item.get("messageId") or "").strip()
+                    tid = str(item.get("thread_id") or item.get("threadId") or "").strip()
+                    if mid:
+                        message_ids.append(mid)
+                    if tid:
+                        thread_ids.append(tid)
+                if message_ids:
+                    output["message_ids"] = message_ids
+                if thread_ids:
+                    output["thread_ids"] = thread_ids
+            return output
+
+        if normalized == "email_get_message":
+            output["message_id"] = str(tool_result.get("message_id") or tool_result.get("messageId") or "").strip()
+            output["thread_id"] = str(tool_result.get("thread_id") or tool_result.get("threadId") or "").strip()
+            output["body_truncated"] = bool(tool_result.get("body_truncated") or tool_result.get("bodyTruncated"))
+            return output
+
+        if normalized == "email_get_thread":
+            output["thread_id"] = str(tool_result.get("thread_id") or tool_result.get("threadId") or "").strip()
+            output["message_count"] = int(tool_result.get("message_count") or tool_result.get("messageCount") or 0)
+            messages = tool_result.get("messages")
+            if isinstance(messages, list):
+                output["returned_messages"] = len(messages)
+            output["truncated"] = bool(tool_result.get("truncated"))
+            return output
+
+        if normalized == "email_create_draft":
+            output["draft_id"] = str(tool_result.get("draft_id") or tool_result.get("draftId") or "").strip()
+            output["message_id"] = str(tool_result.get("message_id") or tool_result.get("messageId") or "").strip()
+            output["thread_id"] = str(tool_result.get("thread_id") or tool_result.get("threadId") or "").strip()
+            output["body_truncated"] = bool(tool_result.get("body_truncated") or tool_result.get("bodyTruncated"))
+            return output
+
+        if normalized == "email_send_draft":
+            output["draft_id"] = str(tool_result.get("draft_id") or tool_result.get("draftId") or "").strip()
+            output["message_id"] = str(tool_result.get("message_id") or tool_result.get("messageId") or "").strip()
+            output["thread_id"] = str(tool_result.get("thread_id") or tool_result.get("threadId") or "").strip()
+            return output
+
+        # Fallback: do not dump arbitrary tool outputs.
+        return output
+
+    def _resolve_email_account_for_tool_call(
+        self,
+        *,
+        conversation: Conversation,
+        arguments: Mapping[str, object],
+    ) -> EmailAccount | None:
+        business_id = getattr(conversation, "business_profile_id", None)
+        raw_account_id = str(arguments.get("email_account_id") or arguments.get("emailAccountId") or "").strip()
+        with tenant_context(business_id):
+            if raw_account_id:
+                try:
+                    account_uuid = uuid.UUID(raw_account_id)
+                except (TypeError, ValueError):
+                    return None
+                return (
+                    EmailAccount.objects.filter(
+                        id=account_uuid,
+                        business_profile_id=business_id,
+                        status=EmailAccountStatus.CONNECTED,
+                    )
+                    .select_related("business_profile", "user")
+                    .first()
+                )
+
+            meta = conversation.metadata if isinstance(getattr(conversation, "metadata", None), Mapping) else {}
+            actor_user_id = None
+            if isinstance(meta, Mapping):
+                actor_user_id = meta.get("actor_user_id") or meta.get("actorUserId") or meta.get("user_id") or meta.get("userId")
+            if not actor_user_id:
+                return None
+            try:
+                user_uuid = uuid.UUID(str(actor_user_id))
+            except (TypeError, ValueError):
+                return None
+            return (
+                EmailAccount.objects.filter(
+                    business_profile_id=business_id,
+                    user_id=user_uuid,
+                    status=EmailAccountStatus.CONNECTED,
+                )
+                .select_related("business_profile", "user")
+                .first()
+            )
+
+    def _effective_email_send_mode(
+        self,
+        *,
+        conversation: Conversation,
+        email_account: EmailAccount,
+    ) -> tuple[str, dict[str, object]]:
+        send_mode = str(getattr(email_account, "send_mode", "") or "").strip() or str(
+            getattr(settings, "EMAIL_SEND_DEFAULT_MODE", EmailSendMode.DRAFT_APPROVAL)
+        )
+        config: dict[str, object] = dict(email_account.policy_config or {}) if isinstance(email_account.policy_config, Mapping) else {}
+        config.setdefault(
+            "step_up_external_domain",
+            bool(getattr(settings, "EMAIL_AUTOSEND_STEP_UP_EXTERNAL_DOMAIN", True)),
+        )
+
+        agent_id = getattr(conversation, "agent_profile_id", None)
+        if not agent_id:
+            return send_mode, config
+
+        business_id = getattr(conversation, "business_profile_id", None)
+        with tenant_context(business_id):
+            override = AgentEmailAccountPolicyOverride.objects.filter(
+                agent_profile_id=agent_id,
+                email_account_id=getattr(email_account, "id", None),
+            ).first()
+        if override:
+            override_mode = str(getattr(override, "send_mode", "") or "").strip()
+            if override_mode:
+                send_mode = override_mode
+            if isinstance(getattr(override, "policy_config", None), Mapping):
+                config.update(dict(override.policy_config))
+        return send_mode, config
+
+    def _email_send_requires_approval(
+        self,
+        *,
+        conversation: Conversation,
+        email_account: EmailAccount,
+        draft_id: str,
+    ) -> tuple[bool, str]:
+        send_mode, config = self._effective_email_send_mode(conversation=conversation, email_account=email_account)
+        auto_send_enabled = str(send_mode).strip().lower() == EmailSendMode.AUTO_SEND
+        if not auto_send_enabled:
+            return True, "draft_plus_approval_default"
+
+        try:
+            email_account = ensure_fresh_email_credentials(email_account)
+            access_token = str((email_account.credentials or {}).get("access_token") or "").strip()
+            if not access_token:
+                return True, "missing_access_token"
+
+            if email_account.provider == EmailAccountProvider.GOOGLE:
+                headers = gmail_get_draft_headers(access_token=access_token, draft_id=draft_id)
+            elif email_account.provider == EmailAccountProvider.MICROSOFT:
+                headers = graph_get_draft_headers(access_token=access_token, draft_id=draft_id)
+            else:
+                return True, "provider_not_supported"
+        except (GmailApiError, GraphApiError, Exception):
+            logger.exception("email.autosend_policy_check_failed account=%s", getattr(email_account, "id", None))
+            return True, "policy_check_failed"
+
+        recipients: list[str] = []
+        pairs = getaddresses([headers.get("to", ""), headers.get("cc", ""), headers.get("bcc", "")])
+        for _name, address in pairs:
+            addr = str(address or "").strip()
+            if addr:
+                recipients.append(addr)
+
+        decision = evaluate_email_send_policy(
+            auto_send_enabled=True,
+            recipients=recipients,
+            sender_email=str(getattr(email_account, "email_address", "") or ""),
+            config=config,
+        )
+        return decision.requires_approval, decision.reason
+
+    def _maybe_request_email_tool_approval(
+        self,
+        *,
+        conversation: Conversation,
+        tool_name: str,
+        tool_call_id: str,
+        tool_event_id: str,
+        arguments: Mapping[str, object],
+        reason: str,
+        on_tool_event: Callable[[Mapping[str, object]], None] | None,
+    ) -> tuple[bool, ConversationToolApproval | None, Mapping[str, object] | None]:
+        expires_at = timezone.now() + timedelta(seconds=self._tool_approval_timeout_seconds())
+        business_id = getattr(conversation, "business_profile_id", None)
+        with tenant_context(business_id):
+            existing = None
+            if tool_call_id:
+                existing = ConversationToolApproval.objects.filter(
+                    conversation=conversation,
+                    tool_call_id=tool_call_id,
+                    status=ConversationToolApprovalStatus.PENDING,
+                ).first()
+            approval = existing or ConversationToolApproval.objects.create(
+                conversation=conversation,
+                connection=None,
+                tool_name=tool_name,
+                remote_tool_name="",
+                tool_call_id=tool_call_id or "",
+                event_id=tool_event_id or "",
+                status=ConversationToolApprovalStatus.PENDING,
+                expires_at=expires_at,
+                input_payload=dict(
+                    redact_tool_input_payload(
+                        dict(arguments) if isinstance(arguments, Mapping) else {},
+                        sensitive_keys={"body_text", "bodyText"},
+                    )
+                ),
+                metadata={
+                    "approval_mode": "email_send",
+                    "operation_type": "write",
+                    "reason": reason,
+                },
+            )
+
+        approval_payload = {
+            "id": str(approval.id),
+            "status": approval.status,
+            "operation_type": "write",
+            "reason": reason,
+            "expires_at": approval.expires_at.isoformat() if approval.expires_at else None,
+        }
+        request_event = {
+            "event_id": tool_event_id,
+            "phase": "approval_requested",
+            "status": "pending_approval",
+            "tool_call_id": tool_call_id,
+            "tool_name": tool_name,
+            "kind": "email",
+            "input": dict(redact_tool_input_payload(arguments, sensitive_keys={"body_text", "bodyText"})),
+            "approval": approval_payload,
+        }
+        if on_tool_event:
+            try:
+                on_tool_event(request_event)
+            except Exception:  # pragma: no cover - UI callback must not break tools
+                logger.exception("mcp portal email approval request callback failed")
+
+        approval = self._wait_for_tool_approval(approval=approval, conversation=conversation)
+        status_value = approval.status if approval else ConversationToolApprovalStatus.DENIED
+        approval_payload["status"] = status_value
+        resolve_event = {
+            "event_id": tool_event_id,
+            "phase": "approval_resolved",
+            "status": status_value,
+            "tool_call_id": tool_call_id,
+            "tool_name": tool_name,
+            "kind": "email",
+            "approval": approval_payload,
+        }
+
+        if status_value != ConversationToolApprovalStatus.APPROVED:
+            tool_result = self._approval_blocked_payload(tool_name, status_value)
+            resolve_event["output"] = dict(tool_result)
+            if on_tool_event:
+                try:
+                    on_tool_event(resolve_event)
+                except Exception:  # pragma: no cover - UI callback must not break tools
+                    logger.exception("mcp portal email approval resolve callback failed")
+            return False, approval, dict(tool_result)
+
+        if on_tool_event:
+            try:
+                on_tool_event(resolve_event)
+            except Exception:  # pragma: no cover - UI callback must not break tools
+                logger.exception("mcp portal email approval resolve callback failed")
+        return True, approval, None
+
+    def _record_email_send_audit(
+        self,
+        *,
+        conversation: Conversation,
+        email_account: EmailAccount,
+        tool_result: Mapping[str, object],
+    ) -> None:
+        status = str(tool_result.get("status") or "").strip().lower()
+        if status != "ok":
+            return
+        business_id = getattr(conversation, "business_profile_id", None)
+        actor_user = None
+        meta = conversation.metadata if isinstance(getattr(conversation, "metadata", None), Mapping) else {}
+        actor_user_id = None
+        if isinstance(meta, Mapping):
+            actor_user_id = meta.get("actor_user_id") or meta.get("actorUserId") or meta.get("user_id") or meta.get("userId")
+        if actor_user_id:
+            try:
+                from django.contrib.auth import get_user_model
+
+                user_model = get_user_model()
+                candidate = user_model.objects.filter(id=uuid.UUID(str(actor_user_id))).first()
+                if candidate and business_id and hasattr(candidate, "business_profiles"):
+                    if not candidate.business_profiles.filter(id=business_id).exists():
+                        candidate = None
+                actor_user = candidate
+            except Exception:
+                actor_user = None
+
+        with tenant_context(business_id):
+            EmailAccountAuditEvent.objects.create(
+                business_profile=conversation.business_profile,
+                email_account=email_account,
+                email_account_id_snapshot=getattr(email_account, "id", None),
+                actor_user=actor_user,
+                actor_agent=getattr(conversation, "agent_profile", None),
+                action=EmailAccountAuditAction.UPDATED,
+                description="Email draft sent via chat.",
+                metadata={
+                    "provider": str(getattr(email_account, "provider", "") or ""),
+                    "draft_id": str(tool_result.get("draft_id") or tool_result.get("draftId") or ""),
+                    "message_id": str(tool_result.get("message_id") or tool_result.get("messageId") or ""),
+                    "thread_id": str(tool_result.get("thread_id") or tool_result.get("threadId") or ""),
+                    "conversation_id": str(getattr(conversation, "id", "") or ""),
+                },
+            )
+
+    def _apply_mcp_setup_defaults(
+        self,
+        arguments: Mapping[str, object],
+        *,
+        connection: object,
+        input_schema: Mapping[str, object] | None,
+    ) -> tuple[dict[str, object], list[str]]:
+        """
+        Apply per-connection marketplace setup fields as default tool arguments.
+
+        Defaults are applied only when:
+        - the remote tool schema declares the key in properties, and
+        - the argument is missing/empty in the tool call.
+
+        Returns (effective_arguments, defaults_applied_keys).
+        """
+        merged = dict(arguments or {})
+        defaults = self._mcp_setup_fields_for_connection(connection)
+        if not defaults:
+            return merged, []
+        props = input_schema.get("properties") if isinstance(input_schema, Mapping) else None
+        if not isinstance(props, Mapping) or not props:
+            return merged, []
+        applied: list[str] = []
+        for key, value in defaults.items():
+            if key not in props:
+                continue
+            if key in merged and not self._is_missing_value(merged.get(key)):
+                continue
+            merged[key] = value
+            applied.append(key)
+        return merged, applied
 
     def _missing_required_fields(self, tool_name: str, arguments: Mapping[str, object]) -> list[str]:
         params = self._tool_parameters(tool_name)
@@ -7460,7 +8014,12 @@ class McpOrchestratorService:
                 event_id=tool_event_id or "",
                 status=ConversationToolApprovalStatus.PENDING,
                 expires_at=expires_at,
-                input_payload=dict(arguments) if isinstance(arguments, Mapping) else {},
+                input_payload=dict(
+                    redact_tool_input_payload(
+                        dict(arguments) if isinstance(arguments, Mapping) else {},
+                        sensitive_keys=self._mcp_setup_fields_for_connection(connection).keys(),
+                    )
+                ),
                 metadata=metadata,
             )
 
@@ -7534,6 +8093,10 @@ class McpOrchestratorService:
             "reason": approval_requirement.get("reason"),
             "expires_at": approval.expires_at.isoformat() if approval.expires_at else None,
         }
+        sensitive_keys = self._mcp_setup_fields_for_connection(connection).keys()
+        redacted_input = redact_tool_input_payload(arguments, sensitive_keys=sensitive_keys)
+        if not isinstance(redacted_input, Mapping):
+            redacted_input = {}
         request_event = {
             "event_id": tool_event_id,
             "phase": "approval_requested",
@@ -7547,7 +8110,7 @@ class McpOrchestratorService:
                 "endpoint_url": str(getattr(connection, "server_url", "") or ""),
                 "remote_tool": remote_tool_name,
             },
-            "input": dict(arguments),
+            "input": dict(redacted_input),
             "approval": approval_payload,
         }
         if on_tool_event:

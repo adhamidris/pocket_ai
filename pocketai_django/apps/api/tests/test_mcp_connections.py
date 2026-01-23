@@ -80,7 +80,10 @@ class McpConnectionsApiTests(TestCase):
         list_resp = self.client.get(create_url, {"business_id": str(self.business.id)})
         self.assertEqual(list_resp.status_code, 200)
         list_payload = list_resp.json()
-        self.assertEqual(len(list_payload.get("connections") or []), 1)
+        connections = list_payload.get("connections") or []
+        self.assertEqual(len(connections), 1)
+        self.assertIn("testJob", connections[0])
+        self.assertEqual(connections[0]["testJob"]["status"], "queued")
         self.assertIn("marketplace", list_payload)
 
     def test_create_connection_with_approval_mode(self) -> None:

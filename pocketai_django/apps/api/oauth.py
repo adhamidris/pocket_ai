@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import json
 import secrets
 import uuid
@@ -7,6 +8,7 @@ from datetime import timedelta
 from http import HTTPStatus
 from urllib.parse import urlencode
 
+from django.conf import settings
 from django.http import HttpRequest, HttpResponse, JsonResponse
 from django.shortcuts import redirect
 from django.urls import reverse
@@ -36,6 +38,75 @@ from apps.accounts.oauth_helpers import (
 
 
 DEFAULT_STATE_TTL_MINUTES = 10
+
+logger = logging.getLogger(__name__)
+
+
+def _bootstrap_oauth_provider(provider_key: str) -> OAuthProvider | None:
+    """
+    Best-effort bootstrap for marketplace OAuth providers from env-backed settings.
+
+    This improves out-of-the-box marketplace OAuth UX in environments where the
+    OAuthProvider rows were not created via admin yet.
+    """
+
+    key = str(provider_key or "").strip()
+    if not key:
+        return None
+
+    if key == "google":
+        client_id = str(getattr(settings, "MCP_OAUTH_GOOGLE_CLIENT_ID", "") or "").strip()
+        client_secret = str(getattr(settings, "MCP_OAUTH_GOOGLE_CLIENT_SECRET", "") or "").strip()
+        scopes = list(getattr(settings, "MCP_OAUTH_GOOGLE_SCOPES", []) or [])
+        authorization_url = "https://accounts.google.com/o/oauth2/v2/auth"
+        token_url = "https://oauth2.googleapis.com/token"
+        name = "Google"
+    elif key == "slack":
+        client_id = str(getattr(settings, "MCP_OAUTH_SLACK_CLIENT_ID", "") or "").strip()
+        client_secret = str(getattr(settings, "MCP_OAUTH_SLACK_CLIENT_SECRET", "") or "").strip()
+        scopes = list(getattr(settings, "MCP_OAUTH_SLACK_SCOPES", []) or [])
+        authorization_url = "https://slack.com/oauth/v2/authorize"
+        token_url = "https://slack.com/api/oauth.v2.access"
+        name = "Slack"
+    else:
+        return None
+
+    if not client_id or not client_secret:
+        return None
+    if not isinstance(scopes, list) or not any(str(scope or "").strip() for scope in scopes):
+        return None
+
+    existing = OAuthProvider.objects.filter(key=key).first()
+    if existing and not existing.is_active:
+        # Respect explicit disablement; do not auto-enable.
+        return None
+
+    provider = existing or OAuthProvider(
+        key=key,
+        name=name,
+        authorization_url=authorization_url,
+        token_url=token_url,
+        client_id=client_id,
+        scopes=scopes,
+        marketplace_keys=[],
+        is_active=True,
+    )
+
+    if not provider.name:
+        provider.name = name
+    if not str(getattr(provider, "authorization_url", "") or "").strip():
+        provider.authorization_url = authorization_url
+    if not str(getattr(provider, "token_url", "") or "").strip():
+        provider.token_url = token_url
+    if not str(getattr(provider, "client_id", "") or "").strip():
+        provider.client_id = client_id
+    if not isinstance(getattr(provider, "scopes", None), list) or not provider.scopes:
+        provider.scopes = scopes
+    if provider.get_client_secret() == "":
+        provider.set_client_secret(client_secret)
+    provider.is_active = True
+    provider.save()
+    return provider
 
 
 def _popup_html(payload: dict[str, object], *, fallback_redirect: str = "/dashboard/mcp/") -> HttpResponse:
@@ -141,7 +212,16 @@ def oauth_start(request: HttpRequest, provider_key: str, marketplace_key: str) -
 
     provider = OAuthProvider.objects.filter(key=provider_key, is_active=True).first()
     if not provider:
-        return _popup_html({"type": "mcp_oauth_error", "error": "provider_not_configured", "provider": provider_key})
+        provider = _bootstrap_oauth_provider(provider_key)
+    if not provider:
+        return _popup_html(
+            {
+                "type": "mcp_oauth_error",
+                "error": "provider_not_configured",
+                "provider": provider_key,
+                "hint": "Ask an admin to configure OAuth providers (or set MCP_OAUTH_<PROVIDER>_CLIENT_ID/SECRET).",
+            }
+        )
 
     entry = _marketplace_entry(marketplace_key)
     if not entry:
@@ -327,6 +407,12 @@ def oauth_callback(request: HttpRequest, provider_key: str) -> HttpResponse:
             description="OAuth credentials connected via marketplace.",
             metadata={"marketplace_key": oauth_state.marketplace_key, "provider": provider.key},
         )
+        try:
+            from apps.mcp.connection_test_jobs import enqueue_mcp_connection_test_job
+
+            enqueue_mcp_connection_test_job(connection=connection, trigger=f"oauth_{provider.key}")
+        except Exception:  # pragma: no cover - background enqueue must not break OAuth callback
+            logger.exception("mcp_test_job_enqueue_failed connection=%s", connection.id)
 
     redirect_after = oauth_state.redirect_after or "/dashboard/mcp/"
     return _popup_html(
@@ -383,4 +469,3 @@ def oauth_refresh(request: HttpRequest, connection_id: uuid.UUID) -> JsonRespons
         },
         status=HTTPStatus.OK,
     )
-

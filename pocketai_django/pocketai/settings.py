@@ -178,6 +178,90 @@ _default_google_scopes = [
 ]
 # GOOGLE_OAUTH_SCOPES: Space-separated OAuth scopes to request (defaults to Drive/Sheets read-only + OpenID).
 GOOGLE_OAUTH_SCOPES = _split_scopes(os.getenv("GOOGLE_OAUTH_SCOPES")) or _default_google_scopes
+
+# ------------------------------------------------------------------------------
+# MCP Marketplace OAuth Providers (global)
+# ------------------------------------------------------------------------------
+# MCP OAuth providers are stored in the database (OAuthProvider model). These env vars allow
+# bootstrapping common providers without manual admin setup.
+#
+# NOTE: Redirect URI for MCP marketplace OAuth is dynamic and uses:
+#   /api/oauth/callback/<provider_key>/
+# Ensure your OAuth app allows that URI for the deployment host.
+MCP_OAUTH_GOOGLE_CLIENT_ID = os.getenv("MCP_OAUTH_GOOGLE_CLIENT_ID", GOOGLE_OAUTH_CLIENT_ID).strip()
+MCP_OAUTH_GOOGLE_CLIENT_SECRET = os.getenv("MCP_OAUTH_GOOGLE_CLIENT_SECRET", GOOGLE_OAUTH_CLIENT_SECRET).strip()
+_default_mcp_google_scopes = [
+    "openid",
+    "https://www.googleapis.com/auth/userinfo.email",
+    "https://www.googleapis.com/auth/userinfo.profile",
+    # Common marketplace connectors
+    "https://www.googleapis.com/auth/gmail.readonly",
+    "https://www.googleapis.com/auth/gmail.send",
+    "https://www.googleapis.com/auth/drive.readonly",
+    "https://www.googleapis.com/auth/calendar.readonly",
+    "https://www.googleapis.com/auth/analytics.readonly",
+    "https://www.googleapis.com/auth/adwords",
+]
+MCP_OAUTH_GOOGLE_SCOPES = _split_scopes(os.getenv("MCP_OAUTH_GOOGLE_SCOPES")) or _default_mcp_google_scopes
+
+MCP_OAUTH_SLACK_CLIENT_ID = os.getenv("MCP_OAUTH_SLACK_CLIENT_ID", "").strip()
+MCP_OAUTH_SLACK_CLIENT_SECRET = os.getenv("MCP_OAUTH_SLACK_CLIENT_SECRET", "").strip()
+_default_mcp_slack_scopes = [
+    "chat:write",
+    "channels:read",
+    "users:read",
+]
+MCP_OAUTH_SLACK_SCOPES = _split_scopes(os.getenv("MCP_OAUTH_SLACK_SCOPES")) or _default_mcp_slack_scopes
+
+# ------------------------------------------------------------------------------
+# Email Connectors (Google/Microsoft) — OAuth apps (platform-owned)
+# ------------------------------------------------------------------------------
+# NOTE: Redirect URI for email OAuth is dynamic and uses:
+#   /api/email/oauth/callback/<provider_key>/
+# Ensure your OAuth apps allow that URI for the deployment host(s).
+EMAIL_OAUTH_GOOGLE_CLIENT_ID = os.getenv("EMAIL_OAUTH_GOOGLE_CLIENT_ID", GOOGLE_OAUTH_CLIENT_ID).strip()
+EMAIL_OAUTH_GOOGLE_CLIENT_SECRET = os.getenv("EMAIL_OAUTH_GOOGLE_CLIENT_SECRET", GOOGLE_OAUTH_CLIENT_SECRET).strip()
+_default_email_google_scopes = [
+    "openid",
+    "https://www.googleapis.com/auth/userinfo.email",
+    "https://www.googleapis.com/auth/userinfo.profile",
+    # Email capabilities (v1: text-only send + read/search)
+    "https://www.googleapis.com/auth/gmail.readonly",
+    "https://www.googleapis.com/auth/gmail.send",
+    "https://www.googleapis.com/auth/gmail.compose",
+]
+EMAIL_OAUTH_GOOGLE_SCOPES = _split_scopes(os.getenv("EMAIL_OAUTH_GOOGLE_SCOPES")) or _default_email_google_scopes
+
+EMAIL_OAUTH_MICROSOFT_CLIENT_ID = os.getenv("EMAIL_OAUTH_MICROSOFT_CLIENT_ID", "").strip()
+EMAIL_OAUTH_MICROSOFT_CLIENT_SECRET = os.getenv("EMAIL_OAUTH_MICROSOFT_CLIENT_SECRET", "").strip()
+_default_email_microsoft_scopes = [
+    "openid",
+    "profile",
+    "email",
+    "offline_access",
+    "User.Read",
+    "Mail.Read",
+    "Mail.Send",
+]
+EMAIL_OAUTH_MICROSOFT_SCOPES = _split_scopes(os.getenv("EMAIL_OAUTH_MICROSOFT_SCOPES")) or _default_email_microsoft_scopes
+
+# ------------------------------------------------------------------------------
+# Email Connectors (Google/Microsoft) — policy defaults
+# ------------------------------------------------------------------------------
+# These settings define default-safe behavior for first-party email connectors.
+# They do not grant access by themselves; access is governed by per-user OAuth.
+#
+# SEND DEFAULT:
+# - "draft_approval": always require approval before sending (recommended default)
+# - "auto_send": allow unattended send when per-connection/per-agent policy permits it
+EMAIL_SEND_DEFAULT_MODE = os.getenv("EMAIL_SEND_DEFAULT_MODE", "draft_approval").strip() or "draft_approval"
+
+# Auto-send safety: step-up to approval for risky recipients.
+EMAIL_AUTOSEND_STEP_UP_EXTERNAL_DOMAIN = os.getenv("EMAIL_AUTOSEND_STEP_UP_EXTERNAL_DOMAIN", "true").lower() in {"1", "true", "yes"}
+
+# Optional "save thread to knowledge" defaults (explicit user action).
+EMAIL_SAVED_THREAD_DEFAULT_VISIBILITY = os.getenv("EMAIL_SAVED_THREAD_DEFAULT_VISIBILITY", "private").strip() or "private"
+EMAIL_SAVED_THREAD_COLLECTION_SLUG = os.getenv("EMAIL_SAVED_THREAD_COLLECTION_SLUG", "saved-emails").strip() or "saved-emails"
 # INTEGRATIONS_DASHBOARD_URL: Where the UI should send users after connecting integrations.
 INTEGRATIONS_DASHBOARD_URL = os.getenv(
     "INTEGRATIONS_DASHBOARD_URL",

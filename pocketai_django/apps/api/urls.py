@@ -3,6 +3,7 @@ from django.urls import path
 from . import views
 from . import mcp_connections
 from . import oauth
+from . import email_oauth
 from . import chat_portal_files
 from .chat_portal import (
     bootstrap_session,
@@ -128,4 +129,6 @@ urlpatterns = [
     path("oauth/start/<str:provider_key>/<str:marketplace_key>/", oauth.oauth_start, name="oauth_start"),
     path("oauth/callback/<str:provider_key>/", oauth.oauth_callback, name="oauth_callback"),
     path("oauth/refresh/<uuid:connection_id>/", oauth.oauth_refresh, name="oauth_refresh"),
+    path("email/oauth/start/<str:provider_key>/", email_oauth.email_oauth_start, name="email_oauth_start"),
+    path("email/oauth/callback/<str:provider_key>/", email_oauth.email_oauth_callback, name="email_oauth_callback"),
 ]

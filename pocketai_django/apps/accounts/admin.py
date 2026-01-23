@@ -8,8 +8,12 @@ from django.contrib.auth.models import AnonymousUser
 from django.utils.html import format_html
 
 from .models import (
+    AgentEmailAccountPolicyOverride,
     AgentProfile,
     BusinessProfile,
+    EmailAccount,
+    EmailAccountAuditEvent,
+    EmailAccountHealthJob,
     IntegrationSyncFrequency,
     KnowledgeAlias,
     KnowledgeEntity,
@@ -269,6 +273,62 @@ class KnowledgeIntegrationAdmin(admin.ModelAdmin):
             last_rotated,
             obj.credential_error_count,
         )
+
+
+@admin.register(EmailAccount)
+class EmailAccountAdmin(admin.ModelAdmin):
+    list_display = ("id", "business_profile", "user", "provider", "email_address", "status", "send_mode", "credentials_state", "updated_at")
+    list_filter = ("provider", "status", "send_mode")
+    search_fields = ("email_address", "external_account_id", "user__email", "business_profile__name")
+    readonly_fields = ("credentials_state", "created_at", "updated_at")
+    fieldsets = (
+        (None, {"fields": ("business_profile", "user", "provider", "email_address", "external_account_id", "status")}),
+        ("Send Policy", {"fields": ("send_mode", "policy_config")}),
+        ("Metadata", {"fields": ("metadata", "last_error")}),
+        ("Timestamps", {"fields": ("created_at", "updated_at")}),
+    )
+
+    @admin.display(description="Credentials")
+    def credentials_state(self, obj: EmailAccount) -> str:
+        return "set" if obj.has_credentials() else "missing"
+
+
+@admin.register(AgentEmailAccountPolicyOverride)
+class AgentEmailAccountPolicyOverrideAdmin(admin.ModelAdmin):
+    list_display = ("id", "agent_profile", "email_account", "send_mode", "updated_at")
+    list_filter = ("send_mode",)
+    search_fields = ("agent_profile__name", "email_account__email_address")
+    readonly_fields = ("created_at", "updated_at")
+
+
+@admin.register(EmailAccountAuditEvent)
+class EmailAccountAuditEventAdmin(admin.ModelAdmin):
+    list_display = ("occurred_at", "business_profile", "email_account", "action", "actor_user")
+    list_filter = ("action",)
+    search_fields = ("email_account_id_snapshot", "email_account__email_address", "actor_user__email", "business_profile__name")
+    readonly_fields = ("id", "created_at")
+
+
+@admin.register(EmailAccountHealthJob)
+class EmailAccountHealthJobAdmin(admin.ModelAdmin):
+    list_display = ("id", "business_profile", "email_account", "status", "trigger", "attempt_count", "created_at", "finished_at")
+    list_filter = ("status", "trigger")
+    search_fields = ("email_account__email_address", "business_profile__name", "error_detail")
+    readonly_fields = ("id", "created_at", "updated_at", "started_at", "finished_at", "payload_pretty")
+    fieldsets = (
+        (None, {"fields": ("id", "business_profile", "email_account", "status", "trigger")}),
+        ("Execution", {"fields": ("attempt_count", "max_attempts", "run_after", "lease_expires_at", "started_at", "finished_at")}),
+        ("Details", {"fields": ("error_detail", "payload_pretty")}),
+        ("Timestamps", {"fields": ("created_at", "updated_at")}),
+    )
+
+    @admin.display(description="Payload")
+    def payload_pretty(self, obj):
+        payload = obj.payload or {}
+        try:
+            return json.dumps(payload, indent=2, sort_keys=True)
+        except Exception:
+            return str(payload)
 
 
 @admin.register(IntegrationCredentialEvent)

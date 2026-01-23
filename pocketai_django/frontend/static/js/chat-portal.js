@@ -916,7 +916,7 @@ class ChatPortalClient {
 	    this.setSpinnerText(text, { pending, force });
 	  }
 
-	  handleBlockStartEvent(data) {
+  handleBlockStartEvent(data) {
 	    let payload = null;
 	    try {
 	      payload = data ? JSON.parse(data) : null;
@@ -934,6 +934,16 @@ class ChatPortalClient {
 	    const blockId = (block.block_id || block.blockId || "").toString().trim();
 	    if (blockId && this.isStreamingTextBlock(blockType)) {
 	      this.streamingTextBlockActiveIds.add(blockId);
+        this.clearStreamingIdleStatusTimer();
+        if (this.spinnerDesiredPending) {
+          // Force-show the orbit loader between block_start and the first block_delta.
+          // This removes awkward silence before the assistant begins streaming text.
+          this.setSpinnerText(this.spinnerDesiredText, {
+            pending: this.spinnerDesiredPending,
+            isError: this.spinnerDesiredIsError,
+            force: true,
+          });
+        }
         // Keep the loader visible until we actually receive text deltas; otherwise
         // the UI can go silent between block_start and the first block_delta.
         this.repositionStreamingStatusRow();
@@ -1025,6 +1035,13 @@ class ChatPortalClient {
     const status = (blockPayload.status || "").toString().trim().toLowerCase();
     if (blockId && (phase === "started" || phase === "approval_requested" || status === "running" || status === "pending_approval" || status === "pending")) {
       this.streamingToolBlockActiveIds.add(blockId);
+    }
+    if (!this.isAssistantTextStreaming()) {
+      this.setSpinnerText(this.spinnerDesiredText || "", {
+        pending: true,
+        isError: this.spinnerDesiredIsError,
+        force: true,
+      });
     }
     this.upsertStreamingContentBlock(block);
     this.repositionStreamingStatusRow();
@@ -1467,18 +1484,18 @@ class ChatPortalClient {
     });
   }
 
-		  buildToolEventCard(payload) {
-		    const toolName = (payload?.tool_name || payload?.toolName || "").toString().trim().toLowerCase();
-		    if (toolName === "mcp_search_tools") {
-		      return null;
-		    }
-		    const eventId = (payload.event_id || payload.eventId || "").toString().trim();
-		    if (!eventId) return null;
+  buildToolEventCard(payload) {
+    const toolName = (payload?.tool_name || payload?.toolName || "").toString().trim().toLowerCase();
+    if (toolName === "mcp_search_tools") {
+      return null;
+    }
+    const eventId = (payload.event_id || payload.eventId || "").toString().trim();
+    if (!eventId) return null;
 
-	    const card = document.createElement("div");
-	    card.dataset.toolCard = "true";
-	    card.dataset.toolEventId = eventId;
-	    card.className = "mcp-tool-row";
+    const card = document.createElement("div");
+    card.dataset.toolCard = "true";
+    card.dataset.toolEventId = eventId;
+    card.className = "mcp-tool-row";
 
     const row = document.createElement("div");
     row.className = "mcp-tool-row-line";
@@ -1486,22 +1503,29 @@ class ChatPortalClient {
     const rowLeft = document.createElement("div");
     rowLeft.className = "mcp-tool-row-left";
 
-	    const status = document.createElement("span");
-	    status.dataset.toolStatus = "true";
-	    status.className = "mcp-status pending";
+    const status = document.createElement("span");
+    status.dataset.toolStatus = "true";
+    status.className = "mcp-status pending";
 
-	    const statusIcon = document.createElement("span");
-	    statusIcon.dataset.toolStatusIcon = "true";
-	    statusIcon.className = "mcp-status-icon";
-	    // Always reserve the left-side loader slot to prevent layout shift.
-	    statusIcon.innerHTML = this.getOrbitLoaderMarkup();
+    const statusIcon = document.createElement("span");
+    statusIcon.dataset.toolStatusIcon = "true";
+    statusIcon.className = "mcp-status-icon mcp-status-icon--orbit";
+    // Always reserve the left-side loader slot to prevent layout shift.
+    const orbitImg = document.createElement("img");
+    orbitImg.className = "mcp-status-orbits";
+    orbitImg.alt = "";
+    orbitImg.decoding = "async";
+    orbitImg.loading = "eager";
+    orbitImg.src = this.getToolOrbitImageUrl();
+    orbitImg.srcset = `${this.getToolOrbitImageUrl()} 1x, ${this.getToolOrbitImage2xUrl()} 2x`;
+    statusIcon.appendChild(orbitImg);
 
-	    const statusLabel = document.createElement("span");
-	    statusLabel.dataset.toolStatusLabel = "true";
-	    statusLabel.className = "mcp-status-label";
+    const statusLabel = document.createElement("span");
+    statusLabel.dataset.toolStatusLabel = "true";
+    statusLabel.className = "mcp-status-label";
 
-	    status.appendChild(statusIcon);
-	    status.appendChild(statusLabel);
+    status.appendChild(statusIcon);
+    status.appendChild(statusLabel);
 
     const title = document.createElement("div");
     title.dataset.toolTitle = "true";
@@ -1528,35 +1552,13 @@ class ChatPortalClient {
 	    approvalActions.appendChild(approveButton);
 	    approvalActions.appendChild(denyButton);
 
-	    const outcome = document.createElement("span");
-	    outcome.dataset.toolOutcomeInline = "true";
-	    outcome.className = "mcp-tool-outcome-inline";
+    rowLeft.appendChild(status);
+    rowLeft.appendChild(title);
+    rowLeft.appendChild(approvalActions);
 
-	    rowLeft.appendChild(status);
-	    rowLeft.appendChild(title);
-	    rowLeft.appendChild(approvalActions);
-	    rowLeft.appendChild(outcome);
-
-	    row.appendChild(rowLeft);
-
-    // Inline approval (no details panels)
-    const approval = document.createElement("div");
-    approval.dataset.toolApproval = "true";
-    approval.className = "mcp-approval-inline hidden";
-
-    const approvalTitle = document.createElement("div");
-    approvalTitle.dataset.toolApprovalTitle = "true";
-    approvalTitle.className = "mcp-approval-inline-title";
-
-    const approvalMeta = document.createElement("div");
-    approvalMeta.dataset.toolApprovalMeta = "true";
-    approvalMeta.className = "mcp-approval-inline-meta";
-
-    approval.appendChild(approvalTitle);
-    approval.appendChild(approvalMeta);
+    row.appendChild(rowLeft);
 
     card.appendChild(row);
-    card.appendChild(approval);
     this.attachToolCardEvents(card);
     return card;
   }
@@ -1605,7 +1607,6 @@ class ChatPortalClient {
       card.dataset.approvalStatus = approvalStatus;
     }
 
-    const progressEl = card.querySelector("[data-tool-progress]");
     let effectiveStatus = statusRaw;
     if (!effectiveStatus) {
       if (approvalStatus === "pending") {
@@ -1614,8 +1615,7 @@ class ChatPortalClient {
         effectiveStatus = approvalStatus;
       }
     }
-    const isRunning = effectiveStatus === "running" || phase === "started";
-    if (progressEl) progressEl.classList.toggle("hidden", !isRunning);
+	    const isRunning = effectiveStatus === "running" || phase === "started";
 
     // Expose a stable, minimal state for CSS styling (timeline notch mode)
     const previousToolState = (card.dataset.toolState || "").toString().trim().toLowerCase();
@@ -1646,37 +1646,63 @@ class ChatPortalClient {
       }, 950);
     }
 
-	    const statusEl = card.querySelector("[data-tool-status]");
-	    if (statusEl) {
-	      const mapped = this.mapToolStatus(effectiveStatus || (isRunning ? "running" : "ok"));
-	      statusEl.className = mapped.className; // Use class directly from mapToolStatus
-	      statusEl.title = mapped.label || "";
-	      statusEl.setAttribute("aria-label", mapped.label || "");
+		    const statusEl = card.querySelector("[data-tool-status]");
+		    if (statusEl) {
+		      const mapped = this.mapToolStatus(effectiveStatus || (isRunning ? "running" : "ok"));
+		      statusEl.className = mapped.className; // Use class directly from mapToolStatus
+		      statusEl.title = mapped.label || "";
+		      statusEl.setAttribute("aria-label", mapped.label || "");
 
-	      const iconEl = statusEl.querySelector("[data-tool-status-icon]");
-	      const labelEl = statusEl.querySelector("[data-tool-status-label]");
+		      const iconEl = statusEl.querySelector("[data-tool-status-icon]");
+		      const labelEl = statusEl.querySelector("[data-tool-status-label]");
 
-	      if (labelEl) labelEl.textContent = "";
+		      if (labelEl) labelEl.textContent = "";
 
-	      if (iconEl) {
-	        // Left slot stays an orbit loader (running animates; finished freezes via CSS).
-	        iconEl.classList.add("mcp-status-icon--orbit");
-	        if (!iconEl.querySelector(".mcp-orbit-loader")) {
-	          iconEl.innerHTML = this.getOrbitLoaderMarkup();
-	        }
-	      }
-	    }
+		      if (iconEl) {
+		        iconEl.classList.toggle("mcp-status-icon--orbit", isRunning);
+		        iconEl.classList.toggle("mcp-status-icon--done", !isRunning);
+		        const orbitImg = iconEl.querySelector(".mcp-status-orbits");
+		        const doneImg = iconEl.querySelector(".mcp-status-done");
+		        if (isRunning) {
+		          if (!orbitImg) {
+		            iconEl.innerHTML = "";
+		            const img = document.createElement("img");
+		            img.className = "mcp-status-orbits";
+		            img.alt = "";
+		            img.decoding = "async";
+		            img.loading = "eager";
+			            img.src = this.getToolOrbitImageUrl();
+			            img.srcset = `${this.getToolOrbitImageUrl()} 1x, ${this.getToolOrbitImage2xUrl()} 2x`;
+			            iconEl.appendChild(img);
+		          }
+		          if (doneImg) {
+		            doneImg.remove();
+		          }
+		        } else {
+		          if (orbitImg) {
+		            orbitImg.remove();
+		          }
+		          if (!doneImg) {
+		            const img = document.createElement("img");
+		            img.className = "mcp-status-done";
+		            img.alt = "";
+		            img.decoding = "async";
+		            img.loading = "lazy";
+		            img.src = toolState === "success" ? this.getToolSuccessIconUrl() : this.getToolFailureIconUrl();
+		            iconEl.appendChild(img);
+		          } else {
+		            doneImg.src = toolState === "success" ? this.getToolSuccessIconUrl() : this.getToolFailureIconUrl();
+		          }
+		        }
+		      }
+		    }
 
-	    const outcomeEl = card.querySelector("[data-tool-outcome-inline]");
-	    if (outcomeEl) {
-	      const showOutcome = toolState === "success" || toolState === "error";
-	      outcomeEl.classList.toggle("is-visible", showOutcome);
-	      if (showOutcome) {
-	        outcomeEl.innerHTML = toolState === "success" ? this.getToolSuccessIconMarkup() : this.getToolFailureIconMarkup();
-	      } else if (outcomeEl.innerHTML) {
-	        outcomeEl.innerHTML = "";
-	      }
-	    }
+			    const outcomeEl = card.querySelector("[data-tool-outcome-inline]");
+			    if (outcomeEl) {
+			      // Compact tool row uses the left icon slot for success/error.
+			      outcomeEl.classList.remove("is-visible");
+			      outcomeEl.innerHTML = "";
+			    }
 
     const approvalActionsEl = card.querySelector("[data-tool-approval-actions]");
     const showActions = approvalStatus === "pending" || effectiveStatus === "pending_approval";
@@ -1715,8 +1741,6 @@ class ChatPortalClient {
   updateToolApprovalPanel(card, payload) {
     if (!card) return;
     const approvalWrap = card.querySelector("[data-tool-approval]");
-    if (!approvalWrap) return;
-
     const approval = payload && typeof payload.approval === "object" ? payload.approval : null;
     const approvalId =
       (payload && (payload.approval_id || payload.approvalId)) ||
@@ -1736,55 +1760,54 @@ class ChatPortalClient {
       card.dataset.approvalStatus = status;
     }
 
-    const titleEl = approvalWrap.querySelector("[data-tool-approval-title]");
-    const metaEl = approvalWrap.querySelector("[data-tool-approval-meta]");
     const approveBtn = card.querySelector('[data-tool-approval-action="approve"]');
     const denyBtn = card.querySelector('[data-tool-approval-action="deny"]');
-
-    if (!approvalId) {
-      approvalWrap.classList.add("hidden");
-      return;
-    }
-
-    approvalWrap.classList.remove("hidden");
 
     const isPending = status === "pending" || status === "pending_approval";
     const isApproved = status === "approved";
     const isDenied = status === "denied";
     const isExpired = status === "expired";
 
-    if (titleEl) {
-      if (isPending) {
-        titleEl.textContent = "Approval required";
-      } else if (isApproved) {
-        titleEl.textContent = "Approval granted";
-      } else if (isDenied) {
-        titleEl.textContent = "Approval denied";
-      } else if (isExpired) {
-        titleEl.textContent = "Approval expired";
+    if (approvalWrap) {
+      if (!approvalId) {
+        approvalWrap.classList.add("hidden");
       } else {
-        titleEl.textContent = "Approval update";
+        approvalWrap.classList.remove("hidden");
+        const titleEl = approvalWrap.querySelector("[data-tool-approval-title]");
+        const metaEl = approvalWrap.querySelector("[data-tool-approval-meta]");
+        if (titleEl) {
+          if (isPending) {
+            titleEl.textContent = "Approval required";
+          } else if (isApproved) {
+            titleEl.textContent = "Approval granted";
+          } else if (isDenied) {
+            titleEl.textContent = "Approval denied";
+          } else if (isExpired) {
+            titleEl.textContent = "Approval expired";
+          } else {
+            titleEl.textContent = "Approval update";
+          }
+        }
+        if (metaEl) {
+          const metaParts = [];
+          const approvalMeta = approval && typeof approval.metadata === "object" ? approval.metadata : null;
+          const operationType =
+            (approval && (approval.operation_type || approval.operationType)) ||
+            (approvalMeta && (approvalMeta.operation_type || approvalMeta.operationType)) ||
+            "";
+          const reason = (approval && approval.reason) || (approvalMeta && approvalMeta.reason) || "";
+          if (operationType) {
+            metaParts.push(`${operationType.toString().toUpperCase()} operation`);
+          }
+          if (reason) {
+            metaParts.push(reason.toString());
+          }
+          if (!metaParts.length && isPending) {
+            metaParts.push("Awaiting approval before executing this tool.");
+          }
+          metaEl.textContent = metaParts.join(" • ");
+        }
       }
-    }
-
-    if (metaEl) {
-      const metaParts = [];
-      const approvalMeta = approval && typeof approval.metadata === "object" ? approval.metadata : null;
-      const operationType =
-        (approval && (approval.operation_type || approval.operationType)) ||
-        (approvalMeta && (approvalMeta.operation_type || approvalMeta.operationType)) ||
-        "";
-      const reason = (approval && approval.reason) || (approvalMeta && approvalMeta.reason) || "";
-      if (operationType) {
-        metaParts.push(`${operationType.toString().toUpperCase()} operation`);
-      }
-      if (reason) {
-        metaParts.push(reason.toString());
-      }
-      if (!metaParts.length && isPending) {
-        metaParts.push("Awaiting approval before executing this tool.");
-      }
-      metaEl.textContent = metaParts.join(" • ");
     }
 
     if (approveBtn) {
@@ -2241,14 +2264,54 @@ class ChatPortalClient {
     return "/static/cross.png";
   }
 
+  getFileTypeIcon(type) {
+    const icons = {
+      pdf: `<svg viewBox="0 0 48 48" fill="none" xmlns="http://www.w3.org/2000/svg">
+        <path d="M12 4h18l10 10v30a2 2 0 0 1-2 2H12a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2z" fill="#E53935"/>
+        <path d="M30 4v10h10" fill="#FFCDD2"/>
+        <path d="M30 4l10 10h-8a2 2 0 0 1-2-2V4z" fill="#FFCDD2"/>
+        <text x="24" y="32" text-anchor="middle" fill="white" font-size="10" font-weight="bold" font-family="system-ui">PDF</text>
+      </svg>`,
+      word: `<svg viewBox="0 0 48 48" fill="none" xmlns="http://www.w3.org/2000/svg">
+        <path d="M12 4h18l10 10v30a2 2 0 0 1-2 2H12a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2z" fill="#1976D2"/>
+        <path d="M30 4v10h10" fill="#BBDEFB"/>
+        <path d="M30 4l10 10h-8a2 2 0 0 1-2-2V4z" fill="#BBDEFB"/>
+        <text x="24" y="32" text-anchor="middle" fill="white" font-size="8" font-weight="bold" font-family="system-ui">DOC</text>
+      </svg>`,
+      excel: `<svg viewBox="0 0 48 48" fill="none" xmlns="http://www.w3.org/2000/svg">
+        <path d="M12 4h18l10 10v30a2 2 0 0 1-2 2H12a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2z" fill="#388E3C"/>
+        <path d="M30 4v10h10" fill="#C8E6C9"/>
+        <path d="M30 4l10 10h-8a2 2 0 0 1-2-2V4z" fill="#C8E6C9"/>
+        <text x="24" y="32" text-anchor="middle" fill="white" font-size="8" font-weight="bold" font-family="system-ui">XLS</text>
+      </svg>`,
+      ppt: `<svg viewBox="0 0 48 48" fill="none" xmlns="http://www.w3.org/2000/svg">
+        <path d="M12 4h18l10 10v30a2 2 0 0 1-2 2H12a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2z" fill="#E64A19"/>
+        <path d="M30 4v10h10" fill="#FFCCBC"/>
+        <path d="M30 4l10 10h-8a2 2 0 0 1-2-2V4z" fill="#FFCCBC"/>
+        <text x="24" y="32" text-anchor="middle" fill="white" font-size="8" font-weight="bold" font-family="system-ui">PPT</text>
+      </svg>`,
+      default: `<svg viewBox="0 0 48 48" fill="none" xmlns="http://www.w3.org/2000/svg">
+        <path d="M12 4h18l10 10v30a2 2 0 0 1-2 2H12a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2z" fill="#78909C"/>
+        <path d="M30 4v10h10" fill="#CFD8DC"/>
+        <path d="M30 4l10 10h-8a2 2 0 0 1-2-2V4z" fill="#CFD8DC"/>
+        <path d="M16 26h16M16 32h10" stroke="white" stroke-width="2" stroke-linecap="round"/>
+      </svg>`,
+    };
+    return icons[type] || icons.default;
+  }
+
+  getToolOrbitImageUrl() {
+    return "/static/orbits.png";
+  }
+
+  getToolOrbitImage2xUrl() {
+    return "/static/orbits@2x.png";
+  }
+
   getOrbitLoaderMarkup() {
-    return `
-      <span class="mcp-orbit-loader" aria-hidden="true">
-        <span class="mcp-orbit-ring mcp-orbit-ring--1" aria-hidden="true"></span>
-        <span class="mcp-orbit-ring mcp-orbit-ring--2" aria-hidden="true"></span>
-        <span class="mcp-orbit-ring mcp-orbit-ring--3" aria-hidden="true"></span>
-      </span>
-    `;
+    const src = this.getToolOrbitImageUrl();
+    const src2x = this.getToolOrbitImage2xUrl();
+    return `<img class="mcp-status-orbits" alt="" decoding="async" loading="eager" src="${src}" srcset="${src} 1x, ${src2x} 2x">`;
   }
 
   formatDurationMs(ms) {
@@ -2691,9 +2754,7 @@ class ChatPortalClient {
       const fileId = (payload.file_id || payload.fileId || "").toString().trim();
       const filename = (payload.filename || "").toString().trim() || "file";
       const contentType = (payload.content_type || payload.contentType || "").toString().trim().toLowerCase();
-      const kind = (payload.kind || "").toString().trim().toLowerCase();
       const status = (payload.status || "").toString().trim().toLowerCase();
-      const labelRaw = (payload.label || "").toString().trim();
 
       const sizeBytesRaw = payload.size_bytes ?? payload.sizeBytes ?? 0;
       const pageCountRaw = payload.page_count ?? payload.pageCount ?? 0;
@@ -2707,65 +2768,48 @@ class ChatPortalClient {
       if (blockId) wrapper.dataset.blockId = blockId;
       wrapper.className = "portal-file-card";
 
+      // Determine file type for branded icon
+      let fileType = "default";
+      const fn = filename.toLowerCase();
+      if (contentType.includes("pdf") || fn.endsWith(".pdf")) fileType = "pdf";
+      else if (contentType.includes("word") || fn.endsWith(".doc") || fn.endsWith(".docx")) fileType = "word";
+      else if (contentType.includes("excel") || contentType.includes("spreadsheet") || fn.endsWith(".xls") || fn.endsWith(".xlsx") || fn.endsWith(".csv")) fileType = "excel";
+      else if (contentType.includes("powerpoint") || contentType.includes("presentation") || fn.endsWith(".ppt") || fn.endsWith(".pptx")) fileType = "ppt";
+
       const icon = document.createElement("div");
       icon.className = "portal-file-card__icon";
-      icon.innerHTML = `
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-          <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
-          <path d="M14 2v6h6"></path>
-          <path d="M8 13h8"></path>
-          <path d="M8 17h5"></path>
-        </svg>
-      `;
+      icon.innerHTML = this.getFileTypeIcon(fileType);
 
       const main = document.createElement("div");
       main.className = "portal-file-card__main";
 
-      const titleRow = document.createElement("div");
-      titleRow.className = "portal-file-card__title-row";
-
       const nameEl = document.createElement("div");
       nameEl.className = "portal-file-card__filename";
       nameEl.textContent = filename;
-
-      const badge = document.createElement("span");
-      badge.className = "portal-file-card__badge";
-      const label =
-        labelRaw ||
-        (kind === "upload" ? "Uploaded" : kind === "artifact" ? "Generated" : "") ||
-        "";
-      badge.textContent = label;
-      badge.hidden = !label;
-
-      titleRow.appendChild(nameEl);
-      titleRow.appendChild(badge);
+      nameEl.title = filename;
 
       const meta = document.createElement("div");
       meta.className = "portal-file-card__meta";
-
       const parts = [];
-      const isPdf = contentType === "application/pdf" || filename.toLowerCase().endsWith(".pdf");
-      parts.push(isPdf ? "PDF" : contentType ? contentType : "File");
       if (pageCount > 0) parts.push(`${pageCount} page${pageCount === 1 ? "" : "s"}`);
       if (sizeBytes > 0) parts.push(this.formatBytes(sizeBytes));
-      meta.textContent = parts.join(" • ");
-
-      main.appendChild(titleRow);
-      main.appendChild(meta);
-
-      const actions = document.createElement("div");
-      actions.className = "portal-file-card__actions";
-
-      const statusEl = document.createElement("div");
-      statusEl.className = "portal-file-card__status";
-      const statusLabel = status === "ready" ? "Ready" : status === "failed" ? "Failed" : "Processing";
-      statusEl.textContent = statusLabel;
-      statusEl.dataset.status = status || "";
+      meta.textContent = parts.length ? parts.join(" • ") : "Document";
 
       const button = document.createElement("button");
       button.type = "button";
       button.className = "portal-file-card__download";
-      button.textContent = status === "ready" ? "Download" : status === "failed" ? "Unavailable" : "Preparing…";
+      if (status === "ready") {
+        button.innerHTML = `<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>`;
+        button.ariaLabel = "Download file";
+      } else if (status === "failed") {
+        button.innerHTML = `<svg width="20" height="20" viewBox="0 0 24 24" fill="none" class="text-destructive/80" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="8" x2="12" y2="12"></line><line x1="12" y1="16" x2="12.01" y2="16"></line></svg>`;
+        button.ariaLabel = "Download unavailable";
+        button.title = "Download unavailable";
+      } else {
+         // Preparing
+        button.innerHTML = `<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="animate-spin text-muted-foreground"><path d="M21 12a9 9 0 1 1-6.219-8.56"></path></svg>`;
+        button.ariaLabel = "Preparing file...";
+      }
       button.disabled = status !== "ready" || !fileId;
       button.addEventListener("click", (event) => {
         event.preventDefault();
@@ -2774,12 +2818,11 @@ class ChatPortalClient {
         void this.downloadConversationFile(fileId, filename);
       });
 
-      actions.appendChild(statusEl);
-      actions.appendChild(button);
-
+      main.appendChild(nameEl);
+      main.appendChild(meta);
       wrapper.appendChild(icon);
       wrapper.appendChild(main);
-      wrapper.appendChild(actions);
+      wrapper.appendChild(button);
       return wrapper;
     }
 
@@ -3922,6 +3965,7 @@ class ChatPortalClient {
 		    this.streamingActive = false;
 		    this.isStreaming = false;
 		    this.textDeltaIntervalEma = 0;
+		    this.lastTextDeltaAt = 0;
 		    this.clearStreamingIdleStatusTimer();
 		    this.clearStreamingStatus();
     if (removeNode && this.streamingMessageNode && this.streamingMessageNode.parentNode) {
@@ -3974,31 +4018,48 @@ class ChatPortalClient {
     this.streamingIdleStatusTimer = null;
   }
 
+  isAssistantTextStreaming() {
+    if (!this.streamingTextBlockActiveIds.size) return false;
+    const lastDeltaAt = this.lastTextDeltaAt || 0;
+    if (!lastDeltaAt) return false;
+    // Use a tight threshold (150ms) to show spinner immediately when LLM pauses
+    const threshold = 150;
+    return Date.now() - lastDeltaAt < threshold;
+  }
+
   scheduleStreamingIdleStatusReveal() {
     if (!this.isStreaming || this.streamFinished) return;
     if (!this.streamingStatusEl || !this.streamingStatusTextEl) return;
     if (!this.spinnerDesiredPending) return;
 
     this.clearStreamingIdleStatusTimer();
-    const hasActiveText = this.streamingTextBlockActiveIds.size > 0;
-    const adaptiveSilenceThreshold = (() => {
-      if (!hasActiveText) return this.streamingSilenceStatusDelayMs;
-      const ema = this.textDeltaIntervalEma || 0;
-      if (!ema) return this.streamingSilenceStatusDelayMs;
-      const scaled = ema * 2.5;
-      return Math.min(2000, Math.max(this.streamingSilenceStatusDelayMs, scaled));
-    })();
-    const delay = hasActiveText ? adaptiveSilenceThreshold : this.streamingIdleStatusDelayMs;
+
+    // Calculate delay based on when text last arrived
+    const lastDeltaAt = this.lastTextDeltaAt || 0;
+    const timeSinceLastDelta = lastDeltaAt ? Date.now() - lastDeltaAt : 999999;
+    const threshold = 150; // How long to wait after last delta before showing spinner
+
+    let delay;
+    if (timeSinceLastDelta < threshold) {
+      // Text just arrived, wait for it to stop then show spinner quickly
+      delay = threshold - timeSinceLastDelta + 50;
+    } else {
+      // Text has stopped, show spinner very soon
+      delay = 50;
+    }
+
     this.streamingIdleStatusTimer = setTimeout(() => {
       this.streamingIdleStatusTimer = null;
       if (!this.isStreaming || this.streamFinished) return;
       if (!this.spinnerDesiredPending) return;
-      if (this.streamingTextBlockActiveIds.size > 0) {
-        const lastDelta = this.lastTextDeltaAt || 0;
-        if (lastDelta && Date.now() - lastDelta < adaptiveSilenceThreshold) {
-          return;
-        }
+
+      // Re-check if text is still streaming
+      if (this.isAssistantTextStreaming()) {
+        // Still streaming, schedule another check
+        this.scheduleStreamingIdleStatusReveal();
+        return;
       }
+
       this.setSpinnerText(this.spinnerDesiredText, {
         pending: this.spinnerDesiredPending,
         isError: this.spinnerDesiredIsError,
@@ -4044,7 +4105,7 @@ class ChatPortalClient {
       if (pending) {
         this.streamingStatusTextEl.textContent = "";
         this.repositionStreamingStatusRow();
-        if (!force && this.streamingTextBlockActiveIds.size > 0) {
+        if (!force && this.isAssistantTextStreaming()) {
           this.streamingStatusEl.classList.add("hidden");
         } else {
           this.streamingStatusEl.classList.remove("hidden");
@@ -4055,7 +4116,7 @@ class ChatPortalClient {
     }
     this.streamingStatusTextEl.innerHTML = this.formatStatusLabel(label);
     this.repositionStreamingStatusRow();
-    if (!force && this.streamingTextBlockActiveIds.size > 0) {
+    if (!force && this.isAssistantTextStreaming()) {
       this.streamingStatusEl.classList.add("hidden");
     } else {
       this.streamingStatusEl.classList.remove("hidden");

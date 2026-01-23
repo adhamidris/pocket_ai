@@ -3,7 +3,7 @@
 {% block title %}MCP Connector (BETA) | Pocket AI{% endblock %}
 
 {% block content %}
-<div class="min-h-screen bg-background flex">
+<div class="h-screen bg-background flex overflow-hidden">
   {% include "frontend/components/dashboard/sidebar.html" with active="mcp" user_name=user_name %}
   <main class="flex-1 overflow-auto">
     <div class="w-full px-4 md:px-6 lg:px-8 py-6 space-y-6">
@@ -36,17 +36,7 @@
         </div>
       </header>
 
-      <section class="rounded-xl border border-border/60 bg-card/60 backdrop-blur p-4">
-        <div class="flex items-start gap-3">
-          <svg class="mt-0.5 h-5 w-5 text-amber-500" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor">
-            <path stroke-linecap="round" stroke-linejoin="round" d="M12 9v3.75m0 3h.007M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z" />
-          </svg>
-          <div class="space-y-1">
-            <div class="text-sm font-semibold text-foreground">Beta feature</div>
-            <div class="text-xs text-muted-foreground">Tool schemas are cached when you run “Test connection”. Agents inherit MCP connections by default (opt out per agent).</div>
-          </div>
-        </div>
-      </section>
+
 
       <section class="rounded-xl border border-border/60 bg-card/60 backdrop-blur p-4" data-mcp-agent-defaults>
         <div class="flex items-start justify-between gap-3">
@@ -417,12 +407,16 @@
 	    var testRateLimitLastAt = {};
 	    var cooldownInterval = null;
 	    var pendingTestClicks = {};  // Track pending clicks to prevent race conditions
+	    var autoTestStatusById = {}; // { [connectionId]: "queued"|"running" }
+	    var autoTestPollTimer = null;
+	    var autoTestPollAttempts = 0;
 
     function setTab(tab) {
       var industryBtn = document.querySelector('[data-tab-button="industry"]');
       var allBtn = document.querySelector('[data-tab-button="all"]');
       var connectedBtn = document.querySelector('[data-tab-button="connected"]');
       var active = ["industry", "all", "connected"].includes(tab) ? tab : "industry";
+      
       if (tabRoot) {
         tabRoot.setAttribute("data-active-tab", active);
       }
@@ -435,14 +429,22 @@
       if (connectedPanel) {
         connectedPanel.classList.toggle("hidden", active !== "connected");
       }
+
+      var activeClasses = ["bg-primary", "text-primary-foreground", "shadow-sm"];
+      var inactiveClasses = ["text-muted-foreground", "hover:text-primary"];
+
       [industryBtn, allBtn, connectedBtn].forEach(function (btn) {
         if (!btn) return;
         var btnTab = btn.getAttribute("data-tab-button");
         var isActive = btnTab === active;
-        btn.classList.toggle("bg-primary", isActive);
-        btn.classList.toggle("text-primary-foreground", isActive);
-        btn.classList.toggle("shadow-sm", isActive);
-        btn.classList.toggle("text-muted-foreground", !isActive);
+        
+        if (isActive) {
+          btn.classList.add(...activeClasses);
+          btn.classList.remove(...inactiveClasses);
+        } else {
+          btn.classList.remove(...activeClasses);
+          btn.classList.add(...inactiveClasses);
+        }
       });
     }
 
@@ -544,7 +546,17 @@
             showFlash("Connected " + (data.marketplaceKey || "OAuth") + ".", "success");
             loadAll();
           } else if (data.type === "mcp_oauth_error") {
-            showFlash("OAuth failed: " + (data.error || "unknown_error") + ".", "error");
+            var code = (data.error || "unknown_error").toString();
+            var hint = data.hint ? (" " + String(data.hint)) : "";
+            if (code === "provider_not_configured") {
+              var provider = (data.provider || "").toString();
+              var label = provider ? ("OAuth provider '" + provider + "'") : "OAuth provider";
+              showFlash(label + " is not configured." + hint, "error");
+            } else if (code === "provider_incomplete_config") {
+              showFlash("OAuth provider is missing client configuration." + hint, "error");
+            } else {
+              showFlash("OAuth failed: " + code + "." + hint, "error");
+            }
           }
         });
 
@@ -600,9 +612,56 @@
 	      }
 	    }
 
+	    function isAutoTesting(connectionId) {
+	      var id = String(connectionId || "");
+	      if (!id) return false;
+	      var status = autoTestStatusById[id];
+	      return status === "queued" || status === "running";
+	    }
+
+	    function updateAutoTestStatuses(connections) {
+	      autoTestStatusById = {};
+	      var rows = connections || [];
+	      var anyActive = false;
+	      rows.forEach(function (conn) {
+	        if (!conn || !conn.id) return;
+	        var job = conn.testJob || conn.test_job || null;
+	        var status = job && job.status ? String(job.status).toLowerCase().trim() : "";
+	        if (status === "queued" || status === "running") {
+	          autoTestStatusById[String(conn.id)] = status;
+	          anyActive = true;
+	        }
+	      });
+	      if (!anyActive) {
+	        autoTestPollAttempts = 0;
+	        if (autoTestPollTimer) {
+	          try { window.clearTimeout(autoTestPollTimer); } catch (_e) {}
+	          autoTestPollTimer = null;
+	        }
+	      }
+	      return anyActive;
+	    }
+
+	    function queueAutoTestPoll() {
+	      if (autoTestPollTimer) return;
+	      autoTestPollTimer = window.setTimeout(function () {
+	        autoTestPollTimer = null;
+	        autoTestPollAttempts += 1;
+	        if (autoTestPollAttempts > 15) {
+	          showFlash("Auto-test is taking longer than expected. Ensure the MCP job worker is running, or click Test manually.", "info");
+	          return;
+	        }
+	        loadAll();
+	      }, 2000);
+	    }
+
 	    // Clean up interval on page unload to prevent memory leaks
 	    window.addEventListener("beforeunload", function () {
 	      clearCooldownTicker();
+	      if (autoTestPollTimer) {
+	        try { window.clearTimeout(autoTestPollTimer); } catch (_e) {}
+	        autoTestPollTimer = null;
+	      }
 	      if (activeTest && activeTest.abortController) {
 	        try { activeTest.abortController.abort(); } catch (_e) {}
 	      }
@@ -666,17 +725,22 @@
 	        var id = String(button.getAttribute("data-mcp-test") || "");
 	        var cooldown = getCooldownRemainingSeconds(id);
 	        var isActive = hasActiveTest && activeId && id === activeId;
-	        var disabled = hasActiveTest || cooldown > 0;
+	        var autoTesting = isAutoTesting(id);
+	        var disabled = hasActiveTest || cooldown > 0 || autoTesting;
 
 	        button.disabled = disabled;
 	        if (isActive) {
 	          setTestButtonLoading(button, "Testing");
+	        } else if (autoTesting) {
+	          setTestButtonLoading(button, "Auto");
 	        } else {
 	          setTestButtonNormal(button);
 	        }
 
 	        if (cooldown > 0) {
 	          button.title = "Rate limited. Retry in " + cooldown + "s.";
+	        } else if (autoTesting && !isActive) {
+	          button.title = "Auto-test in progress…";
 	        } else if (hasActiveTest && !isActive) {
 	          button.title = activeName ? ("Testing " + activeName + "…") : "A test is running.";
 	        } else {
@@ -692,6 +756,8 @@
 	        var isActive = hasActiveTest && activeId && id === activeId;
 	        if (isActive) {
 	          meta.textContent = "Testing connectivity…";
+	        } else if (isAutoTesting(id)) {
+	          meta.textContent = "Auto-testing connectivity…";
 	        } else if (cooldown > 0) {
 	          meta.textContent = "Rate limited — retry in " + cooldown + "s";
 	        } else if (defaultText != null) {
@@ -706,7 +772,7 @@
 	      });
 
 	      if (modalTest) {
-	        modalTest.disabled = Boolean(activeTest);
+	        modalTest.disabled = Boolean(activeTest) || (editingConnectionId && isAutoTesting(editingConnectionId));
 	      }
 	      if (modalSave && activeTest && activeTest.source === "modal") {
 	        modalSave.disabled = true;
@@ -728,6 +794,11 @@
 	    function beginConnectionTest(connectionId, connectionName, opts) {
 	      var id = String(connectionId || "");
 	      if (!id) return Promise.resolve();
+	      if (isAutoTesting(id)) {
+	        showFlash("Auto-test is already running for this connection. Please wait…", "info");
+	        applyUiState();
+	        return Promise.resolve();
+	      }
 
 	      // Prevent duplicate clicks with debounce
 	      var now = Date.now();
@@ -982,49 +1053,103 @@
       }
     }
 
+    function mapToolToLogo(name) {
+      if (!name) return null;
+      var lower = name.toLowerCase();
+      
+      // Developer Tools
+      if (lower.includes("github")) return "/static/img/mcp/github.svg";
+      if (lower.includes("gitlab")) return "/static/img/mcp/gitlab.svg";
+      if (lower.includes("jira") || lower.includes("atlassian")) return "/static/img/mcp/jira.svg";
+      if (lower.includes("linear")) return "/static/img/mcp/linear.svg";
+      if (lower.includes("sentry")) return "/static/img/mcp/sentry.svg";
+      if (lower.includes("vercel")) return "/static/img/mcp/vercel.svg";
+      if (lower.includes("postgres")) return "/static/img/mcp/postgresql.svg";
+      
+      // Communication
+      if (lower.includes("slack")) return "/static/img/mcp/slack.svg";
+      if (lower.includes("teams") || lower.includes("microsoft")) return "/static/img/mcp/microsoftteams.svg";
+      if (lower.includes("discord")) return "/static/img/mcp/discord.svg";
+      if (lower.includes("gmail") || lower.includes("email")) return "/static/img/mcp/gmail.svg";
+      
+      // Productivity & Docs
+      if (lower.includes("notion")) return "/static/img/mcp/notion-logo.svg";
+      if (lower.includes("asana")) return "/static/img/mcp/asana.svg";
+      if (lower.includes("trello")) return "/static/img/mcp/trello.svg";
+      if (lower.includes("airtable")) return "/static/img/mcp/airtable.svg";
+      if (lower.includes("dropbox")) return "/static/img/mcp/dropbox.svg";
+      if (lower.includes("google") || lower.includes("drive")) return "/static/img/mcp/googledrive.svg";
+      if (lower.includes("excel") || lower.includes("spreadsheet")) return "/static/img/mcp/excel.svg";
+      if (lower.includes("pdf") || lower.includes("adobe")) return "/static/img/mcp/adobe.svg";
+      if (lower.includes("docusign")) return "/static/img/mcp/docusign.svg";
+      
+      // Marketing & Sales
+      if (lower.includes("hubspot")) return "/static/img/mcp/hubspot.svg";
+      if (lower.includes("salesforce")) return "/static/img/mcp/salesforce.svg";
+      if (lower.includes("pipedrive")) return "/static/img/mcp/pipedrive.svg";
+      if (lower.includes("mailchimp")) return "/static/img/mcp/mailchimp.svg";
+      if (lower.includes("sendgrid")) return "/static/img/mcp/sendgrid.svg";
+      if (lower.includes("linkedin")) return "/static/img/mcp/linkedin.svg";
+      if (lower.includes("ads") && lower.includes("google")) return "/static/img/mcp/googleads.svg";
+      if (lower.includes("analytics")) return "/static/img/mcp/analytics.svg";
+      if (lower.includes("mixpanel")) return "/static/img/mcp/mixpanel.svg";
+      
+      // Business & Finance
+      if (lower.includes("stripe")) return "/static/img/mcp/stripe.svg";
+      if (lower.includes("shopify")) return "/static/img/mcp/shopify.svg";
+      if (lower.includes("quickbooks")) return "/static/img/mcp/quickbooks.svg";
+      if (lower.includes("woocommerce")) return "/static/img/mcp/woocommerce.svg";
+      if (lower.includes("xerox")) return "/static/img/mcp/xerox.svg";
+      if (lower.includes("zillow")) return "/static/img/mcp/zillow.svg";
+      
+      // Browsers
+      if (lower.includes("brave")) return "/static/img/mcp/brave.svg";
+
+      return null;
+    }
+
     function renderMcpCard(item, targetGrid) {
       var isConnected = cachedConnectedKeys.has(item.key);
       var el = document.createElement("div");
+      // Grid handles sizing now, no need for explicit width classes
       el.setAttribute("data-mcp-marketplace-card", (item && item.key) ? item.key : "1");
-      el.className = "rounded-xl border bg-background/60 p-5 shadow-sm transition-all " + (isConnected ? "border-emerald-500/40" : "border-border/70 hover:border-primary/40");
+      
+      // Card Container
+      el.className = "mcp-card";
 
-      var badgeHtml = "";
-      if (item.badge) {
-        var badgeColor = "border-border/60 bg-muted/40 text-muted-foreground";
-        if (item.badge === "Popular") badgeColor = "border-violet-500/30 bg-violet-500/10 text-violet-400";
-        else if (item.badge === "Official") badgeColor = "border-sky-500/30 bg-sky-500/10 text-sky-400";
-        else if (item.badge === "Premium") badgeColor = "border-amber-500/30 bg-amber-500/10 text-amber-400";
-        else if (item.badge === "Built-in") badgeColor = "border-emerald-500/30 bg-emerald-500/10 text-emerald-400";
-        badgeHtml = '<span class="inline-flex items-center rounded-full border ' + badgeColor + ' px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide">' + escapeHtml(item.badge) + "</span>";
+      // Icon Logic
+      var iconHtml = "";
+      var localLogo = mapToolToLogo(item.name);
+      
+      if (item.iconUrl) {
+         iconHtml = '<img src="' + escapeHtml(item.iconUrl) + '" class="mcp-card-icon" alt="' + escapeHtml(item.name) + '">';
+      } else if (localLogo) {
+         iconHtml = '<img src="' + localLogo + '" class="mcp-card-icon" alt="' + escapeHtml(item.name) + '">';
+      } else {
+         var initial = (item.name || "M").charAt(0).toUpperCase();
+         iconHtml = '<div class="mcp-card-icon-placeholder">' + initial + '</div>';
       }
 
-      var categoryHtml = item.category ? '<span class="text-[10px] text-muted-foreground capitalize">' + escapeHtml(item.category) + '</span>' : '';
-
-      var connectionTypeBadge = getConnectionTypeBadge(item.connectionType || "none");
-
+      // Button Logic
       var buttonHtml = isConnected
-        ? '<button type="button" class="inline-flex items-center gap-2 rounded-md bg-emerald-500/20 text-emerald-400 px-3 py-2 text-xs font-semibold cursor-default" disabled><svg class="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/></svg>Connected</button>'
-        : '<button type="button" class="inline-flex items-center gap-2 rounded-md bg-primary text-primary-foreground px-3 py-2 text-xs font-semibold hover:bg-primary/90" data-mcp-market-add="' + escapeHtml(item.key) + '">Add</button>';
+        ? '<button type="button" class="mcp-btn mcp-btn-connected" disabled><svg class="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/></svg>Installed</button>'
+        : '<button type="button" class="mcp-btn mcp-btn-primary" data-mcp-market-add="' + escapeHtml(item.key) + '">Connect</button>';
 
       el.innerHTML =
-        '<div class="space-y-3">' +
-          '<div class="flex items-start justify-between gap-3">' +
-            '<div class="min-w-0 flex-1">' +
-              '<div class="flex items-center gap-2 flex-wrap">' +
-                '<span class="text-sm font-semibold text-foreground">' + escapeHtml(item.name || "MCP Server") + '</span>' +
-                connectionTypeBadge +
-              '</div>' +
-              '<div class="text-xs text-muted-foreground mt-1 line-clamp-2">' + escapeHtml(item.description || "") + '</div>' +
-            '</div>' +
-            badgeHtml +
-          '</div>' +
-          '<div class="flex items-center justify-between gap-2 pt-2">' +
-            '<div class="flex items-center gap-2">' +
-              categoryHtml +
-              (item.docsUrl ? '<a class="text-xs text-primary hover:underline" href="' + escapeHtml(item.docsUrl) + '" target="_blank" rel="noreferrer">Docs</a>' : '') +
-            '</div>' +
-            buttonHtml +
-          '</div>' +
+        '<div class="mcp-card-header">' +
+           iconHtml +
+           '<div class="mcp-card-meta">' +
+             '<h3 class="mcp-card-title">' + escapeHtml(item.name || "MCP Server") + '</h3>' +
+             '<div class="mcp-card-subtitle">' +
+               (item.badge ? '<span class="mcp-tag">' + escapeHtml(item.badge) + '</span>' : '') +
+               '<span class="text-xs opacity-70">' + escapeHtml(item.category || "General") + '</span>' +
+             '</div>' +
+           '</div>' +
+        '</div>' +
+        '<p class="mcp-card-desc">' + escapeHtml(item.description || "") + '</p>' +
+        '<div class="mcp-card-actions">' +
+           (item.docsUrl ? '<a href="' + escapeHtml(item.docsUrl) + '" target="_blank" class="mcp-btn mcp-btn-outline text-xs">Docs</a>' : '<div></div>') +
+           buttonHtml +
         '</div>';
 
       el.__item = item;
@@ -1070,8 +1195,8 @@
       var allBtn = document.createElement("button");
       allBtn.type = "button";
       allBtn.className = activeCategory === "all"
-        ? "rounded-full px-3 py-1 text-xs font-medium transition-colors bg-primary text-primary-foreground"
-        : "rounded-full px-3 py-1 text-xs font-medium transition-colors border border-border/60 bg-background text-muted-foreground hover:bg-accent hover:text-accent-foreground";
+        ? "mcp-tag bg-primary text-primary-foreground"
+        : "mcp-tag bg-muted text-muted-foreground hover:bg-muted/80";
       allBtn.setAttribute("data-mcp-category", "all");
       allBtn.textContent = "All";
       categoryFilters.appendChild(allBtn);
@@ -1081,8 +1206,8 @@
         var btn = document.createElement("button");
         btn.type = "button";
         btn.className = activeCategory === cat.key
-          ? "rounded-full px-3 py-1 text-xs font-medium transition-colors bg-primary text-primary-foreground"
-          : "rounded-full px-3 py-1 text-xs font-medium transition-colors border border-border/60 bg-background text-muted-foreground hover:bg-accent hover:text-accent-foreground";
+          ? "mcp-tag bg-primary text-primary-foreground"
+          : "mcp-tag bg-muted text-muted-foreground hover:bg-muted/80";
         btn.setAttribute("data-mcp-category", cat.key);
         btn.textContent = cat.label;
         categoryFilters.appendChild(btn);
@@ -1138,10 +1263,16 @@
       }
       listEl.innerHTML = "";
       rows.forEach(function (conn) {
+        var job = conn.testJob || conn.test_job || null;
+        var jobStatus = job && job.status ? String(job.status).toLowerCase().trim() : "";
+        var autoTesting = jobStatus === "queued" || jobStatus === "running";
+        var testingBadge = autoTesting
+          ? '<span class="inline-flex items-center rounded-full border border-sky-500/30 bg-sky-500/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-sky-400" title="Auto-test in progress">Testing</span>'
+          : "";
         var statusBadge = conn.status === "enabled"
           ? '<span class="inline-flex items-center rounded-full border border-emerald-500/30 bg-emerald-500/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-emerald-400">Enabled</span>'
           : '<span class="inline-flex items-center rounded-full border border-border/60 bg-muted/40 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">Disabled</span>';
-        var toolMeta = conn.toolCount ? (conn.toolCount + " tools") : "No tools cached";
+        var toolMeta = autoTesting ? "Auto-testing…" : (conn.toolCount ? (conn.toolCount + " tools") : "No tools cached");
         // Show cache expiration warning
         var cacheWarning = "";
         if (conn.cacheExpired) {
@@ -1170,6 +1301,7 @@
 	                statusBadge +
 	                approvalBadge +
 	                (conn.sourceType === "marketplace" ? '<span class="inline-flex items-center rounded-full border border-amber-500/30 bg-amber-500/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-amber-400">Marketplace</span>' : "") +
+	                testingBadge +
 	                cacheWarning +
 	              "</div>" +
 	              '<div class="text-xs text-muted-foreground truncate" title="' + escapeHtml(conn.serverUrl || "") + '">' + escapeHtml(conn.serverUrl || "") + "</div>" +
@@ -1285,11 +1417,15 @@
 
           // Render all sections
 	        renderConnections(data.connections || []);
+	        var hasAutoTests = updateAutoTestStatuses(data.connections || []);
           renderIndustryTools(cachedIndustryTools, data.industryDisplay || "");
           renderCommonTools(cachedCommonTools);
           renderCategoryFilters(cachedCategories);
 	        renderMarketplace(cachedMarketplace);
 	        applyUiState();
+	        if (hasAutoTests) {
+	          queueAutoTestPoll();
+	        }
 	        return data;
 	      }).catch(function (err) {
 	        listEl.innerHTML = '<div class="rounded-xl border border-rose-500/30 bg-rose-500/10 p-6 text-sm text-rose-300">Failed to load MCP connections: ' + escapeHtml(err.message || "Error") + "</div>";

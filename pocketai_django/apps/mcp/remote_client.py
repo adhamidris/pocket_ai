@@ -1,13 +1,15 @@
 from __future__ import annotations
 
+import ipaddress
 import json
 import logging
+import socket
 import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from email.utils import parsedate_to_datetime
 from typing import Any, Iterable, Iterator, Mapping
-from urllib.parse import urljoin
+from urllib.parse import urljoin, urlsplit
 
 import httpx
 
@@ -38,6 +40,93 @@ class McpRemoteHttpStatusError(McpRemoteTransportError):
         super().__init__(message)
         self.status_code = status_code
         self.retry_after = retry_after
+
+
+class McpRemoteSsrBlockedError(McpRemoteTransportError):
+    """Raised when an MCP network request is blocked by SSRF policy."""
+
+
+def _is_forbidden_ip(ip: ipaddress._BaseAddress) -> bool:
+    return bool(
+        ip.is_private
+        or ip.is_loopback
+        or ip.is_link_local
+        or ip.is_multicast
+        or ip.is_reserved
+        or ip.is_unspecified
+    )
+
+
+def _validate_mcp_url_for_ssrf(url: str, *, action: str) -> None:
+    raw = (url or "").strip()
+    if not raw:
+        raise McpRemoteSsrBlockedError(f"Blocked by SSRF policy during {action} (empty URL).")
+    try:
+        parsed = urlsplit(raw)
+    except ValueError as exc:
+        raise McpRemoteSsrBlockedError(f"Blocked by SSRF policy during {action} (invalid URL).") from exc
+
+    if parsed.scheme not in {"http", "https"}:
+        raise McpRemoteSsrBlockedError(f"Blocked by SSRF policy during {action} (unsupported scheme).")
+    if not parsed.netloc or not parsed.hostname:
+        raise McpRemoteSsrBlockedError(f"Blocked by SSRF policy during {action} (missing hostname).")
+
+    hostname = parsed.hostname.strip().lower().rstrip(".")
+    if hostname in {"localhost"} or hostname.endswith(".local"):
+        raise McpRemoteSsrBlockedError(f"Blocked by SSRF policy during {action} (hostname not allowed).")
+
+    try:
+        port = parsed.port
+    except ValueError as exc:
+        raise McpRemoteSsrBlockedError(f"Blocked by SSRF policy during {action} (invalid port).") from exc
+    port = port or (443 if parsed.scheme == "https" else 80)
+
+    # Block direct IP literals in private ranges and also resolve hostnames to defend against SSRF.
+    try:
+        ip = ipaddress.ip_address(hostname)
+        if _is_forbidden_ip(ip):
+            raise McpRemoteSsrBlockedError(f"Blocked by SSRF policy during {action} (private network address).")
+        return
+    except ValueError:
+        pass
+
+    try:
+        infos = socket.getaddrinfo(hostname, port, type=socket.SOCK_STREAM)
+    except socket.gaierror as exc:
+        raise McpRemoteSsrBlockedError(f"Blocked by SSRF policy during {action} (hostname could not be resolved).") from exc
+
+    resolved_ips: set[str] = set()
+    for _family, _socktype, _proto, _canonname, sockaddr in infos:
+        if not sockaddr:
+            continue
+        candidate_ip = sockaddr[0]
+        if candidate_ip:
+            resolved_ips.add(candidate_ip)
+
+    if not resolved_ips:
+        raise McpRemoteSsrBlockedError(f"Blocked by SSRF policy during {action} (hostname could not be resolved).")
+
+    for candidate_ip in resolved_ips:
+        try:
+            ip = ipaddress.ip_address(candidate_ip)
+        except ValueError:
+            continue
+        if _is_forbidden_ip(ip):
+            raise McpRemoteSsrBlockedError(f"Blocked by SSRF policy during {action} (hostname resolves to private network).")
+
+
+def _raise_for_redirect_response(response: httpx.Response, *, action: str) -> None:
+    if response.status_code < 300 or response.status_code >= 400:
+        return
+    location = (response.headers.get("Location") or "").strip()
+    if not location:
+        raise McpRemoteTransportError(f"MCP request failed during {action} (redirect without Location header).")
+    base_url = str(getattr(response.request, "url", "") or "")
+    target_url = urljoin(base_url, location) if base_url else location
+    _validate_mcp_url_for_ssrf(target_url, action=action)
+    raise McpRemoteTransportError(
+        f"MCP request failed during {action} (redirects are not supported; use the final MCP endpoint URL)."
+    )
 
 
 def _http_reason_phrase(response: httpx.Response) -> str:
@@ -112,7 +201,9 @@ def _post_jsonrpc_with_retry_after(
 
     attempt = 0
     while True:
+        _validate_mcp_url_for_ssrf(url, action=action)
         resp = _request_with_transport_errors(action, lambda: client.post(url, json=payload, headers=dict(headers or {})))
+        _raise_for_redirect_response(resp, action=action)
         if resp.status_code != 429:
             return resp
 
@@ -427,6 +518,7 @@ def _legacy_sse_bootstrap(
     sse_url: str,
     headers: Mapping[str, str] | None,
 ) -> tuple[httpx.Response, Iterator[dict[str, str]], str]:
+    _validate_mcp_url_for_ssrf(sse_url, action="legacy_sse.bootstrap")
     stream_headers = dict(headers or {})
     stream_headers["Accept"] = "text/event-stream"
     try:
@@ -435,6 +527,7 @@ def _legacy_sse_bootstrap(
         raise McpRemoteTransportError("MCP request timed out during legacy_sse.bootstrap.") from exc
     except httpx.RequestError as exc:
         raise McpRemoteTransportError(f"MCP network error during legacy_sse.bootstrap: {exc.__class__.__name__}.") from exc
+    _raise_for_redirect_response(sse_response, action="legacy_sse.bootstrap")
     try:
         sse_response.raise_for_status()
     except httpx.HTTPStatusError as exc:
@@ -451,6 +544,11 @@ def _legacy_sse_bootstrap(
         if not data:
             continue
         message_url = urljoin(sse_url, data)
+        try:
+            _validate_mcp_url_for_ssrf(message_url, action="legacy_sse.endpoint")
+        except McpRemoteSsrBlockedError:
+            sse_response.close()
+            raise
         return sse_response, events, message_url
     sse_response.close()
     raise McpRemoteTransportError("Legacy SSE transport did not provide an endpoint event.")
@@ -514,6 +612,7 @@ def _legacy_sse_initialize_and_list_tools(
             "legacy_sse.initialize",
             lambda: client.post(message_url, json=init_payload, headers=post_headers),
         )
+        _raise_for_redirect_response(init_resp, action="legacy_sse.initialize")
         try:
             init_resp.raise_for_status()
         except httpx.HTTPStatusError as exc:
@@ -541,6 +640,7 @@ def _legacy_sse_initialize_and_list_tools(
             "legacy_sse.initialized",
             lambda: client.post(message_url, json=initialized_payload, headers=post_headers),
         )
+        _raise_for_redirect_response(notif_resp, action="legacy_sse.initialized")
         try:
             notif_resp.raise_for_status()
         except httpx.HTTPStatusError as exc:
@@ -562,6 +662,7 @@ def _legacy_sse_initialize_and_list_tools(
                 "legacy_sse.tools_list",
                 lambda: client.post(message_url, json=list_payload, headers=post_headers),
             )
+            _raise_for_redirect_response(list_resp, action="legacy_sse.tools_list")
             try:
                 list_resp.raise_for_status()
             except httpx.HTTPStatusError as exc:
@@ -636,7 +737,8 @@ def test_mcp_server(
     """
 
     start = time.monotonic()
-    with httpx.Client(timeout=timeout_s, follow_redirects=True) as client:
+    _validate_mcp_url_for_ssrf(server_url, action="mcp_server_test")
+    with httpx.Client(timeout=timeout_s, follow_redirects=False, trust_env=False) as client:
         try:
             session = _streamable_http_initialize(
                 client=client,
@@ -699,7 +801,8 @@ def call_mcp_tool_streamable_http(
     This is intentionally stateless (new session per call) for correctness in beta.
     """
 
-    with httpx.Client(timeout=timeout_s, follow_redirects=True) as client:
+    _validate_mcp_url_for_ssrf(endpoint_url, action="mcp_tools_call")
+    with httpx.Client(timeout=timeout_s, follow_redirects=False, trust_env=False) as client:
         try:
             session = _streamable_http_initialize(
                 client=client,
@@ -748,6 +851,7 @@ def call_mcp_tool_streamable_http(
                     "legacy_sse.initialize",
                     lambda: client.post(message_url, json=init_payload, headers=post_headers),
                 )
+                _raise_for_redirect_response(init_resp, action="legacy_sse.initialize")
                 try:
                     init_resp.raise_for_status()
                 except httpx.HTTPStatusError as exc:
@@ -761,6 +865,7 @@ def call_mcp_tool_streamable_http(
                         headers=post_headers,
                     ),
                 )
+                _raise_for_redirect_response(notif_resp, action="legacy_sse.initialized")
                 try:
                     notif_resp.raise_for_status()
                 except httpx.HTTPStatusError as exc:
@@ -775,6 +880,7 @@ def call_mcp_tool_streamable_http(
                     "legacy_sse.tools_call",
                     lambda: client.post(message_url, json=payload, headers=post_headers),
                 )
+                _raise_for_redirect_response(call_resp, action="legacy_sse.tools_call")
                 try:
                     call_resp.raise_for_status()
                 except httpx.HTTPStatusError as exc:
