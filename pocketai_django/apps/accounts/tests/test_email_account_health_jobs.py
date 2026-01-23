@@ -14,6 +14,7 @@ from apps.accounts.models import (
     EmailAccountHealthJobStatus,
     EmailAccountProvider,
     EmailAccountStatus,
+    RegistrationSession,
     User,
 )
 from apps.integrations.email_health_jobs import (
@@ -28,7 +29,12 @@ class EmailHealthJobTestMixin:
 
     def setUp(self):
         self.user = User.objects.create(email="test@example.com")
-        self.business = BusinessProfile.objects.create(user=self.user, name="Test Business")
+        self.registration_session = RegistrationSession.objects.create(user=self.user)
+        self.business = BusinessProfile.objects.create(
+            user=self.user,
+            name="Test Business",
+            registration_session=self.registration_session,
+        )
         self.email_account = EmailAccount.objects.create(
             business_profile=self.business,
             user=self.user,
@@ -176,7 +182,7 @@ class TestEmailAccountHealthJobRunner(EmailHealthJobTestMixin, TestCase):
         mock_test_google.return_value = (True, "")
 
         # Set credentials
-        self.email_account.set_credentials({"access_token": "test_token", "refresh_token": "test_refresh"})
+        self.email_account.credentials = {"access_token": "test_token", "refresh_token": "test_refresh"}
         self.email_account.save()
 
         job = EmailAccountHealthJob.objects.create(
@@ -203,7 +209,7 @@ class TestEmailAccountHealthJobRunner(EmailHealthJobTestMixin, TestCase):
         mock_test_google.return_value = (False, "API Error: 401")
 
         # Set credentials
-        self.email_account.set_credentials({"access_token": "test_token", "refresh_token": "test_refresh"})
+        self.email_account.credentials = {"access_token": "test_token", "refresh_token": "test_refresh"}
         self.email_account.save()
 
         job = EmailAccountHealthJob.objects.create(
@@ -275,7 +281,7 @@ class TestRunOnce(EmailHealthJobTestMixin, TestCase):
         mock_test_google.return_value = (True, "")
 
         # Set credentials
-        self.email_account.set_credentials({"access_token": "test_token", "refresh_token": "test_refresh"})
+        self.email_account.credentials = {"access_token": "test_token", "refresh_token": "test_refresh"}
         self.email_account.save()
 
         # Create multiple jobs

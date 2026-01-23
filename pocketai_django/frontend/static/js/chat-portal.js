@@ -101,6 +101,7 @@ class ChatPortalClient {
     this.lastStreamEventAt = 0;
     this.lastTextDeltaAt = 0;
     this.textDeltaIntervalEma = 0;
+    this.hadToolsThisTurn = false;
   }
 
   async init() {
@@ -1035,6 +1036,7 @@ class ChatPortalClient {
     const status = (blockPayload.status || "").toString().trim().toLowerCase();
     if (blockId && (phase === "started" || phase === "approval_requested" || status === "running" || status === "pending_approval" || status === "pending")) {
       this.streamingToolBlockActiveIds.add(blockId);
+      this.hadToolsThisTurn = true;
     }
     if (!this.isAssistantTextStreaming()) {
       this.setSpinnerText(this.spinnerDesiredText || "", {
@@ -3966,6 +3968,7 @@ class ChatPortalClient {
 		    this.isStreaming = false;
 		    this.textDeltaIntervalEma = 0;
 		    this.lastTextDeltaAt = 0;
+		    this.hadToolsThisTurn = false;
 		    this.clearStreamingIdleStatusTimer();
 		    this.clearStreamingStatus();
     if (removeNode && this.streamingMessageNode && this.streamingMessageNode.parentNode) {
@@ -4060,6 +4063,19 @@ class ChatPortalClient {
         return;
       }
 
+      // Don't show spinner during final answer phase
+      // (tools finished, we had tools this turn, and we're receiving text)
+      const inFinalAnswerPhase =
+        this.hadToolsThisTurn &&
+        this.streamingToolBlockActiveIds.size === 0 &&
+        this.lastTextDeltaAt > 0;
+
+      if (inFinalAnswerPhase) {
+        // Final answer is streaming/paused, don't show spinner
+        return;
+      }
+
+      // Show the spinner
       this.setSpinnerText(this.spinnerDesiredText, {
         pending: this.spinnerDesiredPending,
         isError: this.spinnerDesiredIsError,
