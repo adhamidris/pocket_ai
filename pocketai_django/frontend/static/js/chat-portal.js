@@ -1209,7 +1209,7 @@ class ChatPortalClient {
 
       if (toolName === "email_send_draft") {
         const draftId = this.getEmailDraftIdFromToolPayload(payload);
-        const existingDraftCard = draftId ? this.draftIdToCardMap.get(draftId) : null;
+        const existingDraftCard = draftId ? this.resolveEmailCardByDraftId(draftId) : null;
         if (existingDraftCard) {
           const existing = this.streamingContentBlockEls.get(blockId);
           if (existing && existing !== existingDraftCard && existing.parentNode) {
@@ -2195,11 +2195,27 @@ class ChatPortalClient {
 
     const draftId =
       (input && (input.draft_id || input.draftId)) ||
-      (output && (output.draft_id || output.draftId || output.id)) ||
-      (outputPreview && (outputPreview.draft_id || outputPreview.draftId || outputPreview.id)) ||
+      (output && (output.draft_id || output.draftId)) ||
+      (outputPreview && (outputPreview.draft_id || outputPreview.draftId)) ||
       "";
 
     return draftId ? draftId.toString().trim() : "";
+  }
+
+  resolveEmailCardByDraftId(draftId) {
+    const normalized = (draftId || "").toString().trim();
+    if (!normalized) return null;
+    const fromMap = this.draftIdToCardMap.get(normalized);
+    if (fromMap) return fromMap;
+    const root = this.elements.messages || this.elements.messagesInner || this.container;
+    if (!root || !root.querySelector) return null;
+    const escape = window.CSS && typeof window.CSS.escape === "function" ? window.CSS.escape : (value) => value;
+    const found = root.querySelector(`[data-email-card="true"][data-draft-id="${escape(normalized)}"]`);
+    if (found) {
+      this.draftIdToCardMap.set(normalized, found);
+      return found;
+    }
+    return null;
   }
 
   async submitEmailDraftAction(action, card) {
@@ -2413,6 +2429,7 @@ class ChatPortalClient {
       "";
     const approvalStatus = approvalStatusRaw.toString().trim().toLowerCase();
     const toolName = (payload.tool_name || "").toString().trim().toLowerCase();
+    const eventId = (payload.event_id || payload.eventId || "").toString().trim();
 
     const statusEl = card.querySelector(".email-preview-status");
     const actionsEl = card.querySelector(".email-preview-actions");
@@ -2435,6 +2452,10 @@ class ChatPortalClient {
       card.dataset.approvalStatus = approvalStatus;
     }
 
+    if (toolName === "email_send_draft" && eventId) {
+      card.dataset.emailSendEventId = eventId;
+    }
+
     // Phase: started (draft creation)
     if (phase === "started" && toolName === "email_create_draft") {
       if (statusEl) statusEl.textContent = "Creating draft...";
@@ -2444,6 +2465,7 @@ class ChatPortalClient {
       if (statusEl) statusEl.textContent = "Sending email...";
       if (approvalEl) approvalEl.hidden = true;
       if (actionsEl) actionsEl.hidden = true;
+      this.scheduleEmailSendReconcile(card);
     }
 
     // Phase: finished (draft created successfully)
@@ -2512,6 +2534,7 @@ class ChatPortalClient {
       if (approvalStatus === "approved" || status === "approved") {
         if (statusEl) statusEl.textContent = "Sending email...";
         if (actionsEl) actionsEl.hidden = true;
+        this.scheduleEmailSendReconcile(card);
       } else if (approvalStatus === "denied" || status === "denied") {
         if (statusEl) statusEl.textContent = "Not sent";
         card.classList.add("email-rejected");
@@ -2522,6 +2545,67 @@ class ChatPortalClient {
         if (actionsEl) actionsEl.hidden = false;
       }
     }
+  }
+
+  scheduleEmailSendReconcile(card) {
+    if (!card) return;
+    if (card.classList.contains("email-sent") || card.classList.contains("email-error")) return;
+    if (card.dataset.emailSendReconcileActive === "true") return;
+
+    const eventId = (card.dataset.emailSendEventId || "").toString().trim();
+    if (!eventId) return;
+    if (!this.endpoints.toolHistory || !this.sessionToken) return;
+
+    card.dataset.emailSendReconcileActive = "true";
+
+    const attemptReconcile = async (attempt) => {
+      if (card.classList.contains("email-sent") || card.classList.contains("email-error")) {
+        card.dataset.emailSendReconcileActive = "false";
+        return;
+      }
+      try {
+        const response = await fetch(this.endpoints.toolHistory, {
+          method: "POST",
+          headers: this.jsonHeaders(),
+          body: JSON.stringify({
+            session_token: this.sessionToken,
+            limit: 200,
+          }),
+        });
+        const payload = await response.json().catch(() => null);
+        if (response.ok && payload && payload.history && Array.isArray(payload.history.toolEvents)) {
+          const match = payload.history.toolEvents.find(
+            (evt) =>
+              evt &&
+              String(evt.event_id || evt.eventId || "").trim() === eventId &&
+              String(evt.phase || "").trim().toLowerCase() === "finished",
+          );
+          if (match) {
+            const matchStatus = String(match.status || "").trim().toLowerCase() || "ok";
+            this.updateEmailPreviewCard(card, {
+              phase: "finished",
+              status: matchStatus,
+              tool_name: "email_send_draft",
+              event_id: eventId,
+              input: { draft_id: card.dataset.draftId || "" },
+            });
+            card.dataset.emailSendReconcileActive = "false";
+            return;
+          }
+        }
+      } catch (error) {
+        // Ignore reconciliation errors; we'll retry a few times.
+        void error;
+      }
+
+      if (attempt >= 4) {
+        card.dataset.emailSendReconcileActive = "false";
+        return;
+      }
+      setTimeout(() => attemptReconcile(attempt + 1), 4000);
+    };
+
+    setTimeout(() => attemptReconcile(1), 2500);
   }
 
   makeEmailFieldsEditable(card) {
@@ -3439,7 +3523,7 @@ class ChatPortalClient {
       const normalizedTool = (payload.tool_name || payload.toolName || "").toString().trim().toLowerCase();
       if (normalizedTool === "email_send_draft") {
         const draftId = this.getEmailDraftIdFromToolPayload(payload);
-        const existingDraftCard = draftId ? this.draftIdToCardMap.get(draftId) : null;
+        const existingDraftCard = draftId ? this.resolveEmailCardByDraftId(draftId) : null;
         if (existingDraftCard) {
           this.updateEmailPreviewCard(existingDraftCard, payload);
           return null;

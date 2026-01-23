@@ -3554,14 +3554,37 @@ class McpOrchestratorService:
             thread_id = str(arguments.get("thread_id") or arguments.get("threadId") or "").strip()
             return {"thread_id": thread_id} if thread_id else None
         if normalized == "email_create_draft":
+            # Email drafts are user-facing (approval UX). Include the full preview payload so
+            # the portal can render + stream the message as it is drafted.
+            def _coerce_list(value: object) -> list[str]:
+                if not isinstance(value, list):
+                    return []
+                out: list[str] = []
+                for item in value[:64]:
+                    text = str(item or "").strip()
+                    if text:
+                        out.append(text)
+                return out
+
             subject = str(arguments.get("subject") or "").strip()
-            to_value = arguments.get("to")
-            to_count = len([item for item in to_value if str(item or "").strip()]) if isinstance(to_value, list) else 0
-            payload = {}
+            body_text = str(arguments.get("body_text") or arguments.get("bodyText") or "").strip()
+            if len(body_text) > 12_000:
+                body_text = body_text[:12_000].rstrip()
+
+            payload: dict[str, object] = {}
+            to_list = _coerce_list(arguments.get("to"))
+            cc_list = _coerce_list(arguments.get("cc"))
+            bcc_list = _coerce_list(arguments.get("bcc"))
+            if to_list:
+                payload["to"] = to_list
+            if cc_list:
+                payload["cc"] = cc_list
+            if bcc_list:
+                payload["bcc"] = bcc_list
             if subject:
-                payload["subject"] = self._clip_text(subject, 120)
-            if to_count:
-                payload["to_count"] = to_count
+                payload["subject"] = self._clip_text(subject, 240)
+            if body_text:
+                payload["body_text"] = body_text
             return payload or None
         if normalized == "email_send_draft":
             draft_id = str(arguments.get("draft_id") or arguments.get("draftId") or "").strip()
@@ -3858,6 +3881,12 @@ class McpOrchestratorService:
             "kind": "email",
             "approval": approval_payload,
         }
+        # Include the (redacted) input so the portal UI can correlate this approval
+        # resolution with the existing draft card (prevents duplicate "Sending email…"
+        # cards that never transition to a finished state).
+        resolve_event["input"] = dict(
+            redact_tool_input_payload(arguments, sensitive_keys={"body_text", "bodyText"})
+        )
 
         if status_value != ConversationToolApprovalStatus.APPROVED:
             tool_result = self._approval_blocked_payload(tool_name, status_value)

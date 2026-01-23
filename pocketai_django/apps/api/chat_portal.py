@@ -2588,7 +2588,19 @@ def stream_send(request: HttpRequest) -> StreamingHttpResponse:
 
             input_payload = event.get("input")
             if input_payload is not None and phase in {"started", "approval_requested", "finished", "approval_resolved"}:
-                payload["input"] = _json_safe_debug(input_payload, depth=3, string_limit=720, list_limit=32)
+                input_string_limit = 720
+                input_list_limit = 32
+                if tool_name.strip().lower() == "email_create_draft":
+                    # Email drafts are user-facing; allow the portal to render the full draft body
+                    # (still bounded by tool-side truncation at 12k chars).
+                    input_string_limit = 12_000
+                    input_list_limit = 96
+                payload["input"] = _json_safe_debug(
+                    input_payload,
+                    depth=3,
+                    string_limit=input_string_limit,
+                    list_limit=input_list_limit,
+                )
 
             tool_use_block_id: str | None = None
             for key in candidate_keys:

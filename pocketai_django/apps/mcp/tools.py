@@ -10733,6 +10733,7 @@ def _email_send_draft_handler(
         "status": "ok",
         "provider": account.provider,
         "email_account_id": str(account.id),
+        "draft_id": draft_id,
         **payload,
         "hint": "Draft sent.",
     }
