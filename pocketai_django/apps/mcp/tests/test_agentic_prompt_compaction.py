@@ -1,8 +1,9 @@
 from __future__ import annotations
 
+import json
 from unittest import mock
 
-from django.test import SimpleTestCase
+from django.test import SimpleTestCase, override_settings
 
 from apps.mcp.orchestrator import McpOrchestratorService
 
@@ -81,3 +82,31 @@ class AgenticPromptCompactionTests(SimpleTestCase):
         self.assertEqual(compact["contents"][0]["id"], "chunk-1")
         self.assertLessEqual(len(compact["contents"][0]["content"]), 400)
 
+    @override_settings(MCP_PROMPT_TOOL_OUTPUT_MAX_CHARS=500)
+    def test_tool_message_truncation_keeps_content_preview(self) -> None:
+        payload = {
+            "tool": "read_document",
+            "status": "ok",
+            "contents": [
+                {
+                    "id": "chunk-1",
+                    "title": "Fees",
+                    "type": "text",
+                    "content": "x" * 2000,
+                    "truncated": False,
+                }
+            ],
+            "total_chars": 2000,
+        }
+
+        message = json.dumps(payload, ensure_ascii=False)
+        truncated = self.service._truncate_tool_message_for_prompt("read_document", message)
+
+        self.assertLessEqual(len(truncated), 500)
+        parsed = json.loads(truncated)
+        self.assertEqual(parsed.get("tool"), "read_document")
+        self.assertTrue(parsed.get("truncated"))
+        self.assertTrue(parsed.get("prompt_compact"))
+        self.assertIn("contents", parsed)
+        self.assertIn("content", parsed["contents"][0])
+        self.assertLess(len(parsed["contents"][0]["content"]), 2000)

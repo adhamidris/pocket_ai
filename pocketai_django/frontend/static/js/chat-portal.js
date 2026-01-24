@@ -68,11 +68,13 @@ class ChatPortalClient {
 	    // Canonical block streaming state (block_id -> DOM + buffers)
 	    this.usingBlockStream = false;
 	    this.streamingContentBlockEls = new Map();
-	    this.streamingPendingBlockOps = new Map();
-	    this.streamingTextBlockActiveIds = new Set();
-	    this.streamingToolBlockActiveIds = new Set();
-	    this.streamingDirtyTextBlocks = new Set();
-	    this.streamingBlockRenderRaf = null;
+    this.streamingPendingBlockOps = new Map();
+    this.streamingTextBlockActiveIds = new Set();
+    this.streamingToolBlockActiveIds = new Set();
+    this.streamingDirtyTextBlocks = new Set();
+    this.streamingBlockRenderRaf = null;
+    this.activeStreamingTextBlockId = null;
+    this.followScrollEnabled = false;
 	    this.spinnerDesiredText = "";
 	    this.spinnerDesiredPending = false;
 	    this.spinnerDesiredIsError = false;
@@ -84,6 +86,8 @@ class ChatPortalClient {
     this.streamFinished = false;
     this.isSending = false;
     this.isStreaming = false;
+    this.hydratingExistingMessages = false;
+    this.finalizingTurn = false;
     this.flushQueueAfterTurn = false;
     this.pendingMessages = [];
     this.statusStyleInjected = false;
@@ -170,64 +174,69 @@ class ChatPortalClient {
     }
   }
 
-	  renderExistingMessages() {
-	    const container = this.elements.messagesInner || this.elements.messages;
-	    if (!container) return;
-	    const messageBodies = container.querySelectorAll('[data-message-body]');
-	    messageBodies.forEach((el) => {
-	      const row = el.closest(".message-row");
-	      const isCustomer = Boolean(row && row.classList.contains("flex-row-reverse"));
-	      const messageId = el.dataset.messageId;
-	      
-	      // Add relative and group classes for AI messages only.
-	      if (!isCustomer) {
-	        el.classList.add("relative", "group", "pr-8");
-	      }
-	
-	      if (!messageId) {
-	        // No message ID means no markdown to render, just add copy button
-	        if (!isCustomer && !el.querySelector('button[data-copy-btn]')) {
-	          this.injectCopyButton(el);
+  renderExistingMessages() {
+    const container = this.elements.messagesInner || this.elements.messages;
+    if (!container) return;
+    this.hydratingExistingMessages = true;
+    const messageBodies = container.querySelectorAll('[data-message-body]');
+    try {
+      messageBodies.forEach((el) => {
+        const row = el.closest(".message-row");
+        const isCustomer = Boolean(row && row.classList.contains("flex-row-reverse"));
+        const messageId = el.dataset.messageId;
+        
+        // Add relative and group classes for AI messages only.
+        if (!isCustomer) {
+          el.classList.add("relative", "group", "pr-8");
         }
-        return;
-      }
-      
-      // Find the corresponding JSON script tag for markdown rendering
-      const scriptTag = document.getElementById(messageId);
-      if (scriptTag) {
-        try {
-          const rawPayload = JSON.parse(scriptTag.textContent);
-          const payloadObj = rawPayload && typeof rawPayload === "object" ? rawPayload : null;
-          const contentBlocks =
-            payloadObj && Array.isArray(payloadObj.content_blocks)
-              ? payloadObj.content_blocks
-              : payloadObj && Array.isArray(payloadObj.contentBlocks)
-              ? payloadObj.contentBlocks
-              : [];
-          const bodyText =
-            typeof rawPayload === "string"
-              ? rawPayload
-              : payloadObj && typeof payloadObj.body === "string"
-              ? payloadObj.body
-              : "";
-
-          // Prefer canonical block rendering when available.
-          if (Array.isArray(contentBlocks) && contentBlocks.length) {
-            this.renderMessageContentBlocks(el, contentBlocks);
-          } else if (!isCustomer && bodyText) {
-            const blocks = this.coerceContentBlocks([], bodyText);
-            this.renderMessageContentBlocks(el, blocks);
-          }
-
-          // Inject copy button ONLY after content is set
-          if (!isCustomer) {
+    
+        if (!messageId) {
+          // No message ID means no markdown to render, just add copy button
+          if (!isCustomer && !el.querySelector('button[data-copy-btn]')) {
             this.injectCopyButton(el);
           }
-        } catch (e) {
-          console.warn('Failed to parse markdown for message', messageId, e);
+          return;
         }
-      }
-    });
+        
+        // Find the corresponding JSON script tag for markdown rendering
+        const scriptTag = document.getElementById(messageId);
+        if (scriptTag) {
+          try {
+            const rawPayload = JSON.parse(scriptTag.textContent);
+            const payloadObj = rawPayload && typeof rawPayload === "object" ? rawPayload : null;
+            const contentBlocks =
+              payloadObj && Array.isArray(payloadObj.content_blocks)
+                ? payloadObj.content_blocks
+                : payloadObj && Array.isArray(payloadObj.contentBlocks)
+                ? payloadObj.contentBlocks
+                : [];
+            const bodyText =
+              typeof rawPayload === "string"
+                ? rawPayload
+                : payloadObj && typeof payloadObj.body === "string"
+                ? payloadObj.body
+                : "";
+
+            // Prefer canonical block rendering when available.
+            if (Array.isArray(contentBlocks) && contentBlocks.length) {
+              this.renderMessageContentBlocks(el, contentBlocks);
+            } else if (!isCustomer && bodyText) {
+              const blocks = this.coerceContentBlocks([], bodyText);
+              this.renderMessageContentBlocks(el, blocks);
+            }
+
+            // Inject copy button ONLY after content is set
+            if (!isCustomer) {
+              this.injectCopyButton(el);
+            }
+          } catch (e) {
+            console.warn('Failed to parse markdown for message', messageId, e);
+          }
+        }
+      });
+    } finally {
+      this.hydratingExistingMessages = false;
+    }
   }
 
   hydrateMessageMetadata(messages) {
@@ -933,10 +942,9 @@ class ChatPortalClient {
       if (text) {
         this.clearStreamingIdleStatusTimer();
       }
-      const force = Boolean(text) || this.streamingTextBlockActiveIds.size === 0;
-      console.log("[Spinner] Received status:", { text, pending, force, reason: payload.reason });
-	    this.setSpinnerText(text, { pending, force });
-	  }
+	      const force = Boolean(text) || this.streamingTextBlockActiveIds.size === 0;
+		    this.setSpinnerText(text, { pending, force });
+		  }
 
 	  async requestStop() {
 	    if (this.stopRequested) return;
@@ -981,6 +989,7 @@ class ChatPortalClient {
 	    const blockId = (block.block_id || block.blockId || "").toString().trim();
 	    if (blockId && this.isStreamingTextBlock(blockType)) {
 	      this.streamingTextBlockActiveIds.add(blockId);
+        this.setActiveStreamingTextBlock(blockId);
         this.clearStreamingIdleStatusTimer();
         if (this.spinnerDesiredPending) {
           // Force-show the orbit loader between block_start and the first block_delta.
@@ -997,7 +1006,7 @@ class ChatPortalClient {
 	    }
 	  }
 
-	  handleBlockDeltaEvent(data) {
+  handleBlockDeltaEvent(data) {
 		    let payload = null;
 		    try {
 		      payload = data ? JSON.parse(data) : null;
@@ -1027,6 +1036,7 @@ class ChatPortalClient {
       const blockType = wrapper && wrapper.dataset ? (wrapper.dataset.blockType || "").toString().trim().toLowerCase() : "";
       if (!blockType || this.isStreamingTextBlock(blockType)) {
 	      this.streamingTextBlockActiveIds.add(blockId);
+        this.setActiveStreamingTextBlock(blockId);
       }
 		    if (this.streamingStatusEl) {
 		      this.streamingStatusEl.classList.add("hidden");
@@ -1041,7 +1051,7 @@ class ChatPortalClient {
 	    this.scheduleScrollToBottom({ behavior: "auto" });
 	  }
 
-	  handleBlockEndEvent(data) {
+  handleBlockEndEvent(data) {
 	    let payload = null;
 	    try {
 	      payload = data ? JSON.parse(data) : null;
@@ -1060,23 +1070,101 @@ class ChatPortalClient {
 	      this.applyBlockOps(blockId, pendingOps);
 	    }
 	    this.streamingTextBlockActiveIds.delete(blockId);
+      this.clearActiveStreamingTextBlock(blockId);
+      if (!this.activeStreamingTextBlockId && this.streamingTextBlockActiveIds.size) {
+        const remaining = Array.from(this.streamingTextBlockActiveIds);
+        this.setActiveStreamingTextBlock(remaining[remaining.length - 1]);
+      }
       const wrapper = this.streamingContentBlockEls.get(blockId);
       const type = wrapper && wrapper.dataset ? (wrapper.dataset.blockType || "").toString().trim().toLowerCase() : "";
-      if (type === "reasoning") {
-        const details = wrapper ? wrapper.querySelector("details") : null;
-        if (details && details.open && details.dataset.userOverride !== "true") {
-          details.open = false;
-        }
-      }
+	      if (type === "reasoning") {
+	        const details = wrapper ? wrapper.querySelector("details") : null;
+	        if (details) {
+	          details.dataset.reasoningState = "complete";
+	          const summaryLabel = details.querySelector("[data-reasoning-summary-label]");
+	          if (summaryLabel) {
+	            summaryLabel.textContent = "Thought";
+	          }
+	          if (details.open && details.dataset.userOverride !== "true") {
+	            this.animateReasoningAutoCollapse(details);
+	          }
+	        }
+	      }
 
-	    if (this.streamingTextBlockActiveIds.size === 0) {
-	      this.scheduleStreamingIdleStatusReveal();
+		    if (this.streamingTextBlockActiveIds.size === 0) {
+		      this.scheduleStreamingIdleStatusReveal();
+		    }
+			  }
+
+	  animateReasoningAutoCollapse(details) {
+	    if (!details || !details.open) return;
+	    if (details.dataset && details.dataset.userOverride === "true") return;
+	    if (details.dataset && details.dataset.reasoningAutoClosing === "true") return;
+
+	    const prefersReducedMotion = window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+	    if (prefersReducedMotion) {
+	      details.open = false;
+	      return;
 	    }
-		  }
 
-  handleBlockToolUseEvent(data) {
-    let payload = null;
-    try {
+	    const content = details.querySelector(".portal-reasoning__content");
+	    if (!content) {
+	      details.open = false;
+	      return;
+	    }
+
+	    details.dataset.reasoningAutoClosing = "true";
+	    details.style.pointerEvents = "none";
+
+	    const startHeight = content.getBoundingClientRect().height;
+	    content.style.overflow = "hidden";
+	    content.style.maxHeight = "none";
+	    content.style.height = `${startHeight}px`;
+	    content.style.opacity = "1";
+	    content.style.transition = "height 220ms cubic-bezier(0.22, 1, 0.36, 1), opacity 160ms ease";
+
+	    // Force reflow so the browser picks up the start height before collapsing.
+	    void content.offsetHeight;
+
+	    content.style.height = "0px";
+	    content.style.opacity = "0";
+
+	    let fallbackTimer = null;
+	    const cleanup = () => {
+	      if (fallbackTimer) {
+	        clearTimeout(fallbackTimer);
+	        fallbackTimer = null;
+	      }
+	      details.open = false;
+	      delete details.dataset.reasoningAutoClosing;
+	      details.style.pointerEvents = "";
+	      content.style.transition = "";
+	      content.style.height = "";
+	      content.style.opacity = "";
+	      content.style.overflow = "";
+	      content.style.maxHeight = "";
+	    };
+
+	    fallbackTimer = setTimeout(() => {
+	      if (details.dataset && details.dataset.reasoningAutoClosing === "true") {
+	        cleanup();
+	      }
+	    }, 320);
+
+	    content.addEventListener(
+	      "transitionend",
+	      (event) => {
+	        if (event && event.target === content && event.propertyName === "height") {
+	          cleanup();
+	        }
+	      },
+	      { once: true },
+	    );
+	  }
+
+	  handleBlockToolUseEvent(data) {
+	    let payload = null;
+	    try {
       payload = data ? JSON.parse(data) : null;
     } catch (error) {
       console.warn("Failed to parse block_tool_use payload", error);
@@ -1195,7 +1283,7 @@ class ChatPortalClient {
 	    });
 	  }
 
-	  upsertStreamingContentBlock(block) {
+  upsertStreamingContentBlock(block) {
 	    if (!block || typeof block !== "object") return;
 	    if (!this.streamingBlocksEl) return;
 	    const blockType = (block.type || "").toString().trim().toLowerCase();
@@ -1207,22 +1295,23 @@ class ChatPortalClient {
       const payload = block.payload && typeof block.payload === "object" ? block.payload : {};
       const toolName = (payload.tool_name || "").toString().trim().toLowerCase();
 
-      if (toolName === "email_send_draft") {
-        const draftId = this.getEmailDraftIdFromToolPayload(payload);
-        const existingDraftCard = draftId ? this.resolveEmailCardByDraftId(draftId) : null;
-        if (existingDraftCard) {
-          const existing = this.streamingContentBlockEls.get(blockId);
-          if (existing && existing !== existingDraftCard && existing.parentNode) {
-            existing.remove();
-          }
-          this.updateEmailPreviewCard(existingDraftCard, payload);
-          existingDraftCard.dataset.blockId = blockId;
-          this.streamingContentBlockEls.set(blockId, existingDraftCard);
-          this.updateInlineToolCardsVisibility(this.streamingMessageNode);
-          return;
-        }
-      }
-    }
+	      if (toolName === "email_send_draft") {
+	        const draftId = this.getEmailDraftIdFromToolPayload(payload);
+	        const existingDraftCard = draftId ? this.resolveEmailCardByDraftId(draftId) : null;
+	        if (existingDraftCard) {
+	          const existing = this.streamingContentBlockEls.get(blockId);
+	          if (existing && existing !== existingDraftCard && existing.parentNode) {
+	            existing.remove();
+	          }
+	          this.updateEmailPreviewCard(existingDraftCard, payload);
+	          // Keep the original block_id on the draft card so the persisted render matches
+	          // the streamed DOM (email_send_draft is a state update, not a new UI block).
+	          this.streamingContentBlockEls.set(blockId, existingDraftCard);
+	          this.updateInlineToolCardsVisibility(this.streamingMessageNode);
+	          return;
+	        }
+	      }
+	    }
 
     const existing = this.streamingContentBlockEls.get(blockId);
     if (existing) {
@@ -1240,6 +1329,7 @@ class ChatPortalClient {
 
     const el = this.buildContentBlockElement(block);
     if (!el) return;
+    this.applyStreamingBlockEnterAnimation(el);
     this.streamingContentBlockEls.set(blockId, el);
     const parentId = (block.parent_block_id || block.parentBlockId || "").toString().trim();
     if (parentId && this.streamingContentBlockEls.has(parentId)) {
@@ -1568,9 +1658,6 @@ class ChatPortalClient {
 
   buildToolEventCard(payload) {
     const toolName = (payload?.tool_name || payload?.toolName || "").toString().trim().toLowerCase();
-    if (toolName === "mcp_search_tools") {
-      return null;
-    }
     // Use custom email preview card for email tools
     if (toolName === "email_create_draft" || toolName === "email_send_draft") {
       return this.buildEmailPreviewCard(payload, toolName);
@@ -1666,9 +1753,20 @@ class ChatPortalClient {
     const bcc = Array.isArray(input.bcc) ? input.bcc : [];
     const subject = input.subject || "";
     const body = input.body_text || input.body || "";
+    const shouldStream = this.isStreaming && !this.hydratingExistingMessages && !this.finalizingTurn;
+    const setFieldValue = (element, value) => {
+      if (!element) return;
+      const text = value != null ? String(value) : "";
+      element.dataset.fullText = this.escapeHtml(text);
+      if (!shouldStream) {
+        element.textContent = text;
+        element.classList.add("email-stream-complete");
+      }
+    };
 
     // Store original content for streaming
     card._emailData = { to, cc, bcc, subject, body };
+    card._emailStreamTimers = [];
 
     // Build email preview container
     const container = document.createElement("div");
@@ -1678,6 +1776,9 @@ class ChatPortalClient {
     const header = document.createElement("div");
     header.className = "email-preview-header";
 
+    const headerMain = document.createElement("div");
+    headerMain.className = "email-preview-header-main";
+
     const icon = document.createElement("span");
     icon.className = "email-preview-icon";
     icon.textContent = "✉️";
@@ -1686,8 +1787,22 @@ class ChatPortalClient {
     status.className = "email-preview-status";
     status.textContent = toolName === "email_send_draft" ? "Sending email..." : "Creating draft...";
 
-    header.appendChild(icon);
-    header.appendChild(status);
+    const summary = document.createElement("span");
+    summary.className = "email-preview-summary";
+
+    headerMain.appendChild(icon);
+    headerMain.appendChild(status);
+    headerMain.appendChild(summary);
+
+    const toggleBtn = document.createElement("button");
+    toggleBtn.type = "button";
+    toggleBtn.className = "email-preview-toggle";
+    toggleBtn.dataset.action = "toggle";
+    toggleBtn.textContent = "Hide email";
+    toggleBtn.setAttribute("aria-expanded", "true");
+
+    header.appendChild(headerMain);
+    header.appendChild(toggleBtn);
 
     // Fields container
     const fieldsContainer = document.createElement("div");
@@ -1702,7 +1817,7 @@ class ChatPortalClient {
     toLabel.textContent = "To:";
     const toValue = document.createElement("span");
     toValue.className = "email-field-value";
-    toValue.dataset.fullText = this.escapeHtml(to.join(", "));
+    setFieldValue(toValue, to.join(", "));
     toField.appendChild(toLabel);
     toField.appendChild(toValue);
     fieldsContainer.appendChild(toField);
@@ -1717,7 +1832,7 @@ class ChatPortalClient {
       ccLabel.textContent = "CC:";
       const ccValue = document.createElement("span");
       ccValue.className = "email-field-value";
-      ccValue.dataset.fullText = this.escapeHtml(cc.join(", "));
+      setFieldValue(ccValue, cc.join(", "));
       ccField.appendChild(ccLabel);
       ccField.appendChild(ccValue);
       fieldsContainer.appendChild(ccField);
@@ -1732,7 +1847,7 @@ class ChatPortalClient {
     subjectLabel.textContent = "Subject:";
     const subjectValue = document.createElement("span");
     subjectValue.className = "email-field-value";
-    subjectValue.dataset.fullText = this.escapeHtml(subject);
+    setFieldValue(subjectValue, subject);
     subjectField.appendChild(subjectLabel);
     subjectField.appendChild(subjectValue);
     fieldsContainer.appendChild(subjectField);
@@ -1746,7 +1861,7 @@ class ChatPortalClient {
     bodyLabel.textContent = "Message:";
     const bodyContent = document.createElement("div");
     bodyContent.className = "email-field-value email-body-content";
-    bodyContent.dataset.fullText = this.escapeHtml(body);
+    setFieldValue(bodyContent, body);
     bodyField.appendChild(bodyLabel);
     bodyField.appendChild(bodyContent);
     fieldsContainer.appendChild(bodyField);
@@ -1776,11 +1891,15 @@ class ChatPortalClient {
     approvalActions.appendChild(approveBtn);
     approvalActions.appendChild(rejectBtn);
 
+    const bodyWrap = document.createElement("div");
+    bodyWrap.className = "email-preview-body";
+    bodyWrap.appendChild(fieldsContainer);
+    bodyWrap.appendChild(editActions);
+    bodyWrap.appendChild(approvalActions);
+
     // Assemble container
     container.appendChild(header);
-    container.appendChild(fieldsContainer);
-    container.appendChild(editActions);
-    container.appendChild(approvalActions);
+    container.appendChild(bodyWrap);
     card.appendChild(container);
 
     // Attach event listeners
@@ -1788,42 +1907,54 @@ class ChatPortalClient {
 
     // Apply approval/status state if present (ensures approval_id is captured)
     this.updateEmailPreviewCard(card, payload);
+    this.updateEmailPreviewSummary(card, { to, subject });
+    this.setEmailPreviewCollapsed(card, false);
 
-    // Trigger staggered animation and streaming effect
-    requestAnimationFrame(() => {
-      card.classList.add("email-card-animate-in");
-      const fields = fieldsContainer.querySelectorAll(".email-field");
-      fields.forEach((field, index) => {
-        setTimeout(() => {
-          field.classList.add("email-field-visible");
-          // Start streaming content for this field
-          const valueEl = field.querySelector(".email-field-value");
-          if (valueEl && valueEl.dataset.fullText) {
-            this.streamEmailFieldContent(valueEl, valueEl.dataset.fullText);
-          }
-        }, index * 150); // 150ms delay between each field
+    if (shouldStream) {
+      requestAnimationFrame(() => {
+        if (!this.isStreaming || this.finalizingTurn || card.dataset.emailStreamCancelled === "true") return;
+        card.classList.add("email-card-animate-in");
+        const fields = fieldsContainer.querySelectorAll(".email-field");
+        fields.forEach((field, index) => {
+          const timer = setTimeout(() => {
+            if (!this.isStreaming || this.finalizingTurn || card.dataset.emailStreamCancelled === "true") return;
+            field.classList.add("email-field-visible");
+            const valueEl = field.querySelector(".email-field-value");
+            if (valueEl && valueEl.dataset.fullText) {
+              this.streamEmailFieldContent(valueEl, valueEl.dataset.fullText);
+            }
+          }, index * 150);
+          card._emailStreamTimers.push(timer);
+        });
       });
-    });
+    } else {
+      const fields = fieldsContainer.querySelectorAll(".email-field");
+      fields.forEach((field) => {
+        field.classList.add("email-field-visible");
+      });
+    }
 
     return card;
   }
 
   streamEmailFieldContent(element, fullText) {
-    if (!element || !fullText) {
-      console.warn("[Email Stream] Missing element or text", { element, fullText });
-      return;
-    }
+    if (!element || !fullText) return;
 
     // Decode HTML entities for display
     const tempDiv = document.createElement("div");
     tempDiv.innerHTML = fullText;
     const decodedText = tempDiv.textContent || tempDiv.innerText || "";
 
-    console.log("[Email Stream] Starting stream", {
-      fieldClass: element.className,
-      textLength: decodedText.length,
-      preview: decodedText.substring(0, 50) + "..."
-    });
+    if (!this.isStreaming || this.finalizingTurn) {
+      element.textContent = decodedText;
+      element.classList.add("email-stream-complete");
+      return;
+    }
+
+    if (element._streamInterval) {
+      clearInterval(element._streamInterval);
+      element._streamInterval = null;
+    }
 
     let currentIndex = 0;
     const isBodyContent = element.classList.contains("email-body-content");
@@ -1835,10 +1966,17 @@ class ChatPortalClient {
     element.textContent = "";
 
     const streamInterval = setInterval(() => {
+      if (!this.isStreaming || this.finalizingTurn) {
+        clearInterval(streamInterval);
+        element._streamInterval = null;
+        element.textContent = decodedText;
+        element.classList.add("email-stream-complete");
+        return;
+      }
       if (currentIndex >= decodedText.length) {
         clearInterval(streamInterval);
+        element._streamInterval = null;
         element.classList.add("email-stream-complete");
-        console.log("[Email Stream] Complete", { fieldClass: element.className });
         return;
       }
 
@@ -2374,6 +2512,15 @@ class ChatPortalClient {
     if (!card || card.dataset.emailEventsBound === "true") return;
     card.dataset.emailEventsBound = "true";
 
+    const toggleBtn = card.querySelector('[data-action="toggle"]');
+    if (toggleBtn) {
+      toggleBtn.addEventListener("click", (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        this.toggleEmailPreviewCard(card);
+      });
+    }
+
     // Edit button
     const editBtn = card.querySelector('[data-action="edit"]');
     if (editBtn) {
@@ -2413,6 +2560,74 @@ class ChatPortalClient {
         this.submitEmailDraftAction("discard", card);
       });
     }
+  }
+
+  toggleEmailPreviewCard(card) {
+    if (!card) return;
+    this.updateEmailPreviewSummary(card);
+    const isCollapsed = card.dataset.collapsed === "true";
+    this.setEmailPreviewCollapsed(card, !isCollapsed);
+  }
+
+  setEmailPreviewCollapsed(card, collapsed) {
+    if (!card) return;
+    const isCollapsed = Boolean(collapsed);
+    card.dataset.collapsed = isCollapsed ? "true" : "false";
+
+    const body = card.querySelector(".email-preview-body");
+    if (body) {
+      // Prevent focus/tabbing into collapsed content without needing JS height animation.
+      body.setAttribute("aria-hidden", isCollapsed ? "true" : "false");
+      if ("inert" in body) {
+        body.inert = isCollapsed;
+      }
+    }
+
+    const toggleBtn = card.querySelector('[data-action="toggle"]');
+    if (toggleBtn) {
+      toggleBtn.textContent = isCollapsed ? "Show email" : "Hide email";
+      toggleBtn.setAttribute("aria-expanded", (!isCollapsed).toString());
+    }
+  }
+
+  getEmailPreviewSummaryText(data) {
+    if (!data || typeof data !== "object") return "Email details";
+    const toRaw = Array.isArray(data.to)
+      ? data.to.join(", ")
+      : data.to != null
+        ? String(data.to)
+        : "";
+    const subjectRaw = data.subject != null ? String(data.subject) : "";
+    const toText = toRaw ? this.clipText(toRaw, 48) : "";
+    const subjectText = subjectRaw ? this.clipText(subjectRaw, 64) : "";
+    const parts = [];
+    if (toText) parts.push(`To: ${toText}`);
+    if (subjectText) parts.push(`Subject: ${subjectText}`);
+    return parts.length ? parts.join(" • ") : "Email details";
+  }
+
+  getEmailPreviewFieldValue(card, fieldName) {
+    if (!card) return "";
+    const field = card.querySelector(`[data-field="${fieldName}"]`);
+    if (!field) return "";
+    const input = field.querySelector(".email-field-input");
+    if (input && typeof input.value === "string") return input.value.trim();
+    const value = field.querySelector(".email-field-value");
+    return value && value.textContent ? value.textContent.trim() : "";
+  }
+
+  updateEmailPreviewSummary(card, overrideData) {
+    if (!card) return;
+    const summary = card.querySelector(".email-preview-summary");
+    if (!summary) return;
+    let data = overrideData;
+    if (!data || typeof data !== "object") {
+      data = {
+        to: this.getEmailPreviewFieldValue(card, "to"),
+        subject: this.getEmailPreviewFieldValue(card, "subject"),
+      };
+    }
+    summary.textContent = this.getEmailPreviewSummaryText(data);
   }
 
   updateEmailPreviewCard(card, payload) {
@@ -2534,17 +2749,22 @@ class ChatPortalClient {
       if (approvalStatus === "approved" || status === "approved") {
         if (statusEl) statusEl.textContent = "Sending email...";
         if (actionsEl) actionsEl.hidden = true;
+        this.setEmailPreviewCollapsed(card, true);
         this.scheduleEmailSendReconcile(card);
       } else if (approvalStatus === "denied" || status === "denied") {
         if (statusEl) statusEl.textContent = "Not sent";
         card.classList.add("email-rejected");
         if (actionsEl) actionsEl.hidden = false; // Show edit button again
+        this.setEmailPreviewCollapsed(card, true);
       } else if (approvalStatus === "expired" || status === "expired") {
         if (statusEl) statusEl.textContent = "Approval expired";
         card.classList.add("email-rejected");
         if (actionsEl) actionsEl.hidden = false;
+        this.setEmailPreviewCollapsed(card, true);
       }
     }
+
+    this.updateEmailPreviewSummary(card);
   }
 
   scheduleEmailSendReconcile(card) {
@@ -2653,17 +2873,26 @@ class ChatPortalClient {
       if (input.classList.contains("email-body-input")) {
         // Body field
         const div = document.createElement("div");
-        div.className = "email-field-value email-body-content";
+        div.className = "email-field-value email-body-content email-stream-complete";
         div.textContent = input.value;
         input.replaceWith(div);
       } else {
         // Other fields
         const span = document.createElement("span");
-        span.className = "email-field-value";
+        span.className = "email-field-value email-stream-complete";
         span.textContent = input.value;
         input.replaceWith(span);
       }
     });
+
+    card._emailData = {
+      to: this.getEmailPreviewFieldValue(card, "to"),
+      cc: this.getEmailPreviewFieldValue(card, "cc"),
+      bcc: this.getEmailPreviewFieldValue(card, "bcc"),
+      subject: this.getEmailPreviewFieldValue(card, "subject"),
+      body: this.getEmailPreviewFieldValue(card, "body"),
+    };
+    this.updateEmailPreviewSummary(card);
 
     // Change Save button back to Edit button
     const saveBtn = card.querySelector('[data-action="save"]');
@@ -3089,62 +3318,79 @@ class ChatPortalClient {
     return `${raw.slice(0, Math.max(0, limit - 1)).trim()}…`;
   }
 
-	  handleTurnPersistedEvent(data) {
-	    try {
-	      const payload = data ? JSON.parse(data) : null;
-	      if (!payload) return;
-	      const messageId = payload.message_id || this.pendingMessageId || this.streamingMessageId || null;
-	      if (typeof payload.metadata_version === "number") {
-	        this.pendingMetadataVersion = payload.metadata_version;
+		  handleTurnPersistedEvent(data) {
+		    this.finalizingTurn = true;
+		    if (this.container && this.container.dataset) {
+		      this.container.dataset.finalizing = "true";
+		    }
+		    try {
+		      const payload = data ? JSON.parse(data) : null;
+		      if (!payload) return;
+		      const messageId = payload.message_id || this.pendingMessageId || this.streamingMessageId || null;
+		      if (typeof payload.metadata_version === "number") {
+		        this.pendingMetadataVersion = payload.metadata_version;
+		      }
+	      const contentBlocks =
+	        Array.isArray(payload.content_blocks) ? payload.content_blocks : Array.isArray(payload.contentBlocks) ? payload.contentBlocks : [];
+	      const persistedText = payload.text ? payload.text.toString() : "";
+
+	      if (contentBlocks.length) {
+	        this.ensureStreamingMessageNode(messageId);
+	        const bodyEl = this.getMessageBodyElement(messageId) || this.streamingMessageBodyEl;
+	        if (bodyEl) {
+	          // Canonical reconcile: update/insert/remove/reorder by block_id without doing a full
+	          // re-render, and prevent streaming-only animations from firing during finalization.
+	          const streamedBlocks =
+	            this.usingBlockStream && this.streamingBlocksEl && this.streamingContentBlockEls && this.streamingContentBlockEls.size > 0;
+	          if (streamedBlocks) {
+	            this.reconcileMessageContentBlocks(bodyEl, contentBlocks);
+	          } else {
+	            this.renderMessageContentBlocks(bodyEl, contentBlocks);
+	          }
+	          this.injectCopyButton(bodyEl);
+	        }
+	        if (messageId) {
+	          const scriptTag = document.getElementById(messageId);
+	          if (scriptTag && scriptTag.tagName === "SCRIPT") {
+	            const bodyText = this.extractPlainTextFromContentBlocks(contentBlocks) || persistedText || "";
+	            scriptTag.textContent = JSON.stringify({ body: bodyText, content_blocks: contentBlocks });
+	          }
+	        }
+	      } else if (persistedText) {
+	        if (this.streamingMessageNode) {
+	          this.ensureStreamingMessageNode(messageId);
+	          this.updateLatestAssistantMessage(persistedText, messageId);
+	        } else {
+	          this.updateLatestAssistantMessage(persistedText, messageId);
+	        }
 	      }
-      const contentBlocks =
-        Array.isArray(payload.content_blocks) ? payload.content_blocks : Array.isArray(payload.contentBlocks) ? payload.contentBlocks : [];
-      const persistedText = payload.text ? payload.text.toString() : "";
 
-      if (contentBlocks.length) {
-        this.ensureStreamingMessageNode(messageId);
-        const bodyEl = this.getMessageBodyElement(messageId) || this.streamingMessageBodyEl;
-        if (bodyEl) {
-          this.renderMessageContentBlocks(bodyEl, contentBlocks);
-          this.injectCopyButton(bodyEl);
-        }
-        if (messageId) {
-          const scriptTag = document.getElementById(messageId);
-          if (scriptTag && scriptTag.tagName === "SCRIPT") {
-            const bodyText = this.extractPlainTextFromContentBlocks(contentBlocks) || persistedText || "";
-            scriptTag.textContent = JSON.stringify({ body: bodyText, content_blocks: contentBlocks });
-          }
-        }
-      } else if (persistedText) {
-        if (this.streamingMessageNode) {
-          this.ensureStreamingMessageNode(messageId);
-          this.updateLatestAssistantMessage(persistedText, messageId);
-        } else {
-          this.updateLatestAssistantMessage(persistedText, messageId);
-        }
-      }
-
-	      this.updateMessageMetadata(messageId, payload);
-      if (payload.session_status) {
-        this.updateStatus(payload.session_status);
-        this.updateCsatVisibility(payload.session_status);
-      }
-	      this.setSpinnerText("", { pending: false });
-	      this.resetStreamingState(false, false);
-      this.pendingMessageId = null;
-      this.usingStateMachine = false;
-      this.usingBlockStream = false;
-      this.streamFinished = true;
-      this.isStreaming = false;
-      this.workflowLocked = false;
-      this.updateSendButtonState(false);
-      this.setComposerAvailability(true);
-      this.updateComposerNotice(false);
-      this.flushQueueAfterTurn = true;
-    } catch (error) {
-      console.warn("Failed to parse persisted turn", error);
-    }
-  }
+		      this.updateMessageMetadata(messageId, payload);
+	      if (payload.session_status) {
+	        this.updateStatus(payload.session_status);
+	        this.updateCsatVisibility(payload.session_status);
+	      }
+		      this.setSpinnerText("", { pending: false });
+		      this.resetStreamingState(false, false);
+	      this.pendingMessageId = null;
+	      this.usingStateMachine = false;
+	      this.usingBlockStream = false;
+	      this.streamFinished = true;
+	      this.isStreaming = false;
+	      this.workflowLocked = false;
+	      this.updateSendButtonState(false);
+	      this.setComposerAvailability(true);
+	      this.updateComposerNotice(false);
+	      this.flushQueueAfterTurn = true;
+	    } catch (error) {
+	      console.warn("Failed to parse persisted turn", error);
+	    } finally {
+	      this.finalizingTurn = false;
+	      if (this.container) {
+	        delete this.container.dataset.finalizing;
+	      }
+	    }
+	  }
 
   connectEventStream() {
     if (!this.endpoints.events || !this.sessionToken) return;
@@ -3386,6 +3632,286 @@ class ChatPortalClient {
     });
   }
 
+  reconcileMessageContentBlocks(messageBodyEl, blocks) {
+    if (!messageBodyEl) return;
+    const blocksRoot =
+      messageBodyEl.querySelector("[data-message-blocks]") ||
+      (() => {
+        messageBodyEl.innerHTML = "";
+        const root = document.createElement("div");
+        root.dataset.messageBlocks = "true";
+        root.className = "space-y-2";
+        messageBodyEl.appendChild(root);
+        return root;
+      })();
+    this.reconcileContentBlocksInto(blocksRoot, blocks);
+  }
+
+  decodeHtmlEntities(value) {
+    if (!value) return "";
+    const tempDiv = document.createElement("div");
+    tempDiv.innerHTML = value;
+    return tempDiv.textContent || tempDiv.innerText || "";
+  }
+
+  finalizeEmailStreams(rootEl) {
+    if (!rootEl || !rootEl.querySelectorAll) return;
+    const cards = rootEl.querySelectorAll('[data-email-card="true"]');
+    if (!cards.length) return;
+
+    cards.forEach((card) => {
+      card.dataset.emailStreamCancelled = "true";
+      if (Array.isArray(card._emailStreamTimers) && card._emailStreamTimers.length) {
+        card._emailStreamTimers.forEach((timer) => clearTimeout(timer));
+        card._emailStreamTimers = [];
+      }
+
+      const fields = card.querySelectorAll(".email-field");
+      fields.forEach((field) => field.classList.add("email-field-visible"));
+
+      const values = card.querySelectorAll(".email-field-value");
+      values.forEach((valueEl) => {
+        if (valueEl._streamInterval) {
+          clearInterval(valueEl._streamInterval);
+          valueEl._streamInterval = null;
+        }
+        const fullText = valueEl.dataset ? valueEl.dataset.fullText : "";
+        if (fullText) {
+          valueEl.textContent = this.decodeHtmlEntities(fullText);
+        }
+        valueEl.classList.add("email-stream-complete");
+      });
+    });
+  }
+
+  updateContentBlockElement(el, block) {
+    if (!el || !block || typeof block !== "object") return el;
+    const type = (block.type || "").toString().trim().toLowerCase();
+    const payload = block.payload && typeof block.payload === "object" ? block.payload : {};
+
+    // Tool cards (including email cards).
+    if (type === "tool_use") {
+      this.updateToolEventCard(el, payload);
+      return el;
+    }
+    if (type === "tool_result") {
+      this.updateToolEventCard(el, { ...payload, phase: "finished" });
+      return el;
+    }
+
+    if (type === "paragraph" || type === "heading" || type === "list_item") {
+      const content = Array.isArray(payload.content) ? payload.content : [];
+      el.innerHTML = "";
+      this.appendInlineNodes(el, content);
+      return el;
+    }
+
+    if (type === "text") {
+      const text = typeof payload.text === "string" ? payload.text : "";
+      const cleaned = this.stripInlineResponseBlocks(text);
+      el.innerHTML = "";
+      if (cleaned) {
+        this.appendInlineNodes(el, [{ text: cleaned }]);
+      }
+      return el;
+    }
+
+    if (type === "code_block") {
+      const codeEl = el.querySelector("[data-content-block-code]");
+      if (codeEl) {
+        codeEl.textContent = typeof payload.code === "string" ? payload.code : "";
+      }
+      return el;
+    }
+
+    if (type === "reasoning") {
+      const details = el.querySelector("details");
+      const codeEl = el.querySelector("[data-content-block-code]");
+      if (codeEl) {
+        const text = typeof payload.code === "string" ? payload.code : typeof payload.text === "string" ? payload.text : "";
+        codeEl.textContent = text || "";
+      }
+      if (details) {
+        const isComplete = Boolean(payload.completed_at || payload.completedAt || payload.completed);
+        details.dataset.reasoningState = isComplete ? "complete" : "active";
+        const label = details.querySelector("[data-reasoning-summary-label]");
+        if (label) {
+          label.textContent = isComplete ? "Thought" : "Thinking";
+        }
+        if (details.dataset.userOverride !== "true") {
+          if (!isComplete) {
+            details.open = true;
+	          } else if (details.open) {
+	            if (this.finalizingTurn) {
+	              details.open = false;
+	            } else {
+	              this.animateReasoningAutoCollapse(details);
+	            }
+	          }
+	        }
+      }
+      return el;
+    }
+
+    if (type === "list") {
+      const ordered = payload.ordered === true;
+      const desiredTag = ordered ? "OL" : "UL";
+      if (el.tagName !== desiredTag) {
+        const replacement = this.buildContentBlockElement(block);
+        if (replacement) {
+          el.replaceWith(replacement);
+          return replacement;
+        }
+        return el;
+      }
+      el.className = `${ordered ? "list-decimal" : "list-disc"} pl-6 space-y-1`;
+      const startValue = Number(payload.start);
+      if (ordered && Number.isFinite(startValue) && startValue > 0) {
+        el.start = startValue;
+      } else if (el.tagName === "OL") {
+        el.removeAttribute("start");
+      }
+      return el;
+    }
+
+    // Other block types are currently treated as static once created.
+    return el;
+  }
+
+  reconcileContentBlocksInto(containerEl, blocks) {
+    if (!containerEl) return;
+
+    // Remove streaming-only affordances; persisted renders do not include them.
+    containerEl.querySelectorAll("[data-streaming-status]").forEach((el) => el.remove());
+
+    // If we are finalizing, ensure we don't leave email field timers/cursors running.
+    if (this.finalizingTurn) {
+      this.finalizeEmailStreams(containerEl);
+    }
+
+    const canonical = Array.isArray(blocks) ? blocks.filter((b) => b && typeof b === "object") : [];
+
+    // Map existing blocks by block_id (remove duplicates proactively).
+    const existingById = new Map();
+    Array.from(containerEl.querySelectorAll("[data-block-id]")).forEach((node) => {
+      const id = node && node.dataset ? (node.dataset.blockId || "").toString().trim() : "";
+      if (!id) return;
+      const prior = existingById.get(id);
+      if (prior && prior !== node) {
+        node.remove();
+        return;
+      }
+      existingById.set(id, node);
+    });
+
+    const emailCardsByToolEvent = new Map();
+    const emailCardsBySendEvent = new Map();
+    containerEl.querySelectorAll('[data-email-card="true"]').forEach((card) => {
+      const toolEventId = (card.dataset.toolEventId || "").toString().trim();
+      const sendEventId = (card.dataset.emailSendEventId || "").toString().trim();
+      if (toolEventId && !emailCardsByToolEvent.has(toolEventId)) emailCardsByToolEvent.set(toolEventId, card);
+      if (sendEventId && !emailCardsBySendEvent.has(sendEventId)) emailCardsBySendEvent.set(sendEventId, card);
+    });
+
+    const keepIds = new Set();
+
+    canonical.forEach((block) => {
+      const blockId = (block.block_id || block.blockId || "").toString().trim();
+      if (!blockId) return;
+      const parentId = (block.parent_block_id || block.parentBlockId || "").toString().trim();
+      const type = (block.type || "").toString().trim().toLowerCase();
+      const payload = block.payload && typeof block.payload === "object" ? block.payload : {};
+
+      // Deterministic merge: email_send_draft updates the existing draft card (no new UI block).
+      if (type === "tool_use") {
+        const toolName = (payload.tool_name || payload.toolName || "").toString().trim().toLowerCase();
+        if (toolName === "email_send_draft") {
+          const draftId = this.getEmailDraftIdFromToolPayload(payload);
+          const existingDraftCard = draftId ? this.resolveEmailCardByDraftId(draftId) : null;
+          if (existingDraftCard) {
+            const stale = existingById.get(blockId);
+            if (stale && stale !== existingDraftCard && stale.parentNode) {
+              stale.remove();
+            }
+            this.updateEmailPreviewCard(existingDraftCard, payload);
+            this.updateEmailPreviewSummary(existingDraftCard);
+            return;
+          }
+        }
+      }
+
+      let el = existingById.get(blockId);
+
+      // Recover email cards even if block_id drifted (e.g. legacy mutation during streaming).
+      if (!el && (type === "tool_use" || type === "tool_result")) {
+        const toolName = (payload.tool_name || payload.toolName || "").toString().trim().toLowerCase();
+        if (toolName === "email_create_draft" || toolName === "email_send_draft") {
+          const eventId = (payload.event_id || payload.eventId || "").toString().trim();
+          el = emailCardsByToolEvent.get(eventId) || emailCardsBySendEvent.get(eventId) || null;
+          if (el) {
+            el.dataset.blockId = blockId;
+            existingById.set(blockId, el);
+          }
+        }
+      }
+
+      if (el) {
+        const currentType = el.dataset ? (el.dataset.blockType || "").toString().trim().toLowerCase() : "";
+        if (currentType && currentType !== type && type !== "reasoning") {
+          const replacement = this.buildContentBlockElement(block);
+          if (replacement) {
+            el.replaceWith(replacement);
+            el = replacement;
+            existingById.set(blockId, el);
+          }
+        } else {
+          el = this.updateContentBlockElement(el, block) || el;
+          existingById.set(blockId, el);
+        }
+      } else {
+        el = this.buildContentBlockElement(block);
+        if (!el) return;
+        existingById.set(blockId, el);
+      }
+
+      const parentEl = parentId && existingById.has(parentId) ? existingById.get(parentId) : null;
+      const targetContainer = parentEl ? parentEl.querySelector("[data-block-container]") || parentEl : containerEl;
+      if (targetContainer && el && el.parentNode !== targetContainer) {
+        targetContainer.appendChild(el);
+      } else if (targetContainer && el) {
+        // Ensure correct sibling order by re-appending in canonical sequence.
+        targetContainer.appendChild(el);
+      }
+
+      keepIds.add(blockId);
+    });
+
+    // Second pass: ensure parent containers exist before final sibling ordering (handles rare
+    // out-of-order parent/child blocks without tearing down the entire message).
+    canonical.forEach((block) => {
+      const blockId = (block.block_id || block.blockId || "").toString().trim();
+      if (!blockId || !keepIds.has(blockId)) return;
+      const parentId = (block.parent_block_id || block.parentBlockId || "").toString().trim();
+      const el = existingById.get(blockId);
+      if (!el) return;
+      const parentEl = parentId && existingById.has(parentId) ? existingById.get(parentId) : null;
+      const targetContainer = parentEl ? parentEl.querySelector("[data-block-container]") || parentEl : containerEl;
+      if (targetContainer) {
+        targetContainer.appendChild(el);
+      }
+    });
+
+    // Remove any remaining blocks not present in canonical output.
+    existingById.forEach((node, id) => {
+      if (!keepIds.has(id) && node && node.parentNode) {
+        node.remove();
+      }
+    });
+
+    const visibilityRoot = containerEl.closest ? containerEl.closest("[data-message-id]") || containerEl : containerEl;
+    this.updateInlineToolCardsVisibility(visibilityRoot);
+  }
+
   buildContentBlockElement(block) {
     if (!block || typeof block !== "object") return null;
     const type = (block.type || "").toString().trim().toLowerCase();
@@ -3456,10 +3982,10 @@ class ChatPortalClient {
 	      return wrapper;
 	    }
 
-    if (type === "reasoning") {
-      const title = (payload.title || payload.label || payload.stage || "Reasoning").toString().trim() || "Reasoning";
-      const collapsed = payload.collapsed !== false;
-      const text = typeof payload.code === "string" ? payload.code : typeof payload.text === "string" ? payload.text : "";
+	    if (type === "reasoning") {
+	      const collapsed = payload.collapsed !== false;
+	      const text = typeof payload.code === "string" ? payload.code : typeof payload.text === "string" ? payload.text : "";
+	      const isComplete = Boolean(payload.completed_at || payload.completedAt || payload.completed);
 
       const wrapper = document.createElement("div");
       wrapper.dataset.contentBlock = "true";
@@ -3467,12 +3993,15 @@ class ChatPortalClient {
       if (blockId) wrapper.dataset.blockId = blockId;
       wrapper.className = "portal-reasoning";
 
-      const details = document.createElement("details");
-      details.className = "portal-reasoning__details";
-      details.dataset.reasoningTitle = title;
-      if (!collapsed) {
-        details.open = true;
-      }
+	      const details = document.createElement("details");
+	      details.className = "portal-reasoning__details";
+	      details.dataset.reasoningState = isComplete ? "complete" : "active";
+	      // Default UX: auto-open while the model is actively thinking, then collapse once complete.
+	      if (!isComplete) {
+	        details.open = true;
+	      } else if (!collapsed) {
+	        details.open = true;
+	      }
 
       const summary = document.createElement("summary");
       summary.className = "portal-reasoning__summary";
@@ -3488,8 +4017,7 @@ class ChatPortalClient {
       pre.appendChild(code);
 
       const updateSummary = () => {
-        const base = details.open ? "Hide reasoning" : "Show reasoning";
-        summaryLabel.textContent = title ? `${base} • ${title}` : base;
+        summaryLabel.textContent = details.dataset.reasoningState === "complete" ? "Thought" : "Thinking";
       };
       updateSummary();
       details.addEventListener("toggle", (event) => {
@@ -4041,10 +4569,49 @@ class ChatPortalClient {
     return distance <= thresholdPx;
   }
 
+  setFollowScrollEnabled(enabled) {
+    const scroller = this.elements.messages;
+    if (!scroller) return;
+    const next = Boolean(enabled);
+    if (this.followScrollEnabled === next) return;
+    this.followScrollEnabled = next;
+    scroller.classList.toggle("portal-follow-scroll", next);
+  }
+
+  setActiveStreamingTextBlock(blockId) {
+    const nextId = (blockId || "").toString().trim();
+    if (!nextId || this.activeStreamingTextBlockId === nextId) return;
+
+    const prevId = this.activeStreamingTextBlockId;
+    if (prevId) {
+      const prevEl = this.streamingContentBlockEls.get(prevId);
+      if (prevEl) prevEl.classList.remove("portal-stream-active");
+    }
+
+    this.activeStreamingTextBlockId = nextId;
+    const nextEl = this.streamingContentBlockEls.get(nextId);
+    if (nextEl) nextEl.classList.add("portal-stream-active");
+  }
+
+  clearActiveStreamingTextBlock(blockId) {
+    const id = blockId ? (blockId || "").toString().trim() : this.activeStreamingTextBlockId;
+    if (!id) return;
+    const el = this.streamingContentBlockEls.get(id);
+    if (el) el.classList.remove("portal-stream-active");
+    if (!blockId || id === this.activeStreamingTextBlockId) {
+      this.activeStreamingTextBlockId = null;
+    }
+  }
+
   scheduleScrollToBottom({ behavior = "auto", force = false } = {}) {
     const scroller = this.elements.messages;
     if (!scroller) return;
-    if (!force && !this.isNearBottom(scroller)) return;
+    const nearBottom = this.isNearBottom(scroller);
+    if (!force && !nearBottom) {
+      this.setFollowScrollEnabled(false);
+      return;
+    }
+    this.setFollowScrollEnabled(this.isStreaming && nearBottom);
     this.scrollToBottomBehavior = behavior || "auto";
     if (this.scrollToBottomRaf) return;
     this.scrollToBottomRaf = requestAnimationFrame(() => {
@@ -4262,14 +4829,9 @@ class ChatPortalClient {
       node.classList.remove("transition-all", "duration-500", "ease-out"); 
     }, 500);
 
-    // Force scroll to show this new bubble
-    if (container.closest('[data-chat-messages]')) {
-        const scroller = container.closest('[data-chat-messages]');
-        scroller.scrollTo({ top: scroller.scrollHeight, behavior: "smooth" });
-    } else if (this.elements.messages) {
-        this.elements.messages.scrollTo({ top: this.elements.messages.scrollHeight, behavior: "smooth" });
-    }
-  }
+	    // Scroll only if the visitor is already near the bottom (don't hijack up-thread reading).
+	    this.scheduleScrollToBottom({ behavior: "smooth" });
+	  }
 
   updateLatestAssistantMessage(text, messageId = null) {
     if (!text || !this.elements.messages) return;
@@ -4766,11 +5328,13 @@ class ChatPortalClient {
 		    }
 		    this.streamingActive = false;
 		    this.isStreaming = false;
+        this.setFollowScrollEnabled(false);
 		    this.textDeltaIntervalEma = 0;
 		    this.lastTextDeltaAt = 0;
 		    this.hadToolsThisTurn = false;
 		    this.clearStreamingIdleStatusTimer();
 		    this.clearStreamingStatus();
+    this.clearActiveStreamingTextBlock();
     if (removeNode && this.streamingMessageNode && this.streamingMessageNode.parentNode) {
       this.streamingMessageNode.parentNode.removeChild(this.streamingMessageNode);
     }
@@ -4783,7 +5347,7 @@ class ChatPortalClient {
 				    this.streamingBlocksEl = null;
 				    this.usingBlockStream = false;
 				    this.streamingContentBlockEls.clear();
-				    this.streamingPendingBlockOps.clear();
+			    this.streamingPendingBlockOps.clear();
 			    this.streamingTextBlockActiveIds.clear();
 			    this.streamingToolBlockActiveIds.clear();
 			    this.streamingDirtyTextBlocks.clear();
@@ -4798,6 +5362,25 @@ class ChatPortalClient {
 		      this.pendingMessageId = null;
 		    }
 		  }
+
+  applyStreamingBlockEnterAnimation(el) {
+    if (!el || !el.classList) return;
+    // Avoid re-animating complex components that already have their own entrance motion.
+    if (el.classList.contains("email-preview-card") || (el.dataset && el.dataset.emailCard === "true")) return;
+    if (this.finalizingTurn) return;
+    if (!this.isStreaming) return;
+    const prefersReducedMotion = window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    if (prefersReducedMotion) return;
+    el.classList.add("portal-stream-enter");
+    el.addEventListener(
+      "animationend",
+      (event) => {
+        if (!event || event.animationName !== "portalStreamBlockIn") return;
+        el.classList.remove("portal-stream-enter");
+      },
+      { once: true },
+    );
+  }
 
   setStreamingStatus(mode = "working", labelOverride) {
     if (this.workflowLocked) return;

@@ -64,7 +64,7 @@ class PromptBuilder:
         - Ask only for missing information required to locate or verify the requested item (document name, identifier, date, email/phone). Do not brainstorm options or scenarios outside the loaded knowledge.
         - Do not repeat the same acknowledgement or promise in consecutive replies. If you already confirmed a fact or said you would review a document, move forward with the new information instead of restating the earlier message.
         - When the visitor pivots to a different product variant (for example, another card tier or benefit), assume the relevant data is already loaded and move straight to the requested details. If you already have the figures, respond directly with the concrete fees, limits, or features instead of saying that you will check.
-        - Use clean, reader-friendly Markdown. For short single-fact answers, reply naturally without headings. Use a heading (`##`) or bold label only when there are multiple topics/products or the visitor explicitly asks for a structured breakdown. Use a short bullet or numbered list only when there are one or two metrics; as soon as three or more rows are involved, switch entirely to a Markdown table and do not restate the exact figures elsewhere. Always close any `**`, `_`, or ``` markers before sending, and never call `read_document` just to improve formatting—reuse the data already returned by the latest tools (e.g., table aggregates).
+        - Use clean, reader-friendly Markdown. For short single-fact answers, reply naturally without headings. Use a heading (`##`) or bold label only when there are multiple topics/products or the visitor explicitly asks for a structured breakdown. Use bullet/numbered lists for checklists or step-by-step instructions. For numeric comparisons/metrics: use a short bullet/numbered list for 1-2 items; if 3+ rows are involved, switch to a Markdown table and do not restate the exact figures elsewhere. Always close any `**`, `_`, or ``` markers before sending, and never call `read_document` just to improve formatting—reuse the data already returned by the latest tools (e.g., table aggregates).
         - When a table is appropriate, surface the numeric details only once inside that table. Skip repeating the same figures in prose beforehand; instead, add a short “Key observations” paragraph after the table if extra context is needed.
         - When you report derived numbers (totals, averages, percentages), compute them carefully from the evidence and sanity-check that they add up before stating them.
         """
@@ -143,6 +143,26 @@ class PromptBuilder:
         """
     ).strip()
 
+    OUTPUT_FORMATTING_RULES = textwrap.dedent(
+        """
+        ### Output Formatting (Chat UI)
+        Write in clean Markdown optimized for a web chat renderer.
+
+        Newlines:
+        - Use a blank line between paragraphs (two newlines: "\\n\\n").
+        - Do not hard-wrap lines inside a paragraph; let the UI wrap naturally.
+        - Use single newlines only for list items, code blocks, or genuinely line-based content (addresses, poetry).
+
+        Structure:
+        - Prefer short paragraphs (1-3 sentences).
+        - Use headings "##" or "###" for sections.
+        - For bullets use "- " (not "•"); for numbered lists use "1. " (not "1)").
+        - Put a blank line before and after lists.
+        - Never embed list markers inside a sentence (bad: "you 1. ... 2. ..."). If you introduce steps, end the lead-in with ":" then start the list on the next line.
+        - Use fenced code blocks (```...```) for code/logs.
+        """
+    ).strip()
+
 
     def build(
         self,
@@ -186,6 +206,8 @@ class PromptBuilder:
                 {self.SEARCH_DISAMBIGUATION_RULES}
 
                 {self.CHUNK_READ_NUDGE}
+
+                {self.OUTPUT_FORMATTING_RULES}
 
                 {self.CUSTOMER_RULES}
                 """

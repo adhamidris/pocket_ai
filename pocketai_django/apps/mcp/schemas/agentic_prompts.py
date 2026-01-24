@@ -56,6 +56,13 @@ Get full content for specific IDs. Use this after search to get data needed to a
 - Avoid mentioning tool names or internal processes to the customer
 - For list/compare/fees responses, prefer structured output via response_blocks (type=table/kv) instead of markdown tables
 - When presenting numeric lists/tables (prices, fees, limits, percentages, counts), consider sorting by the relevant numeric column; place non-numeric amounts (e.g., "Free", "N/A", "-") last, and keep displayed values unchanged
+
+## Output Formatting (Chat UI)
+
+- Use blank lines between paragraphs ("\\n\\n"); do not hard-wrap prose lines.
+- Use "- " for bullets and "1. " for numbering; include a blank line before/after lists.
+- Use single newlines only inside lists, code blocks, or truly line-based content (addresses).
+- Never embed list markers inside a sentence (bad: "you 1. ... 2. ..."). If you introduce steps, end the lead-in with ":" then start the list on the next line.
 {additional_rules}
 '''
 

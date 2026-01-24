@@ -293,6 +293,9 @@ def build_system_message(
         - Avoid placeholder narration during tool use.
         - Use tables for multi-item comparisons when it helps.
         - Prefer clean markdown for prose (avoid flicker-prone partial formatting).
+        - Formatting: use blank lines between paragraphs ("\\n\\n"); do not hard-wrap prose lines.
+        - Lists: use "- " bullets and "1. " numbering; include a blank line before/after lists; never embed list markers inside a sentence (bad: "you 1. ... 2. ...").
+        - Use single newlines only inside lists, code blocks, or truly line-based content (addresses).
         - If a tool creates a downloadable artifact (PDF/file), **do not paste raw download URLs**. Just say it's ready and the visitor can click the **Download** button on the attachment card in the chat.
 
         ---

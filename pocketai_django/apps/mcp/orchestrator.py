@@ -5915,46 +5915,66 @@ class McpOrchestratorService:
         if len(content) <= limit:
             return content
 
-        status: str | None = None
-        error_code: str | None = None
-        error: str | None = None
-        hint: str | None = None
         try:
             parsed = json.loads(content)
         except Exception:
             parsed = None
+
         if isinstance(parsed, Mapping):
-            status_val = parsed.get("status")
-            if status_val is not None:
-                status = str(status_val)[:60]
-            err_code_val = parsed.get("error_code")
-            if err_code_val is not None:
-                error_code = str(err_code_val)[:80]
-            err_val = parsed.get("error")
-            if err_val is not None:
-                error = self._clip_text(err_val, 240)
-            hint_val = parsed.get("hint")
-            if hint_val is not None:
-                hint = self._clip_text(hint_val, 240)
+            base_payload: dict[str, object] = dict(parsed)
+        else:
+            base_payload = {"tool": tool_name, "result": parsed if parsed is not None else content}
 
-        payload: dict[str, object] = {
-            "tool": tool_name,
-            "truncated": True,
-            "prompt_compact": True,
-        }
-        if status:
-            payload["status"] = status
-        if error_code:
-            payload["error_code"] = error_code
-        if error:
-            payload["error"] = error
-        if hint:
-            payload["hint"] = hint
+        if "tool" not in base_payload:
+            base_payload["tool"] = tool_name
+        base_payload["truncated"] = True
+        base_payload["prompt_compact"] = True
 
-        blob = json.dumps(payload, ensure_ascii=False)
+        def _shrink(value: object, *, max_field: int, max_list_items: int) -> object:
+            if value is None:
+                return None
+            if isinstance(value, str):
+                trimmed = value.strip()
+                return self._clip_text(trimmed, max_field) if trimmed else ""
+            if isinstance(value, Mapping):
+                return {k: _shrink(v, max_field=max_field, max_list_items=max_list_items) for k, v in value.items()}
+            if isinstance(value, Sequence) and not isinstance(value, (str, bytes, bytearray)):
+                return [
+                    _shrink(item, max_field=max_field, max_list_items=max_list_items)
+                    for item in list(value)[:max(0, max_list_items)]
+                ]
+            return value
+
+        for max_list_items in (50, 20, 10, 6, 3, 1):
+            for max_field in (10_000, 6_000, 3_000, 1_500, 800, 400, 200, 120):
+                candidate = _shrink(base_payload, max_field=max_field, max_list_items=max_list_items)
+                try:
+                    blob = json.dumps(candidate, ensure_ascii=False, default=str)
+                except Exception:
+                    continue
+                if len(blob) <= limit:
+                    return blob
+
+        status = base_payload.get("status")
+        error_code = base_payload.get("error_code")
+        error = base_payload.get("error")
+        hint = base_payload.get("hint")
+        fallback: dict[str, object] = {"tool": tool_name, "truncated": True, "prompt_compact": True}
+        if status is not None:
+            fallback["status"] = str(status)[:60]
+        if error_code is not None:
+            fallback["error_code"] = str(error_code)[:80]
+        if error is not None:
+            fallback["error"] = self._clip_text(error, 240)
+        if hint is not None:
+            fallback["hint"] = self._clip_text(hint, 240)
+
+        preview_budget = max(0, limit - 200)
+        if preview_budget:
+            fallback["preview"] = self._clip_text(content, preview_budget)
+        blob = json.dumps(fallback, ensure_ascii=False, default=str)
         if len(blob) <= limit:
             return blob
-        # Absolute backstop: never exceed the configured max.
         minimal = json.dumps({"tool": tool_name, "truncated": True, "prompt_compact": True}, ensure_ascii=False)
         return minimal if len(minimal) <= limit else minimal[:limit]
 
@@ -6250,40 +6270,57 @@ class McpOrchestratorService:
         max_cells_exact: int = 100,
     ) -> dict[str, object]:
         """
-        Pass through tool results with minimal modification.
+        Compact tool results before they are injected into the LLM prompt.
 
-        Only truncate if the result exceeds a large threshold.
-        The old approach of aggressive compaction caused tools to break
-        (e.g., email search results being filtered out, causing LLM hallucinations).
+        - Knowledge tools can return very large payloads (full page reads, table previews).
+          Use the legacy structured compactor to preserve IDs + evidence while keeping
+          messages within the prompt tool-output budget.
+        - Other tools are passed through as-is, with a safety truncation for extreme cases.
         """
-        MAX_RESULT_CHARS = 80_000  # 80KB is plenty for any tool result
+        normalized_name = (tool_name or payload.get("tool") or "").strip()
+        if normalized_name and self._is_knowledge_tool(normalized_name):
+            return self._legacy_compact_tool_payload_for_prompt(
+                tool_name,
+                payload,
+                max_snippets=max_snippets,
+                snippet_content_chars=snippet_content_chars,
+                max_rows=max_rows,
+                max_contributions=max_contributions,
+                max_cells=max_cells,
+                max_cells_exact=max_cells_exact,
+            )
 
-        # Start with a copy of the full payload
+        MAX_RESULT_CHARS = 80_000  # 80KB is plenty for any non-knowledge tool result
+
         result = dict(payload)
-
-        # Ensure tool name is present
         if "tool" not in result:
-            result["tool"] = tool_name
+            result["tool"] = normalized_name or tool_name
 
-        # Check total size and truncate only if necessary
         try:
             result_json = json.dumps(result, ensure_ascii=False, default=str)
             if len(result_json) > MAX_RESULT_CHARS:
-                # Only truncate large text fields, keep structure intact
                 result = self._truncate_large_fields(result, MAX_RESULT_CHARS)
         except (TypeError, ValueError):
             pass  # If serialization fails, return as-is
 
         return result
 
-    def _truncate_large_fields(self, obj: Any, max_total: int, max_field: int = 10000) -> Any:
-        """Recursively truncate only large string fields."""
+    def _truncate_large_fields(
+        self,
+        obj: Any,
+        max_total: int,
+        max_field: int = 10000,
+        *,
+        max_list_items: int | None = None,
+    ) -> Any:
+        """Recursively truncate large string fields (and optionally list lengths)."""
         if isinstance(obj, str):
             return obj[:max_field] + "..." if len(obj) > max_field else obj
         if isinstance(obj, dict):
-            return {k: self._truncate_large_fields(v, max_total, max_field) for k, v in obj.items()}
+            return {k: self._truncate_large_fields(v, max_total, max_field, max_list_items=max_list_items) for k, v in obj.items()}
         if isinstance(obj, list):
-            return [self._truncate_large_fields(item, max_total, max_field) for item in obj]
+            items = obj[:max_list_items] if isinstance(max_list_items, int) and max_list_items >= 0 else obj
+            return [self._truncate_large_fields(item, max_total, max_field, max_list_items=max_list_items) for item in items]
         return obj
 
     def _legacy_compact_tool_payload_for_prompt(
@@ -6298,7 +6335,7 @@ class McpOrchestratorService:
         max_cells: int = 12,
         max_cells_exact: int = 60,
     ) -> dict[str, object]:
-        """Legacy compaction function - kept for reference but no longer used."""
+        """Structured prompt compaction for high-volume tools (knowledge + table evidence)."""
         normalized_name = (tool_name or payload.get("tool") or "").strip()
         compact: dict[str, object] = {"tool": normalized_name or payload.get("tool") or tool_name}
         status = payload.get("status")

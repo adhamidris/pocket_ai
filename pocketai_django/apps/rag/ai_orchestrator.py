@@ -71,11 +71,6 @@ from core.metrics import latency_monitor
 from core.tenancy import tenant_context
 from opentelemetry import trace as otel_trace
 
-try:  # optional dependency
-    from sentence_transformers import CrossEncoder
-except ImportError:  # pragma: no cover - dependency not installed by default
-    CrossEncoder = None
-
 
 logger = logging.getLogger(__name__)
 TRACER = otel_trace.get_tracer(__name__)
@@ -1828,12 +1823,15 @@ class KnowledgeSearchService:
         return result_obj
 
     def _build_cross_encoder(self):
-        if not self._cross_encoder_enabled or CrossEncoder is None:
-            if self._cross_encoder_enabled and CrossEncoder is None:
-                logger.warning("Cross-encoder reranker requested but sentence_transformers is not installed.")
+        if not self._cross_encoder_enabled:
             return None
         try:
-            return CrossEncoder(self._cross_encoder_model_name, device=self._cross_encoder_device)
+            from sentence_transformers import CrossEncoder as CrossEncoderCls
+        except Exception as exc:  # pragma: no cover - optional dependency
+            logger.warning("Cross-encoder reranker requested but sentence_transformers is unavailable (%s).", exc)
+            return None
+        try:
+            return CrossEncoderCls(self._cross_encoder_model_name, device=self._cross_encoder_device)
         except Exception as exc:  # pragma: no cover - optional dependency
             logger.warning(
                 "Failed to initialize cross-encoder model=%s error=%s",
