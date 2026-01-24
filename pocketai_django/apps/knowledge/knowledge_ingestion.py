@@ -181,6 +181,7 @@ def create_tesseract_ocr_callable() -> Callable[[bytes], str] | None:
 def create_ocr_reconciler(
     *,
     density_threshold: float = 0.00015,
+    render_dpi: int = 200,
     enable_ocr: bool = True,
 ) -> OCRReconciler:
     """
@@ -197,6 +198,7 @@ def create_ocr_reconciler(
     
     return OCRReconciler(
         density_threshold=density_threshold,
+        render_dpi=render_dpi,
         ocr_callable=ocr_callable,
     )
 
@@ -404,9 +406,15 @@ class OCRReconciler:
         self,
         *,
         density_threshold: float = 0.00015,
+        render_dpi: int = 200,
         ocr_callable: Callable[[bytes], str] | None = None,
     ):
         self.density_threshold = density_threshold
+        try:
+            dpi = int(render_dpi)
+        except (TypeError, ValueError):
+            dpi = 200
+        self.render_dpi = max(72, min(600, dpi))
         self.ocr_callable = ocr_callable
 
     def reconcile_pdf_page(
@@ -434,7 +442,10 @@ class OCRReconciler:
             return extracted_text, False, issues
 
         try:
-            pixmap = page.get_pixmap()  # type: ignore[attr-defined]
+            try:
+                pixmap = page.get_pixmap(dpi=self.render_dpi, alpha=False)  # type: ignore[attr-defined]
+            except TypeError:
+                pixmap = page.get_pixmap(alpha=False)  # type: ignore[attr-defined]
             image_bytes = pixmap.tobytes("png")
             ocr_text = self.ocr_callable(image_bytes)
             if not ocr_text:
@@ -556,10 +567,10 @@ class PageRenderer:
             plain_text = "\n".join(block_texts) if block_texts else ""
             
             # Calculate metrics
-            char_count = len(plain_text.strip())
+            raw_char_count = len(plain_text.strip())
             rect = page.rect
             area = max(rect.width * rect.height, 1.0)
-            density = char_count / area
+            density = raw_char_count / area
             
             # OCR reconciliation
             has_ocr = False
@@ -573,10 +584,23 @@ class PageRenderer:
                 )
                 issues.extend(ocr_issues)
             
-            fragments.append(reconciled_text)
+            final_text = reconciled_text or ""
+            final_char_count = len(final_text.strip())
+            final_density = final_char_count / area if final_char_count else 0.0
+            
+            fragments.append(final_text)
             
             # Build structured blocks (keep your existing logic)
             blocks = self._build_pdf_blocks(page, index)
+            if has_ocr and final_text.strip() and not any((block.text or "").strip() for block in blocks):
+                blocks = [
+                    PageBlockPayload(
+                        block_type=KnowledgeBlockType.PARAGRAPH,
+                        order_index=0,
+                        text=final_text,
+                        metadata={"source": "ocr"},
+                    )
+                ]
             
             pages.append(
                 PageLayout(
@@ -584,12 +608,15 @@ class PageRenderer:
                     width=float(rect.width),
                     height=float(rect.height),
                     rotation=int(page.rotation or 0),
-                    text_density=density,
+                    text_density=final_density,
                     has_ocr_content=has_ocr,
                     content_type="application/pdf",
                     blocks=blocks,
                     metadata={
-                        "char_count": char_count,
+                        "char_count": final_char_count,
+                        "raw_char_count": raw_char_count,
+                        "raw_text_density": density,
+                        "ocr_render_dpi": getattr(ocr, "render_dpi", None) if has_ocr else None,
                         "block_count": len(raw_blocks),
                         "decorative_fragments_filtered": decorative_fragments_filtered,
                         "extraction_method": "block_sorted_with_row_detection"
@@ -2491,8 +2518,10 @@ class KnowledgeIngestionService:
         self.embedding_prewarm_limit = max(0, int(getattr(settings, "INGEST_EMBED_PREWARM_CHUNK_LIMIT", 32)))
         self._fallback_embedding_attempted = False
         
+        ocr_render_dpi = int(getattr(settings, "RAG_OCR_RENDER_DPI", 200) or 200)
+
         # NEW: Create OCR reconciler with Tesseract support
-        self.ocr_reconciler = create_ocr_reconciler(enable_ocr=enable_ocr)
+        self.ocr_reconciler = create_ocr_reconciler(enable_ocr=enable_ocr, render_dpi=ocr_render_dpi)
         
         self.page_renderer = PageRenderer(pymupdf_module=fitz)
         self.table_detector = TableDetector()
@@ -3401,6 +3430,10 @@ class KnowledgeIngestionService:
                 ],
             )
         text = layout_result.text
+        page_count = len(layout_result.pages)
+        if page_count and int(getattr(file_detail, "page_count", 0) or 0) != page_count:
+            KnowledgeUploadFile.objects.filter(id=file_detail.id).update(page_count=page_count, updated_at=timezone.now())
+            file_detail.page_count = page_count
 
         # Geometry-based reconstruction (PDF only, when PyMuPDF available)
         geometry_tables: list[TablePayload] = []

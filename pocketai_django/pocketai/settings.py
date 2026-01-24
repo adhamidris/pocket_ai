@@ -535,6 +535,12 @@ RAG_OCR_PERCENT_SPACE_FIX_ENABLED = os.getenv("RAG_OCR_PERCENT_SPACE_FIX_ENABLED
 RAG_OCR_PERCENT_SANITY_MAX = float(os.getenv("RAG_OCR_PERCENT_SANITY_MAX", "100"))
 # RAG_OCR_CURRENCY_SPACING_ENABLED: Normalize currency spacing artefacts (e.g., "100 EGP" formatting).
 RAG_OCR_CURRENCY_SPACING_ENABLED = os.getenv("RAG_OCR_CURRENCY_SPACING_ENABLED", "true").lower() in {"1", "true", "yes"}
+# RAG_OCR_RENDER_DPI: Rasterization DPI for PDF OCR (higher improves accuracy but costs CPU).
+try:
+    RAG_OCR_RENDER_DPI = int(os.getenv("RAG_OCR_RENDER_DPI", "200"))
+except (TypeError, ValueError):
+    RAG_OCR_RENDER_DPI = 200
+RAG_OCR_RENDER_DPI = max(72, min(600, RAG_OCR_RENDER_DPI))
 # RAG_USE_MCP_ORCHESTRATOR: Use the MCP orchestrator for RAG turns (default true).
 RAG_USE_MCP_ORCHESTRATOR = os.getenv("RAG_USE_MCP_ORCHESTRATOR", "true").lower() in {"1", "true", "yes"}
 # Retrieval is predictable by default: one strong query per user turn.
