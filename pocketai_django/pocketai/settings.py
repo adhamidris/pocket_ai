@@ -364,7 +364,8 @@ INGEST_MAX_JSON_ENTITIES_DEFAULT = int(os.getenv("INGEST_MAX_JSON_ENTITIES_DEFAU
 INGEST_MAX_JSON_ENTITY_CANDIDATES = int(os.getenv("INGEST_MAX_JSON_ENTITY_CANDIDATES", "4000"))
 # INGEST_ALIAS_WARNING_THRESHOLD: Warn when alias extraction exceeds this count (signals noisy ingestion).
 INGEST_ALIAS_WARNING_THRESHOLD = int(os.getenv("INGEST_ALIAS_WARNING_THRESHOLD", "2000"))
-# RAG_MAX_SNIPPETS_PER_SEARCH: Max snippets returned from a single search_knowledge call.
+# RAG_MAX_SNIPPETS_PER_SEARCH: Max retrieval candidates returned by the backend per search.
+# Note: LLM-visible snippet evidence is capped separately via MCP_PROMPT_MAX_SNIPPETS.
 # Increased from 3 to 8 to support comprehensive queries on table-heavy documents.
 RAG_MAX_SNIPPETS_PER_SEARCH = int(os.getenv("RAG_MAX_SNIPPETS_PER_SEARCH", "8"))
 # RAG_ALIAS_MAX_CHUNKS_PER_UPLOAD: Per-upload cap for alias/identifier chunks in retrieval.
@@ -569,6 +570,8 @@ MCP_PROMPT_TABLE_MAX_CELLS_EXACT = int(os.getenv("MCP_PROMPT_TABLE_MAX_CELLS_EXA
 # MCP_PROMPT_TOOL_OUTPUT_MAX_CHARS: Hard cap on any single tool output message injected into the LLM prompt.
 # This is a safety backstop; Phase 1 will replace this with out-of-band tool artifacts + prompt_view.
 MCP_PROMPT_TOOL_OUTPUT_MAX_CHARS = int(os.getenv("MCP_PROMPT_TOOL_OUTPUT_MAX_CHARS", "12000"))
+# MCP_READ_DOCUMENT_MAX_CHARS_MARGIN: Safety margin to keep read_document JSON outputs under MCP_PROMPT_TOOL_OUTPUT_MAX_CHARS.
+MCP_READ_DOCUMENT_MAX_CHARS_MARGIN = int(os.getenv("MCP_READ_DOCUMENT_MAX_CHARS_MARGIN", "800"))
 
 # Stage transcript windowing (raw messages kept verbatim in each provider call).
 # These are *message* limits (not tokens) and apply after tool-call anchoring.
@@ -1036,13 +1039,20 @@ if MCP_LIST_TABLES_CALLS_PER_MINUTE < 0:
 # MCP_DISABLE_TOOL_RATE_LIMITS: Disable cache-backed tool rate limits (useful for CI/load tests).
 MCP_DISABLE_TOOL_RATE_LIMITS = os.getenv("MCP_DISABLE_TOOL_RATE_LIMITS", "false").lower() in {"1", "true", "yes"}
 
+# MCP_UNCAPPED_LIMITS: Allow env var budgets above the default safety clamps.
+# Default behavior keeps conservative upper bounds to protect latency/cost.
+MCP_UNCAPPED_LIMITS = os.getenv("MCP_UNCAPPED_LIMITS", "false").lower() in {"1", "true", "yes"}
+
 # MCP/orchestrator hard caps (cost controls).
 try:
     # MCP_MAX_TOOL_ITERATIONS: Hard cap on tool calls per turn.
     MCP_MAX_TOOL_ITERATIONS = int(os.getenv("MCP_MAX_TOOL_ITERATIONS", "10"))
 except (TypeError, ValueError):
     MCP_MAX_TOOL_ITERATIONS = 10
-MCP_MAX_TOOL_ITERATIONS = max(1, min(50, MCP_MAX_TOOL_ITERATIONS))
+if MCP_UNCAPPED_LIMITS:
+    MCP_MAX_TOOL_ITERATIONS = max(1, MCP_MAX_TOOL_ITERATIONS)
+else:
+    MCP_MAX_TOOL_ITERATIONS = max(1, min(50, MCP_MAX_TOOL_ITERATIONS))
 try:
     # MCP_MAX_SEARCHES_PER_TURN: Limit search_knowledge calls per user message (0 disables limit).
     MCP_MAX_SEARCHES_PER_TURN = int(os.getenv("MCP_MAX_SEARCHES_PER_TURN", "1"))
@@ -1050,6 +1060,22 @@ except (TypeError, ValueError):
     MCP_MAX_SEARCHES_PER_TURN = 1
 if MCP_MAX_SEARCHES_PER_TURN < 0:
     MCP_MAX_SEARCHES_PER_TURN = 0
+try:
+    # MCP_READ_DOCUMENT_REPEAT_LIMIT: Force-final after repeating the same read_document signature this many times.
+    MCP_READ_DOCUMENT_REPEAT_LIMIT = int(os.getenv("MCP_READ_DOCUMENT_REPEAT_LIMIT", "2"))
+except (TypeError, ValueError):
+    MCP_READ_DOCUMENT_REPEAT_LIMIT = 2
+if MCP_READ_DOCUMENT_REPEAT_LIMIT < 0:
+    MCP_READ_DOCUMENT_REPEAT_LIMIT = 0
+MCP_READ_DOCUMENT_REPEAT_LIMIT = min(1000, MCP_READ_DOCUMENT_REPEAT_LIMIT)
+try:
+    # MCP_READ_DOCUMENT_THROTTLE_LIMIT: Force-final after hitting throttled read_document responses this many times.
+    MCP_READ_DOCUMENT_THROTTLE_LIMIT = int(os.getenv("MCP_READ_DOCUMENT_THROTTLE_LIMIT", "2"))
+except (TypeError, ValueError):
+    MCP_READ_DOCUMENT_THROTTLE_LIMIT = 2
+if MCP_READ_DOCUMENT_THROTTLE_LIMIT < 0:
+    MCP_READ_DOCUMENT_THROTTLE_LIMIT = 0
+MCP_READ_DOCUMENT_THROTTLE_LIMIT = min(1000, MCP_READ_DOCUMENT_THROTTLE_LIMIT)
 
 # MCP enumeration flow controls.
 MCP_ENUMERATION_AUTO_STRUCTURE_ENABLED = os.getenv("MCP_ENUMERATION_AUTO_STRUCTURE_ENABLED", "true").lower() in {"1", "true", "yes"}
@@ -1077,13 +1103,19 @@ try:
     RAG_MAX_CHUNK_READS_PER_TURN = int(os.getenv("RAG_MAX_CHUNK_READS_PER_TURN", "3"))
 except (TypeError, ValueError):
     RAG_MAX_CHUNK_READS_PER_TURN = 3
-RAG_MAX_CHUNK_READS_PER_TURN = max(1, min(20, RAG_MAX_CHUNK_READS_PER_TURN))
+if MCP_UNCAPPED_LIMITS:
+    RAG_MAX_CHUNK_READS_PER_TURN = max(1, RAG_MAX_CHUNK_READS_PER_TURN)
+else:
+    RAG_MAX_CHUNK_READS_PER_TURN = max(1, min(20, RAG_MAX_CHUNK_READS_PER_TURN))
 try:
     # RAG_MAX_CHUNK_PAGES_PER_TURN: Max distinct pages that can be read per turn.
     RAG_MAX_CHUNK_PAGES_PER_TURN = int(os.getenv("RAG_MAX_CHUNK_PAGES_PER_TURN", "3"))
 except (TypeError, ValueError):
     RAG_MAX_CHUNK_PAGES_PER_TURN = 3
-RAG_MAX_CHUNK_PAGES_PER_TURN = max(1, min(20, RAG_MAX_CHUNK_PAGES_PER_TURN))
+if MCP_UNCAPPED_LIMITS:
+    RAG_MAX_CHUNK_PAGES_PER_TURN = max(1, RAG_MAX_CHUNK_PAGES_PER_TURN)
+else:
+    RAG_MAX_CHUNK_PAGES_PER_TURN = max(1, min(20, RAG_MAX_CHUNK_PAGES_PER_TURN))
 try:
     # RAG_MAX_CHAR_BUDGET_PER_TURN: Character budget for prompt + tool evidence per turn.
     RAG_MAX_CHAR_BUDGET_PER_TURN = int(os.getenv("RAG_MAX_CHAR_BUDGET_PER_TURN", "48000"))

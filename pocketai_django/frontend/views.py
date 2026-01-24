@@ -2374,20 +2374,14 @@ def _create_text_upload(
         user=request.user,
         display_name=label[:255],
         source_type=KnowledgeSourceType.TEXT,
-        status=KnowledgeStatus.ACTIVE,
+        status=KnowledgeStatus.PROCESSING,
         source_name=label[:255],
         size_bytes=len(normalized_content.encode("utf-8")),
         summary=normalized_content[:500],
         metadata=metadata,
-        last_ingested_at=timezone.now(),
     )
     KnowledgeUploadText.objects.create(upload=upload, content=normalized_content)
-    try:
-        from apps.knowledge.knowledge_preflight import ensure_upload_preflight
-
-        ensure_upload_preflight(upload, trigger="dashboard_text_upload")
-    except Exception:
-        logger.exception("knowledge.preflight.text_failed upload=%s", getattr(upload, "id", None))
+    queue_ingestion_job(upload, trigger="dashboard_text_upload")
     return upload
 
 

@@ -120,6 +120,30 @@ MCP_LOG_FULL_SNIPPET_CONTENT_DEFAULT = False
 MCP_TEXT_PII_REDACTION_DEFAULT = True
 MCP_TEXT_PII_REDACTION_ALLOW_VERIFIED_DEFAULT = False
 
+try:
+    _PROMPT_TOOL_OUTPUT_MAX_CHARS = int(getattr(settings, "MCP_PROMPT_TOOL_OUTPUT_MAX_CHARS", 12000) or 12000)
+except (TypeError, ValueError):  # pragma: no cover - defensive
+    _PROMPT_TOOL_OUTPUT_MAX_CHARS = 12000
+try:
+    _READ_DOCUMENT_MAX_CHARS_MARGIN = int(getattr(settings, "MCP_READ_DOCUMENT_MAX_CHARS_MARGIN", 800) or 800)
+except (TypeError, ValueError):  # pragma: no cover - defensive
+    _READ_DOCUMENT_MAX_CHARS_MARGIN = 800
+_READ_DOCUMENT_SAFE_PROMPT_MAX_CHARS = max(500, _PROMPT_TOOL_OUTPUT_MAX_CHARS - max(0, _READ_DOCUMENT_MAX_CHARS_MARGIN))
+READ_DOCUMENT_MAX_CHARS_SCHEMA_MAX = max(500, min(20000, _READ_DOCUMENT_SAFE_PROMPT_MAX_CHARS))
+READ_DOCUMENT_MAX_CHARS_SCHEMA_DEFAULT = max(500, min(8000, READ_DOCUMENT_MAX_CHARS_SCHEMA_MAX))
+
+try:
+    _MCP_PROMPT_MAX_SNIPPETS = int(getattr(settings, "MCP_PROMPT_MAX_SNIPPETS", 4) or 4)
+except (TypeError, ValueError):  # pragma: no cover - defensive
+    _MCP_PROMPT_MAX_SNIPPETS = 4
+
+# Single source of truth: how many snippet items the LLM is allowed to see per tool call.
+MCP_PROMPT_MAX_SNIPPETS_CAP = max(1, _MCP_PROMPT_MAX_SNIPPETS)
+
+# Keep the tool schema aligned with the runtime cap so the LLM can request up to the true limit.
+SEARCH_KNOWLEDGE_LIMIT_SCHEMA_MAX = MCP_PROMPT_MAX_SNIPPETS_CAP
+SEARCH_KNOWLEDGE_LIMIT_SCHEMA_DEFAULT = max(1, min(5, SEARCH_KNOWLEDGE_LIMIT_SCHEMA_MAX))
+
 
 def _mcp_log_pii_enabled() -> bool:
     return bool(getattr(settings, "MCP_LOG_PII", MCP_LOG_PII_DEFAULT))
@@ -427,10 +451,10 @@ TOOL_DEFINITIONS: tuple[Mapping[str, object], ...] = (
             },
             "limit": {
                 "type": "integer",
-                "description": "Maximum number of snippets to return (1-8).",
+                "description": "Maximum number of snippets to return (1..MCP_PROMPT_MAX_SNIPPETS).",
                 "minimum": 1,
-                "maximum": 8,
-                "default": 5,
+                "maximum": SEARCH_KNOWLEDGE_LIMIT_SCHEMA_MAX,
+                "default": SEARCH_KNOWLEDGE_LIMIT_SCHEMA_DEFAULT,
             },
         },
         required=("query",),
@@ -627,8 +651,8 @@ TOOL_DEFINITIONS: tuple[Mapping[str, object], ...] = (
                 "type": "integer",
                 "description": "Maximum total characters to return across all ids (agentic mode).",
                 "minimum": 500,
-                "maximum": 20000,
-                "default": 8000,
+                "maximum": READ_DOCUMENT_MAX_CHARS_SCHEMA_MAX,
+                "default": READ_DOCUMENT_MAX_CHARS_SCHEMA_DEFAULT,
             },
             "document_id": {
                 "type": "string",
@@ -1644,7 +1668,7 @@ def _serialize_snippets(snippets: Sequence[object]) -> list[dict[str, object]]:
             continue
         seen.add(key)
         deduped.append(entry)
-    return deduped[:8]
+    return deduped
 
 
 def _sanitize_snippet_payloads_for_prompt(
@@ -3013,7 +3037,12 @@ def _search_knowledge_handler(
         if intent == "identifier":
             limit_val = min(limit_val or 5, 4)
         elif intent == "table":
-            limit_val = min(8, max(limit_val or 5, 6))
+            # Table-heavy queries benefit from a slightly higher floor, but must
+            # respect the single source of truth for LLM-visible evidence.
+            floor = min(6, MCP_PROMPT_MAX_SNIPPETS_CAP)
+            limit_val = min(MCP_PROMPT_MAX_SNIPPETS_CAP, max(limit_val or 5, floor))
+        if limit_val is not None:
+            limit_val = max(1, min(int(limit_val), MCP_PROMPT_MAX_SNIPPETS_CAP))
         return limit_val
 
     def _log_search_performance(
@@ -3973,7 +4002,7 @@ def _search_knowledge_handler(
 
     # Apply prompt snippet limit BEFORE seen-item tracking
     # This ensures we only track snippets that will actually be shown to the user
-    prompt_max_snippets = max(1, int(getattr(settings, "MCP_PROMPT_MAX_SNIPPETS", 6) or 6))
+    prompt_max_snippets = MCP_PROMPT_MAX_SNIPPETS_CAP
     clipped = 0
     if len(deduped_snippets) > prompt_max_snippets:
         clipped = len(deduped_snippets) - prompt_max_snippets
@@ -4184,16 +4213,56 @@ def _agentic_batch_read_handler(
         seen_ids.add(doc_id)
         ordered_ids.append(doc_id)
 
+    if not ordered_ids:
+        return {
+            "tool": "read_document",
+            "status": "error",
+            "error": "missing_ids",
+            "contents": [],
+            "hint": "Provide at least one valid id from search_knowledge results (read_id/id).",
+        }
+
     raw_max_chars = arguments.get("max_chars")
-    if raw_max_chars is None:
-        service = _knowledge_service()
-        max_chars = service.inline_char_limit_for_business(conversation.business_profile)
-    else:
+    service = _knowledge_service()
+
+    prompt_output_limit = int(getattr(settings, "MCP_PROMPT_TOOL_OUTPUT_MAX_CHARS", 12000) or 12000)
+    inline_limit = int(service.inline_char_limit_for_business(conversation.business_profile))
+    safety_margin = int(getattr(settings, "MCP_READ_DOCUMENT_MAX_CHARS_MARGIN", 800) or 800)
+    safe_prompt_limit = max(200, prompt_output_limit - max(0, safety_margin))
+
+    remaining_turn_budget: int | None = None
+    if context.char_budget_per_turn is not None:
+        remaining_turn_budget = max(0, int(context.char_budget_per_turn) - int(context.characters_used or 0))
+
+    max_chars_allowed = max(200, min(inline_limit, safe_prompt_limit))
+    if remaining_turn_budget is not None and remaining_turn_budget > 0:
+        max_chars_allowed = max(200, min(max_chars_allowed, remaining_turn_budget))
+
+    requested_max_chars: int | None = None
+    if raw_max_chars is not None:
         try:
-            max_chars = int(raw_max_chars)
+            requested_max_chars = int(raw_max_chars)
         except (TypeError, ValueError):
-            max_chars = 8000
-    max_chars = max(200, max_chars)
+            requested_max_chars = None
+
+    if requested_max_chars is None:
+        max_chars = max_chars_allowed
+    else:
+        max_chars = max(200, requested_max_chars)
+        if max_chars > max_chars_allowed:
+            return {
+                "tool": "read_document",
+                "status": "constraint_error",
+                "error": "max_chars_exceeded",
+                "error_code": "max_chars_exceeded",
+                "contents": [],
+                "requested_max_chars": max_chars,
+                "max_chars_allowed": max_chars_allowed,
+                "hint": (
+                    f"max_chars is too high for this chat (requested {max_chars}, max {max_chars_allowed}). "
+                    f"Retry with max_chars <= {max_chars_allowed}, or read fewer ids / narrower scope."
+                ),
+            }
     
     all_contents: list[dict[str, object]] = []
     total_chars = 0

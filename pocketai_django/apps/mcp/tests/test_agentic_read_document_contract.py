@@ -44,3 +44,34 @@ class AgenticReadDocumentContractTests(SimpleTestCase):
         self.assertNotIn("snippets", result)
         self.assertTrue(result["contents"])
 
+    def test_read_document_agentic_wrapper_rejects_max_chars_over_budget(self) -> None:
+        conversation = SimpleNamespace(
+            id="conv-1",
+            business_profile_id="biz-1",
+            business_profile=SimpleNamespace(metadata={}),
+        )
+        context = ToolExecutionContext(char_budget_per_turn=10_000)
+
+        fake_service = SimpleNamespace(inline_char_limit_for_business=lambda business_profile: 12_000)
+
+        with (
+            mock.patch.object(
+                tools.FeatureFlagService,
+                "snapshot",
+                return_value=SimpleNamespace(rag_agentic_mode=True),
+            ),
+            mock.patch.object(tools, "_knowledge_service", return_value=fake_service),
+            mock.patch.object(tools, "_read_document_handler") as handler_mock,
+        ):
+            result = tools._read_document_agentic_wrapper(
+                {"ids": ["chunk-1"], "max_chars": 50_000},
+                conversation,
+                context,
+            )
+
+        self.assertEqual(result["tool"], "read_document")
+        self.assertEqual(result["status"], "constraint_error")
+        self.assertEqual(result["error_code"], "max_chars_exceeded")
+        self.assertEqual(result.get("max_chars_allowed"), 10_000)
+        self.assertIn("max_chars", str(result.get("hint") or ""))
+        handler_mock.assert_not_called()

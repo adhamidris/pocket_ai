@@ -203,6 +203,7 @@ def create_ocr_reconciler(
 SUPPORTED_SOURCE_TYPES = {
     KnowledgeSourceType.FILE,
     KnowledgeSourceType.LINK,
+    KnowledgeSourceType.TEXT,
     KnowledgeSourceType.INTEGRATION,
 }
 
@@ -3261,7 +3262,44 @@ class KnowledgeIngestionService:
                 raise KnowledgeIngestionError("Link upload missing URL.")
             return self._extract_from_link(url)
 
+        if upload.source_type == KnowledgeSourceType.TEXT:
+            text_detail = getattr(upload, "text_detail", None)
+            if not isinstance(text_detail, KnowledgeUploadText):
+                upload = KnowledgeUpload.objects.select_related("text_detail").get(id=upload.id)
+                text_detail = upload.text_detail
+            if text_detail is None:
+                raise KnowledgeIngestionError("Text metadata missing for upload.")
+            return self._extract_from_text(text_detail)
+
         raise KnowledgeIngestionError(f"Ingestion not implemented for {upload.source_type}.")
+
+    def _extract_from_text(self, text_detail: KnowledgeUploadText) -> ExtractionResult:
+        text = text_detail.content or ""
+        page = PageLayout(
+            page_number=1,
+            width=612,
+            height=792,
+            rotation=0,
+            text_density=len(text.strip()) / float(612 * 792) if text.strip() else 0.0,
+            has_ocr_content=False,
+            content_type="text/plain",
+            blocks=[
+                PageBlockPayload(
+                    block_type=KnowledgeBlockType.PARAGRAPH,
+                    order_index=0,
+                    text=text,
+                )
+            ],
+            metadata={},
+        )
+        return ExtractionResult(
+            text=text,
+            format_hint="text",
+            metadata={"content_type": "text/plain"},
+            pages=[page],
+            tables=[],
+            issues=[],
+        )
 
     def _extract_from_file(
         self,

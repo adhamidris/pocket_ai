@@ -80,7 +80,7 @@ class AgenticPromptCompactionTests(SimpleTestCase):
         self.assertIn("contents", compact)
         self.assertNotIn("snippets", compact)
         self.assertEqual(compact["contents"][0]["id"], "chunk-1")
-        self.assertLessEqual(len(compact["contents"][0]["content"]), 400)
+        self.assertEqual(len(compact["contents"][0]["content"]), 5000)
 
     @override_settings(MCP_PROMPT_TOOL_OUTPUT_MAX_CHARS=500)
     def test_tool_message_truncation_keeps_content_preview(self) -> None:

@@ -6752,7 +6752,17 @@ class McpOrchestratorService:
         if normalized_name == "read_document":
             raw_contents = payload.get("contents")
             if isinstance(raw_contents, list):
-                for key in ("document_id", "mode", "page", "pages", "total_chars", "truncated_ids", "errors"):
+                for key in (
+                    "document_id",
+                    "mode",
+                    "page",
+                    "pages",
+                    "total_chars",
+                    "truncated_ids",
+                    "errors",
+                    "requested_max_chars",
+                    "max_chars_allowed",
+                ):
                     if key not in payload:
                         continue
                     value = payload.get(key)
@@ -6792,7 +6802,7 @@ class McpOrchestratorService:
                         entry[key] = value
                     content = item.get("content")
                     if isinstance(content, str) and content.strip():
-                        entry["content"] = self._clip_text(content.strip(), int(snippet_content_chars))
+                        entry["content"] = self._clip_text(content.strip(), self._tool_output_max_chars())
                     if entry:
                         contents_out.append(entry)
                 compact["contents"] = contents_out

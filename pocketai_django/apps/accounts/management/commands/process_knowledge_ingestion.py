@@ -48,6 +48,11 @@ class Command(BaseCommand):
             help="Queue ingestion jobs for uploads missing extracted text.",
         )
         parser.add_argument(
+            "--requeue-text-missing-chunks",
+            action="store_true",
+            help="Queue ingestion jobs for manual text uploads that have no chunks.",
+        )
+        parser.add_argument(
             "--health-interval",
             type=float,
             default=None,
@@ -58,6 +63,9 @@ class Command(BaseCommand):
         if options.get("requeue_missing"):
             queued = self._requeue_missing()
             self.stdout.write(self.style.SUCCESS(f"Queued {queued} uploads for ingestion."))
+        if options.get("requeue_text_missing_chunks"):
+            queued = self._requeue_text_missing_chunks()
+            self.stdout.write(self.style.SUCCESS(f"Queued {queued} manual text uploads for ingestion."))
 
         service = KnowledgeIngestionService()
         max_jobs = options.get("max_jobs")
@@ -175,6 +183,26 @@ class Command(BaseCommand):
         queued = 0
         for upload in uploads:
             job = queue_ingestion_job(upload, trigger="requeue_missing", force=True)
+            if job:
+                queued += 1
+        return queued
+
+    def _requeue_text_missing_chunks(self) -> int:
+        uploads = (
+            KnowledgeUpload.objects.filter(
+                source_type=KnowledgeSourceType.TEXT,
+                chunks__isnull=True,
+            )
+            .exclude(status=KnowledgeStatus.ARCHIVED)
+            .order_by("created_at")
+        )
+        queued = 0
+        for upload in uploads:
+            if upload.status != KnowledgeStatus.PROCESSING:
+                upload.status = KnowledgeStatus.PROCESSING
+                upload.ingestion_error = ""
+                upload.save(update_fields=["status", "ingestion_error", "updated_at"])
+            job = queue_ingestion_job(upload, trigger="requeue_text_missing_chunks", force=True)
             if job:
                 queued += 1
         return queued

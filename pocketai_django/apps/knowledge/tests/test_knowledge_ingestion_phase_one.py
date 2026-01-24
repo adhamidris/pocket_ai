@@ -16,14 +16,17 @@ from apps.accounts.models import (
     KnowledgeSourceType,
     KnowledgeStatus,
     KnowledgeUpload,
+    KnowledgeUploadChunk,
     KnowledgeUploadFile,
     KnowledgeUploadIssue,
     KnowledgeUploadTable,
     KnowledgeUploadTableRow,
+    KnowledgeUploadText,
     RegistrationSession,
     User,
 )
 from apps.knowledge.knowledge_ingestion import KnowledgeIngestionService
+from core.tenancy import tenant_context
 
 try:
     from openpyxl import Workbook
@@ -111,6 +114,50 @@ class KnowledgeIngestionJsonTests(TestCase):
         self.assertGreater(alias_count, 0)
         self.assertEqual(upload.ingestion_metadata.get("alias_count"), alias_count)
         self.assertEqual(upload.ingestion_metadata.get("truncated_entities"), 2)
+
+
+class KnowledgeIngestionTextTests(TestCase):
+    def setUp(self) -> None:
+        super().setUp()
+        self._media_root = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self._media_root)
+        self.override = override_settings(MEDIA_ROOT=self._media_root)
+        self.override.enable()
+        self.addCleanup(self.override.disable)
+        self.user = User.objects.create(email="text@example.com", first_name="Text")
+        self.registration = RegistrationSession.objects.create(user=self.user)
+        self.business = BusinessProfile.objects.create(
+            user=self.user,
+            registration_session=self.registration,
+            name="Docs Co",
+            industry="support",
+        )
+
+    @mock.patch("apps.knowledge.knowledge_ingestion.build_embedding_service", return_value=None)
+    def test_text_ingestion_persists_chunks(self, _build_embeddings) -> None:
+        upload = KnowledgeUpload.objects.create(
+            business_profile=self.business,
+            user=self.user,
+            source_type=KnowledgeSourceType.TEXT,
+            status=KnowledgeStatus.PENDING,
+            display_name="Manual snippet",
+        )
+        KnowledgeUploadText.objects.create(
+            upload=upload,
+            content="Refund policy:\n- Refunds are allowed within 14 days of purchase.\n",
+        )
+        service = KnowledgeIngestionService(media_root=Path(self._media_root))
+        with tenant_context(self.business.id):
+            extraction = service._extract_upload(upload)
+            self.assertEqual(extraction.format_hint, "text")
+            service._persist_extraction(upload, extraction)
+
+            upload.refresh_from_db()
+            self.assertEqual(upload.status, KnowledgeStatus.ACTIVE)
+            self.assertGreater(int(upload.chunk_count or 0), 0)
+            self.assertTrue(KnowledgeUploadChunk.objects.filter(upload=upload).exists())
+            self.assertEqual(upload.ingestion_metadata.get("format"), "text")
+            self.assertEqual(upload.ingestion_metadata.get("content_type"), "text/plain")
 
 
 class KnowledgeIngestionSpreadsheetTests(TestCase):
