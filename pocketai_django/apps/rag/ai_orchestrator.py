@@ -69,7 +69,7 @@ from apps.rag.retrieval_strategies import StrategyRouter, RetrievalContext, Retr
 from apps.conversations.response_blocks import normalize_response_blocks
 from core.metrics import latency_monitor
 from core.tenancy import tenant_context
-from opentelemetry import trace as otel_trace
+from core.otel import otel_trace
 
 
 logger = logging.getLogger(__name__)

@@ -995,6 +995,53 @@ TOOL_DEFINITIONS: tuple[Mapping[str, object], ...] = (
     ),
 )
 
+READ_DOCUMENT_TOOL_DEFINITION_AGENTIC_V2: Mapping[str, object] = _function_schema(
+    name="read_document",
+    description=(
+        "Read content from the knowledge base (agentic v2 contract). "
+        "Provide items from search_knowledge results; include cursors only when continuing a partial read."
+    ),
+    properties={
+        "items": {
+            "type": "array",
+            "minItems": 1,
+            "description": "List of items to read. Each item is {id} or {id,cursor}.",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "id": {
+                        "type": "string",
+                        "description": "Result id from search_knowledge.",
+                    },
+                    "cursor": {
+                        "type": "string",
+                        "description": "Opaque continuation cursor from a previous read_document response.",
+                    },
+                },
+                "required": ["id"],
+            },
+        },
+        "__ui": {
+            "type": "object",
+            "description": "UI-only metadata (ignored by the tool).",
+            "properties": {
+                "spinner_text": {
+                    "type": "string",
+                    "description": "Short portal spinner label for this tool call.",
+                }
+            },
+        },
+        "max_chars": {
+            "type": "integer",
+            "description": "Maximum total characters to return across all items.",
+            "minimum": 500,
+            "maximum": READ_DOCUMENT_MAX_CHARS_SCHEMA_MAX,
+            "default": READ_DOCUMENT_MAX_CHARS_SCHEMA_DEFAULT,
+        },
+    },
+    required=("items", "max_chars"),
+)
+
 
 def execute_tool(
     name: str,
@@ -1084,7 +1131,11 @@ def execute_tool(
         }
 
     # Layer 2: include per-turn budget snapshot in every knowledge tool response.
-    if normalized_name in {"search_knowledge", "read_document"} and isinstance(result, Mapping):
+    if (
+        bool(getattr(settings, "MCP_NEW_CONTRACT_ENABLED", True))
+        and normalized_name in {"search_knowledge", "read_document"}
+        and isinstance(result, Mapping)
+    ):
         enriched = dict(result)
         enriched["budget"] = ctx.budget_snapshot()
         return enriched
@@ -2657,6 +2708,10 @@ def _convert_to_agentic_search_response(
     """
     snippets = legacy_payload.get("snippets", [])
     results: list[dict[str, object]] = []
+    agentic_read_v2_enabled = (
+        bool(getattr(settings, "MCP_NEW_CONTRACT_ENABLED", True))
+        and bool(getattr(settings, "MCP_AGENTIC_READ_V2_ENABLED", False))
+    )
     
     for snippet in snippets:
         if not isinstance(snippet, Mapping):
@@ -2691,6 +2746,35 @@ def _convert_to_agentic_search_response(
         column_count = diagnostics.get("table_column_count") or snippet.get("column_count")
         table_id = diagnostics.get("table_id")
         row_index = diagnostics.get("row_index") or diagnostics.get("table_row_index")
+
+        preview_source = summary or content
+        preview: str | None = None
+        if isinstance(preview_source, str) and preview_source.strip():
+            preview = preview_source.strip()
+            if len(preview) > 240:
+                preview = f"{preview[:240].rstrip()}…"
+
+        suggested_max_chars = _suggest_max_chars_for_estimate(
+            char_estimate,
+            max_chars_allowed=int(READ_DOCUMENT_MAX_CHARS_SCHEMA_MAX),
+        )
+
+        # Agentic V2: hide legacy read knobs entirely; the LLM only gets "what exists + how big".
+        if agentic_read_v2_enabled:
+            if not chunk_id:
+                continue
+            result_item: dict[str, object] = {
+                "id": chunk_id,
+                "title": snippet.get("title") or snippet.get("public_label") or "Untitled",
+                "type": content_type,
+                "source": snippet.get("source_file") or snippet.get("source") or "",
+                "char_estimate": char_estimate,
+                "read_hint": {"suggested_max_chars": suggested_max_chars},
+            }
+            if preview:
+                result_item["preview"] = preview
+            results.append(result_item)
+            continue
         
         read_hint = snippet.get("read_hint")
         read_id = ""
@@ -2712,27 +2796,16 @@ def _convert_to_agentic_search_response(
         if read_id:
             result_item["read_id"] = read_id
 
-        preview_source = summary or content
-        if isinstance(preview_source, str) and preview_source.strip():
-            preview = preview_source.strip()
-            if len(preview) > 240:
-                preview = f"{preview[:240].rstrip()}…"
+        if preview:
             result_item["preview"] = preview
 
         if isinstance(read_hint, Mapping) and read_hint:
             hint_out = dict(read_hint)
             # Help the LLM pick a `max_chars` that is likely to succeed without guesswork.
-            hint_out.setdefault(
-                "suggested_max_chars",
-                _suggest_max_chars_for_estimate(char_estimate, max_chars_allowed=int(READ_DOCUMENT_MAX_CHARS_SCHEMA_MAX)),
-            )
+            hint_out.setdefault("suggested_max_chars", suggested_max_chars)
             result_item["read_hint"] = hint_out
         else:
-            result_item["read_hint"] = {
-                "suggested_max_chars": _suggest_max_chars_for_estimate(
-                    char_estimate, max_chars_allowed=int(READ_DOCUMENT_MAX_CHARS_SCHEMA_MAX)
-                )
-            }
+            result_item["read_hint"] = {"suggested_max_chars": suggested_max_chars}
         
         if content_type == "table":
             if row_count is not None:
@@ -2772,6 +2845,7 @@ def _convert_to_agentic_search_response(
             "legacy_snippet_count": len(snippets),
             "agentic_result_count": len(results),
             "total_found": total_found,
+            "agentic_read_v2_enabled": agentic_read_v2_enabled,
         },
         context={
             "conversation": conversation.id,
@@ -2980,10 +3054,12 @@ def _search_knowledge_handler(
             "hint": str(exc),
         }
 
+    new_contract_enabled = bool(getattr(settings, "MCP_NEW_CONTRACT_ENABLED", True))
+
     # Layer 3: Semantic duplicate search detection (one intent per user turn).
     # Duplicate intents still consume search budget (reserve_search already happened).
     feature_state = FeatureFlagService.snapshot(conversation.business_profile)
-    rag_agentic_enabled = bool(getattr(feature_state, "rag_agentic_mode", False))
+    rag_agentic_enabled = bool(getattr(feature_state, "rag_agentic_mode", False)) and new_contract_enabled
 
     def _normalize_intent_text(values: Sequence[str]) -> str:
         parts: list[str] = []
@@ -3021,73 +3097,74 @@ def _search_knowledge_handler(
 
     intent_text = _normalize_intent_text(queries)
     intent_embedding: list[float] | None = None
-    embedder = _portal_file_embedding_service()
-    if embedder and intent_text:
-        try:
-            embedded = embedder.embed_text(intent_text)
-            if isinstance(embedded, list) and embedded:
-                intent_embedding = [float(v) for v in embedded]
-        except Exception:
-            intent_embedding = None
+    if new_contract_enabled:
+        embedder = _portal_file_embedding_service()
+        if embedder and intent_text:
+            try:
+                embedded = embedder.embed_text(intent_text)
+                if isinstance(embedded, list) and embedded:
+                    intent_embedding = [float(v) for v in embedded]
+            except Exception:
+                intent_embedding = None
 
-    history = getattr(context, "search_history", None) or []
-    best_match: Mapping[str, object] | None = None
-    best_similarity: float | None = None
-    if intent_text and isinstance(history, list) and history:
-        # Only compare against a small recent window to avoid unbounded work.
-        for entry in reversed(history[-12:]):
-            if not isinstance(entry, Mapping):
-                continue
-            prior_response = entry.get("response")
-            if not isinstance(prior_response, Mapping):
-                continue
-            prior_intent = str(entry.get("intent") or entry.get("query") or "").strip().lower()
-            if not prior_intent:
-                continue
+        history = getattr(context, "search_history", None) or []
+        best_match: Mapping[str, object] | None = None
+        best_similarity: float | None = None
+        if intent_text and isinstance(history, list) and history:
+            # Only compare against a small recent window to avoid unbounded work.
+            for entry in reversed(history[-12:]):
+                if not isinstance(entry, Mapping):
+                    continue
+                prior_response = entry.get("response")
+                if not isinstance(prior_response, Mapping):
+                    continue
+                prior_intent = str(entry.get("intent") or entry.get("query") or "").strip().lower()
+                if not prior_intent:
+                    continue
 
-            similarity: float | None = None
-            if intent_embedding is not None and embedder:
-                prior_embedding = entry.get("embedding")
-                if not isinstance(prior_embedding, list) or not prior_embedding:
-                    try:
-                        embedded = embedder.embed_text(prior_intent)
-                        if isinstance(embedded, list) and embedded:
-                            prior_embedding = [float(v) for v in embedded]
-                            # Cache embedding for future comparisons (not returned to the LLM).
-                            try:
-                                entry["embedding"] = prior_embedding
-                            except Exception:
-                                pass
-                    except Exception:
-                        prior_embedding = None
-                if isinstance(prior_embedding, list) and prior_embedding:
-                    similarity = _cosine_similarity(intent_embedding, prior_embedding)
+                similarity: float | None = None
+                if intent_embedding is not None and embedder:
+                    prior_embedding = entry.get("embedding")
+                    if not isinstance(prior_embedding, list) or not prior_embedding:
+                        try:
+                            embedded = embedder.embed_text(prior_intent)
+                            if isinstance(embedded, list) and embedded:
+                                prior_embedding = [float(v) for v in embedded]
+                                # Cache embedding for future comparisons (not returned to the LLM).
+                                try:
+                                    entry["embedding"] = prior_embedding
+                                except Exception:
+                                    pass
+                        except Exception:
+                            prior_embedding = None
+                    if isinstance(prior_embedding, list) and prior_embedding:
+                        similarity = _cosine_similarity(intent_embedding, prior_embedding)
 
-            if similarity is None:
-                similarity = 1.0 if prior_intent == intent_text else 0.0
+                if similarity is None:
+                    similarity = 1.0 if prior_intent == intent_text else 0.0
 
-            if best_similarity is None or similarity > best_similarity:
-                best_similarity = similarity
-                best_match = entry
+                if best_similarity is None or similarity > best_similarity:
+                    best_similarity = similarity
+                    best_match = entry
 
-        if best_match is not None and best_similarity is not None and best_similarity >= 0.85:
-            prior_response = best_match.get("response")
-            if isinstance(prior_response, Mapping):
-                duplicate_payload: dict[str, object] = {
-                    "tool": "search_knowledge",
-                    "status": "duplicate",
-                    "error": "duplicate_intent",
-                    "error_code": "duplicate_intent",
-                    "hint": "Similar to a previous search this turn. Reusing earlier results.",
-                    "diagnostics": {"dedup_similarity": round(float(best_similarity), 4)},
-                }
-                if rag_agentic_enabled:
-                    duplicate_payload["results"] = list(prior_response.get("results") or [])
-                    if prior_response.get("total_found") not in {None, ""}:
-                        duplicate_payload["total_found"] = prior_response.get("total_found")
-                else:
-                    duplicate_payload["snippets"] = list(prior_response.get("snippets") or [])
-                return duplicate_payload
+            if best_match is not None and best_similarity is not None and best_similarity >= 0.85:
+                prior_response = best_match.get("response")
+                if isinstance(prior_response, Mapping):
+                    duplicate_payload: dict[str, object] = {
+                        "tool": "search_knowledge",
+                        "status": "duplicate",
+                        "error": "duplicate_intent",
+                        "error_code": "duplicate_intent",
+                        "hint": "Similar to a previous search this turn. Reusing earlier results.",
+                        "diagnostics": {"dedup_similarity": round(float(best_similarity), 4)},
+                    }
+                    if rag_agentic_enabled:
+                        duplicate_payload["results"] = list(prior_response.get("results") or [])
+                        if prior_response.get("total_found") not in {None, ""}:
+                            duplicate_payload["total_found"] = prior_response.get("total_found")
+                    else:
+                        duplicate_payload["snippets"] = list(prior_response.get("snippets") or [])
+                    return duplicate_payload
 
     raw_limit = arguments.get("limit")
     try:
@@ -9730,8 +9807,9 @@ def _read_document_agentic_wrapper(
     - Falls through to standard _read_document_handler
     """
     feature_state = FeatureFlagService.snapshot(conversation.business_profile)
+    new_contract_enabled = bool(getattr(settings, "MCP_NEW_CONTRACT_ENABLED", True))
     
-    if feature_state.rag_agentic_mode:
+    if feature_state.rag_agentic_mode and new_contract_enabled:
         # Use batch handler (handles both single and multiple IDs)
         raw_ids = arguments.get("ids")
         if isinstance(raw_ids, (list, tuple)):

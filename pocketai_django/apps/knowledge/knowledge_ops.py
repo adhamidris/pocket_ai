@@ -7,7 +7,7 @@ from typing import Mapping
 
 from django.db.models import Count, Q, Sum
 from django.utils import timezone
-from opentelemetry import trace as otel_trace
+from core.otel import otel_trace
 
 from apps.accounts.models import (
     BusinessProfile,

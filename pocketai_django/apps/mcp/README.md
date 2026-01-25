@@ -202,6 +202,7 @@ Observability
 
 Related Docs
 ------------
+- `apps/mcp/AGENTIC_READ_V2_SPEC.md` (upcoming): agentic read v2 contract (single-method read + cursor continuation).
 - `docs/architecture/llm_conversation_backend_flow.md`
 - `docs/ops/load_testing.md`
 - `docs/ops/manual_qa_playbook.md`

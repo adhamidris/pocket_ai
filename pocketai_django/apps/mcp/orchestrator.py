@@ -25,7 +25,7 @@ from django.conf import settings
 from django.db import close_old_connections
 from django.utils import timezone
 
-from opentelemetry import trace as otel_trace
+from core.otel import otel_trace
 
 from apps.accounts.models import (
     AgentEmailAccountPolicyOverride,
@@ -363,6 +363,8 @@ class McpOrchestratorService:
             self._hydrate_seen_items(conversation, tool_context)
 
         feature_state = FeatureFlagService.snapshot(conversation.business_profile)
+        new_contract_enabled = bool(getattr(settings, "MCP_NEW_CONTRACT_ENABLED", True))
+        rag_agentic_enabled = bool(getattr(feature_state, "rag_agentic_mode", False)) and new_contract_enabled
         query_classification = self._classify_query_intent(user_message)
 
         disable_tools_for_turn = self._is_low_intent_message(user_message)
@@ -371,7 +373,7 @@ class McpOrchestratorService:
         # Gateway mode is permanently enabled.
         gateway_enabled = True
         internal_tool_defs.extend(mcp_tools.GATEWAY_TOOL_DEFINITIONS)
-        if feature_state.rag_agentic_mode:
+        if rag_agentic_enabled:
             allowed = {
                 "search_knowledge",
                 "read_document",
@@ -393,6 +395,15 @@ class McpOrchestratorService:
             internal_tool_defs = [
                 tool_def for tool_def in internal_tool_defs if self._tool_schema_name(tool_def) in allowed
             ]
+            # Agentic read v2 (schema-only rollout): hide legacy read knobs from the LLM.
+            # Behavior is still handled in the tool boundary; this only changes the exposed schema.
+            if bool(getattr(settings, "MCP_AGENTIC_READ_V2_ENABLED", False)):
+                internal_tool_defs = [
+                    mcp_tools.READ_DOCUMENT_TOOL_DEFINITION_AGENTIC_V2
+                    if self._tool_schema_name(tool_def) == "read_document"
+                    else tool_def
+                    for tool_def in internal_tool_defs
+                ]
 
         # External MCP connections (per-agent) extend the tool catalog.
         remote_tool_defs: list[dict[str, Any]] = []
@@ -438,13 +449,13 @@ class McpOrchestratorService:
         else:
             self.tool_definitions = tuple(internal_tool_defs)
         auto_structure_enabled = self._auto_structure_enabled_for_business(conversation.business_profile)
-        if feature_state.rag_agentic_mode:
+        if rag_agentic_enabled:
             auto_structure_enabled = False
         auto_structure_intent = auto_structure_enabled and query_classification.requires_full_coverage()
         auto_structure_doc_limit = self._auto_structure_doc_limit(conversation.business_profile)
         auto_structure_docs: set[str] = set()
         auto_fetch_enabled = self._auto_fetch_enabled_for_business(conversation.business_profile)
-        if feature_state.rag_agentic_mode:
+        if rag_agentic_enabled:
             auto_fetch_enabled = False
         auto_fetch_max_rows = self._auto_fetch_max_rows(conversation.business_profile)
         auto_fetch_max_tables = self._auto_fetch_max_tables(conversation.business_profile)
@@ -1786,8 +1797,9 @@ class McpOrchestratorService:
                             # injected system messages.
 
                             if tool_name in {"search_knowledge", "read_document"}:
-                                tool_result = dict(tool_result)
-                                tool_result["budget"] = tool_context.budget_snapshot()
+                                if bool(getattr(settings, "MCP_NEW_CONTRACT_ENABLED", True)):
+                                    tool_result = dict(tool_result)
+                                    tool_result["budget"] = tool_context.budget_snapshot()
 
                             diagnostics = (
                                 tool_result.get("diagnostics")

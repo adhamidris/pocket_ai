@@ -15,7 +15,7 @@ import textwrap
 import uuid
 from typing import Iterable, Mapping, Sequence
 
-from opentelemetry import trace as otel_trace
+from core.otel import otel_trace
 
 from django.conf import settings
 
@@ -32,7 +32,11 @@ from apps.mcp.identifier_registry import IdentifierGuardrail
 from apps.mcp.sanitizer import sanitize_text
 from apps.accounts.agents import display_tone_label
 from apps.accounts.feature_flags import FeatureFlagService
-from apps.mcp.schemas.agentic_prompts import build_agentic_system_prompt, get_tone_instruction
+from apps.mcp.schemas.agentic_prompts import (
+    build_agentic_system_prompt,
+    build_agentic_system_prompt_v2,
+    get_tone_instruction,
+)
 
 TRACER = otel_trace.get_tracer(__name__)
 
@@ -219,11 +223,12 @@ def build_system_message(
     
     resolved_business_name = business_name or "your business"
     rag_agentic_enabled = False
+    new_contract_enabled = bool(getattr(settings, "MCP_NEW_CONTRACT_ENABLED", True))
     
-    # Check if agentic mode is enabled
+    # Check if agentic mode is enabled (and the new contract gate is on).
     if business_profile is not None:
         feature_state = FeatureFlagService.snapshot(business_profile)
-        rag_agentic_enabled = bool(getattr(feature_state, "rag_agentic_mode", False))
+        rag_agentic_enabled = bool(getattr(feature_state, "rag_agentic_mode", False)) and new_contract_enabled
 
     if rag_agentic_enabled:
         # Use minimal agentic prompt
@@ -233,6 +238,13 @@ def build_system_message(
             rules.append(tone.strip())
         # Gateway mode is permanently enabled.
         rules.append(MCP_GATEWAY_AGENTIC_RULES)
+        agentic_read_v2_enabled = bool(getattr(settings, "MCP_AGENTIC_READ_V2_ENABLED", False))
+        if agentic_read_v2_enabled:
+            return build_agentic_system_prompt_v2(
+                agent,
+                business_name=resolved_business_name,
+                additional_rules="\n\n".join(rule for rule in rules if rule),
+            )
         return build_agentic_system_prompt(
             agent,
             business_name=resolved_business_name,

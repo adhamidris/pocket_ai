@@ -575,9 +575,9 @@ MCP_PROMPT_TABLE_MAX_CELLS = int(os.getenv("MCP_PROMPT_TABLE_MAX_CELLS", "12"))
 MCP_PROMPT_TABLE_MAX_CELLS_EXACT = int(os.getenv("MCP_PROMPT_TABLE_MAX_CELLS_EXACT", "60"))
 # MCP_PROMPT_TOOL_OUTPUT_MAX_CHARS: Hard cap on any single tool output message injected into the LLM prompt.
 # This is a safety backstop; Phase 1 will replace this with out-of-band tool artifacts + prompt_view.
-MCP_PROMPT_TOOL_OUTPUT_MAX_CHARS = int(os.getenv("MCP_PROMPT_TOOL_OUTPUT_MAX_CHARS", "12000"))
+MCP_PROMPT_TOOL_OUTPUT_MAX_CHARS = int(os.getenv("MCP_PROMPT_TOOL_OUTPUT_MAX_CHARS", "25000"))
 # MCP_READ_DOCUMENT_MAX_CHARS_MARGIN: Safety margin to keep read_document JSON outputs under MCP_PROMPT_TOOL_OUTPUT_MAX_CHARS.
-MCP_READ_DOCUMENT_MAX_CHARS_MARGIN = int(os.getenv("MCP_READ_DOCUMENT_MAX_CHARS_MARGIN", "800"))
+MCP_READ_DOCUMENT_MAX_CHARS_MARGIN = int(os.getenv("MCP_READ_DOCUMENT_MAX_CHARS_MARGIN", "1500"))
 
 # Stage transcript windowing (raw messages kept verbatim in each provider call).
 # These are *message* limits (not tokens) and apply after tool-call anchoring.
@@ -1050,6 +1050,15 @@ MCP_DISABLE_TOOL_RATE_LIMITS = os.getenv("MCP_DISABLE_TOOL_RATE_LIMITS", "false"
 MCP_UNCAPPED_LIMITS = os.getenv("MCP_UNCAPPED_LIMITS", "false").lower() in {"1", "true", "yes"}
 
 # MCP/orchestrator hard caps (cost controls).
+# MCP_NEW_CONTRACT_ENABLED: Gate the "one voice + smart tools" contract (budgets,
+# semantic dedup, agentic RAG prompt/response shapes). When disabled, the system
+# falls back to legacy prompt + tool behaviors.
+MCP_NEW_CONTRACT_ENABLED = os.getenv("MCP_NEW_CONTRACT_ENABLED", "true").lower() in {"1", "true", "yes"}
+# MCP_AGENTIC_READ_V2_ENABLED: Gate the simplified agentic read contract:
+# `read_document(items=[{id,cursor?}...], max_chars=...)` with tool-selected retrieval
+# + deterministic continuation. This is intentionally separate from MCP_NEW_CONTRACT_ENABLED
+# so we can roll out V2 read behavior gradually.
+MCP_AGENTIC_READ_V2_ENABLED = os.getenv("MCP_AGENTIC_READ_V2_ENABLED", "false").lower() in {"1", "true", "yes"}
 try:
     # MCP_MAX_TOOL_ITERATIONS: Hard cap on tool calls per turn.
     MCP_MAX_TOOL_ITERATIONS = int(os.getenv("MCP_MAX_TOOL_ITERATIONS", "10"))
@@ -1061,9 +1070,9 @@ else:
     MCP_MAX_TOOL_ITERATIONS = max(1, min(50, MCP_MAX_TOOL_ITERATIONS))
 try:
     # MCP_MAX_SEARCHES_PER_TURN: Limit search_knowledge calls per user message (0 disables limit).
-    MCP_MAX_SEARCHES_PER_TURN = int(os.getenv("MCP_MAX_SEARCHES_PER_TURN", "1"))
+    MCP_MAX_SEARCHES_PER_TURN = int(os.getenv("MCP_MAX_SEARCHES_PER_TURN", "5"))
 except (TypeError, ValueError):
-    MCP_MAX_SEARCHES_PER_TURN = 1
+    MCP_MAX_SEARCHES_PER_TURN = 5
 if MCP_MAX_SEARCHES_PER_TURN < 0:
     MCP_MAX_SEARCHES_PER_TURN = 0
 try:
@@ -1136,15 +1145,15 @@ else:
     RAG_MAX_CHUNK_PAGES_PER_TURN = max(1, min(20, RAG_MAX_CHUNK_PAGES_PER_TURN))
 try:
     # RAG_MAX_CHAR_BUDGET_PER_TURN: Character budget for prompt + tool evidence per turn.
-    RAG_MAX_CHAR_BUDGET_PER_TURN = int(os.getenv("RAG_MAX_CHAR_BUDGET_PER_TURN", "48000"))
+    RAG_MAX_CHAR_BUDGET_PER_TURN = int(os.getenv("RAG_MAX_CHAR_BUDGET_PER_TURN", "200000"))
 except (TypeError, ValueError):
-    RAG_MAX_CHAR_BUDGET_PER_TURN = 48000
+    RAG_MAX_CHAR_BUDGET_PER_TURN = 200000
 RAG_MAX_CHAR_BUDGET_PER_TURN = max(4000, min(200000, RAG_MAX_CHAR_BUDGET_PER_TURN))
 try:
     # RAG_MAX_CHAR_BUDGET_PER_MINUTE: Rolling character budget per tenant per minute.
-    RAG_MAX_CHAR_BUDGET_PER_MINUTE = int(os.getenv("RAG_MAX_CHAR_BUDGET_PER_MINUTE", "64000"))
+    RAG_MAX_CHAR_BUDGET_PER_MINUTE = int(os.getenv("RAG_MAX_CHAR_BUDGET_PER_MINUTE", "400000"))
 except (TypeError, ValueError):
-    RAG_MAX_CHAR_BUDGET_PER_MINUTE = 64000
+    RAG_MAX_CHAR_BUDGET_PER_MINUTE = 400000
 RAG_MAX_CHAR_BUDGET_PER_MINUTE = max(4000, min(500000, RAG_MAX_CHAR_BUDGET_PER_MINUTE))
 try:
     # RAG_CHAR_BUDGET_WINDOW_SECONDS: Window size (seconds) for per-minute character budgeting.

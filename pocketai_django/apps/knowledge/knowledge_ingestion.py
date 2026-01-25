@@ -30,7 +30,7 @@ from django.db import transaction
 from django.db.models import Case, Count, IntegerField, Min, Q, Value, When
 from django.utils import timezone
 from django.utils.text import slugify
-from opentelemetry import trace as otel_trace
+from core.otel import otel_trace
 import requests
 
 from apps.accounts.models import (

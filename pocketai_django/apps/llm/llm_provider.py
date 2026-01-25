@@ -23,8 +23,7 @@ except Exception:  # pragma: no cover - optional
 
 from apps.llm.ai_prompt_builder import PromptBundle
 from apps.rag.rag_logging import structured_log
-from opentelemetry import trace as otel_trace
-from opentelemetry.trace import Span, Status, StatusCode
+from core.otel import otel_trace, Span, Status, StatusCode
 
 # Optional flag to enable token estimation logs (guarded by DEBUG level as well).
 LOG_TOKEN_ESTIMATE = os.getenv("LLM_LOG_TOKEN_ESTIMATE", "").strip().lower() in {"1", "true", "yes"}

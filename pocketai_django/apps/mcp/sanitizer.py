@@ -11,7 +11,7 @@ import re
 import logging
 from typing import Iterable, Tuple
 
-from opentelemetry import trace as otel_trace
+from core.otel import otel_trace
 
 from apps.rag.rag_logging import structured_log
 

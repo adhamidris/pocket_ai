@@ -5,7 +5,7 @@ import math
 from typing import Any, Iterable, Mapping, Sequence
 
 from django.conf import settings
-from opentelemetry import trace as otel_trace
+from core.otel import otel_trace
 
 DEFAULT_NULL_TOKENS = {
     "",

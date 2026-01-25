@@ -5,7 +5,7 @@ import textwrap
 from datetime import datetime
 from typing import Mapping, Sequence
 
-from opentelemetry import trace as otel_trace
+from core.otel import otel_trace
 
 from apps.accounts.models import AgentProfile
 from apps.conversations.models import Conversation, ConversationMessage

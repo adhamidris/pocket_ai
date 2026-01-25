@@ -79,7 +79,7 @@ class McpSearchContractTests(TestCase):
         )
 
     @override_settings(MCP_MAX_SEARCHES_PER_TURN=1)
-    @patch("apps.mcp.orchestrator.tools.execute_tool")
+    @patch("apps.mcp.orchestrator.mcp_tools.execute_tool")
     def test_search_knowledge_runs_once_per_turn(self, execute_tool_mock) -> None:
         def _fake_execute_tool(name, arguments, *, conversation, context=None):
             self.assertEqual(name, "search_knowledge")

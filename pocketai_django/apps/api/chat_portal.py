@@ -22,8 +22,7 @@ from django.http import HttpRequest, HttpResponse, JsonResponse, StreamingHttpRe
 from django.utils import timezone
 from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_GET, require_http_methods, require_POST
-from opentelemetry import context as otel_context
-from opentelemetry import trace as otel_trace
+from core.otel import otel_context, otel_trace
 
 from apps.accounts.models import (
     AgentMcpToolSetting,

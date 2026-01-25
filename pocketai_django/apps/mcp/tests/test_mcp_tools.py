@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from unittest import mock
 
-from django.test import TestCase
+from django.test import TestCase, override_settings
 
 from apps.accounts.models import (
     BusinessProfile,
@@ -367,6 +367,54 @@ class McpSearchKnowledgeHandlerTests(TestCase):
         self.assertTrue(queries_seen)
         self.assertEqual(queries_seen[0], primary_query)
         self.assertLessEqual(len(queries_seen), 4)
+
+    @override_settings(MCP_NEW_CONTRACT_ENABLED=True, MCP_MAX_SEARCHES_PER_TURN=5)
+    @mock.patch("apps.mcp.tools._knowledge_service")
+    def test_search_knowledge_semantic_dedup_reuses_results_and_consumes_budget(self, service_factory_mock) -> None:
+        import uuid
+        from apps.rag.ai_orchestrator import KnowledgeSnippet
+
+        snippet = KnowledgeSnippet(
+            id=uuid.uuid4(),
+            title="Fees",
+            summary="Annual fee overview",
+            source="file",
+            content="Annual fee is 100 EGP.",
+            upload_id=uuid.uuid4(),
+            chunk_id=uuid.uuid4(),
+            chunk_index=1,
+            page_number=1,
+            is_table_chunk=False,
+            read_state="summary",
+        )
+
+        class _DummySearchResult:
+            def __init__(self) -> None:
+                self.snippets = (snippet,)
+                self.status = "ok"
+                self.diagnostics = {}
+
+        service_mock = mock.Mock()
+        service_mock.search.return_value = _DummySearchResult()
+        service_factory_mock.return_value = service_mock
+
+        context = ToolExecutionContext(
+            max_chunk_reads_per_turn=5,
+            max_chunk_pages_per_turn=5,
+            char_budget_per_turn=5000,
+        )
+        payload = {"query": "credit card fees", "limit": 5}
+
+        first = tools._search_knowledge_handler(payload, self.conversation, context)
+        second = tools._search_knowledge_handler(payload, self.conversation, context)
+
+        self.assertEqual(first["status"], "ok")
+        self.assertEqual(second["status"], "duplicate")
+        # Duplicate intents still consume search budget.
+        self.assertEqual(context.searches_used, 2)
+        # Second call should not execute a second backend search.
+        self.assertEqual(service_mock.search.call_count, 1)
+        self.assertEqual(second.get("results"), first.get("results"))
 
     @mock.patch("apps.mcp.tools._knowledge_service")
     def test_read_hint_uses_page_from_metadata_not_chunk_index(self, service_factory_mock) -> None:

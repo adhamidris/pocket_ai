@@ -29,6 +29,7 @@ class AgenticPromptCompactionTests(SimpleTestCase):
                     "source": "Guide.pdf",
                     "preview": "Annual fee is listed in this document.",
                     "char_estimate": 1200,
+                    "read_hint": {"mode": "full_page", "page": 1, "suggested_max_chars": 15000},
                 }
             ],
             "total_found": 1,
@@ -49,6 +50,7 @@ class AgenticPromptCompactionTests(SimpleTestCase):
         self.assertNotIn("snippets", compact)
         self.assertEqual(compact["results"][0]["id"], "chunk-1")
         self.assertIn("preview", compact["results"][0])
+        self.assertEqual(compact["results"][0]["read_hint"]["suggested_max_chars"], 15000)
 
     def test_read_document_compacts_agentic_contents(self) -> None:
         payload = {
@@ -61,6 +63,16 @@ class AgenticPromptCompactionTests(SimpleTestCase):
                     "type": "text",
                     "content": "x" * 5000,
                     "truncated": False,
+                }
+            ],
+            "read": [{"id": "chunk-1", "status": "full", "chars": 5000}],
+            "deferred": [
+                {
+                    "id": "chunk-2",
+                    "chars": 11279,
+                    "reason": "exceeds_budget",
+                    "suggested_max_chars": 12000,
+                    "hint": "Read separately with max_chars=12000.",
                 }
             ],
             "total_chars": 5000,
@@ -81,6 +93,9 @@ class AgenticPromptCompactionTests(SimpleTestCase):
         self.assertNotIn("snippets", compact)
         self.assertEqual(compact["contents"][0]["id"], "chunk-1")
         self.assertEqual(len(compact["contents"][0]["content"]), 5000)
+        self.assertIn("deferred", compact)
+        self.assertEqual(compact["deferred"][0]["id"], "chunk-2")
+        self.assertEqual(compact["deferred"][0]["suggested_max_chars"], 12000)
 
     @override_settings(MCP_PROMPT_TOOL_OUTPUT_MAX_CHARS=500)
     def test_tool_message_truncation_keeps_content_preview(self) -> None:
