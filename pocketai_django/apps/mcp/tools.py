@@ -14,7 +14,9 @@ from __future__ import annotations
 import copy
 import csv
 import gzip
+import base64
 import hashlib
+import hmac
 import json
 import re
 import threading
@@ -4929,6 +4931,862 @@ def _agentic_batch_read_handler(
     return response
 
 
+_AGENTIC_READ_CURSOR_V2_SALT = b"mcp.read_cursor.v2"
+_AGENTIC_READ_CURSOR_V2_TTL_SECONDS = 60 * 60 * 24 * 30  # 30 days
+
+
+def _b64url_encode(data: bytes) -> str:
+    return base64.urlsafe_b64encode(data).decode("ascii").rstrip("=")
+
+
+def _b64url_decode(data: str) -> bytes:
+    padded = data + "=" * (-len(data) % 4)
+    return base64.urlsafe_b64decode(padded.encode("ascii"))
+
+
+def _sign_agentic_read_cursor_v2(payload: Mapping[str, object]) -> str:
+    secret = str(getattr(settings, "SECRET_KEY", "") or "").encode("utf-8")
+    body = _b64url_encode(json.dumps(dict(payload), separators=(",", ":"), ensure_ascii=True).encode("utf-8"))
+    sig = hmac.new(secret, _AGENTIC_READ_CURSOR_V2_SALT + body.encode("ascii"), hashlib.sha256).digest()
+    return f"{body}.{_b64url_encode(sig)}"
+
+
+def _verify_agentic_read_cursor_v2(cursor: str) -> dict[str, object]:
+    raw = (cursor or "").strip()
+    if not raw or "." not in raw:
+        raise ValueError("invalid cursor")
+    body_b64, sig_b64 = raw.split(".", 1)
+    secret = str(getattr(settings, "SECRET_KEY", "") or "").encode("utf-8")
+    expected = hmac.new(secret, _AGENTIC_READ_CURSOR_V2_SALT + body_b64.encode("ascii"), hashlib.sha256).digest()
+    try:
+        provided = _b64url_decode(sig_b64)
+    except Exception as exc:
+        raise ValueError("invalid cursor") from exc
+    if not hmac.compare_digest(expected, provided):
+        raise ValueError("invalid cursor")
+    try:
+        payload = json.loads(_b64url_decode(body_b64).decode("utf-8"))
+    except Exception as exc:
+        raise ValueError("invalid cursor") from exc
+    if not isinstance(payload, dict):
+        raise ValueError("invalid cursor")
+    try:
+        exp = int(payload.get("exp") or 0)
+    except (TypeError, ValueError):
+        raise ValueError("invalid cursor")
+    if exp and exp <= int(time.time()):
+        raise ValueError("expired cursor")
+    return payload
+
+
+def _agentic_read_v2_handler(
+    arguments: Mapping[str, object],
+    conversation: Conversation,
+    context: ToolExecutionContext,
+) -> Mapping[str, object]:
+    """
+    Agentic Read V2: stable interface `read_document(items=[{id,cursor?}...], max_chars=...)`.
+
+    The tool selects the retrieval strategy internally (page blocks vs table rows vs
+    chunk-window fallback) and returns deterministic continuation cursors when the
+    requested content doesn't fit.
+    """
+    raw_items = arguments.get("items")
+    if not isinstance(raw_items, list) or not raw_items:
+        return {
+            "tool": "read_document",
+            "status": "error",
+            "error": "missing_items",
+            "error_code": "missing_items",
+            "contents": [],
+            "hint": "items[] is required (from search_knowledge results).",
+        }
+
+    # Per-call output cap: stay under MCP_PROMPT_TOOL_OUTPUT_MAX_CHARS minus margin.
+    try:
+        prompt_output_limit = int(getattr(settings, "MCP_PROMPT_TOOL_OUTPUT_MAX_CHARS", 12000) or 12000)
+    except (TypeError, ValueError):
+        prompt_output_limit = 12000
+    try:
+        safety_margin = int(getattr(settings, "MCP_READ_DOCUMENT_MAX_CHARS_MARGIN", 800) or 800)
+    except (TypeError, ValueError):
+        safety_margin = 800
+    safe_prompt_limit = max(200, prompt_output_limit - max(0, safety_margin))
+
+    remaining_turn_budget: int | None = None
+    if context.char_budget_per_turn is not None:
+        remaining_turn_budget = max(0, int(context.char_budget_per_turn) - int(context.characters_used or 0))
+
+    max_chars_allowed = max(200, min(20000, safe_prompt_limit))
+    if remaining_turn_budget is not None:
+        max_chars_allowed = max(0, min(max_chars_allowed, remaining_turn_budget))
+    if max_chars_allowed < 200:
+        return {
+            "tool": "read_document",
+            "status": "throttled",
+            "error": "prompt_budget_exceeded",
+            "error_code": "prompt_budget_exceeded",
+            "contents": [],
+            "hint": "Prompt budget exceeded for this turn. Answer from collected evidence or ask a narrower question.",
+        }
+
+    raw_max_chars = arguments.get("max_chars")
+    try:
+        requested_max_chars = int(raw_max_chars)
+    except (TypeError, ValueError):
+        requested_max_chars = None
+    if requested_max_chars is None:
+        max_chars = max_chars_allowed
+    else:
+        max_chars = max(200, requested_max_chars)
+        if max_chars > max_chars_allowed:
+            return {
+                "tool": "read_document",
+                "status": "constraint_error",
+                "error": "max_chars_exceeded",
+                "error_code": "max_chars_exceeded",
+                "contents": [],
+                "requested_max_chars": max_chars,
+                "max_chars_allowed": max_chars_allowed,
+                "hint": (
+                    f"max_chars is too high for this chat (requested {max_chars}, max {max_chars_allowed}). "
+                    f"Retry with max_chars <= {max_chars_allowed}, or read fewer items."
+                ),
+            }
+
+    # Dedup items by (id,cursor) while preserving order.
+    ordered_items: list[dict[str, object]] = []
+    seen_keys: set[tuple[str, str | None]] = set()
+    for entry in raw_items:
+        if not isinstance(entry, Mapping):
+            continue
+        item_id = str(entry.get("id") or "").strip()
+        if not item_id:
+            continue
+        cursor = entry.get("cursor")
+        cursor_str = str(cursor).strip() if isinstance(cursor, str) and cursor.strip() else None
+        key = (item_id, cursor_str)
+        if key in seen_keys:
+            continue
+        seen_keys.add(key)
+        ordered_items.append({"id": item_id, "cursor": cursor_str})
+
+    if not ordered_items:
+        return {
+            "tool": "read_document",
+            "status": "error",
+            "error": "missing_items",
+            "error_code": "missing_items",
+            "contents": [],
+            "hint": "items[] must contain at least one {id} from search_knowledge results.",
+        }
+
+    business = conversation.business_profile
+    redact_text = _should_redact_text_pii(conversation)
+
+    def _upload_title(upload: KnowledgeUpload | None) -> str:
+        if not upload:
+            return "Untitled"
+        title = (
+            getattr(upload, "display_name", None)
+            or getattr(upload, "filename", None)
+            or getattr(upload, "source_name", None)
+            or getattr(upload, "external_reference", None)
+            or getattr(upload, "slug", None)
+            or str(getattr(upload, "id", "") or "")
+        )
+        title_text = str(title or "").strip() or "Untitled"
+        return redact_free_text(title_text) if redact_text else title_text
+
+    def _cursor_payload_base(*, item_id: str, kind: str) -> dict[str, object]:
+        exp = int(time.time()) + _AGENTIC_READ_CURSOR_V2_TTL_SECONDS
+        return {
+            "v": 2,
+            "exp": exp,
+            "conversation_id": str(conversation.id),
+            "business_id": str(conversation.business_profile_id),
+            "item_id": item_id,
+            "kind": kind,
+        }
+
+    def _decode_cursor(item_id: str, cursor: str) -> tuple[dict[str, object] | None, dict[str, object] | None]:
+        try:
+            payload = _verify_agentic_read_cursor_v2(cursor)
+        except ValueError as exc:
+            return None, {"id": item_id, "error_code": "invalid_cursor", "hint": str(exc) or "Invalid cursor."}
+        if str(payload.get("conversation_id") or "") != str(conversation.id):
+            return None, {"id": item_id, "error_code": "invalid_cursor", "hint": "Cursor is for a different conversation."}
+        if str(payload.get("business_id") or "") != str(conversation.business_profile_id):
+            return None, {"id": item_id, "error_code": "invalid_cursor", "hint": "Cursor is for a different business."}
+        if str(payload.get("item_id") or "") != item_id:
+            return None, {"id": item_id, "error_code": "invalid_cursor", "hint": "Cursor does not match the requested id."}
+        if int(payload.get("v") or 0) != 2:
+            return None, {"id": item_id, "error_code": "invalid_cursor", "hint": "Unsupported cursor version."}
+        return payload, None
+
+    def _resolve_target(item_id: str) -> tuple[KnowledgeUploadChunk | None, KnowledgeUpload | None, dict[str, object] | None]:
+        try:
+            identifier = uuid.UUID(item_id)
+        except (TypeError, ValueError):
+            return None, None, {"id": item_id, "error_code": "invalid_id", "hint": "id must be a valid UUID from search_knowledge results."}
+
+        chunk_record = (
+            apply_customer_visible_chunks(
+                KnowledgeUploadChunk.objects.filter(
+                    id=identifier,
+                    business_profile=business,
+                    upload__status=KnowledgeStatus.ACTIVE,
+                )
+            )
+            .select_related("upload")
+            .first()
+        )
+        if chunk_record:
+            upload = getattr(chunk_record, "upload", None)
+            return chunk_record, upload, None
+
+        upload_record = apply_customer_visible_uploads(
+            KnowledgeUpload.objects.filter(
+                id=identifier,
+                business_profile=business,
+                status=KnowledgeStatus.ACTIVE,
+            )
+        ).first()
+        if upload_record:
+            return None, upload_record, None
+        return None, None, {"id": item_id, "error_code": "not_found", "hint": "Document not found for this business."}
+
+    agent_scope = _agent_knowledge_scope(conversation, context)
+    guard = _identifier_guard(context, conversation)
+
+    def _enforce_access(upload_id: str, *, item_id: str) -> dict[str, object] | None:
+        if upload_id and not _agent_scope_allows_upload(scope=agent_scope, conversation=conversation, upload_id=upload_id):
+            return {"id": item_id, "error_code": "forbidden_document", "hint": "This agent is not permitted to access that document."}
+        if guard and upload_id:
+            decision = guard.require_for_upload(str(upload_id))
+            _record_identifier_check(context, decision)
+            if decision.status != "ok":
+                _record_identifier_event_once(
+                    context,
+                    business_profile=conversation.business_profile,
+                    decision=decision,
+                    tool="read_document",
+                    conversation=conversation,
+                    upload_ids=[str(upload_id)],
+                )
+                return {
+                    "id": item_id,
+                    "error_code": "identifier_required",
+                    "hint": decision.hint or "Additional identifiers are required to access that document.",
+                    "identifier_gate": decision.as_dict(),
+                }
+        return None
+
+    def _is_dataset_upload(upload: KnowledgeUpload | None) -> bool:
+        if not upload:
+            return False
+        try:
+            ingestion_meta = upload.ingestion_metadata if isinstance(getattr(upload, "ingestion_metadata", None), Mapping) else {}
+        except Exception:
+            ingestion_meta = {}
+        dataset_meta = ingestion_meta.get("dataset") if isinstance(ingestion_meta, Mapping) else None
+        dataset_enabled = bool(isinstance(dataset_meta, Mapping) and dataset_meta.get("enabled"))
+        format_hint = str(ingestion_meta.get("format") or "").strip().lower()
+        native_tabular = format_hint in {"csv", "tsv", "xls", "xlsx", "jsonl"}
+        if dataset_enabled or native_tabular:
+            return True
+        # Legacy heuristic: uploads that have tables but no pages are usually spreadsheets/datasets.
+        try:
+            if upload.tables.exists() and not upload.pages.exists():
+                return True
+        except Exception:
+            pass
+        return False
+
+    def _read_page_blocks_segment(
+        *,
+        item_id: str,
+        upload: KnowledgeUpload,
+        upload_id: str,
+        page_number: int,
+        start_order: int,
+        start_offset: int,
+        budget_chars: int,
+    ) -> tuple[str, dict[str, object] | None, bool]:
+        try:
+            from apps.accounts.models import KnowledgeUploadPage, KnowledgeUploadPageBlock
+        except Exception:
+            return "", None, True
+
+        page_obj = (
+            KnowledgeUploadPage.objects.filter(upload_id=upload_id, page_number=page_number)
+            .only("id")
+            .first()
+        )
+        if not page_obj:
+            return "", None, True
+
+        blocks_qs = (
+            KnowledgeUploadPageBlock.objects.filter(page_id=page_obj.id)
+            .exclude(text="")
+            .order_by("order_index")
+            .values_list("order_index", "text")
+        )
+
+        remaining = max(0, int(budget_chars))
+        out_parts: list[str] = []
+        cursor_next: dict[str, object] | None = None
+        complete = True
+
+        started = False
+        for order_index, text in blocks_qs.iterator():  # type: ignore[attr-defined]
+            try:
+                order_int = int(order_index)
+            except (TypeError, ValueError):
+                continue
+            if order_int < int(start_order):
+                continue
+            raw_text = str(text or "")
+            if not raw_text:
+                continue
+
+            chunk_text = raw_text
+            offset = 0
+            if not started:
+                started = True
+                offset = max(0, int(start_offset))
+                if offset:
+                    chunk_text = chunk_text[offset:]
+            separator = "\n\n" if out_parts else ""
+            # If we can't fit the separator + at least one character, stop and continue on next call.
+            needed_min = len(separator) + 1
+            if remaining < needed_min:
+                cursor_next = {
+                    **_cursor_payload_base(item_id=item_id, kind="page_blocks"),
+                    "upload_id": upload_id,
+                    "page_number": int(page_number),
+                    "block_order": int(order_int),
+                    "char_offset": int(offset),
+                }
+                complete = False
+                break
+            if separator:
+                out_parts.append(separator)
+                remaining -= len(separator)
+
+            if len(chunk_text) <= remaining:
+                out_parts.append(chunk_text)
+                remaining -= len(chunk_text)
+                # Continue to next block
+                continue
+
+            # Partial block
+            out_parts.append(chunk_text[:remaining])
+            cursor_next = {
+                **_cursor_payload_base(item_id=item_id, kind="page_blocks"),
+                "upload_id": upload_id,
+                "page_number": int(page_number),
+                "block_order": int(order_int),
+                "char_offset": int(offset + remaining),
+            }
+            complete = False
+            break
+
+        content_out = "".join(out_parts)
+        if redact_text and content_out:
+            content_out = redact_free_text(content_out)
+        cursor_str = _sign_agentic_read_cursor_v2(cursor_next) if cursor_next else None
+        return content_out, ({"cursor": cursor_str} if cursor_str else None), complete
+
+    def _read_table_rows_segment(
+        *,
+        item_id: str,
+        upload_id: str,
+        table_id: str,
+        start_pos: int,
+        start_offset: int,
+        budget_chars: int,
+        business_profile,
+    ) -> tuple[str, dict[str, object] | None, bool]:
+        remaining = max(0, int(budget_chars))
+        out_parts: list[str] = []
+        cursor_next: dict[str, object] | None = None
+        complete = True
+
+        rows_qs = (
+            apply_customer_visible_chunks(
+                KnowledgeUploadChunk.objects.filter(
+                    upload_id=upload_id,
+                    business_profile=business_profile,
+                    upload__status=KnowledgeStatus.ACTIVE,
+                    metadata__table_id=str(table_id),
+                    metadata__table_chunk_role="row",
+                )
+            )
+            .exclude(content="")
+            .order_by("chunk_index")
+            .values_list("chunk_index", "content")
+        )
+
+        pos = max(0, int(start_pos))
+        offset = max(0, int(start_offset))
+        started = False
+        idx = 0
+        for chunk_index, content in rows_qs.iterator():  # type: ignore[attr-defined]
+            if idx < pos:
+                idx += 1
+                continue
+            raw = str(content or "")
+            if not raw:
+                idx += 1
+                continue
+
+            row_text = raw
+            row_offset = 0
+            if not started:
+                started = True
+                row_offset = offset
+                if row_offset:
+                    row_text = row_text[row_offset:]
+
+            separator = "\n\n" if out_parts else ""
+            needed_min = len(separator) + 1
+            if remaining < needed_min:
+                cursor_next = {
+                    **_cursor_payload_base(item_id=item_id, kind="table_rows"),
+                    "upload_id": upload_id,
+                    "table_id": str(table_id),
+                    "row_pos": int(idx),
+                    "char_offset": int(row_offset),
+                }
+                complete = False
+                break
+            if separator:
+                out_parts.append(separator)
+                remaining -= len(separator)
+
+            if len(row_text) <= remaining:
+                out_parts.append(row_text)
+                remaining -= len(row_text)
+                idx += 1
+                continue
+
+            out_parts.append(row_text[:remaining])
+            cursor_next = {
+                **_cursor_payload_base(item_id=item_id, kind="table_rows"),
+                "upload_id": upload_id,
+                "table_id": str(table_id),
+                "row_pos": int(idx),
+                "char_offset": int(row_offset + remaining),
+            }
+            complete = False
+            break
+
+        content_out = "".join(out_parts)
+        if redact_text and content_out:
+            content_out = redact_free_text(content_out)
+        cursor_str = _sign_agentic_read_cursor_v2(cursor_next) if cursor_next else None
+        return content_out, ({"cursor": cursor_str} if cursor_str else None), complete
+
+    def _read_chunk_window_segment(
+        *,
+        item_id: str,
+        upload_id: str,
+        start_index: int,
+        end_index: int,
+        current_index: int,
+        start_offset: int,
+        budget_chars: int,
+        business_profile,
+    ) -> tuple[str, dict[str, object] | None, bool]:
+        remaining = max(0, int(budget_chars))
+        out_parts: list[str] = []
+        cursor_next: dict[str, object] | None = None
+        complete = True
+
+        window_qs = (
+            apply_customer_visible_chunks(
+                KnowledgeUploadChunk.objects.filter(
+                    upload_id=upload_id,
+                    business_profile=business_profile,
+                    upload__status=KnowledgeStatus.ACTIVE,
+                    chunk_index__gte=int(start_index),
+                    chunk_index__lte=int(end_index),
+                )
+            )
+            .exclude(content="")
+            .order_by("chunk_index")
+            .values_list("chunk_index", "content")
+        )
+
+        cur_idx = int(current_index)
+        offset = max(0, int(start_offset))
+        started = False
+        for chunk_index, content in window_qs.iterator():  # type: ignore[attr-defined]
+            try:
+                ci = int(chunk_index)
+            except (TypeError, ValueError):
+                continue
+            if ci < cur_idx:
+                continue
+            raw = str(content or "")
+            if not raw:
+                continue
+            text = raw
+            local_offset = 0
+            if not started:
+                started = True
+                local_offset = offset
+                if local_offset:
+                    text = text[local_offset:]
+
+            separator = "\n\n" if out_parts else ""
+            needed_min = len(separator) + 1
+            if remaining < needed_min:
+                cursor_next = {
+                    **_cursor_payload_base(item_id=item_id, kind="chunk_window"),
+                    "upload_id": upload_id,
+                    "chunk_start": int(start_index),
+                    "chunk_end": int(end_index),
+                    "chunk_index": int(ci),
+                    "char_offset": int(local_offset),
+                }
+                complete = False
+                break
+            if separator:
+                out_parts.append(separator)
+                remaining -= len(separator)
+
+            if len(text) <= remaining:
+                out_parts.append(text)
+                remaining -= len(text)
+                continue
+
+            out_parts.append(text[:remaining])
+            cursor_next = {
+                **_cursor_payload_base(item_id=item_id, kind="chunk_window"),
+                "upload_id": upload_id,
+                "chunk_start": int(start_index),
+                "chunk_end": int(end_index),
+                "chunk_index": int(ci),
+                "char_offset": int(local_offset + remaining),
+            }
+            complete = False
+            break
+
+        content_out = "".join(out_parts)
+        if redact_text and content_out:
+            content_out = redact_free_text(content_out)
+        cursor_str = _sign_agentic_read_cursor_v2(cursor_next) if cursor_next else None
+        return content_out, ({"cursor": cursor_str} if cursor_str else None), complete
+
+    contents: list[dict[str, object]] = []
+    read: list[dict[str, object]] = []
+    deferred: list[dict[str, object]] = []
+    errors: list[dict[str, object]] = []
+
+    remaining_chars = max(0, int(max_chars))
+    total_chars = 0
+
+    for idx, entry in enumerate(ordered_items):
+        item_id = str(entry.get("id") or "").strip()
+        cursor_in = entry.get("cursor")
+        if remaining_chars < 200:
+            deferred.append(
+                {
+                    "id": item_id,
+                    "reason": "not_enough_remaining_chars",
+                    "hint": "Not enough remaining chars in this call; retry with a higher max_chars or fewer items.",
+                }
+            )
+            continue
+
+        # Share the remaining budget across the remaining items to avoid starving later items.
+        items_left = max(1, len(ordered_items) - idx)
+        per_item_budget = max(200, remaining_chars // items_left)
+
+        cursor_payload: dict[str, object] | None = None
+        if isinstance(cursor_in, str) and cursor_in.strip():
+            cursor_payload, cursor_error = _decode_cursor(item_id, cursor_in)
+            if cursor_error:
+                errors.append(cursor_error)
+                read.append({"id": item_id, "status": "error"})
+                continue
+
+        chunk_record, upload_record, resolve_error = _resolve_target(item_id)
+        if resolve_error:
+            errors.append(resolve_error)
+            read.append({"id": item_id, "status": "error"})
+            continue
+
+        upload = upload_record or getattr(chunk_record, "upload", None)
+        upload_id = str(getattr(upload, "id", "") or "")
+        if not upload_id:
+            errors.append({"id": item_id, "error_code": "not_found", "hint": "Upload not found."})
+            read.append({"id": item_id, "status": "error"})
+            continue
+
+        access_error = _enforce_access(upload_id, item_id=item_id)
+        if access_error:
+            # Mirror legacy behavior: identifier gate returns status="identifier_required".
+            if access_error.get("error_code") == "identifier_required":
+                errors.append(access_error)
+                read.append({"id": item_id, "status": "identifier_required"})
+            else:
+                errors.append(access_error)
+                read.append({"id": item_id, "status": "error"})
+            continue
+
+        # Block dataset/spreadsheet reads through read_document (same as legacy handler).
+        if _is_dataset_upload(upload) and (chunk_record is None or bool((chunk_record.metadata or {}).get("is_table_chunk"))):
+            errors.append(
+                {
+                    "id": item_id,
+                    "error_code": "wrong_tool_for_table",
+                    "hint": "This upload is a structured dataset/spreadsheet table. Use query_dataset (and list_tables if needed).",
+                }
+            )
+            read.append({"id": item_id, "status": "error"})
+            continue
+
+        # Track for follow-up context.
+        try:
+            context.track_document_read(upload_id, title=_upload_title(upload))
+        except Exception:
+            pass
+
+        content_type = "text"
+        title = _upload_title(upload)
+        cursor_used = cursor_in if isinstance(cursor_in, str) and cursor_in.strip() else None
+        next_cursor: str | None = None
+        complete = True
+        content_text = ""
+
+        # Strategy selection (AUTO):
+        if cursor_payload:
+            kind = str(cursor_payload.get("kind") or "")
+            if kind == "page_blocks":
+                page_number = int(cursor_payload.get("page_number") or 1)
+                block_order = int(cursor_payload.get("block_order") or 0)
+                char_offset = int(cursor_payload.get("char_offset") or 0)
+                content_text, cursor_out, complete = _read_page_blocks_segment(
+                    item_id=item_id,
+                    upload=upload,  # type: ignore[arg-type]
+                    upload_id=upload_id,
+                    page_number=page_number,
+                    start_order=block_order,
+                    start_offset=char_offset,
+                    budget_chars=per_item_budget,
+                )
+                next_cursor = cursor_out.get("cursor") if cursor_out else None
+            elif kind == "table_rows":
+                content_type = "table"
+                table_id = str(cursor_payload.get("table_id") or "").strip()
+                start_pos = int(cursor_payload.get("row_pos") or 0)
+                char_offset = int(cursor_payload.get("char_offset") or 0)
+                content_text, cursor_out, complete = _read_table_rows_segment(
+                    item_id=item_id,
+                    upload_id=upload_id,
+                    table_id=table_id,
+                    start_pos=start_pos,
+                    start_offset=char_offset,
+                    budget_chars=per_item_budget,
+                    business_profile=business,
+                )
+                next_cursor = cursor_out.get("cursor") if cursor_out else None
+            elif kind == "chunk_window":
+                start_index = int(cursor_payload.get("chunk_start") or 0)
+                end_index = int(cursor_payload.get("chunk_end") or start_index)
+                chunk_index = int(cursor_payload.get("chunk_index") or start_index)
+                char_offset = int(cursor_payload.get("char_offset") or 0)
+                content_text, cursor_out, complete = _read_chunk_window_segment(
+                    item_id=item_id,
+                    upload_id=upload_id,
+                    start_index=start_index,
+                    end_index=end_index,
+                    current_index=chunk_index,
+                    start_offset=char_offset,
+                    budget_chars=per_item_budget,
+                    business_profile=business,
+                )
+                next_cursor = cursor_out.get("cursor") if cursor_out else None
+            else:
+                errors.append({"id": item_id, "error_code": "invalid_cursor", "hint": "Unknown cursor kind."})
+                read.append({"id": item_id, "status": "error"})
+                continue
+        else:
+            # New read: decide best source.
+            chunk_meta = chunk_record.metadata if chunk_record and isinstance(getattr(chunk_record, "metadata", None), Mapping) else {}
+            is_table_chunk = bool(chunk_meta.get("is_table_chunk") or chunk_meta.get("table_chunk_role"))
+            table_role = str(chunk_meta.get("table_chunk_role") or "").strip().lower()
+            table_id = str(chunk_meta.get("table_id") or "").strip()
+
+            if is_table_chunk and table_id and table_role not in {"row"}:
+                content_type = "table"
+                # Resolve table title for friendlier output.
+                try:
+                    table_obj = (
+                        KnowledgeUploadTable.objects.filter(id=table_id)
+                        .only("id", "title", "section_heading", "order_index")
+                        .first()
+                    )
+                    if table_obj:
+                        table_title = (table_obj.title or table_obj.section_heading or "").strip()
+                        if not table_title:
+                            table_title = f"Table {table_obj.order_index}" if table_obj.order_index else "Table"
+                        title = redact_free_text(table_title) if redact_text else table_title
+                except Exception:
+                    pass
+
+                content_text, cursor_out, complete = _read_table_rows_segment(
+                    item_id=item_id,
+                    upload_id=upload_id,
+                    table_id=table_id,
+                    start_pos=0,
+                    start_offset=0,
+                    budget_chars=per_item_budget,
+                    business_profile=business,
+                )
+                next_cursor = cursor_out.get("cursor") if cursor_out else None
+            elif is_table_chunk and table_role == "row":
+                # Row chunks are already atomic enough: return the row content.
+                content_type = "table"
+                content_text = str(getattr(chunk_record, "content", "") or "") if chunk_record else ""
+                if redact_text and content_text:
+                    content_text = redact_free_text(content_text)
+                complete = True
+            else:
+                # Prefer page blocks when a page can be resolved; fall back to a chunk window.
+                page_number = 1
+                if chunk_record:
+                    meta_page = chunk_meta.get("table_page_number") or chunk_meta.get("chunk_page") or chunk_meta.get("page_number")
+                    if meta_page:
+                        try:
+                            parsed_page = int(meta_page)
+                            if parsed_page >= 1:
+                                page_number = parsed_page
+                        except (TypeError, ValueError):
+                            pass
+
+                # If page blocks exist for the resolved page, use them.
+                has_page_blocks = False
+                try:
+                    from apps.accounts.models import KnowledgeUploadPageBlock
+                    has_page_blocks = KnowledgeUploadPageBlock.objects.filter(
+                        upload_id=upload_id,
+                        page__page_number=page_number,
+                    ).exclude(text="").exists()
+                except Exception:
+                    has_page_blocks = False
+
+                if has_page_blocks:
+                    content_text, cursor_out, complete = _read_page_blocks_segment(
+                        item_id=item_id,
+                        upload=upload,  # type: ignore[arg-type]
+                        upload_id=upload_id,
+                        page_number=page_number,
+                        start_order=0,
+                        start_offset=0,
+                        budget_chars=per_item_budget,
+                    )
+                    next_cursor = cursor_out.get("cursor") if cursor_out else None
+                elif chunk_record and chunk_record.chunk_index is not None:
+                    neighbor = 1
+                    start_index = max(0, int(chunk_record.chunk_index) - neighbor)
+                    end_index = int(chunk_record.chunk_index) + neighbor
+                    content_text, cursor_out, complete = _read_chunk_window_segment(
+                        item_id=item_id,
+                        upload_id=upload_id,
+                        start_index=start_index,
+                        end_index=end_index,
+                        current_index=start_index,
+                        start_offset=0,
+                        budget_chars=per_item_budget,
+                        business_profile=business,
+                    )
+                    next_cursor = cursor_out.get("cursor") if cursor_out else None
+                else:
+                    errors.append({"id": item_id, "error_code": "not_found", "hint": "No readable content found for that id."})
+                    read.append({"id": item_id, "status": "error"})
+                    continue
+
+        # If we couldn't read anything for this item, mark as deferred rather than returning empty content.
+        if not content_text:
+            deferred.append(
+                {
+                    "id": item_id,
+                    "reason": "empty",
+                    "hint": "No readable content was available for this item.",
+                }
+            )
+            read.append({"id": item_id, "status": "deferred"})
+            continue
+
+        item_chars = len(content_text)
+        remaining_chars = max(0, remaining_chars - item_chars)
+        total_chars += item_chars
+
+        contents.append(
+            {
+                "id": item_id,
+                "title": title,
+                "type": content_type,
+                "content": content_text,
+                "chars": item_chars,
+                "cursor_used": cursor_used,
+                "next_cursor": next_cursor,
+                "complete": bool(complete and not next_cursor),
+                # Back-compat: orchestrator coverage ledger expects "truncated" on contents[].
+                "truncated": bool(not complete or bool(next_cursor)),
+            }
+        )
+        read.append(
+            {
+                "id": item_id,
+                "status": "full" if (complete and not next_cursor) else "partial",
+                "chars": item_chars,
+                "next_cursor": next_cursor,
+            }
+        )
+
+    response_status = "ok"
+    if errors or deferred or any(entry.get("status") == "partial" for entry in read):
+        response_status = "partial" if contents else "error"
+
+    response: dict[str, object] = {
+        "tool": "read_document",
+        "status": response_status,
+        "contents": contents,
+        "read": read,
+        "deferred": deferred,
+        "max_chars": int(max_chars),
+        "max_chars_allowed": int(max_chars_allowed),
+        "total_chars": int(total_chars),
+    }
+    if errors:
+        response["errors"] = errors
+    if not contents and (deferred or errors):
+        response["hint"] = (
+            "No content could be read. Ensure ids/cursors come from tool results, "
+            "increase max_chars (up to max_chars_allowed), or retry with fewer items."
+        )
+
+    try:
+        context.reserve_characters(int(total_chars))
+    except CharacterBudgetExceeded as exc:
+        return {
+            "tool": "read_document",
+            "status": "throttled",
+            "error": "prompt_budget_exceeded",
+            "error_code": "prompt_budget_exceeded",
+            "contents": [],
+            "throttle_notice": {"type": "prompt_budget", "message": str(exc)},
+            "hint": "Prompt budget exceeded. Ask a narrower question or request fewer items.",
+        }
+
+    return response
+
+
 def _agentic_table_chunk_snippets(
     *,
     chunk_record: KnowledgeUploadChunk,
@@ -9808,8 +10666,11 @@ def _read_document_agentic_wrapper(
     """
     feature_state = FeatureFlagService.snapshot(conversation.business_profile)
     new_contract_enabled = bool(getattr(settings, "MCP_NEW_CONTRACT_ENABLED", True))
+    agentic_read_v2_enabled = bool(getattr(settings, "MCP_AGENTIC_READ_V2_ENABLED", False))
     
     if feature_state.rag_agentic_mode and new_contract_enabled:
+        if agentic_read_v2_enabled and isinstance(arguments.get("items"), list):
+            return _agentic_read_v2_handler(arguments, conversation, context)
         # Use batch handler (handles both single and multiple IDs)
         raw_ids = arguments.get("ids")
         if isinstance(raw_ids, (list, tuple)):
