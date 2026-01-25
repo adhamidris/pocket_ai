@@ -1,0 +1,276 @@
+from __future__ import annotations
+
+import json
+from datetime import timedelta
+from types import SimpleNamespace
+from unittest import mock
+
+from django.test import TestCase, override_settings
+from django.utils import timezone
+
+from apps.accounts.models import (
+    BusinessProfile,
+    KnowledgeSourceType,
+    KnowledgeStatus,
+    KnowledgeUpload,
+    KnowledgeUploadChunk,
+    RegistrationSession,
+    User,
+)
+from apps.conversations.models import Conversation
+from apps.mcp import tools
+from apps.mcp.models import McpToolOutputArtifact
+from apps.mcp.tool_artifacts import store_local_tool_output_artifact
+from apps.mcp.types import ToolExecutionContext
+from core.tenancy import tenant_context
+
+
+class AgenticReadV2CursorAndArtifactTests(TestCase):
+    def setUp(self) -> None:
+        super().setUp()
+        tools._knowledge_service.cache_clear()  # type: ignore[attr-defined]
+        self.embed_patcher = mock.patch("apps.rag.ai_orchestrator.build_embedding_service", return_value=None)
+        self.embed_patcher.start()
+
+        self.user = User.objects.create(email="mcp-read-v2@example.com", first_name="MCP")
+        self.registration = RegistrationSession.objects.create(user=self.user)
+        self.business = BusinessProfile.objects.create(
+            user=self.user,
+            registration_session=self.registration,
+            name="MCP V2 Bank",
+            industry="banking",
+        )
+        self.tenant_scope = tenant_context(self.business.id)
+        self.tenant_scope.__enter__()
+
+        self.conversation = Conversation.objects.create(
+            business_profile=self.business,
+            session_token="session-mcp-v2",
+        )
+
+        self.upload = KnowledgeUpload.objects.create(
+            business_profile=self.business,
+            user=self.user,
+            source_type=KnowledgeSourceType.FILE,
+            status=KnowledgeStatus.ACTIVE,
+            display_name="Big Doc",
+            ingestion_metadata={"format": "pdf"},
+        )
+
+        self.chunk = KnowledgeUploadChunk.objects.create(
+            upload=self.upload,
+            business_profile=self.business,
+            chunk_index=0,
+            content="A" * 5000,
+        )
+
+    def tearDown(self) -> None:
+        self.embed_patcher.stop()
+        if hasattr(self, "tenant_scope"):
+            self.tenant_scope.__exit__(None, None, None)
+        super().tearDown()
+
+    def _enable_agentic_mode(self):
+        return mock.patch.object(
+            tools.FeatureFlagService,
+            "snapshot",
+            return_value=SimpleNamespace(rag_agentic_mode=True),
+        )
+
+    @override_settings(
+        MCP_NEW_CONTRACT_ENABLED=True,
+        MCP_AGENTIC_READ_V2_ENABLED=True,
+        MCP_TEXT_PII_REDACTION_ENABLED=False,
+        MCP_PROMPT_TOOL_OUTPUT_MAX_CHARS=25000,
+        MCP_READ_DOCUMENT_MAX_CHARS_MARGIN=0,
+    )
+    def test_chunk_window_cursor_resumes_exactly(self) -> None:
+        ctx = ToolExecutionContext(char_budget_per_turn=100_000)
+        chunk_id = str(self.chunk.id)
+
+        with self._enable_agentic_mode():
+            first = tools.execute_tool(
+                "read_document",
+                {"items": [{"id": chunk_id}], "max_chars": 1000},
+                conversation=self.conversation,
+                context=ctx,
+            )
+
+        self.assertEqual(first["tool"], "read_document")
+        self.assertIn(first["status"], {"ok", "partial"})
+        self.assertEqual(len(first["contents"]), 1)
+        first_item = first["contents"][0]
+        self.assertEqual(first_item["id"], chunk_id)
+        self.assertEqual(len(first_item["content"]), 1000)
+        cursor_1 = first_item.get("next_cursor")
+        self.assertIsInstance(cursor_1, str)
+        self.assertTrue(cursor_1)
+
+        cursor_payload = tools._verify_agentic_read_cursor_v2(cursor_1)  # type: ignore[attr-defined]
+        self.assertEqual(cursor_payload.get("kind"), "chunk_window")
+        self.assertEqual(int(cursor_payload.get("char_offset") or 0), 1000)
+
+        with self._enable_agentic_mode():
+            second = tools.execute_tool(
+                "read_document",
+                {"items": [{"id": chunk_id, "cursor": cursor_1}], "max_chars": 1000},
+                conversation=self.conversation,
+                context=ctx,
+            )
+
+        self.assertEqual(len(second["contents"]), 1)
+        second_item = second["contents"][0]
+        self.assertEqual(len(second_item["content"]), 1000)
+
+        combined = first_item["content"] + second_item["content"]
+        self.assertEqual(combined, ("A" * 2000))
+
+    @override_settings(
+        MCP_NEW_CONTRACT_ENABLED=True,
+        MCP_AGENTIC_READ_V2_ENABLED=True,
+        MCP_TEXT_PII_REDACTION_ENABLED=False,
+        MCP_PROMPT_TOOL_OUTPUT_MAX_CHARS=2100,
+        MCP_READ_DOCUMENT_MAX_CHARS_MARGIN=0,
+    )
+    def test_artifact_cursor_pages_and_resumes_knowledge_cursor(self) -> None:
+        ctx = ToolExecutionContext(char_budget_per_turn=100_000)
+        chunk_id = str(self.chunk.id)
+
+        with self._enable_agentic_mode():
+            first = tools.execute_tool(
+                "read_document",
+                {"items": [{"id": chunk_id}], "max_chars": 2000},
+                conversation=self.conversation,
+                context=ctx,
+            )
+
+        # Tool output should stay under the prompt tool-output cap (no orchestrator truncation needed).
+        self.assertLessEqual(len(json.dumps(first, ensure_ascii=False)), 2100)
+
+        self.assertTrue(first.get("contents"), json.dumps(first, indent=2, default=str))
+        first_item = first["contents"][0]
+        preview_len = len(first_item["content"])
+        self.assertGreaterEqual(preview_len, 200)
+        self.assertLess(preview_len, 2000)
+        self.assertFalse(first_item.get("complete"))
+        self.assertTrue(first_item.get("artifact_id"))
+
+        first_trace = first["read"][0]
+        self.assertEqual(first_trace["status"], "artifact")
+        self.assertEqual(int(first_trace.get("chars") or 0), 2000)
+        self.assertTrue(first_trace.get("artifact_id"))
+
+        cursor_1 = first_item["next_cursor"]
+        cursor_payload_1 = tools._verify_agentic_read_cursor_v2(cursor_1)  # type: ignore[attr-defined]
+        self.assertEqual(cursor_payload_1.get("kind"), "artifact")
+        self.assertEqual(int(cursor_payload_1.get("char_offset") or 0), preview_len)
+
+        collected = first_item["content"]
+        next_cursor = cursor_1
+        chunk_cursor = None
+        # Follow artifact pages until the tool hands us back the underlying knowledge cursor.
+        for _ in range(10):
+            with self._enable_agentic_mode():
+                page = tools.execute_tool(
+                    "read_document",
+                    {"items": [{"id": chunk_id, "cursor": next_cursor}], "max_chars": 2000},
+                    conversation=self.conversation,
+                    context=ctx,
+                )
+
+            self.assertLessEqual(len(json.dumps(page, ensure_ascii=False)), 2100)
+            self.assertTrue(page.get("contents"), json.dumps(page, indent=2, default=str))
+            page_item = page["contents"][0]
+            collected += page_item["content"]
+
+            next_cursor = page_item.get("next_cursor")
+            self.assertIsInstance(next_cursor, str)
+            self.assertTrue(next_cursor)
+            cursor_payload = tools._verify_agentic_read_cursor_v2(next_cursor)  # type: ignore[attr-defined]
+            if cursor_payload.get("kind") == "chunk_window":
+                chunk_cursor = next_cursor
+                self.assertEqual(int(cursor_payload.get("char_offset") or 0), 2000)
+                break
+        self.assertIsNotNone(chunk_cursor)
+        self.assertEqual(collected, ("A" * 2000))
+
+        tail = ""
+        cursor = chunk_cursor
+        for _ in range(10):
+            with self._enable_agentic_mode():
+                out = tools.execute_tool(
+                    "read_document",
+                    {"items": [{"id": chunk_id, "cursor": cursor}], "max_chars": 1000},
+                    conversation=self.conversation,
+                    context=ctx,
+                )
+            self.assertLessEqual(len(json.dumps(out, ensure_ascii=False)), 2100)
+            self.assertTrue(out.get("contents"), json.dumps(out, indent=2, default=str))
+            item = out["contents"][0]
+            tail += item["content"]
+            if len(tail) >= 1000:
+                break
+            cursor = item.get("next_cursor")
+            self.assertIsInstance(cursor, str)
+            self.assertTrue(cursor)
+
+        self.assertGreaterEqual(len(tail), 1000)
+        self.assertEqual(tail[:1000], ("A" * 1000))
+
+    def test_store_local_tool_output_artifact_prunes_by_max_per_conversation(self) -> None:
+        artifact_1 = store_local_tool_output_artifact(
+            conversation=self.conversation,
+            invoked_tool="read_document",
+            request={"items": [{"id": str(self.chunk.id)}]},
+            response={"text": "one"},
+            status="ok",
+            is_error=False,
+            retention_days=365,
+            max_per_conversation=1,
+        )
+        artifact_2 = store_local_tool_output_artifact(
+            conversation=self.conversation,
+            invoked_tool="read_document",
+            request={"items": [{"id": str(self.chunk.id)}]},
+            response={"text": "two"},
+            status="ok",
+            is_error=False,
+            retention_days=365,
+            max_per_conversation=1,
+        )
+        self.assertIsNotNone(artifact_1)
+        self.assertIsNotNone(artifact_2)
+
+        qs = McpToolOutputArtifact.objects.filter(conversation=self.conversation, invoked_tool="read_document").order_by("-created_at")
+        self.assertEqual(qs.count(), 1)
+        self.assertEqual(str(qs.first().id), artifact_2)
+
+    def test_store_local_tool_output_artifact_prunes_by_retention_days(self) -> None:
+        artifact_old = store_local_tool_output_artifact(
+            conversation=self.conversation,
+            invoked_tool="read_document",
+            request={"items": [{"id": str(self.chunk.id)}]},
+            response={"text": "old"},
+            status="ok",
+            is_error=False,
+            retention_days=365,
+            max_per_conversation=10,
+        )
+        self.assertIsNotNone(artifact_old)
+        McpToolOutputArtifact.objects.filter(id=artifact_old).update(created_at=timezone.now() - timedelta(days=45))
+
+        artifact_new = store_local_tool_output_artifact(
+            conversation=self.conversation,
+            invoked_tool="read_document",
+            request={"items": [{"id": str(self.chunk.id)}]},
+            response={"text": "new"},
+            status="ok",
+            is_error=False,
+            retention_days=30,
+            max_per_conversation=10,
+        )
+        self.assertIsNotNone(artifact_new)
+
+        qs = McpToolOutputArtifact.objects.filter(conversation=self.conversation, invoked_tool="read_document").order_by("-created_at")
+        self.assertEqual(qs.count(), 1)
+        self.assertEqual(str(qs.first().id), artifact_new)

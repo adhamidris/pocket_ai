@@ -80,7 +80,7 @@ from .types import (
     ToolRateLimitExceeded,
     CharacterBudgetExceeded,
 )
-from .tool_artifacts import build_prompt_view_for_text_artifact, store_local_tool_output_artifact
+from .tool_artifacts import store_local_tool_output_artifact
 from .models import McpToolOutputArtifact
 from .schemas.agentic_rag import (
     SearchResultItem,
@@ -5006,11 +5006,13 @@ def _agentic_read_v2_handler(
 
     # Per-call output cap: stay under MCP_PROMPT_TOOL_OUTPUT_MAX_CHARS minus margin.
     try:
-        prompt_output_limit = int(getattr(settings, "MCP_PROMPT_TOOL_OUTPUT_MAX_CHARS", 12000) or 12000)
+        raw_prompt_output_limit = getattr(settings, "MCP_PROMPT_TOOL_OUTPUT_MAX_CHARS", 12000)
+        prompt_output_limit = int(raw_prompt_output_limit if raw_prompt_output_limit is not None else 12000)
     except (TypeError, ValueError):
         prompt_output_limit = 12000
     try:
-        safety_margin = int(getattr(settings, "MCP_READ_DOCUMENT_MAX_CHARS_MARGIN", 800) or 800)
+        raw_safety_margin = getattr(settings, "MCP_READ_DOCUMENT_MAX_CHARS_MARGIN", 800)
+        safety_margin = int(raw_safety_margin if raw_safety_margin is not None else 800)
     except (TypeError, ValueError):
         safety_margin = 800
     safe_prompt_limit = max(200, prompt_output_limit - max(0, safety_margin))
@@ -5866,26 +5868,27 @@ def _agentic_read_v2_handler(
         remaining_chars = max(0, remaining_chars - item_chars)
         total_chars += item_chars
 
-        contents.append(
-            {
-                "id": item_id,
-                "title": title,
-                "type": content_type,
-                "content": content_text,
-                "chars": item_chars,
-                "cursor_used": cursor_used,
-                "next_cursor": next_cursor,
-                "complete": bool(complete and not next_cursor),
-                # Back-compat: orchestrator coverage ledger expects "truncated" on contents[].
-                "truncated": bool(not complete or bool(next_cursor)),
-            }
-        )
+        content_entry: dict[str, object] = {
+            "id": item_id,
+            "title": title,
+            "type": content_type,
+            "content": content_text,
+            "chars": item_chars,
+            "complete": bool(complete and not next_cursor),
+            # Back-compat: orchestrator coverage ledger expects "truncated" on contents[].
+            "truncated": bool(not complete or bool(next_cursor)),
+        }
+        if cursor_used:
+            content_entry["cursor_used"] = cursor_used
+        if next_cursor:
+            content_entry["next_cursor"] = next_cursor
+        contents.append(content_entry)
+
         read.append(
             {
                 "id": item_id,
                 "status": "full" if (complete and not next_cursor) else "partial",
                 "chars": item_chars,
-                "next_cursor": next_cursor,
             }
         )
 
@@ -5908,7 +5911,13 @@ def _agentic_read_v2_handler(
         artifact_max_per_conversation = 200
     artifact_max_per_conversation = max(0, min(5000, artifact_max_per_conversation))
 
+    output_limit = max(0, int(prompt_output_limit))
+
+    PROMPT_VIEW_INLINE_MIN_CHARS = 200
     PROMPT_VIEW_INLINE_MAX_CHARS = 1600
+    if output_limit:
+        # Reserve room for JSON framing + cursors + budget metadata when the prompt cap is small.
+        PROMPT_VIEW_INLINE_MAX_CHARS = min(PROMPT_VIEW_INLINE_MAX_CHARS, max(PROMPT_VIEW_INLINE_MIN_CHARS, output_limit // 2))
 
     def _response_status() -> str:
         if errors or deferred or any(str(entry.get("status") or "") in {"partial", "artifact"} for entry in read):
@@ -5950,12 +5959,24 @@ def _agentic_read_v2_handler(
         full_text = item.get("content")
         if not item_id or not isinstance(full_text, str) or not full_text:
             return False
-        if len(full_text) <= PROMPT_VIEW_INLINE_MAX_CHARS:
+        if isinstance(item.get("artifact_id"), str) and str(item.get("artifact_id") or "").strip():
             return False
 
-        preview_text = full_text[:PROMPT_VIEW_INLINE_MAX_CHARS]
+        preview_len = min(len(full_text), PROMPT_VIEW_INLINE_MAX_CHARS)
+        if len(full_text) >= PROMPT_VIEW_INLINE_MIN_CHARS:
+            preview_len = max(PROMPT_VIEW_INLINE_MIN_CHARS, preview_len)
+        preview_text = full_text[:preview_len]
         cursor_after = item.get("next_cursor")
         cursor_used_local = item.get("cursor_used")
+        if isinstance(cursor_used_local, str) and cursor_used_local.strip():
+            # Avoid nested artifacts: if this segment was already read from an artifact cursor,
+            # we can always clip + continue with that cursor instead of creating a new artifact.
+            try:
+                used_payload = _verify_agentic_read_cursor_v2(cursor_used_local.strip())
+            except ValueError:
+                used_payload = None
+            if isinstance(used_payload, dict) and str(used_payload.get("kind") or "") == "artifact":
+                return False
 
         artifact_payload: dict[str, object] = {
             "kind": "agentic_read_v2",
@@ -5982,17 +6003,10 @@ def _agentic_read_v2_handler(
         if not artifact_id:
             return False
 
-        prompt_view = build_prompt_view_for_text_artifact(
-            text=full_text,
-            title=str(item.get("title") or "").strip() or None,
-            content_type=str(item.get("type") or "").strip() or None,
-            max_chars=PROMPT_VIEW_INLINE_MAX_CHARS,
-        )
-
         cursor_next = {
             **_cursor_payload_base(item_id=item_id, kind="artifact"),
             "artifact_id": artifact_id,
-            "char_offset": int(PROMPT_VIEW_INLINE_MAX_CHARS),
+            "char_offset": int(preview_len),
         }
         cursor_str = _sign_agentic_read_cursor_v2(cursor_next)
 
@@ -6005,9 +6019,7 @@ def _agentic_read_v2_handler(
 
         trace["status"] = "artifact"
         trace["chars"] = len(full_text)
-        trace["next_cursor"] = cursor_str
         trace["artifact_id"] = artifact_id
-        trace["prompt_view"] = prompt_view
         return True
 
     # Start with the raw v2 output; if it exceeds the prompt cap once budgets are added,
@@ -6015,7 +6027,6 @@ def _agentic_read_v2_handler(
     total_chars_final = int(total_chars)
     response_hint: str | None = None
     response_candidate = _build_response(total_chars_value=total_chars_final)
-    output_limit = max(0, int(prompt_output_limit))
     if output_limit and _payload_len_with_budget(response_candidate) > output_limit:
         read_by_id: dict[str, dict[str, object]] = {}
         for entry in read:
@@ -6048,7 +6059,101 @@ def _agentic_read_v2_handler(
                 "Use next_cursor to continue reading until complete."
             )
 
-    response = _build_response(total_chars_value=total_chars_final, hint=response_hint)
+    response_candidate = _build_response(total_chars_value=total_chars_final, hint=response_hint)
+
+    # If we're still above the prompt cap (e.g., cursor/budget overhead), clip artifact previews
+    # until the JSON payload fits. This doesn't lose evidence because the full text is stored
+    # in the artifact and `next_cursor` continues deterministically.
+    if output_limit:
+        guard_loops = 0
+        payload_chars = _payload_len_with_budget(response_candidate)
+        while payload_chars > output_limit and guard_loops < 20:
+            guard_loops += 1
+            artifact_streams: list[tuple[dict[str, object], str, int]] = []
+            for item in contents:
+                if not isinstance(item, dict):
+                    continue
+                if not isinstance(item.get("content"), str):
+                    continue
+                artifact_id_direct = item.get("artifact_id")
+                if isinstance(artifact_id_direct, str) and artifact_id_direct.strip():
+                    artifact_streams.append((item, artifact_id_direct.strip(), 0))
+                    continue
+                cursor_used_local = item.get("cursor_used")
+                if not (isinstance(cursor_used_local, str) and cursor_used_local.strip()):
+                    continue
+                try:
+                    used_payload = _verify_agentic_read_cursor_v2(cursor_used_local.strip())
+                except ValueError:
+                    continue
+                if str(used_payload.get("kind") or "") != "artifact":
+                    continue
+                artifact_id = str(used_payload.get("artifact_id") or "").strip()
+                if not artifact_id:
+                    continue
+                try:
+                    base_offset = int(used_payload.get("char_offset") or 0)
+                except (TypeError, ValueError):
+                    base_offset = 0
+                artifact_streams.append((item, artifact_id, max(0, base_offset)))
+
+            if not artifact_streams:
+                break
+            target, target_artifact_id, base_offset = max(artifact_streams, key=lambda it: len(str(it[0].get("content") or "")))
+            current_text = target.get("content")
+            if not isinstance(current_text, str) or len(current_text) <= PROMPT_VIEW_INLINE_MIN_CHARS:
+                break
+
+            excess = max(1, payload_chars - output_limit)
+            new_len = max(PROMPT_VIEW_INLINE_MIN_CHARS, len(current_text) - excess - 25)
+            if new_len >= len(current_text):
+                new_len = max(PROMPT_VIEW_INLINE_MIN_CHARS, len(current_text) - 25)
+            clipped_text = current_text[:new_len]
+            target["content"] = clipped_text
+            target["chars"] = len(clipped_text)
+
+            item_id = str(target.get("id") or "").strip()
+            if item_id and target_artifact_id:
+                cursor_next = {
+                    **_cursor_payload_base(item_id=item_id, kind="artifact"),
+                    "artifact_id": target_artifact_id,
+                    "char_offset": int(base_offset + len(clipped_text)),
+                }
+                target["next_cursor"] = _sign_agentic_read_cursor_v2(cursor_next)
+                target["complete"] = False
+                target["truncated"] = True
+
+            total_chars_final = sum(int(entry.get("chars") or 0) for entry in contents if isinstance(entry, Mapping))
+            response_candidate = _build_response(total_chars_value=total_chars_final, hint=response_hint)
+            payload_chars = _payload_len_with_budget(response_candidate)
+
+    response = response_candidate
+
+    try:
+        artifact_items = sum(1 for entry in read if isinstance(entry, Mapping) and str(entry.get("status") or "") == "artifact")
+        partial_items = sum(1 for entry in read if isinstance(entry, Mapping) and str(entry.get("status") or "") == "partial")
+        response_chars = _payload_len_with_budget(response)
+        structured_log(
+            "mcp",
+            "read_document.agentic_v2",
+            {
+                "items": len(ordered_items),
+                "contents": len(contents),
+                "partial_items": int(partial_items),
+                "artifact_items": int(artifact_items),
+                "deferred": len(deferred),
+                "errors": len(errors),
+                "total_chars": int(total_chars_final),
+                "max_chars": int(max_chars),
+                "output_chars": int(response_chars),
+                "output_limit": int(output_limit or 0),
+            },
+            context={"conversation": conversation.id, "business": conversation.business_profile_id},
+            logger_obj=logger,
+        )
+    except Exception:
+        # Logging must never break the tool boundary.
+        pass
 
     try:
         context.reserve_characters(int(total_chars_final))

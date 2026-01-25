@@ -1879,15 +1879,42 @@ class McpOrchestratorService:
                                 "prompt_compact": True,
                             }
 
+                        raw_tool_json = json.dumps(prompt_tool_result, ensure_ascii=False)
+                        truncated_tool_json = self._truncate_tool_message_for_prompt(tool_name, raw_tool_json)
+                        # Observability: track when we had to truncate a *knowledge* tool message before it
+                        # hit the LLM prompt (this should trend to ~0 in agentic-v2 mode).
+                        try:
+                            tool_output_limit = self._tool_output_max_chars()
+                        except Exception:
+                            tool_output_limit = 0
+                        if (
+                            tool_output_limit
+                            and self._is_knowledge_tool(tool_name)
+                            and isinstance(raw_tool_json, str)
+                            and len(raw_tool_json) > tool_output_limit
+                        ):
+                            structured_log(
+                                "mcp",
+                                "prompt.tool_output_truncated",
+                                {
+                                    "tool": tool_name,
+                                    "raw_chars": len(raw_tool_json),
+                                    "limit": int(tool_output_limit),
+                                },
+                                context={
+                                    "conversation": conversation.id,
+                                    "business": conversation.business_profile_id,
+                                },
+                                logger_obj=logger,
+                                level=logging.WARNING,
+                            )
+
                         transcript.append(
                             {
                                 "role": "tool",
                                 "tool_call_id": tool_call.get("id"),
                                 "name": tool_name,
-                                "content": self._truncate_tool_message_for_prompt(
-                                    tool_name,
-                                    json.dumps(prompt_tool_result, ensure_ascii=False),
-                                ),
+                                "content": truncated_tool_json,
                             }
                         )
 
