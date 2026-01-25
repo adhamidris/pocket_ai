@@ -461,7 +461,6 @@ class McpOrchestratorService:
         streaming_allowed = not verification_blocks_streaming
 
         transcript = list(messages)
-        task_summary_note = self._build_task_summary_note(conversation, user_message, tool_context)
         tool_phase_assistant_message: dict[str, object] | None = None
         final_assistant_message: dict[str, object] | None = None
         first_pass_streamed_chunks: list[str] = []
@@ -480,7 +479,6 @@ class McpOrchestratorService:
         final_answer_started = False
         inline_response_blocks_detected = False
         dsml_skip_line = False
-        preplan_note: str | None = None
         preplan_payload: dict[str, object] | None = None
         provider_name = (os.getenv("MCP_PROVIDER") or "").strip().lower()
         tool_definitions_for_model = self.tool_definitions
@@ -524,15 +522,6 @@ class McpOrchestratorService:
                 search_query = str(preplan_payload.get("search_query") or "").strip()
                 planned_tools = preplan_payload.get("tools") or []
                 tool_list = [t for t in planned_tools if isinstance(t, str) and t.strip()]
-                note_bits: list[str] = []
-                if route:
-                    note_bits.append(f"route={route}")
-                if search_query:
-                    note_bits.append(f"query=\"{self._clip_text(search_query, 120)}\"")
-                if tool_list:
-                    note_bits.append(f"tools={', '.join(tool_list[:4])}")
-                if note_bits:
-                    preplan_note = "Routing plan (system-only): " + "; ".join(note_bits) + ". Follow unless evidence suggests otherwise."
                 if set(tool_list) == {"search_knowledge"}:
                     initial_tools = self._include_tool_schemas({"search_knowledge"})
 
@@ -1072,11 +1061,6 @@ class McpOrchestratorService:
         # Limit the initial payload so the provider only sees the guardrails and
         # the latest transcript entries needed for intent selection.
         primary_messages = prompts.limit_messages_for_stage(transcript, stage="initial_pass")
-        if preplan_note:
-            insert_at = 0
-            while insert_at < len(primary_messages) and primary_messages[insert_at].get("role") == "system":
-                insert_at += 1
-            primary_messages.insert(insert_at, {"role": "system", "content": preplan_note})
         self._log_prompt("primary", conversation=conversation, messages=primary_messages)
         with TRACER.start_as_current_span("portal.mcp.initial_pass") as initial_span:
             if initial_span.is_recording():
@@ -2103,28 +2087,6 @@ class McpOrchestratorService:
                                     }
 
                     loop_messages = prompts.limit_messages_for_stage(transcript, stage="tool_iteration")
-                    reminder = {
-                        "role": "system",
-                        "content": (
-                            "You have already acknowledged that you are checking. For this call you MUST return only "
-                            "the tool_calls payload with empty assistant content until you can provide the final visitor-facing answer. "
-                            "If another tool is required, respond with tool_calls only—NO additional narration or placeholders."
-                        ),
-                    }
-                    insert_at = 0
-                    while insert_at < len(loop_messages) and loop_messages[insert_at].get("role") == "system":
-                        insert_at += 1
-                    extra_system_messages: list[dict[str, str]] = []
-                    if task_summary_note:
-                        extra_system_messages.append({"role": "system", "content": task_summary_note})
-                    loop_note = self._tool_loop_note(tool_context)
-                    if loop_note:
-                        extra_system_messages.append({"role": "system", "content": loop_note})
-                    evidence_note = self._evidence_summary_note(tool_context)
-                    if evidence_note:
-                        extra_system_messages.append({"role": "system", "content": evidence_note})
-                    extra_system_messages.append(reminder)
-                    loop_messages[insert_at:insert_at] = extra_system_messages
                     if read_document_guardrail_reason:
                         structured_log(
                             "mcp",
@@ -2143,26 +2105,10 @@ class McpOrchestratorService:
                             logger_obj=logger,
                             level=logging.WARNING,
                         )
-                        reminder_text = (
-                            "Tools are repeating the same document read. Do NOT call tools again. "
-                            "Answer now using the snippets already provided. "
-                            "If something is still unclear, give a brief high-level response without asking a clarifying "
-                            "question unless a required identifier is missing or the visitor repeats/insists."
-                        )
-                        if read_document_guardrail_reason == "read_document_throttle":
-                            reminder_text = (
-                                "read_document has been throttled. Do NOT call tools again. "
-                                "Answer now using the snippets already provided. "
-                                "If something is still unclear, give a brief high-level response without asking a clarifying "
-                                "question unless a required identifier is missing or the visitor repeats/insists."
-                            )
-                        forced_reminder = {"role": "system", "content": reminder_text}
-                        forced_messages = list(loop_messages)
-                        forced_messages.insert(insert_at, forced_reminder)
                         forced_payload = self._chat_with_context_governor(
                             conversation=conversation,
                             stage="force_final",
-                            messages=forced_messages,
+                            messages=loop_messages,
                             tools=portal_only_tools if portal_only_tools and on_block_event else None,
                             on_stream_delta=_answer_stream_chunk if streaming_allowed else None,
                             on_tool_call_delta=_on_stream_tool_call_delta,
@@ -2252,21 +2198,10 @@ class McpOrchestratorService:
                                 logger_obj=logger,
                                 level=logging.WARNING,
                             )
-                            forced_reminder = {
-                                "role": "system",
-                                "content": (
-                                    "Tools are not returning new evidence. Do NOT call tools again. "
-                                    "Answer now using the snippets/aggregates already provided. "
-                                    "If something is still unclear, give a brief high-level response without asking a clarifying "
-                                    "question unless a required identifier is missing or the visitor repeats/insists."
-                                ),
-                            }
-                            forced_messages = list(loop_messages)
-                            forced_messages.insert(insert_at, forced_reminder)
                             forced_payload = self._chat_with_context_governor(
                                 conversation=conversation,
                                 stage="force_final",
-                                messages=forced_messages,
+                                messages=loop_messages,
                                 tools=portal_only_tools if portal_only_tools and on_block_event else None,
                                 on_stream_delta=_answer_stream_chunk if streaming_allowed else None,
                                 on_tool_call_delta=_on_stream_tool_call_delta,

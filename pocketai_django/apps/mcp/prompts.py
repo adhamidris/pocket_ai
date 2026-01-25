@@ -267,6 +267,7 @@ def build_system_message(
         - Keep queries tight and anchored to the product/plan/service name.
         - If the visitor asks about multiple distinct items/topics, prefer one batched call using `queries=[...]`.
         - If results mismatch intent, refine using document terms or the suggested refinement.
+        - If repeated searches keep returning the same documents/snippets, stop searching and answer from what you have; clearly state what information is not present in the knowledge base.
         - If reliable evidence already exists in context, answer without a new search.
 
         ### `read_document`
@@ -531,58 +532,65 @@ def build_messages(*, conversation: Conversation, user_message: str) -> list[Map
     - Final entry: the latest user message
     """
     with TRACER.start_as_current_span("prompt.mcp.build_messages") as span:
-        messages: list[Mapping[str, object]] = []
+        # Single-system-message contract:
+        # Build one system message that contains the constitution prompt plus any
+        # runtime context notes (identifier guardrails, memory/files notes, language).
+        system_sections: list[str] = []
+
+        agent = conversation.agent_profile
+        business_profile = conversation.business_profile
+        if agent:
+            business_name = business_profile.name if business_profile else "your business"
+            business_industry = (
+                business_profile.industry if business_profile and business_profile.industry else "general services"
+            )
+            system_sections.append(
+                build_system_message(
+                    agent,
+                    business_name=business_name,
+                    business_industry=business_industry,
+                    business_profile=business_profile,
+                ).strip()
+            )
+        else:
+            system_sections.append("You are a helpful assistant.".strip())
+
         guard_summary = _identifier_requirements_note(conversation)
         if guard_summary:
-            messages.append({"role": "system", "content": guard_summary})
-        agent = conversation.agent_profile
-        if agent:
-            business_profile = conversation.business_profile
-            business_name = business_profile.name if business_profile else "your business"
-            business_industry = business_profile.industry if business_profile and business_profile.industry else "general services"
-            messages.append(
-                {
-                    "role": "system",
-                    "content": build_system_message(
-                        agent,
-                        business_name=business_name,
-                        business_industry=business_industry,
-                        business_profile=business_profile,
-                    ),
-                }
-            )
+            system_sections.append(guard_summary.strip())
+
         memory_note = _conversation_memory_note(conversation)
         if memory_note:
-            messages.append({"role": "system", "content": memory_note})
+            system_sections.append(memory_note.strip())
+
         files_note = _conversation_files_note(conversation)
         if files_note:
-            messages.append({"role": "system", "content": files_note})
+            system_sections.append(files_note.strip())
+
         if agent:
-            messages.append({"role": "system", "content": PLACEHOLDER_REMINDER})
-            messages.append({"role": "system", "content": PORTAL_SPINNER_HINT_INSTRUCTIONS})
+            system_sections.append(PLACEHOLDER_REMINDER.strip())
+            system_sections.append(PORTAL_SPINNER_HINT_INSTRUCTIONS.strip())
 
         normalized_user_message = (user_message or "").strip()
         if normalized_user_message:
             if _ARABIC_CHAR_PATTERN.search(normalized_user_message):
-                messages.append(
-                    {
-                        "role": "system",
-                        "content": (
-                            "Language enforcement: The visitor is writing in Arabic. Reply ONLY in Modern Standard Arabic (MSA). "
-                            "Do not include English translations unless the visitor asks."
-                        ),
-                    }
+                system_sections.append(
+                    (
+                        "Language enforcement: The visitor is writing in Arabic. Reply ONLY in Modern Standard Arabic (MSA). "
+                        "Do not include English translations unless the visitor asks."
+                    ).strip()
                 )
             else:
-                messages.append(
-                    {
-                        "role": "system",
-                        "content": (
-                            "Language enforcement: The visitor is writing in English. Reply ONLY in English. "
-                            "Do not include Arabic translations unless the visitor asks."
-                        ),
-                    }
+                system_sections.append(
+                    (
+                        "Language enforcement: The visitor is writing in English. Reply ONLY in English. "
+                        "Do not include Arabic translations unless the visitor asks."
+                    ).strip()
                 )
+
+        system_message = "\n\n".join(section for section in system_sections if section).strip()
+
+        messages: list[Mapping[str, object]] = [{"role": "system", "content": system_message}]
 
         history_limit = 8
         if getattr(settings, "MCP_LONG_CHAT_MEMORY_ENABLED", True) and memory_note:
