@@ -44,6 +44,10 @@ class SearchBudgetExceeded(ToolConstraintError):
     """Raised when search_knowledge calls per turn exceed the limit (Phase 4)."""
 
 
+class ReadBudgetExceeded(ToolConstraintError):
+    """Raised when read_document calls per turn exceed the limit (future/agentic enforcement)."""
+
+
 @dataclasses.dataclass
 class ToolExecutionContext:
     """
@@ -67,6 +71,11 @@ class ToolExecutionContext:
     # Configurable via settings.MCP_MAX_SEARCHES_PER_TURN (default: 2)
     max_searches_per_turn: int = 2
     searches_used: int = 0
+
+    # NEW: Read call tracking (agentic RAG budgeting)
+    # Configurable via settings.MCP_MAX_READS_PER_TURN (default: 10)
+    max_reads_per_turn: int = 10
+    reads_used: int = 0
     
     @property
     def _effective_max_searches(self) -> int:
@@ -79,6 +88,18 @@ class ToolExecutionContext:
         except Exception:
             pass
         return self.max_searches_per_turn
+
+    @property
+    def _effective_max_reads(self) -> int:
+        """Get the effective max reads, checking Django settings first."""
+        try:
+            from django.conf import settings
+            configured = getattr(settings, "MCP_MAX_READS_PER_TURN", None)
+            if configured is not None:
+                return int(configured)
+        except Exception:
+            pass
+        return self.max_reads_per_turn
     
     ingestion_warnings: list[JsonDict] = dataclasses.field(default_factory=list)
     knowledge_results: list[dict[str, object]] = dataclasses.field(default_factory=list)
@@ -205,6 +226,79 @@ class ToolExecutionContext:
                 "You have already searched the knowledge base this turn. Use read_document to get more details "
                 "from the snippets you received, or answer based on what you found."
             )
+
+    def reserve_read(self) -> None:
+        """
+        Track a read_document call against the per-turn read budget.
+
+        Layer 2 uses this only for budgeting visibility (tool responses). Enforcement
+        can be enabled later without changing the budget contract.
+        """
+
+        self.reads_used += 1
+        try:
+            from django.conf import settings
+            enforce = bool(getattr(settings, "MCP_ENFORCE_READ_BUDGET", False))
+        except Exception:
+            enforce = False
+        if not enforce:
+            return
+
+        effective_limit = self._effective_max_reads
+        # No limit configured (set MCP_MAX_READS_PER_TURN=0 to disable)
+        if effective_limit > 0 and self.reads_used > effective_limit:
+            raise ReadBudgetExceeded(
+                f"Read limit exceeded ({self.reads_used} calls this turn, max {effective_limit}). "
+                "Batch IDs into a single read_document call and answer from collected evidence."
+            )
+
+    def budget_snapshot(self) -> dict[str, object]:
+        """
+        Lightweight per-turn budget telemetry for the LLM.
+
+        This is intentionally small and stable. Tool responses should embed this
+        object so the model can plan within limits without relying on injected
+        system messages.
+        """
+
+        searches_used = int(getattr(self, "searches_used", 0) or 0)
+        reads_used = int(getattr(self, "reads_used", 0) or 0)
+
+        max_searches = int(self._effective_max_searches or 0)
+        max_reads = int(self._effective_max_reads or 0)
+
+        searches_remaining: int | None = None
+        if max_searches > 0:
+            searches_remaining = max(0, max_searches - searches_used)
+
+        reads_remaining: int | None = None
+        if max_reads > 0:
+            reads_remaining = max(0, max_reads - reads_used)
+
+        chars_used = int(getattr(self, "characters_used", 0) or 0)
+        chars_budget: int | None = None
+        if getattr(self, "char_budget_per_turn", None) is not None:
+            try:
+                chars_budget = int(getattr(self, "char_budget_per_turn") or 0)
+            except (TypeError, ValueError):
+                chars_budget = None
+
+        warnings: list[str] = []
+        if searches_remaining == 1:
+            warnings.append("Last search available this turn. Make it count.")
+        if reads_remaining == 1:
+            warnings.append("Last read available this turn. Batch ids carefully.")
+        warning = " ".join(warnings) if warnings else None
+
+        return {
+            "searches_used": searches_used,
+            "searches_remaining": searches_remaining,
+            "reads_used": reads_used,
+            "reads_remaining": reads_remaining,
+            "chars_used": chars_used,
+            "chars_budget": chars_budget,
+            "warning": warning,
+        }
 
     def record_llm_usage(
         self,

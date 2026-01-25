@@ -1796,6 +1796,18 @@ class McpOrchestratorService:
                             self._record_search_history(tool_context, arguments, tool_result)
 
                         if isinstance(tool_result, Mapping):
+                            # Layer 2: tool responses carry budget telemetry instead of mid-loop
+                            # injected system messages. Duplicate searches still consume budget.
+                            if tool_name == "search_knowledge" and call_origin == "duplicate":
+                                try:
+                                    tool_context.reserve_search()
+                                except Exception:
+                                    pass
+
+                            if tool_name in {"search_knowledge", "read_document"}:
+                                tool_result = dict(tool_result)
+                                tool_result["budget"] = tool_context.budget_snapshot()
+
                             diagnostics = (
                                 tool_result.get("diagnostics")
                                 if isinstance(tool_result.get("diagnostics"), Mapping)
@@ -6287,6 +6299,11 @@ class McpOrchestratorService:
             if isinstance(value, (list, tuple, set, dict)) and not value:
                 continue
             compact[key] = value
+
+        budget = payload.get("budget")
+        if isinstance(budget, Mapping) and budget:
+            # Budget telemetry is intentionally tiny and safe to preserve.
+            compact["budget"] = dict(budget)
 
         if normalized_name == "mcp_search_tools":
             raw_results = payload.get("results")

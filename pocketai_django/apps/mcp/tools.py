@@ -1030,10 +1030,18 @@ def execute_tool(
             "hint": "Unsupported tool. Use search_knowledge, read_document, or list_tables.",
         }
     ctx = context or ToolExecutionContext()
+    # Track tool-level read calls (one per tool invocation, regardless of how many
+    # internal chunks/pages the handler touches).
+    if normalized_name == "read_document":
+        try:
+            ctx.reserve_read()
+        except Exception:
+            # Budget tracking should never break tool execution.
+            pass
     business_id = getattr(conversation, "business_profile_id", None)
     try:
         with tenant_context(business_id):
-            return handler(arguments, conversation=conversation, context=ctx)
+            result = handler(arguments, conversation=conversation, context=ctx)
     except ToolConstraintError as exc:
         status = "constraint_error"
         error_code = "constraint_error"
@@ -1052,7 +1060,7 @@ def execute_tool(
         elif isinstance(exc, SearchBudgetExceeded):
             status = "throttled"
             error_code = "search_budget_exceeded"
-        return {
+        result = {
             "tool": normalized_name,
             "status": status,
             "error": error_code,
@@ -1066,13 +1074,21 @@ def execute_tool(
             getattr(conversation, "business_profile_id", None),
             getattr(conversation, "id", None),
         )
-        return {
+        result = {
             "tool": normalized_name,
             "status": "error",
             "error": "tool_failed",
             "error_code": "tool_failed",
             "hint": "Tool execution failed unexpectedly. Try a narrower request.",
         }
+
+    # Layer 2: include per-turn budget snapshot in every knowledge tool response.
+    if normalized_name in {"search_knowledge", "read_document"} and isinstance(result, Mapping):
+        enriched = dict(result)
+        enriched["budget"] = ctx.budget_snapshot()
+        return enriched
+
+    return result
 
 
 # ---------------------------------------------------------------------------
