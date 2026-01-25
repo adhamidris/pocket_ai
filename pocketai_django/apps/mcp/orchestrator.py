@@ -10,6 +10,7 @@ tool dispatch, and plan construction logic.
 from __future__ import annotations
 
 import copy
+import hashlib
 import json
 import logging
 import os
@@ -8761,6 +8762,26 @@ class McpOrchestratorService:
         arguments: Mapping[str, object],
         result: Mapping[str, object] | None = None,
     ) -> str | None:
+        items = arguments.get("items")
+        if isinstance(items, list) and items:
+            cleaned_items: list[str] = []
+            for entry in items:
+                if not isinstance(entry, Mapping):
+                    continue
+                item_id = str(entry.get("id") or "").strip()
+                if not item_id:
+                    continue
+                cursor = entry.get("cursor")
+                cursor_str = str(cursor).strip() if isinstance(cursor, str) and cursor.strip() else ""
+                if cursor_str:
+                    digest = hashlib.sha256(cursor_str.encode("utf-8")).hexdigest()[:12]
+                    cleaned_items.append(f"{item_id}@{digest}")
+                else:
+                    cleaned_items.append(item_id)
+            if cleaned_items:
+                max_chars = arguments.get("max_chars")
+                return f"items:{'|'.join(cleaned_items)}:max{max_chars}"
+
         ids = arguments.get("ids")
         if isinstance(ids, list) and ids:
             cleaned_ids = [str(value).strip() for value in ids if str(value).strip()]
@@ -8855,6 +8876,20 @@ class McpOrchestratorService:
             except ValueError:
                 return False
 
+        # Agentic read v2 runs with a strict read_document contract. If we repair to
+        # read_document in v2 mode, we must use the v2 args shape (items/max_chars),
+        # otherwise the tool boundary will reject legacy knobs/extra fields.
+        try:
+            feature_state = FeatureFlagService.snapshot(conv.business_profile)
+            new_contract_enabled = bool(getattr(settings, "MCP_NEW_CONTRACT_ENABLED", True))
+            agentic_read_v2_enabled = (
+                bool(getattr(feature_state, "rag_agentic_mode", False))
+                and new_contract_enabled
+                and bool(getattr(settings, "MCP_AGENTIC_READ_V2_ENABLED", False))
+            )
+        except Exception:
+            agentic_read_v2_enabled = False
+
         if name == "query_dataset":
             doc_id = args.get("dataset_id") or args.get("document_id")
             if doc_id and not _is_dataset(str(doc_id)):
@@ -8862,10 +8897,16 @@ class McpOrchestratorService:
                 # Repair: Switch to read_document
                 # We default to page 1 full_page scan if no other info, 
                 # assuming a broad query intent from standard dataset usage.
-                new_args = dict(args)
-                new_args["document_id"] = doc_id
-                new_args["page"] = 1 # Fallback
-                new_args["mode"] = "full_page" # Assume deep read for broad query
+                if agentic_read_v2_enabled:
+                    new_args: dict[str, object] = {
+                        "items": [{"id": str(doc_id)}],
+                        "max_chars": 12000,
+                    }
+                else:
+                    new_args = dict(args)
+                    new_args["document_id"] = doc_id
+                    new_args["page"] = 1 # Fallback
+                    new_args["mode"] = "full_page" # Assume deep read for broad query
                 
                 # Log the repair
                 if status_callback:

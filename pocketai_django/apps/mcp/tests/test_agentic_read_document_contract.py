@@ -3,7 +3,7 @@ from __future__ import annotations
 from types import SimpleNamespace
 from unittest import mock
 
-from django.test import SimpleTestCase
+from django.test import SimpleTestCase, override_settings
 
 from apps.mcp import tools
 from apps.mcp.types import ToolExecutionContext
@@ -153,3 +153,65 @@ class AgenticReadDocumentContractTests(SimpleTestCase):
 
         # Under the hood we should only read the items that fit.
         self.assertEqual(handler_mock.call_count, 2)
+
+    @override_settings(MCP_NEW_CONTRACT_ENABLED=True, MCP_AGENTIC_READ_V2_ENABLED=True)
+    def test_read_document_agentic_v2_rejects_legacy_ids(self) -> None:
+        conversation = SimpleNamespace(
+            id="conv-1",
+            business_profile_id="biz-1",
+            business_profile=SimpleNamespace(metadata={}),
+        )
+        context = ToolExecutionContext(char_budget_per_turn=10_000)
+        chunk_id = "00000000-0000-0000-0000-000000000001"
+
+        with (
+            mock.patch.object(
+                tools.FeatureFlagService,
+                "snapshot",
+                return_value=SimpleNamespace(rag_agentic_mode=True),
+            ),
+            mock.patch.object(tools, "_agentic_read_v2_handler") as v2_mock,
+            mock.patch.object(tools, "_agentic_batch_read_handler") as v1_mock,
+        ):
+            result = tools._read_document_agentic_wrapper(
+                {"ids": [chunk_id], "max_chars": 2000},
+                conversation,
+                context,
+            )
+
+        self.assertEqual(result["tool"], "read_document")
+        self.assertEqual(result["status"], "constraint_error")
+        self.assertEqual(result["error_code"], "legacy_parameters_not_supported")
+        self.assertIn("unsupported_fields", result)
+        v2_mock.assert_not_called()
+        v1_mock.assert_not_called()
+
+    @override_settings(MCP_NEW_CONTRACT_ENABLED=True, MCP_AGENTIC_READ_V2_ENABLED=True)
+    def test_read_document_agentic_v2_routes_items(self) -> None:
+        conversation = SimpleNamespace(
+            id="conv-1",
+            business_profile_id="biz-1",
+            business_profile=SimpleNamespace(metadata={}),
+        )
+        context = ToolExecutionContext(char_budget_per_turn=10_000)
+        chunk_id = "00000000-0000-0000-0000-000000000001"
+
+        fake_result = {"tool": "read_document", "status": "ok", "contents": [{"id": chunk_id, "content": "ok"}]}
+
+        with (
+            mock.patch.object(
+                tools.FeatureFlagService,
+                "snapshot",
+                return_value=SimpleNamespace(rag_agentic_mode=True),
+            ),
+            mock.patch.object(tools, "_agentic_read_v2_handler", return_value=fake_result) as v2_mock,
+        ):
+            result = tools._read_document_agentic_wrapper(
+                {"items": [{"id": chunk_id}], "max_chars": 2000},
+                conversation,
+                context,
+            )
+
+        self.assertEqual(result["tool"], "read_document")
+        self.assertEqual(result["status"], "ok")
+        v2_mock.assert_called_once()

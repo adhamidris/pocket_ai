@@ -10948,7 +10948,75 @@ def _read_document_agentic_wrapper(
     agentic_read_v2_enabled = bool(getattr(settings, "MCP_AGENTIC_READ_V2_ENABLED", False))
     
     if feature_state.rag_agentic_mode and new_contract_enabled:
-        if agentic_read_v2_enabled and isinstance(arguments.get("items"), list):
+        if agentic_read_v2_enabled:
+            # Phase 5 cleanup: in agentic-v2 mode we accept ONE stable interface only:
+            #   read_document(items=[{id,cursor?}...], max_chars=?)
+            # Reject all legacy knobs even if the model hallucinates them.
+            def _has_value(key: str) -> bool:
+                value = arguments.get(key)
+                if value is None:
+                    return False
+                if isinstance(value, str):
+                    return bool(value.strip())
+                if isinstance(value, (list, tuple, set, dict)):
+                    return bool(value)
+                return True
+
+            legacy_fields = (
+                "ids",
+                "document_id",
+                "pages",
+                "page",
+                "offset",
+                "mode",
+                "neighbor_window",
+                "chunk_neighbor",
+                "token_budget",
+                "agentic_mode",
+            )
+            unsupported = [field for field in legacy_fields if _has_value(field)]
+            if unsupported:
+                return {
+                    "tool": "read_document",
+                    "status": "constraint_error",
+                    "error": "legacy_parameters_not_supported",
+                    "error_code": "legacy_parameters_not_supported",
+                    "contents": [],
+                    "unsupported_fields": unsupported,
+                    "hint": (
+                        "Agentic read v2 is enabled. Use only "
+                        "`read_document(items=[{id,cursor?}...], max_chars=...)` with ids/cursors from tool results."
+                    ),
+                }
+
+            raw_items = arguments.get("items")
+            if not isinstance(raw_items, list) or not raw_items:
+                return {
+                    "tool": "read_document",
+                    "status": "error",
+                    "error": "missing_items",
+                    "error_code": "missing_items",
+                    "contents": [],
+                    "hint": "items[] is required in agentic read v2 (use ids/cursors from search_knowledge/read_document).",
+                }
+
+            # Reject unknown parameters (besides UI-only metadata) to keep the contract tight.
+            allowed = {"items", "max_chars", "__ui"}
+            extra = [key for key in arguments.keys() if key not in allowed and _has_value(str(key))]
+            if extra:
+                return {
+                    "tool": "read_document",
+                    "status": "constraint_error",
+                    "error": "unsupported_parameters",
+                    "error_code": "unsupported_parameters",
+                    "contents": [],
+                    "unsupported_fields": extra,
+                    "hint": (
+                        "Unsupported parameters for agentic read v2. "
+                        "Use only items[] and max_chars (plus optional __ui)."
+                    ),
+                }
+
             return _agentic_read_v2_handler(arguments, conversation, context)
         # Use batch handler (handles both single and multiple IDs)
         raw_ids = arguments.get("ids")
