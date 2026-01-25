@@ -89,6 +89,7 @@ Returns metadata (IDs, titles, types, estimates) and short previews but NOT full
 Read full content for specific IDs from search_knowledge results.
 - `items` is a list of `{id}` objects; use `{id,cursor}` only when continuing a partial read.
 - Cursors are opaque tokens returned by the tool; never invent or edit them—pass them back exactly.
+- If the tool returns `artifact_id` + `prompt_view`, treat `prompt_view` as an excerpt; use `next_cursor` to keep reading until complete.
 - You can continue multiple partial items in ONE call by including multiple `{id,cursor}` entries in `items`.
 - Batch all relevant items into ONE call.
 - Set `max_chars` high enough to cover what you need (higher for "list all" or large tables).

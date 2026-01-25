@@ -6605,6 +6605,22 @@ class McpOrchestratorService:
                                 out["status"] = item.get("status")
                             if item.get("chars") is not None:
                                 out["chars"] = item.get("chars")
+                            next_cursor = item.get("next_cursor")
+                            if isinstance(next_cursor, str) and next_cursor.strip():
+                                # Cursors must be preserved exactly (no clipping), otherwise continuation breaks.
+                                out["next_cursor"] = next_cursor.strip()
+                            artifact_id = item.get("artifact_id")
+                            if isinstance(artifact_id, str) and artifact_id.strip():
+                                out["artifact_id"] = artifact_id.strip()
+                            prompt_view = item.get("prompt_view")
+                            if isinstance(prompt_view, Mapping) and prompt_view:
+                                out["prompt_view"] = self._compact_action_payload_for_prompt(
+                                    prompt_view,
+                                    max_string_chars=1200,
+                                    max_keys=24,
+                                    max_list_items=10,
+                                    max_nested_keys=12,
+                                )
                             if out:
                                 read_out.append(out)
                         if read_out:
@@ -6616,7 +6632,7 @@ class McpOrchestratorService:
                     if not isinstance(item, Mapping):
                         continue
                     entry: dict[str, object] = {}
-                    for key in ("id", "title", "type", "truncated"):
+                    for key in ("id", "title", "type", "truncated", "cursor_used", "next_cursor", "complete", "artifact_id"):
                         value = item.get(key)
                         if value is None:
                             continue
@@ -6624,8 +6640,9 @@ class McpOrchestratorService:
                             continue
                         entry[key] = value
                     content = item.get("content")
-                    if isinstance(content, str) and content.strip():
-                        entry["content"] = self._clip_text(content.strip(), self._tool_output_max_chars())
+                    if isinstance(content, str) and content:
+                        # Preserve leading newlines (prepend_sep) for cursor continuation correctness.
+                        entry["content"] = self._clip_text(content, self._tool_output_max_chars())
                     if entry:
                         contents_out.append(entry)
                 compact["contents"] = contents_out

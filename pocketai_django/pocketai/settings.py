@@ -578,6 +578,18 @@ MCP_PROMPT_TABLE_MAX_CELLS_EXACT = int(os.getenv("MCP_PROMPT_TABLE_MAX_CELLS_EXA
 MCP_PROMPT_TOOL_OUTPUT_MAX_CHARS = int(os.getenv("MCP_PROMPT_TOOL_OUTPUT_MAX_CHARS", "25000"))
 # MCP_READ_DOCUMENT_MAX_CHARS_MARGIN: Safety margin to keep read_document JSON outputs under MCP_PROMPT_TOOL_OUTPUT_MAX_CHARS.
 MCP_READ_DOCUMENT_MAX_CHARS_MARGIN = int(os.getenv("MCP_READ_DOCUMENT_MAX_CHARS_MARGIN", "1500"))
+# MCP_READ_DOCUMENT_ARTIFACT_RETENTION_DAYS: Retain local read_document tool-output artifacts for this many days.
+try:
+    MCP_READ_DOCUMENT_ARTIFACT_RETENTION_DAYS = int(os.getenv("MCP_READ_DOCUMENT_ARTIFACT_RETENTION_DAYS", "30"))
+except (TypeError, ValueError):
+    MCP_READ_DOCUMENT_ARTIFACT_RETENTION_DAYS = 30
+MCP_READ_DOCUMENT_ARTIFACT_RETENTION_DAYS = max(1, min(365, MCP_READ_DOCUMENT_ARTIFACT_RETENTION_DAYS))
+# MCP_READ_DOCUMENT_ARTIFACT_MAX_PER_CONVERSATION: Keep at most N local read_document artifacts per conversation.
+try:
+    MCP_READ_DOCUMENT_ARTIFACT_MAX_PER_CONVERSATION = int(os.getenv("MCP_READ_DOCUMENT_ARTIFACT_MAX_PER_CONVERSATION", "200"))
+except (TypeError, ValueError):
+    MCP_READ_DOCUMENT_ARTIFACT_MAX_PER_CONVERSATION = 200
+MCP_READ_DOCUMENT_ARTIFACT_MAX_PER_CONVERSATION = max(0, min(5000, MCP_READ_DOCUMENT_ARTIFACT_MAX_PER_CONVERSATION))
 
 # Stage transcript windowing (raw messages kept verbatim in each provider call).
 # These are *message* limits (not tokens) and apply after tool-call anchoring.

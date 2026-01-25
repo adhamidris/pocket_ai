@@ -61,11 +61,22 @@ class AgenticPromptCompactionTests(SimpleTestCase):
                     "id": "chunk-1",
                     "title": "Fees",
                     "type": "text",
-                    "content": "x" * 5000,
+                    # Leading newlines matter for cursor continuation (prepend_sep).
+                    "content": "\n\n" + ("x" * 5000),
                     "truncated": False,
+                    "next_cursor": "cursor-1",
                 }
             ],
-            "read": [{"id": "chunk-1", "status": "full", "chars": 5000}],
+            "read": [
+                {
+                    "id": "chunk-1",
+                    "status": "full",
+                    "chars": 5002,
+                    "next_cursor": "cursor-1",
+                    "artifact_id": "00000000-0000-0000-0000-000000000001",
+                    "prompt_view": {"text": "preview"},
+                }
+            ],
             "deferred": [
                 {
                     "id": "chunk-2",
@@ -92,10 +103,15 @@ class AgenticPromptCompactionTests(SimpleTestCase):
         self.assertIn("contents", compact)
         self.assertNotIn("snippets", compact)
         self.assertEqual(compact["contents"][0]["id"], "chunk-1")
-        self.assertEqual(len(compact["contents"][0]["content"]), 5000)
+        self.assertTrue(compact["contents"][0]["content"].startswith("\n\n"))
+        self.assertEqual(len(compact["contents"][0]["content"]), 5002)
+        self.assertEqual(compact["contents"][0]["next_cursor"], "cursor-1")
         self.assertIn("deferred", compact)
         self.assertEqual(compact["deferred"][0]["id"], "chunk-2")
         self.assertEqual(compact["deferred"][0]["suggested_max_chars"], 12000)
+        self.assertEqual(compact["read"][0]["next_cursor"], "cursor-1")
+        self.assertEqual(compact["read"][0]["artifact_id"], "00000000-0000-0000-0000-000000000001")
+        self.assertIn("prompt_view", compact["read"][0])
 
     @override_settings(MCP_PROMPT_TOOL_OUTPUT_MAX_CHARS=500)
     def test_tool_message_truncation_keeps_content_preview(self) -> None:

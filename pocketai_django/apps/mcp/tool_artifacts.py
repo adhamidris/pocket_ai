@@ -2,9 +2,11 @@ from __future__ import annotations
 
 import json
 import uuid
+from datetime import timedelta
 from typing import Any, Mapping
 
 from django.db import transaction
+from django.utils import timezone
 
 from apps.conversations.models import Conversation
 from apps.mcp.models import McpToolOutputArtifact
@@ -129,6 +131,90 @@ def build_prompt_view_for_remote_tool_result(tool_result: Mapping[str, object]) 
     return view
 
 
+def build_prompt_view_for_text_artifact(
+    *,
+    text: str,
+    title: str | None = None,
+    content_type: str | None = None,
+    max_chars: int = 1600,
+) -> dict[str, object]:
+    """
+    Compact prompt_view for large inline text/table reads.
+
+    Keep this intentionally small; the full content lives in an artifact.
+    """
+
+    preview = _clip_text(text.strip(), max_chars) if isinstance(text, str) else ""
+    view: dict[str, object] = {"text": preview}
+    if title:
+        view["title"] = _clip_text(str(title).strip(), 200)
+    if content_type:
+        view["type"] = _clip_text(str(content_type).strip(), 40)
+    try:
+        view["chars_total"] = len(text)
+    except Exception:
+        pass
+    return view
+
+
+def store_local_tool_output_artifact(
+    *,
+    conversation: Conversation,
+    invoked_tool: str,
+    request: Mapping[str, object],
+    response: Mapping[str, object],
+    status: str = "ok",
+    is_error: bool = False,
+    retention_days: int | None = None,
+    max_per_conversation: int | None = None,
+) -> str | None:
+    """
+    Store a local (first-party) tool output artifact (tenant-scoped).
+
+    Best-effort retention:
+    - prune artifacts older than `retention_days` (if set)
+    - keep at most `max_per_conversation` newest artifacts for this tool (if set)
+    """
+
+    safe_invoked = str(invoked_tool or "")[:200]
+    safe_status = str(status or "")[:48]
+
+    try:
+        with transaction.atomic():
+            artifact = McpToolOutputArtifact.objects.create(
+                conversation=conversation,
+                invoked_tool=safe_invoked,
+                status=safe_status,
+                is_error=bool(is_error),
+                request=_json_safe(request),
+                response=_json_safe(response),
+            )
+
+            qs = McpToolOutputArtifact.objects.filter(conversation=conversation, invoked_tool=safe_invoked)
+
+            if retention_days is not None:
+                try:
+                    days = int(retention_days)
+                except (TypeError, ValueError):
+                    days = 0
+                if days > 0:
+                    cutoff = timezone.now() - timedelta(days=days)
+                    qs.filter(created_at__lt=cutoff).delete()
+
+            if max_per_conversation is not None:
+                try:
+                    keep = int(max_per_conversation)
+                except (TypeError, ValueError):
+                    keep = 0
+                if keep > 0:
+                    keep_ids = list(qs.order_by("-created_at").values_list("id", flat=True)[:keep])
+                    qs.exclude(id__in=keep_ids).delete()
+
+            return str(artifact.id)
+    except Exception:
+        return None
+
+
 def store_remote_tool_output_artifact(
     *,
     conversation: Conversation,
@@ -198,4 +284,3 @@ def _json_safe(value: object) -> object:
         return value
     except Exception:
         return str(value)
-

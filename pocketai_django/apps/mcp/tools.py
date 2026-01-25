@@ -80,6 +80,8 @@ from .types import (
     ToolRateLimitExceeded,
     CharacterBudgetExceeded,
 )
+from .tool_artifacts import build_prompt_view_for_text_artifact, store_local_tool_output_artifact
+from .models import McpToolOutputArtifact
 from .schemas.agentic_rag import (
     SearchResultItem,
     SearchResponse,
@@ -5516,6 +5518,68 @@ def _agentic_read_v2_handler(
         cursor_str = _sign_agentic_read_cursor_v2(cursor_next) if cursor_next else None
         return content_out, ({"cursor": cursor_str} if cursor_str else None), complete
 
+    def _read_artifact_segment(
+        *,
+        item_id: str,
+        artifact_id: str,
+        start_offset: int,
+        budget_chars: int,
+    ) -> tuple[str, dict[str, object] | None, bool, dict[str, object] | None]:
+        """
+        Read from a stored tool-output artifact (Phase 4 fallback).
+
+        Artifact payload shape (response JSON):
+          { "text": "...", "title": "...", "type": "text|table", "cursor_after": "opaque_or_null" }
+        """
+
+        try:
+            artifact_uuid = uuid.UUID(str(artifact_id))
+        except (TypeError, ValueError):
+            return "", None, True, {"id": item_id, "error_code": "invalid_cursor", "hint": "Invalid artifact id."}
+
+        artifact = (
+            McpToolOutputArtifact.objects.filter(
+                id=artifact_uuid,
+                conversation=conversation,
+                invoked_tool="read_document",
+            )
+            .only("id", "response")
+            .first()
+        )
+        if not artifact:
+            return "", None, True, {"id": item_id, "error_code": "artifact_not_found", "hint": "Artifact not found for this conversation."}
+
+        payload = artifact.response if isinstance(getattr(artifact, "response", None), Mapping) else {}
+        full_text = payload.get("text")
+        if not isinstance(full_text, str):
+            full_text = str(full_text or "")
+        if not full_text:
+            return "", None, True, {"id": item_id, "error_code": "artifact_empty", "hint": "Artifact has no readable text."}
+
+        title_override = payload.get("title")
+        type_override = payload.get("type")
+
+        start = max(0, int(start_offset or 0))
+        remaining = max(0, int(budget_chars))
+        out = full_text[start : start + remaining]
+        end = start + len(out)
+
+        cursor_after = payload.get("cursor_after")
+        if end < len(full_text):
+            cursor_next = {
+                **_cursor_payload_base(item_id=item_id, kind="artifact"),
+                "artifact_id": str(artifact.id),
+                "char_offset": int(end),
+            }
+            cursor_str = _sign_agentic_read_cursor_v2(cursor_next)
+            return out, {"cursor": cursor_str}, False, {"title": title_override, "type": type_override}
+
+        if isinstance(cursor_after, str) and cursor_after.strip():
+            # Once the artifact stream is consumed, resume the original knowledge cursor (if any).
+            return out, {"cursor": cursor_after.strip()}, False, {"title": title_override, "type": type_override}
+
+        return out, None, True, {"title": title_override, "type": type_override}
+
     contents: list[dict[str, object]] = []
     read: list[dict[str, object]] = []
     deferred: list[dict[str, object]] = []
@@ -5664,6 +5728,27 @@ def _agentic_read_v2_handler(
                     business_profile=business,
                 )
                 next_cursor = cursor_out.get("cursor") if cursor_out else None
+            elif kind == "artifact":
+                artifact_id = str(cursor_payload.get("artifact_id") or "").strip()
+                char_offset = int(cursor_payload.get("char_offset") or 0)
+                content_text, cursor_out, complete, artifact_meta = _read_artifact_segment(
+                    item_id=item_id,
+                    artifact_id=artifact_id,
+                    start_offset=char_offset,
+                    budget_chars=per_item_budget,
+                )
+                if artifact_meta and artifact_meta.get("error_code"):
+                    errors.append(dict(artifact_meta))
+                    read.append({"id": item_id, "status": "error"})
+                    continue
+                if artifact_meta:
+                    title_override = artifact_meta.get("title")
+                    if isinstance(title_override, str) and title_override.strip():
+                        title = title_override.strip()
+                    type_override = artifact_meta.get("type")
+                    if isinstance(type_override, str) and type_override.strip():
+                        content_type = type_override.strip()
+                next_cursor = cursor_out.get("cursor") if cursor_out else None
             else:
                 errors.append({"id": item_id, "error_code": "invalid_cursor", "hint": "Unknown cursor kind."})
                 read.append({"id": item_id, "status": "error"})
@@ -5804,30 +5889,169 @@ def _agentic_read_v2_handler(
             }
         )
 
-    response_status = "ok"
-    if errors or deferred or any(entry.get("status") == "partial" for entry in read):
-        response_status = "partial" if contents else "error"
-
-    response: dict[str, object] = {
-        "tool": "read_document",
-        "status": response_status,
-        "contents": contents,
-        "read": read,
-        "deferred": deferred,
-        "max_chars": int(max_chars),
-        "max_chars_allowed": int(max_chars_allowed),
-        "total_chars": int(total_chars),
-    }
-    if errors:
-        response["errors"] = errors
-    if not contents and (deferred or errors):
-        response["hint"] = (
-            "No content could be read. Ensure ids/cursors come from tool results, "
-            "increase max_chars (up to max_chars_allowed), or retry with fewer items."
-        )
+    # ---------------------------------------------------------------------
+    # Phase 4: Artifact fallback when the *final* tool payload would exceed the
+    # prompt tool-output cap. This prevents orchestrator-side truncation and
+    # enables deterministic paging via `kind=artifact` cursors.
+    # ---------------------------------------------------------------------
 
     try:
-        context.reserve_characters(int(total_chars))
+        artifact_retention_days = int(getattr(settings, "MCP_READ_DOCUMENT_ARTIFACT_RETENTION_DAYS", 30) or 30)
+    except (TypeError, ValueError):
+        artifact_retention_days = 30
+    artifact_retention_days = max(1, min(365, artifact_retention_days))
+    try:
+        artifact_max_per_conversation = int(
+            getattr(settings, "MCP_READ_DOCUMENT_ARTIFACT_MAX_PER_CONVERSATION", 200) or 200
+        )
+    except (TypeError, ValueError):
+        artifact_max_per_conversation = 200
+    artifact_max_per_conversation = max(0, min(5000, artifact_max_per_conversation))
+
+    PROMPT_VIEW_INLINE_MAX_CHARS = 1600
+
+    def _response_status() -> str:
+        if errors or deferred or any(str(entry.get("status") or "") in {"partial", "artifact"} for entry in read):
+            return "partial" if contents else "error"
+        return "ok"
+
+    def _build_response(*, total_chars_value: int, hint: str | None = None) -> dict[str, object]:
+        payload: dict[str, object] = {
+            "tool": "read_document",
+            "status": _response_status(),
+            "contents": contents,
+            "read": read,
+            "deferred": deferred,
+            "max_chars": int(max_chars),
+            "max_chars_allowed": int(max_chars_allowed),
+            "total_chars": int(total_chars_value),
+        }
+        if errors:
+            payload["errors"] = errors
+        if hint:
+            payload["hint"] = hint
+        elif not contents and (deferred or errors):
+            payload["hint"] = (
+                "No content could be read. Ensure ids/cursors come from tool results, "
+                "increase max_chars (up to max_chars_allowed), or retry with fewer items."
+            )
+        return payload
+
+    def _payload_len_with_budget(payload: Mapping[str, object]) -> int:
+        try:
+            probe = dict(payload)
+            probe.setdefault("budget", context.budget_snapshot())
+            return len(json.dumps(probe, ensure_ascii=False, default=str))
+        except Exception:
+            return 0
+
+    def _attach_artifact_for_item(item: dict[str, object], trace: dict[str, object]) -> bool:
+        item_id = str(item.get("id") or "").strip()
+        full_text = item.get("content")
+        if not item_id or not isinstance(full_text, str) or not full_text:
+            return False
+        if len(full_text) <= PROMPT_VIEW_INLINE_MAX_CHARS:
+            return False
+
+        preview_text = full_text[:PROMPT_VIEW_INLINE_MAX_CHARS]
+        cursor_after = item.get("next_cursor")
+        cursor_used_local = item.get("cursor_used")
+
+        artifact_payload: dict[str, object] = {
+            "kind": "agentic_read_v2",
+            "item_id": item_id,
+            "title": item.get("title"),
+            "type": item.get("type"),
+            "text": full_text,
+        }
+        if isinstance(cursor_after, str) and cursor_after.strip():
+            artifact_payload["cursor_after"] = cursor_after.strip()
+        if isinstance(cursor_used_local, str) and cursor_used_local.strip():
+            artifact_payload["cursor_used"] = cursor_used_local.strip()
+
+        artifact_id = store_local_tool_output_artifact(
+            conversation=conversation,
+            invoked_tool="read_document",
+            request={"items": [{"id": item_id, **({"cursor": cursor_used_local} if cursor_used_local else {})}]},
+            response=artifact_payload,
+            status="ok",
+            is_error=False,
+            retention_days=artifact_retention_days,
+            max_per_conversation=artifact_max_per_conversation,
+        )
+        if not artifact_id:
+            return False
+
+        prompt_view = build_prompt_view_for_text_artifact(
+            text=full_text,
+            title=str(item.get("title") or "").strip() or None,
+            content_type=str(item.get("type") or "").strip() or None,
+            max_chars=PROMPT_VIEW_INLINE_MAX_CHARS,
+        )
+
+        cursor_next = {
+            **_cursor_payload_base(item_id=item_id, kind="artifact"),
+            "artifact_id": artifact_id,
+            "char_offset": int(PROMPT_VIEW_INLINE_MAX_CHARS),
+        }
+        cursor_str = _sign_agentic_read_cursor_v2(cursor_next)
+
+        item["artifact_id"] = artifact_id
+        item["content"] = preview_text
+        item["chars"] = len(preview_text)
+        item["next_cursor"] = cursor_str
+        item["complete"] = False
+        item["truncated"] = True
+
+        trace["status"] = "artifact"
+        trace["chars"] = len(full_text)
+        trace["next_cursor"] = cursor_str
+        trace["artifact_id"] = artifact_id
+        trace["prompt_view"] = prompt_view
+        return True
+
+    # Start with the raw v2 output; if it exceeds the prompt cap once budgets are added,
+    # convert the largest content entries to artifacts until it fits.
+    total_chars_final = int(total_chars)
+    response_hint: str | None = None
+    response_candidate = _build_response(total_chars_value=total_chars_final)
+    output_limit = max(0, int(prompt_output_limit))
+    if output_limit and _payload_len_with_budget(response_candidate) > output_limit:
+        read_by_id: dict[str, dict[str, object]] = {}
+        for entry in read:
+            if isinstance(entry, Mapping) and entry.get("id"):
+                read_by_id[str(entry.get("id"))] = entry  # type: ignore[assignment]
+
+        # Convert biggest items first (best shrink per artifact).
+        contents_sorted = sorted(
+            (item for item in contents if isinstance(item, Mapping)),
+            key=lambda item: int(item.get("chars") or 0),
+            reverse=True,
+        )
+        converted_any = False
+        for item in contents_sorted:
+            item_id = str(item.get("id") or "").strip()
+            trace = read_by_id.get(item_id)
+            if not trace or not isinstance(item, dict):
+                continue
+            if not _attach_artifact_for_item(item, trace):
+                continue
+            converted_any = True
+            total_chars_final = sum(int(entry.get("chars") or 0) for entry in contents if isinstance(entry, Mapping))
+            response_candidate = _build_response(total_chars_value=total_chars_final)
+            if _payload_len_with_budget(response_candidate) <= output_limit:
+                break
+
+        if converted_any:
+            response_hint = (
+                "Some content was stored as an artifact to fit prompt limits. "
+                "Use next_cursor to continue reading until complete."
+            )
+
+    response = _build_response(total_chars_value=total_chars_final, hint=response_hint)
+
+    try:
+        context.reserve_characters(int(total_chars_final))
     except CharacterBudgetExceeded as exc:
         return {
             "tool": "read_document",

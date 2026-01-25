@@ -140,6 +140,7 @@ The cursor is an opaque, signed token. Internally it contains:
   - `page_blocks`: `{upload_id, page_number, block_order, char_offset, prepend_sep?}`
   - `table_rows`: `{upload_id, table_id, row_chunk_index, char_offset, prepend_sep?}`
   - `chunk_window`: `{upload_id, chunk_start, chunk_end, chunk_index, char_offset, prepend_sep?}`
+  - `artifact`: `{artifact_id, char_offset}`
 
 `prepend_sep` is set only when resuming at an element boundary so that concatenating
 multiple tool calls preserves the exact `\\n\\n` joins between blocks/rows/chunks.
@@ -155,6 +156,9 @@ store the full output out-of-band and return:
 Implementation preference:
 - Reuse `apps.mcp.models.McpToolOutputArtifact` for local knowledge artifacts
   (remote fields remain blank). This avoids new tables/migrations in Phase 4.
+- Best-effort retention controls (Phase 4):
+  - `MCP_READ_DOCUMENT_ARTIFACT_RETENTION_DAYS`
+  - `MCP_READ_DOCUMENT_ARTIFACT_MAX_PER_CONVERSATION`
 
 Budgets / Interactions
 ----------------------
