@@ -1202,7 +1202,6 @@ class McpOrchestratorService:
                                     },
                                     logger_obj=logger,
                                 )
-                        duplicate_result = None
                         if tool_name == "search_knowledge" and not policy_tool_result:
                             remaining_searches = self._search_budget_remaining(tool_context)
                             if remaining_searches == 0:
@@ -1218,17 +1217,11 @@ class McpOrchestratorService:
                                         "(do not invent IDs)."
                                     ),
                                 }
-                            else:
-                                duplicate_result = self._short_circuit_duplicate_search(
-                                    arguments,
-                                    tool_context,
-                                    conversation,
-                                )
 
                         knowledge_phase: dict[str, object] | None = None
                         # Only emit visitor-visible “searching/reading” phases for real tool execution.
-                        # Policy/duplicate short-circuits should not show a second “Searching…” spinner.
-                        if self._is_knowledge_tool(tool_name) and not policy_tool_result and not duplicate_result:
+                        # Policy short-circuits should not show a “Searching…” spinner.
+                        if self._is_knowledge_tool(tool_name) and not policy_tool_result:
                             knowledge_phase = _emit_phase_start(_knowledge_phase_payload(tool_name, arguments))
 
                         # Record the signature of the tool call after any hint injection so we can
@@ -1242,7 +1235,6 @@ class McpOrchestratorService:
                             if tool_span.is_recording():
                                 tool_span.set_attribute("mcp.tool_name", tool_name)
                                 tool_span.set_attribute("mcp.iteration_index", iteration_index)
-                                tool_span.set_attribute("mcp.duplicate_short_circuit", bool(duplicate_result))
                                 tool_span.set_attribute("mcp.tool_args_keys", sorted(arguments.keys()))
                             if cached_table_result is not None:
                                 tool_result = cached_table_result
@@ -1251,9 +1243,6 @@ class McpOrchestratorService:
                             elif policy_tool_result:
                                 tool_result = policy_tool_result
                                 call_origin = "policy"
-                            elif duplicate_result:
-                                tool_result = duplicate_result
-                                call_origin = "duplicate"
                             else:
                                 if tool_name == "read_document":
                                     ids_requested = arguments.get("ids")
@@ -1792,17 +1781,9 @@ class McpOrchestratorService:
                                 if document_id_hint:
                                     tool_context.table_column_filters.pop(document_id_hint, None)
 
-                        if tool_name == "search_knowledge" and not duplicate_result:
-                            self._record_search_history(tool_context, arguments, tool_result)
-
                         if isinstance(tool_result, Mapping):
                             # Layer 2: tool responses carry budget telemetry instead of mid-loop
-                            # injected system messages. Duplicate searches still consume budget.
-                            if tool_name == "search_knowledge" and call_origin == "duplicate":
-                                try:
-                                    tool_context.reserve_search()
-                                except Exception:
-                                    pass
+                            # injected system messages.
 
                             if tool_name in {"search_knowledge", "read_document"}:
                                 tool_result = dict(tool_result)
@@ -1839,7 +1820,6 @@ class McpOrchestratorService:
                                     "duration_ms": int(call_duration_ms) if call_duration_ms is not None else 0,
                                     "origin": call_origin,
                                     "cache_hit": cache_hit,
-                                    "duplicate_short_circuit": bool(duplicate_result),
                                 }
                             )
                             if tool_name == "read_document":
@@ -4683,169 +4663,6 @@ class McpOrchestratorService:
             },
             logger_obj=logger,
         )
-
-    @staticmethod
-    def _record_search_history(context: ToolExecutionContext, arguments: Mapping[str, object], tool_result: Mapping[str, object]) -> None:
-        history = getattr(context, "search_history", None)
-        if history is None:
-            return
-        raw_query = arguments.get("query")
-        query = str(raw_query).strip() if raw_query is not None else ""
-        if not query:
-            return
-        normalized = query.lower()
-        # Legacy contract: tool_result["snippets"] (content-bearing)
-        snippets = tool_result.get("snippets") if isinstance(tool_result, Mapping) else None
-        results = None
-        if not isinstance(snippets, list) or not snippets:
-            # Agentic contract: tool_result["results"] (metadata only)
-            results = tool_result.get("results") if isinstance(tool_result, Mapping) else None
-            if not isinstance(results, list) or not results:
-                return
-
-        snippet_ids: list[str] = []
-        read_required = False
-        hint_text = None
-
-        if isinstance(snippets, list) and snippets:
-            for snippet in snippets:
-                if not isinstance(snippet, Mapping):
-                    continue
-                identifier = snippet.get("chunk_id") or snippet.get("id") or snippet.get("upload_id")
-                if identifier:
-                    snippet_ids.append(str(identifier))
-                if snippet.get("read_required"):
-                    read_required = True
-                if hint_text is None:
-                    read_hint = snippet.get("read_hint")
-                    if isinstance(read_hint, Mapping):
-                        doc_id = read_hint.get("document_id")
-                        page = read_hint.get("page")
-                        mode = read_hint.get("mode")
-                        pieces = []
-                        if doc_id:
-                            pieces.append(f"document_id={doc_id}")
-                        if page:
-                            pieces.append(f"page={page}")
-                        if mode:
-                            pieces.append(f"mode={mode}")
-                        if pieces:
-                            hint_text = "Read with " + ", ".join(pieces)
-        else:
-            # Agentic results: prefer read_id/id for follow-up reads.
-            for result in results or []:
-                if not isinstance(result, Mapping):
-                    continue
-                identifier = result.get("read_id") or result.get("id") or result.get("document_id")
-                if identifier:
-                    snippet_ids.append(str(identifier))
-            if snippet_ids:
-                preview_ids = ", ".join(snippet_ids[:3])
-                suffix = "…" if len(snippet_ids) > 3 else ""
-                hint_text = f"Use read_document ids=[{preview_ids}{suffix}]"
-            # In agentic mode, search previews are not answer-ready by design.
-            read_required = True
-        queries_to_record = [normalized]
-        extra_queries = arguments.get("queries")
-        if isinstance(extra_queries, (list, tuple)):
-            for value in extra_queries:
-                candidate = str(value).strip().lower()
-                if candidate and candidate not in queries_to_record:
-                    queries_to_record.append(candidate)
-        cached_results = []
-        total_found = None
-        if isinstance(results, list) and results:
-            total_found = tool_result.get("total_found")
-            cached_results = []
-            for result in results[:16]:
-                if isinstance(result, Mapping):
-                    cached_results.append(dict(result))
-        record_payload = {
-            "snippet_count": len(snippets) if isinstance(snippets, list) else len(results or []),
-            "read_required": read_required,
-            "snippet_ids": snippet_ids,
-            "hint": hint_text or "Existing snippets are available; use the provided read_hint if you need more detail.",
-        }
-        if cached_results:
-            record_payload["results"] = cached_results
-        if total_found not in {None, ""}:
-            record_payload["total_found"] = total_found
-        for query_value in queries_to_record:
-            history.append(
-                {
-                    "query": query_value,
-                    **record_payload,
-                }
-            )
-
-    def _short_circuit_duplicate_search(
-        self,
-        arguments: Mapping[str, object],
-        context: ToolExecutionContext,
-        conversation: Conversation,
-    ) -> Mapping[str, object] | None:
-        history = getattr(context, "search_history", None) or []
-        if not history:
-            return None
-        raw_query = arguments.get("query")
-        query = str(raw_query).strip() if raw_query is not None else ""
-        if not query:
-            return None
-        normalized = query.lower()
-        if not normalized:
-            return None
-        if getattr(context, "knowledge_reads", None):
-            return None
-        for entry in reversed(history):
-            if entry.get("query") != normalized:
-                continue
-            if not entry.get("snippet_count"):
-                continue
-            snippet_ids = entry.get("snippet_ids") or []
-            hint = entry.get("hint") or "Use read_document with the existing ids from the earlier search."
-            structured_log(
-                "mcp",
-                "search.duplicate_short_circuit",
-                {
-                    "query": normalized,
-                    "snippet_ids": snippet_ids,
-                },
-                indent=1,
-                context={
-                    "conversation": conversation.id,
-                    "business": conversation.business_profile_id,
-                },
-                logger_obj=logger,
-            )
-            diagnostics = {
-                "duplicate_query": normalized,
-                "snippet_ids": snippet_ids,
-            }
-            cached_results = entry.get("results")
-            if agentic and isinstance(cached_results, list) and cached_results:
-                payload: dict[str, object] = {
-                    "tool": "search_knowledge",
-                    "status": "duplicate",
-                    "error": "duplicate_query",
-                    "results": cached_results,
-                    "hint": hint,
-                    "llm_hint": hint,
-                    "diagnostics": diagnostics,
-                }
-                total_found = entry.get("total_found")
-                if total_found not in {None, ""}:
-                    payload["total_found"] = total_found
-                return payload
-            return {
-                "tool": "search_knowledge",
-                "status": "duplicate",
-                "error": "duplicate_query",
-                "snippets": [],
-                "hint": hint,
-                "llm_hint": hint,
-                "diagnostics": diagnostics,
-            }
-        return None
 
     @staticmethod
     def _search_budget_remaining(context: ToolExecutionContext | None) -> int | None:

@@ -1067,6 +1067,18 @@ except (TypeError, ValueError):
 if MCP_MAX_SEARCHES_PER_TURN < 0:
     MCP_MAX_SEARCHES_PER_TURN = 0
 try:
+    # MCP_MAX_READS_PER_TURN: Limit read_document calls per user message (0 disables limit).
+    # This is primarily used for LLM-visible budgeting; enforcement is optional.
+    MCP_MAX_READS_PER_TURN = int(os.getenv("MCP_MAX_READS_PER_TURN", "10"))
+except (TypeError, ValueError):
+    MCP_MAX_READS_PER_TURN = 10
+if MCP_MAX_READS_PER_TURN < 0:
+    MCP_MAX_READS_PER_TURN = 0
+
+# MCP_ENFORCE_READ_BUDGET: When enabled, read_document calls beyond MCP_MAX_READS_PER_TURN
+# raise a constraint error. Default is off (budget is still tracked in tool responses).
+MCP_ENFORCE_READ_BUDGET = os.getenv("MCP_ENFORCE_READ_BUDGET", "false").lower() in {"1", "true", "yes"}
+try:
     # MCP_READ_DOCUMENT_REPEAT_LIMIT: Force-final after repeating the same read_document signature this many times.
     MCP_READ_DOCUMENT_REPEAT_LIMIT = int(os.getenv("MCP_READ_DOCUMENT_REPEAT_LIMIT", "2"))
 except (TypeError, ValueError):

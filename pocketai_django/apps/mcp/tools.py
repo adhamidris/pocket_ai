@@ -2953,6 +2953,115 @@ def _search_knowledge_handler(
             "hint": str(exc),
         }
 
+    # Layer 3: Semantic duplicate search detection (one intent per user turn).
+    # Duplicate intents still consume search budget (reserve_search already happened).
+    feature_state = FeatureFlagService.snapshot(conversation.business_profile)
+    rag_agentic_enabled = bool(getattr(feature_state, "rag_agentic_mode", False))
+
+    def _normalize_intent_text(values: Sequence[str]) -> str:
+        parts: list[str] = []
+        seen: set[str] = set()
+        for raw in values:
+            token = str(raw or "").strip().lower()
+            if not token:
+                continue
+            if token in seen:
+                continue
+            seen.add(token)
+            parts.append(token)
+        return " | ".join(parts)
+
+    def _cosine_similarity(a: Sequence[float], b: Sequence[float]) -> float | None:
+        if not a or not b:
+            return None
+        if len(a) != len(b):
+            return None
+        dot = 0.0
+        norm_a = 0.0
+        norm_b = 0.0
+        for x, y in zip(a, b, strict=False):
+            try:
+                xf = float(x)
+                yf = float(y)
+            except (TypeError, ValueError):
+                return None
+            dot += xf * yf
+            norm_a += xf * xf
+            norm_b += yf * yf
+        if norm_a <= 0.0 or norm_b <= 0.0:
+            return None
+        return dot / (math.sqrt(norm_a) * math.sqrt(norm_b))
+
+    intent_text = _normalize_intent_text(queries)
+    intent_embedding: list[float] | None = None
+    embedder = _portal_file_embedding_service()
+    if embedder and intent_text:
+        try:
+            embedded = embedder.embed_text(intent_text)
+            if isinstance(embedded, list) and embedded:
+                intent_embedding = [float(v) for v in embedded]
+        except Exception:
+            intent_embedding = None
+
+    history = getattr(context, "search_history", None) or []
+    best_match: Mapping[str, object] | None = None
+    best_similarity: float | None = None
+    if intent_text and isinstance(history, list) and history:
+        # Only compare against a small recent window to avoid unbounded work.
+        for entry in reversed(history[-12:]):
+            if not isinstance(entry, Mapping):
+                continue
+            prior_response = entry.get("response")
+            if not isinstance(prior_response, Mapping):
+                continue
+            prior_intent = str(entry.get("intent") or entry.get("query") or "").strip().lower()
+            if not prior_intent:
+                continue
+
+            similarity: float | None = None
+            if intent_embedding is not None and embedder:
+                prior_embedding = entry.get("embedding")
+                if not isinstance(prior_embedding, list) or not prior_embedding:
+                    try:
+                        embedded = embedder.embed_text(prior_intent)
+                        if isinstance(embedded, list) and embedded:
+                            prior_embedding = [float(v) for v in embedded]
+                            # Cache embedding for future comparisons (not returned to the LLM).
+                            try:
+                                entry["embedding"] = prior_embedding
+                            except Exception:
+                                pass
+                    except Exception:
+                        prior_embedding = None
+                if isinstance(prior_embedding, list) and prior_embedding:
+                    similarity = _cosine_similarity(intent_embedding, prior_embedding)
+
+            if similarity is None:
+                similarity = 1.0 if prior_intent == intent_text else 0.0
+
+            if best_similarity is None or similarity > best_similarity:
+                best_similarity = similarity
+                best_match = entry
+
+        if best_match is not None and best_similarity is not None and best_similarity >= 0.85:
+            prior_response = best_match.get("response")
+            if isinstance(prior_response, Mapping):
+                duplicate_payload: dict[str, object] = {
+                    "tool": "search_knowledge",
+                    "status": "duplicate",
+                    "error": "duplicate_intent",
+                    "error_code": "duplicate_intent",
+                    "hint": "Similar to a previous search this turn. Reusing earlier results.",
+                    "diagnostics": {"dedup_similarity": round(float(best_similarity), 4)},
+                }
+                if rag_agentic_enabled:
+                    duplicate_payload["results"] = list(prior_response.get("results") or [])
+                    if prior_response.get("total_found") not in {None, ""}:
+                        duplicate_payload["total_found"] = prior_response.get("total_found")
+                else:
+                    duplicate_payload["snippets"] = list(prior_response.get("snippets") or [])
+                return duplicate_payload
+
     raw_limit = arguments.get("limit")
     try:
         requested_limit = int(raw_limit) if raw_limit is not None else None
@@ -4120,12 +4229,26 @@ def _search_knowledge_handler(
     if len(queries) > 1:
         payload["batched_queries"] = tuple(queries)
     
-    # Check if agentic mode is enabled for this business
-    feature_state = FeatureFlagService.snapshot(conversation.business_profile)
-    if feature_state.rag_agentic_mode:
-        return _convert_to_agentic_search_response(payload, conversation=conversation)
-    
-    return payload
+    # Convert to agentic format when enabled, and persist search intent metadata
+    # for semantic dedup within this user turn.
+    if rag_agentic_enabled:
+        final_response = _convert_to_agentic_search_response(payload, conversation=conversation)
+    else:
+        final_response = payload
+
+    try:
+        history_entry = {
+            "intent": intent_text,
+            "embedding": intent_embedding,
+            "response": copy.deepcopy(final_response),
+        }
+        context.search_history.append(history_entry)
+        if len(context.search_history) > 25:
+            context.search_history = context.search_history[-25:]
+    except Exception:
+        pass
+
+    return final_response
 
 
 def _convert_to_agentic_read_response(
