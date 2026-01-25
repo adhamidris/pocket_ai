@@ -33,6 +33,7 @@ from typing import Any, Callable, Iterable, Mapping, Sequence
 
 from django.db import models
 from django.db.models import Prefetch
+from django.db.models.functions import Length
 from django.core.cache import cache
 from django.conf import settings
 
@@ -2669,12 +2670,23 @@ def _convert_to_agentic_search_response(
         chunk_id = str(snippet.get("chunk_id") or snippet.get("id") or "")
         upload_id = str(snippet.get("upload_id") or "")
         
-        # Estimate char count from summary/content if available
+        # Estimate read size for token planning.
+        # Prefer diagnostics when present (they reflect runtime caps), otherwise fall back to
+        # preview-derived heuristics.
         content = snippet.get("content") or ""
         summary = snippet.get("summary") or ""
-        char_estimate = len(content) if content else len(summary) * 3  # estimate full content
-
+        char_estimate = len(content) if content else len(summary) * 3
         diagnostics = snippet.get("source_diagnostics") if isinstance(snippet.get("source_diagnostics"), Mapping) else {}
+        limit_hint = 0
+        for key in ("inline_char_limit", "page_char_limit"):
+            try:
+                limit_hint = max(limit_hint, int(diagnostics.get(key) or 0))
+            except (TypeError, ValueError):
+                continue
+        if limit_hint:
+            # Clamp to what the tool schema allows so the hint is actionable.
+            char_estimate = max(char_estimate, min(limit_hint, int(READ_DOCUMENT_MAX_CHARS_SCHEMA_MAX)))
+
         row_count = diagnostics.get("table_total_rows") or diagnostics.get("table_row_count") or snippet.get("row_count")
         column_count = diagnostics.get("table_column_count") or snippet.get("column_count")
         table_id = diagnostics.get("table_id")
@@ -2708,7 +2720,19 @@ def _convert_to_agentic_search_response(
             result_item["preview"] = preview
 
         if isinstance(read_hint, Mapping) and read_hint:
-            result_item["read_hint"] = dict(read_hint)
+            hint_out = dict(read_hint)
+            # Help the LLM pick a `max_chars` that is likely to succeed without guesswork.
+            hint_out.setdefault(
+                "suggested_max_chars",
+                _suggest_max_chars_for_estimate(char_estimate, max_chars_allowed=int(READ_DOCUMENT_MAX_CHARS_SCHEMA_MAX)),
+            )
+            result_item["read_hint"] = hint_out
+        else:
+            result_item["read_hint"] = {
+                "suggested_max_chars": _suggest_max_chars_for_estimate(
+                    char_estimate, max_chars_allowed=int(READ_DOCUMENT_MAX_CHARS_SCHEMA_MAX)
+                )
+            }
         
         if content_type == "table":
             if row_count is not None:
@@ -2732,6 +2756,9 @@ def _convert_to_agentic_search_response(
         "results": results,
         "total_found": total_found,
     }
+    completeness = legacy_payload.get("completeness")
+    if isinstance(completeness, Mapping) and completeness:
+        agentic_response["completeness"] = dict(completeness)
     
     # Add hint only if empty
     if not results:
@@ -4327,6 +4354,257 @@ def _convert_to_agentic_read_response(
     return agentic_response
 
 
+def _suggest_max_chars_for_estimate(estimated_chars: int, *, max_chars_allowed: int) -> int:
+    """
+    Suggest a max_chars value for a follow-up read based on an observed/estimated size.
+
+    We add small headroom so callers don't land exactly on the edge, while still
+    respecting the per-call max limit.
+    """
+
+    base = max(500, int(estimated_chars))
+    with_headroom = int(math.ceil(base * 1.1) + 200)
+    return max(500, min(int(max_chars_allowed), with_headroom))
+
+
+def _estimate_agentic_read_chars_for_id(
+    document_id: str,
+    *,
+    conversation: Conversation,
+    context: ToolExecutionContext,
+    arguments: Mapping[str, object],
+    service: KnowledgeSearchService,
+    max_chars_allowed: int,
+) -> tuple[int | None, str | None]:
+    """
+    Estimate the character footprint of reading `document_id` in agentic `ids[]` mode.
+
+    Goal: produce an estimate that is close to the actual tool output size so we can
+    choose which IDs fit into a `max_chars` budget without truncating any single item.
+    """
+
+    try:
+        identifier = uuid.UUID(str(document_id))
+    except (TypeError, ValueError):
+        return None, "invalid_uuid"
+
+    business = conversation.business_profile
+
+    pages_arg = arguments.get("pages")
+    page_arg = arguments.get("page")
+    offset_value = arguments.get("offset")
+    explicit_page_request = bool(pages_arg or page_arg is not None or offset_value is not None)
+
+    # Resolve pages to read (mirror _read_document_handler defaults/caps).
+    page_indices: list[int] = []
+    if isinstance(pages_arg, list):
+        for p in pages_arg:
+            try:
+                page_indices.append(max(1, int(p)))
+            except (TypeError, ValueError):
+                pass
+    if not page_indices and page_arg is not None:
+        try:
+            page_indices.append(max(1, int(page_arg)))
+        except (TypeError, ValueError):
+            pass
+    if not page_indices and offset_value is not None:
+        try:
+            page_indices.append(max(1, int(offset_value) + 1))
+        except (TypeError, ValueError):
+            pass
+    if not page_indices:
+        page_indices = [1]
+    page_indices = sorted(list(set(page_indices)))[:5]
+
+    raw_mode = _coerce_str(arguments.get("mode")).strip().lower()
+    requested_mode = raw_mode if raw_mode in {"excerpt", "full_page"} else None
+
+    raw_budget = arguments.get("token_budget")
+    token_budget: int | None = None
+    if raw_budget is not None:
+        try:
+            token_budget = max(0, int(raw_budget))
+        except (TypeError, ValueError):
+            token_budget = None
+
+    neighbor = arguments.get("neighbor_window") or arguments.get("chunk_neighbor")
+    try:
+        neighbor_window = int(neighbor)
+    except (TypeError, ValueError):
+        neighbor_window = 1
+    neighbor_window = max(0, min(3, neighbor_window))
+
+    try:
+        chunk_record = (
+            apply_customer_visible_chunks(
+                KnowledgeUploadChunk.objects.filter(
+                    id=identifier,
+                    business_profile=business,
+                    upload__status=KnowledgeStatus.ACTIVE,
+                )
+            )
+            .select_related("upload")
+            .only("id", "upload_id", "chunk_index", "metadata", "upload__id", "upload__ingestion_metadata")
+            .annotate(content_len=Length("content"))
+            .first()
+        )
+
+        upload_record = None
+        if not chunk_record:
+            upload_record = apply_customer_visible_uploads(
+                KnowledgeUpload.objects.filter(
+                    id=identifier,
+                    business_profile=business,
+                    status=KnowledgeStatus.ACTIVE,
+                )
+            ).only("id", "ingestion_metadata", "summary", "token_count").first()
+            if not upload_record:
+                return None, "not_found"
+    except Exception:
+        # Best-effort fallback when DB access is unavailable (e.g., SimpleTestCase) or query fails.
+        # Keep the estimate actionable so the batch handler can still call the underlying reader.
+        per_page = 600
+        if requested_mode == "full_page":
+            try:
+                per_page = int(service.inline_char_limit_for_business(business))
+            except Exception:
+                per_page = int(max_chars_allowed)
+        per_page = max(200, min(int(max_chars_allowed), int(per_page)))
+        return max(200, per_page * len(page_indices)), "estimate_fallback"
+
+    # Agentic table-chunk override: in ids[] mode we should treat table chunks as a single unit
+    # and defer them if the combined content won't fit.
+    if chunk_record and not explicit_page_request:
+        chunk_meta = chunk_record.metadata if isinstance(getattr(chunk_record, "metadata", None), Mapping) else {}
+        if chunk_meta.get("is_table_chunk"):
+            table_role = str(chunk_meta.get("table_chunk_role") or "").strip().lower()
+            table_row_index = chunk_meta.get("table_row_index")
+            if table_role == "row" or table_row_index is not None:
+                # Row chunks are typically small; use stored content length (plus small overhead).
+                try:
+                    content_len = int(getattr(chunk_record, "content_len", 0) or 0)
+                except (TypeError, ValueError):
+                    content_len = 0
+                return max(0, content_len) + 40, None
+
+            table_id = chunk_meta.get("table_id")
+            if table_id:
+                rows_qs = apply_customer_visible_chunks(
+                    KnowledgeUploadChunk.objects.filter(
+                        upload_id=chunk_record.upload_id,
+                        business_profile=business,
+                        upload__status=KnowledgeStatus.ACTIVE,
+                        metadata__table_id=str(table_id),
+                        metadata__table_chunk_role="row",
+                    )
+                ).exclude(content="")
+                agg = rows_qs.aggregate(total=models.Sum(Length("content")), count=models.Count("id"))
+                total_len = int(agg.get("total") or 0)
+                row_count = int(agg.get("count") or 0)
+                separators = 2 * max(0, row_count - 1)
+                return max(0, total_len + separators) + 40, None
+
+    # Estimate the page-window payload (used for most non-table reads).
+    upload_source = chunk_record.upload if chunk_record else upload_record  # type: ignore[union-attr]
+    knowledge_entry = _match_knowledge_entry(context, [str(identifier), str(getattr(upload_source, "id", ""))])
+
+    mode = requested_mode
+    if mode is None:
+        is_pdf_table_chunk = False
+        if chunk_record:
+            chunk_meta = chunk_record.metadata if isinstance(getattr(chunk_record, "metadata", None), Mapping) else {}
+            if chunk_meta.get("is_table_chunk") or chunk_meta.get("table_chunk_role"):
+                ingestion_meta = upload_source.ingestion_metadata if isinstance(getattr(upload_source, "ingestion_metadata", None), Mapping) else {}  # type: ignore[union-attr]
+                format_hint = str(ingestion_meta.get("format") or "").strip().lower()
+                if format_hint not in {"csv", "tsv", "xls", "xlsx", "jsonl"}:
+                    is_pdf_table_chunk = True
+        if is_pdf_table_chunk:
+            mode = "full_page"
+        else:
+            try:
+                prefer_full_page = _detect_full_page_intent(
+                    conversation,
+                    None,
+                    document_entry=knowledge_entry,
+                    upload=upload_source,
+                )
+            except Exception:
+                prefer_full_page = False
+            mode = "full_page" if (prefer_full_page and _budget_allows_full_page(context, business_profile=business, service=service)) else "excerpt"
+
+    # Excerpt reads return synopses/summaries, not full page text. Keep the estimate tight.
+    if mode != "full_page":
+        return max(200, 600 * len(page_indices)), None
+
+    inline_cap = int(service.inline_char_limit_for_business(business))
+    page_cap = int(service.page_char_limit_for_business(business))
+    effective_limit = inline_cap
+    if token_budget is not None:
+        approx_chars = max(200, int(token_budget) * 4)
+        effective_limit = max(200, min(effective_limit, approx_chars))
+    effective_limit = max(200, min(int(max_chars_allowed), effective_limit))
+
+    # Best-effort: estimate page block text length (when present), else fall back to a stitched chunk window.
+    try:
+        from apps.accounts.models import KnowledgeUploadPage, KnowledgeUploadPageBlock
+    except Exception:
+        KnowledgeUploadPage = None  # type: ignore[assignment]
+        KnowledgeUploadPageBlock = None  # type: ignore[assignment]
+
+    total_estimate = 0
+    for page_idx in page_indices:
+        resolved_upload_id = getattr(upload_source, "id", None)
+        resolved_page = page_idx
+        if chunk_record and page_idx == 1:
+            # Mirror load_page_window's chunk-metadata page override when caller used the default page=1.
+            chunk_meta = chunk_record.metadata if isinstance(getattr(chunk_record, "metadata", None), Mapping) else {}
+            meta_page = chunk_meta.get("table_page_number") or chunk_meta.get("chunk_page") or chunk_meta.get("page_number")
+            if meta_page:
+                try:
+                    parsed_page = int(meta_page)
+                    if parsed_page >= 1:
+                        resolved_page = parsed_page
+                except (TypeError, ValueError):
+                    pass
+
+        blocks_estimate = 0
+        if KnowledgeUploadPage and KnowledgeUploadPageBlock and resolved_upload_id:
+            page_obj = (
+                KnowledgeUploadPage.objects.filter(upload_id=resolved_upload_id, page_number=resolved_page)
+                .only("id")
+                .first()
+            )
+            if page_obj:
+                blocks_qs = KnowledgeUploadPageBlock.objects.filter(page_id=page_obj.id).exclude(text="")
+                agg = blocks_qs.aggregate(total=models.Sum(Length("text")), count=models.Count("id"))
+                sum_len = int(agg.get("total") or 0)
+                block_count = int(agg.get("count") or 0)
+                # Account for join/newlines/headers in the renderer.
+                blocks_estimate = max(0, sum_len + 2 * max(0, block_count - 1) + 80)
+
+        chunk_window_estimate = 0
+        if chunk_record and chunk_record.chunk_index is not None:
+            start = max(0, int(chunk_record.chunk_index) - neighbor_window)
+            end = int(chunk_record.chunk_index) + neighbor_window
+            window_qs = KnowledgeUploadChunk.objects.filter(
+                upload_id=chunk_record.upload_id,
+                chunk_index__gte=start,
+                chunk_index__lte=end,
+            ).exclude(content="")
+            agg = window_qs.aggregate(total=models.Sum(Length("content")), count=models.Count("id"))
+            sum_len = int(agg.get("total") or 0)
+            chunk_count = int(agg.get("count") or 0)
+            chunk_window_estimate = max(0, sum_len + 2 * max(0, chunk_count - 1) + 80)
+
+        page_estimate = max(blocks_estimate, chunk_window_estimate)
+        if page_estimate <= 0:
+            page_estimate = effective_limit
+        total_estimate += min(effective_limit, page_estimate)
+
+    return max(0, total_estimate), None
+
+
 def _agentic_batch_read_handler(
     arguments: Mapping[str, object],
     conversation: Conversation,
@@ -4403,93 +4681,131 @@ def _agentic_batch_read_handler(
                 ),
             }
     
-    all_contents: list[dict[str, object]] = []
-    total_chars = 0
-    truncated_ids: list[str] = []
-    errors: list[dict[str, object]] = []
-    
-    for doc_id in ordered_ids:
-        
-        # Check if we've hit the char limit
-        if total_chars >= max_chars:
-            truncated_ids.append(doc_id)
-            continue
-        
-        remaining = max_chars - total_chars
+    # ---------------------------------------------------------------------
+    # Layer 4: Char-aware batch planner (no per-item truncation)
+    # ---------------------------------------------------------------------
 
-        # Call the standard handler for this ID
+    plan_entries: list[dict[str, object]] = []
+    estimate_errors: list[dict[str, object]] = []
+    for idx, doc_id in enumerate(ordered_ids):
+        estimate, err = _estimate_agentic_read_chars_for_id(
+            doc_id,
+            conversation=conversation,
+            context=context,
+            arguments=arguments,
+            service=service,
+            max_chars_allowed=max_chars_allowed,
+        )
+        if estimate is None:
+            estimate_errors.append({"id": doc_id, "error": err or "estimate_failed"})
+            continue
+        plan_entries.append({"id": doc_id, "estimate_chars": int(estimate), "index": idx})
+
+    # Greedy packing: prefer smaller items to maximize coverage within budget.
+    # Tie-break by original order to preserve relevance when estimates match.
+    plan_entries.sort(key=lambda entry: (int(entry.get("estimate_chars") or 0), int(entry.get("index") or 0)))
+
+    remaining_chars = max(0, int(max_chars))
+    to_read: list[dict[str, object]] = []
+    deferred: list[dict[str, object]] = []
+    for entry in plan_entries:
+        estimate_chars = int(entry.get("estimate_chars") or 0)
+        if estimate_chars <= remaining_chars:
+            to_read.append(entry)
+            remaining_chars -= estimate_chars
+        else:
+            deferred.append(entry)
+
+    contents: list[dict[str, object]] = []
+    read: list[dict[str, object]] = []
+    errors: list[dict[str, object]] = []
+    total_chars = 0
+
+    for entry in to_read:
+        doc_id = str(entry.get("id") or "").strip()
+        if not doc_id:
+            continue
         single_args = dict(arguments)
         single_args["document_id"] = doc_id
         single_args["agentic_mode"] = True
         single_args.pop("ids", None)
-        single_args["max_chars"] = remaining
-        
+        # IMPORTANT: do not shrink max_chars per item; we either include an item fully or defer it.
         try:
             result = _read_document_handler(single_args, conversation, context)
-        except Exception as e:
-            errors.append({"id": doc_id, "error": str(e)})
+        except Exception as exc:
+            errors.append({"id": doc_id, "error": str(exc)})
+            read.append({"id": doc_id, "status": "error"})
             continue
-        
-        if result.get("status") == "error" or result.get("status") == "not_found":
-            errors.append({"id": doc_id, "error": result.get("error", "unknown")})
+
+        status = str(result.get("status") or "").strip().lower()
+        if status in {"error", "not_found", "constraint_error", "throttled"}:
+            errors.append({"id": doc_id, "error": result.get("error", status)})
+            read.append({"id": doc_id, "status": status})
             continue
-        
-        # Extract snippets and add to contents
+
         snippets = result.get("snippets", [])
-        for snippet in snippets:
-            if not isinstance(snippet, Mapping):
-                continue
-            
-            is_table = bool(snippet.get("is_table_chunk"))
-            content = snippet.get("content") or snippet.get("summary") or ""
-            content_len = len(str(content))
-            
-            # Check char budget
-            remaining = max_chars - total_chars
-            if remaining <= 0:
-                truncated_ids.append(doc_id)
-                break
-            if content_len > remaining:
-                truncated_ids.append(doc_id)
-                all_contents.append({
-                    "id": str(snippet.get("chunk_id") or snippet.get("id") or doc_id),
-                    "title": snippet.get("title") or snippet.get("public_label") or "Untitled",
-                    "content": str(content)[:remaining],
-                    "type": "table" if is_table else "text",
-                    "truncated": True,
-                })
-                total_chars += remaining
-                break
-            
-            all_contents.append({
-                "id": str(snippet.get("chunk_id") or snippet.get("id") or doc_id),
-                "title": snippet.get("title") or snippet.get("public_label") or "Untitled",
-                "content": content,
-                "type": "table" if is_table else "text",
-                "truncated": False,
-            })
-            total_chars += content_len
-    
-    # Build response
-    response: dict[str, object] = {
-        "tool": "read_document",
-        "status": "partial" if truncated_ids else "ok",
-        "contents": all_contents,
-        "total_chars": total_chars,
-    }
-    
-    if truncated_ids:
-        response["truncated_ids"] = truncated_ids
-    if errors:
-        response["errors"] = errors
-    
+        parts: list[str] = []
+        title = None
+        content_type = "text"
+        truncated = False
+        if isinstance(snippets, list):
+            for snippet in snippets:
+                if not isinstance(snippet, Mapping):
+                    continue
+                if title is None:
+                    title = snippet.get("title") or snippet.get("public_label") or "Untitled"
+                if snippet.get("is_table_chunk"):
+                    content_type = "table"
+                if snippet.get("truncated"):
+                    truncated = True
+                content = snippet.get("content") or snippet.get("summary") or ""
+                if isinstance(content, str) and content.strip():
+                    parts.append(content.strip())
+        combined = "\n\n".join(parts).strip()
+        contents.append(
+            {
+                "id": doc_id,
+                "title": title or "Untitled",
+                "content": combined,
+                "type": content_type,
+                "truncated": truncated,
+            }
+        )
+        doc_chars = len(combined)
+        total_chars += doc_chars
+        read.append({"id": doc_id, "status": "full", "chars": doc_chars})
+
+    deferred_out: list[dict[str, object]] = []
+    for entry in deferred:
+        doc_id = str(entry.get("id") or "").strip()
+        estimate_chars = int(entry.get("estimate_chars") or 0)
+        suggested = _suggest_max_chars_for_estimate(estimate_chars, max_chars_allowed=max_chars_allowed)
+        hint = f"Read separately with max_chars={suggested}."
+        if estimate_chars > max_chars_allowed:
+            hint = (
+                f"Estimated size ({estimate_chars}) exceeds the per-call limit ({max_chars_allowed}). "
+                "Retry with fewer pages/excerpt mode, or read specific pages via document_id + pages."
+            )
+        deferred_out.append(
+            {
+                "id": doc_id,
+                "chars": estimate_chars,
+                "reason": "exceeds_budget",
+                "suggested_max_chars": suggested,
+                "hint": hint,
+            }
+        )
+
+    if estimate_errors:
+        errors.extend(estimate_errors)
+
     structured_log(
         "mcp",
         "read.batch_complete",
         {
         "requested_ids": len(ordered_ids),
-            "content_count": len(all_contents),
-            "truncated_count": len(truncated_ids),
+            "content_count": len(contents),
+            "deferred_count": len(deferred_out),
             "error_count": len(errors),
             "total_chars": total_chars,
             "max_chars": max_chars,
@@ -4501,6 +4817,38 @@ def _agentic_batch_read_handler(
         logger_obj=logger,
     )
     
+    status_value = "ok"
+    if contents:
+        status_value = "partial" if (deferred_out or errors) else "ok"
+    else:
+        if deferred_out:
+            status_value = "partial"
+        elif errors:
+            status_value = "error"
+
+    response: dict[str, object] = {
+        "tool": "read_document",
+        "status": status_value,
+        "contents": contents,
+        "read": read,
+        "deferred": deferred_out,
+        "total_chars": total_chars,
+        "max_chars": max_chars,
+        "max_chars_allowed": max_chars_allowed,
+    }
+    if errors:
+        response["errors"] = errors
+    if deferred_out and not contents:
+        response["hint"] = (
+            "Nothing fit within max_chars. Increase max_chars (up to max_chars_allowed) or narrow the read "
+            "(fewer ids, fewer pages, or excerpt mode)."
+        )
+    if errors and not contents and not deferred_out:
+        response["hint"] = (
+            "No content could be read. Ensure you are using valid UUID ids from search_knowledge results, "
+            "and that the documents are accessible for this business."
+        )
+
     return response
 
 

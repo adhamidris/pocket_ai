@@ -409,10 +409,10 @@ class McpSearchKnowledgeHandlerTests(TestCase):
         result = tools._search_knowledge_handler(payload, self.conversation, context)
         
         self.assertEqual(result["status"], "ok")
-        snippets = result.get("snippets", [])
-        self.assertTrue(snippets, "Should have at least one snippet")
+        results = result.get("results", [])
+        self.assertTrue(results, "Should have at least one result")
         
-        read_hint = snippets[0].get("read_hint", {})
+        read_hint = results[0].get("read_hint", {})
         # Should have page=3 (from page_number), NOT page=8 (chunk_index + 1)
         self.assertIn("page", read_hint, "Should have page when page_number is set")
         self.assertEqual(read_hint["page"], 3, "page should be 3 from page_number, not 8 (chunk_index + 1)")
@@ -459,10 +459,10 @@ class McpSearchKnowledgeHandlerTests(TestCase):
         result = tools._search_knowledge_handler(payload, self.conversation, context)
         
         self.assertEqual(result["status"], "ok")
-        snippets = result.get("snippets", [])
-        self.assertTrue(snippets)
+        results = result.get("results", [])
+        self.assertTrue(results)
         
-        read_hint = snippets[0].get("read_hint", {})
+        read_hint = results[0].get("read_hint", {})
         # Should have offset=7, NOT page=8
         self.assertNotIn("page", read_hint, "Should NOT have page when no page_number")
         self.assertIn("offset", read_hint, "Should have offset when no page_number")
@@ -520,7 +520,7 @@ class McpSearchKnowledgeHandlerTests(TestCase):
         result = tools._search_knowledge_handler(payload, self.conversation, context)
 
         self.assertEqual(result["status"], "ok")
-        self.assertEqual(len(result.get("snippets", [])), 2)
+        self.assertEqual(len(result.get("results", [])), 2)
         self.assertIn("completeness", result)
         completeness = result["completeness"]
         self.assertEqual(completeness["shown"], 2)
@@ -582,7 +582,7 @@ class McpSearchKnowledgeHandlerTests(TestCase):
         result = tools._search_knowledge_handler(payload, self.conversation, context)
 
         self.assertEqual(result["status"], "ok")
-        self.assertEqual(len(result.get("snippets", [])), 2)
+        self.assertEqual(len(result.get("results", [])), 2)
         completeness = result["completeness"]
         self.assertEqual(completeness["shown"], 2)
         self.assertEqual(completeness["already_seen"], 2)

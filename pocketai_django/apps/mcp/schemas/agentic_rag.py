@@ -121,6 +121,25 @@ class ReadContentItem:
 
 
 @dataclass(frozen=True)
+class DeferredReadItem:
+    """An ID that was not read because it would exceed the caller's max_chars budget."""
+
+    id: str
+    chars: int
+    reason: str = "exceeds_budget"
+    suggested_max_chars: int | None = None
+    hint: str | None = None
+
+    def as_dict(self) -> dict:
+        out: dict = {"id": self.id, "chars": self.chars, "reason": self.reason}
+        if self.suggested_max_chars is not None:
+            out["suggested_max_chars"] = self.suggested_max_chars
+        if self.hint:
+            out["hint"] = self.hint
+        return out
+
+
+@dataclass(frozen=True)
 class ReadResponse:
     """
     Read tool response — full content.
@@ -130,8 +149,8 @@ class ReadResponse:
 
     status: Literal["ok", "partial", "error"]
     contents: tuple[ReadContentItem, ...] = field(default_factory=tuple)
+    deferred: tuple[DeferredReadItem, ...] = field(default_factory=tuple)
     total_chars: int = 0
-    truncated_ids: tuple[str, ...] = field(default_factory=tuple)  # IDs that hit char limit
     error: str | None = None
 
     def as_dict(self) -> dict:
@@ -140,8 +159,8 @@ class ReadResponse:
             "contents": [c.as_dict() for c in self.contents],
             "total_chars": self.total_chars,
         }
-        if self.truncated_ids:
-            data["truncated_ids"] = list(self.truncated_ids)
+        if self.deferred:
+            data["deferred"] = [d.as_dict() for d in self.deferred]
         if self.error:
             data["error"] = self.error
         return data
@@ -171,17 +190,17 @@ def build_search_response(
 def build_read_response(
     *,
     contents: Sequence[ReadContentItem],
-    truncated_ids: Sequence[str] | None = None,
+    deferred: Sequence[DeferredReadItem] | None = None,
 ) -> ReadResponse:
     """Build a successful read response."""
     items = tuple(contents)
     total_chars = sum(len(c.content) for c in items)
-    truncated = tuple(truncated_ids) if truncated_ids else tuple()
+    deferred_items = tuple(deferred) if deferred else tuple()
     return ReadResponse(
-        status="partial" if truncated else "ok",
+        status="partial" if deferred_items else "ok",
         contents=items,
+        deferred=deferred_items,
         total_chars=total_chars,
-        truncated_ids=truncated,
     )
 
 

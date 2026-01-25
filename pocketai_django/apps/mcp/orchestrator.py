@@ -6481,7 +6481,7 @@ class McpOrchestratorService:
                     read_hint = result.get("read_hint")
                     if isinstance(read_hint, Mapping) and read_hint:
                         hint_out: dict[str, object] = {}
-                        for key in ("document_id", "page", "pages", "offset", "mode", "intent"):
+                        for key in ("document_id", "page", "pages", "offset", "mode", "intent", "suggested_max_chars"):
                             value = read_hint.get(key)
                             if value is None:
                                 continue
@@ -6527,10 +6527,13 @@ class McpOrchestratorService:
                     "page",
                     "pages",
                     "total_chars",
+                    "max_chars",
+                    "max_chars_allowed",
                     "truncated_ids",
+                    "read",
+                    "deferred",
                     "errors",
                     "requested_max_chars",
-                    "max_chars_allowed",
                 ):
                     if key not in payload:
                         continue
@@ -6555,6 +6558,45 @@ class McpOrchestratorService:
                                 errors_out.append(err_entry)
                         if errors_out:
                             compact["errors"] = errors_out
+                        continue
+                    if key == "deferred" and isinstance(value, list):
+                        deferred_out: list[dict[str, object]] = []
+                        for item in value[:12]:
+                            if not isinstance(item, Mapping):
+                                continue
+                            out: dict[str, object] = {}
+                            if item.get("id"):
+                                out["id"] = item.get("id")
+                            if item.get("chars") is not None:
+                                out["chars"] = item.get("chars")
+                            if item.get("reason"):
+                                out["reason"] = item.get("reason")
+                            if item.get("suggested_max_chars") is not None:
+                                out["suggested_max_chars"] = item.get("suggested_max_chars")
+                            hint = item.get("hint")
+                            if isinstance(hint, str) and hint.strip():
+                                out["hint"] = self._clip_text(hint.strip(), 260)
+                            if out:
+                                deferred_out.append(out)
+                        if deferred_out:
+                            compact["deferred"] = deferred_out
+                        continue
+                    if key == "read" and isinstance(value, list):
+                        read_out: list[dict[str, object]] = []
+                        for item in value[:12]:
+                            if not isinstance(item, Mapping):
+                                continue
+                            out: dict[str, object] = {}
+                            if item.get("id"):
+                                out["id"] = item.get("id")
+                            if item.get("status"):
+                                out["status"] = item.get("status")
+                            if item.get("chars") is not None:
+                                out["chars"] = item.get("chars")
+                            if out:
+                                read_out.append(out)
+                        if read_out:
+                            compact["read"] = read_out
                         continue
                     compact[key] = value
                 contents_out: list[dict[str, object]] = []

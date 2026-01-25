@@ -186,8 +186,9 @@ Debugging Bad Answers (Quick Checklist)
    - Ensure identifier gating isn’t blocking access (constraint errors / required keys).
 3) Check disambiguation:
    - If `status=disambiguation_required`, the assistant must ask a clarifying question.
-4) Inspect truncation:
-   - If `status=partial` with `truncated_ids`, re-read only those ids with a higher `max_chars` budget.
+4) Inspect partial reads:
+   - If `status=partial` with `deferred`, re-read only the deferred ids (use `suggested_max_chars` when provided),
+     or narrow scope (fewer ids/pages, excerpt mode).
 5) Validate routing:
    - Confirm `read_document` vs `query_dataset` routing for the source type (PDF/DOCX vs CSV/XLSX/JSONL).
 6) Evaluate fallback behavior:
