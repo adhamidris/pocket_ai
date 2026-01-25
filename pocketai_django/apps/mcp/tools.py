@@ -5212,6 +5212,7 @@ def _agentic_read_v2_handler(
         start_order: int,
         start_offset: int,
         budget_chars: int,
+        prepend_sep: bool = False,
     ) -> tuple[str, dict[str, object] | None, bool]:
         try:
             from apps.accounts.models import KnowledgeUploadPage, KnowledgeUploadPageBlock
@@ -5237,6 +5238,8 @@ def _agentic_read_v2_handler(
         out_parts: list[str] = []
         cursor_next: dict[str, object] | None = None
         complete = True
+        # Only prepend a separator when resuming at an element boundary.
+        prepend_sep = bool(prepend_sep) and int(start_offset or 0) <= 0
 
         started = False
         for order_index, text in blocks_qs.iterator():  # type: ignore[attr-defined]
@@ -5257,10 +5260,11 @@ def _agentic_read_v2_handler(
                 offset = max(0, int(start_offset))
                 if offset:
                     chunk_text = chunk_text[offset:]
-            separator = "\n\n" if out_parts else ""
+            separator = "\n\n" if (out_parts or prepend_sep) else ""
             # If we can't fit the separator + at least one character, stop and continue on next call.
             needed_min = len(separator) + 1
             if remaining < needed_min:
+                next_prepend_sep = True if out_parts else bool(prepend_sep)
                 cursor_next = {
                     **_cursor_payload_base(item_id=item_id, kind="page_blocks"),
                     "upload_id": upload_id,
@@ -5268,6 +5272,8 @@ def _agentic_read_v2_handler(
                     "block_order": int(order_int),
                     "char_offset": int(offset),
                 }
+                if next_prepend_sep:
+                    cursor_next["prepend_sep"] = True
                 complete = False
                 break
             if separator:
@@ -5303,15 +5309,19 @@ def _agentic_read_v2_handler(
         item_id: str,
         upload_id: str,
         table_id: str,
-        start_pos: int,
-        start_offset: int,
+        start_chunk_index: int | None = None,
+        start_pos: int | None = None,  # legacy cursor field (pre-phase-3)
+        start_offset: int = 0,
         budget_chars: int,
+        prepend_sep: bool = False,
         business_profile,
     ) -> tuple[str, dict[str, object] | None, bool]:
         remaining = max(0, int(budget_chars))
         out_parts: list[str] = []
         cursor_next: dict[str, object] | None = None
         complete = True
+        # Only prepend a separator when resuming at an element boundary.
+        prepend_sep = bool(prepend_sep) and int(start_offset or 0) <= 0
 
         rows_qs = (
             apply_customer_visible_chunks(
@@ -5328,14 +5338,31 @@ def _agentic_read_v2_handler(
             .values_list("chunk_index", "content")
         )
 
-        pos = max(0, int(start_pos))
+        pos = max(0, int(start_pos or 0))
         offset = max(0, int(start_offset))
+        start_chunk = None
+        if start_chunk_index is not None:
+            try:
+                start_chunk = int(start_chunk_index)
+            except (TypeError, ValueError):
+                start_chunk = None
         started = False
         idx = 0
         for chunk_index, content in rows_qs.iterator():  # type: ignore[attr-defined]
-            if idx < pos:
+            try:
+                ci = int(chunk_index)
+            except (TypeError, ValueError):
                 idx += 1
                 continue
+
+            if start_chunk is not None:
+                if ci < start_chunk:
+                    continue
+            else:
+                # Legacy resume: skip by position in the ordered row list.
+                if idx < pos:
+                    idx += 1
+                    continue
             raw = str(content or "")
             if not raw:
                 idx += 1
@@ -5349,16 +5376,19 @@ def _agentic_read_v2_handler(
                 if row_offset:
                     row_text = row_text[row_offset:]
 
-            separator = "\n\n" if out_parts else ""
+            separator = "\n\n" if (out_parts or prepend_sep) else ""
             needed_min = len(separator) + 1
             if remaining < needed_min:
+                next_prepend_sep = True if out_parts else bool(prepend_sep)
                 cursor_next = {
                     **_cursor_payload_base(item_id=item_id, kind="table_rows"),
                     "upload_id": upload_id,
                     "table_id": str(table_id),
-                    "row_pos": int(idx),
+                    "row_chunk_index": int(ci),
                     "char_offset": int(row_offset),
                 }
+                if next_prepend_sep:
+                    cursor_next["prepend_sep"] = True
                 complete = False
                 break
             if separator:
@@ -5376,7 +5406,7 @@ def _agentic_read_v2_handler(
                 **_cursor_payload_base(item_id=item_id, kind="table_rows"),
                 "upload_id": upload_id,
                 "table_id": str(table_id),
-                "row_pos": int(idx),
+                "row_chunk_index": int(ci),
                 "char_offset": int(row_offset + remaining),
             }
             complete = False
@@ -5397,12 +5427,15 @@ def _agentic_read_v2_handler(
         current_index: int,
         start_offset: int,
         budget_chars: int,
+        prepend_sep: bool = False,
         business_profile,
     ) -> tuple[str, dict[str, object] | None, bool]:
         remaining = max(0, int(budget_chars))
         out_parts: list[str] = []
         cursor_next: dict[str, object] | None = None
         complete = True
+        # Only prepend a separator when resuming at an element boundary.
+        prepend_sep = bool(prepend_sep) and int(start_offset or 0) <= 0
 
         window_qs = (
             apply_customer_visible_chunks(
@@ -5440,9 +5473,10 @@ def _agentic_read_v2_handler(
                 if local_offset:
                     text = text[local_offset:]
 
-            separator = "\n\n" if out_parts else ""
+            separator = "\n\n" if (out_parts or prepend_sep) else ""
             needed_min = len(separator) + 1
             if remaining < needed_min:
+                next_prepend_sep = True if out_parts else bool(prepend_sep)
                 cursor_next = {
                     **_cursor_payload_base(item_id=item_id, kind="chunk_window"),
                     "upload_id": upload_id,
@@ -5451,6 +5485,8 @@ def _agentic_read_v2_handler(
                     "chunk_index": int(ci),
                     "char_offset": int(local_offset),
                 }
+                if next_prepend_sep:
+                    cursor_next["prepend_sep"] = True
                 complete = False
                 break
             if separator:
@@ -5565,6 +5601,7 @@ def _agentic_read_v2_handler(
         # Strategy selection (AUTO):
         if cursor_payload:
             kind = str(cursor_payload.get("kind") or "")
+            prepend_sep = bool(cursor_payload.get("prepend_sep"))
             if kind == "page_blocks":
                 page_number = int(cursor_payload.get("page_number") or 1)
                 block_order = int(cursor_payload.get("block_order") or 0)
@@ -5577,20 +5614,36 @@ def _agentic_read_v2_handler(
                     start_order=block_order,
                     start_offset=char_offset,
                     budget_chars=per_item_budget,
+                    prepend_sep=prepend_sep,
                 )
                 next_cursor = cursor_out.get("cursor") if cursor_out else None
             elif kind == "table_rows":
                 content_type = "table"
                 table_id = str(cursor_payload.get("table_id") or "").strip()
-                start_pos = int(cursor_payload.get("row_pos") or 0)
+                raw_row_chunk_index = cursor_payload.get("row_chunk_index")
+                raw_row_pos = cursor_payload.get("row_pos") if raw_row_chunk_index is None else None
+                start_chunk_index = None
+                if raw_row_chunk_index is not None:
+                    try:
+                        start_chunk_index = int(raw_row_chunk_index)
+                    except (TypeError, ValueError):
+                        start_chunk_index = None
+                start_pos = None
+                if raw_row_pos is not None:
+                    try:
+                        start_pos = int(raw_row_pos)
+                    except (TypeError, ValueError):
+                        start_pos = None
                 char_offset = int(cursor_payload.get("char_offset") or 0)
                 content_text, cursor_out, complete = _read_table_rows_segment(
                     item_id=item_id,
                     upload_id=upload_id,
                     table_id=table_id,
+                    start_chunk_index=start_chunk_index,
                     start_pos=start_pos,
                     start_offset=char_offset,
                     budget_chars=per_item_budget,
+                    prepend_sep=prepend_sep,
                     business_profile=business,
                 )
                 next_cursor = cursor_out.get("cursor") if cursor_out else None
@@ -5607,6 +5660,7 @@ def _agentic_read_v2_handler(
                     current_index=chunk_index,
                     start_offset=char_offset,
                     budget_chars=per_item_budget,
+                    prepend_sep=prepend_sep,
                     business_profile=business,
                 )
                 next_cursor = cursor_out.get("cursor") if cursor_out else None
@@ -5642,7 +5696,8 @@ def _agentic_read_v2_handler(
                     item_id=item_id,
                     upload_id=upload_id,
                     table_id=table_id,
-                    start_pos=0,
+                    start_chunk_index=0,
+                    start_pos=None,
                     start_offset=0,
                     budget_chars=per_item_budget,
                     business_profile=business,

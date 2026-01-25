@@ -131,6 +131,19 @@ Recommended implementation detail (later phase):
 - Payload includes: conversation_id, business_profile_id, document_id, source_kind,
   and source-specific offsets.
 
+Cursor Kinds (Phase 3)
+----------------------
+The cursor is an opaque, signed token. Internally it contains:
+- version + expiry: `v=2`, `exp` (unix timestamp)
+- scope: `conversation_id`, `business_id`, `item_id`
+- kind: one of
+  - `page_blocks`: `{upload_id, page_number, block_order, char_offset, prepend_sep?}`
+  - `table_rows`: `{upload_id, table_id, row_chunk_index, char_offset, prepend_sep?}`
+  - `chunk_window`: `{upload_id, chunk_start, chunk_end, chunk_index, char_offset, prepend_sep?}`
+
+`prepend_sep` is set only when resuming at an element boundary so that concatenating
+multiple tool calls preserves the exact `\\n\\n` joins between blocks/rows/chunks.
+
 Artifact Strategy (Decision)
 ---------------------------
 When the tool cannot inline a safe segment (e.g., extremely large structured table),
@@ -163,4 +176,3 @@ In agentic v2 mode, deprecate and remove the LLM-facing read knobs:
 - token_budget
 
 Those can remain as internal strategies selected by the tool, not model choices.
-
