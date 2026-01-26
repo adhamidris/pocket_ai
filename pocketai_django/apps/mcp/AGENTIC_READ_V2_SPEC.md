@@ -1,5 +1,15 @@
 # Agentic Read V2 Spec (Phase 0)
 
+NOTE (2026-01-26)
+-----------------
+This spec documents the current "agentic read v2" contract built around `read_document(items=[...], max_chars=...)`.
+
+The platform is now moving toward a refs-first contract:
+- `search_knowledge` returns EvidenceRefs (pointers), not content-heavy snippets
+- `read_knowledge` ("Reading Knowledge") materializes canonical slices from refs
+
+See: `apps/mcp/AGENTIC_EVIDENCE_REFS_V1_SPEC.md`
+
 Goal
 ----
 Provide a stable agentic retrieval experience by reducing the LLM-facing read surface

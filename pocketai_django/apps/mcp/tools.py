@@ -2704,22 +2704,64 @@ def _convert_to_agentic_search_response(
     """
     Convert legacy search_knowledge response to agentic format.
     
-    Agentic format returns metadata and short previews (no full content):
-    - IDs, titles, types, char estimates, previews
-    - LLM must call read_document() to get actual content
-    
-    This enables the clean 2-tool workflow: search → read → answer
+    Phase 1 (EvidenceRefs): return pointers only (no content previews).
+
+    The agentic format returns a compact list of "refs" the model can read via
+    read_document(). This intentionally avoids duplicating facts in multiple
+    representations (table row + text restatement) and keeps the prompt small.
     """
     snippets = legacy_payload.get("snippets", [])
-    results: list[dict[str, object]] = []
+    refs: list[dict[str, object]] = []
     agentic_read_v2_enabled = (
         bool(getattr(settings, "MCP_NEW_CONTRACT_ENABLED", True))
         and bool(getattr(settings, "MCP_AGENTIC_READ_V2_ENABLED", False))
     )
-    
-    for snippet in snippets:
-        if not isinstance(snippet, Mapping):
+
+    def _is_table_direct(snippet: Mapping[str, object]) -> bool:
+        stage = str(snippet.get("search_stage") or "").strip().lower()
+        source = str(snippet.get("source") or "").strip().lower()
+        return stage in {"table_direct", "table_blended"} or source == "table_direct"
+
+    def _anchor_key(snippet: Mapping[str, object]) -> str:
+        """Canonical dedupe key for EvidenceRefs (avoid duplicates across search stages)."""
+        diagnostics = snippet.get("source_diagnostics") if isinstance(snippet.get("source_diagnostics"), Mapping) else {}
+        table_id = diagnostics.get("table_id")
+        row_index = diagnostics.get("row_index") or diagnostics.get("table_row_index")
+        if table_id and row_index is not None:
+            return f"table:{table_id}:{row_index}"
+        chunk_id = str(snippet.get("chunk_id") or snippet.get("id") or "").strip()
+        if chunk_id:
+            return f"chunk:{chunk_id}"
+        upload_id = str(snippet.get("upload_id") or "").strip()
+        if upload_id:
+            return f"upload:{upload_id}"
+        return f"fallback:{sha256_hex(json.dumps(dict(snippet), sort_keys=True, default=str)[:800])}"
+
+    # Evidence planner (Phase 1): prefer exact table row matches when available,
+    # and dedupe by canonical anchors so the model doesn't see the same fact twice.
+    raw_snippets: list[Mapping[str, object]] = [
+        snippet for snippet in snippets if isinstance(snippet, Mapping)
+    ]
+    table_direct_present = any(_is_table_direct(snippet) for snippet in raw_snippets)
+    if table_direct_present:
+        preferred: list[Mapping[str, object]] = [s for s in raw_snippets if _is_table_direct(s)]
+        # Keep a small number of supporting non-table snippets (definitions/footnotes),
+        # but drop other table chunks to reduce noise.
+        supporting: list[Mapping[str, object]] = [s for s in raw_snippets if not bool(s.get("is_table_chunk")) and not _is_table_direct(s)]
+        candidate_snippets: list[Mapping[str, object]] = [*preferred, *supporting]
+    else:
+        candidate_snippets = raw_snippets
+
+    seen_anchors: set[str] = set()
+    planned_snippets: list[Mapping[str, object]] = []
+    for snippet in candidate_snippets:
+        key = _anchor_key(snippet)
+        if key in seen_anchors:
             continue
+        seen_anchors.add(key)
+        planned_snippets.append(snippet)
+
+    for snippet in planned_snippets:
         
         # Determine type
         is_table = bool(snippet.get("is_table_chunk"))
@@ -2751,86 +2793,113 @@ def _convert_to_agentic_search_response(
         table_id = diagnostics.get("table_id")
         row_index = diagnostics.get("row_index") or diagnostics.get("table_row_index")
 
-        preview_source = summary or content
-        preview: str | None = None
-        if isinstance(preview_source, str) and preview_source.strip():
-            preview = preview_source.strip()
-            if len(preview) > 240:
-                preview = f"{preview[:240].rstrip()}…"
-
         suggested_max_chars = _suggest_max_chars_for_estimate(
             char_estimate,
             max_chars_allowed=int(READ_DOCUMENT_MAX_CHARS_SCHEMA_MAX),
         )
 
-        # Agentic V2: hide legacy read knobs entirely; the LLM only gets "what exists + how big".
-        if agentic_read_v2_enabled:
-            if not chunk_id:
-                continue
-            result_item: dict[str, object] = {
-                "id": chunk_id,
-                "title": snippet.get("title") or snippet.get("public_label") or "Untitled",
-                "type": content_type,
-                "source": snippet.get("source_file") or snippet.get("source") or "",
-                "char_estimate": char_estimate,
-                "read_hint": {"suggested_max_chars": suggested_max_chars},
-            }
-            if preview:
-                result_item["preview"] = preview
-            results.append(result_item)
-            continue
-        
-        read_hint = snippet.get("read_hint")
-        read_id = ""
-        if isinstance(read_hint, Mapping):
-            read_id = str(read_hint.get("document_id") or "").strip()
-        if not read_id:
-            read_id = chunk_id or upload_id
-        if not chunk_id and read_id:
-            chunk_id = read_id
+        # EvidenceRef fields
+        diagnostics = snippet.get("source_diagnostics") if isinstance(snippet.get("source_diagnostics"), Mapping) else {}
+        entity_name = snippet.get("entity_name")
+        title = snippet.get("title") or snippet.get("public_label") or "Untitled"
+        label_parts: list[str] = []
+        if isinstance(entity_name, str) and entity_name.strip():
+            label_parts.append(entity_name.strip())
+        if isinstance(title, str) and title.strip():
+            label_parts.append(title.strip())
+        label = " — ".join(label_parts) if label_parts else str(title or "Untitled")
+        if isinstance(label, str) and len(label) > 240:
+            label = f"{label[:240].rstrip()}…"
 
-        result_item: dict[str, object] = {
+        score_val: float | None = None
+        try:
+            raw_score = snippet.get("confidence_score")
+            if raw_score is not None:
+                score_val = float(raw_score)
+        except (TypeError, ValueError):
+            score_val = None
+
+        kind = "text_anchor"
+        if content_type == "table":
+            kind = "table_row" if (diagnostics.get("table_id") and row_index is not None) else "table_chunk"
+
+        coverage_hint: dict[str, object] = {}
+        if content_type == "table":
+            if table_id:
+                coverage_hint["table_id"] = str(table_id)
+            if row_index is not None:
+                coverage_hint["row_index"] = row_index
+            if row_count is not None:
+                coverage_hint["estimated_rows"] = row_count
+            if column_count is not None:
+                coverage_hint["estimated_columns"] = column_count
+            page_number = snippet.get("page_number")
+            if page_number is not None:
+                try:
+                    coverage_hint["page"] = int(page_number)
+                except (TypeError, ValueError):
+                    pass
+        else:
+            page_number = snippet.get("page_number")
+            if page_number is not None:
+                try:
+                    coverage_hint["page"] = int(page_number)
+                except (TypeError, ValueError):
+                    pass
+            else:
+                chunk_index = snippet.get("chunk_index")
+                if isinstance(chunk_index, int):
+                    coverage_hint["offset"] = chunk_index
+
+        read_hint_in = snippet.get("read_hint")
+        read_hint_out: dict[str, object] = {"suggested_max_chars": suggested_max_chars}
+        if not agentic_read_v2_enabled and isinstance(read_hint_in, Mapping) and read_hint_in:
+            # Preserve legacy read hint metadata for non-v2 agentic reads.
+            read_hint_out = dict(read_hint_in)
+            read_hint_out.setdefault("suggested_max_chars", suggested_max_chars)
+
+        if not chunk_id:
+            continue
+        why: list[str] = []
+        stage = str(snippet.get("search_stage") or "").strip().lower()
+        if stage:
+            why.append(f"search_stage:{stage}")
+        if _is_table_direct(snippet):
+            why.append("match:table_direct")
+        if kind.startswith("table"):
+            why.append("kind:table")
+        else:
+            why.append("kind:text")
+        ref_item: dict[str, object] = {
             "id": chunk_id,
             "document_id": upload_id,
-            "title": snippet.get("title") or snippet.get("public_label") or "Untitled",
+            "kind": kind,
             "type": content_type,
-            "source": snippet.get("source_file") or snippet.get("source") or "",
+            "label": label,
+            "score": score_val if score_val is not None else 0.0,
             "char_estimate": char_estimate,
+            "read_hint": read_hint_out,
         }
-        if read_id:
-            result_item["read_id"] = read_id
-
-        if preview:
-            result_item["preview"] = preview
-
-        if isinstance(read_hint, Mapping) and read_hint:
-            hint_out = dict(read_hint)
-            # Help the LLM pick a `max_chars` that is likely to succeed without guesswork.
-            hint_out.setdefault("suggested_max_chars", suggested_max_chars)
-            result_item["read_hint"] = hint_out
-        else:
-            result_item["read_hint"] = {"suggested_max_chars": suggested_max_chars}
-        
-        if content_type == "table":
-            if row_count is not None:
-                result_item["row_count"] = row_count
-            if column_count is not None:
-                result_item["column_count"] = column_count
-            if table_id:
-                result_item["table_id"] = table_id
-            if row_index is not None:
-                result_item["row_index"] = row_index
-        
-        results.append(result_item)
+        if why:
+            ref_item["why"] = why[:3]
+        if coverage_hint:
+            ref_item["coverage_hint"] = coverage_hint
+        # Keep source metadata for internal debugging / operator traces.
+        source_val = snippet.get("source_file") or snippet.get("source")
+        if isinstance(source_val, str) and source_val.strip():
+            ref_item["source"] = source_val.strip()
+        if diagnostics.get("table_truncated"):
+            ref_item["partial_index"] = True
+        refs.append(ref_item)
     
     # Build agentic response
     status = legacy_payload.get("status", "ok")
-    total_found = legacy_payload.get("completeness", {}).get("total_found", len(results))
+    total_found = legacy_payload.get("completeness", {}).get("total_found", len(refs))
     
     agentic_response: dict[str, object] = {
         "tool": "search_knowledge",
-        "status": status if results else "empty",
-        "results": results,
+        "status": status if refs else "empty",
+        "refs": refs,
         "total_found": total_found,
     }
     completeness = legacy_payload.get("completeness")
@@ -2838,7 +2907,7 @@ def _convert_to_agentic_search_response(
         agentic_response["completeness"] = dict(completeness)
     
     # Add hint only if empty
-    if not results:
+    if not refs:
         agentic_response["hint"] = (
             "No matching documents found. The knowledge base may not contain this. "
             "Answer from available evidence or ask a clarifying question; do not guess."
@@ -2850,9 +2919,11 @@ def _convert_to_agentic_search_response(
         "search.agentic_conversion",
         {
             "legacy_snippet_count": len(snippets),
-            "agentic_result_count": len(results),
+            "agentic_ref_count": len(refs),
             "total_found": total_found,
             "agentic_read_v2_enabled": agentic_read_v2_enabled,
+            "table_direct_present": table_direct_present,
+            "planner_dropped": max(0, len(raw_snippets) - len(planned_snippets)),
         },
         context={
             "conversation": conversation.id,
@@ -3166,7 +3237,8 @@ def _search_knowledge_handler(
                         "diagnostics": {"dedup_similarity": round(float(best_similarity), 4)},
                     }
                     if rag_agentic_enabled:
-                        duplicate_payload["results"] = list(prior_response.get("results") or [])
+                        # Phase 1: agentic search returns EvidenceRefs (`refs[]`).
+                        duplicate_payload["refs"] = list(prior_response.get("refs") or prior_response.get("results") or [])
                         if prior_response.get("total_found") not in {None, ""}:
                             duplicate_payload["total_found"] = prior_response.get("total_found")
                     else:

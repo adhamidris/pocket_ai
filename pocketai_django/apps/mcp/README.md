@@ -36,8 +36,8 @@ Key Flows
    -> final answer (no extra narration between tool calls).
 
 2) Knowledge lookup
-   Agentic retrieval (default): `search_knowledge` returns metadata-only matches
-   (`results[]`), then the model calls `read_document(ids[])` to fetch the
+   Agentic retrieval (default): `search_knowledge` returns metadata-only refs
+   (`refs[]`), then the model calls `read_document(ids[])` to fetch the
    content it needs. For structured datasets/spreadsheets it uses
    `list_tables` + `query_dataset`.
 
@@ -48,7 +48,7 @@ Key Flows
 Tool Catalog (LLM-facing)
 -------------------------
 - search_knowledge
-  - Hybrid semantic + lexical search; returns metadata + short previews (`results[]`), not full content.
+  - Hybrid semantic + lexical search; returns EvidenceRefs (`refs[]`), not full content.
 - list_tables
   - Lists queryable dataset/spreadsheet uploads so the model can grab `document_id` once.
 - read_document

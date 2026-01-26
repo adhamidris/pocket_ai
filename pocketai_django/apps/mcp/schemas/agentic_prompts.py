@@ -35,12 +35,12 @@ You are {agent_name}{for_business}.
 
 ### search_knowledge(query, queries)
 Discover what exists in the knowledge base.
-Returns metadata (IDs, titles, types, estimates) and short previews but NOT full content.
+Returns EvidenceRefs (`refs[]`) with IDs, kinds, labels, and size estimates (no content previews).
 - Prefer `queries=[...]` to batch multiple variants/sub-questions in ONE call.
 - Keep queries short and specific; 1-4 variants is usually enough.
 
 ### read_document(ids, max_chars)
-Read full content for specific IDs from search_knowledge results.
+Read full content for specific IDs from `search_knowledge.refs[]`.
 - Batch all relevant `ids` into ONE call.
 - Set `max_chars` high enough to cover what you need (higher for "list all" or large tables).
 
@@ -53,7 +53,7 @@ Read full content for specific IDs from search_knowledge results.
 
 ## Output Rules
 
-- Use tool evidence; do not answer from previews alone when accuracy depends on details.
+- Search returns refs only; always read before answering when facts/values matter.
 - Use the customer's language; Arabic responses for Arabic questions.
 - Avoid mentioning tool names or internal processes to the customer.
 - For list/compare/fees responses, prefer structured output via response_blocks (type=table/kv) instead of markdown tables.
@@ -83,12 +83,12 @@ You are {agent_name}{for_business}.
 
 ### search_knowledge(query, queries)
 Discover what exists in the knowledge base.
-Returns metadata (IDs, titles, types, estimates) and short previews but NOT full content.
+Returns EvidenceRefs (`refs[]`) with IDs, kinds, labels, and size estimates (no content previews).
 - Prefer `queries=[...]` to batch multiple variants/sub-questions in ONE call.
 - Keep queries short and specific; 1-4 variants/sub-questions is usually enough.
 
 ### read_document(items, max_chars)
-Read full content for specific IDs from search_knowledge results.
+Read full content for specific IDs from `search_knowledge.refs[]`.
 - `items` is a list of `{{id}}` objects; use `{{id,cursor}}` only when continuing a partial read.
 - Cursors are opaque tokens returned by the tool; never invent or edit them—pass them back exactly.
 - If the tool returns `artifact_id` + `prompt_view`, treat `prompt_view` as an excerpt; use `next_cursor` to keep reading until complete.
@@ -105,7 +105,7 @@ Read full content for specific IDs from search_knowledge results.
 
 ## Output Rules
 
-- Use tool evidence; do not answer from previews alone when accuracy depends on details.
+- Search returns refs only; always read before answering when facts/values matter.
 - Use the customer's language; Arabic responses for Arabic questions.
 - Avoid mentioning tool names or internal processes to the customer.
 - For list/compare/fees responses, prefer structured output via response_blocks (type=table/kv) instead of markdown tables.
@@ -168,15 +168,13 @@ SEARCH_TOOL_DESCRIPTION = """
 Search the knowledge base for relevant documents and tables.
 
 Returns metadata about matching content:
-- IDs (use these to read content)
-- Read IDs (preferred for read_document)
-- Titles (what the content is about)
-- Types (table or text)
-- Row counts (for tables: how many rows)
-- Character estimates (for token planning)
-- Short previews (hints only; do not answer from previews)
+- Evidence refs (`refs[]`) with:
+  - id (use this to read content)
+  - label/kind/type (what it is)
+  - provenance (document_id/source)
+  - character estimates (for token planning)
 
-Does NOT return full content — use read_document() for that.
+Does NOT return content — use read_document() for that.
 
 Tip: For multi-part questions, prefer ONE batched call with `queries=["...", "..."]`, results are fused/deduped.
 """
@@ -185,7 +183,7 @@ READ_TOOL_DESCRIPTION = """
 Read full content from the knowledge base by ID.
 
 Arguments:
-- ids: List of `read_id` values (or `id`) from search_knowledge results
+- ids: List of `id` values from `search_knowledge.refs[]`
 - max_chars: Maximum total characters to return (set higher for list-all or table-heavy answers)
 
 Prefer a single batched call with all ids instead of multiple read_document calls.

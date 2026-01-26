@@ -19,15 +19,15 @@ class AgenticPromptCompactionTests(SimpleTestCase):
         payload = {
             "tool": "search_knowledge",
             "status": "ok",
-            "results": [
+            "refs": [
                 {
                     "id": "chunk-1",
-                    "read_id": "chunk-1",
                     "document_id": "upload-1",
-                    "title": "Fees",
-                    "type": "text",
+                    "label": "Annual fee — Fees",
+                    "kind": "text_anchor",
+                    "type": "text",  # legacy enum retained for routing
                     "source": "Guide.pdf",
-                    "preview": "Annual fee is listed in this document.",
+                    "score": 0.91,
                     "char_estimate": 1200,
                     "read_hint": {"mode": "full_page", "page": 1, "suggested_max_chars": 15000},
                 }
@@ -46,11 +46,11 @@ class AgenticPromptCompactionTests(SimpleTestCase):
             max_cells_exact=60,
         )
 
-        self.assertIn("results", compact)
+        self.assertIn("refs", compact)
         self.assertNotIn("snippets", compact)
-        self.assertEqual(compact["results"][0]["id"], "chunk-1")
-        self.assertIn("preview", compact["results"][0])
-        self.assertEqual(compact["results"][0]["read_hint"]["suggested_max_chars"], 15000)
+        self.assertEqual(compact["refs"][0]["id"], "chunk-1")
+        self.assertIn("label", compact["refs"][0])
+        self.assertEqual(compact["refs"][0]["read_hint"]["suggested_max_chars"], 15000)
 
     def test_read_document_compacts_agentic_contents(self) -> None:
         payload = {

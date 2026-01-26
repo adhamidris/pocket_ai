@@ -16,6 +16,7 @@
   - When “everything” is too large to print safely in one answer, the assistant must ask to narrow or paginate.
 
 Deliverable: a short spec (tool inputs/outputs + examples) and acceptance criteria.
+Spec location: `apps/mcp/AGENTIC_EVIDENCE_REFS_V1_SPEC.md`
 
 ---
 

@@ -414,7 +414,7 @@ class McpSearchKnowledgeHandlerTests(TestCase):
         self.assertEqual(context.searches_used, 2)
         # Second call should not execute a second backend search.
         self.assertEqual(service_mock.search.call_count, 1)
-        self.assertEqual(second.get("results"), first.get("results"))
+        self.assertEqual(second.get("refs"), first.get("refs"))
 
     @mock.patch("apps.mcp.tools._knowledge_service")
     def test_read_hint_uses_page_from_metadata_not_chunk_index(self, service_factory_mock) -> None:
@@ -457,14 +457,18 @@ class McpSearchKnowledgeHandlerTests(TestCase):
         result = tools._search_knowledge_handler(payload, self.conversation, context)
         
         self.assertEqual(result["status"], "ok")
-        results = result.get("results", [])
-        self.assertTrue(results, "Should have at least one result")
+        refs = result.get("refs", [])
+        self.assertTrue(refs, "Should have at least one ref")
         
-        read_hint = results[0].get("read_hint", {})
-        # Should have page=3 (from page_number), NOT page=8 (chunk_index + 1)
-        self.assertIn("page", read_hint, "Should have page when page_number is set")
-        self.assertEqual(read_hint["page"], 3, "page should be 3 from page_number, not 8 (chunk_index + 1)")
-        self.assertNotIn("offset", read_hint, "Should not have offset when page is present")
+        read_hint = refs[0].get("read_hint", {})
+        coverage_hint = refs[0].get("coverage_hint", {})
+        # V2 read contract hides legacy read knobs, so page/offset live in coverage_hint instead.
+        if "page" in read_hint:
+            self.assertEqual(read_hint["page"], 3, "page should be 3 from page_number, not 8 (chunk_index + 1)")
+            self.assertNotIn("offset", read_hint, "Should not have offset when page is present")
+        else:
+            self.assertIn("page", coverage_hint, "coverage_hint.page should be present when page_number is set")
+            self.assertEqual(coverage_hint["page"], 3)
 
     @mock.patch("apps.mcp.tools._knowledge_service")
     def test_read_hint_uses_offset_when_no_page_number(self, service_factory_mock) -> None:
@@ -507,14 +511,19 @@ class McpSearchKnowledgeHandlerTests(TestCase):
         result = tools._search_knowledge_handler(payload, self.conversation, context)
         
         self.assertEqual(result["status"], "ok")
-        results = result.get("results", [])
-        self.assertTrue(results)
+        refs = result.get("refs", [])
+        self.assertTrue(refs)
         
-        read_hint = results[0].get("read_hint", {})
-        # Should have offset=7, NOT page=8
-        self.assertNotIn("page", read_hint, "Should NOT have page when no page_number")
-        self.assertIn("offset", read_hint, "Should have offset when no page_number")
-        self.assertEqual(read_hint["offset"], 7)
+        read_hint = refs[0].get("read_hint", {})
+        coverage_hint = refs[0].get("coverage_hint", {})
+        # V2 read contract hides legacy read knobs; validate offset is preserved via coverage_hint.
+        if "offset" in read_hint:
+            self.assertNotIn("page", read_hint, "Should NOT have page when no page_number")
+            self.assertEqual(read_hint["offset"], 7)
+        else:
+            self.assertNotIn("page", coverage_hint, "coverage_hint should NOT have page when no page_number")
+            self.assertIn("offset", coverage_hint, "coverage_hint.offset should be present when no page_number")
+            self.assertEqual(coverage_hint["offset"], 7)
 
     @mock.patch("apps.mcp.tools._knowledge_service")
     def test_search_knowledge_always_returns_completeness(self, service_factory_mock) -> None:
@@ -568,7 +577,7 @@ class McpSearchKnowledgeHandlerTests(TestCase):
         result = tools._search_knowledge_handler(payload, self.conversation, context)
 
         self.assertEqual(result["status"], "ok")
-        self.assertEqual(len(result.get("results", [])), 2)
+        self.assertEqual(len(result.get("refs", [])), 2)
         self.assertIn("completeness", result)
         completeness = result["completeness"]
         self.assertEqual(completeness["shown"], 2)
@@ -630,7 +639,7 @@ class McpSearchKnowledgeHandlerTests(TestCase):
         result = tools._search_knowledge_handler(payload, self.conversation, context)
 
         self.assertEqual(result["status"], "ok")
-        self.assertEqual(len(result.get("results", [])), 2)
+        self.assertEqual(len(result.get("refs", [])), 2)
         completeness = result["completeness"]
         self.assertEqual(completeness["shown"], 2)
         self.assertEqual(completeness["already_seen"], 2)

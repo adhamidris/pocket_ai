@@ -562,6 +562,9 @@ class McpOrchestratorService:
             snippets = payload.get("snippets")
             if isinstance(snippets, Sequence) and not isinstance(snippets, (str, bytes, bytearray)):
                 return len(snippets)
+            refs = payload.get("refs")
+            if isinstance(refs, Sequence) and not isinstance(refs, (str, bytes, bytearray)):
+                return len(refs)
             results = payload.get("results")
             if isinstance(results, Sequence) and not isinstance(results, (str, bytes, bytearray)):
                 return len(results)
@@ -3686,7 +3689,9 @@ class McpOrchestratorService:
             return {"len": len(raw), "sha256_10": digest[:10]}
 
         if normalized == "search_knowledge":
-            results = tool_result.get("results")
+            results = tool_result.get("refs")
+            if not isinstance(results, list):
+                results = tool_result.get("results")
             out: dict[str, object] = {"status": status}
             if isinstance(results, list):
                 out["results_count"] = len(results)
@@ -3698,9 +3703,12 @@ class McpOrchestratorService:
                     item_id = str(item.get("id") or "").strip()
                     if item_id:
                         entry["id"] = item_id
-                    title = item.get("title")
-                    if isinstance(title, str) and title.strip():
-                        entry["title"] = self._clip_text(title.strip(), 140)
+                    label = item.get("label") or item.get("title")
+                    if isinstance(label, str) and label.strip():
+                        entry["title"] = self._clip_text(label.strip(), 140)
+                    kind = item.get("kind")
+                    if isinstance(kind, str) and kind.strip():
+                        entry["kind"] = kind.strip()
                     item_type = item.get("type")
                     if isinstance(item_type, str) and item_type.strip():
                         entry["type"] = item_type.strip()
@@ -3718,6 +3726,11 @@ class McpOrchestratorService:
                             suggested = 0
                         if suggested:
                             entry["suggested_max_chars"] = suggested
+                    why = item.get("why")
+                    if isinstance(why, list) and why:
+                        why_out = [self._clip_text(str(token), 80) for token in why[:2] if str(token).strip()]
+                        if why_out:
+                            entry["why"] = why_out
                     if entry:
                         preview.append(entry)
                 if preview:
@@ -4303,7 +4316,9 @@ class McpOrchestratorService:
     def _search_result_is_table(tool_result: Mapping[str, object]) -> bool:
         snippets = tool_result.get("snippets")
         if not isinstance(snippets, list) or not snippets:
-            results = tool_result.get("results")
+            results = tool_result.get("refs")
+            if not isinstance(results, list) or not results:
+                results = tool_result.get("results")
             if not isinstance(results, list) or not results:
                 return False
             table_results = 0
@@ -4941,14 +4956,17 @@ class McpOrchestratorService:
     def _extract_structure_upload_ids(tool_result: Mapping[str, object]) -> list[str]:
         snippets = tool_result.get("snippets")
         if not isinstance(snippets, list):
-            results = tool_result.get("results")
+            results = tool_result.get("refs")
+            if not isinstance(results, list):
+                results = tool_result.get("results")
             if not isinstance(results, list):
                 return []
             upload_ids: list[str] = []
             for result in results:
                 if not isinstance(result, Mapping):
                     continue
-                is_table = str(result.get("type") or "").strip().lower() == "table" or result.get("row_count")
+                kind = str(result.get("kind") or "").strip().lower()
+                is_table = str(result.get("type") or "").strip().lower() == "table" or kind.startswith("table")
                 if not is_table:
                     continue
                 upload_id = str(result.get("document_id") or "").strip()
@@ -6700,26 +6718,24 @@ class McpOrchestratorService:
                     gate_out[key] = value
                 if gate_out:
                     compact["identifier_gate"] = gate_out
-            raw_results = payload.get("results")
-            results_out: list[dict[str, object]] = []
+            raw_results = payload.get("refs")
+            if not isinstance(raw_results, list):
+                raw_results = payload.get("results")
+            refs_out: list[dict[str, object]] = []
             if isinstance(raw_results, list):
-                preview_chars = max(160, min(360, int(snippet_content_chars)))
                 for result in raw_results[: max(1, max_snippets)]:
                     if not isinstance(result, Mapping):
                         continue
                     entry: dict[str, object] = {}
                     for key in (
                         "id",
-                        "read_id",
                         "document_id",
-                        "title",
+                        "label",
+                        "kind",
                         "type",
                         "source",
+                        "score",
                         "char_estimate",
-                        "row_count",
-                        "column_count",
-                        "table_id",
-                        "row_index",
                     ):
                         if key not in result:
                             continue
@@ -6729,9 +6745,20 @@ class McpOrchestratorService:
                         if isinstance(value, str) and not value.strip():
                             continue
                         entry[key] = value
-                    preview = result.get("preview")
-                    if isinstance(preview, str) and preview.strip():
-                        entry["preview"] = self._clip_text(preview.strip(), preview_chars)
+                    coverage = result.get("coverage_hint")
+                    if isinstance(coverage, Mapping) and coverage:
+                        coverage_out: dict[str, object] = {}
+                        for key in ("page", "table_id", "row_index", "estimated_rows", "estimated_columns"):
+                            value = coverage.get(key)
+                            if value is None:
+                                continue
+                            if isinstance(value, str) and not value.strip():
+                                continue
+                            if isinstance(value, (list, tuple, set, dict)) and not value:
+                                continue
+                            coverage_out[key] = value
+                        if coverage_out:
+                            entry["coverage_hint"] = coverage_out
                     read_hint = result.get("read_hint")
                     if isinstance(read_hint, Mapping) and read_hint:
                         hint_out: dict[str, object] = {}
@@ -6747,9 +6774,9 @@ class McpOrchestratorService:
                         if hint_out:
                             entry["read_hint"] = hint_out
                     if entry:
-                        results_out.append(entry)
-            if results_out:
-                compact["results"] = results_out
+                        refs_out.append(entry)
+            if refs_out:
+                compact["refs"] = refs_out
                 if "total_found" in payload and payload.get("total_found") not in {None, ""}:
                     compact["total_found"] = payload.get("total_found")
                 compact["prompt_compact"] = True
