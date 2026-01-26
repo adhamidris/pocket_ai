@@ -1793,6 +1793,7 @@ class McpOrchestratorService:
                                 if document_id_hint:
                                     tool_context.table_column_filters.pop(document_id_hint, None)
 
+                        trace_index: int | None = None
                         if isinstance(tool_result, Mapping):
                             # Layer 2: tool responses carry budget telemetry instead of mid-loop
                             # injected system messages.
@@ -1816,6 +1817,12 @@ class McpOrchestratorService:
                             if self._is_email_tool(tool_name):
                                 trace_arguments = self._email_tool_trace_arguments(tool_name, arguments)
 
+                            output_summary: dict[str, object] | None = None
+                            try:
+                                output_summary = self._tool_trace_output_summary(tool_name, tool_result)
+                            except Exception:  # pragma: no cover - must never break tool loop
+                                logger.exception("mcp tool trace output summary failed")
+
                             tool_context.add_tool_trace(
                                 {
                                     "tool": tool_name,
@@ -1833,8 +1840,10 @@ class McpOrchestratorService:
                                     "duration_ms": int(call_duration_ms) if call_duration_ms is not None else 0,
                                     "origin": call_origin,
                                     "cache_hit": cache_hit,
+                                    "output_summary": output_summary,
                                 }
                             )
+                            trace_index = len(tool_context.tool_trace) - 1
                             if tool_name == "read_document":
                                 signature = self._read_document_signature(arguments, tool_result)
                                 if signature:
@@ -1858,7 +1867,7 @@ class McpOrchestratorService:
                                         and read_document_throttle_hits >= self.read_document_throttle_limit
                                     ):
                                         read_document_guardrail_reason = "read_document_throttle"
-                                        read_document_guardrail_signature = signature
+                                    read_document_guardrail_signature = signature
 
                             if self._is_knowledge_tool(tool_name):
                                 self._record_knowledge_outputs(tool_context, tool_result)
@@ -1908,6 +1917,28 @@ class McpOrchestratorService:
                                 logger_obj=logger,
                                 level=logging.WARNING,
                             )
+
+                        if (
+                            trace_index is not None
+                            and isinstance(getattr(tool_context, "tool_trace", None), list)
+                            and 0 <= trace_index < len(tool_context.tool_trace)
+                            and isinstance(tool_context.tool_trace[trace_index], dict)
+                        ):
+                            try:
+                                tool_context.tool_trace[trace_index]["prompt_compaction"] = {
+                                    "raw_chars": int(len(raw_tool_json) if isinstance(raw_tool_json, str) else 0),
+                                    "truncated_chars": int(
+                                        len(truncated_tool_json) if isinstance(truncated_tool_json, str) else 0
+                                    ),
+                                    "limit_chars": int(tool_output_limit or 0),
+                                    "truncated": bool(
+                                        isinstance(raw_tool_json, str)
+                                        and isinstance(truncated_tool_json, str)
+                                        and raw_tool_json != truncated_tool_json
+                                    ),
+                                }
+                            except Exception:  # pragma: no cover - must never break tool loop
+                                logger.exception("mcp tool trace prompt compaction patch failed")
 
                         transcript.append(
                             {
@@ -3630,6 +3661,189 @@ class McpOrchestratorService:
 
         # Fallback: do not dump arbitrary tool outputs.
         return output
+
+    def _tool_trace_output_summary(self, tool_name: str, tool_result: Mapping[str, object]) -> dict[str, object] | None:
+        """
+        Build a compact, privacy-safe summary of the tool output for the portal debug panel.
+
+        This intentionally avoids returning any large free-text payloads (e.g., read_document
+        content) while still exposing enough metadata to debug budgets/cursors/artifacts.
+        """
+
+        normalized = str(tool_name or "").strip().lower()
+        status = str(tool_result.get("status") or "").strip() or "ok"
+
+        if self._is_email_tool(tool_name):
+            return self._email_tool_event_output(tool_name, tool_result)
+
+        def _cursor_fingerprint(value: object) -> dict[str, object] | None:
+            if not isinstance(value, str):
+                return None
+            raw = value.strip()
+            if not raw:
+                return None
+            digest = hashlib.sha256(raw.encode("utf-8")).hexdigest()
+            return {"len": len(raw), "sha256_10": digest[:10]}
+
+        if normalized == "search_knowledge":
+            results = tool_result.get("results")
+            out: dict[str, object] = {"status": status}
+            if isinstance(results, list):
+                out["results_count"] = len(results)
+                preview: list[dict[str, object]] = []
+                for item in results[:8]:
+                    if not isinstance(item, Mapping):
+                        continue
+                    entry: dict[str, object] = {}
+                    item_id = str(item.get("id") or "").strip()
+                    if item_id:
+                        entry["id"] = item_id
+                    title = item.get("title")
+                    if isinstance(title, str) and title.strip():
+                        entry["title"] = self._clip_text(title.strip(), 140)
+                    item_type = item.get("type")
+                    if isinstance(item_type, str) and item_type.strip():
+                        entry["type"] = item_type.strip()
+                    for key in ("char_estimate", "chars", "row_count", "column_count"):
+                        if key in item:
+                            try:
+                                entry[key] = int(item.get(key) or 0)
+                            except (TypeError, ValueError):
+                                pass
+                    hint = item.get("read_hint")
+                    if isinstance(hint, Mapping):
+                        try:
+                            suggested = int(hint.get("suggested_max_chars") or 0)
+                        except (TypeError, ValueError):
+                            suggested = 0
+                        if suggested:
+                            entry["suggested_max_chars"] = suggested
+                    if entry:
+                        preview.append(entry)
+                if preview:
+                    out["results_preview"] = preview
+            total_found = tool_result.get("total_found")
+            if isinstance(total_found, (int, float)) or (isinstance(total_found, str) and total_found.strip().isdigit()):
+                try:
+                    out["total_found"] = int(total_found)
+                except (TypeError, ValueError):
+                    pass
+            budget = tool_result.get("budget")
+            if isinstance(budget, Mapping):
+                out["budget"] = dict(budget)
+            return out
+
+        if normalized == "read_document":
+            out = {"status": status}
+            for key in ("total_chars", "max_chars", "max_chars_allowed"):
+                if key in tool_result:
+                    try:
+                        out[key] = int(tool_result.get(key) or 0)
+                    except (TypeError, ValueError):
+                        pass
+            for key in ("error_code", "error"):
+                value = tool_result.get(key)
+                if isinstance(value, str) and value.strip():
+                    out[key] = self._clip_text(value.strip(), 120)
+            contents = tool_result.get("contents")
+            if isinstance(contents, list):
+                out["contents_count"] = len(contents)
+                preview: list[dict[str, object]] = []
+                for item in contents[:6]:
+                    if not isinstance(item, Mapping):
+                        continue
+                    entry: dict[str, object] = {}
+                    item_id = str(item.get("id") or "").strip()
+                    if item_id:
+                        entry["id"] = item_id
+                    title = item.get("title")
+                    if isinstance(title, str) and title.strip():
+                        entry["title"] = self._clip_text(title.strip(), 140)
+                    item_type = item.get("type")
+                    if isinstance(item_type, str) and item_type.strip():
+                        entry["type"] = item_type.strip()
+                    try:
+                        entry["chars"] = int(item.get("chars") or 0)
+                    except (TypeError, ValueError):
+                        pass
+                    entry["complete"] = bool(item.get("complete"))
+                    entry["truncated"] = bool(item.get("truncated"))
+                    artifact_id = item.get("artifact_id")
+                    if isinstance(artifact_id, str) and artifact_id.strip():
+                        entry["artifact_id"] = artifact_id.strip()
+                    cursor_used_fp = _cursor_fingerprint(item.get("cursor_used"))
+                    if cursor_used_fp:
+                        entry["cursor_used"] = cursor_used_fp
+                    next_cursor_fp = _cursor_fingerprint(item.get("next_cursor"))
+                    if next_cursor_fp:
+                        entry["next_cursor"] = next_cursor_fp
+                    if entry:
+                        preview.append(entry)
+                if preview:
+                    out["contents_preview"] = preview
+            read = tool_result.get("read")
+            if isinstance(read, list):
+                out["read_count"] = len(read)
+                read_preview: list[dict[str, object]] = []
+                for item in read[:8]:
+                    if not isinstance(item, Mapping):
+                        continue
+                    entry: dict[str, object] = {}
+                    item_id = str(item.get("id") or "").strip()
+                    if item_id:
+                        entry["id"] = item_id
+                    status_value = item.get("status")
+                    if isinstance(status_value, str) and status_value.strip():
+                        entry["status"] = status_value.strip()
+                    try:
+                        entry["chars"] = int(item.get("chars") or 0)
+                    except (TypeError, ValueError):
+                        pass
+                    artifact_id = item.get("artifact_id")
+                    if isinstance(artifact_id, str) and artifact_id.strip():
+                        entry["artifact_id"] = artifact_id.strip()
+                    if entry:
+                        read_preview.append(entry)
+                if read_preview:
+                    out["read_preview"] = read_preview
+            deferred = tool_result.get("deferred")
+            if isinstance(deferred, list):
+                out["deferred_count"] = len(deferred)
+            errors = tool_result.get("errors")
+            if isinstance(errors, list):
+                out["errors_count"] = len(errors)
+            throttle_notice = tool_result.get("throttle_notice")
+            if isinstance(throttle_notice, Mapping):
+                out["throttle_notice"] = dict(throttle_notice)
+            budget = tool_result.get("budget")
+            if isinstance(budget, Mapping):
+                out["budget"] = dict(budget)
+            return out
+
+        # Default: status + a small set of safe fields (avoid dumping arbitrary payloads).
+        out: dict[str, object] = {"status": status}
+        for key in (
+            "id",
+            "case_id",
+            "document_id",
+            "draft_id",
+            "message_id",
+            "thread_id",
+            "artifact_id",
+            "count",
+            "total",
+        ):
+            value = tool_result.get(key)
+            if value is None or value == "":
+                continue
+            if isinstance(value, (int, float, bool)):
+                out[key] = value
+            else:
+                out[key] = self._clip_text(value, 160)
+        budget = tool_result.get("budget")
+        if isinstance(budget, Mapping):
+            out["budget"] = dict(budget)
+        return out or None
 
     def _resolve_email_account_for_tool_call(
         self,

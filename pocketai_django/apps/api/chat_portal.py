@@ -256,6 +256,7 @@ def _serialize_tool_trace_entry(entry: Mapping[str, object]) -> dict[str, object
             "limit",
             "document_id",
             "ids",
+            "items",
             "page",
             "pages",
             "offset",
@@ -268,7 +269,33 @@ def _serialize_tool_trace_entry(entry: Mapping[str, object]) -> dict[str, object
             "filters",
             "operation",
         }
-        filtered = {k: v for k, v in arguments.items() if str(k) in allowed_keys}
+        filtered: dict[str, object] = {}
+        for key, value in arguments.items():
+            key_str = str(key)
+            if key_str not in allowed_keys:
+                continue
+            if key_str == "items" and isinstance(value, list):
+                # Avoid dumping raw signed cursors into the portal debug panel.
+                safe_items: list[dict[str, object]] = []
+                for item in value[:12]:
+                    if not isinstance(item, Mapping):
+                        continue
+                    item_id = str(item.get("id") or "").strip()
+                    cursor = item.get("cursor")
+                    cursor_fp = None
+                    if isinstance(cursor, str) and cursor.strip():
+                        digest = hashlib.sha256(cursor.strip().encode("utf-8")).hexdigest()
+                        cursor_fp = {"len": len(cursor.strip()), "sha256_10": digest[:10]}
+                    safe_entry: dict[str, object] = {}
+                    if item_id:
+                        safe_entry["id"] = item_id
+                    if cursor_fp:
+                        safe_entry["cursor"] = cursor_fp
+                    if safe_entry:
+                        safe_items.append(safe_entry)
+                filtered[key_str] = safe_items
+            else:
+                filtered[key_str] = value
         if not filtered:
             # Fall back to a bounded view of whatever was provided (still redacts tokens).
             filtered = dict(list(arguments.items())[:12])
@@ -284,6 +311,12 @@ def _serialize_tool_trace_entry(entry: Mapping[str, object]) -> dict[str, object
     }
     if args_out:
         out["arguments"] = args_out
+    output_summary = entry.get("output_summary")
+    if isinstance(output_summary, Mapping) and output_summary:
+        out["output_summary"] = _json_safe_debug(output_summary, depth=4, string_limit=240, list_limit=16)  # type: ignore[arg-type]
+    prompt_compaction = entry.get("prompt_compaction")
+    if isinstance(prompt_compaction, Mapping) and prompt_compaction:
+        out["prompt_compaction"] = _json_safe_debug(prompt_compaction, depth=3, string_limit=180, list_limit=12)  # type: ignore[arg-type]
     hint = entry.get("hint")
     if hint:
         out["hint"] = _clip_debug_text(hint, limit=240)
