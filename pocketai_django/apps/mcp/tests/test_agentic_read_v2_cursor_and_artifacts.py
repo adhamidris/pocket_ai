@@ -90,18 +90,18 @@ class AgenticReadV2CursorAndArtifactTests(TestCase):
 
         with self._enable_agentic_mode():
             first = tools.execute_tool(
-                "read_document",
-                {"items": [{"id": chunk_id}], "max_chars": 1000},
+                "read_knowledge",
+                {"refs": [{"id": chunk_id}], "max_chars": 1000},
                 conversation=self.conversation,
                 context=ctx,
             )
 
-        self.assertEqual(first["tool"], "read_document")
+        self.assertEqual(first["tool"], "read_knowledge")
         self.assertIn(first["status"], {"ok", "partial"})
-        self.assertEqual(len(first["contents"]), 1)
-        first_item = first["contents"][0]
+        self.assertEqual(len(first["evidence"]), 1)
+        first_item = first["evidence"][0]
         self.assertEqual(first_item["id"], chunk_id)
-        self.assertEqual(len(first_item["content"]), 1000)
+        self.assertEqual(len(first_item["payload"]["text"]), 1000)
         cursor_1 = first_item.get("next_cursor")
         self.assertIsInstance(cursor_1, str)
         self.assertTrue(cursor_1)
@@ -112,17 +112,17 @@ class AgenticReadV2CursorAndArtifactTests(TestCase):
 
         with self._enable_agentic_mode():
             second = tools.execute_tool(
-                "read_document",
-                {"items": [{"id": chunk_id, "cursor": cursor_1}], "max_chars": 1000},
+                "read_knowledge",
+                {"refs": [{"id": chunk_id, "cursor": cursor_1}], "max_chars": 1000},
                 conversation=self.conversation,
                 context=ctx,
             )
 
-        self.assertEqual(len(second["contents"]), 1)
-        second_item = second["contents"][0]
-        self.assertEqual(len(second_item["content"]), 1000)
+        self.assertEqual(len(second["evidence"]), 1)
+        second_item = second["evidence"][0]
+        self.assertEqual(len(second_item["payload"]["text"]), 1000)
 
-        combined = first_item["content"] + second_item["content"]
+        combined = first_item["payload"]["text"] + second_item["payload"]["text"]
         self.assertEqual(combined, ("A" * 2000))
 
     @override_settings(
@@ -138,8 +138,8 @@ class AgenticReadV2CursorAndArtifactTests(TestCase):
 
         with self._enable_agentic_mode():
             first = tools.execute_tool(
-                "read_document",
-                {"items": [{"id": chunk_id}], "max_chars": 2000},
+                "read_knowledge",
+                {"refs": [{"id": chunk_id}], "max_chars": 2000},
                 conversation=self.conversation,
                 context=ctx,
             )
@@ -147,9 +147,9 @@ class AgenticReadV2CursorAndArtifactTests(TestCase):
         # Tool output should stay under the prompt tool-output cap (no orchestrator truncation needed).
         self.assertLessEqual(len(json.dumps(first, ensure_ascii=False)), 2100)
 
-        self.assertTrue(first.get("contents"), json.dumps(first, indent=2, default=str))
-        first_item = first["contents"][0]
-        preview_len = len(first_item["content"])
+        self.assertTrue(first.get("evidence"), json.dumps(first, indent=2, default=str))
+        first_item = first["evidence"][0]
+        preview_len = len(first_item["payload"]["text"])
         self.assertGreaterEqual(preview_len, 200)
         self.assertLess(preview_len, 2000)
         self.assertFalse(first_item.get("complete"))
@@ -165,23 +165,23 @@ class AgenticReadV2CursorAndArtifactTests(TestCase):
         self.assertEqual(cursor_payload_1.get("kind"), "artifact")
         self.assertEqual(int(cursor_payload_1.get("char_offset") or 0), preview_len)
 
-        collected = first_item["content"]
+        collected = first_item["payload"]["text"]
         next_cursor = cursor_1
         chunk_cursor = None
         # Follow artifact pages until the tool hands us back the underlying knowledge cursor.
         for _ in range(10):
             with self._enable_agentic_mode():
                 page = tools.execute_tool(
-                    "read_document",
-                    {"items": [{"id": chunk_id, "cursor": next_cursor}], "max_chars": 2000},
+                    "read_knowledge",
+                    {"refs": [{"id": chunk_id, "cursor": next_cursor}], "max_chars": 2000},
                     conversation=self.conversation,
                     context=ctx,
                 )
 
             self.assertLessEqual(len(json.dumps(page, ensure_ascii=False)), 2100)
-            self.assertTrue(page.get("contents"), json.dumps(page, indent=2, default=str))
-            page_item = page["contents"][0]
-            collected += page_item["content"]
+            self.assertTrue(page.get("evidence"), json.dumps(page, indent=2, default=str))
+            page_item = page["evidence"][0]
+            collected += page_item["payload"]["text"]
 
             next_cursor = page_item.get("next_cursor")
             self.assertIsInstance(next_cursor, str)
@@ -199,15 +199,15 @@ class AgenticReadV2CursorAndArtifactTests(TestCase):
         for _ in range(10):
             with self._enable_agentic_mode():
                 out = tools.execute_tool(
-                    "read_document",
-                    {"items": [{"id": chunk_id, "cursor": cursor}], "max_chars": 1000},
+                    "read_knowledge",
+                    {"refs": [{"id": chunk_id, "cursor": cursor}], "max_chars": 1000},
                     conversation=self.conversation,
                     context=ctx,
                 )
             self.assertLessEqual(len(json.dumps(out, ensure_ascii=False)), 2100)
-            self.assertTrue(out.get("contents"), json.dumps(out, indent=2, default=str))
-            item = out["contents"][0]
-            tail += item["content"]
+            self.assertTrue(out.get("evidence"), json.dumps(out, indent=2, default=str))
+            item = out["evidence"][0]
+            tail += item["payload"]["text"]
             if len(tail) >= 1000:
                 break
             cursor = item.get("next_cursor")

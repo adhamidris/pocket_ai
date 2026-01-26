@@ -76,7 +76,7 @@ class ModernRagRoutingTests(TestCase):
         super().tearDown()
 
     def test_adaptive_routing_corrects_dataset_query_on_pdf(self) -> None:
-        """Test that query_dataset on a PDF is auto-repaired to read_document."""
+        """Test that query_dataset on a PDF is auto-repaired to read_knowledge (agentic contract)."""
         # Create a mock agent profile which is required for McpOrchestratorService init
         mock_agent = mock.Mock()
         mock_agent.business_profile = self.business
@@ -87,10 +87,10 @@ class ModernRagRoutingTests(TestCase):
         
         # Direct call to private method for unit testing logic
         tool_name, new_args = service._adaptive_routing_policy("query_dataset", args, self.conversation)
-        
-        self.assertEqual(tool_name, "read_document")
-        self.assertEqual(new_args["document_id"], str(self.pdf_upload.id))
-        self.assertEqual(new_args["mode"], "full_page") # Auto-deep read
+
+        self.assertEqual(tool_name, "read_knowledge")
+        self.assertEqual(new_args["refs"][0]["id"], str(self.pdf_upload.id))
+        self.assertEqual(new_args["mode"], "excerpt")  # broad mismatch repair
 
     def test_adaptive_routing_corrects_read_document_on_dataset(self) -> None:
         """Test that read_document on a Dataset is auto-repaired to query_dataset."""
@@ -113,16 +113,16 @@ class ModernRagRoutingTests(TestCase):
         
         # Try to read_document on a dataset from ANOTHER business.
         # If isolation works, _is_dataset returns False (not found), so we do NOT auto-repair to query_dataset.
-        # We expect it to remain "read_document", which will likely fail later in execution, which is correct (Not Found).
+        # We expect it to be repaired to the agentic read tool ("read_knowledge") without probing cross-tenant metadata.
         args = {"document_id": str(self.other_upload.id)}
         tool_name, new_args = service._adaptive_routing_policy(
             "read_document", 
             args, 
             self.conversation
         )
-        
-        self.assertEqual(tool_name, "read_document")
-        self.assertEqual(new_args, args)
+
+        self.assertEqual(tool_name, "read_knowledge")
+        self.assertEqual(new_args["refs"][0]["id"], str(self.other_upload.id))
 
     def test_adaptive_routing_leaves_valid_calls_alone(self) -> None:
         mock_agent = mock.Mock()
@@ -132,7 +132,7 @@ class ModernRagRoutingTests(TestCase):
         # Valid PDF read
         args_pdf = {"document_id": str(self.pdf_upload.id)}
         name_pdf, _ = service._adaptive_routing_policy("read_document", args_pdf, self.conversation)
-        self.assertEqual(name_pdf, "read_document")
+        self.assertEqual(name_pdf, "read_knowledge")
 
         # Valid Dataset query
         args_ds = {"dataset_id": str(self.dataset_upload.id)}

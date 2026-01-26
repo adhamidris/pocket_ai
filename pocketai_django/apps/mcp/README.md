@@ -37,7 +37,7 @@ Key Flows
 
 2) Knowledge lookup
    Agentic retrieval (default): `search_knowledge` returns metadata-only refs
-   (`refs[]`), then the model calls `read_document(ids[])` to fetch the
+   (`refs[]`), then the model calls `read_knowledge(refs[])` to fetch the
    content it needs. For structured datasets/spreadsheets it uses
    `list_tables` + `query_dataset`.
 
@@ -51,8 +51,10 @@ Tool Catalog (LLM-facing)
   - Hybrid semantic + lexical search; returns EvidenceRefs (`refs[]`), not full content.
 - list_tables
   - Lists queryable dataset/spreadsheet uploads so the model can grab `document_id` once.
-- read_document
-  - Reads full content for `ids[]` (agentic mode), or page windows via `document_id` + `pages/page/offset`.
+- read_knowledge
+  - Reads canonical evidence for `refs[]` (agentic mode). Supports deterministic continuation via `next_cursor`.
+- read_document (legacy)
+  - Deprecated in agentic mode; retained for backward compatibility in non-agentic flows.
 - query_dataset
   - Queries structured datasets/spreadsheets (filters/sort/aggregate/preview rows).
 - get_document_structure
@@ -91,12 +93,13 @@ search_knowledge (batched query):
 }
 ```
 
-read_document (agentic batch read):
+read_knowledge (agentic batch read):
 ```json
 {
-  "tool": "read_document",
-  "ids": ["chunk-uuid-1", "chunk-uuid-2"],
-  "max_chars": 12000
+  "tool": "read_knowledge",
+  "refs": [{"id": "chunk-uuid-1"}, {"id": "chunk-uuid-2"}],
+  "max_chars": 12000,
+  "mode": "auto"
 }
 ```
 

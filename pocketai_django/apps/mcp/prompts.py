@@ -93,7 +93,7 @@ PREPLAN_OUTPUT_HINT = textwrap.dedent(
     {
       "route": "search" | "read" | "answer" | "dataset" | "list_tables",
       "search_query": "short query if search is needed",
-      "tools": ["search_knowledge", "read_document", "get_document_structure", "query_dataset", "list_tables"],
+      "tools": ["search_knowledge", "read_knowledge", "get_document_structure", "query_dataset", "list_tables"],
       "clarifying_question": "optional question if key info is missing",
       "notes": "short reasoning"
     }
@@ -266,9 +266,10 @@ def build_system_message(
 
         1. **Evidence first**: Use tools when business facts are needed; answer from verified content.
         2. **Light planning**: Choose the smallest set of tool calls that yields a correct answer.
-        3. **Minimal narration**: Keep tool steps silent; reply with an answer or a single clarifying question.
-        4. **{tone_instruction}**
-        5. **LANGUAGE**: Reply in the visitor's language; for Arabic use Modern Standard Arabic (MSA).
+        3. **Do not narrate internal steps**: Keep tool steps silent; reply with an answer or a single clarifying question.
+        4. **Tool loop discipline**: Do at most one tool-loop per visitor message (user turn) unless the visitor explicitly asks to continue.
+        5. **{tone_instruction}**
+        6. **LANGUAGE**: Reply in the visitor's language; for Arabic use Modern Standard Arabic (MSA).
 
         ---
 
@@ -868,7 +869,7 @@ def build_preplan_messages(
         ),
         (
             "If the request is a follow-up that clearly refers to an already-known document or table, "
-            "you may route to read_document or query_dataset, but only if IDs are already available."
+            "you may route to read_knowledge or query_dataset, but only if IDs are already available."
         ),
         PREPLAN_OUTPUT_HINT,
         (

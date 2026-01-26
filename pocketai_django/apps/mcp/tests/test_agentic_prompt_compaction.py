@@ -52,17 +52,17 @@ class AgenticPromptCompactionTests(SimpleTestCase):
         self.assertIn("label", compact["refs"][0])
         self.assertEqual(compact["refs"][0]["read_hint"]["suggested_max_chars"], 15000)
 
-    def test_read_document_compacts_agentic_contents(self) -> None:
+    def test_read_knowledge_compacts_agentic_evidence(self) -> None:
         payload = {
-            "tool": "read_document",
+            "tool": "read_knowledge",
             "status": "ok",
-            "contents": [
+            "evidence": [
                 {
                     "id": "chunk-1",
                     "title": "Fees",
                     "type": "text",
-                    # Leading newlines matter for cursor continuation (prepend_sep).
-                    "content": "\n\n" + ("x" * 5000),
+                    "kind": "text_excerpt",
+                    "payload": {"type": "text", "text": "\n\n" + ("x" * 5000)},
                     "truncated": False,
                     "next_cursor": "cursor-1",
                 }
@@ -70,11 +70,9 @@ class AgenticPromptCompactionTests(SimpleTestCase):
             "read": [
                 {
                     "id": "chunk-1",
-                    "status": "full",
+                    "status": "partial",
                     "chars": 5002,
-                    "next_cursor": "cursor-1",
                     "artifact_id": "00000000-0000-0000-0000-000000000001",
-                    "prompt_view": {"text": "preview"},
                 }
             ],
             "deferred": [
@@ -90,7 +88,7 @@ class AgenticPromptCompactionTests(SimpleTestCase):
         }
 
         compact = self.service._compact_tool_payload_for_prompt(
-            "read_document",
+            "read_knowledge",
             payload,
             max_snippets=2,
             snippet_content_chars=400,
@@ -100,30 +98,29 @@ class AgenticPromptCompactionTests(SimpleTestCase):
             max_cells_exact=60,
         )
 
-        self.assertIn("contents", compact)
+        self.assertIn("evidence", compact)
         self.assertNotIn("snippets", compact)
-        self.assertEqual(compact["contents"][0]["id"], "chunk-1")
-        self.assertTrue(compact["contents"][0]["content"].startswith("\n\n"))
-        self.assertEqual(len(compact["contents"][0]["content"]), 5002)
-        self.assertEqual(compact["contents"][0]["next_cursor"], "cursor-1")
+        self.assertEqual(compact["evidence"][0]["id"], "chunk-1")
+        self.assertTrue(compact["evidence"][0]["payload"]["text"].startswith("\n\n"))
+        self.assertEqual(len(compact["evidence"][0]["payload"]["text"]), 5002)
+        self.assertEqual(compact["evidence"][0]["next_cursor"], "cursor-1")
         self.assertIn("deferred", compact)
         self.assertEqual(compact["deferred"][0]["id"], "chunk-2")
         self.assertEqual(compact["deferred"][0]["suggested_max_chars"], 12000)
-        self.assertEqual(compact["read"][0]["next_cursor"], "cursor-1")
         self.assertEqual(compact["read"][0]["artifact_id"], "00000000-0000-0000-0000-000000000001")
-        self.assertIn("prompt_view", compact["read"][0])
 
     @override_settings(MCP_PROMPT_TOOL_OUTPUT_MAX_CHARS=500)
     def test_tool_message_truncation_keeps_content_preview(self) -> None:
         payload = {
-            "tool": "read_document",
+            "tool": "read_knowledge",
             "status": "ok",
-            "contents": [
+            "evidence": [
                 {
                     "id": "chunk-1",
                     "title": "Fees",
                     "type": "text",
-                    "content": "x" * 2000,
+                    "kind": "text_excerpt",
+                    "payload": {"type": "text", "text": "x" * 2000},
                     "truncated": False,
                 }
             ],
@@ -131,13 +128,14 @@ class AgenticPromptCompactionTests(SimpleTestCase):
         }
 
         message = json.dumps(payload, ensure_ascii=False)
-        truncated = self.service._truncate_tool_message_for_prompt("read_document", message)
+        truncated = self.service._truncate_tool_message_for_prompt("read_knowledge", message)
 
         self.assertLessEqual(len(truncated), 500)
         parsed = json.loads(truncated)
-        self.assertEqual(parsed.get("tool"), "read_document")
+        self.assertEqual(parsed.get("tool"), "read_knowledge")
         self.assertTrue(parsed.get("truncated"))
         self.assertTrue(parsed.get("prompt_compact"))
-        self.assertIn("contents", parsed)
-        self.assertIn("content", parsed["contents"][0])
-        self.assertLess(len(parsed["contents"][0]["content"]), 2000)
+        self.assertIn("evidence", parsed)
+        self.assertIn("payload", parsed["evidence"][0])
+        self.assertIn("text", parsed["evidence"][0]["payload"])
+        self.assertLess(len(parsed["evidence"][0]["payload"]["text"]), 2000)

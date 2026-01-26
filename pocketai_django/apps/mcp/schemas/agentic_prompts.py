@@ -39,17 +39,25 @@ Returns EvidenceRefs (`refs[]`) with IDs, kinds, labels, and size estimates (no 
 - Prefer `queries=[...]` to batch multiple variants/sub-questions in ONE call.
 - Keep queries short and specific; 1-4 variants is usually enough.
 
-### read_document(ids, max_chars)
-Read full content for specific IDs from `search_knowledge.refs[]`.
-- Batch all relevant `ids` into ONE call.
+### read_knowledge(refs, max_chars, mode)
+Read canonical evidence for specific refs from `search_knowledge.refs[]`.
+- `refs` is a list of `{id}` objects; use `{id,cursor}` only when continuing a partial read.
+- Cursors are opaque tokens returned by the tool; never invent or edit them—pass them back exactly.
+- Batch all relevant refs into ONE call.
 - Set `max_chars` high enough to cover what you need (higher for "list all" or large tables).
+- Use `mode="table_rows"` only when the user explicitly wants the full list/table; otherwise keep `mode="auto"`.
 
 ## Workflow Rules
 
 1. Search once per user intent (batch variants using `queries=[...]`).
-2. Read once per search: call `read_document(ids=[...], max_chars=...)` with everything you need.
-3. If the tool response indicates partial results, do at most one follow-up read for the missing items.
-4. If evidence does not contain a requested detail, say so plainly; do not guess or invent.
+2. Read once per search: call `read_knowledge(refs=[...], max_chars=...)` with everything you need. Use a high `max_chars` (up to the tool’s cap) to avoid multiple small reads.
+3. Scope discipline:
+   - Answer exactly what the visitor asked for.
+   - Do not read additional refs “just in case.” If search results include other relevant refs, suggest them as optional follow-ups instead of reading them automatically.
+4. If the tool response indicates partial results:
+   - If you can answer without the missing part, answer now.
+   - Otherwise, ask a clarifying question (what to filter / whether to continue) and do at most one follow-up read using returned cursors only if needed to answer the asked question.
+5. If evidence does not contain a requested detail, say so plainly; do not guess or invent.
 
 ## Output Rules
 
@@ -87,21 +95,27 @@ Returns EvidenceRefs (`refs[]`) with IDs, kinds, labels, and size estimates (no 
 - Prefer `queries=[...]` to batch multiple variants/sub-questions in ONE call.
 - Keep queries short and specific; 1-4 variants/sub-questions is usually enough.
 
-### read_document(items, max_chars)
-Read full content for specific IDs from `search_knowledge.refs[]`.
-- `items` is a list of `{{id}}` objects; use `{{id,cursor}}` only when continuing a partial read.
+### read_knowledge(refs, max_chars, mode)
+Read canonical evidence for specific refs from `search_knowledge.refs[]`.
+- `refs` is a list of `{{id}}` objects; use `{{id,cursor}}` only when continuing a partial read.
 - Cursors are opaque tokens returned by the tool; never invent or edit them—pass them back exactly.
-- If the tool returns `artifact_id` + `prompt_view`, treat `prompt_view` as an excerpt; use `next_cursor` to keep reading until complete.
-- You can continue multiple partial items in ONE call by including multiple `{{id,cursor}}` entries in `items`.
+- If the tool returns `artifact_id` and a `next_cursor`, treat the returned excerpt as partial; use `next_cursor` to keep reading until complete.
+- You can continue multiple partial refs in ONE call by including multiple `{{id,cursor}}` entries in `refs`.
 - Batch all relevant items into ONE call.
 - Set `max_chars` high enough to cover what you need (higher for "list all" or large tables).
+- Use `mode="table_rows"` only when the user explicitly wants the full list/table; otherwise keep `mode="auto"`.
 
 ## Workflow Rules
 
 1. Search once per user intent (batch variants using `queries=[...]`).
-2. Read once per search: call `read_document(items=[...], max_chars=...)` with everything you need.
-3. If the tool response indicates partial results, do at most one follow-up read using the returned cursors.
-4. If evidence does not contain a requested detail, say so plainly; do not guess or invent.
+2. Read once per search: call `read_knowledge(refs=[...], max_chars=...)` with everything you need. Use a high `max_chars` (up to the tool’s cap) to avoid multiple small reads.
+3. Scope discipline:
+   - Answer exactly what the visitor asked for.
+   - Do not read additional refs “just in case.” If search results include other relevant refs, suggest them as optional follow-ups instead of reading them automatically.
+4. If the tool response indicates partial results:
+   - If you can answer without the missing part, answer now.
+   - Otherwise, ask a clarifying question (what to filter / whether to continue) and do at most one follow-up read using returned cursors only if needed to answer the asked question.
+5. If evidence does not contain a requested detail, say so plainly; do not guess or invent.
 
 ## Output Rules
 
@@ -150,7 +164,7 @@ def build_agentic_system_prompt_v2(
     Build the minimal agentic system prompt (V2 read contract).
 
     V2 hides legacy read knobs from the LLM and describes the single stable interface:
-    `read_document(items=[{id,cursor?}...], max_chars=...)`.
+    `read_knowledge(refs=[{id,cursor?}...], max_chars=..., mode=...)`.
     """
     for_business = f" for {business_name}" if business_name else ""
     return AGENTIC_SYSTEM_PROMPT_V2.format(
@@ -174,7 +188,7 @@ Returns metadata about matching content:
   - provenance (document_id/source)
   - character estimates (for token planning)
 
-Does NOT return content — use read_document() for that.
+Does NOT return content — use read_knowledge() for that.
 
 Tip: For multi-part questions, prefer ONE batched call with `queries=["...", "..."]`, results are fused/deduped.
 """
@@ -183,14 +197,14 @@ READ_TOOL_DESCRIPTION = """
 Read full content from the knowledge base by ID.
 
 Arguments:
-- ids: List of `id` values from `search_knowledge.refs[]`
+- refs: List of `{id}` objects from `search_knowledge.refs[]` (use `{id,cursor}` only when continuing a partial read)
 - max_chars: Maximum total characters to return (set higher for list-all or table-heavy answers)
+- mode: Optional strategy hint (auto|excerpt|table_rows)
 
-Prefer a single batched call with all ids instead of multiple read_document calls.
-Use document_id + pages only when you explicitly need a specific page.
-Returns the actual content needed to answer the user's question.
-For tables, returns the full table data.
-For text, returns the relevant passages.
+Prefer a single batched call with all refs instead of multiple read_knowledge calls.
+Returns canonical evidence payloads:
+- For tables: lossless rows/columns (paged via next_cursor if too large)
+- For text: relevant excerpts (paged via next_cursor if needed)
 """
 
 

@@ -45,7 +45,7 @@ class SearchBudgetExceeded(ToolConstraintError):
 
 
 class ReadBudgetExceeded(ToolConstraintError):
-    """Raised when read_document calls per turn exceed the limit (future/agentic enforcement)."""
+    """Raised when read_knowledge/read_document calls per turn exceed the limit (future/agentic enforcement)."""
 
 
 @dataclasses.dataclass
@@ -223,13 +223,13 @@ class ToolExecutionContext:
         if self.searches_used > effective_limit:
             raise SearchBudgetExceeded(
                 f"Search limit exceeded ({self.searches_used} calls this turn, max {effective_limit}). "
-                "You have already searched the knowledge base this turn. Use read_document to get more details "
+                "You have already searched the knowledge base this turn. Use read_knowledge to get more details "
                 "from the snippets you received, or answer based on what you found."
             )
 
     def reserve_read(self) -> None:
         """
-        Track a read_document call against the per-turn read budget.
+        Track a read_knowledge/read_document call against the per-turn read budget.
 
         Layer 2 uses this only for budgeting visibility (tool responses). Enforcement
         can be enabled later without changing the budget contract.
@@ -249,7 +249,7 @@ class ToolExecutionContext:
         if effective_limit > 0 and self.reads_used > effective_limit:
             raise ReadBudgetExceeded(
                 f"Read limit exceeded ({self.reads_used} calls this turn, max {effective_limit}). "
-                "Batch IDs into a single read_document call and answer from collected evidence."
+                "Batch IDs into a single read_knowledge call and answer from collected evidence."
             )
 
     def budget_snapshot(self) -> dict[str, object]:

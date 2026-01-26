@@ -69,7 +69,15 @@ class McpToolContractFeatureFlagTests(TestCase):
 
         self.assertTrue(provider.tool_name_sets, "Provider never received tool definitions.")
         advertised = provider.tool_name_sets[0]
-        self.assertEqual(advertised, {"search_knowledge", "read_document", "mcp_search_tools", "mcp_call_tool"})
+        # Agentic mode should expose the refs-first retrieval contract.
+        self.assertIn("search_knowledge", advertised)
+        self.assertIn("read_knowledge", advertised)
+        self.assertIn("mcp_search_tools", advertised)
+        self.assertIn("mcp_call_tool", advertised)
+        self.assertNotIn("read_document", advertised)
+        # Keep high-risk/legacy tools out of the agentic surface.
+        self.assertNotIn("create_case", advertised)
+        self.assertNotIn("query_dataset", advertised)
 
     def test_non_agentic_mode_advertises_full_tool_catalog(self) -> None:
         conversation = self._build_conversation(rag_agentic_mode=False)

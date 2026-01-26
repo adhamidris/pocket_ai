@@ -46,6 +46,7 @@ from apps.accounts.models import (
     EmailAccountStatus,
     KnowledgeAuditAction,
     KnowledgeAuditEvent,
+    KnowledgeVisibility,
     KnowledgeStatus,
     KnowledgeUpload,
     KnowledgeUploadChunk,
@@ -766,8 +767,61 @@ TOOL_DEFINITIONS: tuple[Mapping[str, object], ...] = (
             },
         },
     ),
-    # read_knowledge REMOVED: Use read_document (text/PDFs) or query_dataset (tables/CSVs)
-    # Legacy handler remains at _read_knowledge_handler() for backward compatibility
+    _function_schema(
+        name="read_knowledge",
+        description=(
+            "Read canonical evidence from the knowledge base (agentic contract). "
+            "Provide refs from search_knowledge; include cursors only when continuing a partial read."
+        ),
+        properties={
+            "refs": {
+                "type": "array",
+                "minItems": 1,
+                "description": "List of refs to read. Each item is {id} or {id,cursor}.",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "id": {
+                            "type": "string",
+                            "description": "Ref id from search_knowledge refs[].id.",
+                        },
+                        "cursor": {
+                            "type": "string",
+                            "description": "Opaque continuation cursor from a previous read_knowledge response.",
+                        },
+                    },
+                    "required": ["id"],
+                },
+            },
+            "__ui": {
+                "type": "object",
+                "description": "UI-only metadata (ignored by the tool).",
+                "properties": {
+                    "spinner_text": {
+                        "type": "string",
+                        "description": "Short portal spinner label for this tool call.",
+                    }
+                },
+            },
+            "max_chars": {
+                "type": "integer",
+                "description": "Maximum total characters to return across all refs (bounded by server caps).",
+                "minimum": 500,
+                "maximum": READ_DOCUMENT_MAX_CHARS_SCHEMA_MAX,
+                "default": READ_DOCUMENT_MAX_CHARS_SCHEMA_DEFAULT,
+            },
+            "mode": {
+                "type": "string",
+                "enum": ["auto", "excerpt", "table_rows"],
+                "description": (
+                    "Read strategy hint. auto chooses the smallest correct slice. excerpt forces text excerpts. "
+                    "table_rows forces reading full table rows (paged via next_cursor)."
+                ),
+                "default": "auto",
+            },
+        },
+        required=("refs", "max_chars"),
+    ),
     _function_schema(
         name="create_case",
         description="Create a structured customer case with diagnosis and suggested actions.",
@@ -1079,12 +1133,12 @@ def execute_tool(
             "status": "error",
             "error": "unsupported_tool",
             "error_code": "unsupported_tool",
-            "hint": "Unsupported tool. Use search_knowledge, read_document, or list_tables.",
+            "hint": "Unsupported tool. Use search_knowledge, read_knowledge, or list_tables.",
         }
     ctx = context or ToolExecutionContext()
     # Track tool-level read calls (one per tool invocation, regardless of how many
     # internal chunks/pages the handler touches).
-    if normalized_name == "read_document":
+    if normalized_name in {"read_document", "read_knowledge"}:
         try:
             ctx.reserve_read()
         except Exception:
@@ -2707,7 +2761,7 @@ def _convert_to_agentic_search_response(
     Phase 1 (EvidenceRefs): return pointers only (no content previews).
 
     The agentic format returns a compact list of "refs" the model can read via
-    read_document(). This intentionally avoids duplicating facts in multiple
+    read_knowledge(). This intentionally avoids duplicating facts in multiple
     representations (table row + text restatement) and keeps the prompt small.
     """
     snippets = legacy_payload.get("snippets", [])
@@ -3101,41 +3155,10 @@ def _search_knowledge_handler(
             "snippets": [],
         }
 
-    # MOVED: Server-side search enforcement (Phase 4) - after query validation
-    # Per Codex review: only charge for valid non-empty queries
-    context.reserve_search()
-
-    window_seconds = int(getattr(settings, "MCP_TOOL_RATE_LIMIT_WINDOW_SECONDS", 60) or 60)
-    try:
-        calls_per_minute = int(getattr(settings, "MCP_SEARCH_KNOWLEDGE_CALLS_PER_MINUTE", 120) or 0)
-    except (TypeError, ValueError):
-        calls_per_minute = 120
-    calls_per_minute = 0 if calls_per_minute < 0 else calls_per_minute
-    try:
-        enforce_tool_rate_limit(
-            business_profile=conversation.business_profile,
-            tool="search_knowledge",
-            rate_limit=ToolRateLimit(
-                calls_per_minute=None if calls_per_minute <= 0 else calls_per_minute,
-                window_seconds=window_seconds,
-                scope="business",
-            ),
-        )
-    except ToolRateLimitExceeded as exc:
-        return {
-            "tool": "search_knowledge",
-            "status": "throttled",
-            "error": "rate_limited",
-            "error_code": "rate_limited",
-            "snippets": [],
-            "throttle_notice": {"type": "rate_limited", "message": str(exc)},
-            "hint": str(exc),
-        }
-
     new_contract_enabled = bool(getattr(settings, "MCP_NEW_CONTRACT_ENABLED", True))
 
     # Layer 3: Semantic duplicate search detection (one intent per user turn).
-    # Duplicate intents still consume search budget (reserve_search already happened).
+    # Duplicate intents reuse prior results and do not consume per-turn search budget.
     feature_state = FeatureFlagService.snapshot(conversation.business_profile)
     rag_agentic_enabled = bool(getattr(feature_state, "rag_agentic_mode", False)) and new_contract_enabled
 
@@ -3244,6 +3267,37 @@ def _search_knowledge_handler(
                     else:
                         duplicate_payload["snippets"] = list(prior_response.get("snippets") or [])
                     return duplicate_payload
+
+    # Enforce limits only for non-duplicate searches.
+    window_seconds = int(getattr(settings, "MCP_TOOL_RATE_LIMIT_WINDOW_SECONDS", 60) or 60)
+    try:
+        calls_per_minute = int(getattr(settings, "MCP_SEARCH_KNOWLEDGE_CALLS_PER_MINUTE", 120) or 0)
+    except (TypeError, ValueError):
+        calls_per_minute = 120
+    calls_per_minute = 0 if calls_per_minute < 0 else calls_per_minute
+    try:
+        enforce_tool_rate_limit(
+            business_profile=conversation.business_profile,
+            tool="search_knowledge",
+            rate_limit=ToolRateLimit(
+                calls_per_minute=None if calls_per_minute <= 0 else calls_per_minute,
+                window_seconds=window_seconds,
+                scope="business",
+            ),
+        )
+    except ToolRateLimitExceeded as exc:
+        return {
+            "tool": "search_knowledge",
+            "status": "throttled",
+            "error": "rate_limited",
+            "error_code": "rate_limited",
+            "snippets": [],
+            "throttle_notice": {"type": "rate_limited", "message": str(exc)},
+            "hint": str(exc),
+        }
+
+    # Charge for valid, non-empty, non-duplicate searches only.
+    context.reserve_search()
 
     raw_limit = arguments.get("limit")
     try:
@@ -5062,7 +5116,13 @@ def _agentic_read_v2_handler(
     context: ToolExecutionContext,
 ) -> Mapping[str, object]:
     """
-    Agentic Read V2: stable interface `read_document(items=[{id,cursor?}...], max_chars=...)`.
+    Agentic Read V2 engine for refs-first retrieval.
+
+    Internal interface (called by read_knowledge wrapper):
+      - items=[{id,cursor?}...], max_chars=..., mode=auto|excerpt|table_rows
+
+    LLM-facing interface is enforced by read_knowledge:
+      - refs=[{id,cursor?}...], max_chars=..., mode=...
 
     The tool selects the retrieval strategy internally (page blocks vs table rows vs
     chunk-window fallback) and returns deterministic continuation cursors when the
@@ -5071,12 +5131,12 @@ def _agentic_read_v2_handler(
     raw_items = arguments.get("items")
     if not isinstance(raw_items, list) or not raw_items:
         return {
-            "tool": "read_document",
+            "tool": "read_knowledge",
             "status": "error",
             "error": "missing_items",
             "error_code": "missing_items",
-            "contents": [],
-            "hint": "items[] is required (from search_knowledge results).",
+            "evidence": [],
+            "hint": "refs[] is required (use ids/cursors from search_knowledge/read_knowledge).",
         }
 
     # Per-call output cap: stay under MCP_PROMPT_TOOL_OUTPUT_MAX_CHARS minus margin.
@@ -5101,11 +5161,11 @@ def _agentic_read_v2_handler(
         max_chars_allowed = max(0, min(max_chars_allowed, remaining_turn_budget))
     if max_chars_allowed < 200:
         return {
-            "tool": "read_document",
+            "tool": "read_knowledge",
             "status": "throttled",
             "error": "prompt_budget_exceeded",
             "error_code": "prompt_budget_exceeded",
-            "contents": [],
+            "evidence": [],
             "hint": "Prompt budget exceeded for this turn. Answer from collected evidence or ask a narrower question.",
         }
 
@@ -5120,11 +5180,11 @@ def _agentic_read_v2_handler(
         max_chars = max(200, requested_max_chars)
         if max_chars > max_chars_allowed:
             return {
-                "tool": "read_document",
+                "tool": "read_knowledge",
                 "status": "constraint_error",
                 "error": "max_chars_exceeded",
                 "error_code": "max_chars_exceeded",
-                "contents": [],
+                "evidence": [],
                 "requested_max_chars": max_chars,
                 "max_chars_allowed": max_chars_allowed,
                 "hint": (
@@ -5132,6 +5192,9 @@ def _agentic_read_v2_handler(
                     f"Retry with max_chars <= {max_chars_allowed}, or read fewer items."
                 ),
             }
+
+    raw_mode = _coerce_str(arguments.get("mode")).strip().lower()
+    mode = raw_mode if raw_mode in {"auto", "excerpt", "table_rows"} else "auto"
 
     # Dedup items by (id,cursor) while preserving order.
     ordered_items: list[dict[str, object]] = []
@@ -5152,11 +5215,11 @@ def _agentic_read_v2_handler(
 
     if not ordered_items:
         return {
-            "tool": "read_document",
+            "tool": "read_knowledge",
             "status": "error",
             "error": "missing_items",
             "error_code": "missing_items",
-            "contents": [],
+            "evidence": [],
             "hint": "items[] must contain at least one {id} from search_knowledge results.",
         }
 
@@ -5203,11 +5266,16 @@ def _agentic_read_v2_handler(
             return None, {"id": item_id, "error_code": "invalid_cursor", "hint": "Unsupported cursor version."}
         return payload, None
 
-    def _resolve_target(item_id: str) -> tuple[KnowledgeUploadChunk | None, KnowledgeUpload | None, dict[str, object] | None]:
+    def _resolve_target(item_id: str) -> tuple[
+        KnowledgeUploadChunk | None,
+        KnowledgeUpload | None,
+        KnowledgeUploadTable | None,
+        dict[str, object] | None,
+    ]:
         try:
             identifier = uuid.UUID(item_id)
         except (TypeError, ValueError):
-            return None, None, {"id": item_id, "error_code": "invalid_id", "hint": "id must be a valid UUID from search_knowledge results."}
+            return None, None, None, {"id": item_id, "error_code": "invalid_id", "hint": "id must be a valid UUID from search_knowledge results."}
 
         chunk_record = (
             apply_customer_visible_chunks(
@@ -5222,7 +5290,7 @@ def _agentic_read_v2_handler(
         )
         if chunk_record:
             upload = getattr(chunk_record, "upload", None)
-            return chunk_record, upload, None
+            return chunk_record, upload, None, None
 
         upload_record = apply_customer_visible_uploads(
             KnowledgeUpload.objects.filter(
@@ -5232,8 +5300,35 @@ def _agentic_read_v2_handler(
             )
         ).first()
         if upload_record:
-            return None, upload_record, None
-        return None, None, {"id": item_id, "error_code": "not_found", "hint": "Document not found for this business."}
+            return None, upload_record, None, None
+
+        table_record = (
+            KnowledgeUploadTable.objects.filter(
+                id=identifier,
+                upload__business_profile=business,
+                upload__status=KnowledgeStatus.ACTIVE,
+            )
+            .exclude(upload__visibility=KnowledgeVisibility.INTERNAL)
+            .select_related("upload")
+            .only(
+                "id",
+                "upload_id",
+                "title",
+                "section_heading",
+                "order_index",
+                "upload__id",
+                "upload__display_name",
+                "upload__filename",
+                "upload__source_name",
+                "upload__external_reference",
+                "upload__slug",
+            )
+            .first()
+        )
+        if table_record:
+            return None, None, table_record, None
+
+        return None, None, None, {"id": item_id, "error_code": "not_found", "hint": "Document not found for this business."}
 
     agent_scope = _agent_knowledge_scope(conversation, context)
     guard = _identifier_guard(context, conversation)
@@ -5388,114 +5483,187 @@ def _agentic_read_v2_handler(
         item_id: str,
         upload_id: str,
         table_id: str,
-        start_chunk_index: int | None = None,
-        start_pos: int | None = None,  # legacy cursor field (pre-phase-3)
-        start_offset: int = 0,
+        start_row_index: int = 0,
         budget_chars: int,
-        prepend_sep: bool = False,
+        max_rows: int | None = None,
         business_profile,
-    ) -> tuple[str, dict[str, object] | None, bool]:
+    ) -> tuple[dict[str, object], dict[str, object] | None, bool]:
+        """
+        Lossless structured table read (rows/columns).
+
+        Returns a canonical payload:
+          {type:"table", table_id, columns:[...], rows:[[...]], row_offset, rows_shown, total_rows}
+        """
+
         remaining = max(0, int(budget_chars))
-        out_parts: list[str] = []
+        payload: dict[str, object] = {"type": "table", "table_id": str(table_id), "columns": [], "rows": []}
         cursor_next: dict[str, object] | None = None
         complete = True
-        # Only prepend a separator when resuming at an element boundary.
-        prepend_sep = bool(prepend_sep) and int(start_offset or 0) <= 0
 
-        rows_qs = (
-            apply_customer_visible_chunks(
-                KnowledgeUploadChunk.objects.filter(
-                    upload_id=upload_id,
-                    business_profile=business_profile,
-                    upload__status=KnowledgeStatus.ACTIVE,
-                    metadata__table_id=str(table_id),
-                    metadata__table_chunk_role="row",
-                )
+        try:
+            table_uuid = uuid.UUID(str(table_id))
+        except (TypeError, ValueError):
+            return payload, None, True
+
+        table = (
+            KnowledgeUploadTable.objects.filter(
+                id=table_uuid,
+                upload_id=upload_id,
+                upload__business_profile=business_profile,
+                upload__status=KnowledgeStatus.ACTIVE,
             )
-            .exclude(content="")
-            .order_by("chunk_index")
-            .values_list("chunk_index", "content")
+            .only("id", "order_index", "title", "section_heading", "column_schema")
+            .first()
+        )
+        if not table:
+            return payload, None, True
+
+        # Column labels: prefer column_schema if it looks like a list of strings.
+        raw_schema = table.column_schema if isinstance(getattr(table, "column_schema", None), list) else []
+        columns: list[str] = []
+        for entry in raw_schema:
+            if isinstance(entry, str) and entry.strip():
+                columns.append(entry.strip())
+            elif isinstance(entry, Mapping):
+                # Best-effort support for object schemas.
+                for key in ("column", "name", "label", "key", "column_key"):
+                    value = entry.get(key)
+                    if isinstance(value, str) and value.strip():
+                        columns.append(value.strip())
+                        break
+        columns = columns[:200]
+
+        # If schema is missing/empty, infer columns from the first non-header row's cells.
+        if not columns:
+            row_obj = (
+                table.rows.exclude(metadata__row_type="header")
+                .order_by("row_index")
+                .only("id", "row_index")
+                .first()
+            )
+            if row_obj:
+                cell_qs = (
+                    KnowledgeUploadTableCell.objects.filter(row_id=row_obj.id)
+                    .order_by("column_index")
+                    .values_list("column_index", "column_key")
+                )
+                inferred: list[tuple[int, str]] = []
+                for col_idx, col_key in cell_qs:
+                    try:
+                        idx = int(col_idx)
+                    except (TypeError, ValueError):
+                        continue
+                    label = str(col_key or "").strip() or f"column_{idx + 1}"
+                    inferred.append((idx, label))
+                inferred.sort(key=lambda item: item[0])
+                columns = [label for _idx, label in inferred][:200]
+
+        payload["columns"] = columns
+
+        try:
+            start_row = max(0, int(start_row_index))
+        except (TypeError, ValueError):
+            start_row = 0
+        payload["row_offset"] = start_row
+
+        row_qs = (
+            table.rows.exclude(metadata__row_type="header")
+            .filter(row_index__gte=start_row)
+            .order_by("row_index")
+            .only("id", "row_index")
+        )
+        # Bound reads: even for "list everything", never scan unbounded rows in one call.
+        try:
+            scan_cap = int(max(50, min(500, int(budget_chars) // 30 or 50)))
+        except Exception:
+            scan_cap = 200
+        limit_rows = scan_cap
+        if isinstance(max_rows, int) and max_rows > 0:
+            limit_rows = min(limit_rows, int(max_rows))
+        row_qs = row_qs[: max(1, limit_rows)]
+        row_qs = row_qs.prefetch_related(
+            Prefetch(
+                "cells",
+                queryset=KnowledgeUploadTableCell.objects.order_by("column_index").only(
+                    "row_id",
+                    "column_index",
+                    "column_key",
+                    "raw_text",
+                ),
+            )
         )
 
-        pos = max(0, int(start_pos or 0))
-        offset = max(0, int(start_offset))
-        start_chunk = None
-        if start_chunk_index is not None:
+        # Total rows is useful for "list everything" follow-ups and narrowing prompts.
+        try:
+            payload["total_rows"] = int(table.rows.exclude(metadata__row_type="header").count())
+        except Exception:
+            payload["total_rows"] = None
+
+        rows_out: list[list[str]] = []
+        index_offset: int | None = None
+        next_row_index: int | None = None
+
+        for row in row_qs:
+            row_index = getattr(row, "row_index", None)
             try:
-                start_chunk = int(start_chunk_index)
+                row_index_int = int(row_index) if row_index is not None else None
             except (TypeError, ValueError):
-                start_chunk = None
-        started = False
-        idx = 0
-        for chunk_index, content in rows_qs.iterator():  # type: ignore[attr-defined]
-            try:
-                ci = int(chunk_index)
-            except (TypeError, ValueError):
-                idx += 1
-                continue
+                row_index_int = None
 
-            if start_chunk is not None:
-                if ci < start_chunk:
+            cell_lookup: dict[int, str] = {}
+            for cell in row.cells.all():  # type: ignore[attr-defined]
+                try:
+                    idx = int(getattr(cell, "column_index", None) or 0)
+                except (TypeError, ValueError):
                     continue
-            else:
-                # Legacy resume: skip by position in the ordered row list.
-                if idx < pos:
-                    idx += 1
-                    continue
-            raw = str(content or "")
-            if not raw:
-                idx += 1
-                continue
+                text = str(getattr(cell, "raw_text", "") or "")
+                if redact_text and text:
+                    text = redact_free_text(text)
+                cell_lookup[idx] = text
 
-            row_text = raw
-            row_offset = 0
-            if not started:
-                started = True
-                row_offset = offset
-                if row_offset:
-                    row_text = row_text[row_offset:]
+            if index_offset is None:
+                keys = list(cell_lookup.keys())
+                if 0 in cell_lookup:
+                    index_offset = 0
+                elif 1 in cell_lookup:
+                    index_offset = 1
+                elif keys:
+                    index_offset = min(keys)
+                else:
+                    index_offset = 0
 
-            separator = "\n\n" if (out_parts or prepend_sep) else ""
-            needed_min = len(separator) + 1
-            if remaining < needed_min:
-                next_prepend_sep = True if out_parts else bool(prepend_sep)
-                cursor_next = {
-                    **_cursor_payload_base(item_id=item_id, kind="table_rows"),
-                    "upload_id": upload_id,
-                    "table_id": str(table_id),
-                    "row_chunk_index": int(ci),
-                    "char_offset": int(row_offset),
-                }
-                if next_prepend_sep:
-                    cursor_next["prepend_sep"] = True
+            values: list[str] = []
+            for col_idx in range(len(columns)):
+                values.append(str(cell_lookup.get(int(col_idx) + int(index_offset or 0), "")))
+
+            # Rough prompt-char estimate: sum of cell text + JSON framing overhead.
+            row_chars = sum(len(v) for v in values) + (len(values) * 6) + 32
+            if rows_out and remaining < row_chars:
+                next_row_index = row_index_int if row_index_int is not None else None
                 complete = False
                 break
-            if separator:
-                out_parts.append(separator)
-                remaining -= len(separator)
+            if not rows_out and remaining < row_chars:
+                # Not even one row fits; signal continuation so the assistant can narrow.
+                next_row_index = row_index_int if row_index_int is not None else start_row
+                complete = False
+                break
 
-            if len(row_text) <= remaining:
-                out_parts.append(row_text)
-                remaining -= len(row_text)
-                idx += 1
-                continue
+            rows_out.append(values)
+            remaining = max(0, remaining - row_chars)
 
-            out_parts.append(row_text[:remaining])
+        payload["rows"] = rows_out
+        payload["rows_shown"] = len(rows_out)
+
+        if not complete:
             cursor_next = {
                 **_cursor_payload_base(item_id=item_id, kind="table_rows"),
                 "upload_id": upload_id,
                 "table_id": str(table_id),
-                "row_chunk_index": int(ci),
-                "char_offset": int(row_offset + remaining),
+                "row_index": int(next_row_index) if next_row_index is not None else int(start_row + len(rows_out)),
             }
-            complete = False
-            break
 
-        content_out = "".join(out_parts)
-        if redact_text and content_out:
-            content_out = redact_free_text(content_out)
         cursor_str = _sign_agentic_read_cursor_v2(cursor_next) if cursor_next else None
-        return content_out, ({"cursor": cursor_str} if cursor_str else None), complete
+        return payload, ({"cursor": cursor_str} if cursor_str else None), complete
 
     def _read_chunk_window_segment(
         *,
@@ -5618,7 +5786,7 @@ def _agentic_read_v2_handler(
             McpToolOutputArtifact.objects.filter(
                 id=artifact_uuid,
                 conversation=conversation,
-                invoked_tool="read_document",
+                invoked_tool="read_knowledge",
             )
             .only("id", "response")
             .first()
@@ -5690,13 +5858,13 @@ def _agentic_read_v2_handler(
                 read.append({"id": item_id, "status": "error"})
                 continue
 
-        chunk_record, upload_record, resolve_error = _resolve_target(item_id)
+        chunk_record, upload_record, table_record, resolve_error = _resolve_target(item_id)
         if resolve_error:
             errors.append(resolve_error)
             read.append({"id": item_id, "status": "error"})
             continue
 
-        upload = upload_record or getattr(chunk_record, "upload", None)
+        upload = upload_record or getattr(chunk_record, "upload", None) or getattr(table_record, "upload", None)
         upload_id = str(getattr(upload, "id", "") or "")
         if not upload_id:
             errors.append({"id": item_id, "error_code": "not_found", "hint": "Upload not found."})
@@ -5714,7 +5882,7 @@ def _agentic_read_v2_handler(
                 read.append({"id": item_id, "status": "error"})
             continue
 
-        # Block dataset/spreadsheet reads through read_document (same as legacy handler).
+        # Block dataset/spreadsheet reads through read_knowledge (use query_dataset/list_tables instead).
         if _is_dataset_upload(upload) and (chunk_record is None or bool((chunk_record.metadata or {}).get("is_table_chunk"))):
             errors.append(
                 {
@@ -5732,12 +5900,13 @@ def _agentic_read_v2_handler(
         except Exception:
             pass
 
-        content_type = "text"
+        payload: dict[str, object] = {"type": "text", "text": ""}
+        payload_type = "text"
+        evidence_kind = "text_excerpt"
         title = _upload_title(upload)
         cursor_used = cursor_in if isinstance(cursor_in, str) and cursor_in.strip() else None
         next_cursor: str | None = None
         complete = True
-        content_text = ""
 
         # Strategy selection (AUTO):
         if cursor_payload:
@@ -5757,36 +5926,26 @@ def _agentic_read_v2_handler(
                     budget_chars=per_item_budget,
                     prepend_sep=prepend_sep,
                 )
+                payload["text"] = content_text
                 next_cursor = cursor_out.get("cursor") if cursor_out else None
             elif kind == "table_rows":
-                content_type = "table"
+                payload_type = "table"
+                evidence_kind = "table_rows"
                 table_id = str(cursor_payload.get("table_id") or "").strip()
-                raw_row_chunk_index = cursor_payload.get("row_chunk_index")
-                raw_row_pos = cursor_payload.get("row_pos") if raw_row_chunk_index is None else None
-                start_chunk_index = None
-                if raw_row_chunk_index is not None:
-                    try:
-                        start_chunk_index = int(raw_row_chunk_index)
-                    except (TypeError, ValueError):
-                        start_chunk_index = None
-                start_pos = None
-                if raw_row_pos is not None:
-                    try:
-                        start_pos = int(raw_row_pos)
-                    except (TypeError, ValueError):
-                        start_pos = None
-                char_offset = int(cursor_payload.get("char_offset") or 0)
-                content_text, cursor_out, complete = _read_table_rows_segment(
+                raw_row_index = cursor_payload.get("row_index")
+                try:
+                    start_row_index = int(raw_row_index) if raw_row_index is not None else 0
+                except (TypeError, ValueError):
+                    start_row_index = 0
+                table_payload, cursor_out, complete = _read_table_rows_segment(
                     item_id=item_id,
                     upload_id=upload_id,
                     table_id=table_id,
-                    start_chunk_index=start_chunk_index,
-                    start_pos=start_pos,
-                    start_offset=char_offset,
+                    start_row_index=start_row_index,
                     budget_chars=per_item_budget,
-                    prepend_sep=prepend_sep,
                     business_profile=business,
                 )
+                payload = table_payload
                 next_cursor = cursor_out.get("cursor") if cursor_out else None
             elif kind == "chunk_window":
                 start_index = int(cursor_payload.get("chunk_start") or 0)
@@ -5804,6 +5963,7 @@ def _agentic_read_v2_handler(
                     prepend_sep=prepend_sep,
                     business_profile=business,
                 )
+                payload["text"] = content_text
                 next_cursor = cursor_out.get("cursor") if cursor_out else None
             elif kind == "artifact":
                 artifact_id = str(cursor_payload.get("artifact_id") or "").strip()
@@ -5824,7 +5984,13 @@ def _agentic_read_v2_handler(
                         title = title_override.strip()
                     type_override = artifact_meta.get("type")
                     if isinstance(type_override, str) and type_override.strip():
-                        content_type = type_override.strip()
+                        payload_type = type_override.strip()
+                        evidence_kind = "table_rows" if payload_type == "table" else "text_excerpt"
+                if payload_type == "table":
+                    # Artifact segments currently stream text; tables should not route here.
+                    payload = {"type": "table", "columns": [], "rows": []}
+                else:
+                    payload["text"] = content_text
                 next_cursor = cursor_out.get("cursor") if cursor_out else None
             else:
                 errors.append({"id": item_id, "error_code": "invalid_cursor", "hint": "Unknown cursor kind."})
@@ -5837,8 +6003,29 @@ def _agentic_read_v2_handler(
             table_role = str(chunk_meta.get("table_chunk_role") or "").strip().lower()
             table_id = str(chunk_meta.get("table_id") or "").strip()
 
-            if is_table_chunk and table_id and table_role not in {"row"}:
-                content_type = "table"
+            if table_record is not None:
+                payload_type = "table"
+                evidence_kind = "table_rows"
+                table_id = str(getattr(table_record, "id", "") or "").strip()
+                table_title = str(getattr(table_record, "title", "") or "").strip() or str(getattr(table_record, "section_heading", "") or "").strip()
+                if not table_title:
+                    order_index = getattr(table_record, "order_index", None)
+                    table_title = f"Table {order_index}" if order_index else "Table"
+                title = redact_free_text(table_title) if redact_text else table_title
+
+                table_payload, cursor_out, complete = _read_table_rows_segment(
+                    item_id=item_id,
+                    upload_id=upload_id,
+                    table_id=table_id,
+                    start_row_index=0,
+                    budget_chars=per_item_budget,
+                    business_profile=business,
+                )
+                payload = table_payload
+                next_cursor = cursor_out.get("cursor") if cursor_out else None
+            elif mode != "excerpt" and is_table_chunk and table_id and (mode == "table_rows" or table_role not in {"row"}):
+                payload_type = "table"
+                evidence_kind = "table_rows"
                 # Resolve table title for friendlier output.
                 try:
                     table_obj = (
@@ -5854,23 +6041,35 @@ def _agentic_read_v2_handler(
                 except Exception:
                     pass
 
-                content_text, cursor_out, complete = _read_table_rows_segment(
+                table_payload, cursor_out, complete = _read_table_rows_segment(
                     item_id=item_id,
                     upload_id=upload_id,
                     table_id=table_id,
-                    start_chunk_index=0,
-                    start_pos=None,
-                    start_offset=0,
+                    start_row_index=0,
                     budget_chars=per_item_budget,
                     business_profile=business,
                 )
+                payload = table_payload
                 next_cursor = cursor_out.get("cursor") if cursor_out else None
-            elif is_table_chunk and table_role == "row":
-                # Row chunks are already atomic enough: return the row content.
-                content_type = "table"
-                content_text = str(getattr(chunk_record, "content", "") or "") if chunk_record else ""
-                if redact_text and content_text:
-                    content_text = redact_free_text(content_text)
+            elif mode != "excerpt" and is_table_chunk and table_id and table_role == "row":
+                payload_type = "table"
+                evidence_kind = "table_rows"
+                # Return a single lossless row when possible.
+                row_index_raw = chunk_meta.get("table_row_index")
+                try:
+                    row_index = int(row_index_raw) if row_index_raw is not None else 0
+                except (TypeError, ValueError):
+                    row_index = 0
+                table_payload, _cursor_out, _complete = _read_table_rows_segment(
+                    item_id=item_id,
+                    upload_id=upload_id,
+                    table_id=table_id,
+                    start_row_index=row_index,
+                    budget_chars=per_item_budget,
+                    max_rows=1,
+                    business_profile=business,
+                )
+                payload = table_payload
                 complete = True
             else:
                 # Prefer page blocks when a page can be resolved; fall back to a chunk window.
@@ -5906,6 +6105,7 @@ def _agentic_read_v2_handler(
                         start_offset=0,
                         budget_chars=per_item_budget,
                     )
+                    payload["text"] = content_text
                     next_cursor = cursor_out.get("cursor") if cursor_out else None
                 elif chunk_record and chunk_record.chunk_index is not None:
                     neighbor = 1
@@ -5921,6 +6121,7 @@ def _agentic_read_v2_handler(
                         budget_chars=per_item_budget,
                         business_profile=business,
                     )
+                    payload["text"] = content_text
                     next_cursor = cursor_out.get("cursor") if cursor_out else None
                 else:
                     errors.append({"id": item_id, "error_code": "not_found", "hint": "No readable content found for that id."})
@@ -5928,7 +6129,14 @@ def _agentic_read_v2_handler(
                     continue
 
         # If we couldn't read anything for this item, mark as deferred rather than returning empty content.
-        if not content_text:
+        has_payload = False
+        if payload_type == "table":
+            rows_value = payload.get("rows")
+            has_payload = isinstance(rows_value, list) and bool(rows_value)
+        else:
+            text_value = payload.get("text")
+            has_payload = isinstance(text_value, str) and bool(text_value)
+        if not has_payload:
             deferred.append(
                 {
                     "id": item_id,
@@ -5939,25 +6147,34 @@ def _agentic_read_v2_handler(
             read.append({"id": item_id, "status": "deferred"})
             continue
 
-        item_chars = len(content_text)
+        try:
+            if payload_type == "table":
+                item_chars = len(json.dumps(payload, ensure_ascii=False, default=str))
+            else:
+                item_chars = len(str(payload.get("text") or ""))
+        except Exception:
+            item_chars = 0
+
         remaining_chars = max(0, remaining_chars - item_chars)
         total_chars += item_chars
 
-        content_entry: dict[str, object] = {
+        evidence_entry: dict[str, object] = {
             "id": item_id,
+            "document_id": upload_id,
             "title": title,
-            "type": content_type,
-            "content": content_text,
+            "type": payload_type,
+            "kind": evidence_kind,
+            "payload": payload,
             "chars": item_chars,
             "complete": bool(complete and not next_cursor),
-            # Back-compat: orchestrator coverage ledger expects "truncated" on contents[].
+            # Back-compat: orchestrator coverage ledger expects "truncated" on items.
             "truncated": bool(not complete or bool(next_cursor)),
         }
         if cursor_used:
-            content_entry["cursor_used"] = cursor_used
+            evidence_entry["cursor_used"] = cursor_used
         if next_cursor:
-            content_entry["next_cursor"] = next_cursor
-        contents.append(content_entry)
+            evidence_entry["next_cursor"] = next_cursor
+        contents.append(evidence_entry)
 
         read.append(
             {
@@ -5966,6 +6183,7 @@ def _agentic_read_v2_handler(
                 "chars": item_chars,
             }
         )
+        continue
 
     # ---------------------------------------------------------------------
     # Phase 4: Artifact fallback when the *final* tool payload would exceed the
@@ -6001,14 +6219,16 @@ def _agentic_read_v2_handler(
 
     def _build_response(*, total_chars_value: int, hint: str | None = None) -> dict[str, object]:
         payload: dict[str, object] = {
-            "tool": "read_document",
+            "tool": "read_knowledge",
             "status": _response_status(),
-            "contents": contents,
+            "evidence": contents,
             "read": read,
             "deferred": deferred,
             "max_chars": int(max_chars),
             "max_chars_allowed": int(max_chars_allowed),
             "total_chars": int(total_chars_value),
+            "mode": mode,
+            "budget": context.budget_snapshot(),
         }
         if errors:
             payload["errors"] = errors
@@ -6023,15 +6243,16 @@ def _agentic_read_v2_handler(
 
     def _payload_len_with_budget(payload: Mapping[str, object]) -> int:
         try:
-            probe = dict(payload)
-            probe.setdefault("budget", context.budget_snapshot())
-            return len(json.dumps(probe, ensure_ascii=False, default=str))
+            return len(json.dumps(dict(payload), ensure_ascii=False, default=str))
         except Exception:
             return 0
 
     def _attach_artifact_for_item(item: dict[str, object], trace: dict[str, object]) -> bool:
         item_id = str(item.get("id") or "").strip()
-        full_text = item.get("content")
+        payload_obj = item.get("payload") if isinstance(item.get("payload"), Mapping) else {}
+        if str(payload_obj.get("type") or "") != "text":
+            return False
+        full_text = payload_obj.get("text")
         if not item_id or not isinstance(full_text, str) or not full_text:
             return False
         if isinstance(item.get("artifact_id"), str) and str(item.get("artifact_id") or "").strip():
@@ -6067,8 +6288,8 @@ def _agentic_read_v2_handler(
 
         artifact_id = store_local_tool_output_artifact(
             conversation=conversation,
-            invoked_tool="read_document",
-            request={"items": [{"id": item_id, **({"cursor": cursor_used_local} if cursor_used_local else {})}]},
+            invoked_tool="read_knowledge",
+            request={"refs": [{"id": item_id, **({"cursor": cursor_used_local} if cursor_used_local else {})}]},
             response=artifact_payload,
             status="ok",
             is_error=False,
@@ -6086,7 +6307,9 @@ def _agentic_read_v2_handler(
         cursor_str = _sign_agentic_read_cursor_v2(cursor_next)
 
         item["artifact_id"] = artifact_id
-        item["content"] = preview_text
+        payload_obj = dict(payload_obj)
+        payload_obj["text"] = preview_text
+        item["payload"] = payload_obj
         item["chars"] = len(preview_text)
         item["next_cursor"] = cursor_str
         item["complete"] = False
@@ -6148,7 +6371,8 @@ def _agentic_read_v2_handler(
             for item in contents:
                 if not isinstance(item, dict):
                     continue
-                if not isinstance(item.get("content"), str):
+                payload_obj = item.get("payload") if isinstance(item.get("payload"), Mapping) else {}
+                if str(payload_obj.get("type") or "") != "text" or not isinstance(payload_obj.get("text"), str):
                     continue
                 artifact_id_direct = item.get("artifact_id")
                 if isinstance(artifact_id_direct, str) and artifact_id_direct.strip():
@@ -6174,8 +6398,12 @@ def _agentic_read_v2_handler(
 
             if not artifact_streams:
                 break
-            target, target_artifact_id, base_offset = max(artifact_streams, key=lambda it: len(str(it[0].get("content") or "")))
-            current_text = target.get("content")
+            target, target_artifact_id, base_offset = max(
+                artifact_streams,
+                key=lambda it: len(str(((it[0].get("payload") or {}) if isinstance(it[0].get("payload"), Mapping) else {}).get("text") or "")),
+            )
+            current_payload = target.get("payload") if isinstance(target.get("payload"), Mapping) else {}
+            current_text = current_payload.get("text")
             if not isinstance(current_text, str) or len(current_text) <= PROMPT_VIEW_INLINE_MIN_CHARS:
                 break
 
@@ -6184,7 +6412,9 @@ def _agentic_read_v2_handler(
             if new_len >= len(current_text):
                 new_len = max(PROMPT_VIEW_INLINE_MIN_CHARS, len(current_text) - 25)
             clipped_text = current_text[:new_len]
-            target["content"] = clipped_text
+            current_payload = dict(current_payload)
+            current_payload["text"] = clipped_text
+            target["payload"] = current_payload
             target["chars"] = len(clipped_text)
 
             item_id = str(target.get("id") or "").strip()
@@ -6210,7 +6440,7 @@ def _agentic_read_v2_handler(
         response_chars = _payload_len_with_budget(response)
         structured_log(
             "mcp",
-            "read_document.agentic_v2",
+            "read_knowledge.agentic_v2",
             {
                 "items": len(ordered_items),
                 "contents": len(contents),
@@ -6234,11 +6464,11 @@ def _agentic_read_v2_handler(
         context.reserve_characters(int(total_chars_final))
     except CharacterBudgetExceeded as exc:
         return {
-            "tool": "read_document",
+            "tool": "read_knowledge",
             "status": "throttled",
             "error": "prompt_budget_exceeded",
             "error_code": "prompt_budget_exceeded",
-            "contents": [],
+            "evidence": [],
             "throttle_notice": {"type": "prompt_budget", "message": str(exc)},
             "hint": "Prompt budget exceeded. Ask a narrower question or request fewer items.",
         }
@@ -7012,24 +7242,6 @@ def _get_document_structure_handler(
     Returns:
         Mapping with document info, tables structure, and row_labels for enumeration.
     """
-    # Check if agentic mode is enabled - this tool is deprecated in agentic mode
-    feature_state = FeatureFlagService.snapshot(conversation.business_profile)
-    if feature_state.rag_agentic_mode:
-        structured_log(
-            "mcp",
-            "tool.deprecated_in_agentic_mode",
-            {"tool": "get_document_structure"},
-            context={"conversation": conversation.id, "business": conversation.business_profile_id},
-            logger_obj=logger,
-            level=logging.WARNING,
-        )
-        return {
-            "tool": "get_document_structure",
-            "status": "deprecated",
-            "error": "This tool is not needed in agentic mode. Use search() then read(ids) to get document content.",
-            "hint": "Search returns metadata. Call read(ids) with IDs from search results to get full content.",
-        }
-    
     document_id_raw = _coerce_str(arguments.get("document_id")).strip()
     table_id_raw = _coerce_str(arguments.get("table_id")).strip() or None
     include_row_labels = arguments.get("include_row_labels")
@@ -9685,13 +9897,13 @@ def _dataset_query_handler(
     return payload
 
 
-def _read_knowledge_handler(
+def _read_knowledge_legacy_handler(
     arguments: Mapping[str, object],
     conversation: Conversation,
     context: ToolExecutionContext,
 ) -> Mapping[str, object]:
     """
-    Single LLM-facing retrieval tool.
+    Legacy read_knowledge tool (pre EvidenceRefs).
 
     Routes to one of:
     - _read_document_handler (text/PDF excerpts)
@@ -10898,6 +11110,113 @@ def _read_knowledge_handler(
     return envelope
 
 
+def _read_knowledge_agentic_wrapper(
+    arguments: Mapping[str, object],
+    conversation: Conversation,
+    context: ToolExecutionContext,
+) -> Mapping[str, object]:
+    """
+    Agentic read_knowledge contract.
+
+    Supported interface (Phase 2):
+      read_knowledge(refs=[{id,cursor?}...], max_chars=..., mode=auto|excerpt|table_rows)
+
+    This wrapper rejects legacy knobs in agentic mode to keep the contract small and predictable.
+    """
+
+    def _has_value(key: str) -> bool:
+        value = arguments.get(key)
+        if value is None:
+            return False
+        if isinstance(value, str):
+            return bool(value.strip())
+        if isinstance(value, (list, tuple, set, dict)):
+            return bool(value)
+        return True
+
+    # Accept both "refs" (new) and "items" (compat alias) to reduce brittleness.
+    raw_refs = arguments.get("refs")
+    if not isinstance(raw_refs, list):
+        raw_refs = arguments.get("items")
+
+    if not isinstance(raw_refs, list) or not raw_refs:
+        return {
+            "tool": "read_knowledge",
+            "status": "error",
+            "error": "missing_refs",
+            "error_code": "missing_refs",
+            "evidence": [],
+            "hint": "refs[] is required (use ids/cursors from search_knowledge/read_knowledge).",
+        }
+
+    # Reject legacy parameters (besides UI-only metadata) to keep the contract tight.
+    allowed = {"refs", "items", "max_chars", "mode", "__ui"}
+    extra = [key for key in arguments.keys() if key not in allowed and _has_value(str(key))]
+    if extra:
+        return {
+            "tool": "read_knowledge",
+            "status": "constraint_error",
+            "error": "unsupported_parameters",
+            "error_code": "unsupported_parameters",
+            "evidence": [],
+            "unsupported_fields": extra,
+            "hint": "Unsupported parameters for read_knowledge. Use only refs[] + max_chars (+ optional mode, __ui).",
+        }
+
+    # Normalize "refs" into the internal "items" shape used by the read engine.
+    items: list[dict[str, object]] = []
+    for entry in raw_refs:
+        if not isinstance(entry, Mapping):
+            continue
+        item_id = str(entry.get("id") or entry.get("ref") or "").strip()
+        if not item_id:
+            continue
+        out: dict[str, object] = {"id": item_id}
+        cursor = entry.get("cursor")
+        if isinstance(cursor, str) and cursor.strip():
+            out["cursor"] = cursor.strip()
+        items.append(out)
+
+    if not items:
+        return {
+            "tool": "read_knowledge",
+            "status": "error",
+            "error": "missing_refs",
+            "error_code": "missing_refs",
+            "evidence": [],
+            "hint": "refs[] must contain at least one {id} from search_knowledge results.",
+        }
+
+    # Pass through to the agentic read engine.
+    engine_args: dict[str, object] = {
+        "items": items,
+        "max_chars": arguments.get("max_chars"),
+    }
+    mode = _coerce_str(arguments.get("mode")).strip().lower()
+    if mode:
+        engine_args["mode"] = mode
+    return _agentic_read_v2_handler(engine_args, conversation, context)
+
+
+def _read_knowledge_handler(
+    arguments: Mapping[str, object],
+    conversation: Conversation,
+    context: ToolExecutionContext,
+) -> Mapping[str, object]:
+    """
+    Public read_knowledge entrypoint.
+
+    - In agentic mode (rag_agentic_mode + MCP_NEW_CONTRACT_ENABLED): enforce the refs-first contract.
+    - Otherwise: keep legacy read_knowledge behavior for older flows/tests/load tooling.
+    """
+
+    feature_state = FeatureFlagService.snapshot(conversation.business_profile)
+    new_contract_enabled = bool(getattr(settings, "MCP_NEW_CONTRACT_ENABLED", True))
+    if feature_state.rag_agentic_mode and new_contract_enabled:
+        return _read_knowledge_agentic_wrapper(arguments, conversation, context)
+    return _read_knowledge_legacy_handler(arguments, conversation, context)
+
+
 def _action_tool_result(action: ActionType, payload: Mapping[str, object]) -> Mapping[str, object]:
     """
     Structure a tool result as a planned action without side effects.
@@ -11125,105 +11444,15 @@ def _read_document_agentic_wrapper(
     """
     feature_state = FeatureFlagService.snapshot(conversation.business_profile)
     new_contract_enabled = bool(getattr(settings, "MCP_NEW_CONTRACT_ENABLED", True))
-    agentic_read_v2_enabled = bool(getattr(settings, "MCP_AGENTIC_READ_V2_ENABLED", False))
     
     if feature_state.rag_agentic_mode and new_contract_enabled:
-        if agentic_read_v2_enabled:
-            # Phase 5 cleanup: in agentic-v2 mode we accept ONE stable interface only:
-            #   read_document(items=[{id,cursor?}...], max_chars=?)
-            # Reject all legacy knobs even if the model hallucinates them.
-            def _has_value(key: str) -> bool:
-                value = arguments.get(key)
-                if value is None:
-                    return False
-                if isinstance(value, str):
-                    return bool(value.strip())
-                if isinstance(value, (list, tuple, set, dict)):
-                    return bool(value)
-                return True
-
-            legacy_fields = (
-                "ids",
-                "document_id",
-                "pages",
-                "page",
-                "offset",
-                "mode",
-                "neighbor_window",
-                "chunk_neighbor",
-                "token_budget",
-                "agentic_mode",
-            )
-            unsupported = [field for field in legacy_fields if _has_value(field)]
-            if unsupported:
-                return {
-                    "tool": "read_document",
-                    "status": "constraint_error",
-                    "error": "legacy_parameters_not_supported",
-                    "error_code": "legacy_parameters_not_supported",
-                    "contents": [],
-                    "unsupported_fields": unsupported,
-                    "hint": (
-                        "Agentic read v2 is enabled. Use only "
-                        "`read_document(items=[{id,cursor?}...], max_chars=...)` with ids/cursors from tool results."
-                    ),
-                }
-
-            raw_items = arguments.get("items")
-            if not isinstance(raw_items, list) or not raw_items:
-                return {
-                    "tool": "read_document",
-                    "status": "error",
-                    "error": "missing_items",
-                    "error_code": "missing_items",
-                    "contents": [],
-                    "hint": "items[] is required in agentic read v2 (use ids/cursors from search_knowledge/read_document).",
-                }
-
-            # Reject unknown parameters (besides UI-only metadata) to keep the contract tight.
-            allowed = {"items", "max_chars", "__ui"}
-            extra = [key for key in arguments.keys() if key not in allowed and _has_value(str(key))]
-            if extra:
-                return {
-                    "tool": "read_document",
-                    "status": "constraint_error",
-                    "error": "unsupported_parameters",
-                    "error_code": "unsupported_parameters",
-                    "contents": [],
-                    "unsupported_fields": extra,
-                    "hint": (
-                        "Unsupported parameters for agentic read v2. "
-                        "Use only items[] and max_chars (plus optional __ui)."
-                    ),
-                }
-
-            return _agentic_read_v2_handler(arguments, conversation, context)
-        # Use batch handler (handles both single and multiple IDs)
-        raw_ids = arguments.get("ids")
-        if isinstance(raw_ids, (list, tuple)):
-            return _agentic_batch_read_handler(arguments, conversation, context)
-        document_id = _coerce_str(arguments.get("document_id")).strip()
-        pages = arguments.get("pages")
-        page = arguments.get("page")
-        offset = arguments.get("offset")
-        if document_id and (isinstance(pages, list) and pages or page is not None or offset is not None):
-            # Page-specific read in agentic mode; convert response to agentic format.
-            result = _read_document_handler(arguments, conversation, context)
-            return _convert_to_agentic_read_response(result, conversation=conversation)
-        if document_id:
-            return {
-                "tool": "read_document",
-                "status": "error",
-                "error": "missing_ids_or_pages",
-                "contents": [],
-                "hint": "Provide ids from search_knowledge results (read_id/id), or specify pages/page/offset with document_id.",
-            }
         return {
             "tool": "read_document",
-            "status": "error",
-            "error": "missing_ids_or_pages",
+            "status": "constraint_error",
+            "error": "deprecated_tool",
+            "error_code": "deprecated_tool",
             "contents": [],
-            "hint": "Provide ids from search_knowledge results (read_id/id).",
+            "hint": "read_document is deprecated in agentic mode. Use read_knowledge(refs=[{id,cursor?}...], max_chars=..., mode=...).",
         }
     
     # Legacy mode - use standard handler

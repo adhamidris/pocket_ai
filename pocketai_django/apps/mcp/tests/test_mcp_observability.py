@@ -75,7 +75,7 @@ class McpObservabilityTests(TestCase):
         sanitized_diag = plan.diagnostics.get("sanitized_sentences") or {}
         self.assertEqual(sanitized_diag.get("count"), 1)
         self.assertIn("I'll check the docs.", sanitized_diag.get("examples", []))
-        self.assertTrue(any("dropped_sentence" in entry for entry in logs.output))
+        self.assertTrue(any("DROPPED_SENTENCE" in entry for entry in logs.output))
 
     def test_prompts_include_no_narration_language(self) -> None:
         system_prompt = prompts.build_system_message(

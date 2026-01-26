@@ -270,7 +270,11 @@ class GetDocumentStructureHandlerTests(TestCase):
         self.assertEqual(result["status"], "not_found")
         self.assertEqual(result["error_code"], "document_not_found")
 
-    @override_settings(MCP_DOC_STRUCTURE_CALLS_PER_MINUTE=1, MCP_TOOL_RATE_LIMIT_WINDOW_SECONDS=60)
+    @override_settings(
+        MCP_DOC_STRUCTURE_CALLS_PER_MINUTE=1,
+        MCP_TOOL_RATE_LIMIT_WINDOW_SECONDS=60,
+        MCP_DISABLE_TOOL_RATE_LIMITS=False,
+    )
     def test_rate_limiting(self) -> None:
         """Test that rate limiting returns throttled status."""
         cache.clear()

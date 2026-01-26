@@ -51,7 +51,7 @@ Response (conceptual):
   "status": "ok|empty|duplicate|throttled|error",
   "refs": [
     {
-      "id": "opaque_string (Phase 1: usually a UUID that read_document can read)",
+      "id": "opaque_string (Phase 1: usually a UUID that read_knowledge can read)",
       "kind": "table_group|text_anchor|entity_record",
       "document_id": "uuid",
       "label": "Issuance and Renewal Fees",

@@ -377,7 +377,7 @@ class McpOrchestratorService:
         if rag_agentic_enabled:
             allowed = {
                 "search_knowledge",
-                "read_document",
+                "read_knowledge",
                 "search_conversation_files",
                 "read_conversation_file",
                 "pdf_generate",
@@ -396,15 +396,6 @@ class McpOrchestratorService:
             internal_tool_defs = [
                 tool_def for tool_def in internal_tool_defs if self._tool_schema_name(tool_def) in allowed
             ]
-            # Agentic read v2 (schema-only rollout): hide legacy read knobs from the LLM.
-            # Behavior is still handled in the tool boundary; this only changes the exposed schema.
-            if bool(getattr(settings, "MCP_AGENTIC_READ_V2_ENABLED", False)):
-                internal_tool_defs = [
-                    mcp_tools.READ_DOCUMENT_TOOL_DEFINITION_AGENTIC_V2
-                    if self._tool_schema_name(tool_def) == "read_document"
-                    else tool_def
-                    for tool_def in internal_tool_defs
-                ]
 
         # External MCP connections (per-agent) extend the tool catalog.
         remote_tool_defs: list[dict[str, Any]] = []
@@ -572,6 +563,8 @@ class McpOrchestratorService:
             if isinstance(contents, Sequence) and not isinstance(contents, (str, bytes, bytearray)):
                 return len(contents)
             evidence = payload.get("evidence")
+            if isinstance(evidence, Sequence) and not isinstance(evidence, (str, bytes, bytearray, Mapping)):
+                return len(evidence)
             if isinstance(evidence, Mapping):
                 snippets = evidence.get("snippets")
                 if isinstance(snippets, Sequence) and not isinstance(snippets, (str, bytes, bytearray)):
@@ -581,7 +574,7 @@ class McpOrchestratorService:
         def _resolve_read_label(arguments: Mapping[str, object], *, action_verb: str) -> str:
             """
             Best-effort label for read operations that prefers a human document name
-            over opaque UUIDs (especially when read_document is called with ids[]).
+            over opaque UUIDs (especially when read_knowledge/read_document are called with ids/refs).
             """
             try:
                 business_id = getattr(conversation, "business_profile_id", None)
@@ -662,19 +655,31 @@ class McpOrchestratorService:
                 return {"code": "searching", "label": label, "meta": meta, "compat_code": "searching_knowledge"}
 
             if tool_name == "read_knowledge":
-                # Legacy support: try to guess label from intent, but prefer generic if vague
+                refs = arguments.get("refs")
+                if not isinstance(refs, list):
+                    refs = arguments.get("items")
+                if isinstance(refs, list) and refs:
+                    label = "Reading knowledge"
+                    try:
+                        label = f"Reading knowledge ({len(refs)})"
+                    except Exception:
+                        pass
+                    meta = {"refs_count": len(refs)}
+                    return {"code": "reading", "label": label, "meta": meta, "compat_code": "reading_document"}
+
+                # Legacy support (pre-refs): try to guess label from intent, but prefer generic if vague.
                 intent_hint = str(arguments.get("intent") or "").strip().lower()
-                base_label = "Analyzing properties" # distinct from "Reading" to show intelligence
+                base_label = "Reading knowledge"
                 if intent_hint == "table":
-                     base_label = "Analyzing dataset"
+                    base_label = "Analyzing dataset"
                 elif intent_hint == "text":
-                     base_label = "Reading document"
-                
+                    base_label = "Reading document"
+
                 raw_id = arguments.get("document_id")
                 doc_id = str(raw_id).strip() if raw_id is not None else ""
                 short_id = f"{doc_id[:8]}…" if doc_id else ""
                 label = base_label if not short_id else f"{base_label}: {short_id}"
-                
+
                 meta = {"document_id": doc_id, "intent": intent_hint} if doc_id else {}
                 return {"code": "reading", "label": label, "meta": meta, "compat_code": "reading_document"}
 
@@ -1228,7 +1233,7 @@ class McpOrchestratorService:
                                     "snippets": [],
                                     "hint": (
                                         "Use the snippets already retrieved in this turn. "
-                                        "If more detail is needed, call read_document using the existing snippet IDs "
+                                        "If more detail is needed, call read_knowledge using the existing ref IDs "
                                         "(do not invent IDs)."
                                     ),
                                 }
@@ -1259,6 +1264,33 @@ class McpOrchestratorService:
                                 tool_result = policy_tool_result
                                 call_origin = "policy"
                             else:
+                                if tool_name == "read_knowledge":
+                                    raw_refs = arguments.get("refs")
+                                    if not isinstance(raw_refs, list):
+                                        raw_refs = arguments.get("items")
+                                    refs_out: list[str] = []
+                                    if isinstance(raw_refs, list):
+                                        for ref in raw_refs:
+                                            if not isinstance(ref, Mapping):
+                                                continue
+                                            ref_id = str(ref.get("id") or ref.get("ref") or "").strip()
+                                            if ref_id:
+                                                refs_out.append(ref_id)
+                                    structured_log(
+                                        "mcp",
+                                        "tool.read_knowledge.request",
+                                        {
+                                            "refs": refs_out[:10],
+                                            "refs_count": len(refs_out),
+                                            "mode": arguments.get("mode"),
+                                            "max_chars": arguments.get("max_chars"),
+                                        },
+                                        context={
+                                            "conversation": conversation.id,
+                                            "business": conversation.business_profile_id,
+                                        },
+                                        logger_obj=logger,
+                                    )
                                 if tool_name == "read_document":
                                     ids_requested = arguments.get("ids")
                                     if not isinstance(ids_requested, list):
@@ -1801,7 +1833,7 @@ class McpOrchestratorService:
                             # Layer 2: tool responses carry budget telemetry instead of mid-loop
                             # injected system messages.
 
-                            if tool_name in {"search_knowledge", "read_document"}:
+                            if tool_name in {"search_knowledge", "read_knowledge", "read_document"}:
                                 if bool(getattr(settings, "MCP_NEW_CONTRACT_ENABLED", True)):
                                     tool_result = dict(tool_result)
                                     tool_result["budget"] = tool_context.budget_snapshot()
@@ -1847,7 +1879,7 @@ class McpOrchestratorService:
                                 }
                             )
                             trace_index = len(tool_context.tool_trace) - 1
-                            if tool_name == "read_document":
+                            if tool_name in {"read_document", "read_knowledge"}:
                                 signature = self._read_document_signature(arguments, tool_result)
                                 if signature:
                                     repeat_count = read_document_signatures.get(signature, 0) + 1
@@ -2204,7 +2236,7 @@ class McpOrchestratorService:
                     tools_for_iteration = self.tool_definitions
                     excluded_tools: set[str] = set()
                     if table_only_workflow:
-                        excluded_tools.add("read_document")
+                        excluded_tools.add("read_knowledge")
                     if self._search_budget_remaining(tool_context) == 0:
                         excluded_tools.add("search_knowledge")
                     if excluded_tools:
@@ -3669,8 +3701,8 @@ class McpOrchestratorService:
         """
         Build a compact, privacy-safe summary of the tool output for the portal debug panel.
 
-        This intentionally avoids returning any large free-text payloads (e.g., read_document
-        content) while still exposing enough metadata to debug budgets/cursors/artifacts.
+        This intentionally avoids returning any large free-text payloads (e.g., read_knowledge
+        excerpts) while still exposing enough metadata to debug budgets/cursors/artifacts.
         """
 
         normalized = str(tool_name or "").strip().lower()
@@ -3794,6 +3826,103 @@ class McpOrchestratorService:
                         preview.append(entry)
                 if preview:
                     out["contents_preview"] = preview
+            read = tool_result.get("read")
+            if isinstance(read, list):
+                out["read_count"] = len(read)
+                read_preview: list[dict[str, object]] = []
+                for item in read[:8]:
+                    if not isinstance(item, Mapping):
+                        continue
+                    entry: dict[str, object] = {}
+                    item_id = str(item.get("id") or "").strip()
+                    if item_id:
+                        entry["id"] = item_id
+                    status_value = item.get("status")
+                    if isinstance(status_value, str) and status_value.strip():
+                        entry["status"] = status_value.strip()
+                    try:
+                        entry["chars"] = int(item.get("chars") or 0)
+                    except (TypeError, ValueError):
+                        pass
+                    artifact_id = item.get("artifact_id")
+                    if isinstance(artifact_id, str) and artifact_id.strip():
+                        entry["artifact_id"] = artifact_id.strip()
+                    if entry:
+                        read_preview.append(entry)
+                if read_preview:
+                    out["read_preview"] = read_preview
+            deferred = tool_result.get("deferred")
+            if isinstance(deferred, list):
+                out["deferred_count"] = len(deferred)
+            errors = tool_result.get("errors")
+            if isinstance(errors, list):
+                out["errors_count"] = len(errors)
+            throttle_notice = tool_result.get("throttle_notice")
+            if isinstance(throttle_notice, Mapping):
+                out["throttle_notice"] = dict(throttle_notice)
+            budget = tool_result.get("budget")
+            if isinstance(budget, Mapping):
+                out["budget"] = dict(budget)
+            return out
+
+        if normalized == "read_knowledge":
+            out: dict[str, object] = {"status": status}
+            for key in ("total_chars", "max_chars", "max_chars_allowed"):
+                if key in tool_result:
+                    try:
+                        out[key] = int(tool_result.get(key) or 0)
+                    except (TypeError, ValueError):
+                        pass
+            mode = tool_result.get("mode")
+            if isinstance(mode, str) and mode.strip():
+                out["mode"] = mode.strip()
+            for key in ("error_code", "error"):
+                value = tool_result.get(key)
+                if isinstance(value, str) and value.strip():
+                    out[key] = self._clip_text(value.strip(), 120)
+
+            evidence = tool_result.get("evidence")
+            if not isinstance(evidence, list):
+                evidence = tool_result.get("contents")
+            if isinstance(evidence, list):
+                out["evidence_count"] = len(evidence)
+                preview: list[dict[str, object]] = []
+                for item in evidence[:6]:
+                    if not isinstance(item, Mapping):
+                        continue
+                    entry: dict[str, object] = {}
+                    item_id = str(item.get("id") or "").strip()
+                    if item_id:
+                        entry["id"] = item_id
+                    title = item.get("title")
+                    if isinstance(title, str) and title.strip():
+                        entry["title"] = self._clip_text(title.strip(), 140)
+                    item_type = item.get("type")
+                    if isinstance(item_type, str) and item_type.strip():
+                        entry["type"] = item_type.strip()
+                    kind = item.get("kind")
+                    if isinstance(kind, str) and kind.strip():
+                        entry["kind"] = kind.strip()
+                    try:
+                        entry["chars"] = int(item.get("chars") or 0)
+                    except (TypeError, ValueError):
+                        pass
+                    entry["complete"] = bool(item.get("complete"))
+                    entry["truncated"] = bool(item.get("truncated"))
+                    artifact_id = item.get("artifact_id")
+                    if isinstance(artifact_id, str) and artifact_id.strip():
+                        entry["artifact_id"] = artifact_id.strip()
+                    cursor_used_fp = _cursor_fingerprint(item.get("cursor_used"))
+                    if cursor_used_fp:
+                        entry["cursor_used"] = cursor_used_fp
+                    next_cursor_fp = _cursor_fingerprint(item.get("next_cursor"))
+                    if next_cursor_fp:
+                        entry["next_cursor"] = next_cursor_fp
+                    if entry:
+                        preview.append(entry)
+                if preview:
+                    out["evidence_preview"] = preview
+
             read = tool_result.get("read")
             if isinstance(read, list):
                 out["read_count"] = len(read)
@@ -4347,9 +4476,34 @@ class McpOrchestratorService:
         tool_name = str(tool_result.get("tool") or "").strip() if isinstance(tool_result, Mapping) else ""
         engine = str(tool_result.get("engine") or "").strip() if isinstance(tool_result, Mapping) else ""
         tool_diagnostics = tool_result.get("diagnostics") if isinstance(tool_result.get("diagnostics"), Mapping) else {}
-        evidence = tool_result.get("evidence") if isinstance(tool_result.get("evidence"), Mapping) else {}
+        evidence_raw = tool_result.get("evidence")
+        evidence = evidence_raw if isinstance(evidence_raw, Mapping) else {}
         table_aggregate_snippet_seen = False
         snippets = tool_result.get("snippets") if isinstance(tool_result, Mapping) else None
+        if tool_name == "read_knowledge" and isinstance(evidence_raw, list):
+            # Agentic read_knowledge: evidence is a list of canonical payloads.
+            for item in evidence_raw[:20]:
+                if not isinstance(item, Mapping):
+                    continue
+                content_id = item.get("id")
+                title = item.get("title") or "Knowledge"
+                content_type = str(item.get("type") or "").strip().lower()
+                truncated = bool(item.get("truncated"))
+                upload_id = item.get("document_id") if item.get("document_id") not in {None, ""} else None
+                coverage_entry = {
+                    "id": content_id,
+                    "title": title,
+                    "label": title,
+                    "read_state": "partial" if truncated else "full",
+                    "coverage": (),
+                    "search_stage": "read_knowledge",
+                    "chunk_id": content_id,
+                    "upload_id": upload_id,
+                    "page_mode": None,
+                    "is_table_chunk": content_type == "table",
+                    "suppress_in_prompt": False,
+                }
+                context.add_coverage_entry(coverage_entry)
         if tool_name == "read_knowledge":
             snippets = evidence.get("snippets")
         if isinstance(snippets, list):
@@ -5521,6 +5675,31 @@ class McpOrchestratorService:
                 lines.append(f"- search_knowledge(query={_clean_list(query)}) -> {status or 'done'}")
                 continue
 
+            if tool_name == "read_knowledge":
+                raw_refs = args.get("refs")
+                if not isinstance(raw_refs, list):
+                    raw_refs = args.get("items")
+                refs: list[str] = []
+                if isinstance(raw_refs, list):
+                    for ref in raw_refs:
+                        if not isinstance(ref, Mapping):
+                            continue
+                        ref_id = ref.get("id") or ref.get("ref")
+                        if isinstance(ref_id, str) and ref_id.strip():
+                            refs.append(ref_id.strip())
+                mode = args.get("mode") or ""
+                max_chars = args.get("max_chars")
+                parts: list[str] = []
+                if refs:
+                    parts.append(f"refs={_clean_list(refs, limit_items=5, per_item=40)}")
+                if mode:
+                    parts.append(f"mode={_clean(mode, 20)}")
+                if max_chars is not None:
+                    parts.append(f"max_chars={_clean(max_chars, 10)}")
+                detail = ", ".join(parts)
+                lines.append(f"- read_knowledge({detail}) -> {status or 'done'}")
+                continue
+
             if tool_name == "read_document":
                 doc_id = args.get("document_id") or ""
                 ids = args.get("ids") or []
@@ -5628,7 +5807,7 @@ class McpOrchestratorService:
 
         lines = [
             "Evidence summary (system-only): Answer using ONLY this evidence; do NOT call search_knowledge again this turn.",
-            "If you need more detail, use read_document with the snippet IDs (or read_hint.document_id/pages when present). Never invent IDs.",
+            "If you need more detail, use read_knowledge with the ref IDs. Never invent IDs.",
             "Do NOT include document names/IDs/pages in the user-facing answer.",
         ]
         for idx, summary in enumerate(summaries, start=1):
@@ -6972,6 +7151,54 @@ class McpOrchestratorService:
             return compact
 
         if normalized_name == "read_knowledge":
+            # Agentic contract (Phase 2): evidence is a list of canonical payloads.
+            evidence_list = payload.get("evidence")
+            if isinstance(evidence_list, list):
+                for key in ("mode", "total_chars", "max_chars", "max_chars_allowed"):
+                    value = payload.get(key)
+                    if value is None:
+                        continue
+                    if isinstance(value, str) and not value.strip():
+                        continue
+                    compact[key] = value
+
+                evidence_out: list[dict[str, object]] = []
+                for entry in evidence_list[: max(1, max_snippets)]:
+                    if not isinstance(entry, Mapping):
+                        continue
+                    out_entry: dict[str, object] = {}
+                    entry_id = entry.get("id")
+                    if isinstance(entry_id, str) and entry_id.strip():
+                        out_entry["id"] = entry_id.strip()
+                    title = entry.get("title")
+                    if isinstance(title, str) and title.strip():
+                        out_entry["title"] = self._clip_text(title.strip(), 180)
+                    entry_type = entry.get("type")
+                    if isinstance(entry_type, str) and entry_type.strip():
+                        out_entry["type"] = entry_type.strip()
+                    kind = entry.get("kind")
+                    if isinstance(kind, str) and kind.strip():
+                        out_entry["kind"] = kind.strip()
+                    for key in ("chars", "complete", "truncated", "artifact_id", "cursor_used", "next_cursor"):
+                        if key in entry and entry.get(key) not in {None, ""}:
+                            out_entry[key] = entry.get(key)
+                    payload_obj = entry.get("payload")
+                    if isinstance(payload_obj, Mapping) and payload_obj:
+                        # Do not truncate canonical payloads here; read_knowledge is already bounded by max_chars.
+                        out_entry["payload"] = dict(payload_obj)
+                    if out_entry:
+                        evidence_out.append(out_entry)
+
+                compact["evidence"] = evidence_out
+
+                for key in ("read", "deferred", "errors"):
+                    value = payload.get(key)
+                    if isinstance(value, list) and value:
+                        compact[key] = value[:24]
+
+                compact["prompt_compact"] = True
+                return compact
+
             engine = str(payload.get("engine") or "").strip()
             if engine:
                 compact["engine"] = engine
@@ -9030,6 +9257,27 @@ class McpOrchestratorService:
         arguments: Mapping[str, object],
         result: Mapping[str, object] | None = None,
     ) -> str | None:
+        refs = arguments.get("refs")
+        if isinstance(refs, list) and refs:
+            cleaned_refs: list[str] = []
+            for entry in refs:
+                if not isinstance(entry, Mapping):
+                    continue
+                item_id = str(entry.get("id") or entry.get("ref") or "").strip()
+                if not item_id:
+                    continue
+                cursor = entry.get("cursor")
+                cursor_str = str(cursor).strip() if isinstance(cursor, str) and cursor.strip() else ""
+                if cursor_str:
+                    digest = hashlib.sha256(cursor_str.encode("utf-8")).hexdigest()[:12]
+                    cleaned_refs.append(f"{item_id}@{digest}")
+                else:
+                    cleaned_refs.append(item_id)
+            if cleaned_refs:
+                max_chars = arguments.get("max_chars")
+                mode = arguments.get("mode")
+                return f"refs:{'|'.join(cleaned_refs)}:mode{mode}:max{max_chars}"
+
         items = arguments.get("items")
         if isinstance(items, list) and items:
             cleaned_items: list[str] = []
@@ -9048,14 +9296,16 @@ class McpOrchestratorService:
                     cleaned_items.append(item_id)
             if cleaned_items:
                 max_chars = arguments.get("max_chars")
-                return f"items:{'|'.join(cleaned_items)}:max{max_chars}"
+                mode = arguments.get("mode")
+                return f"items:{'|'.join(cleaned_items)}:mode{mode}:max{max_chars}"
 
         ids = arguments.get("ids")
         if isinstance(ids, list) and ids:
             cleaned_ids = [str(value).strip() for value in ids if str(value).strip()]
             if cleaned_ids:
                 max_chars = arguments.get("max_chars")
-                return f"ids:{'|'.join(cleaned_ids)}:max{max_chars}"
+                mode = arguments.get("mode")
+                return f"ids:{'|'.join(cleaned_ids)}:mode{mode}:max{max_chars}"
 
         doc_id = str(arguments.get("document_id") or (result or {}).get("document_id") or "").strip()
         if not doc_id:
@@ -9144,37 +9394,33 @@ class McpOrchestratorService:
             except ValueError:
                 return False
 
-        # Agentic read v2 runs with a strict read_document contract. If we repair to
-        # read_document in v2 mode, we must use the v2 args shape (items/max_chars),
-        # otherwise the tool boundary will reject legacy knobs/extra fields.
+        # In agentic mode, read_document is deprecated; repairs should prefer read_knowledge.
         try:
             feature_state = FeatureFlagService.snapshot(conv.business_profile)
             new_contract_enabled = bool(getattr(settings, "MCP_NEW_CONTRACT_ENABLED", True))
-            agentic_read_v2_enabled = (
-                bool(getattr(feature_state, "rag_agentic_mode", False))
-                and new_contract_enabled
-                and bool(getattr(settings, "MCP_AGENTIC_READ_V2_ENABLED", False))
-            )
+            rag_agentic_enabled = bool(getattr(feature_state, "rag_agentic_mode", False)) and new_contract_enabled
         except Exception:
-            agentic_read_v2_enabled = False
+            rag_agentic_enabled = False
 
         if name == "query_dataset":
             doc_id = args.get("dataset_id") or args.get("document_id")
             if doc_id and not _is_dataset(str(doc_id)):
                 # Mismatch: query_dataset on a non-dataset (Document)
-                # Repair: Switch to read_document
-                # We default to page 1 full_page scan if no other info, 
-                # assuming a broad query intent from standard dataset usage.
-                if agentic_read_v2_enabled:
+                # Repair: Switch to read_knowledge in agentic mode, otherwise read_document.
+                if rag_agentic_enabled:
                     new_args: dict[str, object] = {
-                        "items": [{"id": str(doc_id)}],
-                        "max_chars": 12000,
+                        "refs": [{"id": str(doc_id)}],
+                        "max_chars": int(args.get("max_chars") or 12000),
+                        "mode": "excerpt",
                     }
-                else:
-                    new_args = dict(args)
-                    new_args["document_id"] = doc_id
-                    new_args["page"] = 1 # Fallback
-                    new_args["mode"] = "full_page" # Assume deep read for broad query
+                    if status_callback:
+                        status_callback("routing.repair", "Auto-correcting: Reading knowledge instead of querying dataset")
+                    return "read_knowledge", new_args
+
+                new_args = dict(args)
+                new_args["document_id"] = doc_id
+                new_args["page"] = 1  # Fallback
+                new_args["mode"] = "full_page"  # Assume deep read for broad query
                 
                 # Log the repair
                 if status_callback:
@@ -9182,18 +9428,48 @@ class McpOrchestratorService:
                 return "read_document", new_args
 
         if name == "read_document":
-                doc_id = args.get("document_id")
-                if doc_id and _is_dataset(str(doc_id)):
-                    # Mismatch: read_document on a Dataset
-                    # Repair: Switch to query_dataset
-                    # We can't easily map 'page' to a query, but we can try a preview
-                    new_args = dict(args)
-                    new_args["dataset_id"] = doc_id
-                    if "query" not in new_args:
-                        new_args["limit"] = 5 # Preview
-                    
+            doc_id = args.get("document_id")
+            if doc_id and _is_dataset(str(doc_id)):
+                # Mismatch: read_document on a Dataset
+                # Repair: Switch to query_dataset
+                # We can't easily map 'page' to a query, but we can try a preview.
+                new_args = dict(args)
+                new_args["dataset_id"] = doc_id
+                if "query" not in new_args:
+                    new_args["limit"] = 5  # Preview
+
+                if status_callback:
+                    status_callback("routing.repair", "Auto-correcting: Querying dataset instead of reading document")
+                return "query_dataset", new_args
+
+            if rag_agentic_enabled:
+                # Repair deprecated read_document calls to read_knowledge.
+                max_chars = args.get("max_chars") or 12000
+                mode = args.get("mode") or "auto"
+                refs: list[dict[str, object]] = []
+                raw_items = args.get("items")
+                if isinstance(raw_items, list):
+                    for item in raw_items:
+                        if not isinstance(item, Mapping):
+                            continue
+                        item_id = str(item.get("id") or "").strip()
+                        if not item_id:
+                            continue
+                        ref_entry: dict[str, object] = {"id": item_id}
+                        cursor = item.get("cursor")
+                        if isinstance(cursor, str) and cursor.strip():
+                            ref_entry["cursor"] = cursor.strip()
+                        refs.append(ref_entry)
+                else:
+                    raw_ids = args.get("ids")
+                    if isinstance(raw_ids, list):
+                        refs = [{"id": str(val).strip()} for val in raw_ids if str(val).strip()]
+                    elif doc_id:
+                        refs = [{"id": str(doc_id).strip()}]
+                if refs:
+                    new_args = {"refs": refs, "max_chars": int(max_chars), "mode": mode}
                     if status_callback:
-                        status_callback("routing.repair", "Auto-correcting: Querying dataset instead of reading document")
-                    return "query_dataset", new_args
+                        status_callback("routing.repair", "Auto-correcting: read_document -> read_knowledge")
+                    return "read_knowledge", new_args
         
         return name, args

@@ -103,7 +103,7 @@ class DeepSeekReasonerToolLoopTests(TestCase):
             session_token="deepseek-loop-session",
         )
 
-    @patch("apps.mcp.orchestrator.tools.execute_tool")
+    @patch("apps.mcp.orchestrator.mcp_tools.execute_tool")
     def test_orchestrator_round_trips_reasoning_content_for_tool_calls(self, execute_tool_mock) -> None:
         def _fake_execute_tool(name, arguments, *, conversation, context=None):
             self.assertEqual(name, "search_knowledge")

@@ -5,6 +5,7 @@ from unittest.mock import patch
 
 from django.test import TestCase, override_settings
 
+from apps.accounts.constants import FEATURE_FLAG_METADATA_KEY
 from apps.accounts.models import AgentProfile, BusinessProfile, RegistrationSession, User
 from apps.conversations.models import Conversation
 from apps.mcp.orchestrator import McpOrchestratorService
@@ -52,6 +53,7 @@ class McpEnumerationAutoStructureTests(TestCase):
             registration_session=self.registration,
             name="Enumeration Bank",
             industry="banking",
+            metadata={FEATURE_FLAG_METADATA_KEY: {"rag_agentic_mode": False}},
         )
         self.agent = AgentProfile.objects.create(
             business_profile=self.business,
@@ -66,7 +68,7 @@ class McpEnumerationAutoStructureTests(TestCase):
         )
 
     @override_settings(MCP_ENUMERATION_AUTO_STRUCTURE_ENABLED=True, MCP_ENUMERATION_MAX_DOCUMENTS=3)
-    @patch("apps.mcp.orchestrator.tools.execute_tool")
+    @patch("apps.mcp.orchestrator.mcp_tools.execute_tool")
     def test_auto_injects_document_structure_for_enumeration(self, execute_tool_mock) -> None:
         def _fake_execute_tool(name, arguments, *, conversation, context=None):
             self.assertIsNotNone(context)
@@ -126,7 +128,7 @@ class McpEnumerationAutoStructureTests(TestCase):
         MCP_ENUMERATION_AUTO_FETCH_MAX_ROWS=200,
         MCP_ENUMERATION_AUTO_FETCH_MAX_TABLES=3,
     )
-    @patch("apps.mcp.orchestrator.tools.execute_tool")
+    @patch("apps.mcp.orchestrator.mcp_tools.execute_tool")
     def test_auto_fetches_table_rows_for_numeric_attributes(self, execute_tool_mock) -> None:
         calls: list[tuple[str, dict]] = []
 

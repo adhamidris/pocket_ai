@@ -4,6 +4,7 @@ from unittest import mock
 
 from django.test import TestCase, override_settings
 
+from apps.accounts.constants import FEATURE_FLAG_METADATA_KEY
 from apps.accounts.models import (
     BusinessProfile,
     KnowledgeSourceType,
@@ -187,6 +188,7 @@ class McpReadKnowledgeRoutingTests(TestCase):
             registration_session=self.registration,
             name="Docs Co",
             industry="docs",
+            metadata={FEATURE_FLAG_METADATA_KEY: {"rag_agentic_mode": False}},
         )
         self.tenant_scope = tenant_context(self.business.id)
         self.tenant_scope.__enter__()
@@ -370,7 +372,7 @@ class McpSearchKnowledgeHandlerTests(TestCase):
 
     @override_settings(MCP_NEW_CONTRACT_ENABLED=True, MCP_MAX_SEARCHES_PER_TURN=5)
     @mock.patch("apps.mcp.tools._knowledge_service")
-    def test_search_knowledge_semantic_dedup_reuses_results_and_consumes_budget(self, service_factory_mock) -> None:
+    def test_search_knowledge_semantic_dedup_reuses_results_and_does_not_consume_budget(self, service_factory_mock) -> None:
         import uuid
         from apps.rag.ai_orchestrator import KnowledgeSnippet
 
@@ -410,8 +412,8 @@ class McpSearchKnowledgeHandlerTests(TestCase):
 
         self.assertEqual(first["status"], "ok")
         self.assertEqual(second["status"], "duplicate")
-        # Duplicate intents still consume search budget.
-        self.assertEqual(context.searches_used, 2)
+        # Duplicate intents reuse prior results and do not consume search budget.
+        self.assertEqual(context.searches_used, 1)
         # Second call should not execute a second backend search.
         self.assertEqual(service_mock.search.call_count, 1)
         self.assertEqual(second.get("refs"), first.get("refs"))

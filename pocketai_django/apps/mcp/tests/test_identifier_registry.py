@@ -24,6 +24,7 @@ from apps.mcp.identifier_registry import (
     IdentifierRegistryService,
 )
 from apps.mcp.identifier_eval import IdentifierEvalCase, IdentifierEvalHarness, IdentifierEvalError
+from core.tenancy import tenant_context
 
 
 class IdentifierRegistryTests(TestCase):
@@ -36,6 +37,8 @@ class IdentifierRegistryTests(TestCase):
             name="Detector Biz",
             industry="support",
         )
+        self.tenant_scope = tenant_context(self.business.id)
+        self.tenant_scope.__enter__()
         self.upload = KnowledgeUpload.objects.create(
             business_profile=self.business,
             user=self.user,
@@ -43,6 +46,11 @@ class IdentifierRegistryTests(TestCase):
             status=KnowledgeStatus.ACTIVE,
             display_name="Contacts",
         )
+
+    def tearDown(self) -> None:
+        if hasattr(self, "tenant_scope"):
+            self.tenant_scope.__exit__(None, None, None)
+        super().tearDown()
 
     def test_detector_picks_common_identifiers(self) -> None:
         detector = IdentifierDetector()
