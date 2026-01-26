@@ -79,7 +79,7 @@ class SearchResponse:
     status: Literal["ok", "empty", "error"]
     results: tuple[SearchResultItem, ...] = field(default_factory=tuple)
     total_found: int = 0
-    hint: str | None = None  # guidance if empty: "Try different search terms"
+    hint: str | None = None  # guidance if empty: "KB may not contain this; answer from evidence or ask a clarifying question"
     error: str | None = None
 
     def as_dict(self) -> dict:

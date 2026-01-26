@@ -2839,7 +2839,10 @@ def _convert_to_agentic_search_response(
     
     # Add hint only if empty
     if not results:
-        agentic_response["hint"] = "No matching documents found. Try different search terms."
+        agentic_response["hint"] = (
+            "No matching documents found. The knowledge base may not contain this. "
+            "Answer from available evidence or ask a clarifying question; do not guess."
+        )
     
     # Log the conversion for debugging
     structured_log(
