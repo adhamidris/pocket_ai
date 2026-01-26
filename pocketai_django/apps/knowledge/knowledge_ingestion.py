@@ -6166,7 +6166,10 @@ class KnowledgeIngestionService:
                 upload=upload,
                 page=page_obj,
                 source_block=None,
-                title=self._clamp_text(table_payload.title, table_title_max),
+                title=self._clamp_text(
+                    self._derive_table_title(table_payload, upload),
+                    table_title_max,
+                ),
                 section_heading=self._clamp_text(table_payload.section_heading, table_section_heading_max),
                 order_index=table_payload.order_index,
                 bbox=table_payload.bbox,
@@ -9719,6 +9722,37 @@ class KnowledgeIngestionService:
         normalized = re.sub(r"[^a-z0-9]+", "_", (candidate or "").lower())
         normalized = re.sub(r"_+", "_", normalized).strip("_")
         return normalized or "table_row"
+
+    _GENERIC_TABLE_TITLE_RE = re.compile(r"^Table\s+\d+$", re.IGNORECASE)
+
+    @staticmethod
+    def _derive_table_title(table_payload: TablePayload, upload: KnowledgeUpload) -> str:
+        current = (table_payload.title or "").strip()
+        if current and not KnowledgeIngestionService._GENERIC_TABLE_TITLE_RE.match(current):
+            return current
+
+        doc_name = ""
+        raw = (upload.display_name or upload.source_name or "").strip()
+        if raw:
+            doc_name = Path(raw).stem.strip()
+
+        section = (table_payload.section_heading or "").strip()
+
+        if doc_name and section:
+            return f"{doc_name} – {section}"
+        if doc_name:
+            return f"{doc_name} – Table {table_payload.order_index}"
+        if section:
+            return section
+
+        cols = [str(c).strip() for c in (table_payload.column_schema or []) if str(c).strip()]
+        if cols:
+            preview = ", ".join(cols[:4])
+            if len(cols) > 4:
+                preview += ", ..."
+            return f"Table {table_payload.order_index} ({preview})"
+
+        return f"Table {table_payload.order_index}"
 
     def _row_attributes_from_table(
         self,

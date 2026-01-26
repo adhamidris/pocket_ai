@@ -364,3 +364,83 @@ class KnowledgeIngestionSpreadsheetTests(TestCase):
         self.assertEqual(table_stats.get("row_cap"), 2)
         self.assertEqual(table_stats.get("row_tier"), "small")
         self.assertFalse(table_stats.get("partial_index"))
+
+
+class DeriveTableTitleTests(SimpleTestCase):
+    """Tests for KnowledgeIngestionService._derive_table_title."""
+
+    @staticmethod
+    def _make_table(
+        title="",
+        section_heading="",
+        order_index=1,
+        column_schema=None,
+    ):
+        from apps.knowledge.knowledge_ingestion import TablePayload
+
+        return TablePayload(
+            order_index=order_index,
+            title=title,
+            section_heading=section_heading,
+            page_number=None,
+            column_schema=column_schema or [],
+        )
+
+    @staticmethod
+    def _make_upload(display_name="", source_name=""):
+        from types import SimpleNamespace
+
+        return SimpleNamespace(display_name=display_name, source_name=source_name)
+
+    def test_non_generic_title_preserved(self):
+        """Azure DI caption or real section heading is kept as-is."""
+        table = self._make_table(title="Revenue by Region")
+        upload = self._make_upload(display_name="report.pdf")
+        result = KnowledgeIngestionService._derive_table_title(table, upload)
+        self.assertEqual(result, "Revenue by Region")
+
+    def test_generic_title_with_doc_name_and_section(self):
+        table = self._make_table(title="Table 3", section_heading="Q4 Results")
+        upload = self._make_upload(display_name="annual_report.pdf")
+        result = KnowledgeIngestionService._derive_table_title(table, upload)
+        self.assertEqual(result, "annual_report \u2013 Q4 Results")
+
+    def test_generic_title_with_doc_name_only(self):
+        table = self._make_table(title="Table 2", order_index=2)
+        upload = self._make_upload(display_name="revenue.csv")
+        result = KnowledgeIngestionService._derive_table_title(table, upload)
+        self.assertEqual(result, "revenue \u2013 Table 2")
+
+    def test_generic_title_with_section_only(self):
+        table = self._make_table(title="Table 1", section_heading="Appendix A")
+        upload = self._make_upload()
+        result = KnowledgeIngestionService._derive_table_title(table, upload)
+        self.assertEqual(result, "Appendix A")
+
+    def test_generic_title_with_column_schema(self):
+        table = self._make_table(
+            title="Table 5",
+            order_index=5,
+            column_schema=["Name", "Price", "Quantity", "Total", "Tax"],
+        )
+        upload = self._make_upload()
+        result = KnowledgeIngestionService._derive_table_title(table, upload)
+        self.assertEqual(result, "Table 5 (Name, Price, Quantity, Total, ...)")
+
+    def test_final_fallback(self):
+        table = self._make_table(title="Table 9", order_index=9)
+        upload = self._make_upload()
+        result = KnowledgeIngestionService._derive_table_title(table, upload)
+        self.assertEqual(result, "Table 9")
+
+    def test_case_insensitive_generic_detection(self):
+        table = self._make_table(title="table 7", order_index=7, section_heading="Sales")
+        upload = self._make_upload()
+        result = KnowledgeIngestionService._derive_table_title(table, upload)
+        self.assertEqual(result, "Sales")
+
+    def test_source_name_fallback(self):
+        table = self._make_table(title="Table 1", order_index=1)
+        upload = self._make_upload(source_name="budget_2024.xlsx")
+        result = KnowledgeIngestionService._derive_table_title(table, upload)
+        self.assertEqual(result, "budget_2024 \u2013 Table 1")

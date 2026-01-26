@@ -9,6 +9,9 @@ SSN_RE = re.compile(r"\b\d{3}-\d{2}-\d{4}\b")
 # Only treat as phone when separators or leading "+" are present to avoid masking invoice/order ids.
 PHONE_RE = re.compile(r"(?<!\w)(?:\+?\d[\d\s().-]{6,}\d)(?!\w)")
 IBAN_RE = re.compile(r"\b[A-Z]{2}\d{2}[A-Z0-9]{11,30}\b", re.IGNORECASE)
+_UUID_RE = re.compile(
+    r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}"
+)
 
 
 def sha256_hex(value: str) -> str:
@@ -157,9 +160,17 @@ def redact_free_text(text: str) -> str:
 
     if not text:
         return ""
-    output = EMAIL_RE.sub(lambda m: redact_email(m.group(0)), text)
+    # Protect UUIDs from false-positive phone matching.
+    placeholders: dict[str, str] = {}
+    def _protect(m: re.Match) -> str:
+        key = f"\x00U{len(placeholders)}\x00"
+        placeholders[key] = m.group(0)
+        return key
+    output = _UUID_RE.sub(_protect, text)
+    output = EMAIL_RE.sub(lambda m: redact_email(m.group(0)), output)
     output = SSN_RE.sub("[SSN]", output)
     output = IBAN_RE.sub("[IBAN]", output)
-    # PHONE_RE is intentionally conservative; avoid masking plain digit sequences.
     output = PHONE_RE.sub("[PHONE]", output)
+    for key, original in placeholders.items():
+        output = output.replace(key, original)
     return output

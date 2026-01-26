@@ -40,7 +40,6 @@ from apps.conversations.content_blocks import (
 from apps.conversations.rich_blocks import RichBlockStreamBuilder, apply_block_ops, coerce_block_event, rich_blocks_from_text
 from apps.conversations.models import ConversationSender, ConversationToolApproval, ConversationToolApprovalStatus
 from apps.core.logging_utils import LogEmoji
-from apps.knowledge.privacy import redact_free_text
 from apps.rag.ai_orchestrator import (
     ActionDispatcher,
     AiOrchestratorService,
@@ -172,8 +171,7 @@ def _portal_debug_tool_trace_enabled(request: HttpRequest, payload: Mapping[str,
 
 
 def _clip_debug_text(value: object, *, limit: int = 480) -> str:
-    text = str(value or "")
-    text = redact_free_text(text).strip()
+    text = str(value or "").strip()
     if limit and len(text) > limit:
         return f"{text[: max(0, limit - 1)].rstrip()}…"
     return text
