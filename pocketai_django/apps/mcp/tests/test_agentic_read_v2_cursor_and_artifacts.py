@@ -14,6 +14,10 @@ from apps.accounts.models import (
     KnowledgeStatus,
     KnowledgeUpload,
     KnowledgeUploadChunk,
+    KnowledgeUploadPage,
+    KnowledgeUploadTable,
+    KnowledgeUploadTableRow,
+    KnowledgeUploadTableCell,
     RegistrationSession,
     User,
 )
@@ -81,6 +85,111 @@ class AgenticReadV2CursorAndArtifactTests(TestCase):
         MCP_NEW_CONTRACT_ENABLED=True,
         MCP_AGENTIC_READ_V2_ENABLED=True,
         MCP_TEXT_PII_REDACTION_ENABLED=False,
+    )
+    def test_table_ref_reads_rows_without_model_field_errors(self) -> None:
+        """
+        Regression: table refs (KnowledgeUploadTable.id) must be readable via read_knowledge.
+
+        This path previously crashed during queryset compilation when `.only()` referenced a
+        non-existent KnowledgeUpload field (e.g., `upload__filename`).
+        """
+
+        table = KnowledgeUploadTable.objects.create(
+            upload=self.upload,
+            order_index=1,
+            title="Fees Table",
+            column_schema=["card_type", "fee"],
+        )
+        # Avoid dataset heuristics: PDF uploads normally have pages in real ingestion.
+        KnowledgeUploadPage.objects.create(upload=self.upload, page_number=1)
+        # In production, ingestion annotates rows; mimic non-header rows.
+        row = KnowledgeUploadTableRow.objects.create(table=table, row_index=0, metadata={"row_type": "body"})
+        KnowledgeUploadTableCell.objects.create(
+            table=table,
+            row=row,
+            column_index=0,
+            column_key="card_type",
+            raw_text="white",
+        )
+        KnowledgeUploadTableCell.objects.create(
+            table=table,
+            row=row,
+            column_index=1,
+            column_key="fee",
+            raw_text="EGP 500",
+        )
+
+        ctx = ToolExecutionContext(char_budget_per_turn=100_000)
+        with self._enable_agentic_mode():
+            result = tools.execute_tool(
+                "read_knowledge",
+                {"refs": [{"id": str(table.id)}], "max_chars": 2000},
+                conversation=self.conversation,
+                context=ctx,
+            )
+
+        self.assertIn(result["status"], {"ok", "truncated"}, json.dumps(result, indent=2, default=str))
+        self.assertTrue(result.get("evidence"), json.dumps(result, indent=2, default=str))
+        item = result["evidence"][0]
+        self.assertEqual(item["id"], str(table.id))
+        self.assertEqual(item["type"], "table")
+        self.assertEqual(item["kind"], "table_rows")
+        self.assertEqual(item["payload"]["columns"], ["card_type", "fee"])
+        self.assertEqual(item["payload"]["rows"], [["white", "EGP 500"]])
+
+    @override_settings(
+        MCP_NEW_CONTRACT_ENABLED=True,
+        MCP_AGENTIC_READ_V2_ENABLED=True,
+        MCP_TEXT_PII_REDACTION_ENABLED=False,
+    )
+    def test_table_row_ref_reads_single_row(self) -> None:
+        """Row refs (KnowledgeUploadTableRow.id) should be readable and return a single row."""
+
+        table = KnowledgeUploadTable.objects.create(
+            upload=self.upload,
+            order_index=1,
+            title="Fees Table",
+            column_schema=["card_type", "fee"],
+        )
+        KnowledgeUploadPage.objects.create(upload=self.upload, page_number=1)
+        row = KnowledgeUploadTableRow.objects.create(table=table, row_index=0, metadata={"row_type": "body"})
+        KnowledgeUploadTableCell.objects.create(
+            table=table,
+            row=row,
+            column_index=0,
+            column_key="card_type",
+            raw_text="white",
+        )
+        KnowledgeUploadTableCell.objects.create(
+            table=table,
+            row=row,
+            column_index=1,
+            column_key="fee",
+            raw_text="EGP 500",
+        )
+
+        ctx = ToolExecutionContext(char_budget_per_turn=100_000)
+        with self._enable_agentic_mode():
+            result = tools.execute_tool(
+                "read_knowledge",
+                {"refs": [{"id": str(row.id)}], "max_chars": 2000},
+                conversation=self.conversation,
+                context=ctx,
+            )
+
+        self.assertIn(result["status"], {"ok", "truncated"}, json.dumps(result, indent=2, default=str))
+        self.assertTrue(result.get("evidence"), json.dumps(result, indent=2, default=str))
+        item = result["evidence"][0]
+        self.assertEqual(item["id"], str(row.id))
+        self.assertEqual(item["type"], "table")
+        self.assertEqual(item["kind"], "table_rows")
+        self.assertEqual(item["payload"]["columns"], ["card_type", "fee"])
+        self.assertEqual(item["payload"]["rows"], [["white", "EGP 500"]])
+
+    @override_settings(
+        MCP_NEW_CONTRACT_ENABLED=True,
+        MCP_AGENTIC_READ_V2_ENABLED=True,
+        MCP_TEXT_PII_REDACTION_ENABLED=False,
         MCP_PROMPT_TOOL_OUTPUT_MAX_CHARS=25000,
         MCP_READ_DOCUMENT_MAX_CHARS_MARGIN=0,
     )
@@ -97,7 +206,7 @@ class AgenticReadV2CursorAndArtifactTests(TestCase):
             )
 
         self.assertEqual(first["tool"], "read_knowledge")
-        self.assertIn(first["status"], {"ok", "partial"})
+        self.assertIn(first["status"], {"ok", "truncated"})
         self.assertEqual(len(first["evidence"]), 1)
         first_item = first["evidence"][0]
         self.assertEqual(first_item["id"], chunk_id)

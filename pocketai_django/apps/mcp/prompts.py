@@ -137,7 +137,7 @@ OPENAI_PROACTIVE_TOOL_INSTRUCTIONS = textwrap.dedent(
 
     Use tools to ground business answers in evidence when needed.
     - `search_knowledge` is a common starting point when evidence is missing.
-    - For multi-part questions, prefer one `search_knowledge(query=..., queries=[...])` call instead of multiple searches.
+    - For multi-part questions, prefer one `search_knowledge(queries=[...])` call instead of multiple searches.
     - If evidence is already present in context, answer directly.
     - Use `read_document` when previews are thin or ambiguous.
     - For exhaustive lists, consider `get_document_structure` to confirm scope.

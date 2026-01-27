@@ -563,6 +563,11 @@ MCP_SEARCH_FANOUT_PARALLEL_MAX_WORKERS = max(1, min(8, MCP_SEARCH_FANOUT_PARALLE
 # MCP prompt-safe tool output limits (evidence packets sent back to the LLM).
 # MCP_PROMPT_MAX_SNIPPETS: Max snippet evidence items returned to the model per tool call.
 MCP_PROMPT_MAX_SNIPPETS = int(os.getenv("MCP_PROMPT_MAX_SNIPPETS", "4"))
+# MCP_SEARCH_KNOWLEDGE_DEFAULT_LIMIT: Server-side fallback when `search_knowledge.limit`
+# is omitted by the caller (LLMs sometimes assume schema defaults are enforced).
+# This is clamped to MCP_PROMPT_MAX_SNIPPETS since the model will never see more than that.
+MCP_SEARCH_KNOWLEDGE_DEFAULT_LIMIT = int(os.getenv("MCP_SEARCH_KNOWLEDGE_DEFAULT_LIMIT", "10"))
+MCP_SEARCH_KNOWLEDGE_DEFAULT_LIMIT = max(1, min(MCP_SEARCH_KNOWLEDGE_DEFAULT_LIMIT, MCP_PROMPT_MAX_SNIPPETS))
 # MCP_PROMPT_SNIPPET_CONTENT_CHARS: Max characters of snippet content included in tool output.
 MCP_PROMPT_SNIPPET_CONTENT_CHARS = int(os.getenv("MCP_PROMPT_SNIPPET_CONTENT_CHARS", "1200"))
 # MCP_PROMPT_TABLE_MAX_ROWS: Max rows included in tabular tool evidence.

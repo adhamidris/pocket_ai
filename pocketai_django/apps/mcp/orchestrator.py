@@ -9411,7 +9411,6 @@ class McpOrchestratorService:
                     new_args: dict[str, object] = {
                         "refs": [{"id": str(doc_id)}],
                         "max_chars": int(args.get("max_chars") or 12000),
-                        "mode": "excerpt",
                     }
                     if status_callback:
                         status_callback("routing.repair", "Auto-correcting: Reading knowledge instead of querying dataset")
@@ -9445,7 +9444,6 @@ class McpOrchestratorService:
             if rag_agentic_enabled:
                 # Repair deprecated read_document calls to read_knowledge.
                 max_chars = args.get("max_chars") or 12000
-                mode = args.get("mode") or "auto"
                 refs: list[dict[str, object]] = []
                 raw_items = args.get("items")
                 if isinstance(raw_items, list):
@@ -9467,7 +9465,7 @@ class McpOrchestratorService:
                     elif doc_id:
                         refs = [{"id": str(doc_id).strip()}]
                 if refs:
-                    new_args = {"refs": refs, "max_chars": int(max_chars), "mode": mode}
+                    new_args = {"refs": refs, "max_chars": int(max_chars)}
                     if status_callback:
                         status_callback("routing.repair", "Auto-correcting: read_document -> read_knowledge")
                     return "read_knowledge", new_args

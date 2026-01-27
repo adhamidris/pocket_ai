@@ -42,7 +42,7 @@ class _SearchTwiceProvider:
                 "function": {
                     "name": "search_knowledge",
                     "arguments": json.dumps(
-                        {"query": "credit card fees", "queries": ["credit card fees charges costs"]},
+                        {"queries": ["credit card fees", "credit card fees charges costs"]},
                         ensure_ascii=False,
                     ),
                 },
@@ -88,7 +88,7 @@ class McpSearchContractTests(TestCase):
             return {
                 "tool": "search_knowledge",
                 "status": "ok",
-                "query": str(arguments.get("query") or ""),
+                "query": str((arguments.get("queries") or [""])[0]),
                 "snippets": [
                     {
                         "id": "snippet-1",

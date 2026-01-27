@@ -1,0 +1,35 @@
+
+ ▐▛███▜▌   Claude Code v2.1.19
+▝▜█████▛▘  Opus 4.5 · Claude Pro
+  ▘▘ ▝▝    ~/Desktop/pocket_ai-main 2
+══════════════════ Conversation compacted · ctrl+o for history ═════════════════
+  ⎿  Read pocketai_django/apps/mcp/schemas/agentic_prompts.py (226 lines)
+  ⎿  Referenced file pocketai_django/apps/mcp/tools.py
+  ⎿  Referenced file pocketai_django/apps/mcp/orchestrator.py
+  ⎿ Read 
+    pocketai_django/plans-business-pov/2026-01-26_agentic-rag-evidence-refs.md 
+    (124 lines)
+  ⎿  You've hit your limit · resets 5am (Africa/Cairo)
+     /upgrade to increase your usage limit.
+
+✻ Baked for 2m 6s
+
+❯ /export 
+  ⎿  Conversation copied to clipboard
+ ▐▛███▜▌   Claude Code v2.1.19
+▝▜█████▛▘  Opus 4.5 · Claude Pro
+  ▘▘ ▝▝    ~/Desktop/pocket_ai-main 2
+══════════════════ Conversation compacted · ctrl+o for history ═════════════════
+  ⎿  Read pocketai_django/apps/mcp/schemas/agentic_prompts.py (226 lines)
+  ⎿  Referenced file pocketai_django/apps/mcp/tools.py
+  ⎿  Referenced file pocketai_django/apps/mcp/orchestrator.py
+  ⎿ Read 
+    pocketai_django/plans-business-pov/2026-01-26_agentic-rag-evidence-refs.md 
+    (124 lines)
+  ⎿  You've hit your limit · resets 5am (Africa/Cairo)
+     /upgrade to increase your usage limit.
+
+✻ Baked for 2m 6s
+
+❯ /export 
+  ⎿  Conversation copied to clipboard

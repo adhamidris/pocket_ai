@@ -148,7 +148,14 @@ MCP_PROMPT_MAX_SNIPPETS_CAP = max(1, _MCP_PROMPT_MAX_SNIPPETS)
 
 # Keep the tool schema aligned with the runtime cap so the LLM can request up to the true limit.
 SEARCH_KNOWLEDGE_LIMIT_SCHEMA_MAX = MCP_PROMPT_MAX_SNIPPETS_CAP
-SEARCH_KNOWLEDGE_LIMIT_SCHEMA_DEFAULT = max(1, min(5, SEARCH_KNOWLEDGE_LIMIT_SCHEMA_MAX))
+try:
+    _SEARCH_KNOWLEDGE_DEFAULT_LIMIT = int(getattr(settings, "MCP_SEARCH_KNOWLEDGE_DEFAULT_LIMIT", 10) or 10)
+except (TypeError, ValueError):  # pragma: no cover - defensive
+    _SEARCH_KNOWLEDGE_DEFAULT_LIMIT = 10
+SEARCH_KNOWLEDGE_LIMIT_SCHEMA_DEFAULT = max(
+    1,
+    min(int(_SEARCH_KNOWLEDGE_DEFAULT_LIMIT), SEARCH_KNOWLEDGE_LIMIT_SCHEMA_MAX),
+)
 
 
 def _mcp_log_pii_enabled() -> bool:
@@ -438,7 +445,13 @@ TOOL_DEFINITIONS: tuple[Mapping[str, object], ...] = (
         properties={
             "query": {
                 "type": "string",
-                "description": "Visitor question or keywords to search for.",
+                "description": "Single search query (back-compat). Prefer `queries` for multiple variants.",
+            },
+            "queries": {
+                "type": "array",
+                "items": {"type": "string"},
+                "minItems": 1,
+                "description": "List of search queries. Use 1-4 short, specific variants.",
             },
             "__ui": {
                 "type": "object",
@@ -450,11 +463,6 @@ TOOL_DEFINITIONS: tuple[Mapping[str, object], ...] = (
                     }
                 },
             },
-            "queries": {
-                "type": "array",
-                "items": {"type": "string"},
-                "description": "Optional list of alias queries to batch with the primary query.",
-            },
             "limit": {
                 "type": "integer",
                 "description": "Maximum number of snippets to return (1..MCP_PROMPT_MAX_SNIPPETS).",
@@ -463,7 +471,7 @@ TOOL_DEFINITIONS: tuple[Mapping[str, object], ...] = (
                 "default": SEARCH_KNOWLEDGE_LIMIT_SCHEMA_DEFAULT,
             },
         },
-        required=("query",),
+        required=(),
     ),
     _function_schema(
         name="search_conversation_files",
@@ -809,15 +817,6 @@ TOOL_DEFINITIONS: tuple[Mapping[str, object], ...] = (
                 "minimum": 500,
                 "maximum": READ_DOCUMENT_MAX_CHARS_SCHEMA_MAX,
                 "default": READ_DOCUMENT_MAX_CHARS_SCHEMA_DEFAULT,
-            },
-            "mode": {
-                "type": "string",
-                "enum": ["auto", "excerpt", "table_rows"],
-                "description": (
-                    "Read strategy hint. auto chooses the smallest correct slice. excerpt forces text excerpts. "
-                    "table_rows forces reading full table rows (paged via next_cursor)."
-                ),
-                "default": "auto",
             },
         },
         required=("refs", "max_chars"),
@@ -2780,7 +2779,10 @@ def _convert_to_agentic_search_response(
         """Canonical dedupe key for EvidenceRefs (avoid duplicates across search stages)."""
         diagnostics = snippet.get("source_diagnostics") if isinstance(snippet.get("source_diagnostics"), Mapping) else {}
         table_id = diagnostics.get("table_id")
-        row_index = diagnostics.get("row_index") or diagnostics.get("table_row_index")
+        # Preserve row_index=0 (0 is valid but falsy).
+        row_index = diagnostics.get("row_index")
+        if row_index is None:
+            row_index = diagnostics.get("table_row_index")
         if table_id and row_index is not None:
             return f"table:{table_id}:{row_index}"
         chunk_id = str(snippet.get("chunk_id") or snippet.get("id") or "").strip()
@@ -2845,7 +2847,19 @@ def _convert_to_agentic_search_response(
         row_count = diagnostics.get("table_total_rows") or diagnostics.get("table_row_count") or snippet.get("row_count")
         column_count = diagnostics.get("table_column_count") or snippet.get("column_count")
         table_id = diagnostics.get("table_id")
-        row_index = diagnostics.get("row_index") or diagnostics.get("table_row_index")
+        # Preserve row_index=0 (0 is valid but falsy).
+        row_index = diagnostics.get("row_index")
+        if row_index is None:
+            row_index = diagnostics.get("table_row_index")
+
+        # For table refs, estimate the full table size so suggested_max_chars
+        # reflects the whole table (~2-4k) rather than just the matched row.
+        if is_table and row_count and column_count:
+            try:
+                table_size_estimate = int(row_count) * int(column_count) * 25 + int(row_count) * 32
+                char_estimate = max(char_estimate, table_size_estimate)
+            except (TypeError, ValueError):
+                pass
 
         suggested_max_chars = _suggest_max_chars_for_estimate(
             char_estimate,
@@ -2949,17 +2963,27 @@ def _convert_to_agentic_search_response(
     # Build agentic response
     status = legacy_payload.get("status", "ok")
     total_found = legacy_payload.get("completeness", {}).get("total_found", len(refs))
-    
+
     agentic_response: dict[str, object] = {
         "tool": "search_knowledge",
         "status": status if refs else "empty",
         "refs": refs,
         "total_found": total_found,
     }
+
+    # Provide a read_budget_hint so the LLM can plan max_chars for read_knowledge.
+    if refs:
+        total_suggested = sum(int(r.get("suggested_max_chars") or 0) for r in refs)
+        max_chars_allowed = int(READ_DOCUMENT_MAX_CHARS_SCHEMA_MAX)
+        agentic_response["read_budget_hint"] = {
+            "total_suggested_max_chars": min(total_suggested, max_chars_allowed),
+            "max_chars_allowed": max_chars_allowed,
+        }
+
     completeness = legacy_payload.get("completeness")
     if isinstance(completeness, Mapping) and completeness:
         agentic_response["completeness"] = dict(completeness)
-    
+
     # Add hint only if empty
     if not refs:
         agentic_response["hint"] = (
@@ -2994,10 +3018,33 @@ def _search_knowledge_handler(
     conversation: Conversation,
     context: ToolExecutionContext,
 ) -> Mapping[str, object]:
-    primary_query = _coerce_str(arguments.get("query")).strip()
-    raw_extra_queries = arguments.get("queries")
+    # Build queries list.
+    # - `query` is the primary, single-query interface (back-compat and simpler).
+    # - `queries[]` allows multiple variants for fanout.
+    raw_queries_param = arguments.get("queries")
+    raw_query_param = _coerce_str(arguments.get("query")).strip()
     queries: list[str] = []
     seen_queries: set[str] = set()
+
+    def _append_query(candidate: str) -> None:
+        normalized = candidate.strip()
+        if not normalized:
+            return
+        lowered = normalized.lower()
+        if lowered in seen_queries:
+            return
+        seen_queries.add(lowered)
+        queries.append(normalized)
+
+    if raw_query_param:
+        _append_query(raw_query_param)
+    if isinstance(raw_queries_param, (list, tuple)):
+        for candidate in raw_queries_param:
+            candidate_str = _coerce_str(candidate).strip()
+            if candidate_str:
+                _append_query(candidate_str)
+
+    primary_query = queries[0] if queries else ""
 
     # =========================================================================
     # DIAGNOSTIC: Log document context state at search start
@@ -3038,6 +3085,8 @@ def _search_knowledge_handler(
             rewrite_result = rewriter.rewrite(primary_query, rewrite_context)
 
             if rewrite_result.context_injected:
+                # Replace the first query with the rewritten version.
+                queries[0] = rewrite_result.rewritten_query
                 primary_query = rewrite_result.rewritten_query
                 structured_log(
                     "mcp",
@@ -3077,24 +3126,6 @@ def _search_knowledge_handler(
         except Exception as exc:
             # Don't fail the search if rewriting fails
             logger.warning("Query rewriting failed: %s", exc, exc_info=True)
-
-    def _append_query(candidate: str) -> None:
-        normalized = candidate.strip()
-        if not normalized:
-            return
-        lowered = normalized.lower()
-        if lowered in seen_queries:
-            return
-        seen_queries.add(lowered)
-        queries.append(normalized)
-
-    if primary_query:
-        _append_query(primary_query)
-    if isinstance(raw_extra_queries, (list, tuple)):
-        for candidate in raw_extra_queries:
-            candidate_str = _coerce_str(candidate).strip()
-            if candidate_str:
-                _append_query(candidate_str)
 
     query_variant_limit = max(
         1,
@@ -3304,6 +3335,10 @@ def _search_knowledge_handler(
         requested_limit = int(raw_limit) if raw_limit is not None else None
     except (TypeError, ValueError):
         requested_limit = None
+    if requested_limit is None:
+        # Server-side default when callers omit `limit`. Without this, the underlying
+        # search service may treat limit=None as unbounded and return huge result sets.
+        requested_limit = SEARCH_KNOWLEDGE_LIMIT_SCHEMA_DEFAULT
 
     service = _knowledge_service()
     # Apply identifier value filter when an email is locked/provided to prevent cross-identifier leakage.
@@ -5119,10 +5154,10 @@ def _agentic_read_v2_handler(
     Agentic Read V2 engine for refs-first retrieval.
 
     Internal interface (called by read_knowledge wrapper):
-      - items=[{id,cursor?}...], max_chars=..., mode=auto|excerpt|table_rows
+      - items=[{id,cursor?}...], max_chars=...
 
-    LLM-facing interface is enforced by read_knowledge:
-      - refs=[{id,cursor?}...], max_chars=..., mode=...
+    Public interface (enforced by read_knowledge):
+      - refs=[{id,cursor?}...], max_chars=...
 
     The tool selects the retrieval strategy internally (page blocks vs table rows vs
     chunk-window fallback) and returns deterministic continuation cursors when the
@@ -5193,8 +5228,9 @@ def _agentic_read_v2_handler(
                 ),
             }
 
-    raw_mode = _coerce_str(arguments.get("mode")).strip().lower()
-    mode = raw_mode if raw_mode in {"auto", "excerpt", "table_rows"} else "auto"
+    # The backend chooses the correct representation and paging strategy.
+    # `mode` is intentionally not part of the public agentic contract.
+    mode = "auto"
 
     # Dedup items by (id,cursor) while preserving order.
     ordered_items: list[dict[str, object]] = []
@@ -5270,12 +5306,13 @@ def _agentic_read_v2_handler(
         KnowledgeUploadChunk | None,
         KnowledgeUpload | None,
         KnowledgeUploadTable | None,
+        KnowledgeUploadTableRow | None,
         dict[str, object] | None,
     ]:
         try:
             identifier = uuid.UUID(item_id)
         except (TypeError, ValueError):
-            return None, None, None, {"id": item_id, "error_code": "invalid_id", "hint": "id must be a valid UUID from search_knowledge results."}
+            return None, None, None, None, {"id": item_id, "error_code": "invalid_id", "hint": "id must be a valid UUID from search_knowledge results."}
 
         chunk_record = (
             apply_customer_visible_chunks(
@@ -5290,7 +5327,7 @@ def _agentic_read_v2_handler(
         )
         if chunk_record:
             upload = getattr(chunk_record, "upload", None)
-            return chunk_record, upload, None, None
+            return chunk_record, upload, None, None, None
 
         upload_record = apply_customer_visible_uploads(
             KnowledgeUpload.objects.filter(
@@ -5300,7 +5337,7 @@ def _agentic_read_v2_handler(
             )
         ).first()
         if upload_record:
-            return None, upload_record, None, None
+            return None, upload_record, None, None, None
 
         table_record = (
             KnowledgeUploadTable.objects.filter(
@@ -5318,7 +5355,6 @@ def _agentic_read_v2_handler(
                 "order_index",
                 "upload__id",
                 "upload__display_name",
-                "upload__filename",
                 "upload__source_name",
                 "upload__external_reference",
                 "upload__slug",
@@ -5326,9 +5362,36 @@ def _agentic_read_v2_handler(
             .first()
         )
         if table_record:
-            return None, None, table_record, None
+            return None, None, table_record, None, None
 
-        return None, None, None, {"id": item_id, "error_code": "not_found", "hint": "Document not found for this business."}
+        row_record = (
+            KnowledgeUploadTableRow.objects.filter(
+                id=identifier,
+                table__upload__business_profile=business,
+                table__upload__status=KnowledgeStatus.ACTIVE,
+            )
+            .exclude(table__upload__visibility=KnowledgeVisibility.INTERNAL)
+            .select_related("table", "table__upload")
+            .only(
+                "id",
+                "row_index",
+                "table__id",
+                "table__title",
+                "table__section_heading",
+                "table__order_index",
+                "table__upload_id",
+                "table__upload__id",
+                "table__upload__display_name",
+                "table__upload__source_name",
+                "table__upload__external_reference",
+                "table__upload__slug",
+            )
+            .first()
+        )
+        if row_record:
+            return None, None, None, row_record, None
+
+        return None, None, None, None, {"id": item_id, "error_code": "not_found", "hint": "Document not found for this business."}
 
     agent_scope = _agent_knowledge_scope(conversation, context)
     guard = _identifier_guard(context, conversation)
@@ -5533,10 +5596,13 @@ def _agentic_read_v2_handler(
                         break
         columns = columns[:200]
 
+        # Treat missing row_type as non-header (NULL should be included).
+        non_header_q = models.Q(metadata__row_type__isnull=True) | ~models.Q(metadata__row_type="header")
+
         # If schema is missing/empty, infer columns from the first non-header row's cells.
         if not columns:
             row_obj = (
-                table.rows.exclude(metadata__row_type="header")
+                table.rows.filter(non_header_q)
                 .order_by("row_index")
                 .only("id", "row_index")
                 .first()
@@ -5567,8 +5633,7 @@ def _agentic_read_v2_handler(
         payload["row_offset"] = start_row
 
         row_qs = (
-            table.rows.exclude(metadata__row_type="header")
-            .filter(row_index__gte=start_row)
+            table.rows.filter(non_header_q, row_index__gte=start_row)
             .order_by("row_index")
             .only("id", "row_index")
         )
@@ -5595,7 +5660,7 @@ def _agentic_read_v2_handler(
 
         # Total rows is useful for "list everything" follow-ups and narrowing prompts.
         try:
-            payload["total_rows"] = int(table.rows.exclude(metadata__row_type="header").count())
+            payload["total_rows"] = int(table.rows.filter(non_header_q).count())
         except Exception:
             payload["total_rows"] = None
 
@@ -5858,13 +5923,18 @@ def _agentic_read_v2_handler(
                 read.append({"id": item_id, "status": "error"})
                 continue
 
-        chunk_record, upload_record, table_record, resolve_error = _resolve_target(item_id)
+        chunk_record, upload_record, table_record, row_record, resolve_error = _resolve_target(item_id)
         if resolve_error:
             errors.append(resolve_error)
             read.append({"id": item_id, "status": "error"})
             continue
 
-        upload = upload_record or getattr(chunk_record, "upload", None) or getattr(table_record, "upload", None)
+        upload = (
+            upload_record
+            or getattr(chunk_record, "upload", None)
+            or getattr(table_record, "upload", None)
+            or getattr(getattr(row_record, "table", None), "upload", None)
+        )
         upload_id = str(getattr(upload, "id", "") or "")
         if not upload_id:
             errors.append({"id": item_id, "error_code": "not_found", "hint": "Upload not found."})
@@ -6003,7 +6073,38 @@ def _agentic_read_v2_handler(
             table_role = str(chunk_meta.get("table_chunk_role") or "").strip().lower()
             table_id = str(chunk_meta.get("table_id") or "").strip()
 
-            if table_record is not None:
+            if row_record is not None:
+                payload_type = "table"
+                evidence_kind = "table_rows"
+                table_obj = getattr(row_record, "table", None)
+                table_id = str(getattr(table_obj, "id", "") or "").strip()
+                row_index_raw = getattr(row_record, "row_index", 0)
+                try:
+                    row_index = int(row_index_raw) if row_index_raw is not None else 0
+                except (TypeError, ValueError):
+                    row_index = 0
+
+                table_title = str(getattr(table_obj, "title", "") or "").strip() or str(
+                    getattr(table_obj, "section_heading", "") or ""
+                ).strip()
+                if not table_title:
+                    order_index = getattr(table_obj, "order_index", None)
+                    table_title = f"Table {order_index}" if order_index else "Table"
+                title = redact_free_text(table_title) if redact_text else table_title
+
+                table_payload, _cursor_out, complete = _read_table_rows_segment(
+                    item_id=item_id,
+                    upload_id=upload_id,
+                    table_id=table_id,
+                    start_row_index=row_index,
+                    budget_chars=per_item_budget,
+                    max_rows=1,
+                    business_profile=business,
+                )
+                payload = table_payload
+                # Row refs are intended to be a single, lossless row.
+                next_cursor = None
+            elif table_record is not None:
                 payload_type = "table"
                 evidence_kind = "table_rows"
                 table_id = str(getattr(table_record, "id", "") or "").strip()
@@ -6054,13 +6155,28 @@ def _agentic_read_v2_handler(
             elif mode != "excerpt" and is_table_chunk and table_id and table_role == "row":
                 payload_type = "table"
                 evidence_kind = "table_rows"
+                # Resolve table title for friendlier output (row-chunk reads should still
+                # look like "Table X", not just the upload title).
+                try:
+                    table_obj = (
+                        KnowledgeUploadTable.objects.filter(id=table_id)
+                        .only("id", "title", "section_heading", "order_index")
+                        .first()
+                    )
+                    if table_obj:
+                        table_title = (table_obj.title or table_obj.section_heading or "").strip()
+                        if not table_title:
+                            table_title = f"Table {table_obj.order_index}" if table_obj.order_index else "Table"
+                        title = redact_free_text(table_title) if redact_text else table_title
+                except Exception:
+                    pass
                 # Return a single lossless row when possible.
                 row_index_raw = chunk_meta.get("table_row_index")
                 try:
                     row_index = int(row_index_raw) if row_index_raw is not None else 0
                 except (TypeError, ValueError):
                     row_index = 0
-                table_payload, _cursor_out, _complete = _read_table_rows_segment(
+                table_payload, cursor_out, complete = _read_table_rows_segment(
                     item_id=item_id,
                     upload_id=upload_id,
                     table_id=table_id,
@@ -6070,7 +6186,7 @@ def _agentic_read_v2_handler(
                     business_profile=business,
                 )
                 payload = table_payload
-                complete = True
+                next_cursor = cursor_out.get("cursor") if cursor_out else None
             else:
                 # Prefer page blocks when a page can be resolved; fall back to a chunk window.
                 page_number = 1
@@ -6170,19 +6286,63 @@ def _agentic_read_v2_handler(
             # Back-compat: orchestrator coverage ledger expects "truncated" on items.
             "truncated": bool(not complete or bool(next_cursor)),
         }
+        if payload_type == "table":
+            # Surface table coverage metadata at the top level so the LLM doesn't have to
+            # infer "slice vs full table" from a small payload.
+            for key in ("table_id", "row_offset", "rows_shown", "total_rows"):
+                if key in payload:
+                    evidence_entry[key] = payload.get(key)
+            try:
+                row_offset = int(payload.get("row_offset") or 0)
+                rows_shown = int(payload.get("rows_shown") or 0)
+                total_rows = payload.get("total_rows")
+                if total_rows is not None:
+                    evidence_entry["has_more"] = bool((row_offset + rows_shown) < int(total_rows))
+            except Exception:
+                pass
         if cursor_used:
             evidence_entry["cursor_used"] = cursor_used
         if next_cursor:
             evidence_entry["next_cursor"] = next_cursor
         contents.append(evidence_entry)
 
-        read.append(
-            {
-                "id": item_id,
-                "status": "full" if (complete and not next_cursor) else "partial",
-                "chars": item_chars,
-            }
-        )
+        is_truncated = not complete or bool(next_cursor)
+        read_entry: dict[str, object] = {
+            "id": item_id,
+            "status": "full" if not is_truncated else "truncated",
+            "chars": item_chars,
+        }
+        if is_truncated:
+            # Build actionable hint for the LLM.
+            hint_parts: list[str] = []
+            if payload_type == "table":
+                rows_shown = len(payload.get("rows") or [])
+                total_rows = payload.get("total_rows")
+                if total_rows:
+                    hint_parts.append(f"{rows_shown} of {total_rows} rows returned.")
+                else:
+                    hint_parts.append(f"{rows_shown} rows returned (total unknown).")
+            hint_parts.append(
+                f"Use next_cursor to continue or retry with higher max_chars (up to {int(max_chars_allowed)})."
+            )
+            read_entry["hint"] = " ".join(hint_parts)
+        elif payload_type == "table":
+            # Even when not truncated, the table payload may intentionally be a single-row slice.
+            try:
+                rows_shown = int(payload.get("rows_shown") or len(payload.get("rows") or []))
+            except Exception:
+                rows_shown = len(payload.get("rows") or [])
+            total_rows = payload.get("total_rows")
+            try:
+                total_rows_int = int(total_rows) if total_rows is not None else None
+            except (TypeError, ValueError):
+                total_rows_int = None
+            if total_rows_int is not None and rows_shown < total_rows_int:
+                read_entry["hint"] = (
+                    f"{rows_shown} of {total_rows_int} rows returned. "
+                    "This may be a targeted row slice (e.g., the matching fee row), not the full table."
+                )
+        read.append(read_entry)
         continue
 
     # ---------------------------------------------------------------------
@@ -6213,8 +6373,8 @@ def _agentic_read_v2_handler(
         PROMPT_VIEW_INLINE_MAX_CHARS = min(PROMPT_VIEW_INLINE_MAX_CHARS, max(PROMPT_VIEW_INLINE_MIN_CHARS, output_limit // 2))
 
     def _response_status() -> str:
-        if errors or deferred or any(str(entry.get("status") or "") in {"partial", "artifact"} for entry in read):
-            return "partial" if contents else "error"
+        if errors or deferred or any(str(entry.get("status") or "") in {"truncated", "partial", "artifact"} for entry in read):
+            return "truncated" if contents else "error"
         return "ok"
 
     def _build_response(*, total_chars_value: int, hint: str | None = None) -> dict[str, object]:
@@ -6227,7 +6387,6 @@ def _agentic_read_v2_handler(
             "max_chars": int(max_chars),
             "max_chars_allowed": int(max_chars_allowed),
             "total_chars": int(total_chars_value),
-            "mode": mode,
             "budget": context.budget_snapshot(),
         }
         if errors:
@@ -6358,6 +6517,11 @@ def _agentic_read_v2_handler(
             )
 
     response_candidate = _build_response(total_chars_value=total_chars_final, hint=response_hint)
+    if output_limit and response_hint and _payload_len_with_budget(response_candidate) > output_limit:
+        # Hints are nice-to-have; when the prompt cap is very small, prefer staying under
+        # the hard tool-output limit over including extra explanatory text.
+        response_hint = None
+        response_candidate = _build_response(total_chars_value=total_chars_final)
 
     # If we're still above the prompt cap (e.g., cursor/budget overhead), clip artifact previews
     # until the JSON payload fits. This doesn't lose evidence because the full text is stored
@@ -6436,7 +6600,7 @@ def _agentic_read_v2_handler(
 
     try:
         artifact_items = sum(1 for entry in read if isinstance(entry, Mapping) and str(entry.get("status") or "") == "artifact")
-        partial_items = sum(1 for entry in read if isinstance(entry, Mapping) and str(entry.get("status") or "") == "partial")
+        truncated_items = sum(1 for entry in read if isinstance(entry, Mapping) and str(entry.get("status") or "") in {"truncated", "partial"})
         response_chars = _payload_len_with_budget(response)
         structured_log(
             "mcp",
@@ -6444,7 +6608,7 @@ def _agentic_read_v2_handler(
             {
                 "items": len(ordered_items),
                 "contents": len(contents),
-                "partial_items": int(partial_items),
+                "truncated_items": int(truncated_items),
                 "artifact_items": int(artifact_items),
                 "deferred": len(deferred),
                 "errors": len(errors),
@@ -11118,8 +11282,8 @@ def _read_knowledge_agentic_wrapper(
     """
     Agentic read_knowledge contract.
 
-    Supported interface (Phase 2):
-      read_knowledge(refs=[{id,cursor?}...], max_chars=..., mode=auto|excerpt|table_rows)
+    Supported interface:
+      read_knowledge(refs=[{id,cursor?}...], max_chars=...)
 
     This wrapper rejects legacy knobs in agentic mode to keep the contract small and predictable.
     """
@@ -11150,6 +11314,9 @@ def _read_knowledge_agentic_wrapper(
         }
 
     # Reject legacy parameters (besides UI-only metadata) to keep the contract tight.
+    # NOTE: `mode` is deprecated (kept only as a no-op compat field). The backend
+    # chooses the correct representation (tables -> table_rows, text -> excerpts)
+    # and paging strategy.
     allowed = {"refs", "items", "max_chars", "mode", "__ui"}
     extra = [key for key in arguments.keys() if key not in allowed and _has_value(str(key))]
     if extra:
@@ -11160,7 +11327,7 @@ def _read_knowledge_agentic_wrapper(
             "error_code": "unsupported_parameters",
             "evidence": [],
             "unsupported_fields": extra,
-            "hint": "Unsupported parameters for read_knowledge. Use only refs[] + max_chars (+ optional mode, __ui).",
+            "hint": "Unsupported parameters for read_knowledge. Use only refs[] + max_chars (+ optional __ui).",
         }
 
     # Normalize "refs" into the internal "items" shape used by the read engine.
@@ -11192,9 +11359,6 @@ def _read_knowledge_agentic_wrapper(
         "items": items,
         "max_chars": arguments.get("max_chars"),
     }
-    mode = _coerce_str(arguments.get("mode")).strip().lower()
-    if mode:
-        engine_args["mode"] = mode
     return _agentic_read_v2_handler(engine_args, conversation, context)
 
 
@@ -11452,7 +11616,7 @@ def _read_document_agentic_wrapper(
             "error": "deprecated_tool",
             "error_code": "deprecated_tool",
             "contents": [],
-            "hint": "read_document is deprecated in agentic mode. Use read_knowledge(refs=[{id,cursor?}...], max_chars=..., mode=...).",
+            "hint": "read_document is deprecated in agentic mode. Use read_knowledge(refs=[{id,cursor?}...], max_chars=...).",
         }
     
     # Legacy mode - use standard handler

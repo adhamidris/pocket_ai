@@ -70,7 +70,7 @@ class AgenticPromptCompactionTests(SimpleTestCase):
             "read": [
                 {
                     "id": "chunk-1",
-                    "status": "partial",
+                    "status": "truncated",
                     "chars": 5002,
                     "artifact_id": "00000000-0000-0000-0000-000000000001",
                 }

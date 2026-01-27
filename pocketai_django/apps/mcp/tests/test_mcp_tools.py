@@ -370,6 +370,79 @@ class McpSearchKnowledgeHandlerTests(TestCase):
         self.assertEqual(queries_seen[0], primary_query)
         self.assertLessEqual(len(queries_seen), 4)
 
+    @mock.patch("apps.mcp.tools._knowledge_service")
+    def test_search_knowledge_uses_server_default_limit_when_omitted(self, service_factory_mock) -> None:
+        class _DummySearchResult:
+            def __init__(self) -> None:
+                self.snippets = tuple()
+                self.status = "ok"
+                self.diagnostics = {}
+
+        service_mock = mock.Mock()
+        service_mock.search.return_value = _DummySearchResult()
+        service_factory_mock.return_value = service_mock
+
+        context = ToolExecutionContext(
+            max_chunk_reads_per_turn=5,
+            max_chunk_pages_per_turn=5,
+            char_budget_per_turn=5000,
+        )
+        payload = {"queries": ["credit card issuance fees"]}
+
+        tools._search_knowledge_handler(payload, self.conversation, context)
+
+        self.assertEqual(service_mock.search.call_count, 1)
+        used_limit = service_mock.search.call_args.kwargs.get("limit")
+        # Regression: omitting `limit` must not result in limit=None (unbounded).
+        self.assertIsNotNone(used_limit)
+
+    @override_settings(MCP_NEW_CONTRACT_ENABLED=True, MCP_AGENTIC_READ_V2_ENABLED=True)
+    def test_agentic_search_dedup_preserves_row_index_zero(self) -> None:
+        """
+        Regression: row_index=0 is valid and must not be dropped by truthy coalescing.
+
+        If we lose 0, anchor dedup falls back to chunk ids and can emit duplicates.
+        """
+
+        import uuid
+
+        table_id = str(uuid.uuid4())
+        upload_id = str(uuid.uuid4())
+
+        legacy_payload = {
+            "tool": "search_knowledge",
+            "status": "ok",
+            "snippets": [
+                {
+                    "is_table_chunk": True,
+                    "chunk_id": str(uuid.uuid4()),
+                    "upload_id": upload_id,
+                    "title": "Fees Table",
+                    "summary": "row 0",
+                    "search_stage": "table_direct",
+                    "source_diagnostics": {"table_id": table_id, "row_index": 0},
+                },
+                {
+                    "is_table_chunk": True,
+                    "chunk_id": str(uuid.uuid4()),
+                    "upload_id": upload_id,
+                    "title": "Fees Table (dup)",
+                    "summary": "row 0 duplicate via another stage",
+                    "search_stage": "content_fts",
+                    "source_diagnostics": {"table_id": table_id, "row_index": 0},
+                },
+            ],
+            "completeness": {"total_found": 2},
+        }
+
+        result = tools._convert_to_agentic_search_response(legacy_payload, conversation=self.conversation)
+        self.assertEqual(result["status"], "ok")
+        refs = result.get("refs") or []
+        self.assertEqual(len(refs), 1, refs)
+        self.assertEqual(refs[0]["kind"], "table_row")
+        coverage = refs[0].get("coverage_hint") or {}
+        self.assertEqual(coverage.get("row_index"), 0)
+
     @override_settings(MCP_NEW_CONTRACT_ENABLED=True, MCP_MAX_SEARCHES_PER_TURN=5)
     @mock.patch("apps.mcp.tools._knowledge_service")
     def test_search_knowledge_semantic_dedup_reuses_results_and_does_not_consume_budget(self, service_factory_mock) -> None:

@@ -90,7 +90,7 @@ class ModernRagRoutingTests(TestCase):
 
         self.assertEqual(tool_name, "read_knowledge")
         self.assertEqual(new_args["refs"][0]["id"], str(self.pdf_upload.id))
-        self.assertEqual(new_args["mode"], "excerpt")  # broad mismatch repair
+        self.assertNotIn("mode", new_args)  # read_knowledge has no mode knob in the agentic contract
 
     def test_adaptive_routing_corrects_read_document_on_dataset(self) -> None:
         """Test that read_document on a Dataset is auto-repaired to query_dataset."""
