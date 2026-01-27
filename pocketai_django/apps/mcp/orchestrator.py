@@ -6956,8 +6956,6 @@ class McpOrchestratorService:
                         refs_out.append(entry)
             if refs_out:
                 compact["refs"] = refs_out
-                if "total_found" in payload and payload.get("total_found") not in {None, ""}:
-                    compact["total_found"] = payload.get("total_found")
                 compact["prompt_compact"] = True
                 return compact
             raw_snippets = payload.get("snippets")

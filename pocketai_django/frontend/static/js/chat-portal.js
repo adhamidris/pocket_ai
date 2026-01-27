@@ -5227,9 +5227,28 @@ class ChatPortalClient {
 	    if (toolTrace.length) {
 	      container.appendChild(
 	        buildSection("Tools", toolTrace, (item) => {
-	          const tool = item && item.tool ? String(item.tool) : "tool";
+	          const toolRaw = item && item.tool ? String(item.tool) : "tool";
+          const tool = toolRaw.toLowerCase();
           const status = item && item.status ? String(item.status) : "";
-          return [tool, status].filter(Boolean).join(" • ");
+          let extra = "";
+
+          // Add lightweight context for common confusion points.
+          // Example: search_knowledge returns fewer refs than the raw `total_found` due to dedupe,
+          // filtering, or agentic conversion.
+          if (tool === "search_knowledge") {
+            const summary = item && item.output_summary && typeof item.output_summary === "object" ? item.output_summary : null;
+            const returned = summary && typeof summary.results_count === "number" ? summary.results_count : null;
+            const total = summary && typeof summary.total_found === "number" ? summary.total_found : null;
+            if (returned !== null && total !== null) {
+              extra = `returned ${returned}/${total}`;
+            } else if (returned !== null) {
+              extra = `returned ${returned}`;
+            } else if (total !== null) {
+              extra = `found ${total}`;
+            }
+          }
+
+          return [toolRaw, status, extra].filter(Boolean).join(" • ");
         }),
       );
     }
@@ -5237,10 +5256,33 @@ class ChatPortalClient {
     if (searchHistory.length) {
       container.appendChild(
         buildSection("Searches", searchHistory, (item, idx) => {
-          const query = item && item.query ? String(item.query) : `Search ${idx + 1}`;
-          const count =
-            item && typeof item.snippet_count === "number" ? `${item.snippet_count} hits` : "";
-          return [query, count].filter(Boolean).join(" • ");
+          const intent = item && (item.intent || item.query) ? String(item.intent || item.query) : `Search ${idx + 1}`;
+          const response = item && item.response && typeof item.response === "object" ? item.response : null;
+          const status = response && response.status ? String(response.status) : "";
+          let returned = null;
+          let totalFound = null;
+
+          if (response) {
+            if (Array.isArray(response.refs)) returned = response.refs.length;
+            else if (Array.isArray(response.results)) returned = response.results.length;
+            else if (Array.isArray(response.snippets)) returned = response.snippets.length;
+            else if (typeof response.results_count === "number") returned = response.results_count;
+
+            const totalCandidate =
+              response.total_found ??
+              (response.completeness && typeof response.completeness === "object" ? response.completeness.total_found : null);
+            if (typeof totalCandidate === "number") totalFound = totalCandidate;
+            else if (typeof totalCandidate === "string" && totalCandidate.trim() && totalCandidate.trim().match(/^\d+$/)) {
+              totalFound = Number(totalCandidate.trim());
+            }
+          }
+
+          let count = "";
+          if (returned !== null && totalFound !== null) count = `returned ${returned}/${totalFound}`;
+          else if (returned !== null) count = `returned ${returned}`;
+          else if (totalFound !== null) count = `found ${totalFound}`;
+
+          return [intent, status, count].filter(Boolean).join(" • ");
         }),
       );
     }
