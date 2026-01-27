@@ -381,7 +381,17 @@ def build_model_specific_prompt(
     Selects the best template for the given model_id, falling back to
     AGENTIC_SYSTEM_PROMPT_V2 for unknown models.
     """
+    import logging
+
     template_key = _select_template(model_id)
+
+    # Log template selection for debugging/verification
+    logger = logging.getLogger(__name__)
+    logger.info(
+        f"[MCP Prompt] Selected template '{template_key}' for model '{model_id or 'None'}' "
+        f"(agent: {agent.name})"
+    )
+
     for_business = f" for {business_name}" if business_name else ""
     fmt_kwargs = {
         "agent_name": agent.name,
