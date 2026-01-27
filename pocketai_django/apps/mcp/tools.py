@@ -5249,6 +5249,36 @@ def _agentic_read_v2_handler(
         seen_keys.add(key)
         ordered_items.append({"id": item_id, "cursor": cursor_str})
 
+    # ── Repeat-read detection (loop prevention) ──────────────────────────
+    # Allow cursor-continuation reads (same ID + cursor = new page of content).
+    # Block non-cursor re-reads of the same ref within a single turn.
+    already_read_ids: set[str] = getattr(context, "read_ref_ids_this_turn", None) or set()
+    filtered_items: list[dict[str, object]] = []
+    blocked_items: list[dict[str, object]] = []
+    for item in ordered_items:
+        item_id = str(item["id"])
+        has_cursor = bool(item.get("cursor"))
+        if item_id in already_read_ids and not has_cursor:
+            blocked_items.append({"id": item_id, "error": "Already read this turn. Answer from available evidence."})
+        else:
+            filtered_items.append(item)
+
+    if not filtered_items:
+        # ALL refs were already read this turn (non-cursor)
+        return {
+            "tool": "read_knowledge",
+            "status": "already_read",
+            "error_code": "already_read",
+            "evidence": [],
+            "blocked": blocked_items,
+            "hint": "All requested refs were already read this turn. Answer from the evidence you have.",
+        }
+
+    if blocked_items:
+        # Some refs blocked, continue with the rest
+        ordered_items = filtered_items
+    # ── End repeat-read detection ────────────────────────────────────────
+
     if not ordered_items:
         return {
             "tool": "read_knowledge",
@@ -6636,6 +6666,10 @@ def _agentic_read_v2_handler(
             "throttle_notice": {"type": "prompt_budget", "message": str(exc)},
             "hint": "Prompt budget exceeded. Ask a narrower question or request fewer items.",
         }
+
+    # Record all successfully read ref IDs for repeat-read detection.
+    for item in ordered_items:
+        context.read_ref_ids_this_turn.add(str(item["id"]))
 
     return response
 

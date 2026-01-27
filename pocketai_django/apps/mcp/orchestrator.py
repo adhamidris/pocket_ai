@@ -339,7 +339,16 @@ class McpOrchestratorService:
             if setup_span.is_recording():
                 setup_span.set_attribute("conversation.id", str(conversation.id))
                 setup_span.set_attribute("business.id", str(conversation.business_profile_id))
-            messages = prompts.build_messages(conversation=conversation, user_message=user_message)
+            # Pre-fetch MCP connections once (reused later for tool catalog).
+            all_remote_connections = list_enabled_mcp_connections_for_agent(self.agent)
+            has_mcp_connections = bool(all_remote_connections)
+            model_id = getattr(self.provider, "model", None) if self.provider else None
+            messages = prompts.build_messages(
+                conversation=conversation,
+                user_message=user_message,
+                model_id=model_id,
+                has_mcp_connections=has_mcp_connections,
+            )
             filter_level = self._filter_level_for_conversation(conversation)
             initial_stream_filter_level = filter_level
             char_turn_limit = self._char_budget_per_turn(conversation.business_profile)
@@ -398,10 +407,10 @@ class McpOrchestratorService:
             ]
 
         # External MCP connections (per-agent) extend the tool catalog.
+        # all_remote_connections was pre-fetched in turn_setup above.
         remote_tool_defs: list[dict[str, Any]] = []
         self._remote_tool_registry = {}
         if not disable_tools_for_turn:
-            all_remote_connections = list_enabled_mcp_connections_for_agent(self.agent)
             remote_descriptors = list_remote_tool_descriptors(all_remote_connections)
             gateway_catalog: dict[str, dict[str, object]] = {}
             remote_registry: dict[str, tuple[object, str]] = {}

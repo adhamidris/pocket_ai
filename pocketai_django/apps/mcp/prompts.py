@@ -35,6 +35,7 @@ from apps.accounts.feature_flags import FeatureFlagService
 from apps.mcp.schemas.agentic_prompts import (
     build_agentic_system_prompt,
     build_agentic_system_prompt_v2,
+    build_model_specific_prompt,
     get_tone_instruction,
 )
 
@@ -47,25 +48,14 @@ def _get_mcp_provider_name() -> str:
 
 
 PLACEHOLDER_REMINDER = (
-    "Reminder: Each visitor message (user turn) may include only one short placeholder before the first tool call. After you acknowledge you're checking, every subsequent tool step in this user turn must return tool_calls with empty content until you have the final visitor-facing answer. Never narrate internal steps between tools."
+    "After acknowledging you are checking, keep tool steps silent until the final answer."
 )
 
 # Portal UX: the model can provide a user-friendly spinner label for each tool call
 # without adding extra tool calls or leaking narration into the chat.
-PORTAL_SPINNER_HINT_INSTRUCTIONS = textwrap.dedent(
-    """
-    ---
-
-    ## Portal Spinner (UI Hint)
-
-    When you call any tool, include an optional `__ui` object inside the tool arguments:
-    - `__ui.spinner_text`: a short description of what you're about to do (max ~48 chars)
-    - This is ONLY for the chat UI spinner; it is NOT a real tool parameter and will be ignored by the tool.
-
-    Example:
-    { "query": "GitHub list repositories", "__ui": { "spinner_text": "Listing your GitHub repos…" } }
-    """
-).strip()
+PORTAL_SPINNER_HINT_INSTRUCTIONS = (
+    "When calling tools, include `__ui.spinner_text` (short label) in tool arguments for portal display."
+)
 
 _ARABIC_CHAR_PATTERN = re.compile(r"[\u0600-\u06FF\u0750-\u077F\u08A0-\u08FF]")
 
@@ -128,7 +118,8 @@ PLANNER_CRM_RULES = textwrap.dedent(
     """
 ).strip()
 
-# OpenAI-specific instructions: GPT models can be too eager to answer without tools.
+# DEPRECATED: Legacy non-agentic path only.  Per-model templates in agentic_prompts.py supersede these.
+# Do not delete -- legacy non-agentic path may still be triggered if feature flag is disabled.
 OPENAI_PROACTIVE_TOOL_INSTRUCTIONS = textwrap.dedent(
     """
     ---
@@ -171,7 +162,8 @@ MCP_GATEWAY_AGENTIC_RULES = textwrap.dedent(
 ).strip()
 
 
-# DeepSeek-specific instructions: keep guidance short and procedural without hard enforcement.
+# DEPRECATED: Legacy non-agentic path only.  Per-model templates in agentic_prompts.py supersede these.
+# Do not delete -- legacy non-agentic path may still be triggered if feature flag is disabled.
 DEEPSEEK_COMPREHENSIVE_QUERY_INSTRUCTIONS = textwrap.dedent(
     """
     ---
@@ -210,6 +202,8 @@ def build_system_message(
     business_industry: str | None = None,
     provider_name: str | None = None,
     business_profile=None,  # Optional: for agentic mode feature flag check
+    model_id: str | None = None,
+    has_mcp_connections: bool = False,
 ) -> str:
     """
     Construct the MCP system prompt with agentic, hint-based guidance.
@@ -236,19 +230,22 @@ def build_system_message(
         tone = get_tone_instruction(agent.tone) if hasattr(agent, "tone") and agent.tone else ""
         if tone:
             rules.append(tone.strip())
-        # Gateway mode is permanently enabled.
-        rules.append(MCP_GATEWAY_AGENTIC_RULES)
+        # Only inject gateway rules when the agent actually has MCP connections.
+        if has_mcp_connections:
+            rules.append(MCP_GATEWAY_AGENTIC_RULES)
+        additional_rules_str = "\n\n".join(rule for rule in rules if rule)
         agentic_read_v2_enabled = bool(getattr(settings, "MCP_AGENTIC_READ_V2_ENABLED", False))
         if agentic_read_v2_enabled:
-            return build_agentic_system_prompt_v2(
+            return build_model_specific_prompt(
                 agent,
+                model_id=model_id,
                 business_name=resolved_business_name,
-                additional_rules="\n\n".join(rule for rule in rules if rule),
+                additional_rules=additional_rules_str,
             )
         return build_agentic_system_prompt(
             agent,
             business_name=resolved_business_name,
-            additional_rules="\n\n".join(rule for rule in rules if rule),
+            additional_rules=additional_rules_str,
         )
 
     tone_label = display_tone_label(agent.tone) or "friendly"
@@ -535,7 +532,13 @@ def _conversation_files_note(conversation: Conversation, *, limit: int = 6) -> s
     return "\n".join(lines).strip()
 
 
-def build_messages(*, conversation: Conversation, user_message: str) -> list[Mapping[str, object]]:
+def build_messages(
+    *,
+    conversation: Conversation,
+    user_message: str,
+    model_id: str | None = None,
+    has_mcp_connections: bool = False,
+) -> list[Mapping[str, object]]:
     """
     Assemble the message history that will be sent to the MCP-ready provider.
 
@@ -563,6 +566,8 @@ def build_messages(*, conversation: Conversation, user_message: str) -> list[Map
                     business_name=business_name,
                     business_industry=business_industry,
                     business_profile=business_profile,
+                    model_id=model_id,
+                    has_mcp_connections=has_mcp_connections,
                 ).strip()
             )
         else:

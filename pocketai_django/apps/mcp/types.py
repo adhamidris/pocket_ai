@@ -142,6 +142,9 @@ class ToolExecutionContext:
     newly_shown_chunk_ids: set[str] = dataclasses.field(default_factory=set)
     newly_shown_row_ids: set[str] = dataclasses.field(default_factory=set)
 
+    # Ref IDs already read this turn (for repeat-read detection / loop prevention)
+    read_ref_ids_this_turn: set[str] = dataclasses.field(default_factory=set)
+
     # =========================================================================
     # Document Context Tracking (Conversation-Aware RAG)
     # =========================================================================
