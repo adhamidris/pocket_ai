@@ -37,6 +37,7 @@ from django.db import models
 from django.db.models import Prefetch
 from django.db.models.functions import Length
 from django.core.cache import cache
+from django.core import signing
 from django.conf import settings
 
 from apps.accounts.models import (
@@ -156,6 +157,32 @@ SEARCH_KNOWLEDGE_LIMIT_SCHEMA_DEFAULT = max(
     1,
     min(int(_SEARCH_KNOWLEDGE_DEFAULT_LIMIT), SEARCH_KNOWLEDGE_LIMIT_SCHEMA_MAX),
 )
+
+# search_knowledge pagination (cursor) helpers
+SEARCH_KNOWLEDGE_CURSOR_SALT = "mcp.search_knowledge.cursor.v1"
+SEARCH_KNOWLEDGE_CURSOR_CACHE_PREFIX = "mcp:search_knowledge:cursor:v1"
+
+
+def _search_cursor_cache_key(*, conversation: Conversation, session_id: str) -> str:
+    return (
+        f"{SEARCH_KNOWLEDGE_CURSOR_CACHE_PREFIX}:"
+        f"{conversation.business_profile_id}:"
+        f"{conversation.id}:"
+        f"{session_id}"
+    )
+
+
+def _encode_search_cursor(*, session_id: str, offset: int) -> str:
+    payload = {"sid": str(session_id), "o": int(offset)}
+    return signing.dumps(payload, salt=SEARCH_KNOWLEDGE_CURSOR_SALT)
+
+
+def _decode_search_cursor(token: str, *, max_age_seconds: int) -> dict[str, object] | None:
+    try:
+        decoded = signing.loads(token, salt=SEARCH_KNOWLEDGE_CURSOR_SALT, max_age=max_age_seconds)
+    except Exception:
+        return None
+    return decoded if isinstance(decoded, dict) else None
 
 
 def _mcp_log_pii_enabled() -> bool:
@@ -443,6 +470,10 @@ TOOL_DEFINITIONS: tuple[Mapping[str, object], ...] = (
         name="search_knowledge",
         description="Search the knowledge base using a natural-language query.",
         properties={
+            "cursor": {
+                "type": "string",
+                "description": "Opaque cursor from a prior search_knowledge response to fetch the next page.",
+            },
             "query": {
                 "type": "string",
                 "description": "Single search query (back-compat). Prefer `queries` for multiple variants.",
@@ -452,6 +483,10 @@ TOOL_DEFINITIONS: tuple[Mapping[str, object], ...] = (
                 "items": {"type": "string"},
                 "minItems": 1,
                 "description": "List of search queries. Use 1-4 short, specific variants.",
+            },
+            "exclude_seen": {
+                "type": "boolean",
+                "description": "Exclude results already shown in this conversation (server default is configurable).",
             },
             "__ui": {
                 "type": "object",
@@ -2793,20 +2828,15 @@ def _convert_to_agentic_search_response(
             return f"upload:{upload_id}"
         return f"fallback:{sha256_hex(json.dumps(dict(snippet), sort_keys=True, default=str)[:800])}"
 
-    # Evidence planner (Phase 1): prefer exact table row matches when available,
-    # and dedupe by canonical anchors so the model doesn't see the same fact twice.
+    # Evidence planner (Phase 1): convert search snippets into lightweight refs.
+    # Dedupe by canonical anchors so the model doesn't see the same fact twice, but
+    # do not drop entire categories of evidence based on search stage (agentic mode
+    # can page/iterate if it needs more).
     raw_snippets: list[Mapping[str, object]] = [
         snippet for snippet in snippets if isinstance(snippet, Mapping)
     ]
     table_direct_present = any(_is_table_direct(snippet) for snippet in raw_snippets)
-    if table_direct_present:
-        preferred: list[Mapping[str, object]] = [s for s in raw_snippets if _is_table_direct(s)]
-        # Keep a small number of supporting non-table snippets (definitions/footnotes),
-        # but drop other table chunks to reduce noise.
-        supporting: list[Mapping[str, object]] = [s for s in raw_snippets if not bool(s.get("is_table_chunk")) and not _is_table_direct(s)]
-        candidate_snippets: list[Mapping[str, object]] = [*preferred, *supporting]
-    else:
-        candidate_snippets = raw_snippets
+    candidate_snippets = raw_snippets
 
     seen_anchors: set[str] = set()
     planned_snippets: list[Mapping[str, object]] = []
@@ -2973,7 +3003,17 @@ def _convert_to_agentic_search_response(
 
     # Provide a read_budget_hint so the LLM can plan max_chars for read_knowledge.
     if refs:
-        total_suggested = sum(int(r.get("suggested_max_chars") or 0) for r in refs)
+        total_suggested = 0
+        for ref in refs:
+            if not isinstance(ref, Mapping):
+                continue
+            read_hint = ref.get("read_hint")
+            if not isinstance(read_hint, Mapping):
+                continue
+            try:
+                total_suggested += int(read_hint.get("suggested_max_chars") or 0)
+            except (TypeError, ValueError):
+                continue
         max_chars_allowed = int(READ_DOCUMENT_MAX_CHARS_SCHEMA_MAX)
         agentic_response["read_budget_hint"] = {
             "total_suggested_max_chars": min(total_suggested, max_chars_allowed),
@@ -2984,8 +3024,17 @@ def _convert_to_agentic_search_response(
     if isinstance(completeness, Mapping) and completeness:
         agentic_response["completeness"] = dict(completeness)
 
-    # Add hint only if empty
-    if not refs:
+    # Pagination hints (cursor-based "next page" support).
+    next_cursor = legacy_payload.get("next_cursor")
+    if isinstance(next_cursor, str) and next_cursor.strip():
+        agentic_response["next_cursor"] = next_cursor.strip()
+    if "has_more" in legacy_payload:
+        agentic_response["has_more"] = bool(legacy_payload.get("has_more"))
+
+    legacy_hint = legacy_payload.get("hint")
+    if isinstance(legacy_hint, str) and legacy_hint.strip():
+        agentic_response["hint"] = legacy_hint.strip()
+    elif not refs:
         agentic_response["hint"] = (
             "No matching documents found. The knowledge base may not contain this. "
             "Answer from available evidence or ask a clarifying question; do not guess."
@@ -3018,6 +3067,238 @@ def _search_knowledge_handler(
     conversation: Conversation,
     context: ToolExecutionContext,
 ) -> Mapping[str, object]:
+    new_contract_enabled = bool(getattr(settings, "MCP_NEW_CONTRACT_ENABLED", True))
+    feature_state = FeatureFlagService.snapshot(conversation.business_profile)
+    rag_agentic_enabled = bool(getattr(feature_state, "rag_agentic_mode", False)) and new_contract_enabled
+
+    pagination_enabled = bool(getattr(settings, "MCP_SEARCH_PAGINATION_ENABLED", True))
+    try:
+        cursor_ttl_seconds = int(getattr(settings, "MCP_SEARCH_PAGINATION_TTL_SECONDS", 3600) or 3600)
+    except (TypeError, ValueError):
+        cursor_ttl_seconds = 3600
+    cursor_ttl_seconds = max(60, cursor_ttl_seconds)
+    try:
+        pagination_prefetch_min = int(getattr(settings, "MCP_SEARCH_PAGINATION_PREFETCH_MIN", 50) or 50)
+    except (TypeError, ValueError):
+        pagination_prefetch_min = 50
+    pagination_prefetch_min = max(0, pagination_prefetch_min)
+
+    exclude_seen = bool(getattr(settings, "MCP_SEARCH_EXCLUDE_SEEN_ENABLED", False))
+    raw_exclude_seen = arguments.get("exclude_seen")
+    if isinstance(raw_exclude_seen, bool):
+        exclude_seen = raw_exclude_seen
+
+    def _excluded_chunk_ids() -> set[str]:
+        if not exclude_seen:
+            return set()
+        try:
+            shown = context.get_all_shown_this_conversation()
+            chunk_ids = shown.get("chunk_ids", set())
+            if isinstance(chunk_ids, set):
+                return {str(cid) for cid in chunk_ids if cid}
+        except Exception:
+            pass
+        # Best-effort fallback.
+        return {
+            str(cid)
+            for cid in (getattr(context, "seen_chunk_ids", set()) | getattr(context, "newly_shown_chunk_ids", set()))
+            if cid
+        }
+
+    def _page_snippets(
+        snippets: Sequence[Mapping[str, object]],
+        *,
+        offset: int,
+        page_size: int,
+        excluded_chunk_ids: set[str],
+    ) -> tuple[list[dict[str, object]], int, bool, int]:
+        out: list[dict[str, object]] = []
+        excluded = 0
+        idx = max(0, int(offset))
+        size = max(1, int(page_size))
+
+        def _chunk_id(entry: Mapping[str, object]) -> str:
+            return str(entry.get("chunk_id") or entry.get("id") or "").strip()
+
+        while idx < len(snippets) and len(out) < size:
+            entry = snippets[idx]
+            idx += 1
+            if not isinstance(entry, Mapping):
+                continue
+            cid = _chunk_id(entry)
+            if cid and cid in excluded_chunk_ids:
+                excluded += 1
+                continue
+            out.append(dict(entry))
+
+        has_more = False
+        if idx < len(snippets):
+            if not excluded_chunk_ids:
+                has_more = True
+            else:
+                for j in range(idx, len(snippets)):
+                    entry = snippets[j]
+                    if not isinstance(entry, Mapping):
+                        continue
+                    cid = _chunk_id(entry)
+                    if cid and cid not in excluded_chunk_ids:
+                        has_more = True
+                        break
+
+        return out, idx, has_more, excluded
+
+    def _enforce_search_rate_limit() -> Mapping[str, object] | None:
+        window_seconds = int(getattr(settings, "MCP_TOOL_RATE_LIMIT_WINDOW_SECONDS", 60) or 60)
+        try:
+            calls_per_minute = int(getattr(settings, "MCP_SEARCH_KNOWLEDGE_CALLS_PER_MINUTE", 120) or 0)
+        except (TypeError, ValueError):
+            calls_per_minute = 120
+        calls_per_minute = 0 if calls_per_minute < 0 else calls_per_minute
+        try:
+            enforce_tool_rate_limit(
+                business_profile=conversation.business_profile,
+                tool="search_knowledge",
+                rate_limit=ToolRateLimit(
+                    calls_per_minute=None if calls_per_minute <= 0 else calls_per_minute,
+                    window_seconds=window_seconds,
+                    scope="business",
+                ),
+            )
+        except ToolRateLimitExceeded as exc:
+            return {
+                "tool": "search_knowledge",
+                "status": "throttled",
+                "error": "rate_limited",
+                "error_code": "rate_limited",
+                "snippets": [],
+                "throttle_notice": {"type": "rate_limited", "message": str(exc)},
+                "hint": str(exc),
+            }
+        return None
+
+    raw_cursor = _coerce_str(arguments.get("cursor")).strip()
+    if raw_cursor:
+        # Cursor paging: bypass duplicate-intent reuse and serve next page from server cache.
+        limited = _enforce_search_rate_limit()
+        if limited is not None:
+            return limited
+        context.reserve_search()
+
+        if not pagination_enabled:
+            return {
+                "tool": "search_knowledge",
+                "status": "constraint_error",
+                "error": "pagination_disabled",
+                "error_code": "pagination_disabled",
+                "hint": "Pagination is disabled. Re-run search_knowledge without cursor.",
+            }
+
+        decoded = _decode_search_cursor(raw_cursor, max_age_seconds=cursor_ttl_seconds)
+        if not decoded:
+            return {
+                "tool": "search_knowledge",
+                "status": "error",
+                "error": "invalid_cursor",
+                "error_code": "invalid_cursor",
+                "snippets": [],
+                "hint": "Invalid or expired cursor. Re-run search_knowledge without cursor.",
+            }
+        session_id = str(decoded.get("sid") or "").strip()
+        try:
+            offset = int(decoded.get("o") or 0)
+        except (TypeError, ValueError):
+            offset = 0
+        if not session_id:
+            return {
+                "tool": "search_knowledge",
+                "status": "error",
+                "error": "invalid_cursor",
+                "error_code": "invalid_cursor",
+                "snippets": [],
+                "hint": "Cursor payload missing session id. Re-run search_knowledge without cursor.",
+            }
+
+        cache_key = _search_cursor_cache_key(conversation=conversation, session_id=session_id)
+        session = cache.get(cache_key)
+        if not isinstance(session, Mapping):
+            return {
+                "tool": "search_knowledge",
+                "status": "error",
+                "error": "cursor_expired",
+                "error_code": "cursor_expired",
+                "snippets": [],
+                "hint": "Cursor expired on the server. Re-run search_knowledge to generate a new cursor.",
+            }
+
+        raw_limit = arguments.get("limit")
+        try:
+            page_size = int(raw_limit) if raw_limit is not None else None
+        except (TypeError, ValueError):
+            page_size = None
+        if page_size is None:
+            try:
+                page_size = int(session.get("page_size") or 0) or SEARCH_KNOWLEDGE_LIMIT_SCHEMA_DEFAULT
+            except (TypeError, ValueError):
+                page_size = SEARCH_KNOWLEDGE_LIMIT_SCHEMA_DEFAULT
+        page_size = max(1, min(int(page_size), MCP_PROMPT_MAX_SNIPPETS_CAP))
+
+        results_full = session.get("results")
+        if not isinstance(results_full, list):
+            results_full = []
+
+        excluded_chunk_ids = _excluded_chunk_ids()
+        page_snippets, next_offset, has_more, excluded_count = _page_snippets(
+            results_full,
+            offset=offset,
+            page_size=page_size,
+            excluded_chunk_ids=excluded_chunk_ids,
+        )
+        next_cursor = _encode_search_cursor(session_id=session_id, offset=next_offset) if has_more else None
+
+        _page_snippets_out, completeness = _apply_seen_item_filter(page_snippets, context, mark_as_seen=False)
+        page_snippets = _page_snippets_out
+        completeness["total_found"] = len(results_full)
+        completeness["has_more"] = bool(has_more)
+        if excluded_count:
+            completeness["excluded_seen"] = excluded_count
+        if completeness.get("shown", 0) > 0 and not completeness.get("has_more"):
+            if completeness.get("already_seen") == completeness.get("shown"):
+                completeness["all_previously_shown"] = True
+                completeness["message"] = (
+                    f"All {completeness['shown']} matching results have already been shown in this conversation. "
+                    "Try a different search term or ask the user if they need something specific."
+                )
+
+        query_text = str(session.get("query") or "").strip()
+        query_intent = session.get("query_intent")
+        hint = "Use next_cursor to continue paging." if has_more else "No more results."
+        if not page_snippets and results_full and exclude_seen:
+            completeness["all_previously_shown"] = True
+            completeness["message"] = (
+                "No new results: all remaining matches were already shown earlier in this conversation. "
+                "Use the earlier results, or change the query to find different matches."
+            )
+            hint = completeness["message"]
+        payload: dict[str, object] = {
+            "tool": "search_knowledge",
+            "query": query_text,
+            "limit": page_size,
+            "query_intent": query_intent,
+            "status": "ok" if page_snippets else "not_found",
+            "diagnostics": {"cursor_used": True, "offset": offset},
+            "snippets": page_snippets,
+            "hint": hint,
+            "completeness": completeness,
+            "has_more": bool(has_more),
+        }
+        if next_cursor:
+            payload["next_cursor"] = next_cursor
+
+        # Convert to agentic format when enabled.
+        if rag_agentic_enabled:
+            return _convert_to_agentic_search_response(payload, conversation=conversation)
+        return payload
+
     # Build queries list.
     # - `query` is the primary, single-query interface (back-compat and simpler).
     # - `queries[]` allows multiple variants for fanout.
@@ -3127,6 +3408,8 @@ def _search_knowledge_handler(
             # Don't fail the search if rewriting fails
             logger.warning("Query rewriting failed: %s", exc, exc_info=True)
 
+    # Fanout variants are controlled via MCP_SEARCH_MAX_QUERY_VARIANTS.
+    # Keep this fully env-configurable so operators can tune recall/cost tradeoffs.
     query_variant_limit = max(
         1,
         int(getattr(settings, "MCP_SEARCH_MAX_QUERY_VARIANTS", DEFAULT_MAX_SEARCH_QUERY_VARIANTS)),
@@ -3186,13 +3469,9 @@ def _search_knowledge_handler(
             "snippets": [],
         }
 
-    new_contract_enabled = bool(getattr(settings, "MCP_NEW_CONTRACT_ENABLED", True))
-
     # Layer 3: Semantic duplicate search detection (one intent per user turn).
     # Duplicate intents reuse prior results and do not consume per-turn search budget.
-    feature_state = FeatureFlagService.snapshot(conversation.business_profile)
-    rag_agentic_enabled = bool(getattr(feature_state, "rag_agentic_mode", False)) and new_contract_enabled
-
+    duplicate_intent_enabled = bool(getattr(settings, "MCP_SEARCH_DUPLICATE_INTENT_ENABLED", True))
     def _normalize_intent_text(values: Sequence[str]) -> str:
         parts: list[str] = []
         seen: set[str] = set()
@@ -3229,7 +3508,7 @@ def _search_knowledge_handler(
 
     intent_text = _normalize_intent_text(queries)
     intent_embedding: list[float] | None = None
-    if new_contract_enabled:
+    if new_contract_enabled and duplicate_intent_enabled:
         embedder = _portal_file_embedding_service()
         if embedder and intent_text:
             try:
@@ -3297,48 +3576,38 @@ def _search_knowledge_handler(
                             duplicate_payload["total_found"] = prior_response.get("total_found")
                     else:
                         duplicate_payload["snippets"] = list(prior_response.get("snippets") or [])
+                    # Bubble up pagination hints so the model can page instead of re-searching.
+                    if prior_response.get("next_cursor"):
+                        duplicate_payload["next_cursor"] = prior_response.get("next_cursor")
+                    if prior_response.get("has_more") not in {None, ""}:
+                        duplicate_payload["has_more"] = prior_response.get("has_more")
                     return duplicate_payload
 
     # Enforce limits only for non-duplicate searches.
-    window_seconds = int(getattr(settings, "MCP_TOOL_RATE_LIMIT_WINDOW_SECONDS", 60) or 60)
-    try:
-        calls_per_minute = int(getattr(settings, "MCP_SEARCH_KNOWLEDGE_CALLS_PER_MINUTE", 120) or 0)
-    except (TypeError, ValueError):
-        calls_per_minute = 120
-    calls_per_minute = 0 if calls_per_minute < 0 else calls_per_minute
-    try:
-        enforce_tool_rate_limit(
-            business_profile=conversation.business_profile,
-            tool="search_knowledge",
-            rate_limit=ToolRateLimit(
-                calls_per_minute=None if calls_per_minute <= 0 else calls_per_minute,
-                window_seconds=window_seconds,
-                scope="business",
-            ),
-        )
-    except ToolRateLimitExceeded as exc:
-        return {
-            "tool": "search_knowledge",
-            "status": "throttled",
-            "error": "rate_limited",
-            "error_code": "rate_limited",
-            "snippets": [],
-            "throttle_notice": {"type": "rate_limited", "message": str(exc)},
-            "hint": str(exc),
-        }
+    limited = _enforce_search_rate_limit()
+    if limited is not None:
+        return limited
 
     # Charge for valid, non-empty, non-duplicate searches only.
     context.reserve_search()
 
     raw_limit = arguments.get("limit")
     try:
-        requested_limit = int(raw_limit) if raw_limit is not None else None
+        page_size_requested = int(raw_limit) if raw_limit is not None else None
     except (TypeError, ValueError):
-        requested_limit = None
-    if requested_limit is None:
+        page_size_requested = None
+    if page_size_requested is None:
         # Server-side default when callers omit `limit`. Without this, the underlying
         # search service may treat limit=None as unbounded and return huge result sets.
-        requested_limit = SEARCH_KNOWLEDGE_LIMIT_SCHEMA_DEFAULT
+        page_size_requested = SEARCH_KNOWLEDGE_LIMIT_SCHEMA_DEFAULT
+
+    page_size = max(1, min(int(page_size_requested), MCP_PROMPT_MAX_SNIPPETS_CAP))
+    fetch_limit = page_size
+    if pagination_enabled and pagination_prefetch_min:
+        prefetch_floor = min(int(pagination_prefetch_min), MCP_PROMPT_MAX_SNIPPETS_CAP)
+        fetch_limit = max(page_size, prefetch_floor)
+    fetch_limit = max(1, min(int(fetch_limit), MCP_PROMPT_MAX_SNIPPETS_CAP))
+    requested_limit = fetch_limit
 
     service = _knowledge_service()
     # Apply identifier value filter when an email is locked/provided to prevent cross-identifier leakage.
@@ -4078,12 +4347,9 @@ def _search_knowledge_handler(
                         )
 
                         if refined_result and refined_result.snippets:
-                            # Build refined snippet payloads
-                            refined_snippet_payloads = []
-                            for snippet in refined_result.snippets:
-                                refined_payload = _snippet_to_payload(snippet, context, search_intent=intent)
+                            refined_snippet_payloads = _serialize_snippets(refined_result.snippets)
+                            for refined_payload in refined_snippet_payloads:
                                 refined_payload["refinement_source"] = "auto_critique"
-                                refined_snippet_payloads.append(refined_payload)
 
                             # Sanitize and use refined results
                             refined_snippet_payloads = _sanitize_snippet_payloads_for_prompt(
@@ -4395,34 +4661,51 @@ def _search_knowledge_handler(
             if clip_limit and len(deduped_snippets) >= clip_limit:
                 break
 
-    total_found = len(deduped_snippets)
+    results_full = deduped_snippets
+    total_found = len(results_full)
 
-    # Apply prompt snippet limit BEFORE seen-item tracking
-    # This ensures we only track snippets that will actually be shown to the user
-    prompt_max_snippets = MCP_PROMPT_MAX_SNIPPETS_CAP
-    clipped = 0
-    if len(deduped_snippets) > prompt_max_snippets:
-        clipped = len(deduped_snippets) - prompt_max_snippets
-        deduped_snippets = deduped_snippets[:prompt_max_snippets]
+    excluded_chunk_ids = _excluded_chunk_ids()
+    page_snippets, next_offset, has_more, excluded_count = _page_snippets(
+        results_full,
+        offset=0,
+        page_size=page_size,
+        excluded_chunk_ids=excluded_chunk_ids,
+    )
 
-    # Track seen items (no filtering)
-    deduped_snippets, completeness = _apply_seen_item_filter(deduped_snippets, context, mark_as_seen=False)
+    next_cursor = None
+    session_id = None
+    if pagination_enabled and has_more and results_full:
+        session_id = str(uuid.uuid4())
+        cache_key = _search_cursor_cache_key(conversation=conversation, session_id=session_id)
+        cache.set(
+            cache_key,
+            {
+                "version": 1,
+                "query": primary_run.get("query"),
+                "query_intent": primary_run.get("query_intent") or primary_run.get("intent"),
+                "page_size": page_size,
+                "results": results_full,
+            },
+            cursor_ttl_seconds,
+        )
+        next_cursor = _encode_search_cursor(session_id=session_id, offset=next_offset)
+
+    _page_snippets_out, completeness = _apply_seen_item_filter(page_snippets, context, mark_as_seen=False)
+    page_snippets = _page_snippets_out
     completeness["total_found"] = total_found
-    completeness["shown"] = len(deduped_snippets)
-    completeness["has_more"] = clipped > 0
-    if clipped:
-        completeness["clipped"] = clipped
-
-    if completeness["shown"] > 0 and not completeness["has_more"]:
-        if completeness["already_seen"] == completeness["shown"]:
+    completeness["has_more"] = bool(has_more)
+    if excluded_count:
+        completeness["excluded_seen"] = excluded_count
+    if completeness.get("shown", 0) > 0 and not completeness.get("has_more"):
+        if completeness.get("already_seen") == completeness.get("shown"):
             completeness["all_previously_shown"] = True
             completeness["message"] = (
                 f"All {completeness['shown']} matching results have already been shown in this conversation. "
                 "Try a different search term or ask the user if they need something specific."
             )
 
-    # NOW mark the final clipped list as seen
-    _mark_snippets_as_seen(deduped_snippets, context)
+    # Mark the returned page as seen (for follow-up paging within this turn).
+    _mark_snippets_as_seen(page_snippets, context)
 
     # Log seen-item tracking results for debugging
     if completeness.get("already_seen", 0) > 0 or completeness.get("clipped", 0) > 0:
@@ -4440,16 +4723,16 @@ def _search_knowledge_handler(
             logger_obj=logger,
         )
 
-    for snippet in deduped_snippets:
+    for snippet in page_snippets:
         context.add_knowledge_result(snippet)
 
     metrics = _log_tool_metrics(
         tool="search_knowledge",
         conversation=conversation,
-        snippets=deduped_snippets,
+        snippets=page_snippets,
         extra={
             "status": primary_run.get("status"),
-            "limit": limit_cap,
+            "limit": page_size,
             "query_length": len(str(primary_run.get("query") or "")),
             "fusion": fusion,
             "fanout_budget_ms": fanout_budget_ms,
@@ -4461,7 +4744,7 @@ def _search_knowledge_handler(
     )
     context.reserve_characters(int(metrics.get("char_count", 0)))
 
-    final_status = "ok" if deduped_snippets else runs[-1].get("status") or "not_found"
+    final_status = "ok" if page_snippets else runs[-1].get("status") or "not_found"
     diag = dict(primary_run.get("diagnostics") or {})
     diag["batched_runs"] = [
         {
@@ -4477,24 +4760,34 @@ def _search_knowledge_handler(
     query_intent = primary_run.get("query_intent") or primary_run.get("intent")
 
     # Update hint if all results were previously shown
-    hint = _search_hint(final_status, query_intent, deduped_snippets, diag)
+    hint = _search_hint(final_status, query_intent, page_snippets, diag)
     if completeness.get("all_previously_shown"):
         hint = completeness.get("message") or hint
+    if not page_snippets and total_found and exclude_seen:
+        completeness["all_previously_shown"] = True
+        completeness["message"] = (
+            f"No new results: the top {total_found} matches were already shown earlier in this conversation. "
+            "Use the earlier results, or change the query to find different matches."
+        )
+        hint = completeness["message"]
 
     payload = {
         "tool": "search_knowledge",
         "query": primary_run.get("query"),
-        "limit": limit_cap,
+        "limit": page_size,
         "query_intent": query_intent,
         "intent_signal": primary_run.get("intent_signal"),
         "status": final_status,
         "diagnostics": diag,
-        "snippets": deduped_snippets,
+        "snippets": page_snippets,
         "hint": hint,
     }
 
     # Always include completeness metadata for transparent decisions
     payload["completeness"] = completeness
+    payload["has_more"] = bool(has_more)
+    if next_cursor:
+        payload["next_cursor"] = next_cursor
 
     if fusion:
         payload["fusion"] = fusion

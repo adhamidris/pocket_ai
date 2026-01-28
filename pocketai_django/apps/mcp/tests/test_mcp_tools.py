@@ -332,6 +332,7 @@ class McpSearchKnowledgeHandlerTests(TestCase):
         super().tearDown()
 
     @mock.patch("apps.mcp.tools._knowledge_service")
+    @override_settings(MCP_SEARCH_MAX_QUERY_VARIANTS=4)
     def test_search_knowledge_caps_extra_queries(self, service_factory_mock) -> None:
         class _DummySearchResult:
             def __init__(self) -> None:
@@ -490,6 +491,73 @@ class McpSearchKnowledgeHandlerTests(TestCase):
         # Second call should not execute a second backend search.
         self.assertEqual(service_mock.search.call_count, 1)
         self.assertEqual(second.get("refs"), first.get("refs"))
+
+    @override_settings(MCP_NEW_CONTRACT_ENABLED=True, MCP_SEARCH_PAGINATION_ENABLED=True)
+    @mock.patch("apps.mcp.tools._knowledge_service")
+    def test_search_knowledge_cursor_pages_and_excludes_seen_results(self, service_factory_mock) -> None:
+        import uuid
+        from apps.rag.ai_orchestrator import KnowledgeSnippet
+
+        self.business.metadata = {FEATURE_FLAG_METADATA_KEY: {"rag_agentic_mode": True}}
+        self.business.save(update_fields=["metadata"])
+
+        snippets = []
+        for idx in range(4):
+            snippets.append(
+                KnowledgeSnippet(
+                    id=uuid.uuid4(),
+                    title=f"Chunk {idx}",
+                    summary=f"Summary {idx}",
+                    source="file",
+                    content=f"Content {idx}",
+                    upload_id=uuid.uuid4(),
+                    chunk_id=uuid.uuid4(),
+                    chunk_index=idx,
+                    page_number=1,
+                    is_table_chunk=False,
+                    read_state="summary",
+                )
+            )
+
+        class _DummySearchResult:
+            def __init__(self) -> None:
+                self.snippets = tuple(snippets)
+                self.status = "ok"
+                self.diagnostics = {}
+
+        service_mock = mock.Mock()
+        service_mock.search.return_value = _DummySearchResult()
+        service_factory_mock.return_value = service_mock
+
+        context = ToolExecutionContext(
+            max_chunk_reads_per_turn=5,
+            max_chunk_pages_per_turn=5,
+            char_budget_per_turn=5000,
+        )
+
+        first = tools._search_knowledge_handler({"query": "fees", "limit": 2}, self.conversation, context)
+        self.assertEqual(first["status"], "ok")
+        self.assertTrue(first.get("has_more"))
+        self.assertIsInstance(first.get("next_cursor"), str)
+
+        refs_first = first.get("refs") or []
+        self.assertEqual(len(refs_first), 2)
+        ids_first = {ref.get("id") for ref in refs_first}
+
+        second = tools._search_knowledge_handler(
+            {"cursor": first["next_cursor"], "limit": 2}, self.conversation, context
+        )
+        self.assertEqual(second["status"], "ok")
+        self.assertFalse(second.get("has_more", True))
+
+        refs_second = second.get("refs") or []
+        self.assertEqual(len(refs_second), 2)
+        ids_second = {ref.get("id") for ref in refs_second}
+
+        # Page 2 must not repeat page 1.
+        self.assertTrue(ids_first.isdisjoint(ids_second))
+        # Cursor paging should not trigger a second backend search.
+        self.assertEqual(service_mock.search.call_count, 1)
 
     @mock.patch("apps.mcp.tools._knowledge_service")
     def test_read_hint_uses_page_from_metadata_not_chunk_index(self, service_factory_mock) -> None:

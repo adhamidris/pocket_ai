@@ -399,6 +399,9 @@ RAG_RERANK_POOL = int(os.getenv("RAG_RERANK_POOL", "30"))
 # RAG_RERANK_BUDGET_MS: Max time budget (ms) for reranking stage (0 disables budget enforcement).
 # Default 2000ms prevents reranking from dominating search latency.
 RAG_RERANK_BUDGET_MS = int(os.getenv("RAG_RERANK_BUDGET_MS", "2000"))
+# RAG_SNIPPET_RERANK_ENABLED: Enable the secondary snippet-level rerank pass (post-blend).
+# Disable to reduce latency and improve determinism (keeps the main rerank only).
+RAG_SNIPPET_RERANK_ENABLED = os.getenv("RAG_SNIPPET_RERANK_ENABLED", "true").lower() in {"1", "true", "yes"}
 # RAG_SNIPPET_RERANK_BUDGET_MS: Max time budget (ms) for snippet-level reranking (0 disables).
 RAG_SNIPPET_RERANK_BUDGET_MS = int(os.getenv("RAG_SNIPPET_RERANK_BUDGET_MS", "1000"))
 # RAG_MMR_LAMBDA: MMR diversity/quality tradeoff (0..1; higher = less diversity).
@@ -555,11 +558,36 @@ MCP_SEARCH_FANOUT_RRF_K = int(os.getenv("MCP_SEARCH_FANOUT_RRF_K", "60"))
 # MCP_SEARCH_FANOUT_PARALLEL: Run fanout queries in parallel (can spike DB/CPU).
 MCP_SEARCH_FANOUT_PARALLEL = os.getenv("MCP_SEARCH_FANOUT_PARALLEL", "false").lower() in {"1", "true", "yes"}
 try:
-    # MCP_SEARCH_FANOUT_PARALLEL_MAX_WORKERS: Threadpool workers for parallel fanout.
+# MCP_SEARCH_FANOUT_PARALLEL_MAX_WORKERS: Threadpool workers for parallel fanout.
     MCP_SEARCH_FANOUT_PARALLEL_MAX_WORKERS = int(os.getenv("MCP_SEARCH_FANOUT_PARALLEL_MAX_WORKERS", "4"))
 except (TypeError, ValueError):
     MCP_SEARCH_FANOUT_PARALLEL_MAX_WORKERS = 4
 MCP_SEARCH_FANOUT_PARALLEL_MAX_WORKERS = max(1, min(8, MCP_SEARCH_FANOUT_PARALLEL_MAX_WORKERS))
+
+# MCP_SEARCH_PAGINATION_ENABLED: Allow search_knowledge to return a cursor for paging.
+MCP_SEARCH_PAGINATION_ENABLED = os.getenv("MCP_SEARCH_PAGINATION_ENABLED", "true").lower() in {"1", "true", "yes"}
+try:
+    # MCP_SEARCH_PAGINATION_TTL_SECONDS: How long a search cursor remains valid in server cache.
+    MCP_SEARCH_PAGINATION_TTL_SECONDS = int(os.getenv("MCP_SEARCH_PAGINATION_TTL_SECONDS", "3600"))
+except (TypeError, ValueError):
+    MCP_SEARCH_PAGINATION_TTL_SECONDS = 3600
+MCP_SEARCH_PAGINATION_TTL_SECONDS = max(60, min(24 * 60 * 60, MCP_SEARCH_PAGINATION_TTL_SECONDS))
+try:
+    # MCP_SEARCH_PAGINATION_PREFETCH_MIN: When paging is enabled, fetch at least this many
+    # results from the backend so a cursor can serve "next page" without a second DB search.
+    MCP_SEARCH_PAGINATION_PREFETCH_MIN = int(os.getenv("MCP_SEARCH_PAGINATION_PREFETCH_MIN", "50"))
+except (TypeError, ValueError):
+    MCP_SEARCH_PAGINATION_PREFETCH_MIN = 50
+MCP_SEARCH_PAGINATION_PREFETCH_MIN = max(0, MCP_SEARCH_PAGINATION_PREFETCH_MIN)
+
+# MCP_SEARCH_EXCLUDE_SEEN_ENABLED: Exclude already-shown chunks/rows when returning search results.
+# Default is false to preserve legacy behavior; enable via env to improve "show me more" flows.
+MCP_SEARCH_EXCLUDE_SEEN_ENABLED = os.getenv("MCP_SEARCH_EXCLUDE_SEEN_ENABLED", "false").lower() in {"1", "true", "yes"}
+
+# MCP_SEARCH_DUPLICATE_INTENT_ENABLED: When true, repeated/near-duplicate search_knowledge calls
+# within the same turn reuse prior results (prevents tool thrash). Disable to force every call
+# to hit retrieval (useful when experimenting with paging/exclusion behaviors).
+MCP_SEARCH_DUPLICATE_INTENT_ENABLED = os.getenv("MCP_SEARCH_DUPLICATE_INTENT_ENABLED", "true").lower() in {"1", "true", "yes"}
 # MCP prompt-safe tool output limits (evidence packets sent back to the LLM).
 # MCP_PROMPT_MAX_SNIPPETS: Max snippet evidence items returned to the model per tool call.
 MCP_PROMPT_MAX_SNIPPETS = int(os.getenv("MCP_PROMPT_MAX_SNIPPETS", "4"))

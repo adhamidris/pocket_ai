@@ -288,7 +288,7 @@ class ToolExecutionContext:
 
         warnings: list[str] = []
         if searches_remaining == 1:
-            warnings.append("Last search available this turn. Make it count.")
+            warnings.append("Last search available this turn. ONLY consume it if needed, otherwise do not waste it.")
         if reads_remaining == 1:
             warnings.append("Last read available this turn. Batch ids carefully.")
         warning = " ".join(warnings) if warnings else None

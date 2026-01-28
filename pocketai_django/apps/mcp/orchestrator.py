@@ -3785,6 +3785,12 @@ class McpOrchestratorService:
             budget = tool_result.get("budget")
             if isinstance(budget, Mapping):
                 out["budget"] = dict(budget)
+            has_more = tool_result.get("has_more")
+            if isinstance(has_more, bool):
+                out["has_more"] = has_more
+            next_cursor_fp = _cursor_fingerprint(tool_result.get("next_cursor"))
+            if next_cursor_fp:
+                out["next_cursor"] = next_cursor_fp
             return out
 
         if normalized == "read_document":
